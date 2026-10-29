@@ -128,6 +128,19 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
   const nowSeconds = nowMs / 1000;
   const rows = candidates(snapshots, nowSeconds, maxPositionAgeSeconds,
     maxObservationOffsetSeconds);
+  const contributions = new Map();
+  snapshots.forEach((snapshot, index) => {
+    const id = sourceId(snapshot?.source || {}, index);
+    contributions.set(id, {source_id: id, provider: providerName(snapshot?.source || {}),
+      candidate_observations: 0, position_wins: 0, agreeing_aircraft: 0,
+      disagreement_aircraft: 0, observation_offsets_s: []});
+  });
+  for (const row of rows) {
+    const entry = contributions.get(row.sourceId);
+    if (!entry) continue;
+    entry.candidate_observations += 1;
+    entry.observation_offsets_s.push(row.age);
+  }
   const byAircraft = new Map();
   for (const row of rows) {
     const key = `${row.hex}:${row.sourceId}`;
@@ -147,6 +160,11 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
     const accepted = (groups.find(group => group.includes(winner)) || [winner])
       .sort((left, right) => right.eventTime - left.eventTime || right.quality - left.quality);
     const rejected = observations.filter(item => !accepted.includes(item));
+    contributions.get(winner.sourceId).position_wins += 1;
+    for (const id of new Set(accepted.map(item => item.sourceId)))
+      contributions.get(id).agreeing_aircraft += 1;
+    for (const id of new Set(rejected.map(item => item.sourceId)))
+      contributions.get(id).disagreement_aircraft += 1;
     const observationOffset = nowSeconds - winner.eventTime;
     const observationAge = Math.max(0, observationOffset);
     const effectiveEventTime = nowSeconds;
@@ -193,9 +211,17 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
   const positionSources = {};
   for (const item of aircraft)
     positionSources[item.position_source] = (positionSources[item.position_source] || 0) + 1;
+  const sourceContributions = [...contributions.values()].map(entry => {
+    const offsets = [...entry.observation_offsets_s].sort((left, right) => left - right);
+    const median = offsets.length ? offsets[Math.floor(offsets.length / 2)] : null;
+    const {observation_offsets_s, ...summary} = entry;
+    return {...summary, median_observation_offset_s: median};
+  });
   return {now: nowSeconds, aircraft, vectorwarp_fusion: {
     schema: 'vectorwarp-adsb-fusion-v1', sources: snapshots.length,
-    observations: rows.length, aircraft: aircraft.length, position_sources: positionSources}};
+    observations: rows.length, aircraft: aircraft.length, position_sources: positionSources,
+    selection_policy: 'newest_position_event_then_quality',
+    source_contributions: sourceContributions}};
 }
 
 module.exports = {separationKm, projectAircraft, positionSource, providerName, fuseAircraftData};

@@ -70,10 +70,11 @@ int main()try{
   retirement.maxDelaySpan==1&&retirement.maxDopplerSpanHz==3,
   "stationary retirement policy is not conservative");
  require(persistentCell(7,3,10)==37,"persistent map did not retain Doppler identity");
- require(persistentRidgeContains(37,27,10,8)&&persistentRidgeContains(37,47,10,8),
-  "adjacent Doppler jitter did not join the local ridge");
- require(!persistentRidgeContains(37,36,10,8)&&!persistentRidgeContains(37,57,10,8),
-  "persistent ridge leaked across delay or remote Doppler cells");
+ require(persistentRidgeContains(37,27,10,8)&&persistentRidgeContains(37,47,10,8)&&
+  persistentRidgeContains(37,36,10,8)&&persistentRidgeContains(37,48,10,8),
+  "one-cell delay/Doppler jitter did not join the local neighborhood");
+ require(!persistentRidgeContains(37,35,10,8)&&!persistentRidgeContains(37,57,10,8),
+  "persistent neighborhood exceeded its bounded radius");
  uint32_t streak=0;uint16_t frame=1;
  for(uint32_t observation=0;observation<60;++observation,frame+=2)
   streak=advancePersistentStreak(streak,frame);

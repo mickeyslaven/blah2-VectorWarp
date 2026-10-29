@@ -37,8 +37,6 @@ inline StationaryRetirementPolicy stationaryRetirementPolicy(bool enabled,
 }
 
 // Persistence is spatial: delay is the fast axis and Doppler the slow axis.
-// A one-row footprint joins row jitter into a narrow ridge without collapsing
-// unrelated Doppler cells into a delay-only notch.
 inline uint32_t persistentCell(uint32_t delayBin,uint32_t dopplerRow,
  uint32_t delayBins){
  if(!delayBins||delayBin>=delayBins||dopplerRow>=(UINT32_MAX-delayBin)/delayBins)
@@ -53,8 +51,11 @@ inline bool persistentRidgeContains(uint32_t learnedCell,uint32_t candidateCell,
   throw std::invalid_argument("GPU tracker persistent-ridge geometry invalid");
  const uint32_t learnedDelay=learnedCell%delayBins,candidateDelay=candidateCell%delayBins;
  const uint32_t learnedRow=learnedCell/delayBins,candidateRow=candidateCell/delayBins;
- return learnedDelay==candidateDelay&&
-  (learnedRow>candidateRow?learnedRow-candidateRow:candidateRow-learnedRow)<=radius;
+ const uint32_t delayDelta=learnedDelay>candidateDelay?
+  learnedDelay-candidateDelay:candidateDelay-learnedDelay;
+ const uint32_t rowDelta=learnedRow>candidateRow?
+  learnedRow-candidateRow:candidateRow-learnedRow;
+ return delayDelta<=radius&&rowDelta<=radius;
 }
 
 // One credit leaks per four missed CPIs. Recurrence with short CFAR/quantizer

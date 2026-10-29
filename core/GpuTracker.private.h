@@ -27,7 +27,7 @@ uint32_t* guidedRecoveries=nullptr;
 size_t guidedWordCapacity=0;
 TrackerResult* result=nullptr;};
 namespace gpu_tracker {
-constexpr uint32_t headerWords=32,displayHistory=100,statusWords=65,workWords=12,
+constexpr uint32_t headerWords=32,displayHistory=100,statusWords=66,workWords=12,
  clutterHeaderWords=10;
 struct Admission {uint32_t bankWords=0,recordWords=0,historyCount=0,nAcc=0,hypotheses=0;
 uint64_t stageBytes=0,totalBytes=0;
@@ -102,9 +102,9 @@ void writeM(uint at,double value){uvec2 q=unpackDouble2x32(value);m[at]=q.x;m[at
 uint historyCapacity(){return max(m[40],100u);}
 uint recordWords(){return 16u+8u*historyCapacity();}
 uint record(uint i){return 32u+recordWords()*i;}
-uint work(uint i){return 65u+12u*i;}
+uint work(uint i){return 66u+12u*i;}
 #if TRACK_GUIDED_SHADOW
-uint guidedBase(){return 65u+12u*m[3];}
+uint guidedBase(){return 66u+12u*m[3];}
 uint guidedRead(uint at){return m[guidedBase()+at];}
 void guidedWrite(uint at,uint value){m[guidedBase()+at]=value;}
 #endif
@@ -205,7 +205,9 @@ const char* predictBody=R"glsl(
 void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
  if(i<m[19]){s[m[6]+i]=0u;uint at=m[5]+8u*i;
   uint cell=s[post[41]+i],beam=cell<m[4]?((s[post[39]+cell]>>8u)&511u):0xffffffffu;
-  if(!finiteD(sd(at))||!finiteD(sd(at+2u))||!finiteD(sd(at+4u))||cell>=m[4]||beam>post[75])reject(303u);atomicAdd(m[57],1u);}
+  if(!finiteD(sd(at))||!finiteD(sd(at+2u))||!finiteD(sd(at+4u))||cell>=m[4]||beam>post[75])reject(303u);
+  else if(post[33]!=0u&&cell%post[33]+1u==post[33]){s[m[6]+i]=2u;atomicAdd(m[65],1u);}
+  atomicAdd(m[57],1u);}
  if(i>=m[18])return;uint r=record(i),w=work(i);double delay=sourceD(r),doppler=sourceD(r+2u),acc=sourceD(r+6u),time=md(50u);
  precise double delayPredict=delay-md(46u)*(doppler*time+0.5LF*acc*time*time)/md(44u);
  precise double dopplerPredict=doppler+(acc*time);
@@ -303,17 +305,20 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
  if(i>=m[19])return;uint at=m[5]+8u*i;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));if(maximum>0.0LF&&abs(doppler)>maximum)return;
  uint cell=s[post[41]+i];if(cell>=m[4]||post[33]==0u){reject(320u);return;}
- // Accumulate the exact delay-Doppler cell plus one Doppler neighbor on each
- // side. This learns narrow ridges despite row quantization jitter, while a
- // persistent return never suppresses the rest of its delay column.
+ // Paint a bounded 3x3 neighborhood. Recurrent site clutter commonly jitters
+ // by one quantized delay or Doppler cell; joining only that immediate
+ // neighborhood lets it accumulate without turning a delay column into a
+ // notch. An independent moving target still has to occupy the neighborhood
+ // for the full configured persistence interval before initiation is blocked.
  uint delayBins=post[33],row=cell/delayBins,rows=post[32],delay=cell%delayBins;
- for(int offset=-1;offset<=1;++offset){int candidate=int(row)+offset;if(candidate<0||candidate>=int(rows))continue;
-  uint index=10u+uint(candidate)*delayBins+delay,prior=clutterPersistence[index],current=m[10]&65535u;
+ for(int rowOffset=-1;rowOffset<=1;++rowOffset){int candidateRow=int(row)+rowOffset;if(candidateRow<0||candidateRow>=int(rows))continue;
+  for(int delayOffset=-1;delayOffset<=1;++delayOffset){int candidateDelay=int(delay)+delayOffset;if(candidateDelay<0||candidateDelay>=int(delayBins))continue;
+  uint index=10u+uint(candidateRow)*delayBins+uint(candidateDelay),prior=clutterPersistence[index],current=m[10]&65535u;
   while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)break;
    uint age=(current-last)&65535u,missed=age>0u?age-1u:0u,leaked=missed/4u;
    uint decayed=prior==0u||leaked>=streak?0u:streak-leaked;
    uint next=(current<<16u)|min(65535u,decayed+1u);
-   uint observed=atomicCompSwap(clutterPersistence[index],prior,next);if(observed==prior)break;prior=observed;}}
+   uint observed=atomicCompSwap(clutterPersistence[index],prior,next);if(observed==prior)break;prior=observed;}}}
 }
 )glsl";
 const char* historyBody=R"glsl(
@@ -536,7 +541,7 @@ class Stage {
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
- else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]<guidedPromoted||s[27]-guidedPromoted>s[19]||s[21]>s[19]-(s[27]-guidedPromoted)||s[29]>s[18]||s[64]>s[29]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
+ else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]<guidedPromoted||s[27]-guidedPromoted>s[19]||s[65]>s[19]-(s[27]-guidedPromoted)||s[21]>s[19]-(s[27]-guidedPromoted)-s[65]||s[29]>s[18]||s[64]>s[29]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
     s[57]!=s[19]||s[56]!=(s[19]+127)/128||s[30]!=s[22]||s[31]!=s[23]||s[23]!=s[20]+s[22]||s[54]!=s[23])
    throw std::runtime_error("GPU tracker executed-work coverage mismatch");
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
@@ -571,7 +576,8 @@ class Stage {
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
    uint32_t guidedPromoted=0;if(config_.trackGuidedPromote){const auto*g=static_cast<const uint32_t*>(metadata_->mapped)+statusWords+workWords*config_.capacity;guidedPromoted=g[13];}
    context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched
-    <<" stationary_clutter_suppressed="<<(s[19]-(s[27]-guidedPromoted)-admission.unmatched)
+    <<" boundary_rejected="<<s[65]
+    <<" stationary_clutter_suppressed="<<(s[19]-(s[27]-guidedPromoted)-s[65]-admission.unmatched)
     <<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
   for(uint32_t phase=0;phase<6;++phase)context_.diagnostics.stream()<<" gpu_phase"<<phase<<"_ms="<<timestamps_->milliseconds(phase);
   if(config_.trackGuidedShadow){const uint64_t guidedOffset=uint64_t(statusWords+workWords*config_.capacity)*4;

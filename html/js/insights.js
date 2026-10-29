@@ -515,6 +515,7 @@
     </div>${photoMarkup}<details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
       <div><dt>Description</dt><dd>${aircraftValue(info.description)}</dd></div><div><dt>ICAO / category</dt><dd>${aircraftValue(info.hex)} · ${aircraftValue(info.category)}</dd></div>
       <div><dt>Squawk / signal</dt><dd>${aircraftValue(info.squawk)} · ${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div><div><dt>Position</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''} · ${info.age === null ? '—' : `${number(info.age, 1)} s old`}</dd></div>
+      <div><dt>Corroborated by</dt><dd>${info.corroboratedProviders.length ? info.corroboratedProviders.map(escapeHtml).join(', ') : 'No second fresh source'}</dd></div>
     </dl></details><details class="aircraft-detail-section"><summary>Radar geometry</summary><dl>
       <div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div><div><dt>Excess path / Doppler</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`} · ${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
       <div><dt>Radar association</dt><dd>${item.radar_track_id ? `Track ${escapeHtml(item.radar_track_id)} · ${escapeHtml(humanize(item.radar_track_state))}` : 'No confirmed match'}</dd></div>

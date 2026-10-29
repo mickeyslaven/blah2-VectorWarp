@@ -852,6 +852,15 @@ function aircraftInfo(aircraft = {}) {
     'MLAT' : rawPositionSource === 'ADSB_DIRECT' ? 'ADS-B' : rawPositionSource || 'ADS-B';
   const provider = String(aircraft.vectorwarp?.provider || aircraft.provenance?.provider ||
     aircraft.vectorwarp?.source_id || aircraft.provenance?.source_id || '').replace(/^exchange:/, '');
+  const selectedSource = String(aircraft.vectorwarp?.source_id ||
+    aircraft.provenance?.source_id || '');
+  const sourceLabel = value => {
+    const raw = String(value || '').replace(/^exchange:/, '');
+    try { return new URL(raw).hostname || raw; } catch (_) { return raw; }
+  };
+  const corroboratedProviders = [...new Set((aircraft.vectorwarp?.agreeing_sources ||
+    aircraft.provenance?.agreeing_sources || []).filter(source => String(source) !== selectedSource)
+    .map(sourceLabel).filter(Boolean))];
   return {
     label: aircraftLabel(aircraft), registration: String(aircraft.r || '').trim(),
     type: String(aircraft.t || aircraft.aircraft_type || '').trim(),
@@ -867,7 +876,8 @@ function aircraftInfo(aircraft = {}) {
     squawk: String(aircraft.squawk || position.squawk || '').trim(),
     signal: finiteValue(aircraft.rssi) ?? finiteValue(position.rssi_dbfs),
     age: finiteValue(aircraft.seen_pos) ?? finiteValue(position.seen_pos_s), delay: finiteValue(aircraft.delay),
-    doppler: finiteValue(aircraft.doppler), positionSource, provider
+    doppler: finiteValue(aircraft.doppler), positionSource, provider,
+    corroboratedProviders
   };
 }
 
@@ -1023,6 +1033,8 @@ function aircraftHoverText(aircraft = {}, geometry = {}) {
     `Heading ${value(info.heading, 0, '°')} · Vertical rate ${value(info.verticalRate, 0, ' ft/min')}`,
     `Squawk ${safe(info.squawk || '—')} · Signal ${value(info.signal, 1, ' dBFS')}`,
     `Position ${safe(info.positionSource)}${info.provider ? ` · ${safe(info.provider)}` : ''}`,
+    info.corroboratedProviders.length ?
+      `Corroborated by ${safe(info.corroboratedProviders.join(', '))}` : null,
     `Position age ${value(info.age, 1, ' s')}`];
   if (Number.isFinite(geometry.delay) || Number.isFinite(geometry.doppler))
     lines.push(`Bistatic range ${value(geometry.delay, 2, ' km')} · Doppler ${value(geometry.doppler, 1, ' Hz')}`);

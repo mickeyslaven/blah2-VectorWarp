@@ -33,6 +33,12 @@ assert.equal(positionSource({type: 'adsb_icao', mlat: ['gs']}), 'ADSB_DIRECT');
 assert.equal(positionSource({type: 'adsb_icao', mlat: ['lat', 'lon']}), 'MLAT');
 assert.equal(providerName({endpoint: 'https://api.adsb.lol/v2/point/1/2/60'}), 'api.adsb.lol');
 assert.deepEqual(single.aircraft[0].vectorwarp.agreeing_sources, ['local-readsb']);
+assert.deepEqual(single.vectorwarp_fusion.source_contributions.map(source => ({
+  id: source.source_id, observations: source.candidate_observations,
+  wins: source.position_wins, agreeing: source.agreeing_aircraft
+})), [{id: 'local-readsb', observations: 1, wins: 1, agreeing: 1}]);
+assert.equal(single.vectorwarp_fusion.selection_policy,
+  'newest_position_event_then_quality');
 
 const mlat = fuseAircraftData([snapshot({id: 'exchange:https://api.adsb.lol/v2/point/1/2/60',
   endpoint: 'https://api.adsb.lol/v2/point/1/2/60', kind: 'exchange'}, nowMs / 1000, [
@@ -84,6 +90,9 @@ assert.equal(newestPreferred.aircraft.length, 1, 'all sources collapse to one ai
 assert.equal(newestPreferred.aircraft[0].lat, 41,
   'the observation with the newest actual position timestamp wins across sources');
 assert.equal(newestPreferred.aircraft[0].vectorwarp.source_id, 'online-a');
+assert.deepEqual(Object.fromEntries(newestPreferred.vectorwarp_fusion.source_contributions
+  .map(source => [source.source_id, source.position_wins])),
+  {'pi-zero': 0, 'online-a': 1, 'online-b': 0});
 
 const bounded = fuseAircraftData([snapshot(local, nowMs / 1000 + 1.1, [
   {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, gs: 100, track: 90, seen_pos: 0}
