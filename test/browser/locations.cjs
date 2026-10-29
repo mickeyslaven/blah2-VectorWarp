@@ -121,6 +121,11 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('#show-radar-coverage-on-map').isChecked(), true,
       'radar-confirmed rolling coverage is visible by default');
     await page.waitForFunction(() => document.querySelector('.location-radar-coverage-path')?.getAttribute('d'));
+    const coveragePath = await page.locator('.location-radar-coverage-path').getAttribute('d');
+    assert.equal((coveragePath.match(/M/g) || []).length, 4,
+      'unsupported bearing gaps must remain separate observed sectors');
+    assert.ok(!coveragePath.includes('Q'),
+      'coverage must not curve across sparse bearings and invent a closed range boundary');
     assert.ok((await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox.zoom)) > 5,
       'online ADS-B acquisition radius must not define the radar map distance');
     assert.equal(await page.locator('.location-radar-track-path').count(), 0);

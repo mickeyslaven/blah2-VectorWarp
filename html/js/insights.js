@@ -237,6 +237,11 @@
     if (root.dataset.ready) return;
     root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar"><summary><span class="map-sidebar-title">Map</span><span class="map-sidebar-selected" id="map-sidebar-selected">Layers & aircraft</span></summary><div class="location-map-sidebar-body"><details class="map-controls-panel"><summary>Layers and controls</summary><div class="map-controls-body"><label class="map-auto-select"><input type="checkbox" id="show-radar-tracks-on-map"><span><strong>Show radar tracks</strong><small>Confirmed tracks use the 3D uncertainty cage.</small></span></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>24 h radar-confirmed coverage</strong><small>Online feed-only positions never expand it.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar matches</strong><small>Keep the current radar-associated aircraft selected.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div></details><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
     root.dataset.ready = 'true';
+    const coverageLabel = root.querySelector?.('#show-radar-coverage-on-map')?.closest?.('label');
+    if (coverageLabel) {
+      coverageLabel.querySelector('strong').textContent = '24 h observed radar reach';
+      coverageLabel.querySelector('small').textContent = 'Confirmed track sectors only; gaps mean no evidence.';
+    }
     const sidebar = root.querySelector?.('.location-map-sidebar');
     if (sidebar) sidebar.open = !window.matchMedia?.('(max-width:760px)')?.matches;
     const showTracks = document.getElementById('show-radar-tracks-on-map');
@@ -809,20 +814,32 @@
       layer._updatePositions = () => {
         const line = points => points.map((point, index) =>
           `${index ? 'L' : 'M'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
-        const smoothClosed = points => {
-          if (points.length < 3) return '';
-          const midpoint = (left, right) => ({x: (left.x + right.x) / 2,
-            y: (left.y + right.y) / 2});
-          const start = midpoint(points.at(-1), points[0]);
-          return `M${start.x.toFixed(1)} ${start.y.toFixed(1)}` + points.map((point, index) => {
-            const next = points[(index + 1) % points.length], middle = midpoint(point, next);
-            return `Q${point.x.toFixed(1)} ${point.y.toFixed(1)} ${middle.x.toFixed(1)} ${middle.y.toFixed(1)}`;
-          }).join('') + 'Z';
-        };
-        const coveragePoints = Array.isArray(layer._radarCoverage?.points) ?
-          layer._radarCoverage.points.map(point => map.project([point.longitude, point.latitude])) : [];
-        layer._coveragePath?.setAttribute('d', coveragePoints.length >= 3 ?
-          smoothClosed(coveragePoints) : '');
+        const coverageRows = Array.isArray(layer._radarCoverage?.points) ?
+          layer._radarCoverage.points.map(point => ({bin: Number(point.bin),
+            point: map.project([point.longitude, point.latitude])}))
+            .filter(row => Number.isInteger(row.bin)).sort((left, right) => left.bin - right.bin) : [];
+        const coverageRuns = [];
+        for (const row of coverageRows) {
+          const run = coverageRuns.at(-1);
+          if (run && row.bin === run.at(-1).bin + 1) run.push(row);
+          else coverageRuns.push([row]);
+        }
+        const binCount = Math.max(1, Number(layer._radarCoverage?.bins) || 72);
+        if (coverageRuns.length > 1 && coverageRuns[0][0]?.bin === 0 &&
+            coverageRuns.at(-1).at(-1)?.bin === binCount - 1) {
+          const wrapped = coverageRuns.pop().concat(coverageRuns.shift());
+          coverageRuns.unshift(wrapped);
+        }
+        const receiverPoint = sites[0] ? map.project([sites[0].longitude, sites[0].latitude]) : null;
+        // Never close or smooth across unsupported bearings. Each contiguous
+        // run becomes its own observed sector; an isolated bin is an honest
+        // radial observation rather than a fictional omnidirectional limit.
+        const coveragePath = receiverPoint ? coverageRuns.map(run => {
+          const radial = `M${receiverPoint.x.toFixed(1)} ${receiverPoint.y.toFixed(1)}` +
+            run.map(row => `L${row.point.x.toFixed(1)} ${row.point.y.toFixed(1)}`).join('');
+          return run.length > 1 ? `${radial}Z` : radial;
+        }).join('') : '';
+        layer._coveragePath?.setAttribute('d', coveragePath);
         for (const {item, path: radarPath, slices, ribs, associated} of layer._radarTrackPaths.values()) {
           const ground = item.latitude.map((latitude, index) => ({latitude,
             point: map.project([item.longitude[index], latitude])}));
