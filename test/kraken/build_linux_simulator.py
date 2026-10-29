@@ -52,14 +52,9 @@ def run(command, **kwargs):
 
 
 def apply_patch(source, patch):
-    if shutil.which('patch'):
-        run(['patch', '--batch', '--fuzz=0', '-p1', '-i', patch], cwd=source)
-    else:
-        # Minimal Linux hosts may already provide Git but no patch executable.
-        isolated = ['git', f'--git-dir={source / ".git-disabled"}',
-                    f'--work-tree={source}', 'apply', '--no-index']
-        run([*isolated, '--check', str(patch)], cwd=source)
-        run([*isolated, str(patch)], cwd=source)
+    # Keep preparation and the installable source kit on the same deterministic
+    # patch engine so the simulator cannot pass or fail for a different reason.
+    CONTRACT['apply_source_patch'](source, patch)
 
 
 def require(condition, message):
