@@ -505,9 +505,9 @@
     const photoMarkup = photo?.available ?
       `<figure class="aircraft-photo"><img src="${escapeHtml(photo.thumbnail)}" alt="${escapeHtml(info.label)} aircraft" loading="lazy" referrerpolicy="no-referrer"><figcaption>Photo by ${escapeHtml(photo.photographer || 'contributor')} · <a href="${escapeHtml(photo.link)}" target="_blank" rel="noopener noreferrer">Planespotters.net</a></figcaption></figure>` :
       `<div class="aircraft-photo aircraft-photo-fallback">${aircraftSvgMarkup(item)}<span>${photo?.loading ? 'Looking for a photo…' : photo?.enabled === false ? 'Aircraft photos are off in ADS-B settings' : 'No photo available'}</span></div>`;
-    return `<section class="info-card aircraft-detail-card"><header><div><span class="aircraft-detail-kind">${escapeHtml(humanize(aircraftKind(item)))}</span><h2>${escapeHtml(info.label)}</h2><span class="aircraft-detail-subtitle">${aircraftValue(info.registration)} · ${aircraftValue(info.type)}</span></div><button type="button" class="button-secondary aircraft-detail-close" aria-label="Close aircraft details">Close</button></header>${photoMarkup}<div class="aircraft-primary-metrics">
+    return `<section class="info-card aircraft-detail-card"><header><div><span class="aircraft-detail-kind">${escapeHtml(humanize(aircraftKind(item)))}</span><h2>${escapeHtml(info.label)}</h2><span class="aircraft-detail-subtitle">${aircraftValue(info.registration)} · ${aircraftValue(info.type)}</span></div><button type="button" class="button-secondary aircraft-detail-close" aria-label="Close aircraft details">Close</button></header><div class="aircraft-primary-metrics">
       <div><strong>${info.altitude === null ? '—' : integer(info.altitude)}</strong><span>ft altitude</span></div><div><strong>${info.speed === null ? '—' : integer(info.speed)}</strong><span>kt speed</span></div><div><strong>${info.heading === null ? '—' : `${integer(info.heading)}°`}</strong><span>heading</span></div><div><strong>${info.verticalRate === null ? '—' : integer(info.verticalRate)}</strong><span>ft/min</span></div>
-    </div><details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
+    </div>${photoMarkup}<details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
       <div><dt>Description</dt><dd>${aircraftValue(info.description)}</dd></div><div><dt>ICAO / category</dt><dd>${aircraftValue(info.hex)} · ${aircraftValue(info.category)}</dd></div>
       <div><dt>Squawk / signal</dt><dd>${aircraftValue(info.squawk)} · ${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div><div><dt>Position</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''} · ${info.age === null ? '—' : `${number(info.age, 1)} s old`}</dd></div>
     </dl></details><details class="aircraft-detail-section"><summary>Radar geometry</summary><dl>
@@ -559,6 +559,7 @@
     });
     if (current) selectedAircraftSnapshot = current;
     const item = current || (selectedAircraftId ? selectedAircraftSnapshot : null);
+    target.closest?.('.location-map-sidebar')?.classList.toggle('has-aircraft-selection', Boolean(item));
     const sidebarLabel = document.getElementById('map-sidebar-selected');
     if (sidebarLabel) sidebarLabel.textContent = item ? aircraftInfo(item).label : 'Layers & aircraft';
     const hex = item ? aircraftInfo(item).hex.toLowerCase() : '';
