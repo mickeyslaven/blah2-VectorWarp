@@ -148,9 +148,6 @@ if (typeof document !== 'undefined') {
   });
 }
 var adsb = {};
-var adsbCache = null;
-var adsbReadAt = -Infinity;
-var adsbPending = false;
 function exactFrameUrl(path, timestamp) {
   const url = new URL(path, typeof window === 'undefined' ?
     'http://vectorwarp.invalid' : window.location.href);
@@ -184,22 +181,6 @@ function trackerOverlay(frame, runningConfig) {
     group.hover.push(`Radar track ${track.id ?? '—'}<br>${state}<br>${range.toFixed(2)} km · ${doppler.toFixed(1)} Hz`);
   }
   return result;
-}
-
-function currentAdsbOverlay(enabled, cpiSeconds) {
-  if (!enabled) return null;
-  const interval = Number.isFinite(cpiSeconds) && cpiSeconds > 0 ?
-    Math.max(16, cpiSeconds * 1000) : 1000;
-  if (!adsbPending && Date.now() - adsbReadAt >= interval) {
-    adsbPending = true;
-    adsbReadAt = Date.now();
-    // An optional, slower truth service must not hold up radar frames.
-    fetchRadarJson(urlAdsbData)
-      .then(data => { adsbCache = data; })
-      .catch(() => { adsbCache = null; })
-      .finally(() => { adsbPending = false; });
-  }
-  return adsbCache;
 }
 
 Plotly.react('data', data, layout, config);
@@ -236,9 +217,11 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   // Bind overlays to the heatmap's exact processor frame. Waiting for these two
   // compact responses avoids clearing markers between independently selected
   // presentation snapshots and prevents adjacent-CPI data from being mixed.
-  const [detected, trackerFrame] = await Promise.all([
+  const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
+  const [detected, trackerFrame, data_adsb] = await Promise.all([
     detectionEnabled && visible.detections ? fetchRadarJson(exactFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
-    fetchRadarJson(exactFrameUrl(urlTracker, data.timestamp)).catch(() => null)
+    fetchRadarJson(exactFrameUrl(urlTracker, data.timestamp)).catch(() => null),
+    adsbEnabled ? fetchRadarJson(exactFrameUrl(urlAdsbData, data.timestamp)).catch(() => null) : null
   ]);
   detection = detected || {delay: [], doppler: []};
   const tracked = trackerOverlay(trackerFrame, runningConfig);
@@ -247,9 +230,6 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
     tracked.coasting = {delay: [], doppler: [], hover: []};
   }
   adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
-  const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
-  const data_adsb = currentAdsbOverlay(adsbEnabled,
-    runningConfig.process?.data?.cpi);
   const stableAircraft = stabilizeAircraftSnapshots(Object.entries(data_adsb || {})
       .map(([hex, record]) => record?.hex ? record : {...record, hex}),
     {scope: 'delay-doppler', graceMs: adsbEnabled ? 10000 : 0});

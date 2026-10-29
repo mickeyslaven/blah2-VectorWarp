@@ -2,6 +2,26 @@ var plottedKeys = '';
 
 // setup API
 var urlTiming = liveApiUrl(radarPresentationUrl('/stash/timing'));
+var urlPresentationTiming = liveApiUrl('/api/presentation/status');
+
+async function updatePresentationTiming() {
+  const target = typeof document === 'undefined' ? null : document.getElementById('presentation-timing');
+  if (!target) return;
+  try {
+    const status = await fetchRadarJson(urlPresentationTiming);
+    const cadence = status.cadence || {};
+    const percent = Number.isFinite(cadence.within_100ms_fraction) ?
+      `${Math.round(cadence.within_100ms_fraction * 100)}%` : 'Measuring';
+    const source = status.event_time?.exact ? 'Exact receiver time' : 'Host-estimated receiver time';
+    target.innerHTML = `<div><strong>${status.presentation_delay_ms ?? '—'} ms</strong><span>Fixed presentation hold</span></div>` +
+      `<div><strong>${status.expected_frame_interval_ms ?? '—'} ms</strong><span>Configured CPI cadence</span></div>` +
+      `<div><strong>${percent}</strong><span>Frames within ±100 ms</span></div>` +
+      `<div><strong>${status.relative_alignment_ms ?? '—'} ms</strong><span>Layer alignment</span></div>` +
+      `<p>${source}. ${status.event_time?.reason || 'Waiting for receiver timing metadata.'}</p>`;
+  } catch (_) {
+    target.innerHTML = '<div><strong>Unavailable</strong><span>Presentation timing</span></div>';
+  }
+}
 
 // setup plotly
 var layout = {
@@ -74,6 +94,7 @@ Plotly.react('data', data, layout, config);
 
 // callback function
 var radarUpdates = startRadarPlot(urlTiming, async function (data) {
+  void updatePresentationTiming();
   const keys = Object.keys(data).filter(key =>
     Array.isArray(data[key]) && !['timestamp', 'uptime_s', 'uptime_days'].includes(key));
   const signature = JSON.stringify(keys);

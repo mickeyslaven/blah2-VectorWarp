@@ -252,10 +252,21 @@ function connect(port) {
     const dd = await request('GET', '/api/adsb/delay-doppler');
     assert.equal(dd.status, 200);
     assert.deepEqual(dd.body, {}, 'One raw position is motion warmup');
+    const alignedDd = await request('GET',
+      '/api/adsb/delay-doppler?presentation=aligned&frame_timestamp=123456');
+    assert.equal(alignedDd.status, 200);
+    assert.equal(alignedDd.headers['x-vectorwarp-presentation-timestamp'], '123456',
+      'ADS-B exposes the exact radar frame used for projection');
     const legacyLink = await request('GET', '/api/adsb2dd');
     assert.equal(legacyLink.body.url, '/api/adsb/delay-doppler');
     const feeds = await request('GET', '/api/adsb/status');
     assert.equal(feeds.body.online, true);
+    const presentation = await request('GET', '/api/presentation/status');
+    assert.equal(presentation.status, 200);
+    assert.equal(presentation.body.presentation_delay_cpis, 0);
+    assert.equal(presentation.body.expected_frame_interval_ms, config.process.data.cpi * 1000);
+    assert.equal(presentation.body.relative_alignment_ms, null,
+      'No radar frame must not impersonate an aligned presentation epoch');
     assert.equal((await request('GET', '/api/system/status')).body.adsbEnabled, true);
     assert.ok(truthRequests.some(url => url === '/receiver/data/aircraft.json'));
 

@@ -51,7 +51,7 @@ const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
-const {PresentationHistory} = require('./presentation-history.js');
+const {PresentationHistory, frameTimestamp} = require('./presentation-history.js');
 const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
@@ -290,11 +290,23 @@ const presentationHistories = Object.fromEntries(['map', 'detection', 'tracker',
 function presentationCutoff(req) {
   return req.query.presentation === 'aligned' ? Date.now() - presentationDelayMs : null;
 }
-function presentationFrame(req, name, current) {
-  if (req.query.presentation === 'aligned' && req.query.frame_timestamp !== undefined) {
+function requestedPresentationTimestamp(req) {
+  if (req.query.frame_timestamp !== undefined) {
     const requested = Number(req.query.frame_timestamp);
-    if (!Number.isSafeInteger(requested) || requested < 0) return '';
-    return presentationHistories[name].exact(requested) ?? '';
+    return Number.isSafeInteger(requested) && requested >= 0 ? requested : NaN;
+  }
+  const cutoff = presentationCutoff(req);
+  if (cutoff === null) return null;
+  // Map is the visual presentation clock. Selecting it once prevents requests
+  // that arrive on opposite sides of a CPI boundary from mixing adjacent radar
+  // frames across heatmap, detection, tracker, timing and ADS-B layers.
+  return frameTimestamp(presentationHistories.map.at(cutoff));
+}
+function presentationFrame(req, name, current) {
+  if (req.query.presentation === 'aligned') {
+    const requested = requestedPresentationTimestamp(req);
+    if (Number.isNaN(requested)) return '';
+    if (requested !== null) return presentationHistories[name].exact(requested) ?? '';
   }
   const cutoff = presentationCutoff(req);
   return cutoff === null ? current : presentationHistories[name].at(cutoff) ?? current;
@@ -666,6 +678,34 @@ app.get('/api/timestamp', (req, res) => {
 });
 app.get('/api/timing', (req, res) => {
   res.send(presentationFrame(req, 'timing', timing));
+});
+app.get('/api/presentation/status', (req, res) => {
+  const now = Date.now();
+  const expectedIntervalMs = Number.isFinite(config.process?.data?.cpi) ?
+    config.process.data.cpi * 1000 : null;
+  const selectedTimestamp = frameTimestamp(
+    presentationHistories.map.at(now - presentationDelayMs));
+  const aligned = selectedTimestamp === null ? {} : Object.fromEntries(
+    Object.entries(presentationHistories).map(([name, history]) =>
+      [name, history.exact(selectedTimestamp) !== null]));
+  const latest = currentTimingBackend();
+  res.json({
+    presentation_delay_cpis: Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
+      config.truth.adsb.association_lag_cpis : 0,
+    presentation_delay_ms: presentationDelayMs,
+    expected_frame_interval_ms: expectedIntervalMs,
+    selected_frame_timestamp: selectedTimestamp,
+    selected_frame_age_ms: selectedTimestamp === null ? null : now - selectedTimestamp,
+    aligned_layers: aligned,
+    relative_alignment_ms: selectedTimestamp === null ? null : 0,
+    cadence: presentationHistories.map.diagnostics(expectedIntervalMs),
+    event_time: latest?.eventTime ? {
+      source: latest.eventTime.source,
+      exact: latest.eventTime.exact === true,
+      uncertainty_bounded: latest.eventTime.uncertaintyBounded === true,
+      reason: latest.eventTime.reason || null
+    } : null
+  });
 });
 app.get('/api/iqdata', (req, res) => {
   res.send(presentationFrame(req, 'iqdata', iqdata));
@@ -1222,10 +1262,17 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
     if (replayTruthDisabled()) return res.json(replayTruthStatus());
     try {
       const presentation = req.query.presentation;
+      const requestedTimestamp = presentation === 'aligned' ?
+        requestedPresentationTimestamp(req) : null;
+      if (Number.isNaN(requestedTimestamp))
+        return res.status(400).json({error: 'frame_timestamp must be a non-negative integer'});
       const value = presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
-        await adsbSource.getPresentationAt(kind, Date.now() - presentationDelayMs) :
+        await adsbSource.getPresentationAt(kind,
+          requestedTimestamp ?? Date.now() - presentationDelayMs) :
         presentation && typeof adsbSource.getPresentation === 'function' ?
           await adsbSource.getPresentation(kind) : await adsbSource.get(kind);
+      if (requestedTimestamp !== null)
+        res.set('X-VectorWarp-Presentation-Timestamp', String(requestedTimestamp));
       if (kind === 'delayDoppler' &&
           (req.query.presentation === 'overlay' || req.query.overlay === '1')) {
         const compact = {};

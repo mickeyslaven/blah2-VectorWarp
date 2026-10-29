@@ -185,6 +185,7 @@ const CONFIG_META = {
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
+  'truth.adsb.association_lag_cpis': ['Frame alignment hold', 'Wait this many complete radar frames before scoring and displaying aircraft truth. Every radar and ADS-B layer is then projected to one exact CPI timestamp.'],
   'truth.adsb.aircraft_photo_provider': ['Aircraft photos', 'Optional aircraft photos cached in the background and shown in Map details.'],
   'truth.adsb.provisional_event_time_uncertainty_s': ['Provisional UTC uncertainty', 'Seconds of SDR event-time uncertainty included in validation gates.'],
   'truth.ais': ['AIS (not implemented)', 'Reserved maritime-feed settings; preserved but not editable.'],
@@ -523,7 +524,7 @@ const NUMERIC_PRESENTATION = {
   'capture.fs': [1000000, 'MS/s'],
   'capture.fc': [1000000, 'MHz'],
   'process.data.cpi': [1, 's'],
-  'process.data.buffer': [1, 'intervals'],
+  'process.data.buffer': [1, 'CPI frames'],
   'process.data.overlap': [1, 's'],
   'process.ambiguity.delayMin': [1, 'bin'],
   'process.ambiguity.delayMax': [1, 'bin'],
@@ -956,6 +957,15 @@ function adsbSourcesInput(legacyValue, path) {
     intro.className = 'adsb-source-note';
     intro.textContent = 'One aircraft is shown once. The newest healthy observation wins; positions are not averaged.';
     wrapper.appendChild(intro);
+
+    const lagCpis = Number(activeConfig.truth?.adsb?.association_lag_cpis || 0);
+    const cpiSeconds = Number(activeConfig.process?.data?.cpi);
+    const alignment = document.createElement('p');
+    alignment.className = 'adsb-source-note';
+    alignment.textContent = Number.isFinite(cpiSeconds) ?
+      `Shared frame timing: ${lagCpis} CPI frames × ${cpiSeconds.toFixed(3)} s = ${(lagCpis * cpiSeconds).toFixed(3)} s hold. Radar, tracks and ADS-B are displayed at one exact frame timestamp.` :
+      `Shared frame timing: ${lagCpis} CPI frames. Radar, tracks and ADS-B are displayed at one exact frame timestamp.`;
+    wrapper.appendChild(alignment);
 
     const localHeading = document.createElement('strong');
     localHeading.textContent = 'Local receivers';

@@ -34,7 +34,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       fetchRadarJson: async url => {
         fetchUrls.push(url);
         return url.startsWith('/api/detection') ? detected :
-          url.startsWith('/api/tracker') ? tracked : new Promise(() => {});
+          url.startsWith('/api/tracker') ? tracked :
+          url.startsWith('/api/adsb/delay-doppler') ? {} : new Promise(() => {});
       },
       window: {innerWidth: 1200, location: new URL('http://vectorwarp.test/display/map/'), addEventListener() {}, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},
@@ -100,6 +101,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.ok(fetchUrls.some(url => url.includes('/api/detection') && url.includes('frame_timestamp=1000')));
       assert.ok(fetchUrls.some(url => url.includes('/api/tracker') && url.includes('frame_timestamp=1000')),
         'Both overlays are requested for the exact heatmap frame');
+      assert.ok(fetchUrls.some(url => url.includes('/api/adsb/delay-doppler') &&
+        url.includes('frame_timestamp=1000')),
+      'ADS-B truth is projected to the exact same heatmap frame');
     }
     if (kind === 'spectrum') {
       const trace = calls.at(-1).args[1][0];

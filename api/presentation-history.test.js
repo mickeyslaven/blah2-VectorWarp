@@ -16,6 +16,11 @@ assert.equal(history.at(999), null);
 assert.equal(JSON.parse(history.at(9999)).value, 'c');
 assert.equal(JSON.parse(history.exact(1500)).value, 'b');
 assert.equal(history.exact(1750), null, 'Exact-frame presentation never substitutes an adjacent CPI');
+assert.deepEqual(history.diagnostics(500), {
+  samples: 3, latest_timestamp: 2000, interval_median_ms: 500,
+  interval_p95_ms: 500, interval_max_ms: 500, expected_interval_ms: 500,
+  within_100ms_fraction: 1
+});
 history.clear();
 assert.equal(history.at(9999), null);
 
