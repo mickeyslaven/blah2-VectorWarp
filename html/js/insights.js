@@ -491,8 +491,8 @@
       layer._aircraftSnapshot = aircraft;
       const seenAircraft = new Set();
       for (const item of aircraft) {
-        const heading = finite(item.track) ?? 0;
         const info = aircraftInfo(item);
+        const heading = info.heading;
         const aircraftId = info.hex || `${info.label}:${item.lat}:${item.lon}`;
         seenAircraft.add(aircraftId);
         let record = layer._aircraftMarkers.get(aircraftId);
@@ -505,7 +505,7 @@
           marker.tabIndex = 0;
           marker.innerHTML = '<span class="location-aircraft-icon"></span><span class="location-aircraft-label"></span><span class="location-aircraft-tooltip"></span>';
           record = {marker, icon: marker.children[0], label: marker.children[1],
-            tooltip: marker.children[2], item, signature: '', isAircraft: true};
+            tooltip: marker.children[2], item, heading, signature: '', isAircraft: true};
           marker.addEventListener?.('click', event => {
             if (event.target?.closest?.('a')) return;
             event.stopPropagation?.();
@@ -523,6 +523,7 @@
           layer._aircraftMarkers.set(aircraftId, record);
         }
         record.item = item;
+        record.heading = heading;
         const marker = record.marker;
         const color = aircraftAltitudeColor(item);
         const radarTracked = Boolean(item.radar_track_id);
@@ -539,7 +540,6 @@
           ['ACTIVE', 'CONFIRMED'].includes(String(item.radar_track_state).toUpperCase()));
         const signature = [aircraftKind(item), color, heading, info.label, detail, radarTracked].join('|');
         if (signature !== record.signature) {
-          record.icon.style.transform = `rotate(${heading}deg)`;
           record.icon.innerHTML = aircraftSvgMarkup(item, color);
           record.label.textContent = info.label;
           record.label.style.borderColor = color;
@@ -574,7 +574,7 @@
       for (const [id, record] of layer._siteMarkers)
         if (!seenSites.has(id)) { record.marker.remove(); layer._siteMarkers.delete(id); }
       layer._updatePositions = () => [...layer._aircraftMarkers.values(),
-        ...layer._siteMarkers.values()].forEach(({item, marker, isAircraft}) => {
+        ...layer._siteMarkers.values()].forEach(({item, marker, icon, heading, isAircraft}) => {
         const point = map.project([Number(item.lon), Number(item.lat)]);
         let altitudeLift = 0;
         const pitch = finite(map.getPitch?.()) ?? 0;
@@ -590,6 +590,10 @@
         }
         marker.style.left = `${point.x}px`;
         marker.style.top = `${point.y - altitudeLift}px`;
+        if (isAircraft && icon) {
+          const rotation = aircraftScreenRotation(heading, map.getBearing?.());
+          icon.style.transform = rotation === null ? 'rotate(0deg)' : `rotate(${rotation}deg)`;
+        }
       });
       layer._updatePositions();
     });

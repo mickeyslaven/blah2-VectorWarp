@@ -788,7 +788,8 @@ function aircraftLabel(aircraft = {}) {
 }
 
 function aircraftInfo(aircraft = {}) {
-  const finiteValue = value => Number.isFinite(Number(value)) ? Number(value) : null;
+  const finiteValue = value => value === null || value === undefined || value === '' ? null :
+    Number.isFinite(Number(value)) ? Number(value) : null;
   const position = aircraft.position && typeof aircraft.position === 'object' ? aircraft.position : {};
   const altitude = finiteValue(aircraft.alt_geom) ?? finiteValue(aircraft.alt_baro) ??
     finiteValue(position.altitude_geom_ft) ?? finiteValue(position.altitude_baro_ft);
@@ -800,12 +801,26 @@ function aircraftInfo(aircraft = {}) {
     description: String(aircraft.desc || '').trim(), category: String(aircraft.category || position.category || '').trim(),
     hex: String(aircraft.hex || aircraft.id || '').trim().toUpperCase(), altitude,
     speed: finiteValue(aircraft.gs) ?? finiteValue(position.ground_speed_kt),
-    heading: finiteValue(aircraft.track) ?? finiteValue(position.track_deg_true), verticalRate,
+    // Ground track is the direction of travel and is therefore the correct
+    // orientation for a moving map marker. Fall back to true/magnetic heading
+    // only when the feed does not provide a track.
+    heading: finiteValue(aircraft.track) ?? finiteValue(position.track_deg_true) ??
+      finiteValue(aircraft.true_heading) ?? finiteValue(position.true_heading_deg) ??
+      finiteValue(aircraft.mag_heading) ?? finiteValue(position.mag_heading_deg), verticalRate,
     squawk: String(aircraft.squawk || position.squawk || '').trim(),
     signal: finiteValue(aircraft.rssi) ?? finiteValue(position.rssi_dbfs),
     age: finiteValue(aircraft.seen_pos) ?? finiteValue(position.seen_pos_s), delay: finiteValue(aircraft.delay),
     doppler: finiteValue(aircraft.doppler)
   };
+}
+
+function aircraftScreenRotation(trackDegTrue, mapBearingDeg = 0) {
+  if (trackDegTrue === null || trackDegTrue === undefined || trackDegTrue === '') return null;
+  const track = Number(trackDegTrue);
+  const bearing = Number(mapBearingDeg);
+  if (!Number.isFinite(track)) return null;
+  const relative = track - (Number.isFinite(bearing) ? bearing : 0);
+  return ((relative % 360) + 360) % 360;
 }
 
 // Warm near the surface, then pink/purple/indigo with increasing altitude.
@@ -933,6 +948,6 @@ if (typeof module !== 'undefined')
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
     refreshLiveStatus, refreshReceiverDevices, aircraftKind, aircraftPlotSymbol,
-    aircraftLabel, aircraftInfo, aircraftPlotData, aircraftHoverText,
+    aircraftLabel, aircraftInfo, aircraftScreenRotation, aircraftPlotData, aircraftHoverText,
     aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
     stabilizeAircraftSnapshots};

@@ -167,6 +167,16 @@ function page(origin, apiOrigin = origin) {
     baro_rate_fpm: 512, category: 'A1', squawk: '1200', rssi_dbfs: -8.5, seen_pos_s: .2}});
   assert.match(nestedHover, /12,000 ft/);
   assert.match(nestedHover, /210 kt/);
+  assert.equal(test.context.aircraftScreenRotation(90, 0), 90,
+    'Eastbound aircraft points east on a north-up map');
+  assert.equal(test.context.aircraftScreenRotation(90, 45), 45,
+    'Aircraft orientation compensates for clockwise map rotation');
+  assert.equal(test.context.aircraftScreenRotation(350, 10), 340,
+    'Aircraft orientation wraps cleanly around true north');
+  assert.equal(test.context.aircraftScreenRotation(null, 10), null,
+    'Unknown course remains unknown');
+  assert.equal(test.context.aircraftInfo({true_heading: 123}).heading, 123,
+    'True heading is a fallback when ground track is unavailable');
   const rotorcraftIcon = test.context.aircraftSvgMarkup({category: 'A7'});
   assert.match(rotorcraftIcon, /viewBox="0 0 100 100"/);
   assert.match(rotorcraftIcon, /M10 8 90 70M90 8 10 70/,
