@@ -319,8 +319,11 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .location-map-panel #data, .location-map-panel .mapboxgl-map, .location-map-panel .mapboxgl-canvas-container,
 .location-map-panel .maplibregl-map, .location-map-panel .maplibregl-canvas-container { touch-action:none!important; overscroll-behavior:contain; }
 .location-map-panel .insight-plot { height:calc(100dvh - 138px); min-height:520px; }
-.location-map-sidebar { position:absolute; z-index:12; top:12px; right:12px; width:min(310px,calc(100% - 24px)); max-height:calc(100% - 24px); overflow:auto; border:1px solid rgba(255,135,84,.32); border-radius:12px; background:rgba(18,14,13,.96); box-shadow:0 8px 28px rgba(0,0,0,.34); }
+.location-map-drawers { position:absolute; z-index:12; top:12px; right:12px; display:grid; gap:8px; width:min(330px,calc(100% - 24px)); max-height:calc(100% - 24px); pointer-events:none; }
+.location-map-sidebar { position:relative; width:100%; max-height:min(620px,calc(100dvh - 180px)); overflow:auto; border:1px solid rgba(255,135,84,.32); border-radius:12px; background:rgba(18,14,13,.96); box-shadow:0 8px 28px rgba(0,0,0,.34); pointer-events:auto; }
 .location-map-sidebar:not([open]) { width:auto; max-width:180px; overflow:hidden; }
+.location-map-sidebar[open] ~ .location-map-sidebar:not([open]),
+.location-map-sidebar:not([open]):has(~ .location-map-sidebar[open]) { display:none; }
 .location-map-sidebar > summary { position:sticky; z-index:2; top:0; display:flex; align-items:center; gap:7px; padding:9px 11px; background:rgba(24,18,16,.98); color:var(--ink); font-size:11px; font-weight:800; cursor:pointer; touch-action:manipulation; }
 .map-sidebar-title { color:var(--accent); }
 .map-sidebar-selected { min-width:0; overflow:hidden; color:var(--muted); font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
@@ -338,6 +341,10 @@ a { color:inherit; } a:hover { color:var(--accent); }
   align-items:center; gap:8px; color:var(--muted); font-size:10px; }
 .map-coverage-filter select { min-width:0; width:100%; padding:7px 8px; }
 .map-coverage-filter > small { grid-column:1 / -1; color:var(--muted); font-size:9px; line-height:1.35; }
+.map-range-input { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px; }
+.map-range-input input { min-width:0; width:100%; padding:7px 8px; }
+.map-range-input > span { color:var(--muted); }
+.location-aircraft-sidebar:not([open]) { justify-self:end; }
 .location-map-sidebar .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; }
 .location-map-sidebar .metric-card { min-height:48px; padding:7px 8px; }
 .location-map-sidebar .metric-card strong { font-size:15px; }
@@ -383,15 +390,16 @@ a { color:inherit; } a:hover { color:var(--accent); }
 @media (max-width:760px) {
   .app-nav { grid-template-columns:repeat(5,minmax(0,1fr)); }
   .location-map-panel .insight-plot { height:calc(100svh - 116px); min-height:430px; }
-  .location-map-sidebar { top:auto; right:8px; bottom:8px; left:8px; width:auto; max-height:min(44svh,380px); }
-  .location-map-sidebar:not([open]) { right:auto; left:8px; width:auto; max-width:170px; }
+  .location-map-drawers { top:auto; right:8px; bottom:8px; left:8px; display:flex; align-items:flex-end; width:auto; max-height:min(48svh,390px); }
+  .location-map-sidebar { width:min(100%,360px); max-height:min(48svh,390px); }
+  .location-map-sidebar[open] { flex:1 1 100%; }
+  .location-map-sidebar:not([open]) { flex:0 1 auto; width:auto; max-width:170px; }
   .location-map-sidebar .insight-stats { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .location-map-sidebar .metric-card { min-height:58px; padding:8px; }
   .location-map-sidebar .metric-card strong { font-size:16px; }
-  .location-map-sidebar.has-aircraft-selection .map-controls-panel,
-  .location-map-sidebar.has-aircraft-selection > .location-map-sidebar-body > #view-summary { display:none; }
   .location-map-sidebar.has-aircraft-selection .aircraft-photo { min-height:80px; }
   .location-map-sidebar.has-aircraft-selection .aircraft-photo img { max-height:120px; }
+  .location-aircraft-marker.radar-active::before { animation:none; }
 }
 @media (max-width:440px) {
   .app-nav a { padding:8px 4px; font-size:11px; }

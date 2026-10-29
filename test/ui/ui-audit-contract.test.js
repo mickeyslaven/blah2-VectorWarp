@@ -93,11 +93,16 @@ assert.match(insights, /layer\._coverageUsesMapLayer \? '' : coveragePath/,
   'The SVG coverage renderer is retained only as a compatibility fallback');
 assert.match(insights, /const associationTracks = tracks;/,
   'Hiding map track cages must not disable radar-to-aircraft association');
-assert.match(insights, /Radar-confirmed ADS-B \(no ellipses\)/,
-  'The map offers radar-confirmed aircraft without uncertainty ellipses');
-assert.match(insights, /All tracks \(radar ellipses\)/,
-  'The map keeps all radar uncertainty ellipses behind an explicit dropdown choice');
-assert.match(insights, /ADS-B only/,
-  'The map offers a plain ADS-B-only presentation');
+assert.match(insights, /class="location-map-sidebar location-map-controls"/,
+  'Map controls have their own compact drawer');
+assert.match(insights, /class="location-map-sidebar location-aircraft-sidebar"/,
+  'Aircraft details have a separate drawer');
+for (const label of ['Show all', 'All within selected range',
+  'All within observed radar range', 'Only radar-tracked'])
+  assert.match(insights, new RegExp(label), `ADS-B map filter offers ${label}`);
+assert.match(insights, /radar-map-overlay-mode/,
+  'Radar uncertainty ellipses are controlled independently from ADS-B filtering');
+assert.match(insights, /function aircraftWithinObservedRadarRange/,
+  'Observed radar-range filtering respects the supported directional coverage bins');
 
 console.log(`UI audit contract covers all ${pageFiles.length} website routes.`);
