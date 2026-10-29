@@ -12,6 +12,7 @@ const {getSettingsMapping} = require('./receiver-manager');
 const base = yaml.load(fs.readFileSync(
   path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
 const clone = value => JSON.parse(JSON.stringify(value));
+const C = 299792458;
 
 for (const preset of geometryUi.layoutPresets()) {
   const config = clone(base);
@@ -27,6 +28,19 @@ for (const preset of geometryUi.layoutPresets()) {
     Array.from({length: preset.bearing}, (_, index) => index));
   assert.equal(new Set(array.elements.map(item => item.daq_channel)).size,
     preset.channels, `${preset.id} has a one-to-one DAQ mapping`);
+  const bearingPoints = array.elements.filter(item =>
+    array.bearing_channels.includes(item.daq_channel)).map(item => item.position);
+  const adjacent = bearingPoints.map((point, index) => {
+    const other = preset.shape === 'ula' ? bearingPoints[index + 1] :
+      bearingPoints[(index + 1) % bearingPoints.length];
+    return other ? Math.hypot(point[0] - other[0], point[1] - other[1], point[2] - other[2]) : null;
+  }).filter(value => value !== null);
+  const halfWavelength = C / config.capture.fc / 2;
+  adjacent.forEach(value => assert.ok(Math.abs(value - halfWavelength) < 1e-10,
+    `${preset.id} adjacent bearing elements use exact wavelength/2 spacing`));
+  const centre = [0, 1, 2].map(axis => bearingPoints.reduce((sum, point) => sum + point[axis], 0) / bearingPoints.length);
+  centre.forEach(value => assert.ok(Math.abs(value) < 1e-10,
+    `${preset.id} bearing aperture remains centred at the array origin`));
   if (preset.dedicated) {
     const reference = preset.channels - 1;
     assert.equal(device.reference_channel, reference);
@@ -49,7 +63,7 @@ for (const preset of geometryUi.layoutPresets()) {
 const mismatch = clone(base);
 mismatch.capture.device.channel_count = 5;
 const before = JSON.stringify(mismatch);
-assert.equal(geometryUi.applyPreset(mismatch, 'ring8'), false,
+assert.equal(geometryUi.applyPreset(mismatch, 'octagon8'), false,
   'an eight-channel frontend layout cannot mutate a five-channel receiver');
 assert.equal(JSON.stringify(mismatch), before,
   'rejected frontend layouts leave the backend draft untouched');

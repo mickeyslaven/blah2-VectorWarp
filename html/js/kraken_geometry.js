@@ -32,10 +32,27 @@
       .filter((_, other) => other !== index).map(other => Math.hypot(point.x - other.x, point.y - other.y))))
       .filter(finite);
     const radii = points.map(point => Math.hypot(point.x, point.y));
-    const idealRadiusM = idealSpacingM !== null && points.length >= 3 ?
-      idealSpacingM / (2 * Math.sin(Math.PI / points.length)) : null;
+    const shape = geometry?.shape || 'custom';
+    const idealRadiusM = idealSpacingM === null || points.length < 3 ? null :
+      shape === 'cross' && points.length === 4 ? idealSpacingM / Math.sqrt(2) :
+      shape === 'regular_polygon' ? idealSpacingM / (2 * Math.sin(Math.PI / points.length)) : null;
+    let idealPoints = [];
+    if (idealSpacingM !== null && points.length >= 2) {
+      if (shape === 'ula') idealPoints = points.map((_, index) => ({
+        x: (index - (points.length - 1) / 2) * idealSpacingM, y: 0
+      }));
+      else if (shape === 'cross' && points.length === 4) idealPoints = [
+        {x: idealRadiusM, y: 0}, {x: 0, y: idealRadiusM},
+        {x: -idealRadiusM, y: 0}, {x: 0, y: -idealRadiusM}
+      ];
+      else if (shape === 'regular_polygon' && idealRadiusM !== null)
+        idealPoints = points.map((_, index) => ({
+          x: Math.cos(2 * Math.PI * index / points.length) * idealRadiusM,
+          y: Math.sin(2 * Math.PI * index / points.length) * idealRadiusM
+        }));
+    }
     return {frequencyHz, wavelengthM, idealSpacingM, idealRadiusM, points,
-      actualSpacingM: median(nearest), actualRadiusM: median(radii), shape: geometry?.shape || 'custom'};
+      idealPoints, actualSpacingM: median(nearest), actualRadiusM: median(radii), shape};
   }
   const metres = value => finite(value) ? `${value < .1 ? value.toFixed(3) : value.toFixed(3)} m` : '—';
   function comparisonVisual(document, config) {
@@ -62,9 +79,11 @@
     row('Measured elements', String(model.points.length));
     row('Actual neighbour spacing', metres(model.actualSpacingM), 'actual');
     row('λ/2 reference spacing', metres(model.idealSpacingM), 'ideal');
-    if (model.points.length >= 3) {
+    if (model.idealRadiusM !== null) {
       row('Actual median radius', metres(model.actualRadiusM), 'actual');
       row(`Reference radius (${model.points.length} elements)`, metres(model.idealRadiusM), 'ideal');
+    } else if (model.shape === 'ula' && model.points.length >= 2) {
+      row('Reference end-to-end length', metres(model.idealSpacingM * (model.points.length - 1)), 'ideal');
     }
     copy.appendChild(stats);
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -78,30 +97,26 @@
       svg.appendChild(node); return node;
     };
     const centerX = 260, centerY = 170;
-    const extent = Math.max(.001, model.idealRadiusM || 0,
+    const extent = Math.max(.001, ...model.idealPoints.map(point => Math.hypot(point.x, point.y)),
       ...model.points.map(point => Math.hypot(point.x, point.y)));
     const scale = 128 / extent;
     add('line', {x1: 50, y1: centerY, x2: 470, y2: centerY, class: 'geometry-axis'});
     add('line', {x1: centerX, y1: 30, x2: centerX, y2: 310, class: 'geometry-axis'});
     add('text', {x: 468, y: centerY - 8, class: 'geometry-axis-label'}, '+x');
     add('text', {x: centerX + 8, y: 42, class: 'geometry-axis-label'}, '+y');
-    if (finite(model.idealRadiusM)) {
-      add('circle', {cx: centerX, cy: centerY, r: model.idealRadiusM * scale,
+    if (model.idealPoints.length >= 2) {
+      const ideal = model.idealPoints.map(point =>
+        `${centerX + point.x * scale},${centerY - point.y * scale}`).join(' ');
+      add(model.shape === 'ula' ? 'polyline' : 'polygon', {points: ideal,
         class: 'geometry-ideal-ring'});
-      for (let index = 0; index < model.points.length; index++) {
-        const angle = 2 * Math.PI * index / model.points.length;
-        add('circle', {cx: centerX + Math.cos(angle) * model.idealRadiusM * scale,
-          cy: centerY - Math.sin(angle) * model.idealRadiusM * scale, r: 5,
-          class: 'geometry-ideal-node'});
-      }
-    } else if (finite(model.idealSpacingM)) {
-      add('line', {x1: centerX - model.idealSpacingM * scale / 2, y1: centerY + 95,
-        x2: centerX + model.idealSpacingM * scale / 2, y2: centerY + 95,
-        class: 'geometry-ideal-spacing'});
+      model.idealPoints.forEach(point => add('circle', {
+        cx: centerX + point.x * scale, cy: centerY - point.y * scale, r: 5,
+        class: 'geometry-ideal-node'}));
     }
     if (model.points.length >= 2) {
-      const ordered = [...model.points].sort((left, right) =>
-        Math.atan2(left.y, left.x) - Math.atan2(right.y, right.x));
+      const ordered = [...model.points].sort(model.shape === 'ula' ?
+        ((left, right) => left.x - right.x || left.y - right.y) :
+        ((left, right) => Math.atan2(left.y, left.x) - Math.atan2(right.y, right.x)));
       const polygon = ordered.map(point => `${centerX + point.x * scale},${centerY - point.y * scale}`).join(' ');
       add(model.shape === 'ula' ? 'polyline' : 'polygon', {points: polygon,
         class: 'geometry-actual-outline'});
@@ -161,8 +176,9 @@
       points = bearingChannels.map((_, index) =>
         [(index - (preset.bearing - 1) / 2) * spacing, 0, 0]);
     } else if (preset.shape === 'cross') {
-      points = [[spacing, 0, 0], [-spacing, 0, 0],
-        [0, spacing, 0], [0, -spacing, 0]];
+      const radius = spacing / Math.sqrt(2);
+      points = [[radius, 0, 0], [0, radius, 0],
+        [-radius, 0, 0], [0, -radius, 0]];
     } else {
       const radius = spacing / (2 * Math.sin(Math.PI / preset.bearing));
       points = bearingChannels.map((_, index) => {
@@ -214,8 +230,17 @@
     const shell = document.createElement('section'); shell.className = 'geometry-presets';
     const title = document.createElement('h3'); title.textContent = 'Common array layouts';
     const explanation = document.createElement('p');
-    explanation.textContent = 'Choose a starting layout only when its active channel count matches the receiver. Reference positions are guides: measure the installed coordinates and channel mapping before confirming them.';
-    const countPicker = document.createElement('div'); countPicker.className = 'geometry-preset-counts';
+    explanation.textContent = 'Choose the number of connected antennas, then pick the matching shape. Applying a layout sets the active receiver channel count. Reference positions are guides: measure the installed coordinates and cable mapping before confirming them.';
+    const countPicker = document.createElement('label'); countPicker.className = 'geometry-preset-counts';
+    const countTitle = document.createElement('span'); countTitle.textContent = 'Antennas connected';
+    const countSelect = document.createElement('select');
+    for (let count = 2; count <= 8; count++) {
+      const option = document.createElement('option'); option.value = String(count);
+      option.textContent = `${count} antennas`; countSelect.appendChild(option);
+    }
+    countSelect.value = String(config.capture.device.channel_count);
+    countSelect.disabled = !editable;
+    countPicker.append(countTitle, countSelect);
     const grid = document.createElement('div'); grid.className = 'geometry-preset-grid';
     let previewCount = config.capture.device.channel_count;
     const renderCards = () => {
@@ -243,26 +268,15 @@
       const detail = document.createElement('p');
       detail.textContent = `${preset.bearing} bearing element${preset.bearing === 1 ? '' : 's'}${preset.dedicated ? ' + 1 dedicated reference' : ' using array synthesis'}`;
       const action = document.createElement('button'); action.type = 'button';
-      const exact = config.capture.device.channel_count === preset.channels;
-      action.disabled = !editable || !exact;
-      action.textContent = exact ? 'Use this layout' : `Set ${preset.channels} active channels first`;
+      action.disabled = !editable;
+      action.textContent = 'Use this layout';
       action.addEventListener('click', () => { if (!action.disabled) choose(preset); });
       card.append(heading, diagram, detail, action); grid.appendChild(card);
       });
     };
-    for (let count = 2; count <= 8; count++) {
-      const action = document.createElement('button'); action.type = 'button';
-      action.textContent = String(count); action.setAttribute('aria-label', `Preview ${count}-channel layouts`);
-      action.disabled = !editable;
-      action.classList.toggle('active', count === previewCount);
-      action.addEventListener('click', () => {
-        previewCount = count;
-        [...countPicker.children].forEach((button, index) =>
-          button.classList.toggle('active', index + 2 === previewCount));
-        renderCards();
-      });
-      countPicker.appendChild(action);
-    }
+    countSelect.addEventListener('change', () => {
+      previewCount = Number(countSelect.value); renderCards();
+    });
     renderCards();
     shell.append(title, explanation, countPicker, grid); return shell;
   }
@@ -353,7 +367,7 @@
       elements: Array.from({length: Math.max(2, Math.min(8, count || 2))}, (_, index) =>
         ({id: `element-${index + 1}`, daq_channel: null, position: [null, null, null]}))};
   }
-  function render(document, config, changed, editable = true) {
+  function render(document, config, changed, editable = true, resizeChannels = null) {
     const canEdit = typeof editable === 'function' ? editable : () => editable;
     const device = config.capture.device;
     const section = document.createElement('details');
@@ -412,11 +426,22 @@
     presetHost.className = 'geometry-preset-host';
     presetHost.appendChild(presetGallery(document, config, preset => {
       if (document.defaultView?.confirm(`Replace the unsaved layout with ${preset.title}? You must measure and confirm the installed positions before saving.`)) {
+        const previousCount = device.channel_count;
+        device.channel_count = preset.channels;
+        if (typeof resizeChannels === 'function') resizeChannels(preset.channels, previousCount);
         applyPreset(config, preset.id);
         changed(true);
       }
     }, canEdit()));
     content.insertBefore(presetHost, assessment);
+    const manualDetails = document.createElement('details');
+    manualDetails.className = 'geometry-manual';
+    const manualSummary = document.createElement('summary');
+    manualSummary.textContent = 'Measured layout and channel mapping';
+    const manualBody = document.createElement('div');
+    manualBody.className = 'config-fields';
+    manualDetails.append(manualSummary, manualBody);
+    content.insertBefore(manualDetails, assessment);
     function field(parent, key, title, help, control) {
       const wrapper = document.createElement('div'); wrapper.className = 'config-field'; wrapper.dataset.path = `${prefix}.${key}`;
       const label = document.createElement('label'); control.id = `geometry-${key.replace(/\./g, '-')}`; label.htmlFor = control.id; label.textContent = title;
@@ -505,6 +530,7 @@
       control.addEventListener('change', () => update(() => { geometry[key] = control.checked; }, false, true));
       field(content, key, title, '', control);
     }
+    while (assessment.nextSibling) manualBody.appendChild(assessment.nextSibling);
     return section;
   }
   function showAssessment(document, assessment) {

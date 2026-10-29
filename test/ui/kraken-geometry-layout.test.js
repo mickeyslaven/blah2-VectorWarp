@@ -49,6 +49,15 @@ for (const width of [1440, 390, 320]) {
   doc.getElementById('geometry-root').appendChild(helper.render(doc, config, () => {}, true));
   assert.ok(doc.querySelector('.geometry-visual svg'), 'Array editor includes a top-down visual');
   assert.match(doc.querySelector('.geometry-visual').textContent, /λ\/2 reference layout/);
+  assert.equal(doc.querySelector('.geometry-preset-counts select').value, '8',
+    'A single labelled antenna-count dropdown drives the visual presets');
+  assert.equal(doc.querySelector('.geometry-preset-counts span').textContent, 'Antennas connected');
+  assert.ok(doc.querySelector('.geometry-manual:not([open])'),
+    'Manual coordinates and channel mapping stay collapsed until explicitly requested');
+  assert.equal(dom.window.getComputedStyle(doc.querySelector('.geometry-preset-diagram')).aspectRatio, '1',
+    'Preset geometry uses a square coordinate plane and cannot stretch circles into ellipses');
+  assert.equal(dom.window.getComputedStyle(doc.querySelector('.geometry-visual svg')).aspectRatio, '520 / 340',
+    'The measured geometry SVG preserves its viewBox aspect ratio');
   assert.equal(doc.querySelectorAll('.geometry-element').length, 8);
   const invalid = doc.querySelector('[data-path="capture.device.array_geometry.shape"]');
   invalid.classList.add('invalid');
@@ -70,6 +79,17 @@ for (const width of [1440, 390, 320]) {
   const elementGrid = dom.window.getComputedStyle(doc.querySelector('.geometry-element')).gridTemplateColumns;
   assert.equal(elementGrid, 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))');
   assert.equal(dom.window.getComputedStyle(invalid.querySelector('.config-field-error')).overflowWrap, 'anywhere');
+  if (width === 1440) {
+    dom.window.confirm = () => true;
+    const count = doc.querySelector('.geometry-preset-counts select');
+    count.value = '7'; count.dispatchEvent(new dom.window.Event('change'));
+    assert.match(doc.querySelector('.geometry-preset-card h4').textContent, /7-element/);
+    doc.querySelector('.geometry-preset-card button').click();
+    assert.equal(config.capture.device.channel_count, 7,
+      'Choosing a visual layout also sets the receiver channel count');
+    assert.equal(config.capture.device.array_geometry.elements.length, 7,
+      'Visual selection materializes matching backend geometry');
+  }
   const filename = path.join(evidence, `geometry-8ch-${width}-css-dom-fixture.html`);
   fs.writeFileSync(filename, dom.serialize());
   results.push({intendedViewportWidth: width, elementRows: 8, errorLabel: true,

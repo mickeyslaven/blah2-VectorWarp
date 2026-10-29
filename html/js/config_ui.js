@@ -1626,7 +1626,8 @@ function makeGeometryEditor() {
   return geometryEditor.render(document, activeConfig, rebuild => {
     if (rebuild) refreshGeometryEditor();
     scheduleValidation();
-  }, () => Boolean(capabilities.editable && !saveInProgress && !restartInProgress));
+  }, () => Boolean(capabilities.editable && !saveInProgress && !restartInProgress),
+  (_count, previousCount) => normalizeKrakenChannels(activeConfig, previousCount));
 }
 
 function refreshGeometryEditor() {
