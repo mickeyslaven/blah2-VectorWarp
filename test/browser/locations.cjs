@@ -81,6 +81,14 @@ const server = http.createServer((request, response) => {
     await page.locator('#show-radar-tracks-on-map').check();
     await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
     const firstTrackPath = await page.locator('.location-radar-track-path').getAttribute('d');
+    const overlayStyle = await page.evaluate(() => ({
+      overflow: getComputedStyle(document.querySelector('.location-aircraft-trails')).overflow,
+      trackFilter: getComputedStyle(document.querySelector('.location-radar-track-path')).filter,
+      trailFilter: getComputedStyle(document.querySelector('.location-aircraft-flight-trail')).filter
+    }));
+    assert.equal(overlayStyle.overflow, 'hidden', 'offscreen SVG geometry must be clipped');
+    assert.equal(overlayStyle.trackFilter, 'none', 'radar paths cannot use Safari-smearing SVG filters');
+    assert.equal(overlayStyle.trailFilter, 'none', 'flight trails cannot use Safari-smearing SVG filters');
     const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();
     const sidebarBounds = await page.locator('.location-map-sidebar').boundingBox();
     assert.ok(fullscreenBounds && sidebarBounds &&

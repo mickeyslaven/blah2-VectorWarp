@@ -568,8 +568,19 @@
           layer._altitudeConnector = path('location-aircraft-altitude-connector');
           layer.appendChild(svg);
         }
-        map.on('move', () => layer._updatePositions?.());
-        map.on('resize', () => layer._updatePositions?.());
+        // Mobile Safari can dispatch many map transform events inside one
+        // display frame during pinch zoom.  Mutating dozens of SVG trail legs
+        // for each event leaves stale compositor tiles behind.  Coalesce all
+        // transforms into the map's next animation frame instead.
+        layer._schedulePositionUpdate = () => {
+          if (layer._positionFrame) return;
+          layer._positionFrame = schedule(() => {
+            layer._positionFrame = 0;
+            layer._updatePositions?.();
+          });
+        };
+        map.on('move', layer._schedulePositionUpdate);
+        map.on('resize', layer._schedulePositionUpdate);
       }
       layer._aircraftMarkers ||= new Map();
       layer._siteMarkers ||= new Map();
@@ -747,7 +758,7 @@
         layer._altitudeConnector?.setAttribute('d', last && Math.abs(last.groundY - last.flightY) > 1 ?
           `M${last.x.toFixed(1)} ${last.groundY.toFixed(1)}L${last.x.toFixed(1)} ${last.flightY.toFixed(1)}` : '');
       };
-      layer._updatePositions();
+      layer._schedulePositionUpdate?.();
     });
   }
 

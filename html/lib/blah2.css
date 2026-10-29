@@ -253,11 +253,11 @@ a { color:inherit; } a:hover { color:var(--accent); }
   .app-nav { grid-template-columns:repeat(5,minmax(0,1fr)); }
   .app-nav a { padding:8px 4px; font-size:11px; }
 }
-.location-aircraft-trails { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+.location-aircraft-trails { position:absolute; inset:0; width:100%; height:100%; overflow:hidden; pointer-events:none; contain:strict; }
 .location-aircraft-trails path { fill:none; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
-.location-radar-track-path { stroke:#ff8754; stroke-width:4; opacity:.9; filter:drop-shadow(0 0 3px rgba(255,135,84,.48)); }
+.location-radar-track-path { stroke:#ff8754; stroke-width:4; opacity:.9; }
 .location-aircraft-ground-trail { stroke:rgba(243,238,233,.46); stroke-width:2; stroke-dasharray:4 6; }
-.location-aircraft-flight-trail { filter:drop-shadow(0 0 4px rgba(91,231,255,.54)); }
+.location-aircraft-flight-trail { opacity:.94; }
 .location-aircraft-flight-trail path { stroke-width:3.5; }
 .location-aircraft-altitude-connector { stroke-width:1.5; stroke-dasharray:3 4; opacity:.72; }
 .location-map-layout { display:block; }
