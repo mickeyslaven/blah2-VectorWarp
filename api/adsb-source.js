@@ -127,6 +127,12 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   });
   const pollMs = Number.isFinite(config.truth?.adsb?.poll_interval) ?
     Math.max(100, Math.min(60000, config.truth.adsb.poll_interval * 1000)) : 1000;
+  // Public exchange APIs commonly enforce a lower request rate than a LAN
+  // readsb feed. Keep local truth at the configured cadence while sharing the
+  // latest validated exchange snapshot between faster CPI/UI consumers.
+  const exchangePollMs = Number.isFinite(config.truth?.adsb?.exchange_poll_interval) ?
+    Math.max(pollMs, Math.min(60000, config.truth.adsb.exchange_poll_interval * 1000)) :
+    Math.max(pollMs, 2000);
   const cpiMs = Number.isFinite(config.process?.data?.cpi) ?
     Math.max(1, config.process.data.cpi * 1000) : 500;
   const associationLagMs = Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
@@ -197,11 +203,19 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       throw error;
     }
   }
+  async function readSourcePaced(slot) {
+    const interval = slot.state.kind === 'exchange' ? exchangePollMs : pollMs;
+    if (slot.lastValue && now() - slot.lastReadAt < interval) return slot.lastValue;
+    const value = await readSource(slot);
+    slot.lastReadAt = now();
+    slot.lastValue = value;
+    return value;
+  }
   async function rawSnapshots() {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    entry.promise = Promise.allSettled(slots.map(readSource)).then(results => {
+    entry.promise = Promise.allSettled(slots.map(readSourcePaced)).then(results => {
       const healthy = results.filter(result => result.status === 'fulfilled')
         .map(result => result.value);
       if (!healthy.length) throw new Error(`All ADS-B sources failed: ${results.map((result, index) =>

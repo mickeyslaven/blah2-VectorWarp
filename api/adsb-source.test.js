@@ -208,6 +208,27 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.deepEqual(multiStatus.fusion, {...multiAircraft.vectorwarp_fusion,
     fused_at: clock, healthy_sources: 1, failed_sources: 1});
 
+  let localPacedReads = 0;
+  let exchangePacedReads = 0;
+  const pacedConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    poll_interval: 1, sources: ['local.example',
+      'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/75']}}};
+  const paced = createAdsbSource(pacedConfig, {now: () => clock,
+    fetchJson: async url => {
+      if (url.hostname === 'api.adsb.lol') exchangePacedReads += 1;
+      else localPacedReads += 1;
+      return url.hostname === 'api.adsb.lol' ? {now: clock / 1000, ac: []} :
+        {now: clock / 1000, aircraft: []};
+    }});
+  await paced.get('aircraft');
+  clock += 1001;
+  await paced.get('aircraft');
+  assert.equal(localPacedReads, 2, 'LAN ADS-B sources retain the configured one-second cadence');
+  assert.equal(exchangePacedReads, 1, 'Public exchange snapshots are reused for at least two seconds');
+  clock += 1000;
+  await paced.get('aircraft');
+  assert.equal(exchangePacedReads, 2, 'Public exchange sources refresh after their independent interval');
+
   const server = http.createServer((req, res) => {
     if (req.url === '/stall') { res.writeHead(200); res.write('{'); return; }
     if (req.url === '/large') return res.end('x'.repeat(200));
