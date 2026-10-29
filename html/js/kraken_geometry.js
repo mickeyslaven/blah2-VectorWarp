@@ -124,6 +124,122 @@
     shell.append(drawing, copy);
     return shell;
   }
+  function layoutPresets() {
+    return [
+      {id: 'ula4', title: '4-element line', channels: 4, bearing: 4, shape: 'ula'},
+      {id: 'cross4ref', title: '4-element cross + reference', channels: 5,
+        bearing: 4, shape: 'cross', dedicated: true},
+      {id: 'pentagon5', title: '5-element pentagon', channels: 5,
+        bearing: 5, shape: 'regular_polygon'},
+      {id: 'pentagon5ref', title: '5-element pentagon + reference', channels: 6,
+        bearing: 5, shape: 'regular_polygon', dedicated: true},
+      {id: 'ring7', title: '7-element ring', channels: 7,
+        bearing: 7, shape: 'regular_polygon'},
+      {id: 'ring7ref', title: '7-element ring + reference', channels: 8,
+        bearing: 7, shape: 'regular_polygon', dedicated: true},
+      {id: 'ring8', title: '8-element ring', channels: 8,
+        bearing: 8, shape: 'regular_polygon'},
+      {id: 'ula8', title: '8-element line', channels: 8, bearing: 8, shape: 'ula'}
+    ].map(item => Object.freeze(item));
+  }
+  function presetRecord(config, presetId) {
+    const preset = layoutPresets().find(item => item.id === presetId);
+    if (!preset) return null;
+    const configuredCount = config?.capture?.device?.channel_count;
+    if (configuredCount !== preset.channels) return null;
+    const frequencyHz = Number(config?.capture?.fc);
+    const spacing = frequencyHz > 0 ? lightSpeed / frequencyHz / 2 : .25;
+    const bearingChannels = Array.from({length: preset.bearing}, (_, index) => index);
+    let points;
+    if (preset.shape === 'ula') {
+      points = bearingChannels.map((_, index) =>
+        [(index - (preset.bearing - 1) / 2) * spacing, 0, 0]);
+    } else if (preset.shape === 'cross') {
+      points = [[spacing, 0, 0], [-spacing, 0, 0],
+        [0, spacing, 0], [0, -spacing, 0]];
+    } else {
+      const radius = spacing / (2 * Math.sin(Math.PI / preset.bearing));
+      points = bearingChannels.map((_, index) => {
+        const angle = 2 * Math.PI * index / preset.bearing;
+        return [radius * Math.cos(angle), radius * Math.sin(angle), 0];
+      });
+    }
+    const elements = bearingChannels.map((channel, index) => ({
+      id: `element-${channel + 1}`, daq_channel: channel, position: points[index]
+    }));
+    if (preset.dedicated) {
+      const reference = preset.channels - 1;
+      const extent = Math.max(...points.map(point => Math.hypot(point[0], point[1])));
+      elements.push({id: 'reference', daq_channel: reference,
+        position: [0, -(extent + spacing), 0]});
+    }
+    return {preset, geometry: {
+      shape: preset.shape, entry_template: preset.shape, units: 'm',
+      coordinate_frame: 'array_xy_right_handed', mapping_confirmed: false,
+      geometry_confirmed: false, orientation_confirmed: false,
+      x_axis_bearing_deg_true: null, bearing_channels: bearingChannels,
+      ula_half_plane: 'both', elements
+    }};
+  }
+  function applyPreset(config, presetId) {
+    const generated = presetRecord(config, presetId);
+    if (!generated) return false;
+    const device = config.capture.device;
+    device.array_geometry = generated.geometry;
+    if (!object(config.process)) config.process = {};
+    const existingSynthesis = object(config.process.reference_synthesis) ?
+      config.process.reference_synthesis : {};
+    const channels = [...generated.geometry.bearing_channels];
+    if (generated.preset.dedicated) {
+      const reference = generated.preset.channels - 1;
+      device.reference_channel = reference;
+      device.surveillance_channels = channels;
+      config.process.reference_synthesis = {...existingSynthesis,
+        mode: 'dedicated', channels: [reference]};
+    } else {
+      device.reference_channel = channels[0];
+      device.surveillance_channels = channels;
+      config.process.reference_synthesis = {...existingSynthesis,
+        mode: 'array_eigenbeam', channels};
+    }
+    return true;
+  }
+  function presetGallery(document, config, choose, editable) {
+    const shell = document.createElement('section'); shell.className = 'geometry-presets';
+    const title = document.createElement('h3'); title.textContent = 'Common array layouts';
+    const explanation = document.createElement('p');
+    explanation.textContent = 'Choose a starting layout only when its active channel count matches the receiver. Reference positions are guides: measure the installed coordinates and channel mapping before confirming them.';
+    const grid = document.createElement('div'); grid.className = 'geometry-preset-grid';
+    layoutPresets().forEach(preset => {
+      const card = document.createElement('article'); card.className = 'geometry-preset-card';
+      const heading = document.createElement('h4'); heading.textContent = preset.title;
+      const diagram = document.createElement('div'); diagram.className = `geometry-preset-diagram ${preset.shape}`;
+      for (let index = 0; index < preset.bearing; index++) {
+        const node = document.createElement('i');
+        let x, y;
+        if (preset.shape === 'ula') {
+          x = 18 + 64 * index / (preset.bearing - 1); y = 50;
+        } else if (preset.shape === 'cross') {
+          [[72, 50], [28, 50], [50, 23], [50, 77]][index].forEach((value, axis) => {
+            if (axis === 0) x = value; else y = value;
+          });
+        } else {
+          const angle = 2 * Math.PI * index / preset.bearing;
+          x = 50 + Math.cos(angle) * 29; y = 50 - Math.sin(angle) * 29;
+        }
+        node.style.left = `${x}%`; node.style.top = `${y}%`; diagram.appendChild(node);
+      }
+      if (preset.dedicated) { const reference = document.createElement('i'); reference.className = 'reference'; diagram.appendChild(reference); }
+      const detail = document.createElement('p');
+      detail.textContent = `${preset.bearing} bearing element${preset.bearing === 1 ? '' : 's'}${preset.dedicated ? ' + 1 dedicated reference' : ' using array synthesis'}`;
+      const action = document.createElement('button'); action.type = 'button';
+      const exact = config.capture.device.channel_count === preset.channels;
+      action.disabled = !editable || !exact; action.textContent = exact ? 'Use this layout' : `Requires ${preset.channels} active channels`;
+      action.addEventListener('click', () => { if (!action.disabled) choose(preset); });
+      card.append(heading, diagram, detail, action); grid.appendChild(card);
+    });
+    shell.append(title, explanation, grid); return shell;
+  }
   function invalidate(geometry) {
     if (object(geometry)) confirmations.forEach(key => { geometry[key] = false; });
     return geometry;
@@ -267,6 +383,15 @@
       if (!attestation) section.querySelectorAll('[data-attestation]').forEach(input => { input.checked = false; });
       changed(rebuild);
     };
+    const presetHost = document.createElement('div');
+    presetHost.className = 'geometry-preset-host';
+    presetHost.appendChild(presetGallery(document, config, preset => {
+      if (document.defaultView?.confirm(`Replace the unsaved layout with ${preset.title}? You must measure and confirm the installed positions before saving.`)) {
+        applyPreset(config, preset.id);
+        changed(true);
+      }
+    }, canEdit()));
+    content.insertBefore(presetHost, assessment);
     function field(parent, key, title, help, control) {
       const wrapper = document.createElement('div'); wrapper.className = 'config-field'; wrapper.dataset.path = `${prefix}.${key}`;
       const label = document.createElement('label'); control.id = `geometry-${key.replace(/\./g, '-')}`; label.htmlFor = control.id; label.textContent = title;
@@ -364,5 +489,6 @@
     target.textContent = assessment.valid ? 'Layout complete; measurements are unverified.' :
       `Layout needs review: ${errors.slice(0, 3).map(issue => issue.message).join(' ')}${errors.length > 3 ? ' Review additional measurements or mappings.' : ''}`;
   }
-  return {recordErrors, emptyRecord, invalidate, context, reconcile, layoutComparison, render, showAssessment};
+  return {recordErrors, emptyRecord, invalidate, context, reconcile, layoutComparison,
+    layoutPresets, presetRecord, applyPreset, render, showAssessment};
 });

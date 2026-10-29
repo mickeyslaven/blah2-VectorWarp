@@ -128,6 +128,12 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.equal(doc.querySelectorAll('[role=tab]').length, 7);
     assert.equal(current().capture.device.array_geometry, undefined);
     click('Add antenna layout');
+    const presets = [...doc.querySelectorAll('.geometry-preset-card')];
+    assert.equal(presets.length, 8, 'Every supported frontend preset is visible');
+    assert.equal(presets.filter(card => !card.querySelector('button').disabled).length, 2,
+      'Only exact five-channel layouts can modify a five-channel receiver');
+    assert.ok(presets.find(card => card.querySelector('h4').textContent === '8-element ring')
+      .querySelector('button').disabled, 'An eight-channel diagram cannot configure five-channel hardware');
     assert.equal(g('elements.0.daq_channel').value, '', 'No DAQ wiring guess');
     assert.equal(g('elements.0.position.0').value, '', 'No position guess');
     assert.equal(g('mapping_confirmed').checked, false);

@@ -11,6 +11,18 @@
 .kraken-geometry .config-field > small:empty { display: none; }
 .geometry-element .geometry-role { grid-column: 1 / -1; margin: .2rem 0; font-size: 12px; overflow-wrap: anywhere; }
 .geometry-visual-host { grid-column:1 / -1; min-width:0; }
+.geometry-preset-host,.geometry-presets { grid-column:1 / -1; min-width:0; }
+.geometry-presets { padding:12px; border:1px solid var(--line); border-radius:10px; background:rgb(13 10 10 / .42); }
+.geometry-presets > h3 { margin:0 0 5px; font-size:15px; }
+.geometry-presets > p { margin:0 0 12px!important; color:var(--muted); }
+.geometry-preset-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:9px; }
+.geometry-preset-card { min-width:0; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--surface-raised); }
+.geometry-preset-card h4 { margin:0 0 7px; font-size:12px; }
+.geometry-preset-card p { min-height:34px; margin:7px 0!important; color:var(--muted); font-size:10px!important; }
+.geometry-preset-card button { width:100%; justify-self:stretch; font-size:11px; }
+.geometry-preset-diagram { position:relative; height:92px; border-radius:6px; background:radial-gradient(circle at center,#211816 0,#120e0d 76%); }
+.geometry-preset-diagram i { position:absolute; width:9px; height:9px; border-radius:50%; background:#ff8055; transform:translate(-50%,-50%); }
+.geometry-preset-diagram i.reference { left:84%; top:80%; background:#50dfc0; box-shadow:0 0 0 3px #50dfc030; }
 .geometry-visual { display:grid; grid-template-columns:minmax(280px,1.25fr) minmax(220px,.75fr); gap:14px; padding:12px; border:1px solid var(--line); border-radius:10px; background:rgb(13 10 10 / .55); }
 .geometry-visual-drawing { min-width:0; }
 .geometry-visual svg { display:block; width:100%; max-height:330px; border-radius:8px; background:radial-gradient(circle at center,#211816 0,#120e0d 72%); touch-action:pan-y; }
