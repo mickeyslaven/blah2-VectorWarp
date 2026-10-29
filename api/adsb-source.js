@@ -7,6 +7,12 @@ const {fuseAircraftData} = require('./adsb-fusion');
 const {classifyAdsbSource, discoverLocalAdsb, selectLocalAdsb,
   validateAircraftData} = require('./adsb-discovery');
 
+// ADS-B sources are polled continuously. Reusing transport connections avoids
+// paying a TCP/TLS (and, for remote peers, overlay-network) handshake on every
+// snapshot without changing source cadence or event-time semantics.
+const httpAgent = new http.Agent({keepAlive: true, maxSockets: 8, scheduling: 'lifo'});
+const httpsAgent = new https.Agent({keepAlive: true, maxSockets: 8, scheduling: 'lifo'});
+
 function sourceAddress(value) {
   if (typeof value !== 'string' || !value || /[\s\\]/.test(value)) throw new Error('Invalid source address');
   const url = new URL(/^https?:\/\//i.test(value) ? value : `http://${value}`);
@@ -74,6 +80,7 @@ function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
     timer = setTimeout(() => finish(new Error('ADS-B source timed out')), timeoutMs);
     try {
       request = (url.protocol === 'https:' ? https : http).get(url, {
+        agent: url.protocol === 'https:' ? httpsAgent : httpAgent,
         headers: {Accept: 'application/json', 'Accept-Encoding': 'identity',
           'User-Agent': 'VectorWarp/1.0 ADS-B client'}
       }, incoming => {
