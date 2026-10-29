@@ -26,16 +26,16 @@ const CONFIG_META = {
   'capture.aircraft_clips.minimum_elevation_deg': ['Lowest aircraft elevation (°)', 'Ignore aircraft below this geometric elevation angle.'],
   'capture.aircraft_clips.maximum_elevation_deg': ['Highest aircraft elevation (°)', 'Ignore aircraft above this geometric elevation angle.'],
   'capture.aircraft_clips.minimum_interval_seconds': ['Minimum time between clips (s)', 'Limits recorder and disk load when several aircraft become eligible together.'],
-  'capture.device': ['Receiver hardware', 'Settings for the selected radio.'],
+  'capture.device': ['Receiver hardware', 'Connect the radio, assign channel roles, and describe the antenna array.'],
   'capture.device.type': ['Receiver type', 'Choose your SDR.'],
-  'capture.device.array_geometry': ['Antenna layout', 'Record your layout; this does not configure the receiver.'],
+  'capture.device.array_geometry': ['Array setup', 'Choose the physical layout, map DAQ channels, and enter measured antenna positions.'],
   'capture.device.channel_count': ['Input channels', 'Coherent Kraken channels sent by HeIMDALL. Allowed: 2–8.'],
-  'capture.device.reference_channel': ['Reference channel', 'Input carrying the direct transmitter signal in dedicated mode.'],
-  'capture.device.surveillance_channels': ['Radar inputs', 'Inputs searched for reflected signals. Select at least one.'],
-  'capture.device.heimdall': ['HeIMDALL connection', 'KrakenSDR Suite V2 data source.'],
-  'capture.device.heimdall.host': ['HeIMDALL host', 'Computer running HeIMDALL.'],
-  'capture.device.heimdall.port': ['HeIMDALL port', 'HeIMDALL TCP data port.'],
-  'capture.device.heimdall.control_port': ['HeIMDALL control port', 'Suite V2 status and command port. Usually 8092; separate from the IQ data port.'],
+  'capture.device.reference_channel': ['Dedicated reference input', 'Channel aimed at the transmitter when Reference mode is Dedicated input.'],
+  'capture.device.surveillance_channels': ['Surveillance inputs', 'Antenna channels searched for aircraft reflections. Select every surveillance antenna in use.'],
+  'capture.device.heimdall': ['Radio connection & gain', 'Connect to KrakenSDR Suite V2 and set tuner gain.'],
+  'capture.device.heimdall.host': ['Suite computer', 'Host name or IP address of the computer running KrakenSDR Suite V2. Use 127.0.0.1 when it runs here.'],
+  'capture.device.heimdall.port': ['IQ stream port', 'Suite V2 TCP port carrying coherent samples. Usually 8091.'],
+  'capture.device.heimdall.control_port': ['Control port', 'Suite V2 status and command port. Usually 8092.'],
   'capture.device.heimdall.gain': ['Receiver gain', 'Shared gain in dB. Automatic adjustment updates this after checking all channels.'],
   'capture.device.heimdall.channel_gains': ['Coherent channel gains', 'Optional fixed dB vector, one physical tuner-table gain per channel.'],
   'capture.device.heimdall.gain_control': ['Gain adjustment', 'Automatic checks each Apply and monitors overload. Fixed holds gain for comparisons.'],
@@ -78,9 +78,9 @@ const CONFIG_META = {
   'process.clutter.followAmbiguity': ['Follow radar delay range', 'Cancel across the complete delay map; disable only for a manual filter range.'],
   'process.clutter.delayMin': ['Minimum filter delay bin', 'Manual first filter sample; ignored while following the radar delay range.'],
   'process.clutter.delayMax': ['Maximum filter delay bin', 'Manual exclusive filter endpoint; ignored while following the radar delay range.'],
-  'process.reference_synthesis': ['Reference signal', 'Use one receiver input or combine inputs into the broadcast reference.'],
-  'process.reference_synthesis.mode': ['Reference mode', 'Use one input or combine several inputs automatically.'],
-  'process.reference_synthesis.channels': ['Combined inputs', 'Inputs used to create the synthesized reference signal.'],
+  'process.reference_synthesis': ['Reference input', 'Choose a dedicated transmitter antenna or let VectorWarp combine array inputs.'],
+  'process.reference_synthesis.mode': ['Reference mode', 'Dedicated uses one input; combined mode estimates the broadcast waveform from selected coherent inputs.'],
+  'process.reference_synthesis.channels': ['Reference source inputs', 'Inputs VectorWarp may combine when using the array-derived reference.'],
   'process.reference_synthesis.analysis_samples': ['Analysis samples', 'Samples per reference estimate. Minimum: 64.'],
   'process.reference_synthesis.analysis_interval': ['Analysis interval', 'Frames between reference-weight updates'],
   'process.reference_synthesis.power_iterations': ['Solver iterations', 'More iterations improve the reference estimate but use more CPU.'],
@@ -252,6 +252,7 @@ const SIMPLE_SETTING_PATHS = new Set([
   'capture.device.heimdall.host', 'capture.device.heimdall.port',
   'capture.device.heimdall.control_port', 'capture.device.heimdall.gain',
   'capture.device.heimdall.gain_control',
+  'process.reference_synthesis.mode', 'process.reference_synthesis.channels',
   'capture.replay.state', 'capture.replay.file', 'capture.replay.loop',
   'process.data.cpi', 'process.clutter.enable', 'process.detection.enable',
   'process.tracker.enable', 'process.tracker.profile', 'process.performance.acceleration',
@@ -1387,7 +1388,12 @@ function group(key, value, path, topLevel = false, options = {}) {
   if (dotted === 'capture.device') {
     const profile = capabilities.deviceProfiles?.find(item => item.type === value.type);
     title = profile ? profile.label : value.type || title;
-    description = 'Connection and receiver-specific settings';
+    description = kraken ? 'Radio, gain, channel roles, and array setup' :
+      'Connection and receiver-specific settings';
+  }
+  if (kraken && dotted === 'capture.device.heimdall') {
+    title = 'Radio connection & gain';
+    description = 'KrakenSDR Suite V2 connection and tuner levels';
   }
   const details = document.createElement('details');
   details.dataset.configGroup = dotted;
@@ -1403,11 +1409,20 @@ function group(key, value, path, topLevel = false, options = {}) {
   summary.append(heading);
   const content = document.createElement('div');
   content.className = 'config-fields';
+  if (kraken && dotted === 'capture.device') {
+    const guide = document.createElement('div');
+    guide.className = 'kraken-settings-guide';
+    guide.innerHTML = '<span><b>1</b><strong>Radio & gain</strong><small>Connect Suite V2 without overload</small></span>' +
+      '<span><b>2</b><strong>Channel roles</strong><small>Choose reference and surveillance inputs</small></span>' +
+      '<span><b>3</b><strong>Array setup</strong><small>Match the physical antenna layout</small></span>';
+    content.appendChild(guide);
+  }
   if (dotted === 'capture' && value.device?.type !== undefined)
     content.appendChild(field(value.device.type, ['capture', 'device', 'type']));
   const order = {
     capture: ['fc', 'fs', 'device', 'aircraft_clips', 'replay'],
-    'capture.device': ['channel_count', 'heimdall', 'surveillance_channels'],
+    'capture.device': ['heimdall', 'channel_count', 'surveillance_channels'],
+    'capture.device.heimdall': ['gain_control', 'gain', 'channel_gains', 'host', 'port', 'control_port'],
     process: ['data', 'ambiguity', 'clutter', 'detection', 'tracker', 'performance'],
     'process.reference_synthesis': ['mode', 'channels']
   }[dotted] || [];
@@ -1457,17 +1472,16 @@ function group(key, value, path, topLevel = false, options = {}) {
     content.appendChild(field('keep', [...currentPath, 'gain']));
   if (dotted === 'capture.device.heimdall' && value.gain_control === undefined)
     content.appendChild(field('fixed', [...currentPath, 'gain_control']));
-  if (advancedFields.children.length) content.appendChild(advancedReference);
+  if (settingsMode === 'advanced' && advancedFields.children.length)
+    content.appendChild(advancedReference);
   if (settingsMode === 'advanced' && dotted === 'process.performance' &&
       activeConfig.process?.data?.buffer !== undefined)
     content.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
-  if (settingsMode === 'advanced' && kraken && dotted === 'capture.device' &&
+  if (kraken && dotted === 'capture.device' &&
       activeConfig.process?.reference_synthesis)
     content.appendChild(group('reference_synthesis', activeConfig.process.reference_synthesis, ['process']));
   const savedGeometry = activeConfig.capture?.device?.array_geometry;
-  const geometryNeedsReview = savedGeometry !== undefined && (!savedGeometry ||
-    typeof savedGeometry !== 'object' || !['regular_polygon', 'custom'].includes(savedGeometry.shape));
-  if ((settingsMode === 'advanced' || geometryNeedsReview) && dotted === 'capture.device' && geometryEditor &&
+  if (dotted === 'capture.device' && geometryEditor &&
       (kraken || savedGeometry !== undefined))
     content.appendChild(makeGeometryEditor());
   details.append(summary, content);
@@ -2071,7 +2085,7 @@ function renderEditor() {
       else {
         const note = document.createElement('p');
         note.className = 'config-simple-note';
-        note.textContent = 'Advanced mode contains receiver-specific array, synchronization, and diagnostic controls.';
+        note.textContent = 'Advanced mode adds low-level processing, synchronization, performance, and diagnostic controls. Array setup and channel roles remain available here.';
         panel.appendChild(note);
       }
       if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {

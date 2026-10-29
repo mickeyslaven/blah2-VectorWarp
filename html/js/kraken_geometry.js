@@ -360,7 +360,7 @@
     section.className = 'config-group kraken-geometry';
     section.dataset.configGroup = prefix;
     const heading = document.createElement('summary');
-    heading.textContent = device.type === 'Kraken' ? 'Antenna layout (optional)' : 'Saved Kraken layout (inactive)';
+    heading.textContent = device.type === 'Kraken' ? 'Array setup' : 'Saved Kraken array setup (inactive)';
     section.appendChild(heading);
     const content = document.createElement('div');
     content.className = 'config-fields';
@@ -379,7 +379,6 @@
       content.appendChild(button('Add antenna layout', () => { device.array_geometry = emptyRecord(device.channel_count); changed(true); }));
       return section;
     }
-    section.open = true;
     content.appendChild(button('Remove layout', () => {
       if (document.defaultView?.confirm('Remove this layout and its measurements from the draft? Discard changes can restore them until you save.')) {
         delete device.array_geometry;

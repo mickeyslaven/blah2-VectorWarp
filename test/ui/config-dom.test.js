@@ -59,6 +59,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: status === 200, status, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/kraken_geometry.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
 const query = key => window.document.querySelector(`[data-path="${key}"]`);
 function change(input, value, event = 'input') {
@@ -453,8 +454,12 @@ function change(input, value, event = 'input') {
     assert.ok(query('capture.fc'), 'Simple mode keeps essential tuning controls');
     assert.ok(query('capture.device.heimdall.host'), 'Simple Kraken setup exposes the Suite host');
     assert.ok(query('capture.device.heimdall.control_port'), 'Simple Kraken setup exposes the Suite control port');
-    assert.equal(query('process.reference_synthesis.mode'), null,
-      'Simple mode must not leak Kraken reference internals');
+    assert.ok(query('process.reference_synthesis.mode'),
+      'Simple Kraken setup exposes the essential reference choice');
+    assert.ok(window.document.querySelector('#settings-panel-capture .kraken-geometry'),
+      'Array setup remains available without enabling Advanced mode');
+    assert.equal(query('process.reference_synthesis.analysis_samples'), null,
+      'Simple mode keeps low-level reference solver tuning hidden');
     assert.equal(query('process.data.buffer'), null,
       'Simple mode must not leak performance buffer internals');
     assert.equal(window.document.querySelector('[role=tab][data-tab=network]'), null,
@@ -468,6 +473,8 @@ function change(input, value, event = 'input') {
     window.switchDevice('Kraken');
     window.__settingsModeApi.setMode('advanced');
     assert.ok(query('process.reference_synthesis.mode'), 'Advanced mode restores receiver internals');
+    assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 1,
+      'Changing detail level must not duplicate reference controls');
     assert.ok(query('process.data.buffer'), 'Advanced mode restores performance internals');
     console.log('Browser DOM tests passed: all-device layout audit, site add/edit/cancel/select, grouped frequency, errors, stale validation, discard and save payloads.');
   } finally { window.close(); }

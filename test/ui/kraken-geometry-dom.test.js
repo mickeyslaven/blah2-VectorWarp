@@ -200,7 +200,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     change(query('process.reference_synthesis.mode'), 'array_eigenbeam');
     assert.equal(g('mapping_confirmed').checked, false);
     window.switchDevice('RspDuo');
-    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Saved Kraken layout (inactive)'));
+    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Saved Kraken array setup (inactive)'));
     assert.equal(doc.querySelectorAll('.kraken-geometry input, .kraken-geometry select').length, 0);
     change(query('capture.replay.state'), true);
     await save();
@@ -312,7 +312,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Unsupported saved layout'));
     window.switchDevice('RspDuo'); change(query('capture.replay.state'), true);
     assert.equal(await window.validateActiveConfiguration(), false);
-    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Saved Kraken layout (inactive)'));
+    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Saved Kraken array setup (inactive)'));
     window.confirm = () => true; click('Remove layout'); await save();
     assert.equal(current().capture.device.type, 'RspDuo');
     assert.equal(current().capture.device.array_geometry, undefined);
