@@ -125,22 +125,28 @@
     return shell;
   }
   function layoutPresets() {
-    return [
-      {id: 'ula4', title: '4-element line', channels: 4, bearing: 4, shape: 'ula'},
-      {id: 'cross4ref', title: '4-element cross + reference', channels: 5,
-        bearing: 4, shape: 'cross', dedicated: true},
-      {id: 'pentagon5', title: '5-element pentagon', channels: 5,
-        bearing: 5, shape: 'regular_polygon'},
-      {id: 'pentagon5ref', title: '5-element pentagon + reference', channels: 6,
-        bearing: 5, shape: 'regular_polygon', dedicated: true},
-      {id: 'ring7', title: '7-element ring', channels: 7,
-        bearing: 7, shape: 'regular_polygon'},
-      {id: 'ring7ref', title: '7-element ring + reference', channels: 8,
-        bearing: 7, shape: 'regular_polygon', dedicated: true},
-      {id: 'ring8', title: '8-element ring', channels: 8,
-        bearing: 8, shape: 'regular_polygon'},
-      {id: 'ula8', title: '8-element line', channels: 8, bearing: 8, shape: 'ula'}
-    ].map(item => Object.freeze(item));
+    const presets = [];
+    const polygonName = count => ({3: 'triangle', 5: 'pentagon', 6: 'hexagon',
+      7: 'heptagon ring', 8: 'octagon ring'}[count]);
+    for (let bearing = 2; bearing <= 8; bearing++)
+      presets.push({id: `ula${bearing}`, title: `${bearing}-element line`,
+        channels: bearing, bearing, shape: 'ula'});
+    for (let bearing = 2; bearing <= 7; bearing++)
+      presets.push({id: `ula${bearing}ref`, title: `${bearing}-element line + reference`,
+        channels: bearing + 1, bearing, shape: 'ula', dedicated: true});
+    for (const bearing of [3, 5, 6, 7, 8])
+      presets.push({id: `${polygonName(bearing).split(' ')[0]}${bearing}`,
+        title: `${bearing}-element ${polygonName(bearing)}`, channels: bearing,
+        bearing, shape: 'regular_polygon'});
+    for (const bearing of [3, 5, 6, 7])
+      presets.push({id: `${polygonName(bearing).split(' ')[0]}${bearing}ref`,
+        title: `${bearing}-element ${polygonName(bearing)} + reference`,
+        channels: bearing + 1, bearing, shape: 'regular_polygon', dedicated: true});
+    presets.push({id: 'cross4', title: '4-element cross', channels: 4,
+      bearing: 4, shape: 'cross'});
+    presets.push({id: 'cross4ref', title: '4-element cross + reference', channels: 5,
+      bearing: 4, shape: 'cross', dedicated: true});
+    return presets.map(item => Object.freeze(item));
   }
   function presetRecord(config, presetId) {
     const preset = layoutPresets().find(item => item.id === presetId);
@@ -209,8 +215,12 @@
     const title = document.createElement('h3'); title.textContent = 'Common array layouts';
     const explanation = document.createElement('p');
     explanation.textContent = 'Choose a starting layout only when its active channel count matches the receiver. Reference positions are guides: measure the installed coordinates and channel mapping before confirming them.';
+    const countPicker = document.createElement('div'); countPicker.className = 'geometry-preset-counts';
     const grid = document.createElement('div'); grid.className = 'geometry-preset-grid';
-    layoutPresets().forEach(preset => {
+    let previewCount = config.capture.device.channel_count;
+    const renderCards = () => {
+      grid.replaceChildren();
+      layoutPresets().filter(preset => preset.channels === previewCount).forEach(preset => {
       const card = document.createElement('article'); card.className = 'geometry-preset-card';
       const heading = document.createElement('h4'); heading.textContent = preset.title;
       const diagram = document.createElement('div'); diagram.className = `geometry-preset-diagram ${preset.shape}`;
@@ -234,11 +244,27 @@
       detail.textContent = `${preset.bearing} bearing element${preset.bearing === 1 ? '' : 's'}${preset.dedicated ? ' + 1 dedicated reference' : ' using array synthesis'}`;
       const action = document.createElement('button'); action.type = 'button';
       const exact = config.capture.device.channel_count === preset.channels;
-      action.disabled = !editable || !exact; action.textContent = exact ? 'Use this layout' : `Requires ${preset.channels} active channels`;
+      action.disabled = !editable || !exact;
+      action.textContent = exact ? 'Use this layout' : `Set ${preset.channels} active channels first`;
       action.addEventListener('click', () => { if (!action.disabled) choose(preset); });
       card.append(heading, diagram, detail, action); grid.appendChild(card);
-    });
-    shell.append(title, explanation, grid); return shell;
+      });
+    };
+    for (let count = 2; count <= 8; count++) {
+      const action = document.createElement('button'); action.type = 'button';
+      action.textContent = String(count); action.setAttribute('aria-label', `Preview ${count}-channel layouts`);
+      action.disabled = !editable;
+      action.classList.toggle('active', count === previewCount);
+      action.addEventListener('click', () => {
+        previewCount = count;
+        [...countPicker.children].forEach((button, index) =>
+          button.classList.toggle('active', index + 2 === previewCount));
+        renderCards();
+      });
+      countPicker.appendChild(action);
+    }
+    renderCards();
+    shell.append(title, explanation, countPicker, grid); return shell;
   }
   function invalidate(geometry) {
     if (object(geometry)) confirmations.forEach(key => { geometry[key] = false; });

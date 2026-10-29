@@ -7,6 +7,7 @@ const yaml = require('js-yaml');
 const geometryUi = require('../html/js/kraken_geometry');
 const {evaluateKrakenArray} = require('./kraken-array');
 const {validateConfig} = require('./config-manager');
+const {getSettingsMapping} = require('./receiver-manager');
 
 const base = yaml.load(fs.readFileSync(
   path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
@@ -52,5 +53,16 @@ assert.equal(geometryUi.applyPreset(mismatch, 'ring8'), false,
   'an eight-channel frontend layout cannot mutate a five-channel receiver');
 assert.equal(JSON.stringify(mismatch), before,
   'rejected frontend layouts leave the backend draft untouched');
+
+const receiverBoundary = new Map(getSettingsMapping('Kraken')
+  .map(item => [item.configField, item]));
+assert.equal(receiverBoundary.get('capture.device.channel_count').controlOperation,
+  'set_num_elements', 'active channel count is applied to Suite and read back');
+for (const field of ['capture.device.reference_channel',
+  'capture.device.surveillance_channels', 'process.reference_synthesis'])
+  assert.equal(receiverBoundary.get(field).direction, 'config-only',
+    `${field} is a VectorWarp DSP role, not an invented DAQ command`);
+assert.equal(receiverBoundary.has('capture.device.array_geometry'), false,
+  'physical coordinates remain in VectorWarp because the DAQ has no geometry contract');
 
 console.log('Frontend array presets pass managed and runtime 2-8 channel backend contracts.');

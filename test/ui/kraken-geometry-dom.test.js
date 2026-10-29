@@ -129,10 +129,14 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.equal(current().capture.device.array_geometry, undefined);
     click('Add antenna layout');
     const presets = [...doc.querySelectorAll('.geometry-preset-card')];
-    assert.equal(presets.length, 8, 'Every supported frontend preset is visible');
-    assert.equal(presets.filter(card => !card.querySelector('button').disabled).length, 2,
-      'Only exact five-channel layouts can modify a five-channel receiver');
-    assert.ok(presets.find(card => card.querySelector('h4').textContent === '8-element ring')
+    assert.equal(presets.length, 4, 'Compatible five-channel families are visible without clutter');
+    assert.ok(presets.every(card => !card.querySelector('button').disabled),
+      'Every shown five-channel layout can modify a five-channel receiver');
+    assert.equal(doc.querySelectorAll('.geometry-preset-counts button').length, 7,
+      'Users can preview every supported active channel count');
+    doc.querySelector('[aria-label="Preview 8-channel layouts"]').click();
+    assert.ok([...doc.querySelectorAll('.geometry-preset-card')]
+      .find(card => card.querySelector('h4').textContent === '8-element octagon ring')
       .querySelector('button').disabled, 'An eight-channel diagram cannot configure five-channel hardware');
     assert.equal(g('elements.0.daq_channel').value, '', 'No DAQ wiring guess');
     assert.equal(g('elements.0.position.0').value, '', 'No position guess');
