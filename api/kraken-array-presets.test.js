@@ -68,6 +68,21 @@ assert.equal(geometryUi.applyPreset(mismatch, 'octagon8'), false,
 assert.equal(JSON.stringify(mismatch), before,
   'rejected frontend layouts leave the backend draft untouched');
 
+const roles = clone(base);
+roles.capture.device.channel_count = 5;
+geometryUi.applyPreset(roles, 'pentagon5');
+geometryUi.applyChannelRole(roles, 4, 'dedicated_reference');
+assert.equal(geometryUi.channelRole(roles, 4), 'dedicated_reference');
+assert.equal(roles.process.reference_synthesis.mode, 'dedicated');
+assert.deepEqual(roles.process.reference_synthesis.channels, [4]);
+assert.ok(!roles.capture.device.surveillance_channels.includes(4));
+assert.ok(!roles.capture.device.array_geometry.bearing_channels.includes(4));
+geometryUi.applyReferenceMode(roles, 'array_eigenbeam');
+assert.equal(geometryUi.channelRole(roles, 4), 'array');
+assert.ok(roles.capture.device.surveillance_channels.includes(4));
+assert.ok(roles.capture.device.array_geometry.bearing_channels.includes(4));
+assert.equal(validateConfig(roles).valid, true, validateConfig(roles).errors.join('; '));
+
 const receiverBoundary = new Map(getSettingsMapping('Kraken')
   .map(item => [item.configField, item]));
 assert.equal(receiverBoundary.get('capture.device.channel_count').controlOperation,

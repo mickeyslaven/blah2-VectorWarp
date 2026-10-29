@@ -38,6 +38,7 @@ for (const width of [1440, 390, 320]) {
   config.process.reference_synthesis.channels = [6];
   const geometry = helper.emptyRecord(8);
   geometry.shape = 'unsupported_saved_shape';
+  geometry.bearing_channels = [0, 1, 2, 3, 4, 5, 7];
   geometry.elements.forEach((element, index) => {
     element.daq_channel = index;
     element.receiver_serial = 'operator-recorded-serial-'.repeat(4);
@@ -52,6 +53,14 @@ for (const width of [1440, 390, 320]) {
   assert.equal(doc.querySelector('.geometry-preset-counts select').value, '8',
     'A single labelled antenna-count dropdown drives the visual presets');
   assert.equal(doc.querySelector('.geometry-preset-counts span').textContent, 'Antennas connected');
+  assert.equal(doc.querySelectorAll('.geometry-channel-node').length, 8,
+    'Every mapped antenna is a clickable visual channel control');
+  assert.equal(doc.querySelector('.geometry-reference-mode select').value, 'dedicated',
+    'Reference estimation is configured inside the visual array editor');
+  doc.querySelector('.geometry-channel-node').click();
+  assert.match(doc.querySelector('.geometry-channel-panel h4').textContent, /^Channel 0/);
+  assert.equal(doc.querySelector('.geometry-channel-panel select').value, 'array',
+    'Clicking an antenna exposes its backend channel role');
   assert.ok(doc.querySelector('.geometry-manual:not([open])'),
     'Manual coordinates and channel mapping stay collapsed until explicitly requested');
   assert.equal(dom.window.getComputedStyle(doc.querySelector('.geometry-preset-diagram')).aspectRatio, '1',

@@ -1,5 +1,7 @@
 const geometryEditor = typeof module !== 'undefined' && module.exports ?
   require('./kraken_geometry') : window.KrakenGeometry;
+const configProfiles = typeof module !== 'undefined' && module.exports ?
+  require('./config_profiles') : window.VectorWarpConfigProfiles;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
 const CONFIG_META = {
@@ -208,6 +210,196 @@ const CONFIG_META = {
   'save.timing': ['Export timing metadata', 'Compatibility diagnostic flag. This is not IQ and does not control aircraft clips.'],
   'save.path': ['Recording folder', 'Directory used for saved data']
 };
+
+function applyComposite(action) {
+  const before = geometryEditor?.context(activeConfig);
+  action(activeConfig);
+  if (before !== geometryEditor?.context(activeConfig))
+    geometryEditor?.invalidate(activeConfig.capture?.device?.array_geometry);
+  refreshSettingsFilter();
+  scheduleValidation();
+}
+
+function compositeField(title, description, control, path) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'config-field';
+  if (path) wrapper.dataset.path = path;
+  const copy = document.createElement('div'); copy.className = 'config-field-copy';
+  const label = document.createElement('label'); label.textContent = title;
+  const help = document.createElement('small'); help.textContent = description;
+  copy.append(label, help);
+  const controls = control.matches?.('input, select') ? [control] : control.querySelectorAll('input, select');
+  Array.from(controls).forEach((input, index) => {
+    input.disabled ||= !capabilities.editable;
+    input.dataset.originalDisabled = String(input.disabled);
+    if (!input.id) input.id = `composite-${(path || title).replace(/[^a-z0-9]+/gi, '-')}-${index}`;
+    if (!index) label.htmlFor = input.id;
+  });
+  const error = document.createElement('small'); error.className = 'config-field-error';
+  wrapper.append(copy, control, error); return wrapper;
+}
+
+function compositeGroup(title, description) {
+  const details = document.createElement('details'); details.className = 'config-group composite-settings';
+  const summary = document.createElement('summary');
+  const copy = document.createElement('span');
+  const strong = document.createElement('strong'); strong.textContent = title;
+  const small = document.createElement('small'); small.textContent = description;
+  copy.append(strong, small); summary.appendChild(copy);
+  const body = document.createElement('div'); body.className = 'config-fields';
+  details.append(summary, body); return {details, body};
+}
+
+function renderClutterSettings() {
+  const {details, body} = compositeGroup('Clutter removal',
+    'Remove the stationary direct path and fixed multipath before detection.');
+  details.open = true;
+  const custom = document.createElement('div'); custom.className = 'config-fields composite-custom';
+  const select = selectInput([
+    {value: 'off', label: 'Off'},
+    {value: 'automatic', label: 'Automatic (match the radar range)'},
+    {value: 'custom', label: 'Custom filter range'}
+  ], configProfiles.clutterMode(activeConfig), value => {
+    applyComposite(config => configProfiles.applyClutterMode(config, value));
+    custom.hidden = value !== 'custom';
+  });
+  body.appendChild(compositeField('Clutter removal',
+    'Automatic follows the complete delay map. Custom is only for installations that must limit cancellation.',
+    select, 'process.clutter.enable'));
+  custom.append(field(activeConfig.process.clutter.delayMin, ['process', 'clutter', 'delayMin']),
+    field(activeConfig.process.clutter.delayMax, ['process', 'clutter', 'delayMax']));
+  custom.hidden = configProfiles.clutterMode(activeConfig) !== 'custom';
+  body.appendChild(custom); return details;
+}
+
+function renderDetectionSettings() {
+  const detection = activeConfig.process.detection;
+  const {details, body} = compositeGroup('Detection',
+    'Choose the false-alarm tradeoff, then optionally customize the CFAR estimator.');
+  details.open = true;
+  body.appendChild(field(detection.enable, ['process', 'detection', 'enable']));
+  const sensitivity = selectInput([
+    {value: 'conservative', label: 'Fewer false alarms'},
+    {value: 'balanced', label: 'Balanced (recommended)'},
+    {value: 'sensitive', label: 'Weak targets (more false alarms)'},
+    {value: 'custom', label: 'Custom'}
+  ], configProfiles.detectionSensitivity(activeConfig), value => {
+    if (value !== 'custom') applyComposite(config => configProfiles.applyDetectionSensitivity(config, value));
+    tuning.hidden = value !== 'custom' && settingsMode !== 'advanced';
+  });
+  body.appendChild(compositeField('Detection sensitivity',
+    'Changes the whole-bank false-alarm probability. Weak targets admits more noise; it does not create signal that is absent.',
+    sensitivity, 'process.detection.pfa'));
+  const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
+  tuning.hidden = configProfiles.detectionSensitivity(activeConfig) !== 'custom' && settingsMode !== 'advanced';
+  const summary = document.createElement('summary'); summary.textContent = 'CFAR tuning';
+  const fields = document.createElement('div'); fields.className = 'config-fields';
+  for (const key of ['pfa', 'nGuard', 'nTrain', 'nCentroid']) fields.appendChild(field(detection[key], ['process', 'detection', key]));
+  tuning.append(summary, fields); body.appendChild(tuning); return details;
+}
+
+function renderInterferenceRejectionSettings() {
+  const detection = activeConfig.process.detection;
+  const {details, body} = compositeGroup('Nearby and stationary rejection',
+    'Exclude the direct-path neighborhood and near-zero Doppler from target detection.');
+  const sampleKm = 299792458 / Number(activeConfig.capture.fs || 1) / 1000;
+  body.appendChild(compositeField('Minimum excess path',
+    `Detections closer than this are ignored. One delay sample is ${sampleKm.toFixed(3)} km of transmitter→target→receiver excess path; this is not receiver slant range.`,
+    typedInput(detection.minDelay, ['process', 'detection', 'minDelay']), 'process.detection.minDelay'));
+  body.appendChild(compositeField('Near-zero Doppler exclusion',
+    'Ignore detections inside ± this frequency. Higher values suppress stationary clutter but can remove slow radial motion.',
+    typedInput(detection.minDoppler, ['process', 'detection', 'minDoppler']), 'process.detection.minDoppler'));
+  return details;
+}
+
+function renderWeakTargetSettings() {
+  const detection = activeConfig.process.detection;
+  const coherent = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
+    capabilities.deviceProfiles || []).coherentArray;
+  const residentCoherent = coherent &&
+    activeConfig.capture?.device?.array_geometry?.shape === 'regular_polygon';
+  const {details, body} = compositeGroup('Weak-target recovery',
+    'Combine consecutive coherent frames when a single frame is too weak. Adds latency and GPU work.');
+  const choices = [{value: 'off', label: 'Off (single frame)'},
+    {value: 'two', label: 'Two-frame integration'},
+    {value: 'two_motion', label: 'Two-frame integration + motion search'},
+    {value: 'four', label: 'Four-frame track-before-detect'},
+    {value: 'eight', label: 'Eight-frame track-before-detect'},
+    {value: 'custom', label: 'Custom'}];
+  const select = selectInput(choices, configProfiles.weakTargetMode(activeConfig), value => {
+    if (value !== 'custom') applyComposite(config => configProfiles.applyWeakTargetMode(config, value));
+    custom.hidden = value !== 'custom' && settingsMode !== 'advanced';
+  });
+  if (!coherent) [...select.options].forEach(option => { if (!['off', 'custom'].includes(option.value)) option.disabled = true; });
+  else if (!residentCoherent) [...select.options].forEach(option => {
+    if (['four', 'eight'].includes(option.value)) option.disabled = true;
+  });
+  body.appendChild(compositeField('Recovery depth', coherent ?
+    'Longer banks can recover motion-consistent energy but delay a result by additional CPIs.' :
+    'Multi-frame coherent recovery requires a supported coherent array receiver.', select,
+  'process.detection.integration_cpis'));
+  const custom = document.createElement('details'); custom.className = 'config-group composite-tuning';
+  custom.hidden = configProfiles.weakTargetMode(activeConfig) !== 'custom' && settingsMode !== 'advanced';
+  const summary = document.createElement('summary'); summary.textContent = 'Recovery tuning';
+  const fields = document.createElement('div'); fields.className = 'config-fields';
+  fields.append(field(detection.integration_cpis, ['process', 'detection', 'integration_cpis']),
+    field(detection.integration_motion_bins, ['process', 'detection', 'integration_motion_bins']));
+  if (detection.track_before_detect)
+    fields.appendChild(group('track_before_detect', detection.track_before_detect, ['process', 'detection']));
+  custom.append(summary, fields); body.appendChild(custom); return details;
+}
+
+function renderTrackerSettings() {
+  const tracker = activeConfig.process.tracker;
+  const {details, body} = compositeGroup('Tracking',
+    'Turn repeated detections into persistent tracks without changing detector sensitivity.');
+  details.open = true;
+  body.appendChild(field(tracker.enable, ['process', 'tracker', 'enable']));
+  body.appendChild(field(tracker.profile ?? 'permissive', ['process', 'tracker', 'profile']));
+  const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
+  const summary = document.createElement('summary'); summary.textContent = 'Track confirmation and lifetime';
+  const fields = document.createElement('div'); fields.className = 'config-fields';
+  for (const key of ['M', 'N', 'min_snr_db', 'maxAcc', 'acceleration_model'])
+    if (tracker.initiate?.[key] !== undefined) fields.appendChild(field(tracker.initiate[key], ['process', 'tracker', 'initiate', key]));
+  fields.appendChild(field(tracker.delete, ['process', 'tracker', 'delete']));
+  tuning.append(summary, fields); body.appendChild(tuning); return details;
+}
+
+function renderPerformanceSettings() {
+  const performance = activeConfig.process.performance || {};
+  const {details, body} = compositeGroup('Processing',
+    'Automatic prefers an available qualified GPU and safely falls back to CPU.');
+  const select = selectInput([{value: 'automatic', label: `Automatic (${performance.acceleration === 'gpu-resident' ? 'GPU resident' : performance.acceleration === 'gpu' ? 'GPU with fallback' : 'best available'})`},
+    {value: 'cpu', label: 'CPU only (free the GPU)'}], configProfiles.processingMode(activeConfig), value => {
+    const gpuFeatures = configProfiles.weakTargetMode(activeConfig) !== 'off' ||
+      activeConfig.process.bearing?.enable === true ||
+      activeConfig.process.tracker?.initiate?.stationary_clutter?.enable === true;
+    if (value === 'cpu' && gpuFeatures && !window.confirm('CPU only will disable weak-target recovery, bearing, GPU stationary-clutter initiation, and guided GPU recovery. Continue?')) {
+      select.value = 'automatic'; return;
+    }
+    applyComposite(config => configProfiles.applyProcessingMode(config, value));
+  });
+  body.appendChild(compositeField('Processing hardware',
+    'CPU only explicitly disables every GPU-resident feature so no radar work remains on the GPU.',
+    select, 'process.performance.acceleration'));
+  if (settingsMode === 'advanced') {
+    const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
+    const summary = document.createElement('summary'); summary.textContent = 'CPU scheduling and queue';
+    const fields = document.createElement('div'); fields.className = 'config-fields';
+    for (const key of ['surveillance_workers', 'fft_threads'])
+      if (performance[key] !== undefined) fields.appendChild(field(performance[key], ['process', 'performance', key]));
+    if (activeConfig.process.data?.buffer !== undefined)
+      fields.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
+    tuning.append(summary, fields); body.appendChild(tuning);
+  }
+  return details;
+}
+
+function appendCompositeRadarSettings(content) {
+  content.append(renderClutterSettings(), renderDetectionSettings(),
+    renderInterferenceRejectionSettings(), renderWeakTargetSettings(),
+    renderTrackerSettings(), renderPerformanceSettings());
+}
 
 let activeConfig = null;
 let originalConfig = '';
@@ -826,7 +1018,7 @@ function arrayInput(value, path) {
   value.forEach((item, index) => {
     const slot = document.createElement('label');
     const caption = document.createElement('span');
-    caption.textContent = value.length === 2 ?
+    caption.textContent = key === 'capture.device.heimdall.channel_gains' ? `Channel ${index}` : value.length === 2 ?
       (index === 0 ? 'Reference' : 'Surveillance') : `Item ${index + 1}`;
     let input;
     const update = next => {
@@ -1164,21 +1356,36 @@ function typedInput(value, path) {
     return label;
   }
   if (key === 'capture.fc') return frequencyInput(value, path);
-  if (key === 'capture.device.heimdall.gain_control')
-    return selectInput([{value: 'fixed', label: 'Fixed'},
-      {value: 'measured', label: `Automatic${typeof activeConfig.capture.device.heimdall.gain === 'number' ?
-        ` (${activeConfig.capture.device.heimdall.gain.toFixed(1)} dB selected)` : ''}`},
-      {value: 'measured_per_channel', label: `Automatic per channel${
+  if (key === 'capture.device.heimdall.gain_control') {
+    const wrapper = document.createElement('div'); wrapper.className = 'config-gain-policy';
+    const manual = document.createElement('div'); manual.className = 'config-gain-manual';
+    const gains = Array.isArray(activeConfig.capture.device.heimdall.channel_gains) ?
+      activeConfig.capture.device.heimdall.channel_gains :
+      Array.from({length: activeConfig.capture.device.channel_count || 1}, () =>
+        typeof activeConfig.capture.device.heimdall.gain === 'number' ? activeConfig.capture.device.heimdall.gain : 0);
+    manual.appendChild(arrayInput(gains, ['capture', 'device', 'heimdall', 'channel_gains']));
+    const modeValue = value === 'fixed' ? 'fixed' : 'measured_per_channel';
+    const mode = selectInput([{value: 'fixed', label: `Manual${
         Array.isArray(activeConfig.capture.device.heimdall.channel_gains) ?
           ` (${activeConfig.capture.device.heimdall.channel_gains.map(gain =>
-            Number(gain).toFixed(1)).join(', ')} dB selected)` : ''}`}], value,
-      selected => setValue(path, selected));
+            Number(gain).toFixed(1)).join(', ')} dB)` : ''}`},
+      {value: 'measured_per_channel', label: `Automatic${
+        Array.isArray(activeConfig.capture.device.heimdall.channel_gains) ?
+          ` (${activeConfig.capture.device.heimdall.channel_gains.map(gain =>
+            Number(gain).toFixed(1)).join(', ')} dB selected)` : ''}`}], modeValue,
+    selected => {
+      applyComposite(config => configProfiles.applyGainMode(config,
+        selected === 'fixed' ? 'manual' : 'automatic'));
+      manual.hidden = selected !== 'fixed';
+    });
+    manual.hidden = modeValue !== 'fixed';
+    wrapper.append(mode, manual); return wrapper;
+  }
   if (key === 'capture.device.lnaState') return rspDuoLnaInput(value);
   if (key === 'process.performance.acceleration')
-    return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU'},
-      {value: 'gpu', label: 'GPU (with CPU fallback)'},
-      {value: 'gpu-resident', label: 'GPU resident (advanced)'}], value,
-      selected => setValue(path, selected));
+    return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU only'}],
+      value === 'cpu' ? 'cpu' : 'auto', selected => applyComposite(config =>
+        configProfiles.applyProcessingMode(config, selected === 'cpu' ? 'cpu' : 'automatic')));
   if (key === 'process.tracker.profile')
     return selectInput([{value: 'conservative', label: 'Conservative (recommended)'},
       {value: 'permissive', label: 'Permissive (legacy)'}], value,
@@ -1405,7 +1612,7 @@ function group(key, value, path, topLevel = false, options = {}) {
     title = settingsMode === 'advanced' ? 'Radio connection & gain' : 'Gain';
     description = settingsMode === 'advanced' ?
       'KrakenSDR Suite V2 connection and tuner levels' :
-      'Choose fixed, shared automatic, or per-channel automatic gain';
+      'Automatic measures every tuner independently; Manual preserves the requested levels';
   }
   const details = document.createElement('details');
   details.dataset.configGroup = dotted;
@@ -1458,9 +1665,12 @@ function group(key, value, path, topLevel = false, options = {}) {
     // generic editor for the same setting.
     if (capabilities.fieldRules?.[childPath.join('.')]?.structuredControl) return;
     if (dotted === 'process.data' && childKey === 'buffer') return;
+    if (dotted === 'process' && ['clutter', 'detection', 'tracker', 'performance'].includes(childKey)) return;
     if (dotted === 'capture.device' && childKey === 'type') return;
     if (dotted === 'capture.device' && childKey === 'array_geometry') return;
-    if (kraken && dotted === 'capture.device' && childKey === 'reference_channel') return;
+    if (kraken && dotted === 'capture.device' && ['channel_count', 'reference_channel',
+      'surveillance_channels'].includes(childKey)) return;
+    if (kraken && dotted === 'capture.device.heimdall' && ['gain', 'channel_gains'].includes(childKey)) return;
     if (kraken && dotted === 'process' && childKey === 'reference_synthesis') return;
     if (kraken && dotted === 'process.reference_synthesis' && !['mode', 'channels'].includes(childKey)) {
       advancedFields.appendChild(field(childValue, [...currentPath, childKey]));
@@ -1486,16 +1696,11 @@ function group(key, value, path, topLevel = false, options = {}) {
     content.appendChild(field('fixed', [...currentPath, 'gain_control']));
   if (settingsMode === 'advanced' && advancedFields.children.length)
     content.appendChild(advancedReference);
-  if (settingsMode === 'advanced' && dotted === 'process.performance' &&
-      activeConfig.process?.data?.buffer !== undefined)
-    content.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
-  if (kraken && dotted === 'capture.device' &&
-      activeConfig.process?.reference_synthesis)
-    content.appendChild(group('reference_synthesis', activeConfig.process.reference_synthesis, ['process']));
   const savedGeometry = activeConfig.capture?.device?.array_geometry;
   if (dotted === 'capture.device' && geometryEditor &&
       (kraken || savedGeometry !== undefined))
     content.appendChild(makeGeometryEditor());
+  if (dotted === 'process') appendCompositeRadarSettings(content);
   details.append(summary, content);
   return details;
 }
@@ -1515,21 +1720,13 @@ function renderReceiverFeatures() {
   const heading = document.createElement('h3');
   heading.textContent = 'Kraken array processing';
   const copy = document.createElement('p');
-  copy.textContent = 'Optional coherent combining, longer integration, bearing, and site-manifold tools for the selected Kraken array.';
+  copy.textContent = 'Advanced tracker capacity and array-only recovery diagnostics. Array combining, reference estimation, and bearing are configured inside Array setup above.';
   section.append(heading, copy);
   const featureOptions = {groupMeta: {
     'process.detection': ['Coherent integration', 'Combine consecutive radar intervals and search short motion paths.'],
     'process.tracker': ['Array recovery experiments', 'Bounded array-only recovery tests; normal tracking remains in Radar.']
   }};
   const process = activeConfig.process || {};
-  if (process.surveillance_fusion)
-    section.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process'], false,
-      {...featureOptions, skipPath: experimentalSettingPath}));
-  const detection = process.detection || {};
-  const residentDetection = Object.fromEntries(['integration_cpis', 'integration_motion_bins',
-    'track_before_detect'].filter(key => detection[key] !== undefined).map(key => [key, detection[key]]));
-  if (Object.keys(residentDetection).length)
-    section.appendChild(group('detection', residentDetection, ['process'], false, featureOptions));
   const tracker = process.tracker || {};
   const residentTracker = {};
   for (const key of ['gpu_capacity', 'beam_tolerance', 'track_guided_shadow'])
@@ -1539,9 +1736,6 @@ function renderReceiverFeatures() {
     residentTracker.initiate = {stationary_clutter: tracker.initiate.stationary_clutter};
   if (Object.keys(residentTracker).length)
     section.appendChild(group('tracker', residentTracker, ['process'], false, featureOptions));
-  if (process.bearing)
-    section.appendChild(group('bearing', process.bearing, ['process'], false,
-      {...featureOptions, skipPath: experimentalSettingPath}));
   return section;
 }
 
@@ -1623,11 +1817,36 @@ function renderRecordingSettings() {
 function makeGeometryEditor() {
   if (receiverInvalidatedGeometry)
     geometryEditor?.invalidate(activeConfig.capture?.device?.array_geometry);
-  return geometryEditor.render(document, activeConfig, rebuild => {
+  const editor = geometryEditor.render(document, activeConfig, rebuild => {
     if (rebuild) refreshGeometryEditor();
     scheduleValidation();
   }, () => Boolean(capabilities.editable && !saveInProgress && !restartInProgress),
   (_count, previousCount) => normalizeKrakenChannels(activeConfig, previousCount));
+  const content = editor.querySelector(':scope > .config-fields');
+  if (!content || activeConfig.capture?.device?.type !== 'Kraken') return editor;
+  const process = activeConfig.process || {};
+  if (settingsMode === 'advanced' && process.reference_synthesis) {
+    const tuning = Object.fromEntries(['analysis_samples', 'analysis_interval', 'power_iterations',
+      'covariance_smoothing', 'diagonal_loading'].filter(key =>
+      process.reference_synthesis[key] !== undefined).map(key => [key, process.reference_synthesis[key]]));
+    if (Object.keys(tuning).length)
+      content.appendChild(group('reference_synthesis', tuning, ['process'], false,
+        {groupMeta: {'process.reference_synthesis': ['Reference estimation tuning',
+          'Advanced update cadence and numerical stability for the array-derived reference.']}}));
+  }
+  if (process.surveillance_fusion)
+    content.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process'], false,
+      {groupMeta: {'process.surveillance_fusion': ['Array combining',
+        'Combine surveillance antennas with power or calibrated coherent beams.']},
+      skipPath: path => experimentalSettingPath(path) ||
+        (settingsMode === 'simple' && !['process.surveillance_fusion.mode'].includes(path))}));
+  if (process.bearing)
+    content.appendChild(group('bearing', process.bearing, ['process'], false,
+      {groupMeta: {'process.bearing': ['Bearing',
+        'Estimate target direction from the configured and surveyed array.']},
+      skipPath: path => experimentalSettingPath(path) ||
+        (settingsMode === 'simple' && !['process.bearing.enable', 'process.bearing.method'].includes(path))}));
+  return editor;
 }
 
 function refreshGeometryEditor() {

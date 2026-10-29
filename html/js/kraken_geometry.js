@@ -163,6 +163,32 @@
       bearing: 4, shape: 'cross', dedicated: true});
     return presets.map(item => Object.freeze(item));
   }
+  function disableIncompatibleArrayFeatures(config, dedicated = false) {
+    const process = config.process || {};
+    if (process.surveillance_fusion &&
+        ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(process.surveillance_fusion.mode))
+      process.surveillance_fusion.mode = 'noncoherent';
+    if (process.bearing) process.bearing.enable = false;
+    if (process.detection) {
+      if (process.detection.track_before_detect) process.detection.track_before_detect.enable = false;
+      if (dedicated) {
+        process.detection.integration_cpis = 1;
+        process.detection.integration_motion_bins = 0;
+      }
+    }
+    if (dedicated && process.performance?.acceleration === 'gpu-resident')
+      process.performance.acceleration = 'auto';
+    if (dedicated && process.tracker) {
+      if (process.tracker.track_guided_shadow) {
+        process.tracker.track_guided_shadow.enable = false;
+        process.tracker.track_guided_shadow.promote = false;
+      }
+      if (process.tracker.initiate?.stationary_clutter)
+        process.tracker.initiate.stationary_clutter.enable = false;
+      if (process.tracker.initiate?.acceleration_model === 'adaptive_gate')
+        process.tracker.initiate.acceleration_model = 'hypothesis_bank';
+    }
+  }
   function presetRecord(config, presetId) {
     const preset = layoutPresets().find(item => item.id === presetId);
     if (!preset) return null;
@@ -218,13 +244,175 @@
       device.surveillance_channels = channels;
       config.process.reference_synthesis = {...existingSynthesis,
         mode: 'dedicated', channels: [reference]};
+      disableIncompatibleArrayFeatures(config, true);
     } else {
       device.reference_channel = channels[0];
       device.surveillance_channels = channels;
       config.process.reference_synthesis = {...existingSynthesis,
         mode: 'array_eigenbeam', channels};
+      if (generated.preset.shape !== 'regular_polygon')
+        disableIncompatibleArrayFeatures(config, false);
     }
     return true;
+  }
+  function channelRole(config, channel) {
+    const device = config?.capture?.device || {};
+    const synthesis = config?.process?.reference_synthesis || {};
+    if (synthesis.mode === 'dedicated' && device.reference_channel === channel)
+      return 'dedicated_reference';
+    const surveillance = (device.surveillance_channels || []).includes(channel);
+    const bearing = (device.array_geometry?.bearing_channels || []).includes(channel);
+    if (surveillance && bearing) return 'array';
+    if (surveillance) return 'surveillance';
+    return 'disabled';
+  }
+  function applyChannelRole(config, channel, role) {
+    const device = config.capture.device;
+    const geometry = device.array_geometry;
+    if (!object(config.process)) config.process = {};
+    if (!object(config.process.reference_synthesis)) config.process.reference_synthesis = {};
+    const synthesis = config.process.reference_synthesis;
+    const count = device.channel_count;
+    const valid = value => Number.isInteger(value) && value >= 0 && value < count;
+    const add = (values, value) => [...new Set([...(values || []).filter(valid), value])].sort((a, b) => a - b);
+    const remove = (values, value) => (values || []).filter(item => item !== value && valid(item));
+    if (role === 'dedicated_reference') {
+      const previous = device.reference_channel;
+      device.reference_channel = channel;
+      device.surveillance_channels = remove(device.surveillance_channels, channel);
+      geometry.bearing_channels = remove(geometry.bearing_channels, channel);
+      synthesis.mode = 'dedicated'; synthesis.channels = [channel];
+      disableIncompatibleArrayFeatures(config, true);
+      if (valid(previous) && previous !== channel && channelRole(config, previous) === 'disabled')
+        device.surveillance_channels = add(device.surveillance_channels, previous);
+    } else {
+      if (synthesis.mode === 'dedicated' && device.reference_channel === channel) {
+        synthesis.mode = 'array_eigenbeam';
+        synthesis.channels = [...new Set([...(geometry.bearing_channels || []), channel])].filter(valid).sort((a, b) => a - b);
+      }
+      if (role === 'array') {
+        device.surveillance_channels = add(device.surveillance_channels, channel);
+        geometry.bearing_channels = add(geometry.bearing_channels, channel);
+        if (synthesis.mode === 'array_eigenbeam') synthesis.channels = add(synthesis.channels, channel);
+      } else if (role === 'surveillance') {
+        device.surveillance_channels = add(device.surveillance_channels, channel);
+        geometry.bearing_channels = remove(geometry.bearing_channels, channel);
+        if (synthesis.mode === 'array_eigenbeam') synthesis.channels = remove(synthesis.channels, channel);
+      } else if (role === 'disabled') {
+        device.surveillance_channels = remove(device.surveillance_channels, channel);
+        geometry.bearing_channels = remove(geometry.bearing_channels, channel);
+        if (synthesis.mode === 'array_eigenbeam') synthesis.channels = remove(synthesis.channels, channel);
+      }
+    }
+    invalidate(geometry);
+    return config;
+  }
+  function applyReferenceMode(config, mode) {
+    const device = config.capture.device;
+    const geometry = device.array_geometry;
+    const synthesis = config.process.reference_synthesis;
+    if (mode === 'array_eigenbeam') {
+      const oldReference = device.reference_channel;
+      synthesis.mode = 'array_eigenbeam';
+      device.surveillance_channels = [...new Set([...(device.surveillance_channels || []), oldReference])].sort((a, b) => a - b);
+      geometry.bearing_channels = [...new Set([...(geometry.bearing_channels || []), oldReference])].sort((a, b) => a - b);
+      const channels = [...new Set((geometry.bearing_channels || []).filter(channel =>
+        device.surveillance_channels.includes(channel)))].sort((a, b) => a - b);
+      synthesis.channels = channels.length >= 2 ? channels : Array.from({length: device.channel_count}, (_, index) => index);
+    } else {
+      let reference = device.reference_channel;
+      if (!Number.isInteger(reference) || reference < 0 || reference >= device.channel_count)
+        reference = device.channel_count - 1;
+      device.reference_channel = reference;
+      synthesis.mode = 'dedicated'; synthesis.channels = [reference];
+      device.surveillance_channels = (device.surveillance_channels || []).filter(channel => channel !== reference);
+      geometry.bearing_channels = (geometry.bearing_channels || []).filter(channel => channel !== reference);
+      disableIncompatibleArrayFeatures(config, true);
+    }
+    invalidate(geometry); return config;
+  }
+
+  function channelRoleEditor(document, config, changed, canEdit) {
+    const device = config.capture.device, geometry = device.array_geometry;
+    const shell = document.createElement('section'); shell.className = 'geometry-channel-editor';
+    const heading = document.createElement('div'); heading.className = 'geometry-channel-heading';
+    heading.innerHTML = '<h3>Antennas and channel roles</h3><p>Click an antenna to configure its role, mapping, measured position, and gain.</p>';
+    const referenceLabel = document.createElement('label'); referenceLabel.className = 'geometry-reference-mode';
+    const referenceTitle = document.createElement('span'); referenceTitle.textContent = 'Reference estimation';
+    const referenceSelect = document.createElement('select');
+    for (const [value, label] of [['array_eigenbeam', 'Automatic from array'], ['dedicated', 'Dedicated reference antenna']]) {
+      const option = document.createElement('option'); option.value = value; option.textContent = label; referenceSelect.appendChild(option);
+    }
+    referenceSelect.value = config.process.reference_synthesis.mode;
+    referenceSelect.disabled = !canEdit();
+    referenceSelect.addEventListener('change', () => {
+      applyReferenceMode(config, referenceSelect.value); changed(true);
+    });
+    referenceLabel.append(referenceTitle, referenceSelect); heading.appendChild(referenceLabel);
+    const workspace = document.createElement('div'); workspace.className = 'geometry-channel-workspace';
+    const map = document.createElement('div'); map.className = 'geometry-channel-map';
+    const panel = document.createElement('div'); panel.className = 'geometry-channel-panel';
+    let selected = geometry.elements.find(element => Number.isInteger(element?.daq_channel))?.daq_channel ?? 0;
+    const positioned = geometry.elements.filter(element => Number.isInteger(element?.daq_channel));
+    const extent = Math.max(.001, ...positioned.map(element => Math.hypot(Number(element.position?.[0]) || 0,
+      Number(element.position?.[1]) || 0)));
+    const renderPanel = () => {
+      panel.replaceChildren();
+      const element = geometry.elements.find(item => item?.daq_channel === selected);
+      if (!element) { panel.textContent = 'Select a mapped antenna.'; return; }
+      const title = document.createElement('h4'); title.textContent = `Channel ${selected} · ${element.id}`;
+      const makeLabel = (text, control, help = '') => {
+        const label = document.createElement('label'); const span = document.createElement('span'); span.textContent = text;
+        label.append(span, control); if (help) { const small = document.createElement('small'); small.textContent = help; label.appendChild(small); }
+        return label;
+      };
+      const role = document.createElement('select');
+      for (const [value, label] of [['array', 'Array antenna + surveillance'], ['surveillance', 'Surveillance only'],
+        ['dedicated_reference', 'Dedicated reference'], ['disabled', 'Disabled']]) {
+        const option = document.createElement('option'); option.value = value; option.textContent = label; role.appendChild(option);
+      }
+      role.value = channelRole(config, selected); role.disabled = !canEdit();
+      role.addEventListener('change', () => { applyChannelRole(config, selected, role.value); changed(true); });
+      const labelInput = document.createElement('input'); labelInput.value = element.id || ''; labelInput.disabled = !canEdit();
+      labelInput.addEventListener('input', () => { element.id = labelInput.value; invalidate(geometry); changed(false); });
+      const coordinates = document.createElement('div'); coordinates.className = 'geometry-coordinate-grid';
+      ['x (m)', 'y (m)', 'z (m)'].forEach((name, axis) => {
+        const input = document.createElement('input'); input.type = 'number'; input.step = 'any';
+        input.value = element.position?.[axis] ?? ''; input.disabled = !canEdit();
+        input.addEventListener('input', () => {
+          if (!Array.isArray(element.position)) element.position = [null, null, null];
+          element.position[axis] = input.value === '' ? null : Number(input.value);
+          invalidate(geometry); changed(false);
+        }); coordinates.appendChild(makeLabel(name, input));
+      });
+      panel.append(title, makeLabel('Role', role, 'Array antennas participate in bearing; surveillance-only channels do not.'),
+        makeLabel('Antenna label', labelInput), coordinates);
+      const gains = config.capture.device.heimdall?.channel_gains;
+      const automatic = config.capture.device.heimdall?.gain_control !== 'fixed';
+      const gain = document.createElement('input'); gain.type = 'number'; gain.min = '0'; gain.max = '50'; gain.step = '.1';
+      gain.value = Array.isArray(gains) && Number.isFinite(gains[selected]) ? gains[selected] : '';
+      gain.disabled = automatic || !canEdit();
+      gain.addEventListener('input', () => {
+        const vector = Array.isArray(config.capture.device.heimdall.channel_gains) ?
+          [...config.capture.device.heimdall.channel_gains] : Array.from({length: device.channel_count}, () => 0);
+        vector[selected] = Number(gain.value); config.capture.device.heimdall.channel_gains = vector; changed(false);
+      });
+      panel.appendChild(makeLabel(automatic ? 'Gain selected automatically' : 'Manual gain (dB)', gain,
+        automatic ? 'Change Gain to Manual to edit this channel.' : 'Applied to this tuner after save and restart.'));
+    };
+    positioned.forEach(element => {
+      const channel = element.daq_channel;
+      const button = document.createElement('button'); button.type = 'button';
+      button.className = `geometry-channel-node role-${channelRole(config, channel)}`;
+      const x = Number(element.position?.[0]) || 0, y = Number(element.position?.[1]) || 0;
+      button.style.left = `${50 + x / extent * 35}%`; button.style.top = `${50 - y / extent * 35}%`;
+      button.innerHTML = `<strong>CH${channel}</strong><small>${channelRole(config, channel).replaceAll('_', ' ')}</small>`;
+      button.addEventListener('click', () => {
+        selected = channel; map.querySelectorAll('button').forEach(item => item.classList.toggle('selected', item === button)); renderPanel();
+      });
+      if (channel === selected) button.classList.add('selected'); map.appendChild(button);
+    });
+    renderPanel(); workspace.append(map, panel); shell.append(heading, workspace); return shell;
   }
   function presetGallery(document, config, choose, editable) {
     const shell = document.createElement('section'); shell.className = 'geometry-presets';
@@ -434,6 +622,7 @@
       }
     }, canEdit()));
     content.insertBefore(presetHost, assessment);
+    content.insertBefore(channelRoleEditor(document, config, changed, canEdit), assessment);
     const manualDetails = document.createElement('details');
     manualDetails.className = 'geometry-manual';
     const manualSummary = document.createElement('summary');
@@ -541,5 +730,6 @@
       `Layout needs review: ${errors.slice(0, 3).map(issue => issue.message).join(' ')}${errors.length > 3 ? ' Review additional measurements or mappings.' : ''}`;
   }
   return {recordErrors, emptyRecord, invalidate, context, reconcile, layoutComparison,
-    layoutPresets, presetRecord, applyPreset, render, showAssessment};
+    layoutPresets, presetRecord, applyPreset, channelRole, applyChannelRole,
+    applyReferenceMode, render, showAssessment};
 });
