@@ -146,8 +146,9 @@ const server = http.createServer((request, response) => {
       getComputedStyle(document.querySelector('.location-map-panel .mapboxgl-map')).touchAction);
     assert.equal(mapTouchAction, 'none', 'map gestures must not zoom or scroll the surrounding web page');
     await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map.fire('movestart'));
-    assert.equal(await page.locator('.location-aircraft-trails').evaluate(node =>
-      getComputedStyle(node).visibility), 'hidden', 'projected SVG paths hide while the map transforms');
+    assert.notEqual(await page.locator('.location-aircraft-trails').evaluate(node =>
+      getComputedStyle(node).visibility), 'hidden',
+    'projected paths must remain visible while the operator rotates or zooms the map');
     await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map.fire('moveend'));
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.location-aircraft-trails')).visibility !== 'hidden');
     const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();

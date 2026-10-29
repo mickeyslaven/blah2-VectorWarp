@@ -667,15 +667,7 @@
         };
         map.on('move', layer._schedulePositionUpdate);
         map.on('resize', layer._schedulePositionUpdate);
-        const beginMapTransform = () => layer.classList.add('map-transforming');
-        const endMapTransform = () => {
-          layer._schedulePositionUpdate();
-          schedule(() => schedule(() => {
-            if (!map.isMoving?.()) layer.classList.remove('map-transforming');
-          }));
-        };
-        ['movestart', 'zoomstart', 'rotatestart', 'pitchstart'].forEach(name =>
-          map.on(name, beginMapTransform));
+        const endMapTransform = () => layer._schedulePositionUpdate();
         ['moveend', 'zoomend', 'rotateend', 'pitchend'].forEach(name =>
           map.on(name, endMapTransform));
       }

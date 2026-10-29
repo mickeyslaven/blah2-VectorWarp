@@ -273,7 +273,6 @@ a { color:inherit; } a:hover { color:var(--accent); }
   .app-nav a { padding:8px 4px; font-size:11px; }
 }
 .location-aircraft-trails { position:absolute; inset:0; width:100%; height:100%; overflow:hidden; pointer-events:none; contain:strict; }
-.location-aircraft-layer.map-transforming .location-aircraft-trails { visibility:hidden; }
 .location-aircraft-trails path { fill:none; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
 .location-radar-track-path { stroke:#ff8754; stroke-width:3; stroke-dasharray:7 6; opacity:.86; }
 .location-radar-track-slice { stroke:#ff8754; stroke-width:2; opacity:.48; }
