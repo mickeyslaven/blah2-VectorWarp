@@ -85,5 +85,15 @@ assert.match(calibrationRenderer, /api\/bearing\/diagnostic/,
   'Array calibration owns known-angle and wiring diagnostics');
 assert.match(insights, /class="overview-health"/,
   'Overview includes the beginner health checklist');
+assert.match(insights, /addSource\(radarCoverageSourceId, \{type: 'geojson', data\}\)/,
+  'Radar coverage uses a geographic Mapbox source so zoom cannot tear a screen-space path');
+assert.match(insights, /source\.setData\(data\)/,
+  'Radar coverage updates its existing map layer without rebuilding the map');
+assert.match(insights, /layer\._coverageUsesMapLayer \? '' : coveragePath/,
+  'The SVG coverage renderer is retained only as a compatibility fallback');
+assert.match(insights, /const associationTracks = tracks;/,
+  'Hiding map track cages must not disable radar-to-aircraft association');
+assert.match(insights, /Radar track layer/,
+  'The map summary distinguishes a disabled track layer from missing tracks');
 
 console.log(`UI audit contract covers all ${pageFiles.length} website routes.`);

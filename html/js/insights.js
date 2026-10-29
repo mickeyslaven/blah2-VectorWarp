@@ -646,6 +646,67 @@
     return locationMapEngaged || locationMapDragging || Date.now() < locationMapHoldUntil;
   }
 
+  const radarCoverageSourceId = 'vectorwarp-radar-coverage';
+  const radarCoverageFillLayerId = 'vectorwarp-radar-coverage-fill';
+  const radarCoverageLineLayerId = 'vectorwarp-radar-coverage-line';
+
+  function radarCoverageGeoJson(coverage, receiver) {
+    const rows = Array.isArray(coverage?.points) ? coverage.points.map(point => ({
+      bin: Number(point.bin),
+      coordinate: [Number(point.longitude), Number(point.latitude)]
+    })).filter(row => Number.isInteger(row.bin) && row.coordinate.every(Number.isFinite))
+      .sort((left, right) => left.bin - right.bin) : [];
+    const runs = [];
+    for (const row of rows) {
+      const run = runs.at(-1);
+      if (run && row.bin === run.at(-1).bin + 1) run.push(row);
+      else runs.push([row]);
+    }
+    const binCount = Math.max(1, Number(coverage?.bins) || 72);
+    if (runs.length > 1 && runs[0][0]?.bin === 0 &&
+        runs.at(-1).at(-1)?.bin === binCount - 1) {
+      const wrapped = runs.pop().concat(runs.shift());
+      runs.unshift(wrapped);
+    }
+    const origin = [Number(receiver?.longitude), Number(receiver?.latitude)];
+    if (!origin.every(Number.isFinite)) return {type: 'FeatureCollection', features: []};
+    return {type: 'FeatureCollection', features: runs.map((run, index) => {
+      const points = run.map(row => row.coordinate);
+      return points.length > 1 ? {
+        type: 'Feature', id: `sector-${index}`, properties: {},
+        geometry: {type: 'Polygon', coordinates: [[origin, ...points, origin]]}
+      } : {
+        type: 'Feature', id: `radial-${index}`, properties: {},
+        geometry: {type: 'LineString', coordinates: [origin, ...points]}
+      };
+    })};
+  }
+
+  function syncRadarCoverageLayer(map, coverage, receiver) {
+    if (!map?.addSource || !map?.getSource || !map?.addLayer || !map?.getLayer) return false;
+    if (map.isStyleLoaded && !map.isStyleLoaded()) return false;
+    const data = radarCoverageGeoJson(coverage, receiver);
+    try {
+      const source = map.getSource(radarCoverageSourceId);
+      if (source?.setData) source.setData(data);
+      else map.addSource(radarCoverageSourceId, {type: 'geojson', data});
+      if (!map.getLayer(radarCoverageFillLayerId)) map.addLayer({
+        id: radarCoverageFillLayerId, type: 'fill', source: radarCoverageSourceId,
+        filter: ['==', '$type', 'Polygon'],
+        paint: {'fill-color': '#20dddc', 'fill-opacity': .09}
+      });
+      if (!map.getLayer(radarCoverageLineLayerId)) map.addLayer({
+        id: radarCoverageLineLayerId, type: 'line', source: radarCoverageSourceId,
+        paint: {'line-color': '#20dddc', 'line-opacity': .92, 'line-width': 3}
+      });
+      return true;
+    } catch (_) {
+      // Older Plotly/Mapbox builds may not expose style mutation. Retain the
+      // screen-space SVG path below as a compatibility fallback.
+      return false;
+    }
+  }
+
   function renderAircraftOverlays(aircraft, sites = [], radarTracks = [], coverage = null) {
     const schedule = window.requestAnimationFrame || (callback => callback());
     schedule(() => {
@@ -711,6 +772,10 @@
       layer._radarTrackPaths ||= new Map();
       layer._aircraftSnapshot = aircraft;
       layer._radarCoverage = coverage;
+      // Keep the 24-hour boundary in geographic coordinates. Mapbox can then
+      // transform one stable GPU layer during pan, pitch and pinch zoom rather
+      // than making Mobile Safari repeatedly composite a changing SVG path.
+      layer._coverageUsesMapLayer = syncRadarCoverageLayer(map, coverage, sites[0]);
       const seenRadarTracks = new Set();
       for (const track of radarTracks) {
         const id = String(track.id);
@@ -865,7 +930,7 @@
             run.map(row => `L${row.point.x.toFixed(1)} ${row.point.y.toFixed(1)}`).join('');
           return run.length > 1 ? `${radial}Z` : radial;
         }).join('') : '';
-        layer._coveragePath?.setAttribute('d', coveragePath);
+        layer._coveragePath?.setAttribute('d', layer._coverageUsesMapLayer ? '' : coveragePath);
         for (const {item, path: radarPath, slices, ribs, associated} of layer._radarTrackPaths.values()) {
           const ground = item.latitude.map((latitude, index) => ({latitude,
             point: map.project([item.longitude[index], latitude])}));
@@ -1054,7 +1119,10 @@
         const delayGate = finite(config?.process?.bearing?.manifold_recorder?.max_delay_error_km) ?? .25;
         const dopplerGate = finite(config?.process?.bearing?.manifold_recorder?.max_doppler_error_hz) ?? 5;
         const candidates = [];
-        const associationTracks = showRadarTracksOnMap ? tracks : [];
+        // Association is radar evidence, not a presentation preference. Keep
+        // matching aircraft to confirmed tracks even when the operator hides
+        // the geographic uncertainty cages.
+        const associationTracks = tracks;
         aircraft.forEach((item, aircraftIndex) => associationTracks.forEach(track => {
           const delayError = Math.abs((finite(item.delay) ?? Infinity) - track.delay);
           const dopplerError = Math.abs((finite(item.doppler) ?? Infinity) - track.doppler);
@@ -1171,15 +1239,19 @@
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
-    renderHtml(document.getElementById('view-summary'), `${card(tracks.length, 'Radar tracks')}${card(aircraft.length, 'Aircraft')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
+    renderHtml(document.getElementById('view-summary'), `${showRadarTracksOnMap ? card(visibleTracks.length, 'Radar tracks shown') : card('Off', 'Radar track layer')}${card(aircraft.length, 'Aircraft')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
     renderDetail(`<details class="info-card location-map-notes"><summary>Map details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `Orange 3D uncertainty cages show all ${visibleTracks.length} visible confirmed active delay-only tracks. A highlighted altitude slice means ADS-B/MLAT identified the tracked aircraft; the radar did not independently measure altitude.` : `Confirmed radar tracks are currently kept on the main radar display only; enable “Show radar tracks on this map” above to add their 3D uncertainty cages here.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position. Array wiring and known-angle RF diagnostics are under Array calibration.</div></details>`);
     renderSelectedAircraftCard(aircraft);
     renderAircraftOverlays(aircraft, [
       {...receiver, kind: 'receiver', name: receiver.name || 'Receiver'},
       {...transmitter, kind: 'transmitter', name: transmitter.name || 'Illuminator'}
     ], radarTrackOverlays, showRadarCoverageOnMap ? coverage : null);
+    const trackStateLabel = tracks.length ?
+      `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}${showRadarTracksOnMap ? '' : ' · layer off'}` :
+      'No current radar tracks';
     if (locationMapIsBeingNavigated()) {
-      setState(aircraftError || (tracks.length ? `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}` : 'No current radar tracks'), aircraftError ? 'warning' : tracks.length ? 'good' : 'warning');
+      setState(aircraftError || trackStateLabel,
+        aircraftError ? 'warning' : tracks.length && showRadarTracksOnMap ? 'good' : 'warning');
       return;
     }
     // ADS-B uses the keyed icon overlay below. Do not also send it through
@@ -1196,7 +1268,8 @@
       }, plotConfig);
       locationPlotSignature = plotSignature;
     }
-    setState(aircraftError || (tracks.length ? `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}` : 'No current radar tracks'), aircraftError ? 'warning' : tracks.length ? 'good' : 'warning');
+    setState(aircraftError || trackStateLabel,
+      aircraftError ? 'warning' : tracks.length && showRadarTracksOnMap ? 'good' : 'warning');
   }
 
   async function renderEvaluation() {
