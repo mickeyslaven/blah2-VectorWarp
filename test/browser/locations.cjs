@@ -249,12 +249,24 @@ const server = http.createServer((request, response) => {
     stage = 'mobile aircraft label collision avoidance';
     fixtures['/api/adsb'] = {aircraft: Array.from({length: 54}, (_, index) => ({
       hex: (0xa10000 + index).toString(16), flight: `T${String(index).padStart(3, '0')}`,
-      lat: 39.93 + (index % 9) * .016, lon: -80.17 + Math.floor(index / 9) * .025,
+      lat: 38.7 + (index % 9) * .32, lon: -82.2 + Math.floor(index / 9) * .8,
       alt_baro: 8000 + index * 500, gs: 190, track: 70, seen_pos: 0
     }))};
     await page.setViewportSize({width: 390, height: 844});
+    await page.evaluate(async () => {
+      const graph = document.getElementById('data');
+      await Plotly.Plots.resize(graph);
+      const map = graph._fullLayout.mapbox._subplot.map;
+      map.resize();
+      map.jumpTo({center: [-80.08, 40.02], zoom: 5.8, bearing: 0, pitch: 0});
+    });
     await page.waitForFunction(() => document.querySelectorAll('.location-aircraft-marker').length >= 50,
       null, {timeout: 7000});
+    await page.waitForFunction(() => {
+      const visible = [...document.querySelectorAll('.location-aircraft-label')]
+        .filter(label => getComputedStyle(label).display !== 'none').length;
+      return visible > 0 && visible <= 22;
+    }, null, {timeout: 7000});
     const labelLayout = await page.evaluate(() => {
       const labels = [...document.querySelectorAll('.location-aircraft-label')]
         .filter(label => getComputedStyle(label).display !== 'none')
@@ -271,6 +283,12 @@ const server = http.createServer((request, response) => {
       'the mobile regional map keeps a bounded useful set of aircraft labels');
     assert.equal(labelLayout.collisions, 0,
       'visible mobile aircraft labels must not cover one another');
+    const siteLabels = await page.locator('.location-site-name').evaluateAll(labels =>
+      labels.map(label => label.getBoundingClientRect()));
+    assert.ok(siteLabels.length === 2 && (siteLabels[0].right <= siteLabels[1].left ||
+      siteLabels[0].left >= siteLabels[1].right || siteLabels[0].bottom <= siteLabels[1].top ||
+      siteLabels[0].top >= siteLabels[1].bottom),
+    'receiver and transmitter name plates must use non-overlapping opposite anchors');
     console.log('Real Chromium locations map: initialization, escaped site labels, updates and resize passed (synthetic data).');
   } catch (error) {
     let state;

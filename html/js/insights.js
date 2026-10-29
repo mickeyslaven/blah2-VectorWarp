@@ -819,6 +819,8 @@
         }
         record.marker.querySelector('.location-site-icon').replaceChildren();
         record.marker.querySelector('.location-site-name').textContent = site.name;
+        record.marker.classList.toggle('receiver-site', site.kind !== 'transmitter');
+        record.marker.classList.toggle('transmitter-site', site.kind === 'transmitter');
         record.item = {lat: site.latitude, lon: site.longitude, kind: site.kind};
       }
       for (const [id, record] of layer._siteMarkers)
@@ -922,8 +924,9 @@
         const occupied = [];
         for (const {item} of layer._siteMarkers.values()) {
           const point = map.project([Number(item.lon), Number(item.lat)]);
-          occupied.push({left: point.x - 22, right: point.x + 128,
-            top: point.y - 48, bottom: point.y + 8});
+          occupied.push(item.kind === 'transmitter' ?
+            {left: point.x + 18, right: point.x + 164, top: point.y - 54, bottom: point.y - 18} :
+            {left: point.x - 164, right: point.x - 18, top: point.y + 8, bottom: point.y + 38});
         }
         const mobile = mapWidth <= 760;
         const labelLimit = mapZoom < 6 ? (mobile ? 12 : 28) :
