@@ -21,9 +21,9 @@ for (const file of pageFiles) {
   const html = fs.readFileSync(file, 'utf8');
   const route = path.relative(root, file);
   assert.match(html, /<h1(?:\s|>)/i, `${route} must expose a page heading`);
-  if (route === 'html/display/map/index.html') {
-    assert.match(html, /location\.replace\(['"]\/['"]\)/,
-      `${route} must redirect to canonical Live radar`);
+  if (route === 'html/display/map/index.html' || route === 'html/display/evaluation/index.html') {
+    assert.match(html, /location\.replace\(/,
+      `${route} must redirect to its canonical replacement`);
     continue;
   }
   assert.match(html, /common\.js/, `${route} must use shared navigation/status behavior`);
@@ -62,5 +62,24 @@ const assistant = read('html/js/setup_assistant.js');
 assert.match(assistant, /aria-current="step"/);
 assert.match(assistant, /aria-pressed="true"/);
 assert.match(assistant, /aria-labelledby.*setup-wizard-title/);
+
+const controller = read('html/controller/index.html');
+const statisticsPage = read('html/display/statistics/index.html');
+const insights = read('html/js/insights.js');
+assert.doesNotMatch(controller, /href="\/display\/evaluation"/,
+  'ADS-B evaluation must not remain a duplicate navigation destination');
+assert.match(statisticsPage, /data-validation-tab="results"/);
+assert.match(statisticsPage, /data-validation-tab="adsb"/,
+  'Radar validation keeps scorecards and live ADS-B comparison in one workspace');
+const locationsRenderer = insights.slice(insights.indexOf('async function renderLocations()'),
+  insights.indexOf('async function renderEvaluation()'));
+const calibrationRenderer = insights.slice(insights.indexOf('async function renderCalibration()'),
+  insights.indexOf('const renderers ='));
+assert.doesNotMatch(locationsRenderer, /api\/bearing\/diagnostic/,
+  'The primary Map must not fetch engineering-only bearing diagnostics');
+assert.match(calibrationRenderer, /api\/bearing\/diagnostic/,
+  'Array calibration owns known-angle and wiring diagnostics');
+assert.match(insights, /class="overview-health"/,
+  'Overview includes the beginner health checklist');
 
 console.log(`UI audit contract covers all ${pageFiles.length} website routes.`);

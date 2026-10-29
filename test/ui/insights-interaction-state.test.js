@@ -45,6 +45,7 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
   details.open = true;
   table.scrollTop = 37;
   table.focus();
+  dom.window.document.documentElement.scrollTop = 211;
 
   updatedAt = 2000;
   now += 2000;
@@ -59,5 +60,7 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
   assert.equal(table.scrollTop, 37, 'live data refresh preserves local scroll position');
   assert.strictEqual(dom.window.document.activeElement, table,
     'live data refresh preserves focus');
-  console.log('Insight refresh preserves menu, node, focus and scroll state.');
+  assert.equal(dom.window.document.documentElement.scrollTop, 211,
+    'live data refresh does not jump the page scroll position');
+  console.log('Insight refresh preserves menu, node, focus, local scroll and page scroll state.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

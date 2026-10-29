@@ -310,6 +310,7 @@
     const [config, detection, tracker, timing] = await Promise.all([
       getConfig(), apiJson('/api/detection'), apiJson('/api/tracker'), apiJson('/api/timing')
     ]);
+    const adsb = await adsbHealth(config);
     const detections = detectionRows(detection);
     const tracks = array(tracker?.data);
     const strongest = [...detections].sort((left, right) => (right.snr ?? -Infinity) - (left.snr ?? -Infinity))[0];
@@ -317,6 +318,7 @@
     const load = hop && finite(timing?.cpi) !== null ? timing.cpi / hop * 100 : null;
     const receiver = config?.location?.rx?.name || 'Receiver site';
     const transmitter = config?.location?.tx?.name || 'Illuminator site';
+    const health = healthSnapshot(config, timing, tracker, adsb);
     renderHtml(root, `<div class="insight-stats insight-stats-four">
       ${card(detections.length, 'Detections in latest CPI')}
       ${card(tracks.length, 'Persistent tracks')}
@@ -325,9 +327,10 @@
     </div><div class="overview-grid">
       <section class="info-card"><h2>Radar</h2><dl><div><dt>Receiver</dt><dd>${escapeHtml(receiver)}</dd></div><div><dt>Illuminator</dt><dd>${escapeHtml(transmitter)}</dd></div><div><dt>Radio</dt><dd>${escapeHtml(config?.capture?.device?.type || 'Receiver')} · ${escapeHtml(frequencyLabel(config))}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(channelCount(config) ?? 'Unknown')} channels</dd></div></dl></section>
       <section class="info-card"><h2>Current activity</h2>${strongest ? `<dl><div><dt>Bistatic range</dt><dd>${number(strongest.delay, 2)} km</dd></div><div><dt>Doppler</dt><dd>${number(strongest.doppler, 1)} Hz</dd></div><div><dt>Signal-to-noise ratio</dt><dd>${number(strongest.snr, 1)} dB</dd></div><div><dt>Frame</dt><dd>${escapeHtml(timeLabel(detection?.timestamp))}</dd></div></dl>` : empty('No detections in the latest CPI', 'The radar is running; no return currently passes the configured detector.')}</section>
-      <section class="info-card overview-links"><h2>Open a view</h2><a href="/display/locations">Map <b>→</b></a><a href="/display/detections">Current detections <b>→</b></a><a href="/display/tracks">Tracks <b>→</b></a><a href="/display/health">System health <b>→</b></a><a href="/display/site">Site geometry <b>→</b></a></section>
+      <section class="info-card overview-links"><h2>Open a view</h2><a href="/display/locations">Map <b>→</b></a><a href="/display/detections">Current detections <b>→</b></a><a href="/display/tracks">Tracks <b>→</b></a><a href="/display/health">Detailed diagnostics <b>→</b></a><a href="/display/site">Site geometry <b>→</b></a></section>
+      <section class="overview-health"><header><div><h2>System health</h2><p>Everything a new operator needs to confirm before using the radar.</p></div><span class="state-pill ${health.overallTone === 'good' ? 'active' : health.overallTone === 'warning' ? 'coasting' : ''}">${escapeHtml(health.overall)}</span></header><div class="health-list">${health.rows}</div><a class="button-link" href="/display/health">Open stage timings and engineering diagnostics</a></section>
     </div>`);
-    setState(`Updated ${timeLabel(timing?.timestamp)}`, 'good');
+    setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
 
   async function renderDetections() {
@@ -343,9 +346,7 @@
     return `<article class="health-row"><span class="health-indicator ${tone}"></span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></div><b>${escapeHtml(value)}</b></article>`;
   }
 
-  async function renderHealth() {
-    const [config, timing, tracker] = await Promise.all([getConfig(), apiJson('/api/timing'), apiJson('/api/tracker')]);
-    const adsb = await adsbHealth(config);
+  function healthSnapshot(config, timing, tracker, adsb) {
     const configuredCpi = finite(config?.process?.data?.cpi);
     const hop = configuredCpi === null ? null : configuredCpi * 1000;
     const processMs = finite(timing?.cpi);
@@ -363,9 +364,21 @@
     if (adsb.enabled) tones.push(adsbTone);
     const overall = tones.includes('bad') ? 'Attention needed' : tones.includes('warning') ? 'Monitor' : 'Healthy';
     const overallTone = tones.includes('bad') ? 'bad' : tones.includes('warning') ? 'warning' : 'good';
+    const rows = healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, `Updates every ${number(hop, 0)} ms`, freshnessTone) +
+      healthRow('Processing load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? 'No timing data' : `${number(processMs, 1)} ms per ${number(hop, 1)} ms update`, loadTone) +
+      healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, 'Captured data waiting to be processed', backlogTone) +
+      healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} track candidates` : 'Optional processing is off', trackerTone) +
+      healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.disabledForReplay ? 'Not shown during replay.' : adsb.enabled ? 'For comparison only; not used by radar.' : 'Optional feed is off', adsbTone);
+    return {hop, processMs, load, backlog, overall, overallTone, rows};
+  }
+
+  async function renderHealth() {
+    const [config, timing, tracker] = await Promise.all([getConfig(), apiJson('/api/timing'), apiJson('/api/tracker')]);
+    const adsb = await adsbHealth(config);
+    const health = healthSnapshot(config, timing, tracker, adsb);
     const stages = Object.entries(timing || {}).filter(([key, value]) => typeof value === 'number' && finite(value) !== null && !['timestamp', 'nCpi', 'uptime_s', 'uptime_days', 'cpi_data_ms', 'cpi_hop_ms', 'cpi_overlap_fraction', 'capture_backlog_ms', 'cpi'].includes(key)).sort((left, right) => Number(right[1]) - Number(left[1]));
-    renderHtml(root, `<div class="insight-stats">${card(overall, 'Overall state', overallTone)}${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', loadTone)}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, `Updates every ${number(hop, 0)} ms`, freshnessTone)}${healthRow('Load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? 'No timing data' : `${number(processMs, 1)} ms per ${number(hop, 1)} ms update`, loadTone)}${healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, 'Captured data waiting to be processed', backlogTone)}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', 'Shows current detections', config?.process?.detection?.enable === false ? 'neutral' : 'good')}${healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} track candidates` : 'Optional processing is off', trackerTone)}${healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.disabledForReplay ? 'Not shown during replay.' : adsb.enabled ? 'For comparison only; not used by radar.' : 'Optional feed is off', adsbTone)}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
-    setState(`Updated ${timeLabel(timing?.timestamp)}`, overallTone);
+    renderHtml(root, `<div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 100 ? 'bad' : health.load > 80 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', 'Shows current detections', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
+    setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
 
   let activityHistory = [];
@@ -973,13 +986,9 @@
     const hiddenAssociatedTracks = trackerRows.filter(track =>
       String(track?.state || '').toUpperCase() === 'ASSOCIATED').length;
     let bearingLocations = null;
-    let bearingDiagnostic = null;
     if (config?.process?.bearing?.enable === true) {
-      const [locationsResult, diagnosticResult] = await Promise.allSettled([
-        apiJson('/api/locations'), apiJson('/api/bearing/diagnostic')]);
-      bearingLocations = locationsResult.status === 'fulfilled' ? locationsResult.value :
-        {enabled: true, available: false, data: []};
-      bearingDiagnostic = diagnosticResult.status === 'fulfilled' ? diagnosticResult.value : null;
+      try { bearingLocations = await apiJson('/api/locations'); }
+      catch (_) { bearingLocations = {enabled: true, available: false, data: []}; }
     }
 
     let aircraft = [];
@@ -1117,26 +1126,7 @@
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
     renderHtml(document.getElementById('view-summary'), `${card(tracks.length, 'Radar tracks')}${card(aircraft.length, 'Aircraft')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
-    const reference = bearingDiagnostic?.known_angle_reference;
-    const referenceDiagnostic = !reference ? '' : reference.available ?
-      `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
-        <div><dt>RF source</dt><dd>${escapeHtml(reference.source?.name || 'Configured transmitter')} · ${number(reference.source?.bearing_deg_true, 3)}° true</dd></div>
-        <div><dt>Configured fit</dt><dd>Heading ${number(reference.configured?.heading_deg_true, 1)}° · phase error ${number(reference.configured?.median_phase_error_deg, 1)}° median / ${number(reference.configured?.p95_phase_error_deg, 1)}° p95</dd></div>
-        <div><dt>Best mapping at configured heading</dt><dd>${escapeHtml(array(reference.best_mapping_at_configured_heading?.mapping).join(' → ') || 'Unavailable')} · phase error ${number(reference.best_mapping_at_configured_heading?.median_phase_error_deg, 1)}°</dd></div>
-        <div><dt>Fitted phase axis with configured mapping</dt><dd>${number(reference.heading_with_configured_mapping?.heading_deg_true, 0)}° true (${number(reference.heading_with_configured_mapping?.signed_correction_deg, 0)}° model offset) · phase error ${number(reference.heading_with_configured_mapping?.median_phase_error_deg, 1)}°</dd></div>
-        <div><dt>RF evidence</dt><dd>${integer(reference.quality?.updates)} updates · coherence ${number(reference.quality?.coherent_fraction_median, 3)} median · amplitude span ${number(reference.quality?.amplitude_span_db_median, 1)} dB median</dd></div>
-      </dl>${reference.quality?.reliable === false ? '<p class="view-note">This source is excluded from multi-reference calibration by the RF quality gate.</p>' : ''}<p class="view-note">${escapeHtml(reference.limitation)}</p></section>` :
-      `<section class="info-card"><h2>Known-angle reference</h2><p>${escapeHtml(reference.reason)}</p></section>`;
-    const diagnostic = !bearingDiagnostic ? '' : bearingDiagnostic.available ?
-      `<section class="info-card"><h2>Bearing wiring diagnostic · shadow only</h2><dl>
-        <div><dt>Evidence</dt><dd>${integer(bearingDiagnostic.samples)} samples · ${integer(bearingDiagnostic.aircraft)} aircraft · ${integer(bearingDiagnostic.sectors)}/8 sectors</dd></div>
-        <div><dt>Active mapping</dt><dd>${escapeHtml(array(bearingDiagnostic.active?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.active?.median_error_deg, 1)}°</dd></div>
-        <div><dt>Best replay</dt><dd>${escapeHtml(array(bearingDiagnostic.best?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.best?.median_error_deg, 1)}°</dd></div>
-        <div><dt>Heading-only correction</dt><dd>${number(bearingDiagnostic.global_heading_bias?.signed_correction_deg, 0)}° · median error ${number(bearingDiagnostic.global_heading_bias?.median_error_deg, 1)}°</dd></div>
-        <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
-      </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
-      `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `Orange 3D uncertainty cages show all ${visibleTracks.length} visible confirmed active delay-only tracks. A highlighted altitude slice means ADS-B/MLAT identified the tracked aircraft; the radar did not independently measure altitude.` : `Confirmed radar tracks are currently kept on the main radar display only; enable “Show radar tracks on this map” above to add their 3D uncertainty cages here.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
+    renderDetail(`<details class="info-card location-map-notes"><summary>Map details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `Orange 3D uncertainty cages show all ${visibleTracks.length} visible confirmed active delay-only tracks. A highlighted altitude slice means ADS-B/MLAT identified the tracked aircraft; the radar did not independently measure altitude.` : `Confirmed radar tracks are currently kept on the main radar display only; enable “Show radar tracks on this map” above to add their 3D uncertainty cages here.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position. Array wiring and known-angle RF diagnostics are under Array calibration.</div></details>`);
     renderSelectedAircraftCard(aircraft);
     renderAircraftOverlays(aircraft, [
       {...receiver, kind: 'receiver', name: receiver.name || 'Receiver'},
@@ -1325,9 +1315,36 @@
     statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
   }
 
+  function bearingEngineeringDiagnostics(bearingDiagnostic) {
+    if (!bearingDiagnostic) return `<section class="info-card"><h2>Array engineering diagnostics</h2><p class="view-note">Known-angle and wiring evidence is not available from this receiver.</p></section>`;
+    const reference = bearingDiagnostic.known_angle_reference;
+    const referenceMarkup = !reference ? '' : reference.available ?
+      `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
+        <div><dt>RF source</dt><dd>${escapeHtml(reference.source?.name || 'Configured transmitter')} · ${number(reference.source?.bearing_deg_true, 3)}° true</dd></div>
+        <div><dt>Configured fit</dt><dd>Heading ${number(reference.configured?.heading_deg_true, 1)}° · phase error ${number(reference.configured?.median_phase_error_deg, 1)}° median / ${number(reference.configured?.p95_phase_error_deg, 1)}° p95</dd></div>
+        <div><dt>Best mapping at configured heading</dt><dd>${escapeHtml(array(reference.best_mapping_at_configured_heading?.mapping).join(' → ') || 'Unavailable')} · phase error ${number(reference.best_mapping_at_configured_heading?.median_phase_error_deg, 1)}°</dd></div>
+        <div><dt>Fitted phase axis</dt><dd>${number(reference.heading_with_configured_mapping?.heading_deg_true, 0)}° true (${number(reference.heading_with_configured_mapping?.signed_correction_deg, 0)}° model offset) · phase error ${number(reference.heading_with_configured_mapping?.median_phase_error_deg, 1)}°</dd></div>
+        <div><dt>RF evidence</dt><dd>${integer(reference.quality?.updates)} updates · coherence ${number(reference.quality?.coherent_fraction_median, 3)} median · amplitude span ${number(reference.quality?.amplitude_span_db_median, 1)} dB median</dd></div>
+      </dl>${reference.quality?.reliable === false ? '<p class="view-note">This source is excluded from multi-reference calibration by the RF quality gate.</p>' : ''}<p class="view-note">${escapeHtml(reference.limitation)}</p></section>` :
+      `<section class="info-card"><h2>Known-angle reference</h2><p class="view-note">${escapeHtml(reference.reason)}</p></section>`;
+    const wiringMarkup = bearingDiagnostic.available ?
+      `<section class="info-card"><h2>Bearing wiring diagnostic · shadow only</h2><dl>
+        <div><dt>Evidence</dt><dd>${integer(bearingDiagnostic.samples)} samples · ${integer(bearingDiagnostic.aircraft)} aircraft · ${integer(bearingDiagnostic.sectors)}/8 sectors</dd></div>
+        <div><dt>Active mapping</dt><dd>${escapeHtml(array(bearingDiagnostic.active?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.active?.median_error_deg, 1)}°</dd></div>
+        <div><dt>Best replay</dt><dd>${escapeHtml(array(bearingDiagnostic.best?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.best?.median_error_deg, 1)}°</dd></div>
+        <div><dt>Heading-only correction</dt><dd>${number(bearingDiagnostic.global_heading_bias?.signed_correction_deg, 0)}° · median error ${number(bearingDiagnostic.global_heading_bias?.median_error_deg, 1)}°</dd></div>
+        <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
+      </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
+      `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p class="view-note">${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
+    return `<details class="statistics-details calibration-engineering"><summary>Array engineering diagnostics</summary><div class="statistics-grid">${wiringMarkup}${referenceMarkup}</div></details>`;
+  }
+
   async function renderCalibration() {
     setupPlotScaffold('insight-content-wide');
     const campaign = await apiJson('/api/array-calibration/status');
+    let bearingDiagnostic = null;
+    try { bearingDiagnostic = await apiJson('/api/bearing/diagnostic'); }
+    catch (_) { /* Optional on receivers without bearing support. */ }
     const bearingCampaign = campaign?.bearing || {};
     const progress = bearingCampaign.progress || {};
     const automation = bearingCampaign.automation || {};
@@ -1380,7 +1397,7 @@
         <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
       </dl><p class="view-note">${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
     </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>
-    <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>`);
+    <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>${bearingEngineeringDiagnostics(bearingDiagnostic)}`);
     const labels = sectors.map(item => `${integer(item.from_deg)}–${integer(item.to_deg)}°`);
     await Plotly.react('data', [
       {x: labels, y: sectors.map(item => item.passes), name: 'Independent passes', type: 'bar', marker: {color: colors[0]}},

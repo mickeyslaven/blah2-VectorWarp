@@ -32,6 +32,15 @@ change receiver tuning, radar DSP, scientific defaults, or deployment state.
 - Real Chromium acceptance now checks the primary pages at 320, 375, 768, and
   1440 pixel widths, in addition to the existing mobile radar and map gesture
   suites.
+- Overview now includes the beginner health checklist; the separate Health
+  route is explicitly the detailed processing/timing diagnostic.
+- Detection/tracking scorecards and live ADS-B comparison are tabs in one Radar
+  validation workspace. The former ADS-B route is a bookmark-safe redirect.
+- The primary Map no longer requests or renders wiring, known-angle, or model
+  diagnostics. Those engineering-only panels now live under Array calibration.
+- The required DOM suite now exercises repeated live refresh against an open
+  details menu, focused table, local table scroll, and page scroll. Map
+  interaction/viewport persistence remains covered in real Chromium.
 
 ## Cross-route fixes in this audit
 
@@ -69,16 +78,16 @@ change receiver tuning, radar DSP, scientific defaults, or deployment state.
 | `/display/detection/doppler` | Same shared plot contract verified. | Merge with Detections tabs. |
 | `/display/detection/delay-doppler` | Same shared plot contract verified. | Merge with Detections tabs. |
 | `/display/detections` | Valid empty detections are distinct from endpoint failure; snapshot refresh verified. | Prefer “latest radar update” in beginner copy; reserve “CPI” for Advanced/help. |
-| `/display/evaluation` | ADS-B comparison explicitly states that it does not drive radar; shared recovery verified. | Combine with historical Statistics under a Radar validation concept. |
-| `/display/health` | Current/stale/error states and last valid snapshot verified. | Overview duplicates several health metrics; combine beginner summary and keep stage timing expandable. |
-| `/display/locations` | Map interaction state survives refreshes; ADS-B/tracks/bearing empty and stale behavior covered; capture controls removed. | Move known-angle/wiring/model diagnostics to Calibration/Advanced. |
+| `/display/evaluation` | Bookmark-compatible redirect to the live ADS-B tab in Radar validation. | None. |
+| `/display/health` | Detailed stage timing, backlog, and source diagnostics; beginner health is consolidated into Overview. | None. |
+| `/display/locations` | Map interaction state survives refreshes; ADS-B/tracks/bearing empty and stale behavior covered; capture controls removed; engineering diagnostics removed. | None. |
 | `/display/map` | Legacy duplicate redirects immediately to canonical Live radar. | None; retained only as a bookmark-compatible redirect. |
 | `/display/maxhold` | Shared non-destructive refresh and visible error state; capture controls removed. | Place under Advanced Signal diagnostics. |
-| `/display/overview` | Multi-endpoint refresh is throttled, preserves the last snapshot, and reports repeated failure. | Merge the beginner portion of Health and recent Activity here. |
+| `/display/overview` | Multi-endpoint refresh is throttled, preserves the last snapshot, reports repeated failure, and includes the beginner system-health checklist. | Recent browser-session Activity remains a separate advanced view. |
 | `/display/recordings` | Pagination, search/filter state, indexing refresh ownership, mobile cards, progress/cancel import, focus-managed deletion, and review-first replay verified. | A non-destructive in-browser IQ preview still requires a bounded decimation/streaming API and is not represented as implemented. |
 | `/display/site` | Incomplete-coordinate empty state and snapshot recovery verified. | Consider a Site setup tab within Map to reduce navigation fragmentation. |
 | `/display/spectrum` | dB scaling, first/late frames, stale/error state, and removal of capture actions verified. | Place under Advanced Signal diagnostics. |
-| `/display/statistics` | Portable/rich statistics smoke coverage and snapshot recovery remain intact. | Rename from generic “Performance” to Radar validation/Tracking scorecard and pair with ADS-B evaluation. |
+| `/display/statistics` | Radar validation workspace combines portable/rich scorecards and live ADS-B comparison as explicit tabs. | None. |
 | `/display/timing` | Shared frame cadence and visible failure state; capture controls removed. | Advanced/Developer view, not a peer of beginner radar plots. |
 | `/display/tracks` | Empty/current/stale snapshots use shared insight behavior; recording action removed. | Add concise explanations for tentative, active, coasting, and confirmed state terms. |
 
@@ -95,10 +104,5 @@ change receiver tuning, radar DSP, scientific defaults, or deployment state.
 
 ## Prioritized remaining work
 
-1. Merge duplicated Overview/Health beginner content; keep raw stage timing in
-   the Advanced health view.
-2. Pair ADS-B evaluation with the Statistics validation scorecard without
-   making ADS-B appear to drive radar detections.
-3. Move remaining bearing engineering diagnostics out of the main Map view.
-4. Add automated accessibility semantics beyond the current real-browser
+1. Add automated accessibility semantics beyond the current real-browser
    viewport, interaction, overflow, and JavaScript-error checks.
