@@ -22,7 +22,8 @@ const rules = {
   'capture.device.heimdall.control_port': {...integer(1, 65535), optional: true},
   'capture.device.heimdall.gain': {type: 'gain', optional: true},
   'capture.device.heimdall.channel_gains': {type: 'array', optional: true},
-  'capture.device.heimdall.gain_control': {type: 'string', choices: ['fixed', 'measured'], optional: true},
+  'capture.device.heimdall.gain_control': {type: 'string',
+    choices: ['fixed', 'measured', 'measured_per_channel'], optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
   // Published SDRplay API 3.09 section 5: RSPduo 50-ohm inputs, not Hi-Z.

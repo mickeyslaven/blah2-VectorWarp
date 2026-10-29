@@ -17,6 +17,9 @@ const root = path.resolve(__dirname, '../..');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kraken-geometry-dom-'));
 const filename = path.join(directory, 'config.yml');
 const config = applyDeviceProfile(setupDefaults(), getDeviceProfiles()[0]);
+// This disposable preview exercises geometry persistence, not the installed
+// Linux automatic-gain transaction.
+config.capture.device.heimdall.gain_control = 'fixed';
 config.truth.adsb.enabled = false;
 config.network.ip = '127.0.0.1';
 config.capture.device.reference_channel = 2;

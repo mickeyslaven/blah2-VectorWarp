@@ -17,14 +17,19 @@ capture:
       # Preserve the Suite's existing gain unless an operator explicitly selects
       # automatic (-1) or a manual 0–50 dB Suite gain in Settings.
       gain: "keep"
-      # Optional fixed coherent per-channel tuner-table gains. One manual dB
-      # value per active channel; requires gain_control: fixed. VectorWarp
+      # Automatic per-channel headroom selection is the default. It keeps this
+      # policy after applying and stores its latest verified selections in
+      # channel_gains so the chosen values remain visible and reproducible.
+      gain_control: "measured_per_channel"
+      # Optional fixed coherent per-channel tuner-table gains. One dB value per
+      # active channel. Fixed mode preserves them; automatic-per-channel mode
+      # uses them as starting values and replaces them after verification.
+      # VectorWarp
       # applies the vector atomically and requires physical readback plus a
       # fresh calibration before accepting radar data.
       # channel_gains: [19.7, 19.7, 19.7, 19.7, 19.7]
-      # Optional measured shared-gain selection on EVERY Apply and restart:
-      # gain_control: "measured"
-      # Omit or use "fixed" to preserve gain during controlled comparisons.
+      # Use gain_control: "measured" for one shared automatic value, or
+      # gain_control: "fixed" to preserve gains during controlled comparisons.
     # Must match the number of channels streamed by the Suite.
     channel_count: 5
     reference_channel: 0

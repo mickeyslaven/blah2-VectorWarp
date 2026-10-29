@@ -136,6 +136,10 @@ try {
   badChannelGains.capture.device.heimdall.gain_control = 'measured';
   assert.equal(validateConfig(badChannelGains).valid, false,
     'measured common gain must not silently overwrite coherent channel gains');
+  const automaticChannelGains = clone(channelGains);
+  automaticChannelGains.capture.device.heimdall.gain_control = 'measured_per_channel';
+  assert.equal(validateConfig(automaticChannelGains).valid, true,
+    'automatic per-channel gain accepts a verified starting vector');
   const fusion = clone(krakenBase);
   fusion.process.performance.acceleration = 'gpu-resident';
   fusion.process.tracker.gpu_capacity = 128;

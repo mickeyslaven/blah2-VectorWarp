@@ -294,6 +294,7 @@ function change(input, value, event = 'input') {
     assert.equal(query('capture.replay.format').querySelector('select').value, 'auto');
 
     window.switchDevice('Kraken');
+    change(query('capture.device.heimdall.gain_control').querySelector('select'), 'fixed', 'change');
     const gainControl = query('capture.device.heimdall.gain');
     const gainMode = gainControl.querySelector('select');
     const manualGain = gainControl.querySelector('input');
@@ -452,8 +453,18 @@ function change(input, value, event = 'input') {
     }
     window.__settingsModeApi.setMode('simple');
     assert.ok(query('capture.fc'), 'Simple mode keeps essential tuning controls');
-    assert.ok(query('capture.device.heimdall.host'), 'Simple Kraken setup exposes the Suite host');
-    assert.ok(query('capture.device.heimdall.control_port'), 'Simple Kraken setup exposes the Suite control port');
+    assert.equal(query('capture.device.heimdall.host'), null,
+      'Simple Kraken setup hides Suite connection internals');
+    assert.equal(query('capture.device.heimdall.control_port'), null,
+      'Simple Kraken setup hides the Suite control port');
+    assert.deepEqual([...query('capture.device.heimdall.gain_control').querySelectorAll('option')]
+      .map(option => option.textContent), ['Fixed', 'Automatic', 'Automatic per channel']);
+    window.setValue(['capture', 'device', 'heimdall', 'channel_gains'], [7.7, 7.7, 12.5, 3.7, 2.7]);
+    window.setValue(['capture', 'device', 'heimdall', 'gain_control'], 'measured_per_channel');
+    window.renderEditor();
+    assert.equal(query('capture.device.heimdall.gain_control').querySelector('option:checked').textContent,
+      'Automatic per channel (7.7, 7.7, 12.5, 3.7, 2.7 dB selected)',
+      'Automatic mode keeps its retained policy visible alongside the verified selected gains');
     assert.ok(query('process.reference_synthesis.mode'),
       'Simple Kraken setup exposes the essential reference choice');
     assert.ok(window.document.querySelector('#settings-panel-capture .kraken-geometry'),
@@ -472,6 +483,8 @@ function change(input, value, event = 'input') {
       assert.ok(query(path), `Simple HackRF setup exposes ${path}`);
     window.switchDevice('Kraken');
     window.__settingsModeApi.setMode('advanced');
+    assert.ok(query('capture.device.heimdall.host'), 'Advanced mode exposes the Suite host');
+    assert.ok(query('capture.device.heimdall.control_port'), 'Advanced mode exposes the Suite control port');
     assert.ok(query('process.reference_synthesis.mode'), 'Advanced mode restores receiver internals');
     assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 1,
       'Changing detail level must not duplicate reference controls');

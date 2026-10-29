@@ -3,8 +3,9 @@
 const clone = value => JSON.parse(JSON.stringify(value));
 const liveKraken = config => config?.capture?.device?.type === 'Kraken' &&
   config?.capture?.replay?.state !== true;
+const automaticPolicies = new Set(['measured', 'measured_per_channel']);
 const enabled = config => liveKraken(config) &&
-  config.capture.device.heimdall?.gain_control === 'measured';
+  automaticPolicies.has(config.capture.device.heimdall?.gain_control);
 const fixedGain = gain => typeof gain === 'number' && Number.isFinite(gain) &&
   gain >= 0 && gain <= 50 && Math.round(gain * 10) === gain * 10;
 const MAX_AUTOMATIC_GAIN_MS = 1235000;
@@ -66,11 +67,14 @@ function assertTuple(receipt, config, {requireIdle = true} = {}) {
   const after = receipt?.after;
   const wanted = config.capture;
   const gain = wanted.device.heimdall.gain;
+  const channelGains = wanted.device.heimdall.channel_gains;
   if (!after || after.centerFrequency !== wanted.fc || after.sampleRate !== wanted.fs ||
       after.channelCount !== wanted.device.channel_count || after.operatingMode !== 'coherent' ||
       after.reconfiguring !== false || (requireIdle && (after.recovering !== false ||
       after.cooldownActive !== false)) || !fixedGain(after.gain) ||
-      (gain !== 'keep' && gain !== undefined && after.gain !== gain))
+      (gain !== 'keep' && gain !== undefined && after.gain !== gain) ||
+      (channelGains !== undefined &&
+        JSON.stringify(after.channelGains) !== JSON.stringify(channelGains)))
     throw failure('AUTOMATIC_GAIN_RECEIVER_MISMATCH',
       'Measured gain requires a matching idle coherent receiver with a reported fixed gain between 0 and 50 dB.');
   return after;
@@ -93,9 +97,12 @@ function assertCalibration(receipt, config) {
 function validateProbe(probe, config) {
   const capture = config.capture;
   const count = capture.device.channel_count;
+  const expectedChannelGains = capture.device.heimdall.channel_gains;
   if (!probe || probe.frequencyHz !== capture.fc || probe.sampleRateHz !== capture.fs ||
       probe.channelCount !== count || probe.gainDb !== capture.device.heimdall.gain ||
-      !Array.isArray(probe.channels) || probe.channels.length !== count)
+      !Array.isArray(probe.channels) || probe.channels.length !== count ||
+      (expectedChannelGains !== undefined &&
+        JSON.stringify(probe.channelGains) !== JSON.stringify(expectedChannelGains)))
     throw failure('AUTOMATIC_GAIN_PROBE_MISMATCH',
       'Gain measurement did not match the requested frequency, sample rate, channel count and fixed gain.');
   const calibration = probe.calibration;
@@ -124,7 +131,9 @@ function validateProbe(probe, config) {
   const safe = channels.every(channel => channel.railFraction === 0 &&
     channel.peakFraction <= LIMITS.peakFraction && channel.p999Fraction <= LIMITS.p999Fraction);
   return {frequencyHz: probe.frequencyHz, sampleRateHz: probe.sampleRateHz,
-    channelCount: count, gainDb: probe.gainDb, channels, safe,
+    channelCount: count, gainDb: probe.gainDb,
+    ...(expectedChannelGains === undefined ? {} : {channelGains: [...probe.channelGains]}),
+    channels, safe,
     source: probe.source, packets: probe.packets,
     calibration: {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: probe.packets},
     worstP999Fraction: Math.max(...channels.map(channel => channel.p999Fraction)),
@@ -174,7 +183,8 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
     }
     async function settle(name, candidate, synchronized, trial = null) {
       const requireTransition = synchronized.operations?.some(operation => operation.commandSent &&
-        ['set_gain', 'set_frequency', 'set_num_elements'].includes(operation.operation)) === true;
+        ['set_gain', 'set_channel_gains', 'set_frequency', 'set_num_elements']
+          .includes(operation.operation)) === true;
       requireBudget(name, LIMITS.settlingTimeoutMs, name.startsWith('restore-'));
       try {
         // Gain changes initiate Suite phase calibration independently of its
@@ -214,6 +224,7 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
           assertTuple(await stage('restore-verify', () => synchronizer.verify(restoreConfig)), restoreConfig);
           automatic.rollback.status = 'restored';
           automatic.status = 'rolled-back'; automatic.selectedGainDb = null;
+          automatic.selectedChannelGainsDb = null;
           receiverSync.status = 'restored';
           return receiverSync;
         } catch (error) {
@@ -263,6 +274,105 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
       if (before.acceptance) receiverSync.acceptance = clone(before.acceptance);
       restoreConfig = clone(previous);
       restoreConfig.capture.device.heimdall.gain = actual.gain;
+      const perChannel = endpoint.gain_control === 'measured_per_channel';
+      if (perChannel) {
+        const count = config.capture.device.channel_count;
+        const actualChannelGains = Array.isArray(actual.channelGains) &&
+          actual.channelGains.length === count && actual.channelGains.every(fixedGain) ?
+          [...actual.channelGains] : Array(count).fill(actual.gain);
+        restoreConfig.capture.device.heimdall.channel_gains = actualChannelGains;
+        automatic.claims.measured =
+          'Headroom of delivered calibrated wire samples at independently selected Suite channel gains.';
+        automatic.gainSteps = {source: 'Suite per-channel gain requests',
+          perChannelRequestedGainStepDb: LIMITS.commonRequestedGainStepDb,
+          hardwareGainStepsVerified: false,
+          limitation: 'Suite has not advertised a verified tuner gain table; a 1 dB request is not a guaranteed physical gain change.'};
+        let trialGains = Array.isArray(endpoint.channel_gains) &&
+          endpoint.channel_gains.length === count && endpoint.channel_gains.every(fixedGain) ?
+          [...endpoint.channel_gains] : [...actualChannelGains];
+        const lastSafe = Array(count).fill(null);
+        const seekingDown = Array(count).fill(false);
+        const channelSafe = (measurement, index) => {
+          const wire = measurement.channels[index];
+          const raw = measurement.rawAdc?.channels[index];
+          return wire.railFraction === 0 && wire.peakFraction <= LIMITS.peakFraction &&
+            wire.p999Fraction <= LIMITS.p999Fraction &&
+            (!raw || (raw.railFraction === 0 && raw.p999Fraction <= LIMITS.p999Fraction));
+        };
+        const clearHeadroom = (measurement, index) => {
+          const wire = measurement.channels[index];
+          const raw = measurement.rawAdc?.channels[index];
+          return wire.peakFraction < LIMITS.increaseBelowPeakFraction &&
+            wire.p999Fraction < LIMITS.increaseBelowP999Fraction &&
+            (!raw || raw.p999Fraction < LIMITS.increaseBelowP999Fraction);
+        };
+        for (let trial = 1; trial <= LIMITS.maxTrialSettings; trial++) {
+          config.capture.device.heimdall.gain = fixedGain(endpoint.gain) ? endpoint.gain : actual.gain;
+          config.capture.device.heimdall.channel_gains = [...trialGains];
+          attemptedConfig = clone(config);
+          automatic.trials.push({trial, channelGainsDb: [...trialGains]});
+          const synchronized = await stage('trial-synchronize', () => {
+            mutated = true;
+            return synchronizer.synchronize(restoreConfig, clone(config), {force: true});
+          }, trial);
+          assertTuple(synchronized, config, {requireIdle: false});
+          await settle('trial-settle', config, synchronized, trial);
+          assertCalibration(await stage('trial-recalibrate', () =>
+            synchronizer.recalibrate(clone(config)), trial), config);
+          let measurement = await probe(trial);
+          let next = [...trialGains];
+          const adjust = measured => {
+            next = trialGains.map((gain, index) => {
+              if (!channelSafe(measured, index)) {
+                if (gain === LIMITS.gainMinDb)
+                  throw failure('AUTOMATIC_GAIN_UNSAFE_AT_MINIMUM',
+                    `Channel ${index} exceeds headroom limits at zero gain.`);
+                seekingDown[index] = true;
+                return lastSafe[index] !== null && lastSafe[index] < gain ?
+                  lastSafe[index] : Math.max(LIMITS.gainMinDb,
+                    Math.round((gain - LIMITS.commonRequestedGainStepDb) * 10) / 10);
+              }
+              if (increase && !seekingDown[index] && clearHeadroom(measured, index) &&
+                  gain < LIMITS.gainMaxDb) {
+                lastSafe[index] = gain;
+                return Math.min(LIMITS.gainMaxDb,
+                  Math.round((gain + LIMITS.commonRequestedGainStepDb) * 10) / 10);
+              }
+              return gain;
+            });
+          };
+          adjust(measurement);
+          if (JSON.stringify(next) === JSON.stringify(trialGains)) {
+            measurement = await probe(trial);
+            if (Array.from({length: count}, (_, index) => channelSafe(measurement, index))
+              .every(Boolean)) {
+              assertTuple(await stage('verify-selected', () =>
+                synchronizer.verify(clone(config)), trial), config);
+              automatic.status = 'verified';
+              automatic.selectedGainDb = config.capture.device.heimdall.gain;
+              automatic.selectedChannelGainsDb = [...trialGains];
+              if (measurement.rawAdc) {
+                automatic.claims.rawAdcClippingProven = true;
+                automatic.claims.rawAdcSource = measurement.rawAdc.source;
+              }
+              automatic.selectionReason = seekingDown.some(Boolean) ?
+                'per-channel-safe-below-unsafe-setting' : !increase ?
+                  'per-channel-backoff-only' : 'per-channel-headroom-target';
+              automatic.finalPassingProbes = 2;
+              receiverSync.status = 'synchronized';
+              receiverSync.requested = {frequency: config.capture.fc,
+                sampleRate: config.capture.fs, channelCount: count,
+                gain: config.capture.device.heimdall.gain,
+                channelGains: [...trialGains]};
+              return {config: clone(config), receiverSync, rollback};
+            }
+            adjust(measurement);
+          }
+          trialGains = next;
+        }
+        throw failure('AUTOMATIC_GAIN_NO_SAFE_SETTING',
+          'No per-channel gain vector met the stopping rule and two independent headroom checks within sixteen trials.');
+      }
       automatic.gainSteps = {source: 'Suite common gain requests',
         commonRequestedGainStepDb: LIMITS.commonRequestedGainStepDb,
         hardwareGainStepsVerified: false,

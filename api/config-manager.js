@@ -27,7 +27,8 @@ const DEVICE_PROFILES = [
     sampleRate: 2400000,
     device: {
       type: 'Kraken',
-      heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092, gain: 'keep'},
+      heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092,
+        gain: 'keep', gain_control: 'measured_per_channel'},
       channel_count: 5,
       reference_channel: 0,
       surveillance_channels: [0, 1, 2, 3, 4]
@@ -406,7 +407,7 @@ function validateConfig(config, baseline = null, options = {}) {
     if (heimdall.gain !== undefined && !(heimdall.gain === 'keep' || heimdall.gain === -1 ||
         (typeof heimdall.gain === 'number' && Number.isFinite(heimdall.gain) && heimdall.gain >= 0 && heimdall.gain <= 50 && Math.round(heimdall.gain * 10) === heimdall.gain * 10)))
       errors.push('capture.device.heimdall.gain must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps');
-    if (heimdall.gain_control === 'measured' && heimdall.gain === -1)
+    if (['measured', 'measured_per_channel'].includes(heimdall.gain_control) && heimdall.gain === -1)
       errors.push('capture.device.heimdall.gain must be keep or a fixed starting gain when automatic headroom selection is enabled; Suite AGC cannot provide a stable measurement.');
     if (heimdall.channel_gains !== undefined) {
       if (!Array.isArray(heimdall.channel_gains) || heimdall.channel_gains.length !== channelCount)
