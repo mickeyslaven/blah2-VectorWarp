@@ -235,7 +235,7 @@
 
   function setupLocationMapScaffold() {
     if (root.dataset.ready) return;
-    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar"><summary><span class="map-sidebar-title">Map</span><span class="map-sidebar-selected" id="map-sidebar-selected">Layers & aircraft</span></summary><div class="location-map-sidebar-body"><details class="map-controls-panel"><summary>Layers and controls</summary><div class="map-controls-body"><label class="map-auto-select"><input type="checkbox" id="show-radar-tracks-on-map"><span><strong>Show radar tracks</strong><small>Confirmed tracks use the 3D uncertainty cage.</small></span></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>24 h radar-confirmed coverage</strong><small>Online feed-only positions never expand it.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar matches</strong><small>Keep the current radar-associated aircraft selected.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div></details><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
+    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar"><summary><span class="map-sidebar-title">Map</span><span class="map-sidebar-selected" id="map-sidebar-selected">Layers & aircraft</span></summary><div class="location-map-sidebar-body"><details class="map-controls-panel"><summary>Layers and controls</summary><div class="map-controls-body"><label class="map-coverage-filter"><span>Aircraft and radar</span><select id="radar-map-display-mode"><option value="all">All tracks (radar ellipses)</option><option value="confirmed">Radar-confirmed ADS-B (no ellipses)</option><option value="adsb">ADS-B only</option></select><small>Radar-confirmed shows only ADS-B/MLAT aircraft matched to a confirmed radar track.</small></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>24 h radar-confirmed coverage</strong><small>Online feed-only positions never expand it.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar matches</strong><small>Keep the current radar-associated aircraft selected.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div></details><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
     root.dataset.ready = 'true';
     const coverageLabel = root.querySelector?.('#show-radar-coverage-on-map')?.closest?.('label');
     if (coverageLabel) {
@@ -244,12 +244,12 @@
     }
     const sidebar = root.querySelector?.('.location-map-sidebar');
     if (sidebar) sidebar.open = !window.matchMedia?.('(max-width:760px)')?.matches;
-    const showTracks = document.getElementById('show-radar-tracks-on-map');
+    const trackDisplayMode = document.getElementById('radar-map-display-mode');
     const showCoverage = document.getElementById('show-radar-coverage-on-map');
     const coverageAltitude = document.getElementById('radar-coverage-altitude');
     const autoSelect = document.getElementById('auto-select-radar-aircraft');
     const syncTrackControls = () => {
-      if (showTracks) showTracks.checked = showRadarTracksOnMap;
+      if (trackDisplayMode) trackDisplayMode.value = radarMapDisplayMode;
       if (showCoverage) showCoverage.checked = showRadarCoverageOnMap;
       if (coverageAltitude) {
         coverageAltitude.value = radarCoverageAltitudeBand;
@@ -257,14 +257,19 @@
       }
       if (autoSelect) {
         autoSelect.checked = autoSelectRadarAircraft;
-        autoSelect.disabled = !showRadarTracksOnMap;
-        autoSelect.closest?.('label')?.classList?.toggle('disabled', !showRadarTracksOnMap);
+        autoSelect.disabled = radarMapDisplayMode === 'adsb';
+        autoSelect.closest?.('label')?.classList?.toggle('disabled', radarMapDisplayMode === 'adsb');
       }
     };
     syncTrackControls();
-    showTracks?.addEventListener?.('change', () => {
-      showRadarTracksOnMap = showTracks.checked;
-      try { localStorage.setItem('vectorwarp-show-radar-tracks-on-map', String(showRadarTracksOnMap)); }
+    trackDisplayMode?.addEventListener?.('change', () => {
+      radarMapDisplayMode = ['all', 'confirmed', 'adsb'].includes(trackDisplayMode.value) ?
+        trackDisplayMode.value : 'confirmed';
+      showRadarTracksOnMap = radarMapDisplayMode === 'all';
+      try {
+        localStorage.setItem('vectorwarp-radar-map-display-mode', radarMapDisplayMode);
+        localStorage.setItem('vectorwarp-show-radar-tracks-on-map', String(showRadarTracksOnMap));
+      }
       catch (_) { /* Persistence is optional. */ }
       syncTrackControls();
       renderLocations().catch(error => { window.blah2ViewLastError = error?.message || String(error); });
@@ -477,14 +482,18 @@
   let selectedAircraftId = null;
   let selectedAircraftSnapshot = null;
   let autoSelectRadarAircraft = false;
+  let radarMapDisplayMode = 'confirmed';
   let showRadarTracksOnMap = false;
   let showRadarCoverageOnMap = true;
   let radarCoverageAltitudeBand = 'all';
   let radarCoverageCache = null;
   try { autoSelectRadarAircraft = localStorage.getItem('vectorwarp-auto-select-radar-aircraft') === 'true'; }
   catch (_) { /* Persistence is optional. */ }
-  try { showRadarTracksOnMap = localStorage.getItem('vectorwarp-show-radar-tracks-on-map') === 'true'; }
-  catch (_) { /* Persistence is optional. */ }
+  try {
+    const savedMode = localStorage.getItem('vectorwarp-radar-map-display-mode');
+    radarMapDisplayMode = ['all', 'confirmed', 'adsb'].includes(savedMode) ? savedMode : 'confirmed';
+    showRadarTracksOnMap = radarMapDisplayMode === 'all';
+  } catch (_) { /* Persistence is optional. */ }
   try {
     const stored = localStorage.getItem('vectorwarp-show-radar-coverage-on-map');
     showRadarCoverageOnMap = stored === null ? true : stored === 'true';
@@ -848,7 +857,7 @@
         record.flightPathAngle = aircraftFlightPathAngle(info.verticalRate, info.speed);
         const marker = record.marker;
         const color = aircraftAltitudeColor(item);
-        const radarTracked = Boolean(item.radar_track_id);
+        const radarTracked = radarMapDisplayMode !== 'adsb' && Boolean(item.radar_track_id);
         marker.classList?.toggle('selected', selectedAircraftId === aircraftId);
         marker.classList?.toggle('snapshot-stale', item._snapshot_stale === true);
         marker.classList?.toggle('mlat-position', info.positionSource === 'MLAT');
@@ -1146,7 +1155,7 @@
         }
         prefetchAircraftPhotos(aircraft);
         selectedAircraftId = selectRadarAssociatedAircraft(selectedAircraftId, aircraft,
-          autoSelectRadarAircraft && showRadarTracksOnMap);
+          autoSelectRadarAircraft);
         selectedAircraftSnapshot = aircraft.find(item => aircraftIdentity(item) === selectedAircraftId) ||
           selectedAircraftSnapshot;
       } catch (_) {
@@ -1171,8 +1180,12 @@
     };
     const showStationary = new URLSearchParams(window.location.search).get('showStationary') === '1';
     const stationaryIds = new Set(array(bearingLocations?.data).filter(item => item?.stationary_clutter).map(item => item.id));
-    const visibleTracks = !showRadarTracksOnMap ? [] : showStationary ? tracks :
-      tracks.filter(item => !stationaryIds.has(item.id));
+    const eligibleMapTracks = showStationary ? tracks : tracks.filter(item => !stationaryIds.has(item.id));
+    const matchedTrackIds = new Set(aircraft.map(item => item.radar_track_id).filter(value => value !== undefined)
+      .map(String));
+    const visibleTracks = radarMapDisplayMode === 'all' ? eligibleMapTracks : [];
+    const mapAircraft = radarMapDisplayMode === 'confirmed' ?
+      aircraft.filter(item => item.radar_track_id !== undefined) : aircraft;
     const radarTrackOverlays = visibleTracks.map(item => radarTrackOverlay(item));
     const traces = [];
     // The map is also a bearing diagnostic: show every tracker state and every
@@ -1239,15 +1252,15 @@
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
-    renderHtml(document.getElementById('view-summary'), `${showRadarTracksOnMap ? card(visibleTracks.length, 'Radar tracks shown') : card('Off', 'Radar track layer')}${card(aircraft.length, 'Aircraft')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
-    renderDetail(`<details class="info-card location-map-notes"><summary>Map details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `Orange 3D uncertainty cages show all ${visibleTracks.length} visible confirmed active delay-only tracks. A highlighted altitude slice means ADS-B/MLAT identified the tracked aircraft; the radar did not independently measure altitude.` : `Confirmed radar tracks are currently kept on the main radar display only; enable “Show radar tracks on this map” above to add their 3D uncertainty cages here.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position. Array wiring and known-angle RF diagnostics are under Array calibration.</div></details>`);
-    renderSelectedAircraftCard(aircraft);
-    renderAircraftOverlays(aircraft, [
+    renderHtml(document.getElementById('view-summary'), `${showRadarTracksOnMap ? card(visibleTracks.length, 'Radar ellipses') : radarMapDisplayMode === 'confirmed' ? card(mapAircraft.length, 'Radar-confirmed ADS-B') : card('Off', 'Radar overlays')}${card(mapAircraft.length, 'Aircraft shown')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
+    renderDetail(`<details class="info-card location-map-notes"><summary>Map details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `All ${visibleTracks.length} current confirmed radar tracks use orange delay-uncertainty ellipses.` : radarMapDisplayMode === 'confirmed' ? `Only the ${mapAircraft.length} ADS-B/MLAT aircraft matched to confirmed radar tracks are shown; uncertainty ellipses are off.` : `All ADS-B/MLAT aircraft are shown without radar ellipses or radar highlighting.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position. Array wiring and known-angle RF diagnostics are under Array calibration.</div></details>`);
+    renderSelectedAircraftCard(mapAircraft);
+    renderAircraftOverlays(mapAircraft, [
       {...receiver, kind: 'receiver', name: receiver.name || 'Receiver'},
       {...transmitter, kind: 'transmitter', name: transmitter.name || 'Illuminator'}
     ], radarTrackOverlays, showRadarCoverageOnMap ? coverage : null);
     const trackStateLabel = tracks.length ?
-      `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}${showRadarTracksOnMap ? '' : ' · layer off'}` :
+      `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'} · ${radarMapDisplayMode === 'all' ? 'ellipses shown' : radarMapDisplayMode === 'confirmed' ? `${mapAircraft.length} ADS-B confirmed` : 'ADS-B only'}` :
       'No current radar tracks';
     if (locationMapIsBeingNavigated()) {
       setState(aircraftError || trackStateLabel,

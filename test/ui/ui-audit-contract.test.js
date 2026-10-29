@@ -93,7 +93,11 @@ assert.match(insights, /layer\._coverageUsesMapLayer \? '' : coveragePath/,
   'The SVG coverage renderer is retained only as a compatibility fallback');
 assert.match(insights, /const associationTracks = tracks;/,
   'Hiding map track cages must not disable radar-to-aircraft association');
-assert.match(insights, /Radar track layer/,
-  'The map summary distinguishes a disabled track layer from missing tracks');
+assert.match(insights, /Radar-confirmed ADS-B \(no ellipses\)/,
+  'The map offers radar-confirmed aircraft without uncertainty ellipses');
+assert.match(insights, /All tracks \(radar ellipses\)/,
+  'The map keeps all radar uncertainty ellipses behind an explicit dropdown choice');
+assert.match(insights, /ADS-B only/,
+  'The map offers a plain ADS-B-only presentation');
 
 console.log(`UI audit contract covers all ${pageFiles.length} website routes.`);

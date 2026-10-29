@@ -8,7 +8,8 @@ const path = require('node:path');
 const {chromium} = require('playwright');
 const root = path.resolve(__dirname, '../../html');
 const config = {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', channel_count: 5}},
-  process: {data: {cpi: .2}, ambiguity: {delayMax: 245}, tracker: {enable: true}},
+  process: {data: {cpi: .2}, ambiguity: {delayMax: 245}, tracker: {enable: true},
+    bearing: {manifold_recorder: {max_delay_error_km: 100, max_doppler_error_hz: 100}}},
   location: {rx: {name: 'Receiver <test>', latitude: 40, longitude: -80, altitude: 250},
     tx: {name: 'Illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}},
   truth: {adsb: {enabled: true, display_range_km: 1000,
@@ -116,16 +117,32 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('.location-3d-model-layer').evaluate(node => getComputedStyle(node).pointerEvents), 'none',
       'mobile 3D models cannot steal map gestures');
     await page.setViewportSize({width: 1000, height: 700});
-    assert.equal(await page.locator('#show-radar-tracks-on-map').isChecked(), false,
-      'geographic radar ellipses are opt-in');
+    assert.equal(await page.locator('#radar-map-display-mode').inputValue(), 'confirmed',
+      'the map defaults to radar-confirmed ADS-B aircraft without uncertainty ellipses');
     assert.equal(await page.locator('#show-radar-coverage-on-map').isChecked(), true,
       'radar-confirmed rolling coverage is visible by default');
-    await page.waitForFunction(() => document.querySelector('.location-radar-coverage-path')?.getAttribute('d'));
-    const coveragePath = await page.locator('.location-radar-coverage-path').getAttribute('d');
-    assert.equal((coveragePath.match(/M/g) || []).length, 4,
-      'unsupported bearing gaps must remain separate observed sectors');
-    assert.ok(!coveragePath.includes('Q'),
-      'coverage must not curve across sparse bearings and invent a closed range boundary');
+    await page.waitForFunction(() => document.getElementById('data')._fullLayout.mapbox._subplot.map
+      .getSource('vectorwarp-radar-coverage'));
+    const coverageGeometry = await page.evaluate(() => {
+      const map = document.getElementById('data')._fullLayout.mapbox._subplot.map;
+      const source = map.getSource('vectorwarp-radar-coverage');
+      return {data: source._data, fill: Boolean(map.getLayer('vectorwarp-radar-coverage-fill')),
+        line: Boolean(map.getLayer('vectorwarp-radar-coverage-line'))};
+    });
+    assert.equal(coverageGeometry.data.features.length, 4,
+      'unsupported bearing gaps remain four separate geographic radials');
+    assert.ok(coverageGeometry.fill && coverageGeometry.line,
+      'coverage fill and line are native geographic map layers');
+    assert.equal(await page.locator('.location-radar-coverage-path').getAttribute('d'), '',
+      'the screen-space SVG coverage path is disabled when native map layers are available');
+    await page.evaluate(() => {
+      const map = document.getElementById('data')._fullLayout.mapbox._subplot.map;
+      map.zoomTo(map.getZoom() + 1, {duration: 0});
+    });
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map
+      .getSource('vectorwarp-radar-coverage')._data.features.length), 4,
+    'zooming preserves the geographic coverage geometry without rebuilding screen paths');
     assert.ok((await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox.zoom)) > 5,
       'online ADS-B acquisition radius must not define the radar map distance');
     assert.equal(await page.locator('.location-radar-track-path').count(), 0);
@@ -134,7 +151,7 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('.location-aircraft-label').textContent(), 'TEST123');
     await page.waitForFunction(() => window.photoRequestsForTest === undefined || true);
     await page.locator('.map-controls-panel > summary').click();
-    await page.locator('#show-radar-tracks-on-map').check();
+    await page.locator('#radar-map-display-mode').selectOption('all');
     await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
     assert.equal(await page.locator('.location-radar-track-cage').count(), 1,
       'each confirmed track gets one consistent 3D uncertainty cage');
@@ -208,7 +225,9 @@ const server = http.createServer((request, response) => {
       'touch map engagement must survive refreshes between successive gestures');
     await page.dispatchEvent('body', 'pointerdown', {pointerType: 'touch', pointerId: 3});
     const touchRequests = trackerRequests;
-    const touchResumeDeadline = Date.now() + 4000;
+    // This may coincide with the fixture's intentional API timeout. Give the
+    // normal retry cadence enough time to prove refresh resumes afterward.
+    const touchResumeDeadline = Date.now() + 8000;
     while (trackerRequests <= touchRequests && Date.now() < touchResumeDeadline)
       await page.waitForTimeout(100);
     assert.ok(trackerRequests > touchRequests,

@@ -210,7 +210,7 @@ setTimeout(() => {
     errors.push('bearing diagnostic counts were not rendered');
   if (view === 'locations' && mode === 'rich' &&
       (lastPlot?.traces?.some(trace => String(trace.name).startsWith('Radar track ')) ||
-       !rendered.includes('kept on the main radar display only')))
+       !rendered.includes('ADS-B/MLAT aircraft matched to confirmed radar tracks')))
     errors.push('geographic radar tracks were not hidden by the safe default');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
