@@ -262,7 +262,7 @@ function page(origin, apiOrigin = origin) {
     querySelector: () => null,
     documentElement: {classList: classList(pageClasses)},
     body: {classList: classList(pageClasses)},
-    createElement: () => (fullscreenButton = {addEventListener(event, callback) {
+    createElement: () => (fullscreenButton = {setAttribute(name, value) { this[name] = value; }, addEventListener(event, callback) {
       if (event === 'click') fullscreenClick = callback;
     }}), addEventListener() {}
   });
@@ -278,7 +278,8 @@ function page(origin, apiOrigin = origin) {
   await fullscreenClick();
   assert.ok(panelClasses.has('fullscreen-fallback'),
     'Mobile browsers without the Fullscreen API need an in-page fullscreen fallback');
-  assert.equal(fullscreenButton.textContent, 'Exit fullscreen');
+  assert.equal(fullscreenButton.textContent, '×');
+  assert.equal(fullscreenButton['aria-label'], 'Exit fullscreen');
   await fullscreenClick();
   assert.ok(!panelClasses.has('fullscreen-fallback'));
   raf.shift()();

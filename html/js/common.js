@@ -245,14 +245,20 @@ function addFullscreenControl() {
   const button = document.createElement('button');
   button.className = 'fullscreen-button';
   button.type = 'button';
-  button.textContent = 'Fullscreen';
+  const labelFullscreen = active => {
+    const label = active ? 'Exit fullscreen' : 'Fullscreen';
+    button.textContent = active ? '×' : '⛶';
+    button.setAttribute('aria-label', label);
+    button.setAttribute('title', label);
+  };
+  labelFullscreen(false);
   const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
   const fallbackActive = () => panel.classList.contains('fullscreen-fallback');
   const setFallback = active => {
     panel.classList.toggle('fullscreen-fallback', active);
     document.documentElement.classList.toggle('fullscreen-page', active);
     document.body.classList.toggle('fullscreen-page', active);
-    button.textContent = active ? 'Exit fullscreen' : 'Fullscreen';
+    labelFullscreen(active);
   };
   button.addEventListener('click', async () => {
     if (fallbackActive()) {
@@ -328,7 +334,7 @@ function addFullscreenControl() {
   }
   window.addEventListener('resize', resizePlot);
   const fullscreenChanged = () => {
-    button.textContent = fullscreenElement() ? 'Exit fullscreen' : 'Fullscreen';
+    labelFullscreen(Boolean(fullscreenElement()));
     resizePlot();
     window.setTimeout(resizePlot, 120);
     window.setTimeout(resizePlot, 360);
