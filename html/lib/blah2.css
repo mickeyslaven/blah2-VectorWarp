@@ -237,7 +237,10 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .receiver-software-card dd { margin:2px 0 0; overflow-wrap:anywhere; }
 @media (max-width:760px) { .receiver-software-card dl { grid-template-columns:1fr; } }
 .location-aircraft-marker { pointer-events:none!important; }
-.location-aircraft-icon { display:block; transform-origin:19px 19px; transform-style:preserve-3d; pointer-events:auto; touch-action:manipulation; cursor:pointer; will-change:transform; }
+.location-aircraft-icon { display:block; width:38px; height:38px; pointer-events:auto; touch-action:manipulation; cursor:pointer; }
+.location-3d-model-layer { position:absolute; inset:0; z-index:1; width:100%; height:100%; pointer-events:none; contain:strict; }
+.location-aircraft-trails { z-index:0; }
+.location-aircraft-marker,.location-site-label { z-index:2; }
 .aircraft-3d-svg { display:block; overflow:visible; }
 .aircraft-3d-depth { color:#141817; fill:#141817; stroke:#141817; opacity:.82; }
 .aircraft-3d-highlight { fill:rgb(255 255 255 / .5); stroke:none; pointer-events:none; }

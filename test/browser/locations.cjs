@@ -94,23 +94,26 @@ const server = http.createServer((request, response) => {
     await page.waitForFunction(() => document.querySelectorAll('.location-site-label').length === 2);
     await page.waitForFunction(() => document.querySelectorAll('.location-aircraft-marker').length === 1);
     assert.deepEqual(await page.locator('.location-site-label').allTextContents(), ['Receiver <test>', 'Illuminator']);
-    assert.equal(await page.locator('.location-site-icon .site-3d-svg').count(), 2,
-      'receiver and illuminator use lightweight 3D site models');
-    assert.equal(await page.locator('.location-aircraft-icon .aircraft-3d-depth').count(), 1,
-      'aircraft marker renders its depth layer');
-    const aircraftPose = await page.locator('.location-aircraft-icon').getAttribute('style');
-    assert.match(aircraftPose, /perspective\(180px\).*rotateZ\(135deg\).*rotateX\(/,
-      'aircraft marker uses map-relative yaw and vertical-rate flight-path pitch');
+    assert.equal(await page.locator('.location-3d-model-layer[data-renderer="vectorwarp-real-3d-v1"]').count(), 1,
+      'aircraft and sites share the true 3D mesh-rendering layer');
+    const renderedPixels = await page.locator('.location-3d-model-layer').evaluate(canvas => {
+      const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      let visible = 0;
+      for (let index = 3; index < pixels.length; index += 4) if (pixels[index]) visible++;
+      return {width: canvas.width, height: canvas.height, visible};
+    });
+    assert.ok(renderedPixels.width > 0 && renderedPixels.height > 0 && renderedPixels.visible > 100,
+      'the real 3D layer must render visible mesh faces');
     assert.equal(await page.locator('.location-aircraft-icon').getAttribute('data-flight-path'), 'climbing');
     await page.setViewportSize({width: 390, height: 844});
     const mobileIconSizes = await page.evaluate(() => ({
-      aircraft: getComputedStyle(document.querySelector('.location-aircraft-icon svg')).width,
+      aircraft: getComputedStyle(document.querySelector('.location-aircraft-icon')).width,
       site: getComputedStyle(document.querySelector('.location-site-icon')).width
     }));
     assert.deepEqual(mobileIconSizes, {aircraft: '38px', site: '42px'},
       '3D aircraft and site models remain compact touch-safe overlays on mobile');
-    assert.equal(await page.locator('.location-aircraft-icon .aircraft-3d-svg').evaluate(node => getComputedStyle(node).filter), 'none',
-      'mobile 3D icons avoid compositor-heavy filters while the map moves');
+    assert.equal(await page.locator('.location-3d-model-layer').evaluate(node => getComputedStyle(node).pointerEvents), 'none',
+      'mobile 3D models cannot steal map gestures');
     await page.setViewportSize({width: 1000, height: 700});
     assert.equal(await page.locator('#show-radar-tracks-on-map').isChecked(), false,
       'geographic radar ellipses are opt-in');
@@ -149,6 +152,9 @@ const server = http.createServer((request, response) => {
     assert.notEqual(await page.locator('.location-aircraft-trails').evaluate(node =>
       getComputedStyle(node).visibility), 'hidden',
     'projected paths must remain visible while the operator rotates or zooms the map');
+    assert.notEqual(await page.locator('.location-3d-model-layer').evaluate(node =>
+      getComputedStyle(node).visibility), 'hidden',
+    '3D aircraft and sites must remain visible during map navigation');
     await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map.fire('moveend'));
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.location-aircraft-trails')).visibility !== 'hidden');
     const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();

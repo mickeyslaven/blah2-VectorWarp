@@ -654,6 +654,12 @@
           layer._altitudeConnector = path('location-aircraft-altitude-connector');
           layer.appendChild(svg);
         }
+        const modelCanvas = document.createElement('canvas');
+        modelCanvas.className = 'location-3d-model-layer';
+        modelCanvas.setAttribute('aria-hidden', 'true');
+        layer.appendChild(modelCanvas);
+        layer._modelCanvas = modelCanvas;
+        layer._modelRenderer = window.VectorWarp3D?.createRenderer?.(modelCanvas) || null;
         // Mobile Safari can dispatch many map transform events inside one
         // display frame during pinch zoom.  Mutating dozens of SVG trail legs
         // for each event leaves stale compositor tiles behind.  Coalesce all
@@ -755,7 +761,7 @@
         const signature = [aircraftKind(item), color, heading, info.label,
           info.positionSource, radarTracked].join('|');
         if (signature !== record.signature) {
-          record.icon.innerHTML = aircraftSvgMarkup(item, color);
+          record.icon.replaceChildren();
           record.label.textContent = info.label;
           record.label.style.borderColor = color;
           record.icon.setAttribute('aria-label', `${info.label}. Select for aircraft details.`);
@@ -779,9 +785,9 @@
           record = {marker, item: null, isAircraft: false};
           layer._siteMarkers.set(id, record);
         }
-        record.marker.querySelector('.location-site-icon').innerHTML = siteSvgMarkup(site.kind);
+        record.marker.querySelector('.location-site-icon').replaceChildren();
         record.marker.querySelector('.location-site-name').textContent = site.name;
-        record.item = {lat: site.latitude, lon: site.longitude};
+        record.item = {lat: site.latitude, lon: site.longitude, kind: site.kind};
       }
       for (const [id, record] of layer._siteMarkers)
         if (!seenSites.has(id)) { record.marker.remove(); layer._siteMarkers.delete(id); }
@@ -835,6 +841,7 @@
             associated.setAttribute('stroke', item.associatedColor || '#5be7ff');
           }
         }
+        const modelInstances = [];
         [...layer._aircraftMarkers.values(), ...layer._siteMarkers.values()].forEach(
           ({item, marker, icon, heading, flightPathAngle, isAircraft}) => {
         const point = map.project([Number(item.lon), Number(item.lat)]);
@@ -845,10 +852,16 @@
           const rotation = aircraftScreenRotation(heading, map.getBearing?.());
           const yaw = rotation === null ? 0 : rotation;
           const pitch = Number.isFinite(flightPathAngle) ? flightPathAngle : 0;
-          icon.style.transform = `perspective(180px) rotateZ(${yaw}deg) rotateX(${pitch.toFixed(2)}deg)`;
           icon.dataset.flightPath = pitch > .5 ? 'climbing' : pitch < -.5 ? 'descending' : 'level';
+          modelInstances.push({model: aircraftKind(item), x: point.x, y: point.y - altitudeLift,
+            yaw, pitch, size: 16.5, color: aircraftAltitudeColor(item)});
+        } else {
+          modelInstances.push({model: item.kind === 'transmitter' ? 'transmitter' : 'receiver',
+            x: point.x, y: point.y - 23, yaw: -(finite(map.getBearing?.()) ?? 0), pitch: 0,
+            size: item.kind === 'transmitter' ? 15 : 14, color: item.kind === 'transmitter' ? '#ff8754' : '#8fe7df'});
         }
         });
+        layer._modelRenderer?.render(modelInstances);
         const history = selectedAircraftId ? aircraftTrackHistories.get(selectedAircraftId) || [] : [];
         const points = history.map(point => {
           const projected = map.project([point.lon, point.lat]);
