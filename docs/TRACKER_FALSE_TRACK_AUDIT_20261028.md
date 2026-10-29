@@ -55,3 +55,22 @@ the newly occupied field. These tests establish implementation integrity, not
 aircraft recovery. Live acceptance must compare confirmed-track and false-track
 burden over matched traffic while preserving RF, gain, geometry and detector
 settings.
+
+## Live dev acceptance
+
+The conservative profile was deployed on the Ford Street development node as
+release `/opt/vectorwarp/releases/20261029T0115Z-conservative-tracker-67f6a31`
+from source `67f6a31676c27bf496a0aa4a4dfa84254af59396`. The native Fedora suite passed
+49 of 49 tests before deployment. Managed config revision
+`b8e254448b677776268223713eb5ce52f20af254775f5e99ab2d9aadcf845965`
+explicitly preserves main clutter cancellation and enables the 60-CPI
+persistent stationary-clutter initiation filter.
+
+Post-cutover acceptance verified 509 MHz, 2.4 MS/s, five channels, applied
+gains `[7.7, 7.7, 12.5, 3.7, 2.7]` dB, converged calibration, zero ADC rail and
+near-rail samples, advancing frames, application-verified receiver identity
+and no reconciliation requirement. The GPU startup oracle caused a bounded
+initial drop burst; settled frames then ran at roughly 427–461 ms with a flat
+drop counter. Automatic aircraft IQ clips were restored explicitly with a
+two-second pre/post window. This acceptance proves operational integrity, not
+an aircraft-detection or false-track improvement; those remain epoch metrics.
