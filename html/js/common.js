@@ -922,14 +922,21 @@ function selectRadarAssociatedAircraft(currentId, rows = [], enabled = false) {
 // Ground and unknown-altitude targets remain neutral instead of implying data.
 function aircraftAltitudeColor(aircraft = {}) {
   const info = aircraftInfo(aircraft);
-  const rawAltitude = aircraft.alt_baro ?? aircraft.position?.altitude_baro_ft;
+  // Track-history points use the normalized `altitude` field while live feed
+  // rows use alt_baro/alt_geom. Accept both so markers, legends, and trails
+  // always share one continuous altitude palette.
+  const normalizedAltitude = aircraft.altitude !== null && aircraft.altitude !== undefined &&
+    aircraft.altitude !== '' && Number.isFinite(Number(aircraft.altitude)) ? Number(aircraft.altitude) : null;
+  const rawAltitude = aircraft.alt_baro ?? aircraft.alt_geom ?? aircraft.altitude ??
+    aircraft.position?.altitude_baro_ft;
   if (aircraftKind(aircraft) === 'ground' || String(rawAltitude).toLowerCase() === 'ground')
     return '#8f9994';
-  if (!Number.isFinite(info.altitude)) return '#a7b0ac';
+  const colorAltitude = info.altitude ?? normalizedAltitude;
+  if (!Number.isFinite(colorAltitude)) return '#a7b0ac';
   const stops = [[0,[243,154,74]],[5000,[242,184,75]],[10000,[227,106,114]],
     [20000,[196,95,202]],[30000,[143,102,229]],[40000,[102,88,211]],
     [50000,[224,90,122]]];
-  const altitude = Math.max(0, Math.min(50000, info.altitude));
+  const altitude = Math.max(0, Math.min(50000, colorAltitude));
   let upper = stops.findIndex(stop => altitude <= stop[0]);
   if (upper <= 0) upper = 1;
   const [lowAltitude, low] = stops[upper - 1];

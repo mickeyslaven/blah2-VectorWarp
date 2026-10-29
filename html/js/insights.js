@@ -444,7 +444,7 @@
       <div><dt>Position source</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''}</dd></div><div><dt>Position age</dt><dd>${info.age === null ? '—' : `${number(info.age, 1)} s`}</dd></div>
       <div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div>
       <div><dt>Excess bistatic path</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`}</dd></div><div><dt>Predicted Doppler</dt><dd>${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
-    </dl><p class="aircraft-track-note">The selected aircraft shows a recent ground trail and, when the map is tilted, an altitude-lifted 3D trail.</p></section>`;
+    </dl><p class="aircraft-track-note">The selected aircraft shows a recent ground trail and, when the map is tilted, an altitude-lifted 3D trail. Its color follows the altitude legend: warm colors are lower and purple/indigo colors are higher.</p></section>`;
   }
 
   function renderSelectedAircraftCard(aircraft = []) {
@@ -540,7 +540,9 @@
             return value;
           };
           layer._groundTrail = path('location-aircraft-ground-trail');
-          layer._flightTrail = path('location-aircraft-flight-trail');
+          layer._flightTrail = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          layer._flightTrail.setAttribute('class', 'location-aircraft-flight-trail');
+          svg.appendChild(layer._flightTrail);
           layer._altitudeConnector = path('location-aircraft-altitude-connector');
           layer.appendChild(svg);
         }
@@ -666,13 +668,37 @@
         const points = history.map(point => {
           const projected = map.project([point.lon, point.lat]);
           return {x: projected.x, groundY: projected.y,
-            flightY: projected.y - altitudeLiftFor(point)};
+            flightY: projected.y - altitudeLiftFor(point), altitude: point.altitude};
         });
         const path = (values, y) => values.map((point, index) =>
           `${index ? 'L' : 'M'}${point.x.toFixed(1)} ${point[y].toFixed(1)}`).join(' ');
         layer._groundTrail?.setAttribute('d', points.length > 1 ? path(points, 'groundY') : '');
-        layer._flightTrail?.setAttribute('d', points.length > 1 ? path(points, 'flightY') : '');
+        if (layer._flightTrail) {
+          // A path cannot vary its stroke color along an arbitrary rise and
+          // descent. Reuse one short path per recorded leg instead. Frequent
+          // position samples plus the continuous palette make climbs and
+          // descents read as a smooth altitude gradient without canvas work or
+          // extra data transfer. Reusing nodes keeps CPI-paced mobile updates
+          // cheap even at the full 180-point history limit.
+          const legs = Math.max(0, points.length - 1);
+          while (layer._flightTrail.children.length < legs) {
+            const segment = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            layer._flightTrail.appendChild(segment);
+          }
+          while (layer._flightTrail.children.length > legs)
+            layer._flightTrail.lastElementChild.remove();
+          for (let index = 0; index < legs; index++) {
+            const from = points[index], to = points[index + 1];
+            const altitudeValues = [from.altitude, to.altitude].filter(Number.isFinite);
+            const altitude = altitudeValues.length ?
+              altitudeValues.reduce((sum, value) => sum + value, 0) / altitudeValues.length : null;
+            const segment = layer._flightTrail.children[index];
+            segment.setAttribute('d', `M${from.x.toFixed(1)} ${from.flightY.toFixed(1)}L${to.x.toFixed(1)} ${to.flightY.toFixed(1)}`);
+            segment.setAttribute('stroke', aircraftAltitudeColor({altitude}));
+          }
+        }
         const last = points[points.length - 1];
+        layer._altitudeConnector?.setAttribute('stroke', aircraftAltitudeColor({altitude: last?.altitude}));
         layer._altitudeConnector?.setAttribute('d', last && Math.abs(last.groundY - last.flightY) > 1 ?
           `M${last.x.toFixed(1)} ${last.groundY.toFixed(1)}L${last.x.toFixed(1)} ${last.flightY.toFixed(1)}` : '');
       };

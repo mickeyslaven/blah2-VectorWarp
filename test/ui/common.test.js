@@ -205,6 +205,9 @@ function page(origin, apiOrigin = origin) {
     'Fixed-wing UAVs must retain the visible rear pusher propeller');
   assert.equal(test.context.aircraftAltitudeColor({alt_baro: 'ground'}), '#8f9994');
   assert.equal(test.context.aircraftAltitudeColor({}), '#a7b0ac');
+  assert.equal(test.context.aircraftAltitudeColor({altitude: 10000}),
+    test.context.aircraftAltitudeColor({alt_baro: 10000}),
+    'normalized history altitude uses the same palette as live ADS-B rows');
   assert.notEqual(test.context.aircraftAltitudeColor({alt_baro: 1000}),
     test.context.aircraftAltitudeColor({alt_baro: 30000}));
   const snapshot = test.context.stabilizeAircraftSnapshots([{hex: 'abc123', flight: 'TEST',

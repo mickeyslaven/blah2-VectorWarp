@@ -254,8 +254,9 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .location-aircraft-trails { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .location-aircraft-trails path { fill:none; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
 .location-aircraft-ground-trail { stroke:rgba(243,238,233,.46); stroke-width:2; stroke-dasharray:4 6; }
-.location-aircraft-flight-trail { stroke:#5be7ff; stroke-width:3; filter:drop-shadow(0 0 4px rgba(91,231,255,.72)); }
-.location-aircraft-altitude-connector { stroke:rgba(91,231,255,.58); stroke-width:1.5; stroke-dasharray:3 4; }
+.location-aircraft-flight-trail { filter:drop-shadow(0 0 4px rgba(91,231,255,.54)); }
+.location-aircraft-flight-trail path { stroke-width:3.5; }
+.location-aircraft-altitude-connector { stroke-width:1.5; stroke-dasharray:3 4; opacity:.72; }
 .location-map-layout { display:block; }
 .location-map-panel { position:relative; }
 .location-map-panel .insight-plot { height:calc(100dvh - 138px); min-height:520px; }
