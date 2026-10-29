@@ -35,16 +35,18 @@ def run(command, **kwargs):
 
 
 def apply_source_patch(tree, patch):
-    if shutil.which('patch'):
-        run(['patch', '--batch', '--fuzz=0', '-p1', '-i', patch], cwd=tree)
-    else:
-        # The disposable source tree normally lives below VectorWarp's own
-        # Git worktree.  Bind Git to a deliberately absent repository and to
-        # this tree so its patch paths cannot resolve against the parent repo.
+    if shutil.which('git'):
+        # Use one patch engine on every supported host. GNU patch and git apply
+        # do not resolve offsets identically after earlier patches in the kit,
+        # which made a source kit pass staging but fail during installation.
+        # The disposable source tree normally lives below VectorWarp's own Git
+        # worktree, so bind Git to an absent repository and this exact tree.
         isolated = ['git', f'--git-dir={tree / ".git-disabled"}',
                     f'--work-tree={tree}', 'apply', '--no-index']
         run([*isolated, '--check', patch], cwd=tree)
         run([*isolated, patch], cwd=tree)
+    else:
+        run(['patch', '--batch', '--fuzz=0', '-p1', '-i', patch], cwd=tree)
 
 
 def extract_sources(bundle, destination):
