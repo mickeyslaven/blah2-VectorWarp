@@ -38,7 +38,7 @@ const CONFIG_META = {
   'capture.device.heimdall.host': ['Suite computer', 'Host name or IP address of the computer running KrakenSDR Suite V2. Use 127.0.0.1 when it runs here.'],
   'capture.device.heimdall.port': ['IQ stream port', 'Suite V2 TCP port carrying coherent samples. Usually 8091.'],
   'capture.device.heimdall.control_port': ['Control port', 'Suite V2 status and command port. Usually 8092.'],
-  'capture.device.heimdall.gain': ['Starting gain', 'Shared starting gain in dB. Fixed keeps it; either Automatic mode measures and replaces it safely.'],
+  'capture.device.heimdall.gain': ['Starting gain', 'Shared starting gain in dB. Manual keeps it; Automatic measures each channel and replaces it safely.'],
   'capture.device.heimdall.channel_gains': ['Per-channel gains', 'One fixed tuner gain per channel. Automatic per channel measures and fills this vector.'],
   'capture.device.heimdall.gain_control': ['Gain mode', 'Fixed preserves requested gains. Automatic measures one shared gain. Automatic per channel measures every tuner independently.'],
   'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
@@ -1631,7 +1631,7 @@ function group(key, value, path, topLevel = false, options = {}) {
   if (kraken && dotted === 'capture.device') {
     const guide = document.createElement('div');
     guide.className = 'kraken-settings-guide';
-    guide.innerHTML = '<span><b>1</b><strong>Gain</strong><small>Choose fixed or automatic levels</small></span>' +
+    guide.innerHTML = '<span><b>1</b><strong>Gain</strong><small>Choose manual or automatic levels</small></span>' +
       '<span><b>2</b><strong>Channel roles</strong><small>Choose reference and surveillance inputs</small></span>' +
       '<span><b>3</b><strong>Array setup</strong><small>Match the physical antenna layout</small></span>';
     content.appendChild(guide);
@@ -2048,6 +2048,14 @@ async function refreshUpstreamStatus() {
     const note = document.createElement('p');
     note.textContent = 'Receiver-reported settings compared with the saved file, not unsaved edits.';
     target.appendChild(note);
+    const measuredGains = Array.isArray(status.actual.adcHeadroom?.channels) ?
+      status.actual.adcHeadroom.channels.map(channel => channel.actualGainDb).
+        filter(Number.isFinite) : [];
+    const gainText = measuredGains.length ?
+      `Automatic (${measuredGains.map(gain => gain.toFixed(1)).join(', ')} dB)` :
+      Number.isFinite(status.actual.gain) ?
+        status.actual.gain < 0 ? 'Automatic' : `${status.actual.gain.toFixed(1)} dB` :
+        'Unavailable';
     const rows = [
       ['Frequency', formatHertz(status.expected.centerFrequency),
         formatHertz(status.actual.centerFrequency)],
@@ -2056,9 +2064,7 @@ async function refreshUpstreamStatus() {
       ['Channels', String(status.expected.channels),
         status.actual.channels === null ? 'Unavailable' : String(status.actual.channels)],
       ['Mode', status.expected.mode, status.actual.mode || 'Unavailable'],
-      ['Gain', 'Set in Heimdall', Number.isFinite(status.actual.gain) ?
-        status.actual.gain < 0 ? 'Automatic' : `${status.actual.gain.toFixed(1)} dB` :
-        'Unavailable']
+      ['Gain', 'Set in Heimdall', gainText]
     ];
     rows.forEach(([labelText, expected, actual]) => {
       const row = document.createElement('div');
