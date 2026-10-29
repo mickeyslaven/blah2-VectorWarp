@@ -209,6 +209,29 @@ function page(origin, apiOrigin = origin) {
   assert.equal(snapshot.length, 1);
   assert.equal(held[0]._snapshot_stale, true);
   assert.equal(refreshed[0].r, 'N123', 'Metadata survives sparse position updates');
+  const histories = new Map();
+  test.context.updateAircraftTrackHistories(histories, [
+    {hex: 'abc123', lat: 40, lon: -80, alt_baro: 10000}
+  ], {now: 1000, maxAgeMs: 10000, maxPoints: 3});
+  test.context.updateAircraftTrackHistories(histories, [
+    {hex: 'abc123', lat: 40, lon: -80, alt_baro: 10000},
+    {hex: 'def456', lat: 41, lon: -81, alt_baro: 5000}
+  ], {now: 2000, maxAgeMs: 10000, maxPoints: 3});
+  test.context.updateAircraftTrackHistories(histories, [
+    {hex: 'abc123', lat: 40.01, lon: -80.01, alt_baro: 10500}
+  ], {now: 3000, maxAgeMs: 10000, maxPoints: 3});
+  assert.equal(histories.get('ABC123').length, 2,
+    'Aircraft trails append moved positions without duplicating unchanged CPIs');
+  const radarRows = [
+    {hex: 'aaa111', radar_track_id: 4, radar_track_state: 'ASSOCIATED', seen_pos: .1},
+    {hex: 'bbb222', radar_track_id: 5, radar_track_state: 'ACTIVE', seen_pos: .3}
+  ];
+  assert.equal(test.context.selectRadarAssociatedAircraft(null, radarRows, true), 'BBB222',
+    'Auto-select prefers an active radar association');
+  assert.equal(test.context.selectRadarAssociatedAircraft('AAA111', radarRows, true), 'AAA111',
+    'Auto-select holds the current associated aircraft instead of jumping every CPI');
+  assert.equal(test.context.selectRadarAssociatedAircraft('MANUAL', radarRows, false), 'MANUAL',
+    'Disabled auto-select preserves the manual selection');
   // ResizeObserver fires during Mapbox initialization, before the first plot
   // finishes. Relayout at that point throws asynchronously inside Mapbox.
   const mapTest = page('http://radar.local:9876');

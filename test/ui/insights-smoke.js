@@ -163,12 +163,15 @@ global.aircraftKind = common.aircraftKind;
 global.aircraftPlotSymbol = common.aircraftPlotSymbol;
 global.aircraftLabel = common.aircraftLabel;
 global.aircraftInfo = common.aircraftInfo;
+global.aircraftIdentity = common.aircraftIdentity;
 global.aircraftPlotData = common.aircraftPlotData;
 global.aircraftHoverText = common.aircraftHoverText;
 global.aircraftHoverTemplate = common.aircraftHoverTemplate;
 global.aircraftSvgMarkup = common.aircraftSvgMarkup;
 global.aircraftAltitudeColor = common.aircraftAltitudeColor;
 global.stabilizeAircraftSnapshots = common.stabilizeAircraftSnapshots;
+global.updateAircraftTrackHistories = common.updateAircraftTrackHistories;
+global.selectRadarAssociatedAircraft = common.selectRadarAssociatedAircraft;
 
 vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 

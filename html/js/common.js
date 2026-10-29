@@ -834,6 +834,50 @@ function aircraftScreenRotation(trackDegTrue, mapBearingDeg = 0) {
   return ((relative % 360) + 360) % 360;
 }
 
+function aircraftIdentity(aircraft = {}) {
+  const info = aircraftInfo(aircraft);
+  return info.hex || info.label || null;
+}
+
+// Keep a compact browser-side trail without asking the live API for historical
+// positions. Repeated CPIs at the same position do not grow the history.
+function updateAircraftTrackHistories(histories, rows = [], options = {}) {
+  const target = histories && typeof histories.get === 'function' &&
+    typeof histories.set === 'function' ? histories : new Map();
+  const now = Number.isFinite(options.now) ? options.now : Date.now();
+  const maxAgeMs = Number.isFinite(options.maxAgeMs) ? Math.max(1000, options.maxAgeMs) : 15 * 60 * 1000;
+  const maxPoints = Number.isFinite(options.maxPoints) ? Math.max(2, options.maxPoints) : 180;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = aircraftIdentity(row);
+    const lat = Number(row?.lat), lon = Number(row?.lon);
+    if (!id || !Number.isFinite(lat) || !Number.isFinite(lon) || row?._snapshot_stale) continue;
+    const altitude = aircraftInfo(row).altitude;
+    const history = target.get(id) || [];
+    const previous = history[history.length - 1];
+    if (!previous || previous.lat !== lat || previous.lon !== lon || previous.altitude !== altitude)
+      history.push({lat, lon, altitude, at: now});
+    target.set(id, history.filter(point => now - point.at <= maxAgeMs).slice(-maxPoints));
+  }
+  for (const [id, history] of target) {
+    const recent = history.filter(point => now - point.at <= maxAgeMs).slice(-maxPoints);
+    if (recent.length) target.set(id, recent); else target.delete(id);
+  }
+  return target;
+}
+
+function selectRadarAssociatedAircraft(currentId, rows = [], enabled = false) {
+  if (!enabled) return currentId || null;
+  const associated = (Array.isArray(rows) ? rows : []).filter(row => row?.radar_track_id);
+  if (associated.some(row => aircraftIdentity(row) === currentId)) return currentId;
+  associated.sort((left, right) => {
+    const priority = row => ['ACTIVE', 'CONFIRMED'].includes(String(row?.radar_track_state).toUpperCase()) ? 0 : 1;
+    return priority(left) - priority(right) ||
+      Number(Boolean(left?._snapshot_stale)) - Number(Boolean(right?._snapshot_stale)) ||
+      (aircraftInfo(left).age ?? Infinity) - (aircraftInfo(right).age ?? Infinity);
+  });
+  return associated.length ? aircraftIdentity(associated[0]) : (currentId || null);
+}
+
 // Warm near the surface, then pink/purple/indigo with increasing altitude.
 // Ground and unknown-altitude targets remain neutral instead of implying data.
 function aircraftAltitudeColor(aircraft = {}) {
@@ -959,6 +1003,6 @@ if (typeof module !== 'undefined')
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
-    aircraftLabel, aircraftInfo, aircraftScreenRotation, aircraftPlotData, aircraftHoverText,
+    aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftPlotData, aircraftHoverText,
     aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
-    stabilizeAircraftSnapshots};
+    stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft};

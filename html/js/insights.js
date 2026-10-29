@@ -235,8 +235,23 @@
 
   function setupLocationMapScaffold() {
     if (root.dataset.ready) return;
-    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar" open><summary>Map information</summary><div class="location-map-sidebar-body"><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
+    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar" open><summary>Map information</summary><div class="location-map-sidebar-body"><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar-associated aircraft</strong><small>Hold the current match; switch only when it is no longer associated.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
     root.dataset.ready = 'true';
+    const autoSelect = document.getElementById('auto-select-radar-aircraft');
+    if (autoSelect) {
+      autoSelect.checked = autoSelectRadarAircraft;
+      autoSelect.addEventListener?.('change', () => {
+        autoSelectRadarAircraft = autoSelect.checked;
+        try { localStorage.setItem('vectorwarp-auto-select-radar-aircraft', String(autoSelectRadarAircraft)); }
+        catch (_) { /* Persistence is optional. */ }
+        const layer = document.querySelector?.('.location-aircraft-layer');
+        const rows = layer?._aircraftSnapshot || [];
+        selectedAircraftId = selectRadarAssociatedAircraft(selectedAircraftId, rows, autoSelectRadarAircraft);
+        selectedAircraftSnapshot = rows.find(row => aircraftIdentity(row) === selectedAircraftId) || selectedAircraftSnapshot;
+        renderSelectedAircraftCard(rows);
+        layer?._updatePositions?.();
+      });
+    }
     addRecordingControl();
     addFullscreenControl();
   }
@@ -403,6 +418,10 @@
   let locationPlotSignature = null;
   let selectedAircraftId = null;
   let selectedAircraftSnapshot = null;
+  let autoSelectRadarAircraft = false;
+  try { autoSelectRadarAircraft = localStorage.getItem('vectorwarp-auto-select-radar-aircraft') === 'true'; }
+  catch (_) { /* Persistence is optional. */ }
+  const aircraftTrackHistories = new Map();
   const aircraftPhotoCache = new Map();
 
   function aircraftValue(value, suffix = '') {
@@ -423,7 +442,7 @@
       <div><dt>Squawk</dt><dd>${aircraftValue(info.squawk)}</dd></div><div><dt>Signal</dt><dd>${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div>
       <div><dt>Position age</dt><dd>${info.age === null ? '—' : `${number(info.age, 1)} s`}</dd></div><div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div>
       <div><dt>Excess bistatic path</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`}</dd></div><div><dt>Predicted Doppler</dt><dd>${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
-    </dl></section>`;
+    </dl><p class="aircraft-track-note">The selected aircraft shows a recent ground trail and, when the map is tilted, an altitude-lifted 3D trail.</p></section>`;
   }
 
   function renderSelectedAircraftCard(aircraft = []) {
@@ -442,6 +461,7 @@
       renderSelectedAircraftCard(aircraft);
       document.querySelectorAll?.('.location-aircraft-marker.selected').forEach(marker =>
         marker.classList.remove('selected'));
+      document.querySelector?.('.location-aircraft-layer')?._updatePositions?.();
     });
     if (!hex || aircraftPhotoCache.has(hex)) return;
     aircraftPhotoCache.set(hex, {loading: true});
@@ -489,6 +509,21 @@
         Object.assign(layer.style, {position: 'absolute', inset: '0', zIndex: '8',
           pointerEvents: 'none', overflow: 'hidden'});
         container.appendChild(layer);
+        if (document.createElementNS) {
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('class', 'location-aircraft-trails');
+          svg.setAttribute('aria-hidden', 'true');
+          const path = className => {
+            const value = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            value.setAttribute('class', className);
+            svg.appendChild(value);
+            return value;
+          };
+          layer._groundTrail = path('location-aircraft-ground-trail');
+          layer._flightTrail = path('location-aircraft-flight-trail');
+          layer._altitudeConnector = path('location-aircraft-altitude-connector');
+          layer.appendChild(svg);
+        }
         map.on('move', () => layer._updatePositions?.());
         map.on('resize', () => layer._updatePositions?.());
       }
@@ -524,6 +559,7 @@
             const sidebar = document.querySelector?.('.location-map-sidebar');
             if (selectedAircraftId && sidebar) sidebar.open = true;
             renderSelectedAircraftCard(layer._aircraftSnapshot || []);
+            layer._updatePositions?.();
           });
           layer.appendChild(marker);
           layer._aircraftMarkers.set(aircraftId, record);
@@ -579,28 +615,44 @@
       }
       for (const [id, record] of layer._siteMarkers)
         if (!seenSites.has(id)) { record.marker.remove(); layer._siteMarkers.delete(id); }
-      layer._updatePositions = () => [...layer._aircraftMarkers.values(),
-        ...layer._siteMarkers.values()].forEach(({item, marker, icon, heading, isAircraft}) => {
-        const point = map.project([Number(item.lon), Number(item.lat)]);
-        let altitudeLift = 0;
+      const altitudeLiftFor = item => {
         const pitch = finite(map.getPitch?.()) ?? 0;
-        if (isAircraft && pitch > 0) {
-          const altitudeFeet = aircraftInfo(item).altitude;
-          const groundMeters = finite(sites[0]?.altitude) ?? 0;
-          const heightMeters = altitudeFeet === null ? 0 : Math.max(0, altitudeFeet * .3048 - groundMeters);
-          const zoom = finite(map.getZoom?.()) ?? 0;
-          const metersPerPixel = Math.cos(Number(item.lat) * Math.PI / 180) * 2 * Math.PI * 6378137 /
-            (512 * Math.pow(2, zoom));
-          altitudeLift = Math.min(240, heightMeters / Math.max(.01, metersPerPixel) *
-            Math.sin(pitch * Math.PI / 180));
-        }
+        if (pitch <= 0) return 0;
+        const altitudeFeet = Number.isFinite(item.altitude) ? item.altitude : aircraftInfo(item).altitude;
+        const groundMeters = finite(sites[0]?.altitude) ?? 0;
+        const heightMeters = altitudeFeet === null ? 0 : Math.max(0, altitudeFeet * .3048 - groundMeters);
+        const zoom = finite(map.getZoom?.()) ?? 0;
+        const metersPerPixel = Math.cos(Number(item.lat) * Math.PI / 180) * 2 * Math.PI * 6378137 /
+          (512 * Math.pow(2, zoom));
+        return Math.min(240, heightMeters / Math.max(.01, metersPerPixel) *
+          Math.sin(pitch * Math.PI / 180));
+      };
+      layer._updatePositions = () => {
+        [...layer._aircraftMarkers.values(), ...layer._siteMarkers.values()].forEach(
+          ({item, marker, icon, heading, isAircraft}) => {
+        const point = map.project([Number(item.lon), Number(item.lat)]);
+        const altitudeLift = isAircraft ? altitudeLiftFor(item) : 0;
         marker.style.left = `${point.x}px`;
         marker.style.top = `${point.y - altitudeLift}px`;
         if (isAircraft && icon) {
           const rotation = aircraftScreenRotation(heading, map.getBearing?.());
           icon.style.transform = rotation === null ? 'rotate(0deg)' : `rotate(${rotation}deg)`;
         }
-      });
+        });
+        const history = selectedAircraftId ? aircraftTrackHistories.get(selectedAircraftId) || [] : [];
+        const points = history.map(point => {
+          const projected = map.project([point.lon, point.lat]);
+          return {x: projected.x, groundY: projected.y,
+            flightY: projected.y - altitudeLiftFor(point)};
+        });
+        const path = (values, y) => values.map((point, index) =>
+          `${index ? 'L' : 'M'}${point.x.toFixed(1)} ${point[y].toFixed(1)}`).join(' ');
+        layer._groundTrail?.setAttribute('d', points.length > 1 ? path(points, 'groundY') : '');
+        layer._flightTrail?.setAttribute('d', points.length > 1 ? path(points, 'flightY') : '');
+        const last = points[points.length - 1];
+        layer._altitudeConnector?.setAttribute('d', last && Math.abs(last.groundY - last.flightY) > 1 ?
+          `M${last.x.toFixed(1)} ${last.groundY.toFixed(1)}L${last.x.toFixed(1)} ${last.flightY.toFixed(1)}` : '');
+      };
       layer._updatePositions();
     });
   }
@@ -678,6 +730,11 @@
           aircraft[candidate.aircraftIndex] = {...aircraft[candidate.aircraftIndex],
             radar_track_id: candidate.track.id, radar_track_state: candidate.track.state};
         });
+        updateAircraftTrackHistories(aircraftTrackHistories, aircraft);
+        selectedAircraftId = selectRadarAssociatedAircraft(selectedAircraftId, aircraft,
+          autoSelectRadarAircraft);
+        selectedAircraftSnapshot = aircraft.find(item => aircraftIdentity(item) === selectedAircraftId) ||
+          selectedAircraftSnapshot;
       } catch (_) {
         aircraft = stabilizeAircraftSnapshots([], {scope: 'map', graceMs: 10000});
         aircraftError = 'ADS-B aircraft positions temporarily unavailable';
