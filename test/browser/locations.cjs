@@ -25,7 +25,7 @@ const fixtures = {'/api/runtime/config': config, '/api/config': config,
       {bin: 54, latitude: 40.0, longitude: -80.35}
     ]},
   '/api/adsb': {aircraft: [{hex: 'a0b1c2', flight: 'TEST123', lat: 40.04, lon: -80.05,
-    alt_baro: 18000, gs: 220, track: 135, seen_pos: 0}]},
+    alt_baro: 18000, gs: 220, track: 135, geom_rate: 1800, seen_pos: 0}]},
   '/api/adsb/delay-doppler': {A0B1C2: {hex: 'A0B1C2', delay: 20, doppler: 40}},
   '/api/adsb/aircraft-photo/a0b1c2': {available: true, provider: 'Planespotters.net',
     thumbnail: 'https://t.plnspttrs.net/test.jpg', link: 'https://www.planespotters.net/photo/test',
@@ -94,6 +94,24 @@ const server = http.createServer((request, response) => {
     await page.waitForFunction(() => document.querySelectorAll('.location-site-label').length === 2);
     await page.waitForFunction(() => document.querySelectorAll('.location-aircraft-marker').length === 1);
     assert.deepEqual(await page.locator('.location-site-label').allTextContents(), ['Receiver <test>', 'Illuminator']);
+    assert.equal(await page.locator('.location-site-icon .site-3d-svg').count(), 2,
+      'receiver and illuminator use lightweight 3D site models');
+    assert.equal(await page.locator('.location-aircraft-icon .aircraft-3d-depth').count(), 1,
+      'aircraft marker renders its depth layer');
+    const aircraftPose = await page.locator('.location-aircraft-icon').getAttribute('style');
+    assert.match(aircraftPose, /perspective\(180px\).*rotateZ\(135deg\).*rotateX\(/,
+      'aircraft marker uses map-relative yaw and vertical-rate flight-path pitch');
+    assert.equal(await page.locator('.location-aircraft-icon').getAttribute('data-flight-path'), 'climbing');
+    await page.setViewportSize({width: 390, height: 844});
+    const mobileIconSizes = await page.evaluate(() => ({
+      aircraft: getComputedStyle(document.querySelector('.location-aircraft-icon svg')).width,
+      site: getComputedStyle(document.querySelector('.location-site-icon')).width
+    }));
+    assert.deepEqual(mobileIconSizes, {aircraft: '38px', site: '42px'},
+      '3D aircraft and site models remain compact touch-safe overlays on mobile');
+    assert.equal(await page.locator('.location-aircraft-icon .aircraft-3d-svg').evaluate(node => getComputedStyle(node).filter), 'none',
+      'mobile 3D icons avoid compositor-heavy filters while the map moves');
+    await page.setViewportSize({width: 1000, height: 700});
     assert.equal(await page.locator('#show-radar-tracks-on-map').isChecked(), false,
       'geographic radar ellipses are opt-in');
     assert.equal(await page.locator('#show-radar-coverage-on-map').isChecked(), true,

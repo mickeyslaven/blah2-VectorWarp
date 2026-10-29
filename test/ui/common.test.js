@@ -190,10 +190,20 @@ function page(origin, apiOrigin = origin) {
     'Aircraft orientation wraps cleanly around true north');
   assert.equal(test.context.aircraftScreenRotation(null, 10), null,
     'Unknown course remains unknown');
+  assert.ok(test.context.aircraftFlightPathAngle(1500, 180) > 0,
+    'a climb produces a nose-up flight-path angle');
+  assert.ok(test.context.aircraftFlightPathAngle(-1500, 180) < 0,
+    'a descent produces a nose-down flight-path angle');
+  assert.equal(test.context.aircraftFlightPathAngle(10000, 0), 20,
+    'near-vertical movement remains bounded for a legible marker');
+  assert.equal(test.context.aircraftFlightPathAngle(null, 180), 0,
+    'missing vertical rate keeps the marker level');
   assert.equal(test.context.aircraftInfo({true_heading: 123}).heading, 123,
     'True heading is a fallback when ground track is unavailable');
   const rotorcraftIcon = test.context.aircraftSvgMarkup({category: 'A7'});
   assert.match(rotorcraftIcon, /viewBox="0 0 100 100"/);
+  assert.match(rotorcraftIcon, /aircraft-3d-depth/,
+    'aircraft icons include a lightweight depth layer');
   assert.match(rotorcraftIcon, /M10 8 90 70M90 8 10 70/,
     'Rotorcraft markers must retain the selected Minimal X rotor silhouette');
   assert.match(rotorcraftIcon, /v35h-6V59/,
@@ -203,6 +213,10 @@ function page(origin, apiOrigin = origin) {
     'Gliders must use the distinct long-wing planform');
   assert.match(test.context.aircraftSvgMarkup({category: 'B6'}), /M29 83h42/,
     'Fixed-wing UAVs must retain the visible rear pusher propeller');
+  assert.match(test.context.siteSvgMarkup('receiver'), /site-3d-mast/,
+    'the receiver uses a distinct 3D array/mast model');
+  assert.match(test.context.siteSvgMarkup('transmitter'), /M32 8 49 62/,
+    'the illuminator uses a distinct 3D broadcast-tower model');
   assert.equal(test.context.aircraftAltitudeColor({alt_baro: 'ground'}), '#8f9994');
   assert.equal(test.context.aircraftAltitudeColor({}), '#a7b0ac');
   assert.equal(test.context.aircraftAltitudeColor({altitude: 10000}),

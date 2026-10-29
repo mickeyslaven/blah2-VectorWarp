@@ -880,6 +880,18 @@ function aircraftScreenRotation(trackDegTrue, mapBearingDeg = 0) {
   return ((relative % 360) + 360) % 360;
 }
 
+// ADS-B supplies direction of travel rather than pitch attitude. Derive a
+// bounded flight-path angle so the map can show climbs and descents in 3D.
+function aircraftFlightPathAngle(verticalRateFpm, groundSpeedKnots) {
+  const vertical = Number(verticalRateFpm);
+  const speed = Number(groundSpeedKnots);
+  if (!Number.isFinite(vertical)) return 0;
+  const horizontalFpm = Number.isFinite(speed) && speed > 0 ? speed * 6076.11549 / 60 : 0;
+  const angle = horizontalFpm > 1 ? Math.atan2(vertical, horizontalFpm) * 180 / Math.PI :
+    Math.sign(vertical) * Math.min(20, Math.abs(vertical) / 100);
+  return Math.max(-20, Math.min(20, angle));
+}
+
 function aircraftIdentity(aircraft = {}) {
   const info = aircraftInfo(aircraft);
   return info.hex || info.label || null;
@@ -1027,11 +1039,16 @@ const aircraftHoverTemplate = '<b>%{customdata[0]}</b><br>' +
 
 function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
   const kind = aircraftKind(aircraft);
+  const layered = (shape, options = {}) => {
+    const attributes = options.attributes || '';
+    return `<svg class="aircraft-3d-svg" viewBox="0 0 ${options.viewBox || '100 100'}" width="38" height="38" aria-hidden="true"><g class="aircraft-3d-depth" color="${color}" fill="${options.fill || color}" stroke="${options.stroke || color}" ${attributes} transform="translate(4 6)">${shape}</g><g class="aircraft-3d-top" color="${color}" fill="${options.fill || color}" stroke="${options.stroke || color}" ${attributes}>${shape}</g><path class="aircraft-3d-highlight" d="M50 5 53 24 50 20 47 24Z"/></svg>`;
+  };
   if (kind === 'rotorcraft') {
     // Original VectorWarp planform: a compact, single-color rotor silhouette
     // that remains recognizable at map scale. The straight boom deliberately
     // avoids the split-tail "chicken bone" shape of generic helicopter glyphs.
-    return `<svg viewBox="0 0 100 100" width="38" height="38" aria-hidden="true"><g fill="${color}" stroke="${color}" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8 90 70M90 8 10 70" fill="none" stroke-width="5"/><path d="M50 17c10 0 15 8 14 21-1 10-5 17-11 21v35h-6V59c-7-4-10-11-11-21-1-13 4-21 14-21Z"/><path d="M39 90h22v6H39z"/><circle cx="50" cy="39" r="5"/></g></svg>`;
+    return layered('<path d="M10 8 90 70M90 8 10 70" fill="none" stroke-width="5"/><path d="M50 17c10 0 15 8 14 21-1 10-5 17-11 21v35h-6V59c-7-4-10-11-11-21-1-13 4-21 14-21Z"/><path d="M39 90h22v6H39z"/><circle cx="50" cy="39" r="5"/>',
+      {attributes: 'stroke-linecap="round" stroke-linejoin="round"'});
   }
   // Original VectorWarp top-down planforms. These stay license-neutral while
   // preserving recognisable proportions at the map's normal 38 px scale.
@@ -1041,10 +1058,10 @@ function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
     heavy: '<path d="M46 3Q50-1 54 3L58 31 97 53 96 61 57 49 56 77 72 89 71 95 50 88 29 95 28 89 44 77 43 49 4 61 3 53 42 31Z"/><path d="M18 51q-5 0-6 5t7 6l4-2v-8zm18-6q-5 0-6 6t7 6l4-2-1-9zm46 6q5 0 6 5t-7 6l-4-2v-8zm-18-6q5 0 6 6t-7 6l-4-2 1-9z" opacity=".55"/>',
     light: '<path d="M46 17Q50 10 54 17L56 37 88 44 89 53 57 51 56 75 67 86 66 91 50 86 34 91 33 86 44 75 43 51 11 53 12 44 44 37Z"/><path d="M48 5h4v10h-4zM31 8h38v4H31z"/>',
     glider: '<path d="M47 7Q50 2 53 7L54 40c13 1 29 3 45 7v6c-16-1-31-2-45-1l1 26 13 10-2 5-16-6-16 6-2-5 13-10 1-26c-14-1-29 0-45 1v-6c16-4 32-6 45-7Z"/><path d="M47 17q3-7 6 0v18h-6Z" opacity=".55"/>',
-    drone: '<path d="M47 8Q50 3 53 8L55 37 94 48v7l-39-5 1 27 16 11-4 6-18-9-18 9-4-6 16-11 1-27-39 5v-7l39-11Z"/><path d="M46 25h8l3 17-7 8-7-8Z" opacity=".55"/><path d="M29 83h42M50 74v24m-6-23-15 13m27-13 15 13" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round"/>'
+    drone: '<path d="M47 8Q50 3 53 8L55 37 94 48v7l-39-5 1 27 16 11-4 6-18-9-18 9-4-6 16-11 1-27-39 5v-7l39-11Z"/><path d="M46 25h8l3 17-7 8-7-8Z" opacity=".55"/><path d="M29 83h42M50 74v24m-6-23-15 13m27-13 15 13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>'
   };
   if (planforms[kind])
-    return `<svg viewBox="0 0 100 100" width="38" height="38" aria-hidden="true"><g fill="${color}" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${planforms[kind]}</g></svg>`;
+    return layered(planforms[kind], {attributes: 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'});
   // Ground vehicles retain the compact MIT-licensed Tabler glyph.
   const paths = {
     ground: '<path d="M5 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M5 17H3V6a1 1 0 0 1 1-1h9v12M9 17h6M19 17h2v-6h-8M13 6h5l3 5"/>',
@@ -1052,11 +1069,17 @@ function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
   return `<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><g fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[kind] || paths.ground}</g></svg>`;
 }
 
+function siteSvgMarkup(kind = 'receiver') {
+  if (kind === 'transmitter') return '<svg class="site-3d-svg" viewBox="0 0 64 72" width="42" height="48" aria-hidden="true"><path class="site-3d-shadow" d="m17 64 18-9 18 9-18 7Z"/><path class="site-3d-side" d="M32 8 49 62 35 69 35 18Z"/><path class="site-3d-front" d="M32 8 15 62 29 69 32 18ZM21 46h22M18 58h28M25 34h14"/><path class="site-3d-accent" d="M32 8v-5M19 12a18 18 0 0 0 0 25M45 12a18 18 0 0 1 0 25M13 7a26 26 0 0 0 0 35M51 7a26 26 0 0 1 0 35"/></svg>';
+  return '<svg class="site-3d-svg" viewBox="0 0 64 72" width="42" height="48" aria-hidden="true"><path class="site-3d-shadow" d="m10 61 23-11 23 11-23 10Z"/><path class="site-3d-side" d="m33 50 23 11-23 10Z"/><path class="site-3d-front" d="m10 61 23-11v21Z"/><path class="site-3d-mast" d="M30 54V22h6v32M18 34l15-8 15 8-15 8ZM24 46l9-5 9 5-9 5Z"/><circle class="site-3d-accent-fill" cx="33" cy="17" r="5"/><path class="site-3d-accent" d="M22 17a11 11 0 0 1 22 0M16 17a17 17 0 0 1 34 0"/></svg>';
+}
+
 if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
-    aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftPlotData, aircraftHoverText,
-    aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
+    aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftFlightPathAngle,
+    aircraftPlotData, aircraftHoverText, aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
+    siteSvgMarkup,
     stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft};

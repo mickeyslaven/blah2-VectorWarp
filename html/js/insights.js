@@ -720,8 +720,7 @@
           const marker = document.createElement('div');
           marker.className = 'location-aircraft-marker';
           Object.assign(marker.style, {position: 'absolute', width: '42px', height: '52px',
-            transform: 'translate(-50%, -50%)', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.9))',
-            pointerEvents: 'none'});
+            transform: 'translate(-50%, -50%)', pointerEvents: 'none'});
           marker.tabIndex = -1;
           marker.innerHTML = '<span class="location-aircraft-icon"></span><span class="location-aircraft-label"></span>';
           record = {marker, icon: marker.children[0], label: marker.children[1],
@@ -751,6 +750,7 @@
         }
         record.item = item;
         record.heading = heading;
+        record.flightPathAngle = aircraftFlightPathAngle(info.verticalRate, info.speed);
         const marker = record.marker;
         const color = aircraftAltitudeColor(item);
         const radarTracked = Boolean(item.radar_track_id);
@@ -782,15 +782,13 @@
         if (!record) {
           const marker = document.createElement('div');
           marker.className = 'location-site-label';
-          Object.assign(marker.style, {position: 'absolute', margin: '10px 0 0 12px',
-            padding: '2px 5px', borderRadius: '4px', color: '#f3eee9',
-            background: 'rgba(16,20,18,.84)', font: '600 12px/1.3 Inter,system-ui,sans-serif',
-            whiteSpace: 'nowrap'});
+          marker.innerHTML = '<span class="location-site-icon"></span><span class="location-site-name"></span>';
           layer.appendChild(marker);
           record = {marker, item: null, isAircraft: false};
           layer._siteMarkers.set(id, record);
         }
-        record.marker.textContent = site.name;
+        record.marker.querySelector('.location-site-icon').innerHTML = siteSvgMarkup(site.kind);
+        record.marker.querySelector('.location-site-name').textContent = site.name;
         record.item = {lat: site.latitude, lon: site.longitude};
       }
       for (const [id, record] of layer._siteMarkers)
@@ -846,14 +844,17 @@
           }
         }
         [...layer._aircraftMarkers.values(), ...layer._siteMarkers.values()].forEach(
-          ({item, marker, icon, heading, isAircraft}) => {
+          ({item, marker, icon, heading, flightPathAngle, isAircraft}) => {
         const point = map.project([Number(item.lon), Number(item.lat)]);
         const altitudeLift = isAircraft ? altitudeLiftFor(item) : 0;
         marker.style.left = `${point.x}px`;
         marker.style.top = `${point.y - altitudeLift}px`;
         if (isAircraft && icon) {
           const rotation = aircraftScreenRotation(heading, map.getBearing?.());
-          icon.style.transform = rotation === null ? 'rotate(0deg)' : `rotate(${rotation}deg)`;
+          const yaw = rotation === null ? 0 : rotation;
+          const pitch = Number.isFinite(flightPathAngle) ? flightPathAngle : 0;
+          icon.style.transform = `perspective(180px) rotateZ(${yaw}deg) rotateX(${pitch.toFixed(2)}deg)`;
+          icon.dataset.flightPath = pitch > .5 ? 'climbing' : pitch < -.5 ? 'descending' : 'level';
         }
         });
         const history = selectedAircraftId ? aircraftTrackHistories.get(selectedAircraftId) || [] : [];
@@ -1090,8 +1091,8 @@
     renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `Orange 3D uncertainty cages show all ${visibleTracks.length} visible confirmed active delay-only tracks. A highlighted altitude slice means ADS-B/MLAT identified the tracked aircraft; the radar did not independently measure altitude.` : `Confirmed radar tracks are currently kept on the main radar display only; enable “Show radar tracks on this map” above to add their 3D uncertainty cages here.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
     renderSelectedAircraftCard(aircraft);
     renderAircraftOverlays(aircraft, [
-      {...receiver, name: receiver.name || 'Receiver'},
-      {...transmitter, name: transmitter.name || 'Illuminator'}
+      {...receiver, kind: 'receiver', name: receiver.name || 'Receiver'},
+      {...transmitter, kind: 'transmitter', name: transmitter.name || 'Illuminator'}
     ], radarTrackOverlays, showRadarCoverageOnMap ? coverage : null);
     if (locationMapIsBeingNavigated()) {
       setState(aircraftError || (tracks.length ? `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}` : 'No current radar tracks'), aircraftError ? 'warning' : tracks.length ? 'good' : 'warning');
