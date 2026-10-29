@@ -414,6 +414,7 @@
 
   let locationMapViewport = null;
   let locationMapDragging = false;
+  let locationMapEngaged = false;
   let locationMapHoldUntil = 0;
   let locationPlotSignature = null;
   let selectedAircraftId = null;
@@ -479,7 +480,25 @@
     const map = document.getElementById('data');
     if (!map?.addEventListener || !window.addEventListener || map.dataset.locationInputBound) return;
     map.dataset.locationInputBound = 'true';
-    map.addEventListener('pointerdown', () => { locationMapDragging = true; });
+    // Plotly.react can reconcile the Mapbox scene whenever live track traces
+    // change.  Do not do that in the middle of an operator's map session: on
+    // desktop, one click should keep pan/zoom active until the pointer leaves
+    // the map.  Touch gestures retain the shorter release grace because they
+    // do not reliably produce pointerleave on every browser.
+    map.addEventListener('pointerdown', () => {
+      locationMapDragging = true;
+      locationMapEngaged = true;
+    });
+    map.addEventListener('pointerleave', event => {
+      if (event.pointerType !== 'touch') locationMapEngaged = false;
+    });
+    // Touch screens have no durable hover/leave lifecycle. Keep the map
+    // engaged across successive pan/pinch gestures and release it only when
+    // the operator taps elsewhere on the page.
+    document.addEventListener?.('pointerdown', event => {
+      if (event.pointerType === 'touch' && !map.contains?.(event.target))
+        locationMapEngaged = false;
+    }, true);
     const release = () => {
       locationMapDragging = false;
       locationMapHoldUntil = Date.now() + 900;
@@ -492,7 +511,7 @@
   }
 
   function locationMapIsBeingNavigated() {
-    return locationMapDragging || Date.now() < locationMapHoldUntil;
+    return locationMapEngaged || locationMapDragging || Date.now() < locationMapHoldUntil;
   }
 
   function renderAircraftOverlays(aircraft, sites = []) {
@@ -660,7 +679,6 @@
   async function renderLocations() {
     setupLocationMapScaffold();
     bindLocationMapInteraction();
-    if (locationMapIsBeingNavigated()) return;
     const [config, detection, tracker] = await Promise.all([
       getConfig(), apiJson('/api/detection'), apiJson('/api/tracker')
     ]);
@@ -844,7 +862,14 @@
       `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
     renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="view-note">Orange ellipses show all ${tracks.length} confirmed active delay-only tracks; there is no display cap. Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are counted above but hidden from operational ellipses. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} counted above but hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
     renderSelectedAircraftCard(aircraft);
-    if (locationMapIsBeingNavigated()) return;
+    renderAircraftOverlays(aircraft, [
+      {...receiver, name: receiver.name || 'Receiver'},
+      {...transmitter, name: transmitter.name || 'Illuminator'}
+    ]);
+    if (locationMapIsBeingNavigated()) {
+      setState(aircraftError || (tracks.length ? `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}` : 'No current radar tracks'), aircraftError ? 'warning' : tracks.length ? 'good' : 'warning');
+      return;
+    }
     // ADS-B uses the keyed icon overlay below. Do not also send it through
     // Plotly: that duplicate path rebuilt the entire Mapbox scene every CPI.
     const plotSignature = JSON.stringify(traces.map(trace => [trace.name, trace.lat,
@@ -859,10 +884,6 @@
       }, plotConfig);
       locationPlotSignature = plotSignature;
     }
-    renderAircraftOverlays(aircraft, [
-      {...receiver, name: receiver.name || 'Receiver'},
-      {...transmitter, name: transmitter.name || 'Illuminator'}
-    ]);
     setState(aircraftError || (tracks.length ? `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}` : 'No current radar tracks'), aircraftError ? 'warning' : tracks.length ? 'good' : 'warning');
   }
 

@@ -19,11 +19,12 @@ const fixtures = {'/api/runtime/config': config, '/api/config': config,
   '/capture/status': {supported: false, available: false, recording: false},
   '/api/adsb/status': {enabled: false, online: false}};
 let detectionRequests = 0;
+let trackerRequests = 0;
 let inducedRefreshTimeout = false;
 const server = http.createServer((request, response) => {
   const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
   if (Object.hasOwn(fixtures, pathname)) {
-    if (pathname === '/api/detection' && ++detectionRequests === 2) {
+    if (pathname === '/api/detection' && ++detectionRequests === 6) {
       inducedRefreshTimeout = true;
       // Exercise recovery from one real browser-side API timeout. The request
       // is aborted by readResponse; the following refresh must clear the stale
@@ -31,7 +32,9 @@ const server = http.createServer((request, response) => {
       return;
     }
     response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify(fixtures[pathname])); return;
+    const payload = pathname === '/api/tracker' ? {timestamp: ++trackerRequests,
+      data: [{id: 7, state: 'ACTIVE', delay: 18 + trackerRequests, doppler: 40}]} : fixtures[pathname];
+    response.end(JSON.stringify(payload)); return;
   }
   const filename = path.resolve(root, '.' + (pathname.endsWith('/') ? pathname + 'index.html' : pathname));
   if (!filename.startsWith(root + path.sep) || !fs.existsSync(filename) || !fs.statSync(filename).isFile()) {
@@ -72,6 +75,49 @@ const server = http.createServer((request, response) => {
     await page.goto(base + '/display/locations/', {waitUntil: 'domcontentloaded'});
     await page.waitForFunction(() => document.querySelectorAll('.location-site-label').length === 2);
     assert.deepEqual(await page.locator('.location-site-label').allTextContents(), ['Receiver <test>', 'Illuminator']);
+    stage = 'persistent map interaction across refresh intervals';
+    await page.evaluate(() => {
+      window.locationAfterPlotCount = 0;
+      document.getElementById('data').on('plotly_afterplot', () => window.locationAfterPlotCount++);
+    });
+    const mapBounds = await page.locator('#data').boundingBox();
+    assert.ok(mapBounds, 'map must have interactive bounds');
+    await page.mouse.move(mapBounds.x + mapBounds.width / 2, mapBounds.y + mapBounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.up();
+    // Let any refresh that began before the click finish before measuring the
+    // protected interaction interval.
+    await page.waitForTimeout(300);
+    const plotsWhileEngaged = await page.evaluate(() => window.locationAfterPlotCount);
+    await page.mouse.wheel(0, -180);
+    await page.waitForTimeout(2300);
+    await page.mouse.wheel(0, -180);
+    await page.waitForTimeout(200);
+    assert.equal(await page.evaluate(() => window.locationAfterPlotCount), plotsWhileEngaged,
+      'live refresh must not reconcile the Mapbox scene while the pointer remains on the map');
+    await page.mouse.move(2, 2);
+    const resumedDeadline = Date.now() + 4000;
+    while (await page.evaluate(() => window.locationAfterPlotCount) <= plotsWhileEngaged &&
+      Date.now() < resumedDeadline)
+      await page.waitForTimeout(100);
+    assert.ok(await page.evaluate(() => window.locationAfterPlotCount) > plotsWhileEngaged,
+      'map trace reconciliation must resume after the pointer leaves the map');
+    stage = 'touch map interaction persists until an outside tap';
+    const touchPlots = await page.evaluate(() => window.locationAfterPlotCount);
+    await page.dispatchEvent('#data', 'pointerdown', {pointerType: 'touch', pointerId: 2});
+    await page.dispatchEvent('#data', 'pointerup', {pointerType: 'touch', pointerId: 2});
+    await page.waitForTimeout(2300);
+    assert.equal(await page.evaluate(() => window.locationAfterPlotCount), touchPlots,
+      'touch map engagement must survive refreshes between successive gestures');
+    await page.dispatchEvent('body', 'pointerdown', {pointerType: 'touch', pointerId: 3});
+    const touchResumeDeadline = Date.now() + 4000;
+    while (await page.evaluate(() => window.locationAfterPlotCount) <= touchPlots &&
+      Date.now() < touchResumeDeadline)
+      await page.waitForTimeout(100);
+    assert.ok(await page.evaluate(() => window.locationAfterPlotCount) > touchPlots,
+      'an outside touch must release the persistent map interaction session');
+    const preservedCenter = await page.evaluate(() =>
+      document.getElementById('data')._fullLayout.mapbox.center);
     stage = 'map style and dimensions after viewport resize';
     for (const width of [1200, 1050, 1400]) await page.setViewportSize({width, height: 900});
     await page.waitForFunction(() => {
@@ -82,9 +128,9 @@ const server = http.createServer((request, response) => {
     });
     stage = 'live refresh and final assertions';
     const refreshDeadline = Date.now() + 8000;
-    while (detectionRequests < 3 && Date.now() < refreshDeadline) await page.waitForTimeout(100);
+    while (detectionRequests < 7 && Date.now() < refreshDeadline) await page.waitForTimeout(100);
     assert.equal(inducedRefreshTimeout, true, 'The recovery path must be exercised');
-    assert.ok(detectionRequests >= 3, 'A successful refresh must follow the induced timeout');
+    assert.ok(detectionRequests >= 7, 'A successful refresh must follow the induced timeout');
     await page.waitForFunction(() => window.blah2ViewLastError === null);
     const state = await page.evaluate(() => {
       const graph = document.getElementById('data');
@@ -97,8 +143,10 @@ const server = http.createServer((request, response) => {
     assert.deepEqual(errors, []);
     assert.deepEqual(state.latitude, [40, 40.1]);
     assert.deepEqual(state.longitude, [-80, -80.2]);
-    assert.equal(state.center.lat, 40.05);
-    assert.equal(state.center.lon, -80.1);
+    assert.ok(Math.abs(state.center.lat - preservedCenter.lat) < 1e-6,
+      'live refresh and resize must preserve the operator map latitude');
+    assert.ok(Math.abs(state.center.lon - preservedCenter.lon) < 1e-6,
+      'live refresh and resize must preserve the operator map longitude');
     assert.equal(state.labels, 2);
     console.log('Real Chromium locations map: initialization, escaped site labels, updates and resize passed (synthetic data).');
   } catch (error) {
