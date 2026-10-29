@@ -39,7 +39,10 @@ const server = http.createServer((request, response) => {
     let bounds = await button.boundingBox();
     assert.ok(bounds && bounds.width <= 40 && bounds.height <= 40,
       `mobile fullscreen control must stay compact, got ${JSON.stringify(bounds)}`);
-    assert.ok(bounds.y < 180, 'mobile fullscreen control belongs in the top-right plot corner');
+    const toolbarBounds = await page.locator('.radar-toolbar').boundingBox();
+    assert.ok(toolbarBounds && bounds.y >= toolbarBounds.y &&
+      bounds.y + bounds.height <= toolbarBounds.y + toolbarBounds.height,
+      'mobile fullscreen control must stay inside the reserved toolbar');
     const visualBounds = await page.locator('.radar-panel .visualization').boundingBox();
     assert.ok(visualBounds && visualBounds.height <= 500 && visualBounds.height / visualBounds.width < 1.4,
       `portrait delay-Doppler must remain a readable overview, got ${JSON.stringify(visualBounds)}`);
@@ -48,17 +51,37 @@ const server = http.createServer((request, response) => {
       'mobile marker key must not run underneath the fullscreen control');
     const markerBounds = await page.locator('.radar-overlay-control').boundingBox();
     const recordingBounds = await page.locator('.recording-control').boundingBox();
-    assert.ok(markerBounds && visualBounds && markerBounds.y >= visualBounds.y + visualBounds.height,
-      'mobile marker selector must stay outside the delay-Doppler plot');
-    assert.ok(markerBounds && recordingBounds && markerBounds.y + markerBounds.height <= recordingBounds.y,
-      'mobile marker selector must stay above the recording controls');
+    assert.ok(markerBounds && toolbarBounds && markerBounds.y >= toolbarBounds.y &&
+      markerBounds.y + markerBounds.height <= toolbarBounds.y + toolbarBounds.height,
+      'mobile marker selector must stay inside the reserved toolbar');
+    assert.ok(toolbarBounds && visualBounds && toolbarBounds.y + toolbarBounds.height <= visualBounds.y,
+      'reserved toolbar must not overlap the delay-Doppler plot');
+    assert.ok(visualBounds && recordingBounds && visualBounds.y + visualBounds.height <= recordingBounds.y,
+      'delay-Doppler plot must stay above recording controls');
     await button.click();
     await page.getByRole('button', {name: 'Exit fullscreen'}).waitFor();
     bounds = await page.getByRole('button', {name: 'Exit fullscreen'}).boundingBox();
     assert.ok(bounds && bounds.width <= 40 && bounds.height <= 40,
       `fallback fullscreen control must stay compact, got ${JSON.stringify(bounds)}`);
     assert.equal(await page.locator('.radar-panel.fullscreen-fallback').count(), 1);
-    console.log('Mobile radar fullscreen control stays compact before and after fallback fullscreen.');
+    await page.setViewportSize({width: 1194, height: 834});
+    await page.getByRole('button', {name: 'Exit fullscreen'}).click();
+    await page.waitForTimeout(50);
+    const tabletToolbar = await page.locator('.radar-toolbar').boundingBox();
+    const tabletPlot = await page.locator('.radar-panel .visualization').boundingBox();
+    const tabletButton = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();
+    const tabletSelector = await page.locator('.radar-overlay-control').boundingBox();
+    assert.ok(tabletToolbar && tabletPlot && tabletToolbar.y + tabletToolbar.height <= tabletPlot.y,
+      'iPad landscape toolbar must reserve space above the plot');
+    for (const [name, box] of [['fullscreen', tabletButton], ['selector', tabletSelector]]) {
+      assert.ok(box && tabletToolbar && box.y >= tabletToolbar.y &&
+        box.y + box.height <= tabletToolbar.y + tabletToolbar.height,
+        `iPad landscape ${name} control must stay inside the toolbar`);
+    }
+    const horizontalOverflow = await page.evaluate(() =>
+      Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - innerWidth);
+    assert.ok(horizontalOverflow <= 2, `iPad landscape must not overflow by ${horizontalOverflow}px`);
+    console.log('Radar controls reserve non-overlapping plot space on phone and iPad landscape.');
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

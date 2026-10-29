@@ -16,10 +16,11 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .page-intro,.controller-intro { display:none; }.eyebrow,.page-title,.page-subtitle { display:none; }
 .panel { overflow:hidden; border:1px solid var(--line); border-radius:13px; background:rgb(28 23 21 / .92); box-shadow:0 18px 48px rgb(0 0 0 / .16); }.panel-header { display:none; }.visualization { width:100%; height:calc(100vh - 108px); min-height:480px; }
 .radar-panel { display:flex; min-height:calc(100dvh - 80px); flex-direction:column; }
-.radar-panel .visualization { flex:1 1 auto; height:calc(100dvh - 138px); min-height:430px; }
+.radar-panel .visualization { flex:1 1 auto; height:calc(100dvh - 176px); min-height:430px; }
 .fullscreen-target { position:relative; }.fullscreen-button { position:absolute; z-index:10; top:9px; right:12px; padding:5px 9px; border:1px solid var(--line); border-radius:6px; background:var(--surface-raised); color:var(--muted); font:600 11px inherit; cursor:pointer; }.fullscreen-button:hover { color:var(--ink); border-color:var(--accent); }.fullscreen-target:fullscreen,.fullscreen-target:-webkit-full-screen,.fullscreen-target.fullscreen-fallback { display:flex; width:100vw; height:100vh; height:100dvh; border:0; border-radius:0; background:var(--canvas); }.fullscreen-target.fullscreen-fallback { position:fixed; inset:0; z-index:10000; margin:0; }.fullscreen-target:fullscreen .visualization,.fullscreen-target:-webkit-full-screen .visualization,.fullscreen-target.fullscreen-fallback .visualization { flex:1 1 auto; width:100%; height:100%; min-width:0; min-height:0; max-height:none; }.fullscreen-page { overflow:hidden !important; overscroll-behavior:none; }
-.radar-panel > .fullscreen-button { z-index:20; top:auto; right:14px; bottom:14px; background:rgb(36 29 26 / .96); box-shadow:0 4px 16px rgb(0 0 0 / .3); }
-.radar-overlay-control { position:absolute; z-index:8; top:9px; right:12px; display:flex; align-items:center; gap:7px; padding:5px 7px; border:1px solid rgb(71 54 46 / .72); border-radius:7px; background:rgba(18,14,13,.9); color:var(--muted); font-size:9px; font-weight:700; backdrop-filter:blur(4px); }
+.radar-toolbar { display:flex; flex:0 0 auto; min-width:0; min-height:42px; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; border-bottom:1px solid var(--line); background:rgb(24 18 16 / .97); }
+.radar-toolbar > .fullscreen-button { position:static; z-index:auto; display:grid; flex:0 0 34px; width:34px; height:30px; padding:0; place-items:center; border-radius:7px; font-size:18px; line-height:1; }
+.radar-overlay-control { position:static; display:flex; flex:0 0 auto; align-items:center; gap:7px; padding:0; border:0; background:transparent; color:var(--muted); font-size:9px; font-weight:700; }
 .radar-overlay-control select { width:auto; min-height:26px; padding:3px 24px 3px 7px; border:1px solid var(--line); border-radius:5px; background:var(--surface-raised); color:var(--ink); font:650 10px inherit; }
 .recording-panel { display:flex; flex-direction:column; }
 .recording-panel:not(.radar-panel):not(.insight-plot-card) .visualization { flex:1 1 auto; height:calc(100vh - 158px); min-height:430px; }
@@ -385,15 +386,14 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .recording-list.is-loading::before { content:"Loading recordings…"; display:block; padding:22px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); text-align:center; }
 .recording-list.is-loading > .empty-state { display:none; }
 .recording-list.is-loading > .recording-card { opacity:.58; }
-.radar-overlay-key { position:absolute; z-index:6; top:10px; left:12px; display:flex; flex-wrap:wrap; gap:7px 12px; padding:6px 9px; border:1px solid rgb(71 54 46 / .72); border-radius:7px; background:rgba(18,14,13,.82); color:var(--muted); font-size:9px; pointer-events:none; backdrop-filter:blur(4px); }.radar-overlay-key span { display:flex; align-items:center; gap:5px; white-space:nowrap; }.radar-overlay-key i { display:block; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }.radar-overlay-key .raw { background:#f4b183; opacity:.68; }.radar-overlay-key .track { width:11px; height:11px; border:1px solid #542012; background:#ff7a45; }.radar-overlay-key .coasting { width:13px; height:13px; border:2px solid rgb(255 122 69 / .72); background:transparent; }.radar-overlay-key .adsb { width:11px; height:11px; background:#4dd4b0; border:1px solid #10251f; }
+.radar-overlay-key { display:flex; min-width:0; flex-wrap:wrap; gap:5px 10px; color:var(--muted); font-size:9px; pointer-events:none; }.radar-overlay-key span { display:flex; align-items:center; gap:5px; white-space:nowrap; }.radar-overlay-key i { display:block; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }.radar-overlay-key .raw { background:#f4b183; opacity:.68; }.radar-overlay-key .track { width:11px; height:11px; border:1px solid #542012; background:#ff7a45; }.radar-overlay-key .coasting { width:13px; height:13px; border:2px solid rgb(255 122 69 / .72); background:transparent; }.radar-overlay-key .adsb { width:11px; height:11px; background:#4dd4b0; border:1px solid #10251f; }
 @media (max-width:600px) {
-  .radar-panel .visualization { order:1; }
-  .radar-overlay-control { position:static; order:2; width:100%; max-width:none; padding:5px 8px; border-width:1px 0 0; border-radius:0; background:rgb(24 18 16 / .97); }
+  .radar-toolbar { flex-wrap:wrap; gap:6px; padding:6px; }
+  .radar-overlay-key { flex:1 1 calc(100% - 44px); gap:4px 7px; }
+  .radar-overlay-control { order:3; width:100%; max-width:none; }
   .radar-overlay-control > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   .radar-overlay-control select { width:100%; min-height:30px; max-width:none; }
-  .recording-control { order:3; }
-  .radar-panel > .fullscreen-button { top:8px; right:8px; bottom:auto; display:grid; width:34px; height:34px; padding:0; place-items:center; border-radius:9px; font-size:21px; line-height:1; }
-  .radar-overlay-key { max-width:calc(100% - 54px); gap:5px 8px; padding:5px 7px; }
+  .radar-toolbar > .fullscreen-button { flex-basis:34px; height:34px; border-radius:9px; font-size:21px; }
   .recording-pause[hidden] { display:none; }
 }
 .page-loading { display:grid; place-items:center; gap:8px; min-height:240px; padding:32px; color:var(--muted); text-align:center; }

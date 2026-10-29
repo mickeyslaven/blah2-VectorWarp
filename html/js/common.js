@@ -279,7 +279,8 @@ function addFullscreenControl() {
   });
   panel.classList.add('fullscreen-target');
   panel.classList.add('has-fullscreen');
-  panel.appendChild(button);
+  const toolbar = panel.querySelector('.radar-toolbar');
+  (toolbar || panel).appendChild(button);
   let resizePending = false;
   let resizeInFlight = false;
   let resizeRequested = false;
