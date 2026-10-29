@@ -695,7 +695,10 @@
             value.setAttribute('class', className); group.appendChild(value); return value;
           };
           const path = makePath('location-radar-track-path location-radar-track-ground');
-          const slices = [10000, 20000, 30000, 40000].map(() =>
+          // Delay-only radar tracks do not measure altitude. The cage spans
+          // the practical civil-aircraft envelope so high traffic does not
+          // appear above it; an ADS-B match still gets its own exact slice.
+          const slices = [10000, 20000, 30000, 40000, 60000].map(() =>
             makePath('location-radar-track-slice'));
           const ribs = makePath('location-radar-track-ribs');
           const associated = makePath('location-radar-track-associated');
@@ -824,7 +827,7 @@
           const ground = item.latitude.map((latitude, index) => ({latitude,
             point: map.project([item.longitude[index], latitude])}));
           radarPath.setAttribute('d', line(ground.map(value => value.point)));
-          const sliceAltitudes = [10000, 20000, 30000, 40000];
+          const sliceAltitudes = [10000, 20000, 30000, 40000, 60000];
           const lifted = altitude => ground.map(value => ({x: value.point.x,
             y: value.point.y - altitudeLiftFor({lat: value.latitude, altitude})}));
           slices.forEach((slice, index) => slice.setAttribute('d', line(lifted(sliceAltitudes[index]))));
@@ -1059,11 +1062,16 @@
     });
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
     const configuredExcessKm = configuredDelayBins * resolution;
-    const evaluationRadiusKm = Math.max(0, finite(config?.truth?.adsb?.display_range_km) ?? 0);
     const viewportKey = [receiver.latitude, receiver.longitude, transmitter.latitude,
-      transmitter.longitude, configuredExcessKm, evaluationRadiusKm].join(':');
+      transmitter.longitude, configuredExcessKm].join(':');
     if (!locationMapViewport || locationMapViewport.key !== viewportKey) {
-      const spanKm = Math.max(10, baseline + configuredExcessKm, evaluationRadiusKm * 2);
+      // Online ADS-B radius describes feed acquisition, not radar reach. Frame
+      // a fresh map from the durable 24-hour radar-confirmed envelope instead.
+      // Do this only at initialization/config change so new tracks never yank
+      // an operator's active pan or zoom.
+      const coverageRadiusKm = Math.max(0, ...array(coverage?.points)
+        .map(point => finite(point?.ground_range_km) ?? 0));
+      const spanKm = Math.max(10, baseline + configuredExcessKm, coverageRadiusKm * 2);
       locationMapViewport = {
         key: viewportKey,
         center: {lat: (receiver.latitude + transmitter.latitude) / 2,

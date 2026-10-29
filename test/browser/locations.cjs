@@ -11,7 +11,8 @@ const config = {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', c
   process: {data: {cpi: .2}, ambiguity: {delayMax: 245}, tracker: {enable: true}},
   location: {rx: {name: 'Receiver <test>', latitude: 40, longitude: -80, altitude: 250},
     tx: {name: 'Illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}},
-  truth: {adsb: {enabled: true, aircraft_photo_provider: 'planespotters'}}};
+  truth: {adsb: {enabled: true, display_range_km: 1000,
+    aircraft_photo_provider: 'planespotters'}}};
 const fixtures = {'/api/runtime/config': config, '/api/config': config,
   '/api/system/status': {serverId: 'synthetic-map-test', radar: 'no-data', adsbEnabled: false},
   '/api/detection': {timestamp: 1, delay: [], doppler: [], snr: []},
@@ -120,6 +121,8 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('#show-radar-coverage-on-map').isChecked(), true,
       'radar-confirmed rolling coverage is visible by default');
     await page.waitForFunction(() => document.querySelector('.location-radar-coverage-path')?.getAttribute('d'));
+    assert.ok((await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox.zoom)) > 5,
+      'online ADS-B acquisition radius must not define the radar map distance');
     assert.equal(await page.locator('.location-radar-track-path').count(), 0);
     assert.equal(await page.locator('.location-aircraft-tooltip').count(), 0,
       'map markers must remain label-only; aircraft data belongs in the sidebar');
@@ -130,8 +133,8 @@ const server = http.createServer((request, response) => {
     await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
     assert.equal(await page.locator('.location-radar-track-cage').count(), 1,
       'each confirmed track gets one consistent 3D uncertainty cage');
-    assert.equal(await page.locator('.location-radar-track-slice').count(), 4,
-      'the cage exposes four altitude slices on desktop and mobile');
+    assert.equal(await page.locator('.location-radar-track-slice').count(), 5,
+      'the cage spans through 60,000 feet on desktop and mobile');
     assert.ok(await page.locator('.location-radar-track-ribs').getAttribute('d'),
       'the altitude slices are joined by sparse vertical ribs');
     const firstTrackPath = await page.locator('.location-radar-track-path').getAttribute('d');
