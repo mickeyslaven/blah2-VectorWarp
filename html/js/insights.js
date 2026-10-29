@@ -441,7 +441,8 @@
       <div><dt>Altitude</dt><dd>${info.altitude === null ? '—' : `${integer(info.altitude)} ft`}</dd></div><div><dt>Ground speed</dt><dd>${info.speed === null ? '—' : `${integer(info.speed)} kt`}</dd></div>
       <div><dt>Heading</dt><dd>${info.heading === null ? '—' : `${integer(info.heading)}°`}</dd></div><div><dt>Vertical rate</dt><dd>${info.verticalRate === null ? '—' : `${integer(info.verticalRate)} ft/min`}</dd></div>
       <div><dt>Squawk</dt><dd>${aircraftValue(info.squawk)}</dd></div><div><dt>Signal</dt><dd>${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div>
-      <div><dt>Position age</dt><dd>${info.age === null ? '—' : `${number(info.age, 1)} s`}</dd></div><div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div>
+      <div><dt>Position source</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''}</dd></div><div><dt>Position age</dt><dd>${info.age === null ? '—' : `${number(info.age, 1)} s`}</dd></div>
+      <div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div>
       <div><dt>Excess bistatic path</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`}</dd></div><div><dt>Predicted Doppler</dt><dd>${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
     </dl><p class="aircraft-track-note">The selected aircraft shows a recent ground trail and, when the map is tilted, an altitude-lifted 3D trail.</p></section>`;
   }
@@ -588,7 +589,8 @@
         const marker = record.marker;
         const color = aircraftAltitudeColor(item);
         const radarTracked = Boolean(item.radar_track_id);
-        const detail = [info.registration, info.type, info.description,
+        const detail = [info.positionSource === 'MLAT' ? `MLAT position${info.provider ? ` · ${info.provider}` : ''}` : '',
+          info.registration, info.type, info.description,
           info.altitude === null ? '' : `${Math.round(info.altitude).toLocaleString()} ft`,
           info.speed === null ? '' : `${Math.round(info.speed)} kt`,
           info.hex ? `ICAO ${info.hex}` : '', info.squawk ? `Squawk ${info.squawk}` : '',
@@ -596,10 +598,12 @@
           .filter(Boolean).map(escapeHtml).join('<br>');
         marker.classList?.toggle('selected', selectedAircraftId === aircraftId);
         marker.classList?.toggle('snapshot-stale', item._snapshot_stale === true);
+        marker.classList?.toggle('mlat-position', info.positionSource === 'MLAT');
         marker.classList?.toggle('radar-tracked', radarTracked);
         marker.classList?.toggle('radar-active', radarTracked &&
           ['ACTIVE', 'CONFIRMED'].includes(String(item.radar_track_state).toUpperCase()));
-        const signature = [aircraftKind(item), color, heading, info.label, detail, radarTracked].join('|');
+        const signature = [aircraftKind(item), color, heading, info.label, detail,
+          info.positionSource, radarTracked].join('|');
         if (signature !== record.signature) {
           record.icon.innerHTML = aircraftSvgMarkup(item, color);
           record.label.textContent = info.label;

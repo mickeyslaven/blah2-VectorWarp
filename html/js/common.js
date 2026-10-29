@@ -840,6 +840,12 @@ function aircraftInfo(aircraft = {}) {
     finiteValue(position.altitude_geom_ft) ?? finiteValue(position.altitude_baro_ft);
   const verticalRate = finiteValue(aircraft.geom_rate) ?? finiteValue(aircraft.baro_rate) ??
     finiteValue(position.geom_rate_fpm) ?? finiteValue(position.baro_rate_fpm);
+  const rawPositionSource = String(aircraft.position_source ||
+    aircraft.vectorwarp?.position_source || aircraft.provenance?.position_source || '').toUpperCase();
+  const positionSource = rawPositionSource === 'MLAT' || String(aircraft.type || '').toLowerCase() === 'mlat' ?
+    'MLAT' : rawPositionSource === 'ADSB_DIRECT' ? 'ADS-B' : rawPositionSource || 'ADS-B';
+  const provider = String(aircraft.vectorwarp?.provider || aircraft.provenance?.provider ||
+    aircraft.vectorwarp?.source_id || aircraft.provenance?.source_id || '').replace(/^exchange:/, '');
   return {
     label: aircraftLabel(aircraft), registration: String(aircraft.r || '').trim(),
     type: String(aircraft.t || aircraft.aircraft_type || '').trim(),
@@ -855,7 +861,7 @@ function aircraftInfo(aircraft = {}) {
     squawk: String(aircraft.squawk || position.squawk || '').trim(),
     signal: finiteValue(aircraft.rssi) ?? finiteValue(position.rssi_dbfs),
     age: finiteValue(aircraft.seen_pos) ?? finiteValue(position.seen_pos_s), delay: finiteValue(aircraft.delay),
-    doppler: finiteValue(aircraft.doppler)
+    doppler: finiteValue(aircraft.doppler), positionSource, provider
   };
 }
 
@@ -973,7 +979,7 @@ function aircraftPlotData(aircraft = {}) {
   const info = aircraftInfo(aircraft);
   return [info.label, info.registration, info.type, info.description, info.hex,
     info.altitude, info.speed, info.heading, info.verticalRate, info.squawk,
-    info.signal, info.age, info.category];
+    info.signal, info.age, info.category, info.positionSource, info.provider];
 }
 
 function aircraftHoverText(aircraft = {}, geometry = {}) {
@@ -991,6 +997,7 @@ function aircraftHoverText(aircraft = {}, geometry = {}) {
     `Altitude ${value(info.altitude, 0, ' ft')} · Speed ${value(info.speed, 0, ' kt')}`,
     `Heading ${value(info.heading, 0, '°')} · Vertical rate ${value(info.verticalRate, 0, ' ft/min')}`,
     `Squawk ${safe(info.squawk || '—')} · Signal ${value(info.signal, 1, ' dBFS')}`,
+    `Position ${safe(info.positionSource)}${info.provider ? ` · ${safe(info.provider)}` : ''}`,
     `Position age ${value(info.age, 1, ' s')}`];
   if (Number.isFinite(geometry.delay) || Number.isFinite(geometry.doppler))
     lines.push(`Bistatic range ${value(geometry.delay, 2, ' km')} · Doppler ${value(geometry.doppler, 1, ' Hz')}`);

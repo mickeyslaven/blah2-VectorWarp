@@ -1231,6 +1231,7 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
           const position = aircraft.position && typeof aircraft.position === 'object' ? aircraft.position : {};
           compact[id] = {...Object.fromEntries([
             'delay', 'doppler', 'hex', 'flight', 'r', 't', 'type', 'desc', 'category',
+            'position_source', 'source_fields',
             'alt_baro', 'alt_geom', 'gs', 'track', 'geom_rate', 'baro_rate',
             'squawk', 'rssi', 'seen_pos'
           ].filter(key => aircraft[key] !== undefined).map(key => [key, aircraft[key]])),

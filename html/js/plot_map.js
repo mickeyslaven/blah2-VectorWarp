@@ -276,6 +276,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
         size: 16,
         opacity: 0.78,
         color: '#4dd4b0',
+        // All externally sourced aircraft truth remains a green dot. MLAT is
+        // identified in hover/details rather than changing the radar grammar.
         symbol: 'circle',
         line: {color: '#10251f', width: 1.2}
       },

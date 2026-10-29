@@ -59,12 +59,14 @@ class DelayDopplerHistory {
     for (const [hex, result] of this.output)
       if (now - result.timestamp > this.maxAge) this.output.delete(hex);
     for (const aircraft of feed.aircraft) {
+      const altitudeFeet = finite(aircraft?.alt_geom) ? aircraft.alt_geom :
+        finite(aircraft?.alt_baro) ? aircraft.alt_baro : null;
       if (typeof aircraft?.hex !== 'string' || !finite(aircraft.lat) || !finite(aircraft.lon) ||
-          Math.abs(aircraft.lat) > 90 || Math.abs(aircraft.lon) > 180 || !finite(aircraft.alt_geom) ||
+          Math.abs(aircraft.lat) > 90 || Math.abs(aircraft.lon) > 180 || !finite(altitudeFeet) ||
           !finite(aircraft.seen_pos) || aircraft.seen_pos < 0 || aircraft.seen_pos > this.maxAge) continue;
       const timestamp = now - aircraft.seen_pos;
       if (!finite(timestamp) || now - timestamp > this.maxAge) continue;
-      const target = ecef(aircraft.lat, aircraft.lon, aircraft.alt_geom * .3048);
+      const target = ecef(aircraft.lat, aircraft.lon, altitudeFeet * .3048);
       const delay = distance(this.rx, target) + distance(this.tx, target) - this.baseline;
       if (!target.every(finite) || !finite(delay)) continue;
       const previous = this.history.get(aircraft.hex) || [];
@@ -73,7 +75,7 @@ class DelayDopplerHistory {
           (last.lat === aircraft.lat && last.lon === aircraft.lon && last.alt === aircraft.alt_geom))) continue;
       // PR #5: timestamps are feed.now - seen_pos and duplicate coordinates are
       // compared against processing history, never the sparse output object.
-      const samples = [...previous, {timestamp, delay, lat: aircraft.lat, lon: aircraft.lon, alt: aircraft.alt_geom}]
+      const samples = [...previous, {timestamp, delay, lat: aircraft.lat, lon: aircraft.lon, alt: altitudeFeet}]
         .filter(item => timestamp - item.timestamp <= this.maxAge).slice(-Math.max(2, this.window + 1));
       this.history.set(aircraft.hex, samples);
       if (samples.length < 2) continue;
@@ -91,6 +93,9 @@ class DelayDopplerHistory {
         r: typeof aircraft.r === 'string' ? aircraft.r.trim() : '',
         t: typeof aircraft.t === 'string' ? aircraft.t.trim() : '',
         type: typeof aircraft.type === 'string' ? aircraft.type : '',
+        position_source: typeof aircraft.position_source === 'string' ? aircraft.position_source :
+          typeof aircraft.vectorwarp?.position_source === 'string' ? aircraft.vectorwarp.position_source : 'OTHER',
+        source_fields: Array.isArray(aircraft.source_fields) ? aircraft.source_fields : [],
         desc: typeof aircraft.desc === 'string' ? aircraft.desc : '',
         ownOp: typeof aircraft.ownOp === 'string' ? aircraft.ownOp : '',
         year: typeof aircraft.year === 'string' || Number.isFinite(aircraft.year) ? aircraft.year : '',
@@ -99,6 +104,7 @@ class DelayDopplerHistory {
         delay_definition: 'excess_bistatic_path_km',
         position: {latitude: aircraft.lat, longitude: aircraft.lon,
           altitude_geom_ft: aircraft.alt_geom, altitude_baro_ft: optionalNumber(aircraft.alt_baro),
+          altitude_source: finite(aircraft.alt_geom) ? 'GEOMETRIC' : 'BAROMETRIC_FALLBACK',
           ground_speed_kt: optionalNumber(aircraft.gs), track_deg_true: optionalNumber(aircraft.track),
           geom_rate_fpm: optionalNumber(aircraft.geom_rate), baro_rate_fpm: optionalNumber(aircraft.baro_rate),
           category: typeof aircraft.category === 'string' ? aircraft.category : null,

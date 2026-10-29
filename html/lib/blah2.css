@@ -236,6 +236,8 @@ a { color:inherit; } a:hover { color:var(--accent); }
 @keyframes radar-track-pulse { 0%,100% { opacity:.95; transform:translate(-50%,-50%) scale(.9); } 50% { opacity:.38; transform:translate(-50%,-50%) scale(1.18); } }
 .location-aircraft-marker.radar-active::before { animation:radar-track-pulse 1.8s ease-in-out infinite; }
 .location-aircraft-marker.snapshot-stale { opacity:.58; }
+.location-aircraft-marker.mlat-position .location-aircraft-label::before { content:"MLAT"; display:inline-block; margin-right:4px; padding:0 3px; border:1px dashed currentColor; border-radius:3px; font-size:8px; letter-spacing:.05em; }
+.location-aircraft-marker.mlat-position .location-aircraft-icon { opacity:.82; filter:saturate(.75); }
 @media (prefers-reduced-motion:reduce) { .location-aircraft-marker.radar-active::before { animation:none; } }
 .page-intro { position:absolute; display:block; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
 .page-intro .page-title { display:block; }

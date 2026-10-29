@@ -50,6 +50,22 @@ function sourceReliability(source) {
   return .7;
 }
 
+function positionSource(aircraft) {
+  const type = String(aircraft?.type || '').toLowerCase();
+  const fields = Array.isArray(aircraft?.mlat) ? aircraft.mlat.map(value => String(value).toLowerCase()) : [];
+  if (type === 'mlat' || fields.includes('lat') || fields.includes('lon')) return 'MLAT';
+  if (type.startsWith('adsb')) return 'ADSB_DIRECT';
+  if (type.startsWith('adsr')) return 'ADSR';
+  if (type.startsWith('tisb')) return 'TISB';
+  return 'OTHER';
+}
+
+function providerName(source) {
+  const value = source?.endpoint || source?.id || source?.path || '';
+  try { return new URL(value.replace(/^exchange:/, '')).hostname || value; }
+  catch (_) { return String(value); }
+}
+
 function positionQuality(aircraft) {
   if (finite(aircraft?.nic)) return Math.max(.5, Math.min(1, .5 + aircraft.nic / 22));
   if (finite(aircraft?.nac_p)) return Math.max(.5, Math.min(1, .5 + aircraft.nac_p / 22));
@@ -137,8 +153,15 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
     const pairwise = [];
     for (let i = 0; i < accepted.length; i++) for (let j = i + 1; j < accepted.length; j++)
       pairwise.push(separationKm(accepted[i].projectedAircraft, accepted[j].projectedAircraft));
+    const sourceFields = Array.isArray(winner.aircraft?.mlat) ?
+      winner.aircraft.mlat.map(value => String(value)) : [];
+    const sourceClass = positionSource(winner.aircraft);
     aircraft.push({...winner.projectedAircraft, hex, seen_pos: 0,
+      position_source: sourceClass, source_fields: sourceFields,
       vectorwarp: {
+        position_source: sourceClass,
+        source_fields: sourceFields,
+        provider: providerName(winner.source),
         source_id: winner.sourceId,
         source_kind: winner.source.kind || winner.source.mode || 'http',
         source_mode: winner.source.mode || null,
@@ -167,9 +190,12 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
       }});
   }
   aircraft.sort((left, right) => left.hex.localeCompare(right.hex));
+  const positionSources = {};
+  for (const item of aircraft)
+    positionSources[item.position_source] = (positionSources[item.position_source] || 0) + 1;
   return {now: nowSeconds, aircraft, vectorwarp_fusion: {
     schema: 'vectorwarp-adsb-fusion-v1', sources: snapshots.length,
-    observations: rows.length, aircraft: aircraft.length}};
+    observations: rows.length, aircraft: aircraft.length, position_sources: positionSources}};
 }
 
-module.exports = {separationKm, projectAircraft, fuseAircraftData};
+module.exports = {separationKm, projectAircraft, positionSource, providerName, fuseAircraftData};

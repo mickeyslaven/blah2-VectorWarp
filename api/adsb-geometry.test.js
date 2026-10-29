@@ -51,4 +51,14 @@ assert.ok(Math.abs(doubled.doppler / first.doppler - 2) < 1e-9,
   'Bistatic Doppler must scale with the configured live carrier frequency');
 assert.ok(Math.abs(doubled.delay - first.delay) < 1e-9,
   'Excess-path delay must remain independent of carrier frequency');
+const mlatHistory = new DelayDopplerHistory(config);
+const mlatPoint = (now, lon) => ({now, aircraft: [{hex: 'def456', type: 'mlat',
+  position_source: 'MLAT', source_fields: ['lat', 'lon'], lat: 0, lon,
+  alt_baro: 9000, seen_pos: 0, vectorwarp: {position_source: 'MLAT'}}]});
+assert.deepEqual(mlatHistory.update(mlatPoint(100, .4)).data, {});
+const mlatResult = mlatHistory.update(mlatPoint(101, .5)).data.def456;
+assert.ok(Number.isFinite(mlatResult.delay) && Number.isFinite(mlatResult.doppler),
+  'MLAT with barometric altitude remains displayable on delay-Doppler');
+assert.equal(mlatResult.position_source, 'MLAT');
+assert.equal(mlatResult.position.altitude_source, 'BAROMETRIC_FALLBACK');
 console.log('ADS-B WGS84 geometry, units, PR #5 timing/duplicates, ordering, eviction and reset tests passed.');

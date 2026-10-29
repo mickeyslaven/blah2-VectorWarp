@@ -1,7 +1,8 @@
 'use strict';
 
 const assert = require('assert');
-const {separationKm, projectAircraft, fuseAircraftData} = require('./adsb-fusion');
+const {separationKm, projectAircraft, positionSource, providerName,
+  fuseAircraftData} = require('./adsb-fusion');
 
 const nowMs = 2_000_000_000_000;
 const snapshot = (source, now, aircraft) => ({source, receivedAtMs: nowMs, data: {now, aircraft}});
@@ -27,7 +28,21 @@ assert.ok(Math.abs(single.aircraft[0].vectorwarp.observation_position_timestamp_
   (nowMs / 1000 - 1.7)) < 1e-6);
 assert.ok(Math.abs(single.aircraft[0].vectorwarp.observation_position_age_s - 1.7) < 1e-6);
 assert.equal(single.aircraft[0].vectorwarp.position_timestamp_s, nowMs / 1000);
+assert.equal(positionSource({type: 'mlat'}), 'MLAT');
+assert.equal(positionSource({type: 'adsb_icao', mlat: ['gs']}), 'ADSB_DIRECT');
+assert.equal(positionSource({type: 'adsb_icao', mlat: ['lat', 'lon']}), 'MLAT');
+assert.equal(providerName({endpoint: 'https://api.adsb.lol/v2/point/1/2/60'}), 'api.adsb.lol');
 assert.deepEqual(single.aircraft[0].vectorwarp.agreeing_sources, ['local-readsb']);
+
+const mlat = fuseAircraftData([snapshot({id: 'exchange:https://api.adsb.lol/v2/point/1/2/60',
+  endpoint: 'https://api.adsb.lol/v2/point/1/2/60', kind: 'exchange'}, nowMs / 1000, [
+  {hex: 'def456', type: 'mlat', mlat: ['lat', 'lon', 'gs'], lat: 40, lon: -80,
+    alt_baro: 9000, gs: 120, track: 45, seen_pos: .1}
+])], {nowMs});
+assert.equal(mlat.aircraft[0].position_source, 'MLAT');
+assert.deepEqual(mlat.aircraft[0].source_fields, ['lat', 'lon', 'gs']);
+assert.equal(mlat.aircraft[0].vectorwarp.provider, 'api.adsb.lol');
+assert.deepEqual(mlat.vectorwarp_fusion.position_sources, {MLAT: 1});
 
 const stale = fuseAircraftData([snapshot(local, nowMs / 1000, [
   {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, seen_pos: 31}

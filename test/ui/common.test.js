@@ -176,6 +176,12 @@ function page(origin, apiOrigin = origin) {
     baro_rate_fpm: 512, category: 'A1', squawk: '1200', rssi_dbfs: -8.5, seen_pos_s: .2}});
   assert.match(nestedHover, /12,000 ft/);
   assert.match(nestedHover, /210 kt/);
+  const mlatHover = test.context.aircraftHoverText({flight: 'MLAT1', type: 'mlat',
+    position_source: 'MLAT', vectorwarp: {provider: 'api.adsb.lol'}, hex: 'def456',
+    alt_baro: 9000, gs: 120, track: 45, seen_pos: .8});
+  assert.match(mlatHover, /Position MLAT · api\.adsb\.lol/,
+    'MLAT provenance is explicit in radar hover text');
+  assert.equal(test.context.aircraftInfo({type: 'mlat'}).positionSource, 'MLAT');
   assert.equal(test.context.aircraftScreenRotation(90, 0), 90,
     'Eastbound aircraft points east on a north-up map');
   assert.equal(test.context.aircraftScreenRotation(90, 45), 45,
