@@ -229,7 +229,7 @@
 
   function setupLocationMapScaffold() {
     if (root.dataset.ready) return;
-    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div></div><aside class="location-map-sidebar" aria-label="Map and aircraft details"><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></aside></section>`;
+    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar" open><summary>Map information</summary><div class="location-map-sidebar-body"><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
     root.dataset.ready = 'true';
     addRecordingControl();
     addFullscreenControl();
@@ -394,6 +394,7 @@
   let locationMapViewport = null;
   let locationMapDragging = false;
   let locationMapHoldUntil = 0;
+  let locationPlotSignature = null;
   let selectedAircraftId = null;
   let selectedAircraftSnapshot = null;
   const aircraftPhotoCache = new Map();
@@ -485,54 +486,110 @@
         map.on('move', () => layer._updatePositions?.());
         map.on('resize', () => layer._updatePositions?.());
       }
-      layer.replaceChildren();
-      const markers = aircraft.map(item => {
-        const marker = document.createElement('div');
-        marker.className = 'location-aircraft-marker';
-        Object.assign(marker.style, {position: 'absolute', width: '42px', height: '52px',
-          transform: 'translate(-50%, -50%)', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.9))'});
+      layer._aircraftMarkers ||= new Map();
+      layer._siteMarkers ||= new Map();
+      layer._aircraftSnapshot = aircraft;
+      const seenAircraft = new Set();
+      for (const item of aircraft) {
         const heading = finite(item.track) ?? 0;
         const info = aircraftInfo(item);
-        const aircraftId = info.hex || info.label;
+        const aircraftId = info.hex || `${info.label}:${item.lat}:${item.lon}`;
+        seenAircraft.add(aircraftId);
+        let record = layer._aircraftMarkers.get(aircraftId);
+        if (!record) {
+          const marker = document.createElement('div');
+          marker.className = 'location-aircraft-marker';
+          Object.assign(marker.style, {position: 'absolute', width: '42px', height: '52px',
+            transform: 'translate(-50%, -50%)', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.9))',
+            pointerEvents: 'auto'});
+          marker.tabIndex = 0;
+          marker.innerHTML = '<span class="location-aircraft-icon"></span><span class="location-aircraft-label"></span><span class="location-aircraft-tooltip"></span>';
+          record = {marker, icon: marker.children[0], label: marker.children[1],
+            tooltip: marker.children[2], item, signature: '', isAircraft: true};
+          marker.addEventListener?.('click', event => {
+            if (event.target?.closest?.('a')) return;
+            event.stopPropagation?.();
+            const currentInfo = aircraftInfo(record.item);
+            const currentId = currentInfo.hex || `${currentInfo.label}:${record.item.lat}:${record.item.lon}`;
+            selectedAircraftId = selectedAircraftId === currentId ? null : currentId;
+            if (selectedAircraftId) selectedAircraftSnapshot = record.item;
+            layer.querySelectorAll?.('.location-aircraft-marker').forEach(candidate =>
+              candidate.classList?.toggle('selected', candidate === marker && selectedAircraftId === currentId));
+            const sidebar = document.querySelector?.('.location-map-sidebar');
+            if (selectedAircraftId && sidebar) sidebar.open = true;
+            renderSelectedAircraftCard(layer._aircraftSnapshot || []);
+          });
+          layer.appendChild(marker);
+          layer._aircraftMarkers.set(aircraftId, record);
+        }
+        record.item = item;
+        const marker = record.marker;
+        const color = aircraftAltitudeColor(item);
+        const radarTracked = Boolean(item.radar_track_id);
         const detail = [info.registration, info.type, info.description,
           info.altitude === null ? '' : `${Math.round(info.altitude).toLocaleString()} ft`,
           info.speed === null ? '' : `${Math.round(info.speed)} kt`,
-          info.hex ? `ICAO ${info.hex}` : '', info.squawk ? `Squawk ${info.squawk}` : '']
+          info.hex ? `ICAO ${info.hex}` : '', info.squawk ? `Squawk ${info.squawk}` : '',
+          radarTracked ? `Radar track ${item.radar_track_id} · ${humanize(item.radar_track_state)}` : '']
           .filter(Boolean).map(escapeHtml).join('<br>');
-        marker.style.pointerEvents = 'auto';
-        marker.tabIndex = 0;
         marker.classList?.toggle('selected', selectedAircraftId === aircraftId);
-        marker.setAttribute('aria-label', `${info.label}${detail ? `, ${detail.replace(/<br>/g, ', ')}` : ''}`);
-        marker.innerHTML = `<span class="location-aircraft-icon" style="transform:rotate(${heading}deg)">${aircraftSvgMarkup(item)}</span><span class="location-aircraft-label">${escapeHtml(info.label)}</span><span class="location-aircraft-tooltip"><strong>${escapeHtml(info.label)}</strong>${detail ? `<br>${detail}` : ''}<br>Tap for full details</span>`;
-        marker.addEventListener?.('click', event => {
-          if (event.target?.closest?.('a')) return;
-          event.stopPropagation?.();
-          selectedAircraftId = selectedAircraftId === aircraftId ? null : aircraftId;
-          if (selectedAircraftId) selectedAircraftSnapshot = item;
-          layer.querySelectorAll?.('.location-aircraft-marker').forEach(candidate =>
-            candidate.classList?.toggle('selected', candidate === marker && selectedAircraftId === aircraftId));
-          renderSelectedAircraftCard(aircraft);
-        });
-        layer.appendChild(marker);
-        return {item, marker};
-      });
+        marker.classList?.toggle('snapshot-stale', item._snapshot_stale === true);
+        marker.classList?.toggle('radar-tracked', radarTracked);
+        marker.classList?.toggle('radar-active', radarTracked &&
+          ['ACTIVE', 'CONFIRMED'].includes(String(item.radar_track_state).toUpperCase()));
+        const signature = [aircraftKind(item), color, heading, info.label, detail, radarTracked].join('|');
+        if (signature !== record.signature) {
+          record.icon.style.transform = `rotate(${heading}deg)`;
+          record.icon.innerHTML = aircraftSvgMarkup(item, color);
+          record.label.textContent = info.label;
+          record.label.style.borderColor = color;
+          record.tooltip.innerHTML = `<strong>${escapeHtml(info.label)}</strong>${detail ? `<br>${detail}` : ''}<br>Tap for full details`;
+          marker.setAttribute('aria-label', `${info.label}${detail ? `, ${detail.replace(/<br>/g, ', ')}` : ''}`);
+          record.signature = signature;
+        }
+      }
+      for (const [id, record] of layer._aircraftMarkers)
+        if (!seenAircraft.has(id)) { record.marker.remove(); layer._aircraftMarkers.delete(id); }
       // Plotly's raster OSM style has no glyph source. Keep site labels in
       // the existing HTML overlay instead of requesting unsupported symbols.
+      const seenSites = new Set();
       for (const site of sites) {
-        const marker = document.createElement('div');
-        marker.className = 'location-site-label';
-        marker.textContent = site.name;
-        Object.assign(marker.style, {position: 'absolute', margin: '10px 0 0 12px',
-          padding: '2px 5px', borderRadius: '4px', color: '#f3eee9',
-          background: 'rgba(16,20,18,.84)', font: '600 12px/1.3 Inter,system-ui,sans-serif',
-          whiteSpace: 'nowrap'});
-        layer.appendChild(marker);
-        markers.push({item: {lat: site.latitude, lon: site.longitude}, marker});
+        const id = `${site.name}:${site.latitude}:${site.longitude}`;
+        seenSites.add(id);
+        let record = layer._siteMarkers.get(id);
+        if (!record) {
+          const marker = document.createElement('div');
+          marker.className = 'location-site-label';
+          Object.assign(marker.style, {position: 'absolute', margin: '10px 0 0 12px',
+            padding: '2px 5px', borderRadius: '4px', color: '#f3eee9',
+            background: 'rgba(16,20,18,.84)', font: '600 12px/1.3 Inter,system-ui,sans-serif',
+            whiteSpace: 'nowrap'});
+          layer.appendChild(marker);
+          record = {marker, item: null, isAircraft: false};
+          layer._siteMarkers.set(id, record);
+        }
+        record.marker.textContent = site.name;
+        record.item = {lat: site.latitude, lon: site.longitude};
       }
-      layer._updatePositions = () => markers.forEach(({item, marker}) => {
+      for (const [id, record] of layer._siteMarkers)
+        if (!seenSites.has(id)) { record.marker.remove(); layer._siteMarkers.delete(id); }
+      layer._updatePositions = () => [...layer._aircraftMarkers.values(),
+        ...layer._siteMarkers.values()].forEach(({item, marker, isAircraft}) => {
         const point = map.project([Number(item.lon), Number(item.lat)]);
+        let altitudeLift = 0;
+        const pitch = finite(map.getPitch?.()) ?? 0;
+        if (isAircraft && pitch > 0) {
+          const altitudeFeet = aircraftInfo(item).altitude;
+          const groundMeters = finite(sites[0]?.altitude) ?? 0;
+          const heightMeters = altitudeFeet === null ? 0 : Math.max(0, altitudeFeet * .3048 - groundMeters);
+          const zoom = finite(map.getZoom?.()) ?? 0;
+          const metersPerPixel = Math.cos(Number(item.lat) * Math.PI / 180) * 2 * Math.PI * 6378137 /
+            (512 * Math.pow(2, zoom));
+          altitudeLift = Math.min(240, heightMeters / Math.max(.01, metersPerPixel) *
+            Math.sin(pitch * Math.PI / 180));
+        }
         marker.style.left = `${point.x}px`;
-        marker.style.top = `${point.y}px`;
+        marker.style.top = `${point.y - altitudeLift}px`;
       });
       layer._updatePositions();
     });
@@ -563,7 +620,8 @@
     const tracks = trackerRows.map(track => ({
       id: track.id,
       state: track.state,
-      delay: trackRangeKm(track.delay, config)
+      delay: trackRangeKm(track.delay, config),
+      doppler: finite(track.doppler)
     })).filter(track => track.delay !== null && track.delay > 0 &&
       currentTrackStates.has(String(track.state || '').toUpperCase()));
     const hiddenCoastingTracks = trackerRows.filter(track =>
@@ -593,7 +651,27 @@
           [String(item?.hex || id || '').toUpperCase(), item]));
         aircraft = aircraft.map(item => ({...item,
           ...(byHex.get(String(item.hex || '').toUpperCase()) || {})}));
-      } catch (_) { aircraftError = 'ADS-B aircraft positions unavailable'; }
+        aircraft = stabilizeAircraftSnapshots(aircraft, {scope: 'map', graceMs: 10000});
+        const delayGate = finite(config?.process?.bearing?.manifold_recorder?.max_delay_error_km) ?? .25;
+        const dopplerGate = finite(config?.process?.bearing?.manifold_recorder?.max_doppler_error_hz) ?? 5;
+        const candidates = [];
+        aircraft.forEach((item, aircraftIndex) => tracks.forEach(track => {
+          const delayError = Math.abs((finite(item.delay) ?? Infinity) - track.delay);
+          const dopplerError = Math.abs((finite(item.doppler) ?? Infinity) - track.doppler);
+          if (delayError <= delayGate && dopplerError <= dopplerGate)
+            candidates.push({aircraftIndex, track, score: delayError / delayGate + dopplerError / dopplerGate});
+        }));
+        const assignedAircraft = new Set(), assignedTracks = new Set();
+        candidates.sort((left, right) => left.score - right.score).forEach(candidate => {
+          if (assignedAircraft.has(candidate.aircraftIndex) || assignedTracks.has(candidate.track.id)) return;
+          assignedAircraft.add(candidate.aircraftIndex); assignedTracks.add(candidate.track.id);
+          aircraft[candidate.aircraftIndex] = {...aircraft[candidate.aircraftIndex],
+            radar_track_id: candidate.track.id, radar_track_state: candidate.track.state};
+        });
+      } catch (_) {
+        aircraft = stabilizeAircraftSnapshots([], {scope: 'map', graceMs: 10000});
+        aircraftError = 'ADS-B aircraft positions temporarily unavailable';
+      }
     }
 
     const tx = siteOffset(receiver, transmitter);
@@ -657,14 +735,6 @@
       marker: {size: [13, 13], color: ['#f3eee9', '#f7c75f']},
       hovertemplate: '%{text}<br>%{lat:.5f}, %{lon:.5f}<extra></extra>'
     });
-    if (aircraft.length) traces.push({
-      type: 'scattermapbox', mode: 'markers', name: 'ADS-B',
-      lat: aircraft.map(item => item.lat), lon: aircraft.map(item => item.lon),
-      marker: {size: 24, color: 'rgba(77,212,176,.32)'},
-      text: aircraft.map(item => aircraftHoverText(item)),
-      hovertemplate: '%{text}<extra></extra>'
-    });
-
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
     const configuredExcessKm = configuredDelayBins * resolution;
     const evaluationRadiusKm = Math.max(0, finite(config?.truth?.adsb?.display_range_km) ?? 0);
@@ -701,16 +771,23 @@
         <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
       </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
       `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="view-note">Orange ellipses show all ${tracks.length} current delay-only tracks; there is no display cap. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenTentativeTracks} tentative and ${hiddenCoastingTracks} coasting tracker rows are counted above but hidden from the current-track ellipses. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} counted above but hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
+    renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="view-note">Orange ellipses show all ${tracks.length} current delay-only tracks; there is no display cap. Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenTentativeTracks} tentative and ${hiddenCoastingTracks} coasting tracker rows are counted above but hidden from the current-track ellipses. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} counted above but hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
     renderSelectedAircraftCard(aircraft);
     if (locationMapIsBeingNavigated()) return;
-    await Plotly.react('data', traces, {
-      ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},
-      uirevision: locationMapViewport.key,
-      mapbox: {style: 'open-street-map', center: locationMapViewport.center,
-        zoom: locationMapViewport.zoom, uirevision: locationMapViewport.key},
-      legend: {orientation: 'h', x: 0, y: 1.03, bgcolor: 'rgba(20,16,14,.82)'}
-    }, plotConfig);
+    // ADS-B uses the keyed icon overlay below. Do not also send it through
+    // Plotly: that duplicate path rebuilt the entire Mapbox scene every CPI.
+    const plotSignature = JSON.stringify(traces.map(trace => [trace.name, trace.lat,
+      trace.lon, trace.line, trace.marker]));
+    if (plotSignature !== locationPlotSignature || !document.getElementById('data')?._fullLayout?.mapbox) {
+      await Plotly.react('data', traces, {
+        ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},
+        uirevision: locationMapViewport.key,
+        mapbox: {style: 'open-street-map', center: locationMapViewport.center,
+          zoom: locationMapViewport.zoom, uirevision: locationMapViewport.key},
+        legend: {orientation: 'h', x: 0, y: 1.03, bgcolor: 'rgba(20,16,14,.82)'}
+      }, plotConfig);
+      locationPlotSignature = plotSignature;
+    }
     renderAircraftOverlays(aircraft, [
       {...receiver, name: receiver.name || 'Receiver'},
       {...transmitter, name: transmitter.name || 'Illuminator'}
@@ -728,8 +805,9 @@
       try { feed = await getAdsb(); } catch (error) { feedError = error; }
     }
     const replayTruthDisabled = feed?.disabledForReplay === true;
-    const aircraft = feed && typeof feed === 'object' && !replayTruthDisabled ?
+    let aircraft = feed && typeof feed === 'object' && !replayTruthDisabled ?
       Object.entries(feed).map(([id, item]) => ({id, ...item})) : [];
+    aircraft = stabilizeAircraftSnapshots(aircraft, {scope: 'evaluation', graceMs: 10000});
     const radar = detectionRows(detection);
     const truth = config?.truth?.adsb || {};
     renderHtml(document.getElementById('view-summary'), `${card(replayTruthDisabled ? 'Not replayed' : enabled ? (feedError ? 'Offline' : 'Online') : 'Disabled', 'ADS-B', feedError ? 'bad' : enabled && !replayTruthDisabled ? 'good' : '')}${card(aircraft.length, 'Aircraft')}${card(radar.length, 'Radar detections')}${card(finite(truth.display_range_km) === null ? 'Source range' : `${number(truth.display_range_km, 0)} km`, 'Range')}`);

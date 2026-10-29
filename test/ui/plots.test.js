@@ -23,6 +23,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       aircraftPlotData: common.aircraftPlotData,
       aircraftHoverText: common.aircraftHoverText,
       aircraftHoverTemplate: common.aircraftHoverTemplate,
+      stabilizeAircraftSnapshots: common.stabilizeAircraftSnapshots,
       fetchRadarJson: async url => url.startsWith('/api/detection') ? detected : new Promise(() => {}),
       window: {innerWidth: 1200, addEventListener() {}, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},

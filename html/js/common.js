@@ -801,6 +801,63 @@ function aircraftInfo(aircraft = {}) {
   };
 }
 
+// Warm near the surface, then pink/purple/indigo with increasing altitude.
+// Ground and unknown-altitude targets remain neutral instead of implying data.
+function aircraftAltitudeColor(aircraft = {}) {
+  const info = aircraftInfo(aircraft);
+  const rawAltitude = aircraft.alt_baro ?? aircraft.position?.altitude_baro_ft;
+  if (aircraftKind(aircraft) === 'ground' || String(rawAltitude).toLowerCase() === 'ground')
+    return '#8f9994';
+  if (!Number.isFinite(info.altitude)) return '#a7b0ac';
+  const stops = [[0,[243,154,74]],[5000,[242,184,75]],[10000,[227,106,114]],
+    [20000,[196,95,202]],[30000,[143,102,229]],[40000,[102,88,211]],
+    [50000,[224,90,122]]];
+  const altitude = Math.max(0, Math.min(50000, info.altitude));
+  let upper = stops.findIndex(stop => altitude <= stop[0]);
+  if (upper <= 0) upper = 1;
+  const [lowAltitude, low] = stops[upper - 1];
+  const [highAltitude, high] = stops[upper];
+  const ratio = (altitude - lowAltitude) / (highAltitude - lowAltitude);
+  const channel = index => Math.round(low[index] + (high[index] - low[index]) * ratio)
+    .toString(16).padStart(2, '0');
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
+const aircraftSnapshotCaches = new Map();
+function stabilizeAircraftSnapshots(rows = [], options = {}) {
+  const scope = String(options.scope || 'default');
+  const now = Number.isFinite(options.now) ? options.now : Date.now();
+  const graceMs = Number.isFinite(options.graceMs) ? Math.max(0, options.graceMs) : 10000;
+  let cache = aircraftSnapshotCaches.get(scope);
+  if (!cache) {
+    cache = new Map();
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(`vectorwarp-aircraft-${scope}`) || '[]');
+      for (const entry of stored) if (entry?.id && entry?.seenAt && entry?.row)
+        cache.set(entry.id, {seenAt: entry.seenAt, row: entry.row});
+    } catch (_) { /* Session storage is optional. */ }
+    aircraftSnapshotCaches.set(scope, cache);
+  }
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== 'object') continue;
+    const info = aircraftInfo(row);
+    const id = info.hex || String(row.id || info.label || '').trim();
+    if (!id) continue;
+    const previous = cache.get(id)?.row || {};
+    cache.set(id, {seenAt: now, row: {...previous, ...row, _snapshot_stale: false}});
+  }
+  for (const [id, entry] of cache)
+    if (now - entry.seenAt > Math.max(graceMs, 30 * 60 * 1000)) cache.delete(id);
+  const visible = [...cache.values()].filter(entry => now - entry.seenAt <= graceMs)
+    .map(entry => ({...entry.row, _snapshot_stale: now > entry.seenAt,
+      _snapshot_age_ms: now - entry.seenAt}));
+  try {
+    sessionStorage.setItem(`vectorwarp-aircraft-${scope}`, JSON.stringify([...cache.entries()]
+      .map(([id, entry]) => ({id, ...entry}))));
+  } catch (_) { /* Browsers may disable or fill session storage. */ }
+  return visible;
+}
+
 function aircraftPlotData(aircraft = {}) {
   const info = aircraftInfo(aircraft);
   return [info.label, info.registration, info.type, info.description, info.hex,
@@ -870,4 +927,5 @@ if (typeof module !== 'undefined')
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
     refreshLiveStatus, refreshReceiverDevices, aircraftKind, aircraftPlotSymbol,
     aircraftLabel, aircraftInfo, aircraftPlotData, aircraftHoverText,
-    aircraftHoverTemplate, aircraftSvgMarkup};
+    aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
+    stabilizeAircraftSnapshots};

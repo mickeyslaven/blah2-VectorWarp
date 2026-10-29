@@ -167,6 +167,8 @@ global.aircraftPlotData = common.aircraftPlotData;
 global.aircraftHoverText = common.aircraftHoverText;
 global.aircraftHoverTemplate = common.aircraftHoverTemplate;
 global.aircraftSvgMarkup = common.aircraftSvgMarkup;
+global.aircraftAltitudeColor = common.aircraftAltitudeColor;
+global.stabilizeAircraftSnapshots = common.stabilizeAircraftSnapshots;
 
 vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 
@@ -181,9 +183,8 @@ setTimeout(() => {
   if (view === 'locations' && (!lastPlot?.layout?.mapbox || !lastPlot.layout.uirevision))
     errors.push('location map viewport is not persistent');
   if (view === 'locations' && mode === 'rich' &&
-      !lastPlot?.traces?.some(trace => trace.name === 'ADS-B' &&
-        Number(trace.marker?.size) >= 24))
-    errors.push('ADS-B plane symbols were not rendered');
+      lastPlot?.traces?.some(trace => trace.name === 'ADS-B'))
+    errors.push('ADS-B was redundantly rendered as a Plotly dot instead of the icon overlay');
   if (view === 'locations' && mode === 'rich' &&
       !lastPlot?.traces?.some(trace => trace.name === 'Unresolved estimate T2'))
     errors.push('unresolved coasting bearing estimate was not rendered');

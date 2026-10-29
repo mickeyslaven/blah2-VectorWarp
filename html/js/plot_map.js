@@ -202,9 +202,10 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
   const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true,
     runningConfig.process?.data?.cpi);
-  if (data_adsb) {
-    for (const [hex, record] of Object.entries(data_adsb)) {
-      const aircraft = record?.hex ? record : {...record, hex};
+  const stableAircraft = stabilizeAircraftSnapshots(Object.entries(data_adsb || {})
+      .map(([hex, record]) => record?.hex ? record : {...record, hex}),
+    {scope: 'delay-doppler', graceMs: 10000});
+  for (const aircraft of stableAircraft) {
       if (aircraft && 'doppler' in aircraft) {
         adsb.delay.push(aircraft.delay);
         adsb.doppler.push(aircraft.doppler);
@@ -213,7 +214,6 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
         adsb.hover.push(aircraftHoverText(aircraft,
           {delay: aircraft.delay, doppler: aircraft.doppler}));
       }
-    }
   }
 
   // case draw new plot

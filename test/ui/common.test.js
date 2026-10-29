@@ -178,6 +178,18 @@ function page(origin, apiOrigin = origin) {
     'Gliders must use the distinct long-wing planform');
   assert.match(test.context.aircraftSvgMarkup({category: 'B6'}), /M29 83h42/,
     'Fixed-wing UAVs must retain the visible rear pusher propeller');
+  assert.equal(test.context.aircraftAltitudeColor({alt_baro: 'ground'}), '#8f9994');
+  assert.equal(test.context.aircraftAltitudeColor({}), '#a7b0ac');
+  assert.notEqual(test.context.aircraftAltitudeColor({alt_baro: 1000}),
+    test.context.aircraftAltitudeColor({alt_baro: 30000}));
+  const snapshot = test.context.stabilizeAircraftSnapshots([{hex: 'abc123', flight: 'TEST',
+    lat: 40, lon: -80, r: 'N123'}], {scope: 'test', now: 1000, graceMs: 10000});
+  const held = test.context.stabilizeAircraftSnapshots([], {scope: 'test', now: 2000, graceMs: 10000});
+  const refreshed = test.context.stabilizeAircraftSnapshots([{hex: 'abc123', lat: 40.01, lon: -80}],
+    {scope: 'test', now: 3000, graceMs: 10000});
+  assert.equal(snapshot.length, 1);
+  assert.equal(held[0]._snapshot_stale, true);
+  assert.equal(refreshed[0].r, 'N123', 'Metadata survives sparse position updates');
   // ResizeObserver fires during Mapbox initialization, before the first plot
   // finishes. Relayout at that point throws asynchronously inside Mapbox.
   const mapTest = page('http://radar.local:9876');
