@@ -86,6 +86,11 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(target.querySelector('.setup-wizard'), 'Start setup opens a modal wizard');
   assert.equal(target.querySelectorAll('[data-wizard-step]').length, 6);
+  target.querySelector('[data-wizard-step="0"]').click();
+  assert.equal(target.querySelectorAll('[data-receiver-field]').length, 0,
+    'Beginner setup must not expose receiver host, port, serial, or subdevice overrides');
+  assert.match(target.querySelector('.setup-wizard-content').textContent,
+    /detected receiver connection automatically/i);
   assert.equal(target.querySelector('[data-wizard-step="0"]').disabled, false,
     'A completed receiver step remains directly selectable');
   assert.equal(target.querySelector('[data-wizard-step="1"]').disabled, false,
@@ -94,8 +99,7 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
     'A completed radar step remains directly selectable even when an earlier site step is active');
   assert.equal(target.querySelector('[data-wizard-step="4"]').disabled, true,
     'Future steps cannot be skipped before current settings are saved');
-  target.querySelector('[data-wizard-next]').click();
-  await new Promise(resolve => setImmediate(resolve));
+  target.querySelector('[data-wizard-step="3"]').click();
   assert.match(target.querySelector('.setup-wizard-content').textContent, /radar search/i);
   target.querySelector('[data-wizard-next]').click();
   assert.ok(writes.some(([path, value]) => path === 'process.ambiguity.delayMax' && value === 801));

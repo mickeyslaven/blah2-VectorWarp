@@ -51,6 +51,10 @@ assert.match(css, /@media \(max-width:760px\)[\s\S]*\.live-status \{ display:fle
   'Mobile retains operational status instead of hiding it');
 assert.match(css, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/,
   'The five primary navigation items receive five mobile grid columns');
+assert.match(css, /\.setup-wizard-shell \{[^}]*grid-template-columns:minmax\(0,1fr\)/,
+  'The mobile setup wizard cannot expand beyond the phone viewport');
+assert.match(css, /\.setup-wizard nav \{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/,
+  'All six setup steps remain visibly selectable in two mobile rows');
 
 const recordings = read('html/js/recordings.js');
 assert.doesNotMatch(recordings, /api\/config\?restart=true/,
