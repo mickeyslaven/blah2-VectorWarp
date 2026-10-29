@@ -1258,6 +1258,14 @@ app.get('/api/adsb/status', async (req, res) => {
   if (replayTruthDisabled()) return res.json(replayTruthStatus());
   res.json(await adsbSource.status());
 });
+app.get('/api/radar/coverage', (req, res) => {
+  if (replayTruthDisabled()) return res.json(replayTruthStatus());
+  const hours = Number(req.query.hours || 24);
+  const bins = Number(req.query.bins || 72);
+  const altitudeBand = String(req.query.altitude || 'all');
+  res.set('Cache-Control', 'private, max-age=30');
+  res.json(provisionalEvidenceStatistics.radarCoverage({hours, bins, altitudeBand}));
+});
 app.get('/api/adsb/aircraft-photo/:hex', async (req, res) => {
   try {
     const value = await aircraftPhotoLookup.lookup(req.params.hex);

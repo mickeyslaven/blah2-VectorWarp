@@ -38,6 +38,12 @@ const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
 const SLANT_RANGE_EDGES_KM = Object.freeze([0, 10, 20, 30, 40, 50, 75, 100, 150, 250, 500]);
 const ELEVATION_EDGES_DEG = Object.freeze([0, 2, 5, 10, 15, 30, 90]);
 const AZIMUTH_EDGES_DEG = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315, 360]);
+const RADAR_COVERAGE_ALTITUDE_BANDS = Object.freeze({
+  all: [-Infinity, Infinity], low: [0, 10000], medium: [10000, 20000],
+  high: [20000, 30000], very_high: [30000, 40000], extreme: [40000, Infinity]
+});
+const RADAR_COVERAGE_BINS = 72;
+const RADAR_COVERAGE_BUCKET_MS = 3600000;
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const normalizeHex = value => typeof value === 'string' && /^[0-9a-f]{6}$/i.test(value.trim()) ?
   value.trim().toLowerCase() : null;
@@ -304,6 +310,123 @@ function compactFinalizedPass(pass) {
       pass.truthHistory.length > MAX_FINALIZED_TRUTH_SAMPLES)
     pass.truthHistory = pass.truthHistory.slice(-MAX_FINALIZED_TRUTH_SAMPLES);
   return pass;
+}
+
+// A coverage outline is meaningful only where the radar itself produced a
+// stable track association.  ADS-B/MLAT contributes the aircraft position for
+// that association; it never qualifies a point by itself.  Keeping this as a
+// compact radial maximum avoids sending a day of raw trajectories to phones.
+function radarCoverageFromPasses(passes, {now = Date.now(), hours = 24,
+  altitudeBand = 'all', bins = 72, siteKey: requiredSiteKey = null} = {}) {
+  const boundedHours = Math.max(1, Math.min(168, Number(hours) || 24));
+  const boundedBins = Math.max(24, Math.min(360, Math.round(Number(bins) || 72)));
+  const band = RADAR_COVERAGE_ALTITUDE_BANDS[altitudeBand] ||
+    RADAR_COVERAGE_ALTITUDE_BANDS.all;
+  const cutoff = now - boundedHours * 3600000;
+  const maxima = new Map(), supportingPasses = new Set(), aircraft = new Set();
+  let associatedSamples = 0;
+  for (const pass of Array.isArray(passes) ? passes : []) {
+    if (!pass || pass.lastAt < cutoff ||
+        (requiredSiteKey && pass.siteKey !== requiredSiteKey)) continue;
+    const trackedAt = new Set((pass.cpiAudit || []).filter(row =>
+      row?.stable_tracked === true && finite(row.timestamp_ms)).map(row => row.timestamp_ms));
+    for (const sample of pass.truthHistory || []) {
+      if (!trackedAt.has(sample?.timestamp_ms) || sample.timestamp_ms < cutoff ||
+          !finite(sample.bearing_deg_true) || !finite(sample.ground_range_km) ||
+          !finite(sample.latitude) || !finite(sample.longitude)) continue;
+      const altitude = finite(sample.altitude_geom_ft) ? sample.altitude_geom_ft :
+        sample.altitude_baro_ft;
+      if (!finite(altitude) || altitude < band[0] || altitude >= band[1]) continue;
+      const bearing = ((sample.bearing_deg_true % 360) + 360) % 360;
+      const bin = Math.floor(bearing / 360 * boundedBins) % boundedBins;
+      const prior = maxima.get(bin);
+      associatedSamples += 1; supportingPasses.add(pass.id || `${pass.hex}:${pass.startedAt}`);
+      if (pass.hex) aircraft.add(pass.hex);
+      if (!prior || sample.ground_range_km > prior.ground_range_km) maxima.set(bin, {
+        bin, bearing_deg_true: bearing, ground_range_km: sample.ground_range_km,
+        latitude: sample.latitude, longitude: sample.longitude,
+        altitude_ft: altitude, timestamp_ms: sample.timestamp_ms,
+        pass_id: pass.id || null, hex: pass.hex || null
+      });
+    }
+  }
+  return {schema: 'vectorwarp-radar-confirmed-coverage-v1', hours: boundedHours,
+    altitude_band: altitudeBand in RADAR_COVERAGE_ALTITUDE_BANDS ? altitudeBand : 'all',
+    definition: 'farthest ADS-B/MLAT position associated with a confirmed radar track in each bearing bin',
+    bins: boundedBins, supported_bins: maxima.size, associated_samples: associatedSamples,
+    supporting_passes: supportingPasses.size, supporting_aircraft: aircraft.size,
+    cutoff_ms: cutoff, updated_at: now,
+    points: [...maxima.values()].sort((left, right) => left.bin - right.bin)};
+}
+
+function radarCoverageBand(altitude) {
+  if (!finite(altitude) || altitude < 0) return null;
+  if (altitude < 10000) return 'low';
+  if (altitude < 20000) return 'medium';
+  if (altitude < 30000) return 'high';
+  if (altitude < 40000) return 'very_high';
+  return 'extreme';
+}
+
+function rememberRadarCoverage(state, pass, sample) {
+  if (!state || !pass || !sample || !finite(sample.timestamp_ms) ||
+      !finite(sample.bearing_deg_true) || !finite(sample.ground_range_km) ||
+      !finite(sample.latitude) || !finite(sample.longitude)) return;
+  const altitude = finite(sample.altitude_geom_ft) ? sample.altitude_geom_ft :
+    sample.altitude_baro_ft;
+  const altitudeBand = radarCoverageBand(altitude);
+  if (!altitudeBand) return;
+  state.radarCoverage ||= {schema: 'vectorwarp-radar-coverage-accumulator-v1', buckets: {}};
+  state.radarCoverage.buckets ||= {};
+  const bucketAt = Math.floor(sample.timestamp_ms / RADAR_COVERAGE_BUCKET_MS) *
+    RADAR_COVERAGE_BUCKET_MS;
+  const bucket = state.radarCoverage.buckets[bucketAt] ||= {at: bucketAt, samples: 0,
+    pass_ids: [], aircraft: [], bands: {all: {}, low: {}, medium: {}, high: {},
+      very_high: {}, extreme: {}}};
+  bucket.samples += 1;
+  const passIdValue = pass.id || `${pass.hex}:${pass.startedAt}`;
+  if (!bucket.pass_ids.includes(passIdValue)) bucket.pass_ids.push(passIdValue);
+  if (pass.hex && !bucket.aircraft.includes(pass.hex)) bucket.aircraft.push(pass.hex);
+  const bearing = ((sample.bearing_deg_true % 360) + 360) % 360;
+  const bin = Math.floor(bearing / 360 * RADAR_COVERAGE_BINS) % RADAR_COVERAGE_BINS;
+  const point = {bin, bearing_deg_true: bearing, ground_range_km: sample.ground_range_km,
+    latitude: sample.latitude, longitude: sample.longitude, altitude_ft: altitude,
+    timestamp_ms: sample.timestamp_ms, pass_id: pass.id || null, hex: pass.hex || null};
+  for (const name of ['all', altitudeBand]) {
+    const prior = bucket.bands[name][bin];
+    if (!prior || point.ground_range_km > prior.ground_range_km)
+      bucket.bands[name][bin] = point;
+  }
+  const oldest = sample.timestamp_ms - 8 * 24 * RADAR_COVERAGE_BUCKET_MS;
+  for (const [key, value] of Object.entries(state.radarCoverage.buckets))
+    if (!finite(value?.at) || value.at < oldest) delete state.radarCoverage.buckets[key];
+}
+
+function radarCoverageFromAccumulator(accumulator, {now = Date.now(), hours = 24,
+  altitudeBand = 'all'} = {}) {
+  const boundedHours = Math.max(1, Math.min(168, Number(hours) || 24));
+  const selectedBand = altitudeBand in RADAR_COVERAGE_ALTITUDE_BANDS ? altitudeBand : 'all';
+  const cutoff = now - boundedHours * RADAR_COVERAGE_BUCKET_MS;
+  const maxima = new Map(), passes = new Set(), aircraft = new Set();
+  let associatedSamples = 0;
+  for (const bucket of Object.values(accumulator?.buckets || {})) {
+    if (!finite(bucket?.at) || bucket.at + RADAR_COVERAGE_BUCKET_MS < cutoff) continue;
+    associatedSamples += bucket.samples || 0;
+    for (const id of bucket.pass_ids || []) passes.add(id);
+    for (const hex of bucket.aircraft || []) aircraft.add(hex);
+    for (const point of Object.values(bucket.bands?.[selectedBand] || {})) {
+      if (!point || point.timestamp_ms < cutoff) continue;
+      const prior = maxima.get(point.bin);
+      if (!prior || point.ground_range_km > prior.ground_range_km) maxima.set(point.bin, point);
+    }
+  }
+  return {schema: 'vectorwarp-radar-confirmed-coverage-v1', hours: boundedHours,
+    altitude_band: selectedBand,
+    definition: 'farthest ADS-B/MLAT position associated with a confirmed radar track in each bearing bin',
+    bins: RADAR_COVERAGE_BINS, supported_bins: maxima.size,
+    associated_samples: associatedSamples, supporting_passes: passes.size,
+    supporting_aircraft: aircraft.size, cutoff_ms: cutoff, updated_at: now,
+    points: [...maxima.values()].sort((left, right) => left.bin - right.bin)};
 }
 
 function accumulateRollup(state, key, old) {
@@ -628,6 +751,7 @@ class EvidenceStatistics {
         detected: 0, tracked: 0, missed: 0, outOfConfig: 0,
         mapEligible: 0, detectorEligible: 0, truthUnusable: 0,
         eligibleNoRadar: 0, detectedNotTracked: 0},
+      radarCoverage: {schema: 'vectorwarp-radar-coverage-accumulator-v1', buckets: {}},
       captureAdmission: {checked: 0, admitted: 0, quarantined: 0,
         missingAfterAdmission: 0, reasons: {}}, error: null};
     this.latest = {detection: null, tracker: null, bearing: null};
@@ -677,6 +801,8 @@ class EvidenceStatistics {
       this.state.captureAdmission ||= {checked: 0, admitted: 0, quarantined: 0,
         missingAfterAdmission: 0, reasons: {}};
       this.state.associationDiagnostics ||= {detection: {}, tracker: {}};
+      this.state.radarCoverage ||= {schema: 'vectorwarp-radar-coverage-accumulator-v1', buckets: {}};
+      this.state.radarCoverage.buckets ||= {};
       this.state.captureAdmission.missingAfterAdmission ||= 0;
       // Capture requests are intentionally process-local and bounded. After an
       // API restart no native recorder can still acknowledge the old queue, so
@@ -837,6 +963,7 @@ class EvidenceStatistics {
     const delay = prediction.delay, doppler = prediction.doppler;
     updateExtent(pass, delay, doppler);
     updateTruth(pass, prediction, timestamp);
+    if (trackedAssociation) rememberRadarCoverage(this.state, pass, pass.lastTruth);
     const delayBin = delay / this.limits.kmPerBin;
     const delayInMap = delayBin >= this.limits.delayMinBin && delayBin <= this.limits.delayMaxBin;
     const aboveFloor = delayBin >= this.limits.detectionMinDelayBin;
@@ -1363,6 +1490,25 @@ class EvidenceStatistics {
       active_passes: active, recent_finalized_passes: finalized};
   }
 
+  radarCoverage(options = {}) {
+    const retained = radarCoverageFromPasses([
+      ...this.state.passes,
+      ...Object.values(this.state.active)
+    ], {...options, now: this.now(), siteKey: this.key});
+    const accumulated = radarCoverageFromAccumulator(this.state.radarCoverage,
+      {...options, now: this.now()});
+    const points = new Map();
+    for (const point of [...retained.points, ...accumulated.points]) {
+      const prior = points.get(point.bin);
+      if (!prior || point.ground_range_km > prior.ground_range_km) points.set(point.bin, point);
+    }
+    return {...accumulated, supported_bins: points.size,
+      associated_samples: Math.max(retained.associated_samples, accumulated.associated_samples),
+      supporting_passes: Math.max(retained.supporting_passes, accumulated.supporting_passes),
+      supporting_aircraft: Math.max(retained.supporting_aircraft, accumulated.supporting_aircraft),
+      points: [...points.values()].sort((left, right) => left.bin - right.bin)};
+  }
+
   close() {
     this.closed = true;
     if (this.sampler !== null) this.clearInterval(this.sampler);
@@ -1390,6 +1536,8 @@ module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_S
   TRIGGER_EVENT_TRUTH_SAMPLES, TRUTH_SAMPLE_MS, MAX_ACTIVE_CAPTURE_TIMESTAMPS, MAX_CAPTURE_ASSOCIATIONS,
   limits, associationGates, assignments, delayBandEdges, delayBand, adsbQuality,
   ELEVATION_EDGES_DEG, AZIMUTH_EDGES_DEG,
+  RADAR_COVERAGE_ALTITUDE_BANDS, radarCoverageFromPasses,
+  radarCoverageFromAccumulator, rememberRadarCoverage,
   primaryGeometryBand, standardizedComparison,
   siteKey, siteDescriptor, EvidenceStatistics,
   createEvidenceStatistics, createEvidenceStatisticsLanes};

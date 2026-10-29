@@ -16,6 +16,14 @@ const fixtures = {'/api/runtime/config': config, '/api/config': config,
   '/api/system/status': {serverId: 'synthetic-map-test', radar: 'no-data', adsbEnabled: false},
   '/api/detection': {timestamp: 1, delay: [], doppler: [], snr: []},
   '/api/tracker': {timestamp: 1, data: []},
+  '/api/radar/coverage': {schema: 'vectorwarp-radar-confirmed-coverage-v1', hours: 24,
+    bins: 72, supported_bins: 4, supporting_passes: 3, supporting_aircraft: 2,
+    points: [
+      {bin: 0, latitude: 40.25, longitude: -80.0},
+      {bin: 18, latitude: 40.0, longitude: -79.65},
+      {bin: 36, latitude: 39.72, longitude: -80.0},
+      {bin: 54, latitude: 40.0, longitude: -80.35}
+    ]},
   '/capture/status': {supported: false, available: false, recording: false},
   '/api/adsb/status': {enabled: false, online: false}};
 let detectionRequests = 0;
@@ -77,16 +85,21 @@ const server = http.createServer((request, response) => {
     assert.deepEqual(await page.locator('.location-site-label').allTextContents(), ['Receiver <test>', 'Illuminator']);
     assert.equal(await page.locator('#show-radar-tracks-on-map').isChecked(), false,
       'geographic radar ellipses are opt-in');
+    assert.equal(await page.locator('#show-radar-coverage-on-map').isChecked(), true,
+      'radar-confirmed rolling coverage is visible by default');
+    await page.waitForFunction(() => document.querySelector('.location-radar-coverage-path')?.getAttribute('d'));
     assert.equal(await page.locator('.location-radar-track-path').count(), 0);
     await page.locator('#show-radar-tracks-on-map').check();
     await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
     const firstTrackPath = await page.locator('.location-radar-track-path').getAttribute('d');
     const overlayStyle = await page.evaluate(() => ({
       overflow: getComputedStyle(document.querySelector('.location-aircraft-trails')).overflow,
+      coverageFilter: getComputedStyle(document.querySelector('.location-radar-coverage-path')).filter,
       trackFilter: getComputedStyle(document.querySelector('.location-radar-track-path')).filter,
       trailFilter: getComputedStyle(document.querySelector('.location-aircraft-flight-trail')).filter
     }));
     assert.equal(overlayStyle.overflow, 'hidden', 'offscreen SVG geometry must be clipped');
+    assert.equal(overlayStyle.coverageFilter, 'none', 'coverage outline cannot use Safari-smearing SVG filters');
     assert.equal(overlayStyle.trackFilter, 'none', 'radar paths cannot use Safari-smearing SVG filters');
     assert.equal(overlayStyle.trailFilter, 'none', 'flight trails cannot use Safari-smearing SVG filters');
     const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();

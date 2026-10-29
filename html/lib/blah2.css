@@ -258,7 +258,12 @@ a { color:inherit; } a:hover { color:var(--accent); }
 }
 .location-aircraft-trails { position:absolute; inset:0; width:100%; height:100%; overflow:hidden; pointer-events:none; contain:strict; }
 .location-aircraft-trails path { fill:none; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
-.location-radar-track-path { stroke:#ff8754; stroke-width:4; opacity:.9; }
+.location-radar-track-path { stroke:#ff8754; stroke-width:3; stroke-dasharray:7 6; opacity:.86; }
+.location-radar-track-slice { stroke:#ff8754; stroke-width:2; opacity:.48; }
+.location-radar-track-ribs { stroke:#ff8754; stroke-width:1.5; stroke-dasharray:4 6; opacity:.52; }
+.location-radar-track-associated { stroke-width:4; opacity:.98; }
+.location-radar-coverage-path { fill:rgba(32,221,220,.09)!important; stroke:#20dddc; stroke-width:3;
+  stroke-linejoin:round; opacity:.92; }
 .location-aircraft-ground-trail { stroke:rgba(243,238,233,.46); stroke-width:2; stroke-dasharray:4 6; }
 .location-aircraft-flight-trail { opacity:.94; }
 .location-aircraft-flight-trail path { stroke-width:3.5; }
@@ -275,6 +280,9 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .map-auto-select span { display:grid; gap:3px; min-width:0; }
 .map-auto-select strong { color:var(--ink); font-size:11px; line-height:1.3; }
 .map-auto-select small { color:var(--muted); font-size:9px; line-height:1.35; }
+.map-coverage-filter { display:grid; grid-template-columns:minmax(0,1fr) minmax(130px,auto);
+  align-items:center; gap:8px; color:var(--muted); font-size:10px; }
+.map-coverage-filter select { min-width:0; width:100%; padding:7px 8px; }
 .location-map-sidebar .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; }
 .location-map-sidebar .metric-card { min-height:66px; padding:10px 12px; }
 .location-map-sidebar .metric-card strong { font-size:18px; }
