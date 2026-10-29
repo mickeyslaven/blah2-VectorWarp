@@ -160,10 +160,16 @@
         return current;
       }
       if (current.nodeType !== 1) return current;
+      // Expanded/collapsed details are user interface state, not server data.
+      // Reapplying the markup's `open` attribute on every poll closed menus the
+      // operator had opened (or reopened menus they had deliberately closed).
+      const preserveDetailsOpen = current.tagName === 'DETAILS';
       for (const attribute of Array.from(current.attributes)) {
+        if (preserveDetailsOpen && attribute.name === 'open') continue;
         if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
       }
       for (const attribute of Array.from(next.attributes)) {
+        if (preserveDetailsOpen && attribute.name === 'open') continue;
         if (current.getAttribute(attribute.name) !== attribute.value)
           current.setAttribute(attribute.name, attribute.value);
       }

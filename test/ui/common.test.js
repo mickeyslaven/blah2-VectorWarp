@@ -60,6 +60,15 @@ function page(origin, apiOrigin = origin) {
   assert.equal(toggle.headers['X-VectorWarp-Intent'], 'recording-toggle-v1');
 
   const test = page('http://radar.local:9876');
+  const stableStatus = {writes: 0, _html: '', set innerHTML(value) {
+    this.writes++; this._html = value;
+  }, get innerHTML() { return this._html; }};
+  test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'ONLINE', true);
+  test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'ONLINE', true);
+  assert.equal(stableStatus.writes, 1,
+    'An unchanged status poll must preserve the existing header DOM');
+  test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'STALE', false);
+  assert.equal(stableStatus.writes, 2, 'A real status transition updates the label once');
   const commonSource = fs.readFileSync(require.resolve('../../html/js/common.js'), 'utf8');
   assert.doesNotMatch(commonSource, /setInterval\(refreshReceiverDevices/,
     'Shared radar/display headers must never schedule receiver host probes');

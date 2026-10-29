@@ -564,7 +564,7 @@ async function refreshLiveStatus() {
         replay.state === 'stopped' ? 'REPLAY STOPPED' : `REPLAY ${replay.state.toUpperCase()}${progress}`;
     } else label = restarting ? 'RESTARTING' : status.errors?.length ? 'ERROR' :
       status.radar === 'receiving' ? 'ONLINE' : status.radar === 'stale' ? 'STALE' : 'OFFLINE';
-    radarLabel.innerHTML = `<span class="live-dot${label === 'ONLINE' ? '' : ' offline'}"></span>RADAR ${label}`;
+    updateLiveStatusLabel(radarLabel, 'RADAR', label, label === 'ONLINE');
     radarLabel.title = processor?.error || status.errors?.[0] || status.message || '';
     if (processorAlert) {
       processorAlert.textContent = processor?.error || '';
@@ -581,24 +581,35 @@ async function refreshLiveStatus() {
           const feeds = await adsbResponse.json();
           window.blah2AdsbStatusAt = Date.now();
           const label = feeds.online ? 'ONLINE' : feeds.aircraft?.available || feeds.delayDoppler?.available ? 'PARTIAL' : 'OFFLINE';
-          adsbLabel.innerHTML = `<span class="live-dot${feeds.online ? '' : ' offline'}"></span>ADS-B ${label}`;
+          updateLiveStatusLabel(adsbLabel, 'ADS-B', label, feeds.online);
           adsbLabel.title = [feeds.aircraft?.message, feeds.delayDoppler?.message].filter(Boolean).join(' · ');
         } catch (_) {
-          adsbLabel.innerHTML = '<span class="live-dot offline"></span>ADS-B OFFLINE';
+          updateLiveStatusLabel(adsbLabel, 'ADS-B', 'OFFLINE', false);
         }
       }
     }
   } catch (_) {
     renderReceiverHealth(null);
-    radarLabel.innerHTML = '<span class="live-dot offline"></span>RADAR OFFLINE';
+    updateLiveStatusLabel(radarLabel, 'RADAR', 'OFFLINE', false);
     if (adsbLabel && window.blah2AdsbEnabled) {
       adsbLabel.hidden = false;
-      adsbLabel.innerHTML = '<span class="live-dot offline"></span>ADS-B OFFLINE';
+      updateLiveStatusLabel(adsbLabel, 'ADS-B', 'OFFLINE', false);
     }
     if (processorAlert) processorAlert.hidden = true;
   } finally {
     window.blah2LiveStatusPending = false;
   }
+}
+
+// Do not rebuild status DOM on every poll. Keeping the same nodes avoids
+// unnecessary layout/paint work in the shared header and prevents a status
+// tick from disturbing an open mobile menu or the browser's scroll anchor.
+function updateLiveStatusLabel(target, prefix, label, healthy) {
+  if (!target) return;
+  const signature = `${prefix}:${label}:${healthy ? 'healthy' : 'degraded'}`;
+  if (target._vectorwarpStatusSignature === signature) return;
+  target._vectorwarpStatusSignature = signature;
+  target.innerHTML = `<span class="live-dot${healthy ? '' : ' offline'}"></span>${prefix} ${label}`;
 }
 
 // Only the API's loaded configuration controls display cadence. An editor draft
@@ -947,7 +958,7 @@ if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
-    refreshLiveStatus, refreshReceiverDevices, aircraftKind, aircraftPlotSymbol,
+    refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
     aircraftLabel, aircraftInfo, aircraftScreenRotation, aircraftPlotData, aircraftHoverText,
     aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
     stabilizeAircraftSnapshots};
