@@ -5,13 +5,13 @@ var range_y = [];
 function delayDopplerPresentation(width) {
   const compact = Number.isFinite(width) && width <= 600;
   return compact ? {
-    margin: {l: 42, r: 10, b: 42, t: 10, pad: 0},
+    margin: {l: 38, r: 6, b: 38, t: 8, pad: 0},
     fontSize: 10,
     axisTitleSize: 11,
     xTitle: 'Range (km)',
     yTitle: 'Hz',
     tickSize: 9,
-    tickCount: 5,
+    tickCount: 4,
     showScale: false,
     colorbar: {
       title: {text: 'dB', side: 'right', font: {color: '#f3eee9', size: 10}},

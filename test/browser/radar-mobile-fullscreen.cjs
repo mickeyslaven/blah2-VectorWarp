@@ -40,6 +40,16 @@ const server = http.createServer((request, response) => {
     assert.ok(bounds && bounds.width <= 40 && bounds.height <= 40,
       `mobile fullscreen control must stay compact, got ${JSON.stringify(bounds)}`);
     assert.ok(bounds.y < 180, 'mobile fullscreen control belongs in the top-right plot corner');
+    const visualBounds = await page.locator('.radar-panel .visualization').boundingBox();
+    assert.ok(visualBounds && visualBounds.height <= 500 && visualBounds.height / visualBounds.width < 1.4,
+      `portrait delay-Doppler must remain a readable overview, got ${JSON.stringify(visualBounds)}`);
+    const legendBounds = await page.locator('.radar-overlay-key').boundingBox();
+    assert.ok(legendBounds && legendBounds.x + legendBounds.width <= bounds.x - 2,
+      'mobile marker key must not run underneath the fullscreen control');
+    const markerBounds = await page.locator('.radar-overlay-control').boundingBox();
+    const recordingBounds = await page.locator('.recording-control').boundingBox();
+    assert.ok(markerBounds && recordingBounds && markerBounds.y + markerBounds.height <= recordingBounds.y,
+      'mobile marker selector must stay above the recording controls');
     await button.click();
     await page.getByRole('button', {name: 'Exit fullscreen'}).waitFor();
     bounds = await page.getByRole('button', {name: 'Exit fullscreen'}).boundingBox();
