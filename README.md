@@ -4,10 +4,10 @@
 
 > **THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!**
 
-VectorWarp is an open passive-radar application for turning coherent SDR data
-into live range–Doppler maps, persistent tracks, bearing estimates, recordings,
-and an interactive 3D airspace view. Receiver setup, processing, visualization,
-recording, replay, and diagnostics all live in one browser interface.
+VectorWarp is an open-source passive-radar application for Linux and macOS. It
+supports KrakenSDR, Ettus USRP/UHD, HackRF, and SDRplay receivers. Its browser
+interface provides live range–Doppler maps, radar tracking, bearing estimates,
+recording, replay, receiver setup, and a 3D airspace map.
 
 [Install VectorWarp](https://mickeyslaven.github.io/blah2-VectorWarp/#install) ·
 [Setup](docs/SETUP.md) ·
@@ -16,10 +16,10 @@ recording, replay, and diagnostics all live in one browser interface.
 
 ## See VectorWarp in action
 
-### Live passive-radar processing
+### ADS-B-tracked aircraft
 
-View the bistatic range–Doppler surface, radar detections, persistent tracks,
-and aircraft truth together in real time.
+See ADS-B-tracked aircraft alongside radar detections and tracks on the live
+bistatic range–Doppler display.
 
 ![VectorWarp live bistatic range-Doppler display](docs/media/vectorwarp-bistatic-range-doppler.gif)
 
@@ -37,13 +37,11 @@ coverage, transmitter sites, and receiver sites on the same map.
 - Live bistatic range–Doppler processing with configurable search bounds.
 - GPU-accelerated clutter removal, detection, weak-target recovery, and
   tracking, with automatic CPU fallback.
-- Persistent multi-CPI tracking with clear candidate, active, and coasting
-  states.
+- Persistent multi-CPI tracking with candidate, active, and coasting states.
 - Automatic clutter suppression plus a learned stationary-clutter map.
 - Coherent bearing estimation, calibrated beam banks, measured array
   manifolds, and bistatic geolocation tools.
-- Automatic processing choices for routine use and detailed controls for
-  research and tuning.
+- Automatic processing defaults with manual controls for tuning.
 
 ### Arrays and receivers
 
@@ -68,8 +66,7 @@ coverage, transmitter sites, and receiver sites on the same map.
   and selectable radar-track overlays.
 - Map controls for all aircraft, radar-associated aircraft, or a clean radar-only
   view.
-- Mobile and desktop layouts designed around touch, pinch, rotation, fullscreen,
-  and persistent page state.
+- Mobile touch controls for pinch zoom, rotation, and fullscreen.
 
 ### Record, review, and replay
 
@@ -81,8 +78,8 @@ coverage, transmitter sites, and receiver sites on the same map.
   host by loading its packaged configuration.
 - Browser playback with a floating timeline for pause, scrub, rewind, and skip.
 - Download a complete recording bundle or reveal it in the local file browser.
-- Recording labels, retention controls, storage status, and replay-ready
-  metadata.
+- Recording labels, retention controls, storage status, and the metadata needed
+  for replay.
 
 ### Browser control and diagnostics
 
@@ -91,9 +88,8 @@ coverage, transmitter sites, and receiver sites on the same map.
 - Live health, timing, source, calibration, GPU, recording, and receiver status.
 - Settings validation, automatic selections with their resolved values, and
   controlled Save & Restart.
-- Sanitized issue reports with free-form comments and relevant system details.
-- Cached map, aircraft, imagery, and page data for fast navigation without
-  resetting menus, scroll position, or map state.
+- Sanitized issue reports with free-form comments, configuration, service
+  status, and logs.
 
 ## Install
 
