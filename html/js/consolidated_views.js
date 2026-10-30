@@ -37,7 +37,7 @@
     } else {
       document.body.dataset.insightView = view;
       content.innerHTML = '<div id="view-root"></div>';
-      load('../../js/insights.js?v=consolidated-pages-1');
+      load('../../js/insights.js?v=frame-health-2');
     }
   } else if (kind === 'signal') {
     if (view === 'maxhold') {

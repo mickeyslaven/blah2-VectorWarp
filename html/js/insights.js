@@ -380,7 +380,10 @@
         Math.max(0, Date.now() - timing.timestamp - presentationDelay)));
     const freshLimit = Math.max(2500, (hop ?? 0) * 3);
     const freshnessTone = ageMs === null || ageMs > 10000 ? 'bad' : ageMs > freshLimit ? 'warning' : 'good';
-    const loadTone = load === null ? 'neutral' : load > 100 ? 'bad' : load > 80 ? 'warning' : 'good';
+    // Finishing inside the configured CPI is healthy. Backlog growth is the
+    // stronger signal of sustained overload; do not alarm on normal 420–455 ms
+    // GPU processing within a 500 ms cadence.
+    const loadTone = load === null ? 'neutral' : load > 120 ? 'bad' : load > 100 ? 'warning' : 'good';
     const backlogTone = backlog === null || hop === null ? 'neutral' :
       backlog > hop * 2 ? 'bad' : backlog > hop * 1.25 ? 'warning' : 'good';
     const trackerEnabled = config?.process?.tracker?.enable === true;
@@ -407,7 +410,7 @@
     const adsb = await adsbHealth(config);
     const health = healthSnapshot(config, timing, tracker, adsb);
     const stages = Object.entries(timing || {}).filter(([key, value]) => typeof value === 'number' && finite(value) !== null && !['timestamp', 'nCpi', 'uptime_s', 'uptime_days', 'cpi_data_ms', 'cpi_hop_ms', 'cpi_overlap_fraction', 'capture_backlog_ms', 'cpi'].includes(key)).sort((left, right) => Number(right[1]) - Number(left[1]));
-    renderHtml(root, `<div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 100 ? 'bad' : health.load > 80 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', '', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
+    renderHtml(root, `<div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 120 ? 'bad' : health.load > 100 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', '', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
 

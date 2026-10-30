@@ -37,5 +37,8 @@ vm.runInContext(fs.readFileSync('/tmp/vectorwarp-device-cache-pr91/html/js/insig
   assert.match(text, /Capture backlog1\.01 CPI queued503\.0 ms/,
     'The real one-CPI capture queue is shown in milliseconds and CPIs');
   assert.doesNotMatch(text, /Capture backlogUnavailable/);
+  assert.match(text, /HealthyOverall state/, 'Normal sub-cadence processing remains healthy');
+  assert.doesNotMatch(text, /MonitorOverall state/,
+    'Normal 420–455 ms processing within a 500 ms cadence is not an alarm');
   console.log('Health timing distinguishes aligned presentation age and capture backlog.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
