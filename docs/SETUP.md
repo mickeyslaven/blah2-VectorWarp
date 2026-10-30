@@ -1,273 +1,214 @@
-# Receiver setup
+# Set up VectorWarp
 
-For macOS, begin with [Homebrew installation](MACOS_HOMEBREW.md) and the
-[Mac receiver guide](MACOS.md#runtime-scope). Local USB Kraken uses the
-[Homebrew Heimdall companion](MACOS_KRAKEN.md), and receiver setup uses per-user
-Mac actions. The systemd services, APT/DNF packages, and privileged enrollment
-instructions below apply to Linux.
+Install VectorWarp from the [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+or follow the [macOS Homebrew guide](MACOS_HOMEBREW.md). Run `vectorwarp` to
+open the browser interface, then select **Settings**.
 
-1. On a Pi 4B, follow the [Pi 4 preview guide](PI4_GUIDE.md) and open its
-   [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
-   Fresh-card boot and Wi-Fi qualification are pending. On other Linux systems,
-   install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
-   On macOS, use the [Homebrew guide](MACOS_HOMEBREW.md). Then run `vectorwarp`
-   to open **Settings** without starting radar.
-2. If the receiver is an RSPduo, first install SDRplay's vendor API yourself
-   and choose **Build SDRplay support** in Settings. VectorWarp does not
-   distribute the API. Then select and configure the receiver.
-3. Choose **Save & Restart** to save settings and start radar, including the
-   first time. **Save for later** does not start it.
-4. Later, `vectorwarp start` brings up the full stack using saved settings;
-   `vectorwarp stop` stops it, including the web interface; and
-   `vectorwarp restart` restarts it in order. These commands do not stop shared Kraken
-   Suite or SDRplay services. `vectorwarp status`, `vectorwarp logs`, and
-   `vectorwarp help` inspect it. Linux also has `vectorwarp version`; on macOS,
-   use `brew list --versions vectorwarp`.
+## Setup assistant
 
-If you enabled a Mac Homebrew service, use `brew services stop vectorwarp` and
-`brew services restart vectorwarp` for service control. A plain `vectorwarp stop`
-leaves that supervisor running, so it restarts the child processes.
+Select **Start setup**. VectorWarp looks for connected SDRs before opening the
+first step. A single detected receiver is selected automatically. If several
+receivers are detected, choose the one to use.
 
-Use the
-[source-build guide](INSTALL.md#build-from-source) for development or unsupported
-systems. No Docker runtime is needed.
+Each **Save step & Continue** button saves that step without starting or
+restarting the radar. Completed steps can be opened again from the step list.
 
-## Build from source
+### 1. Receiver
 
-The [installation guide](INSTALL.md) is the single source for dependencies,
-Node.js requirements, receiver build choices, GPU build packages and startup
-commands. Choose the required `--backend` before building. Installing an SDR
-driver later does not add an adapter that was omitted from the VectorWarp build.
+Choose the receiver connected to the radar computer:
 
-For the Raspberry Pi 4B Bookworm preview, use the [Pi 4 guide](PI4_GUIDE.md)
-after installation. It documents the tested RSPduo configuration and the
-geometry-limited mixed AUTO path. Fresh-card boot and Wi-Fi qualification remain
-pending; see [validation limits](PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is
-future work.
+- **KrakenSDR Suite V2**
+- **SDRplay RSPduo**
+- **Ettus USRP / UHD**, including B210
+- **Dual HackRF**
 
-## Check receiver software
+VectorWarp uses the detected connection automatically. Receiver-specific host,
+port, serial, antenna, clock, gain, and channel controls remain available in
+**Advanced → Receiver**.
 
-Select your receiver, then choose **Check receiver software**. The result
-separately reports the compiled adapter, its runtime dependencies and detected
-software or devices. This check does not retune a receiver or start services.
+If the selected receiver needs software, select **Open receiver software
+setup** and use the action shown there. Return to the assistant when the
+receiver reports ready.
 
-If the page offers a local setup action, review it. Run the exact enrollment
-command it displays in an administrator terminal on the radar host, return to
-**Check receiver software**, and approve the proposed action there. Enrollment
-does not install packages or start the service by itself. Remote Kraken setups
-keep using their configured remote endpoint; local actions do not control it.
+### 2. Tuning
 
-## KrakenSDR Suite V2
+Enter:
 
-1. Install and configure [KrakenSDR Suite V2](https://github.com/krakenrf/krakensdr_suite)
-   on the receiver host. Suite owns the USB devices and calibration; VectorWarp
-   consumes its calibrated TCP stream.
-2. Select **Kraken** in Settings. Enter the Suite host and IQ/control ports
-   (normally 8091/8092). Use the receiver host's address for a remote Suite.
-3. Match VectorWarp's sample rate to Suite's rate, choose the active channel
-   count, and select dedicated or synthesized reference operation. Configure
-   the reference and surveillance channels for the actual antenna connections.
-4. Choose **Save & Restart**. Frequency, channel count and an explicitly chosen
-   gain require a command acknowledgement and a later matching Suite status.
-   A sample-rate mismatch blocks Apply: change it in Suite, then match it here.
+- **Center frequency:** the broadcast frequency used as the illuminator.
+- **Sample rate:** a rate supported by the selected receiver.
 
-Kraken supports 2–8 coherent input channels. Dedicated-reference mode excludes
-that channel from surveillance. Array-reference mode synthesizes a common
-reference from the selected channels; it is not bearing estimation.
-Gain defaults to **Keep receiver setting**. An explicit `-1` selects Suite
-automatic gain; 0–50 selects manual gain in dB.
+### 3. Sites
 
-For a local Suite service, **Check receiver software** can offer enrollment and
-startup of an installed service. It does not install Kraken drivers. Set the
-receiver/transmitter sites for geographic views and record the actual array
-layout. Reported settings do not prove antenna order, calibration or RF reception.
+Enter the name, latitude, longitude, and altitude for:
 
-## SDRplay RSPduo
+- **Receiver site:** the antenna array location.
+- **Illuminator site:** the transmitter location.
 
-Follow [SDRplay setup](SDRPLAY_SETUP.md) to install the vendor API and use the
-local RSPduo source kit in the unified package or `--backend all` source build.
-VectorWarp never downloads that API or accepts its license.
+These positions are used for bistatic range, aircraft comparison, coverage,
+and the map.
 
-In Settings, choose the RSPduo profile, then frequency, output sample rate and
-gain settings. With multiple RSPduos, enter the intended device's serial number.
-Reference and surveillance gain reduction are separate values. Choose
-**Save & Restart** to reuse a running API service or start a standard installed
-service before capture. Startup failures appear in the interface.
+### 4. Radar
 
-The adapter applies both tuners' settings through SDRplay API 3.15 and checks
-return codes. It does not independently read back RF tuning or prove coherence.
+Set:
 
-The shared live-page header and **Settings → Receiver → RSPduo overload check**
-show SDRplay overload reports for **A (reference)** and **B (surveillance)** on
-Linux, Raspberry Pi and macOS. Active overload is a warning to review gain.
-Recovered events remain visible, with detection/recovery counts and last event
-times in Settings, even when a short event ends between browser polls. “Recently
-recovered” means the SDK reported recovery within the last minute. Counts cover
-one receiver capture run and reset when capture starts again. These are SDK
-overload events, not proof of continuous ADC clipping; “No overload reported”
-does not guarantee RF quality. Acknowledgement failures are shown separately
-because overload reports may be incomplete.
+- **CPI:** the processing interval in seconds.
+- **Maximum range:** the farthest aircraft range to search.
+- **Maximum speed:** the fastest target to include.
+- **Detect radar returns:** enables detections on the range–Doppler display.
+- **Build persistent tracks:** joins detections across CPIs.
 
-If overload repeats, increase the affected channel's gain reduction when AGC is
-off, or choose a higher LNA state to reduce RF gain. With AGC on, try a more
-negative AGC target. Choose **Save & Restart**, then check both channels again.
-Overload warnings do not change gain automatically. Stale status, stopped receivers,
-replay and unavailable telemetry are shown as unknown or unavailable. If an
-older installed RSPduo module has no telemetry, rebuild SDRplay support using
-the receiver software check in Settings.
+VectorWarp calculates the delay and Doppler search limits from the range,
+speed, frequency, and sample rate.
 
-## USRP / B210
+### 5. Data
 
-Use a build containing the USRP adapter and install UHD 4.1 or newer. Select
-**USRP** in Settings; enter the intended device address, subdevice, antenna and
-gain, then set frequency and sample rate. Choose **Save & Restart**. UHD opens
-the receiver directly; there is no separate VectorWarp-managed UHD daemon.
+Choose whether to enable:
 
-Before streaming, the adapter checks both channels through UHD getters:
-sample rate within 0.5 Hz, tuning within 1 Hz, gain within 0.05 dB, and exact
-antenna/subdevice values. Mismatches stop startup. These are software readbacks,
-not RF or clock-source verification; clock/time source is not a web setting.
-Fresh processor status and the Settings startup panel preserve those per-channel
-getter values, the attested clock/time sources, and UHD motherboard/RX identity.
-They remain explicitly non-UTC and do not prove physical RF performance.
+- **ADS-B comparison**
+- **Automatic aircraft IQ clips**
 
-The 6 MS/s replay path passes with clutter filtering, but this is not a sustained
-B210 hardware test. The upstream B210 timeout/crash report still needs a physical
-endurance test; defensive error handling is not evidence that it is resolved.
+The page shows estimated storage for an hour of manual recording and for each
+automatic aircraft clip.
 
-## Dual HackRF
+### 6. Review
 
-1. Use two HackRF units with a shared clock and hardware trigger. Follow the
-   [wiring notes and official hardware guide](../src/capture/hackrf/README.md).
-2. Install libhackrf and use a VectorWarp build containing the HackRF adapter.
-   **Check receiver software** can offer supported native package setup.
-3. Run `hackrf_info` on the receiver host to identify both serial numbers.
-   In Settings, put the reference device first and surveillance device second.
-4. Set frequency, sample rate, LNA/VGA gain and amplifier selection, then choose
-   **Save & Restart**.
+Confirm that Receiver, Tuning, Sites, Radar, and Data show **Ready**, then
+select **Finish & Start radar**. VectorWarp validates the complete setup,
+applies it to the receiver, and starts processing.
 
-The adapter resolves each configured serial suffix uniquely from one device
-enumeration, opens those exact reference/surveillance devices, and checks every
-open, setting and start return code. Fresh processor status and the Settings
-startup panel preserve the resolved full serials and per-radio settings.
-libhackrf automatically chooses a baseband filter no wider than 0.75 times the
-sample rate; VectorWarp records that policy but cannot read back its exact
-analog state. Frequency, gain, clock/trigger wiring and hardware time likewise
-have no post-set readback. Setter acceptance is therefore useful operational
-evidence, not a physical RF or coherence test.
+## Receiver-specific setup
 
-## Receiver settings: application and verification
+### KrakenSDR Suite V2
 
-The **Receiver** tab changes with the selected backend. It contains only that
-radio's connection, tuning, gain, and hardware-specific controls. Automatic
-aircraft IQ clips are receiver-independent and appear under **Recording** for
-every live receiver; their range, elevation, pre/post-roll, and minimum-spacing
-policy is configured there. Kraken additionally shows coherent reference, fusion, resident
-integration, bearing, and manifold controls. Only those array controls are
-hidden for RSPduo, USRP, and HackRF.
+KrakenSDR Suite owns the radio, synchronization, and calibration. VectorWarp
+connects to its IQ and control ports.
 
-Portable processing remains in **Radar** for every backend: CPI and ambiguity
-limits, clutter removal, CFAR detection, the basic tracker, CPU/GPU selection,
-manual recording/replay, ADS-B statistics, sites, and output controls. Switching
-away from Kraken safely disables any enabled Kraken-only feature instead of
-leaving an invisible incompatible setting active.
+For a remote Suite, open **Advanced → Receiver** and enter the Suite host,
+stream port, and control port. Match VectorWarp's sample rate and active channel
+count to the Suite configuration.
 
-**Save for later** stores pending settings without applying them or restarting.
-**Save & Restart** applies settings and restarts processing; previously saved
-changes use **Apply & Restart**. Check fresh processor status after the restart.
-If startup fails, correct the reported issue in Settings before retrying.
+Use the visual array editor to select the layout, assign reference and
+surveillance roles, map channels to physical antennas, and enter the measured
+antenna positions. Kraken supports coherent arrays with two through eight
+active channels.
 
-Suite status/readback, SDK return codes and physical RF verification are
-different checks. The receiver sections above explain each boundary; discovery
-alone does not establish successful radar operation.
+### SDRplay RSPduo
 
-## Recording, replay and browser access
+Select **SDRplay RSPduo**, then open receiver software setup if the SDRplay API
+or VectorWarp adapter needs installation. The setup action checks the installed
+API, builds the adapter, and reports when the receiver is ready.
 
-### ADS-B source
+Choose automatic gain, automatic gain per channel, or manual gain under
+**Receiver**. The live header and Receiver settings show overload events for
+the reference and surveillance tuners.
 
-In **Settings → ADS-B planes**, discover a local readsb/dump1090 feed or enter
-a remote ADS-B server address. Like upstream adsb2dd, a server address such as
-`http://receiver/tar1090` is read at `http://receiver/tar1090/data/aircraft.json`;
-enter the base address, not the JSON filename. A compatible dump1090/readsb
-web endpoint works too. Local decoder-file discovery does not require tar1090.
-Discovery does not install or start a decoder or scan
-other hosts. The source is saved in `truth.adsb.tar1090`. Live ADS-B is disabled
-during replay and preview; it is never radar detection or tracking input.
+### Ettus USRP / B210
 
-For an advanced redundant installation, `truth.adsb.sources` may be an ordered
-list of up to eight readsb/dump1090-compatible base addresses or local selections.
-When present and non-empty, it replaces `tar1090` as the active list; omitting it
-retains the legacy singleton behavior. Sources are read concurrently, separately
-timed out, and fused per ICAO address. `source_timeout` is seconds, from 0.1 to
-10 (default 1.5):
+Select **Ettus USRP / UHD**. VectorWarp detects local UHD devices and fills the
+connection when one receiver is found. Device address, subdevice, antenna,
+clock, gain, and channel settings are under **Advanced → Receiver**.
 
-```yaml
-truth:
-  adsb:
-    enabled: true
-    tar1090: 'localhost:8080' # legacy/default source
-    sources:
-      - 'local:readsb'
-      - 'https://approved-backup.example/tar1090'
-      - 'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/60'
-    source_timeout: 1.5
-    association_lag_cpis: 4 # two seconds when CPI is 0.5 s
-    # Provisional scoring only. It expands the validation association tube by
-    # aircraft delay/Doppler rate; it never changes detection or tracking.
-    provisional_event_time_uncertainty_s: 1.0
+### Dual HackRF
+
+Connect two HackRF units with a shared clock and hardware trigger. Select
+**Dual HackRF**, then assign the reference radio first and surveillance radio
+second. Serial numbers, amplifier controls, and LNA/VGA gains are under
+**Advanced → Receiver**.
+
+## Array setup
+
+Open **Settings → Receiver → Array** to configure coherent receivers. Start by
+choosing the number of active antennas, then select a visual layout:
+
+- Uniform linear array
+- Circular array
+- Cross or plus array
+- Bearing array with a dedicated reference antenna
+- Custom measured layout
+
+Select an antenna in the diagram to change its channel, role, position, gain,
+or orientation. The diagram compares the installed measurements with the
+frequency-based reference spacing without stretching the array shape.
+
+## ADS-B and MLAT
+
+Open **Settings → ADS-B** to enable aircraft comparison and choose sources.
+VectorWarp can use local readsb or dump1090 data, remote tar1090 servers, and
+configured online exchange sources. Multiple sources are read in parallel and
+the newest aircraft position is used.
+
+For a remote tar1090 server, enter its base address, for example:
+
+```text
+http://receiver/tar1090
 ```
 
-Do not combine `auto` with other list entries because discovery could rediscover
-the same receiver and manufacture false corroboration. Duplicate entries are
-also rejected. This plumbing does not add credentials or enable a public feed;
-only configure services whose access, attribution, retention, and operational
-terms have been approved. `/api/adsb/status` reports per-source health,
-latency, positions usable by geometry, positions fresh enough for evidence,
-failures, and the latest fusion summary.
+VectorWarp reads the server's aircraft data and keeps the winning source on
+each aircraft record. The source status page shows update age, request time,
+failures, contribution counts, and which source supplied each position.
 
-Prefix an exact ADS-B Exchange v2-compatible endpoint with `exchange:`. These
-responses use `ac` and millisecond snapshot timestamps; VectorWarp normalizes
-them to readsb event time without changing each aircraft's `seen_pos`. Ordered
-sources are deduplicated by ICAO address and the observation with the newest
-actual position event time (`snapshot time - seen_pos`) wins. Source provenance,
-agreement, and disagreement remain attached to that single aircraft record. A
-fresh moving observation is propagated to the fusion/CPI timestamp using its
-ground speed, track, and vertical rate; provenance retains both the original
-observation age and the bounded projection interval.
-`association_lag_cpis` delays ADS-B association—not RF capture or detector
-processing—then projects the newly arrived observation backward or forward to
-the held CPI timestamp.
-When an SDR cannot supply a UTC-qualified RF timestamp,
-`provisional_event_time_uncertainty_s` treats the remaining absolute offset as a
-bounded nuisance parameter. The scorer expands only its validation gates by the
-aircraft's measured delay and Doppler rates over that radius, records the
-allowance on every association, and keeps the result non-decision-grade. It does
-not steer a beam, move a detection cell, or provide ADS-B to radar inference.
-Configure only services whose usage and attribution terms fit the deployment.
+## Recording
 
-Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).
-Stock 3lips uses an external adsb2dd service rather than this built-in converter.
+### Manual recording
 
-### Recording replay
+Select **Start recording** on the Live radar page to capture raw IQ. Select it
+again to stop. The recording appears on the **Recordings** page with its time,
+length, size, receiver, channels, and associated aircraft.
 
-Portable `.blah2iq` files include channel-major complex-float32 IQ, sample rate,
-frequency and channel count. Replay checks those values without opening hardware.
-Legacy RSPduo, Kraken MCHQ, USRP float32 and HackRF signed-int8 files need their
-matching format; legacy USRP also needs the original block length.
+### Automatic aircraft clips
 
-The browser/API defaults to port 3000 with no password. Use a trusted LAN/VPN
-or an authenticated gateway; see [browser access](INSTALL.md#4-open-the-interface-and-configure-your-receiver).
+Open **Settings → Recording → Automatic aircraft IQ clips**. Enable automatic
+recording and set the pre-roll, post-roll, aircraft range, elevation, and
+minimum time between clips. Eligible aircraft passes create labeled clips
+without changing manual recording.
 
-Serve Settings from the API's own address. If hosting the UI separately, the
-administrator must list its exact origin (scheme, hostname and port) in the
-API service's `BLAH2_RECEIVER_ORIGINS` comma-separated setting. Custom config
-clients must send that `Origin` and `X-VectorWarp-Intent: config-write-v1`, in
-addition to the revision and receiver-sync headers. Recording control uses
-`POST /capture/toggle` with `X-VectorWarp-Intent: recording-toggle-v1`;
-GET requests do not change recording state.
+### Share a recording
 
-## Evidence and limits
+On the **Recordings** page, expand a finished recording and select **Share
+recording**. On the radar computer, VectorWarp opens the recording folder with
+that recording selected. From another device, it downloads a portable package
+containing the IQ, receiver and processing configuration, array geometry,
+ADS-B timeline, and recording metadata.
 
-[Upstream comparison](UPSTREAM_COMPARISON.md) distinguishes implemented features,
-automated tests, hardware evidence and planned work. See the
-[fixed-range benchmark](GPU_BENCHMARK_20260911.md) for measured processing times.
+## Replay
+
+On the **Recordings** page, expand a recording and select **Replay recording**.
+VectorWarp loads the configuration packaged with that recording and starts the
+replay without opening a physical SDR.
+
+Use the playback bar to pause, resume, scrub, rewind, or skip forward. Live
+radar, maps, displays, and aircraft information follow the selected replay
+time.
+
+## Confirm the radar is running
+
+After setup or replay starts, check:
+
+1. The header shows **RADAR ONLINE**.
+2. The Live radar frame continues to update.
+3. **Settings → Receiver status** matches the saved receiver settings.
+4. ADS-B shows **ONLINE** when aircraft comparison is enabled.
+5. The **Recordings** page shows existing recordings and active captures.
+
+## Commands
+
+```text
+vectorwarp          Open the browser interface
+vectorwarp start    Start VectorWarp
+vectorwarp stop     Stop VectorWarp
+vectorwarp restart  Restart VectorWarp
+vectorwarp status   Show service status
+vectorwarp logs     Show service logs
+vectorwarp help     List commands
+```
+
+For a Homebrew-managed macOS service, use `brew services start vectorwarp`,
+`brew services stop vectorwarp`, or `brew services restart vectorwarp`.
+
+For source installation, see [Install VectorWarp](INSTALL.md).
+
+## Report a problem
+
+Open **Settings**, select **Report an issue**, describe what happened in the
+comments box, and create the diagnostic report. Attach that report to a
+[GitHub issue](https://github.com/mickeyslaven/blah2-VectorWarp/issues).
