@@ -19,8 +19,8 @@ unverified.
 The separate universal standalone `.pkg` is Developer ID signed, Apple-notarized
 and installs at `/Applications/VectorWarp.app`. Published versions appear in the
 [release download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
-See [MACOS_STANDALONE.md](MACOS_STANDALONE.md) for its target
-layout, commands and qualification boundaries.
+Standalone package commands are in
+[Install VectorWarp](INSTALL.md#manual-package-installation).
 Homebrew installation, updates, and service commands are in
 [Install VectorWarp](INSTALL.md#macos). CPU processing
 is always available. Optional Vulkan/MoltenVK processing is described in

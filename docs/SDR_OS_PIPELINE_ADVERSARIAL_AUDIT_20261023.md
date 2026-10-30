@@ -432,8 +432,7 @@ The macOS lifecycle creates per-user recordings/calibration directories and
 rewrites the initial config to those paths (`script/vectorwarp-macos.py:332-351`).
 Its supervisor tears down the partial stack and restarts the owned API/processor/
 Kraken set after child failure (`script/vectorwarp-macos.py:548-580`). GPU
-qualification explicitly falls back to CPU when it fails
-(`docs/MACOS_STANDALONE.md:56-65`). No additional macOS product-path correctness
+qualification explicitly falls back to CPU when it fails. No additional macOS product-path correctness
 defect was found; F10 below corrected acceptance coverage that had drifted from
 the all-backend event-time contract.
 

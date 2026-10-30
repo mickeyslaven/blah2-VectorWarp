@@ -84,8 +84,7 @@ restoring the original nine-CPI fixture passed without changing the app or gates
 These checks do not qualify signed execution on physical Intel hardware.
 Apple accepted the signed installer for notarization; its ticket was stapled and
 local Gatekeeper installer assessment passed. Actual installer execution remains
-untested; published binaries require separate release verification. See
-[MACOS_STANDALONE.md](MACOS_STANDALONE.md).
+untested; published binaries require separate release verification.
 
 Local verification used macOS 26.6.1 on an Apple M2 with 8 GiB RAM,
 AppleClang and Node 24.21.0. Results below distinguish actual Mac execution,

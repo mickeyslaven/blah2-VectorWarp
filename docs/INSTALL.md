@@ -246,7 +246,6 @@ brew uninstall vectorwarp
 
 ## Other installation guides
 
-- [macOS standalone package](MACOS_STANDALONE.md)
 - [SDRplay RSPduo](SDRPLAY_SETUP.md)
 - [DragonOS](DRAGONOS.md)
 - [Raspberry Pi 4](PI4_GUIDE.md)
