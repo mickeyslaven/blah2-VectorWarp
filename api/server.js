@@ -335,16 +335,25 @@ const HOST = net.isIP(config.network?.ip || '') ? config.network.ip : '0.0.0.0';
 const receiverOrigins = trustedOrigins(PORT, (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean));
 const CONFIG_INTENT = 'config-write-v1';
 const RECORDING_INTENT = 'recording-toggle-v1';
-function siteNamesOnlyChange(before, after) {
+function receiverIndependentChange(before, after) {
   const currentRx = before?.location?.rx?.name;
   const currentTx = before?.location?.tx?.name;
   const nextRx = after?.location?.rx?.name;
   const nextTx = after?.location?.tx?.name;
-  if (currentRx === nextRx && currentTx === nextTx) return false;
   const normalized = JSON.parse(JSON.stringify(after));
-  if (normalized.location?.rx) normalized.location.rx.name = currentRx;
-  if (normalized.location?.tx) normalized.location.tx.name = currentTx;
-  return JSON.stringify(normalized) === JSON.stringify(before);
+  let changed = false;
+  if (currentRx !== nextRx || currentTx !== nextTx) {
+    if (normalized.location?.rx) normalized.location.rx.name = currentRx;
+    if (normalized.location?.tx) normalized.location.tx.name = currentTx;
+    changed = true;
+  }
+  if (JSON.stringify(before?.truth?.remote_id) !== JSON.stringify(after?.truth?.remote_id)) {
+    normalized.truth ||= {};
+    if (before?.truth?.remote_id === undefined) delete normalized.truth.remote_id;
+    else normalized.truth.remote_id = JSON.parse(JSON.stringify(before.truth.remote_id));
+    changed = true;
+  }
+  return changed && JSON.stringify(normalized) === JSON.stringify(before);
 }
 var map = '';
 var detection = '';
@@ -1307,10 +1316,10 @@ app.put('/api/config', async (req, res) => {
   const validation = validateConfig(req.body, currentDocument.config);
   if (!validation.valid)
     return res.status(422).json({ok: false, errors: validation.errors});
-  // Site labels are presentation metadata. They do not retune the receiver,
-  // change radar geometry, or alter processing, so do not force automatic-gain
-  // measurement or stop a healthy processor merely to rename a map marker.
-  if (!saveLater && !wantsRestart && siteNamesOnlyChange(currentDocument.config, req.body)) {
+  // Site labels and cooperative truth-source presentation do not retune the
+  // receiver, change radar geometry or alter processing. Persist them without
+  // disturbing a healthy receiver or processor.
+  if (!saveLater && !wantsRestart && receiverIndependentChange(currentDocument.config, req.body)) {
     const saved = saveConfig(configFile, req.body, currentDocument.revision);
     const priorReceipt = receiverSyncState.receipt || {schemaVersion: 1,
       receiverType: req.body.capture.device.type, status: 'not-required', operations: []};
@@ -1325,7 +1334,7 @@ app.put('/api/config', async (req, res) => {
     upstreamCache = null;
     return res.json({ok: true, restarting: false, revision: saved.revision,
       config: saved.config, receiverSync: receipt,
-      message: 'Site names saved. Live receiver and radar processing were not restarted.'});
+      message: 'Presentation settings saved. Live receiver and radar processing were not restarted.'});
   }
   const measuredGain = !saveLater && automaticGainEnabled(req.body);
   if (measuredGain && !gainRestart.installedGainRestartSupported(restartCommand))
