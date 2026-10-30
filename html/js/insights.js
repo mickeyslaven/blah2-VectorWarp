@@ -10,7 +10,8 @@
     autosize: true,
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    font: {color: '#f3eee9', family: 'Inter, system-ui, sans-serif'},
+    font: {color: '#f3eee9', family: 'Inter, system-ui, sans-serif',
+      size: typeof window !== 'undefined' && window.innerWidth <= 600 ? 13 : 14},
     margin: {l: 72, r: 38, t: 24, b: 58},
     hoverlabel: {namelength: 24},
     legend: {orientation: 'h', x: 0, y: 1.08, bgcolor: 'rgba(0,0,0,0)'},
@@ -327,7 +328,7 @@
 
   async function emptyPlot(message, layout = {}) {
     await Plotly.react('data', [], {...plotBase, ...layout, annotations: [{
-      text: message, showarrow: false, font: {color: '#ac9e94', size: 14}
+      text: message, showarrow: false, font: {color: '#ac9e94', size: 16}
     }]}, plotConfig);
   }
 
@@ -442,7 +443,7 @@
     const compact = typeof window !== 'undefined' && window.innerWidth <= 600;
     await Plotly.react('data', traces, {...plotBase,
       margin: compact ? {l: 55, r: 18, t: 42, b: 46} : {l: 72, r: 45, t: 34, b: 55},
-      legend: {...plotBase.legend, font: {size: compact ? 9 : 12}},
+      legend: {...plotBase.legend, font: {size: compact ? 10 : 14}},
       xaxis: {gridcolor: '#47362e', tickformat: compact ? '%H:%M:%S' : undefined,
         nticks: compact ? 4 : undefined, tickangle: 0, automargin: true},
       yaxis: {title: 'Count', domain: [.7, 1], rangemode: 'tozero', gridcolor: '#47362e'},

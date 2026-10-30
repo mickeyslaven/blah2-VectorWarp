@@ -10,30 +10,30 @@ function delayDopplerPresentation(width, height) {
     (Number.isFinite(height) && height <= 600);
   return compact ? {
     margin: {l: 38, r: 6, b: 38, t: 8, pad: 0},
-    fontSize: 10,
-    axisTitleSize: 11,
+    fontSize: 11,
+    axisTitleSize: 12,
     xTitle: 'Range (km)',
     yTitle: 'Hz',
-    tickSize: 9,
+    tickSize: 10,
     tickCount: 4,
     showScale: false,
     colorbar: {
-      title: {text: 'dB', side: 'right', font: {color: '#f3eee9', size: 10}},
-      tickfont: {color: '#f3eee9', size: 8},
+      title: {text: 'dB', side: 'right', font: {color: '#f3eee9', size: 11}},
+      tickfont: {color: '#f3eee9', size: 9},
       outlinecolor: '#47362e', thickness: 8, len: .72, xpad: 2
     }
   } : {
     margin: {l: 92, r: 132, b: 50, t: 36, pad: 0},
-    fontSize: 12,
-    axisTitleSize: 18,
+    fontSize: 14,
+    axisTitleSize: 20,
     xTitle: 'Bistatic Range (km)',
     yTitle: 'Bistatic Doppler (Hz)',
-    tickSize: 12,
+    tickSize: 14,
     tickCount: 0,
     showScale: true,
     colorbar: {
-      title: {text: 'Power (dB)', side: 'right', font: {color: '#f3eee9', size: 13}},
-      tickfont: {color: '#f3eee9', size: 11},
+      title: {text: 'Power (dB)', side: 'right', font: {color: '#f3eee9', size: 15}},
+      tickfont: {color: '#f3eee9', size: 13},
       outlinecolor: '#47362e', thickness: 14
     }
   };
