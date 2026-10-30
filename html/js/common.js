@@ -35,6 +35,28 @@ function renderAppHeader(active) {
   addFullscreenControl();
 }
 
+function renderRadarViewTabs(active = 'live') {
+  const target = document.querySelector('[data-radar-view-tabs]');
+  if (!target) return;
+  const views = [
+    ['live', '/', 'Live radar'],
+    ['detections', '/display/detections', 'Detections'],
+    ['tracks', '/display/tracks', 'Tracks'],
+    ['history', '/display/detection?view=range-doppler', 'History'],
+    ['adsb', '/display/statistics?tab=adsb', 'ADS-B truth']
+  ];
+  target.className = 'view-tabs radar-view-tabs';
+  target.setAttribute('aria-label', 'Live radar views');
+  target.hidden = false;
+  target.replaceChildren(...views.map(([key, href, label]) => {
+    const link = document.createElement('a');
+    link.href = href;
+    link.textContent = label;
+    if (key === active) link.setAttribute('aria-current', 'page');
+    return link;
+  }));
+}
+
 // Discovery is read-only. A newly connected receiver is offered to the user,
 // but the running receiver and saved configuration are never changed here.
 async function refreshReceiverDevices() {

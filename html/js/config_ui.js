@@ -1652,6 +1652,8 @@ function moveArrayEditorToArrayTab(panels, enabled) {
   const geometry = panels.querySelector('#settings-panel-capture .kraken-geometry');
   const arrayPanel = panels.querySelector('#settings-panel-array');
   if (!geometry || !arrayPanel) return false;
+  geometry.open = true;
+  geometry.classList.add('kraken-geometry-standalone');
   arrayPanel.appendChild(geometry);
   return true;
 }
@@ -1837,8 +1839,10 @@ function renderRecordingSettings() {
   section.className = 'recording-settings';
   const intro = document.createElement('div');
   intro.className = 'config-section-heading';
-  intro.innerHTML = '<h2>IQ recordings</h2><p>Raw IQ only. Radar maps and detections are separate exports.</p>';
+  intro.innerHTML = '<h2>Recording & replay</h2>';
   section.appendChild(intro);
+  if (activeConfig.capture?.replay && typeof activeConfig.capture.replay === 'object')
+    section.appendChild(group('replay', activeConfig.capture.replay, ['capture'], true));
   if (activeConfig.capture?.aircraft_clips &&
       typeof activeConfig.capture.aircraft_clips === 'object') {
     section.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
@@ -2492,6 +2496,7 @@ function renderEditor() {
         (key === 'process' && receiverSpecificProcessPath(path)) ||
         (key === 'process' && experimentalSettingPath(path)) ||
         (key === 'capture' && path.startsWith('capture.aircraft_clips')) ||
+        (key === 'capture' && path.startsWith('capture.replay')) ||
         simpleSettingHidden(path)}));
     else
       panel.appendChild(field(value, [key]));

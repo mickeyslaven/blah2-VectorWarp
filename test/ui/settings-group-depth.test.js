@@ -48,6 +48,10 @@ panels.innerHTML = '<section id="settings-panel-capture"><details class="kraken-
 assert.equal(window.moveArrayEditorToArrayTab(panels, true), true);
 assert.ok(panels.querySelector('#settings-panel-array > .kraken-geometry'),
   'Coherent-array geometry moves into its own visual settings tab');
+assert.ok(panels.querySelector('#settings-panel-array > .kraken-geometry').open,
+  'The dedicated Array tab exposes the editor without another disclosure');
+assert.ok(panels.querySelector('#settings-panel-array > .kraken-geometry').classList.contains(
+  'kraken-geometry-standalone'));
 assert.equal(panels.querySelector('#settings-panel-capture .kraken-geometry'), null,
   'Receiver is no longer burdened with the full array editor');
 console.log('Single controls drop redundant headings; array geometry has its own tab.');
