@@ -685,9 +685,12 @@
         tileSize: 512, attribution: 'Terrain &copy; Mapterhorn'
       }
     };
+    const aerial = mapBackgroundMode === 'aerial';
     const layers = [
       {id: 'vectorwarp-background', type: 'background', paint: {'background-color': '#15110f'}},
-      {id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'}
+      {id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap',
+        paint: {'raster-opacity': aerial ? 0 : 1,
+          'raster-opacity-transition': {duration: 120, delay: 0}}}
     ];
     const validBounds = bounds => Array.isArray(bounds) && bounds.length === 4 &&
       bounds.map(Number).every(Number.isFinite);
@@ -710,12 +713,15 @@
       };
       // Do not set a layer maxzoom: MapLibre then keeps overzooming the last
       // real tile as a stable parent while a denser nested tier is loading.
-      layers.push({id, type: 'raster', source: id, minzoom: Number(tier.minzoom)});
+      layers.push({id, type: 'raster', source: id, minzoom: Number(tier.minzoom),
+        paint: {'raster-opacity': aerial ? 1 : 0,
+          'raster-opacity-transition': {duration: 120, delay: 0}}});
     });
     layers.push({
       id: 'vectorwarp-hillshade', type: 'hillshade', source: 'vectorwarp-hillshade-dem',
-      layout: {visibility: 'none'},
-      paint: {'hillshade-exaggeration': .34, 'hillshade-shadow-color': '#30251f',
+      paint: {'hillshade-exaggeration': aerial ? 0 : .34,
+        'hillshade-exaggeration-transition': {duration: 120, delay: 0},
+        'hillshade-shadow-color': '#30251f',
         'hillshade-highlight-color': '#f4d4ad', 'hillshade-accent-color': '#7d614f'}
     });
     return {
@@ -727,16 +733,21 @@
   }
 
   function syncMapBackground(map) {
-    if (!map?.getLayer || !map?.setLayoutProperty) return;
-    const aerial = mapBackgroundMode === 'aerial';
-    if (map.getLayer('vectorwarp-basemap'))
-      map.setLayoutProperty('vectorwarp-basemap', 'visibility', aerial ? 'none' : 'visible');
-    const imageryLayers = (map.getStyle?.()?.layers || []).map(layer => layer.id)
-      .filter(id => id.startsWith('vectorwarp-local-imagery-'));
-    for (const id of imageryLayers)
-      map.setLayoutProperty(id, 'visibility', aerial ? 'visible' : 'none');
-    if (map.getLayer('vectorwarp-hillshade'))
-      map.setLayoutProperty('vectorwarp-hillshade', 'visibility', aerial ? 'none' : 'visible');
+    if (!map?.getLayer || !map?.setPaintProperty || map._vectorwarpBackgroundSyncPending) return;
+    map._vectorwarpBackgroundSyncPending = true;
+    const schedule = window.requestAnimationFrame || (callback => callback());
+    schedule(() => {
+      map._vectorwarpBackgroundSyncPending = false;
+      const aerial = mapBackgroundMode === 'aerial';
+      if (map.getLayer('vectorwarp-basemap'))
+        map.setPaintProperty('vectorwarp-basemap', 'raster-opacity', aerial ? 0 : 1);
+      const imageryLayers = (map.getStyle?.()?.layers || []).map(layer => layer.id)
+        .filter(id => id.startsWith('vectorwarp-local-imagery-'));
+      for (const id of imageryLayers)
+        map.setPaintProperty(id, 'raster-opacity', aerial ? 1 : 0);
+      if (map.getLayer('vectorwarp-hillshade'))
+        map.setPaintProperty('vectorwarp-hillshade', 'hillshade-exaggeration', aerial ? 0 : .34);
+    });
   }
 
   async function ensureLocationMap(viewport) {
