@@ -1148,7 +1148,7 @@ function adsbSourcesInput(legacyValue, path) {
     wrapper.replaceChildren();
     const intro = document.createElement('p');
     intro.className = 'adsb-source-note';
-    intro.textContent = 'One aircraft is shown once. The newest healthy observation wins; positions are not averaged.';
+    intro.textContent = 'Newest healthy position wins.';
     wrapper.appendChild(intro);
 
     const lagCpis = Number(activeConfig.truth?.adsb?.association_lag_cpis || 0);
@@ -1156,8 +1156,8 @@ function adsbSourcesInput(legacyValue, path) {
     const alignment = document.createElement('p');
     alignment.className = 'adsb-source-note';
     alignment.textContent = Number.isFinite(cpiSeconds) ?
-      `Shared frame timing: ${lagCpis} CPI frames × ${cpiSeconds.toFixed(3)} s = ${(lagCpis * cpiSeconds).toFixed(3)} s hold. Radar, tracks and ADS-B are displayed at one exact frame timestamp.` :
-      `Shared frame timing: ${lagCpis} CPI frames. Radar, tracks and ADS-B are displayed at one exact frame timestamp.`;
+      `Presentation hold: ${lagCpis} CPIs (${(lagCpis * cpiSeconds).toFixed(3)} s).` :
+      `Presentation hold: ${lagCpis} CPIs.`;
     wrapper.appendChild(alignment);
 
     const localHeading = document.createElement('strong');
@@ -1193,7 +1193,7 @@ function adsbSourcesInput(legacyValue, path) {
     wrapper.appendChild(exchangeHeading);
     const exchangeTimingNote = document.createElement('p');
     exchangeTimingNote.className = 'adsb-source-note warning';
-    exchangeTimingNote.textContent = 'Stock readsb usually publishes aircraft.json once per second, which is too slow for CPI-level pass scoring. Set --write-json-every 0.25 or add an online source. VectorWarp uses the newest fresh position.';
+    exchangeTimingNote.textContent = 'Stock readsb 1 s JSON is too slow for CPI pass scoring. Use --write-json-every 0.25.';
     wrapper.appendChild(exchangeTimingNote);
     const hasSite = ADSB_PUBLIC_EXCHANGES.every(exchange => adsbPublicSource(exchange.id));
     for (const exchange of ADSB_PUBLIC_EXCHANGES) {
@@ -1268,7 +1268,7 @@ function adsbSourcesInput(legacyValue, path) {
     wrapper.appendChild(photoRow);
     const photoNote = document.createElement('p');
     photoNote.className = 'adsb-source-note';
-    photoNote.textContent = 'Sends visible aircraft ICAO addresses to Planespotters. Photos and credits are cached.';
+    photoNote.textContent = 'Aircraft photos are cached.';
     wrapper.appendChild(photoNote);
 
     const custom = sources.map((source, index) => ({source, index}))
@@ -1747,16 +1747,7 @@ function renderReceiverFeatures() {
   section.className = 'receiver-feature-section';
   const type = activeConfig.capture?.device?.type;
   const features = receiverFeatureCapabilities(type, capabilities.deviceProfiles || []);
-  if (!features.coherentArray) {
-    const note = document.createElement('p');
-    note.className = 'config-capability-note';
-    note.textContent = 'This receiver uses its reference and surveillance inputs directly. Kraken array controls are hidden.';
-    section.appendChild(note);
-    return section;
-  }
-  const heading = document.createElement('h3');
-  heading.textContent = 'Kraken array processing';
-  section.append(heading);
+  if (!features.coherentArray) return section;
   const featureOptions = {groupMeta: {
     'process.detection': ['Coherent integration', 'Combine consecutive radar intervals and search short motion paths.'],
     'process.tracker': ['Array recovery experiments', 'Bounded array-only recovery tests; normal tracking remains in Radar.']
@@ -1777,7 +1768,6 @@ function renderReceiverFeatures() {
 function renderExperimentalSettings() {
   const section = document.createElement('section');
   section.className = 'experimental-settings';
-  section.innerHTML = '<div class="config-section-heading"><h2>Experimental</h2><p>Optional shadow features. May increase load. Never auto-promotes models.</p></div>';
   const process = activeConfig.process || {};
   const coherentArray = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
     capabilities.deviceProfiles || []).coherentArray;
@@ -1824,10 +1814,6 @@ function renderExperimentalSettings() {
 function renderRecordingSettings() {
   const section = document.createElement('section');
   section.className = 'recording-settings';
-  const intro = document.createElement('div');
-  intro.className = 'config-section-heading';
-  intro.innerHTML = '<h2>Recording</h2>';
-  section.appendChild(intro);
   if (activeConfig.capture?.aircraft_clips &&
       typeof activeConfig.capture.aircraft_clips === 'object') {
     section.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
@@ -1915,7 +1901,7 @@ function updateDirtyState() {
   const state = document.getElementById('config-state');
   if (state) state.textContent = pendingLiveConfig !== null ?
     'Saved settings changed' : dirty ? `${editedCount} unsaved change${editedCount === 1 ? '' : 's'}` :
-      receiverApplyPending ? 'Apply settings to confirm' : 'Up to date';
+      receiverApplyPending ? 'Apply settings to confirm' : '';
   window.onbeforeunload = dirty ? () => true : null;
 }
 
@@ -2082,9 +2068,6 @@ async function refreshUpstreamStatus() {
     }
     const grid = document.createElement('div');
     grid.className = 'upstream-grid';
-    const note = document.createElement('p');
-    note.textContent = 'Receiver-reported settings compared with the saved file, not unsaved edits.';
-    target.appendChild(note);
     const measuredGains = Array.isArray(status.actual.adcHeadroom?.channels) ?
       status.actual.adcHeadroom.channels.map(channel => channel.actualGainDb).
         filter(Number.isFinite) : [];
@@ -2369,8 +2352,7 @@ function makeSettingsFilter(tabs, panels, activate) {
         lastRevealedField = firstVisibleField;
       }
     }
-    status.textContent = filtering ? `${visible} matching setting${visible === 1 ? '' : 's'}` :
-      `${fields.length} settings in this receiver profile`;
+    status.textContent = filtering ? `${visible} matching setting${visible === 1 ? '' : 's'}` : '';
   };
   input.addEventListener('input', () => { settingsSearch = input.value; apply(); });
   checkbox.addEventListener('change', () => {
@@ -2428,7 +2410,7 @@ function organizeTechnicalControls(panel, tab) {
   const title = document.createElement('strong');
   const description = document.createElement('small');
   title.textContent = 'Technical controls';
-  description.textContent = 'Connection, solver, timing, and diagnostic values';
+  description.textContent = 'Ports and expert tuning';
   heading.append(title, description);
   const count = document.createElement('b');
   count.textContent = String(technicalFields.length);
@@ -2440,6 +2422,9 @@ function organizeTechnicalControls(panel, tab) {
   removeEmptySettingsGroups(panel, details);
   panel.appendChild(details);
   revealSmallSettingsGroups(panel);
+  panel.querySelectorAll('.receiver-feature-section').forEach(section => {
+    if (!section.querySelector('.config-field,input,select,button')) section.remove();
+  });
 }
 
 function renderEditor() {
@@ -2804,7 +2789,7 @@ function renderReceiverSetup() {
   const heading = document.createElement('h3');
   heading.textContent = 'Receiver software';
   const description = document.createElement('p');
-  description.textContent = 'VectorWarp detects connected receivers and prepares their software automatically.';
+  description.textContent = 'Scan connected SDRs.';
   const check = document.createElement('button');
   check.type = 'button'; check.className = 'button-secondary';
   check.textContent = 'Scan for receivers';
@@ -2936,15 +2921,15 @@ function renderReceiverSetup() {
           needsSdrplay ? 'Install required' : ready ? 'Ready' : 'Unavailable';
         cardHeader.append(cardTitle, cardState);
         const state = document.createElement('p');
-        state.textContent = needsSdrplay ? 'Install SDRplay’s API once; VectorWarp will build and configure the RSPduo adapter automatically.' :
+        state.textContent = needsSdrplay ? 'Install the SDRplay API once.' :
           incomplete ? 'This receiver is missing from the installed VectorWarp package.' :
-          receiver.capabilities.detected ? 'Connected and ready to configure.' :
-          ready ? 'Support is installed. Connect the receiver when you are ready.' :
+          receiver.capabilities.detected ? 'Connected.' :
+          ready ? 'Support installed.' :
           'Connect the receiver and scan again.';
         card.append(cardHeader, state);
         output.appendChild(card);
         if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
-          paragraph('SDRplay requires accepting its vendor license. After installation, return here; VectorWarp completes the adapter automatically.');
+          paragraph('Vendor license acceptance is required.');
           sdrplayLink();
         }
         if (receiver.type === 'RspDuo') {
@@ -2972,7 +2957,6 @@ function renderReceiverSetup() {
         }
       }
       if (result.processor?.state === 'error') paragraph(`Processor input error: ${result.processor.error}`);
-      else paragraph('Select a ready receiver, then Save & Restart. VectorWarp verifies reception automatically.');
       if (result.errors?.length) paragraph('One or more receiver checks failed. Scan again or send a diagnostic report.');
     } catch (error) { output.replaceChildren(); paragraph(error.message); }
     finally { check.disabled = false; }
@@ -3178,7 +3162,7 @@ async function renderConfiguration() {
     }
     validationErrors = [];
     validationPending = false;
-    target.innerHTML = `<div class="config-toolbar"><div><strong>System settings</strong><span id="config-state">Up to date</span></div><div class="config-actions"><button id="config-reset" class="button-secondary" type="button" disabled>Discard changes</button><button id="config-save" class="button-primary" type="button" disabled>Save & Restart</button></div></div><div id="config-message" class="config-message"></div><section id="upstream-status" class="upstream-status"><div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div></section><div id="config-restart-progress" class="config-restart-progress" role="status" aria-live="polite" hidden><div class="config-restart-copy"><span id="config-restart-label">Preparing restart…</span><b id="config-restart-value">0%</b></div><div class="config-restart-track"><span id="config-restart-bar"></span></div></div><div id="config-fields" class="config-editor"></div>`;
+    target.innerHTML = `<div class="config-toolbar"><div><strong>Unsaved settings</strong><span id="config-state"></span></div><div class="config-actions"><button id="config-reset" class="button-secondary" type="button" disabled>Discard changes</button><button id="config-save" class="button-primary" type="button" disabled>Save & Restart</button></div></div><div id="config-message" class="config-message"></div><section id="upstream-status" class="upstream-status"><div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div></section><div id="config-restart-progress" class="config-restart-progress" role="status" aria-live="polite" hidden><div class="config-restart-copy"><span id="config-restart-label">Preparing restart…</span><b id="config-restart-value">0%</b></div><div class="config-restart-track"><span id="config-restart-bar"></span></div></div><div id="config-fields" class="config-editor"></div>`;
     if (capabilities.receiverSynchronization?.pendingIntentValue === 'save-pending-v1') {
       const later = document.createElement('button');
       later.id = 'config-save-later';

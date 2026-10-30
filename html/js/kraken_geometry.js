@@ -65,8 +65,8 @@
     title.textContent = 'Actual vs λ/2 reference layout';
     const explanation = document.createElement('p');
     explanation.textContent = model.wavelengthM === null ?
-      'Set a center frequency to calculate a wavelength-based reference layout.' :
-      `At ${(model.frequencyHz / 1e6).toFixed(3)} MHz, wavelength is ${metres(model.wavelengthM)}. The dashed guide uses half-wavelength nearest-neighbour spacing, a common no-grating-lobe reference rather than a universal optimum.`;
+      'Set frequency to calculate λ/2 spacing.' :
+      `${(model.frequencyHz / 1e6).toFixed(3)} MHz: λ/2 = ${metres(model.wavelengthM / 2)}.`;
     copy.append(title, explanation);
     const stats = document.createElement('dl');
     const row = (label, value, className = '') => {
@@ -418,7 +418,7 @@
     const shell = document.createElement('section'); shell.className = 'geometry-presets';
     const title = document.createElement('h3'); title.textContent = 'Common array layouts';
     const explanation = document.createElement('p');
-    explanation.textContent = 'Choose the antenna count and layout. Then measure positions and assign DAQ channels.';
+    explanation.textContent = 'Choose a layout.';
     const countPicker = document.createElement('label'); countPicker.className = 'geometry-preset-counts';
     const countTitle = document.createElement('span'); countTitle.textContent = 'Antennas connected';
     const countSelect = document.createElement('select');
@@ -568,9 +568,7 @@
     content.className = 'config-fields';
     section.appendChild(content);
     const note = text => { const p = document.createElement('p'); p.textContent = text; content.appendChild(p); return p; };
-    note(config.process?.bearing?.enable === true ?
-      'Bearing output is enabled. Confirmations are operator attestations; live results still carry uncertainty and ambiguity.' :
-      'Saved layout only; measurements are unverified. Bearing output is disabled. Not sent to Suite.');
+    note(config.process?.bearing?.enable === true ? 'Bearing output on.' : 'Bearing output off.');
     const geometry = device.array_geometry;
     const button = (text, action) => {
       const b = document.createElement('button'); b.type = 'button'; b.textContent = text;
@@ -665,9 +663,9 @@
     });
     field(content, 'entry_template', 'Layout guide', 'Guides entry; keeps all measurements and channel roles.', template);
     if (['pentagon', 'regular_polygon'].includes(geometry.entry_template))
-      note('Five pentagon vertices with one reference leave four bearing elements (custom). Five bearing elements plus a separate reference need six channels.');
+      note('A dedicated reference uses one channel outside the bearing array.');
     field(content, 'shape', 'Bearing subset shape', 'Classifies selected bearing elements only.', select(shapes.map(value => [value, {custom: 'Custom', cross: 'Four-arm cross', regular_polygon: 'Regular polygon', ula: 'Uniform line'}[value]]), geometry.shape, value => { geometry.shape = value; }));
-    note('Measure positions in metres: +z up, +x/+y right-handed. Trace each cable to assign its DAQ channel. Live serial order and survey freshness are unknown.');
+    note('Measure x/y/z in metres and match each DAQ channel.');
     const table = document.createElement('div'); table.className = 'geometry-elements'; content.appendChild(table);
     geometry.elements.forEach((element, index) => {
       if (!object(element)) { note(`Element ${index + 1} needs repair in the saved file.`); return; }
@@ -713,7 +711,7 @@
     const angle = input(geometry.x_axis_bearing_deg_true, value => { geometry.x_axis_bearing_deg_true = value; }, 'number'); angle.min = 0; angle.max = 359.999999999;
     field(content, 'x_axis_bearing_deg_true', '+x bearing from true north (degrees)', 'Clockwise: 0 north, 90 east. Leave unknown orientation blank.', angle);
     field(content, 'ula_half_plane', 'Linear-array half-plane', 'Both retains front/back ambiguity.', select([['both', 'Both (ambiguous)'], ['positive_y', 'Local +y only'], ['negative_y', 'Local −y only']], geometry.ula_half_plane ?? 'both', value => { geometry.ula_half_plane = value; }));
-    note('Save layout changes before confirming these survey details. Changing the layout clears earlier confirmations.');
+    note('Save before confirming measurements.');
     for (const [key, title] of [['mapping_confirmed', 'I checked the cable map'], ['geometry_confirmed', 'I measured the element positions'], ['orientation_confirmed', 'I surveyed true-north orientation']]) {
       const control = document.createElement('input'); control.type = 'checkbox'; control.checked = geometry[key] === true; control.dataset.attestation = key;
       control.addEventListener('change', () => update(() => { geometry[key] = control.checked; }, false, true));
@@ -726,7 +724,7 @@
     const target = document.getElementById('geometry-assessment');
     if (!target || !assessment) return;
     const errors = assessment.issues?.filter(issue => issue.severity === 'error') || [];
-    target.textContent = assessment.valid ? 'Layout complete; measurements are unverified.' :
+    target.textContent = assessment.valid ? 'Measurements not confirmed.' :
       `Layout needs review: ${errors.slice(0, 3).map(issue => issue.message).join(' ')}${errors.length > 3 ? ' Review additional measurements or mappings.' : ''}`;
   }
   return {recordErrors, emptyRecord, invalidate, context, reconcile, layoutComparison,
