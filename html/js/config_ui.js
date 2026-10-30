@@ -1606,6 +1606,42 @@ function recordingFolderControl(value, path) {
   return wrapper;
 }
 
+function finishSettingsGroup(details, summary, content, topLevel) {
+  const fieldCount = content.querySelectorAll('.config-field').length;
+  if (topLevel || fieldCount >= 3) {
+    details.append(summary, content);
+    return details;
+  }
+  const section = document.createElement('section');
+  section.dataset.configGroup = details.dataset.configGroup;
+  section.className = `${details.className} config-group-inline`;
+  const heading = document.createElement('div');
+  heading.className = 'config-group-heading';
+  while (summary.firstChild) heading.appendChild(summary.firstChild);
+  section.append(heading, content);
+  return section;
+}
+
+function revealSmallSettingsGroups(root) {
+  const groups = [...root.querySelectorAll('details.config-group')].reverse();
+  for (const details of groups) {
+    if (details.classList.contains('config-group-root')) continue;
+    const fieldCount = details.querySelectorAll('.config-field').length;
+    if (fieldCount < 1 || fieldCount >= 3) continue;
+    const summary = details.querySelector(':scope > summary');
+    if (!summary) continue;
+    const section = document.createElement('section');
+    section.className = `${details.className} config-group-inline`;
+    for (const [key, value] of Object.entries(details.dataset)) section.dataset[key] = value;
+    const heading = document.createElement('div');
+    heading.className = 'config-group-heading';
+    while (summary.firstChild) heading.appendChild(summary.firstChild);
+    section.appendChild(heading);
+    while (details.children.length > 1) section.appendChild(details.children[1]);
+    details.replaceWith(section);
+  }
+}
+
 function group(key, value, path, topLevel = false, options = {}) {
   const currentPath = [...path, key];
   const dotted = currentPath.join('.');
@@ -1701,8 +1737,7 @@ function group(key, value, path, topLevel = false, options = {}) {
       (kraken || savedGeometry !== undefined))
     content.appendChild(makeGeometryEditor());
   if (dotted === 'process') appendCompositeRadarSettings(content);
-  details.append(summary, content);
-  return details;
+  return finishSettingsGroup(details, summary, content, topLevel);
 }
 
 function renderReceiverFeatures() {
@@ -1772,8 +1807,7 @@ function renderExperimentalSettings() {
     const fields = document.createElement('div');
     fields.className = 'config-fields';
     diagnosticKeys.forEach(key => fields.appendChild(field(activeConfig.save[key], ['save', key])));
-    diagnostics.append(summary, fields);
-    section.appendChild(diagnostics);
+    section.appendChild(finishSettingsGroup(diagnostics, summary, fields, false));
   }
   if (!section.querySelector('.config-field')) {
     const empty = document.createElement('p');
@@ -2465,6 +2499,7 @@ function renderEditor() {
     }
     panels.appendChild(panel);
   });
+  revealSmallSettingsGroups(panels);
   if (settingsMode === 'simple') {
     const heading = document.createElement('div');
     heading.className = 'config-section-heading';
