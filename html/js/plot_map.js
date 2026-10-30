@@ -61,6 +61,7 @@ var urlTracker = liveApiUrl(radarPresentationUrl('/api/tracker'));
 urlMap = liveApiUrl(radarPresentationUrl(mapPresentationUrl(urlMap,
   typeof window === 'undefined' ? 1280 : window.innerWidth)));
 var urlAdsbData = liveApiUrl(radarPresentationUrl('/api/adsb/delay-doppler?overlay=1'));
+var urlRemoteIdData = liveApiUrl(radarPresentationUrl('/api/remote-id/delay-doppler?overlay=1'));
 
 // setup plotly
 var layout = {
@@ -148,6 +149,7 @@ if (typeof document !== 'undefined') {
   });
 }
 var adsb = {};
+var remoteId = {};
 function exactFrameUrl(path, timestamp) {
   const url = new URL(path, typeof window === 'undefined' ?
     'http://vectorwarp.invalid' : window.location.href);
@@ -218,10 +220,12 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   // compact responses avoids clearing markers between independently selected
   // presentation snapshots and prevents adjacent-CPI data from being mixed.
   const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
-  const [detected, trackerFrame, data_adsb] = await Promise.all([
+  const remoteIdEnabled = runningConfig.truth?.remote_id?.enabled === true;
+  const [detected, trackerFrame, data_adsb, data_remote_id] = await Promise.all([
     detectionEnabled && visible.detections ? fetchRadarJson(exactFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
     fetchRadarJson(exactFrameUrl(urlTracker, data.timestamp)).catch(() => null),
-    adsbEnabled ? fetchRadarJson(exactFrameUrl(urlAdsbData, data.timestamp)).catch(() => null) : null
+    adsbEnabled ? fetchRadarJson(exactFrameUrl(urlAdsbData, data.timestamp)).catch(() => null) : null,
+    remoteIdEnabled ? fetchRadarJson(exactFrameUrl(urlRemoteIdData, data.timestamp)).catch(() => null) : null
   ]);
   detection = detected || {delay: [], doppler: []};
   const tracked = trackerOverlay(trackerFrame, runningConfig);
@@ -242,6 +246,17 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
         adsb.hover.push(aircraftHoverText(aircraft,
           {delay: aircraft.delay, doppler: aircraft.doppler}));
       }
+  }
+  remoteId = {delay: [], doppler: [], customdata: [], hover: []};
+  const stableDrones = stabilizeAircraftSnapshots(Object.entries(data_remote_id || {})
+      .map(([id, record]) => record?.hex ? record : {...record, hex: id}),
+    {scope: 'delay-doppler-remote-id', graceMs: remoteIdEnabled ? 10000 : 0});
+  for (const drone of stableDrones) {
+    if (!drone || !Number.isFinite(Number(drone.delay)) || !Number.isFinite(Number(drone.doppler))) continue;
+    remoteId.delay.push(drone.delay);
+    remoteId.doppler.push(drone.doppler);
+    remoteId.customdata.push(aircraftPlotData(drone));
+    remoteId.hover.push(aircraftHoverText(drone, {delay: drone.delay, doppler: drone.doppler}));
   }
 
   // case draw new plot
@@ -331,20 +346,32 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       text: tracked.coasting.hover,
       hovertemplate: '%{text}<extra></extra>'
     };
+    var trace6 = {
+      name: 'Remote ID drone',
+      x: remoteId.delay,
+      y: remoteId.doppler,
+      mode: 'markers',
+      type: 'scatter',
+      marker: {size: 14, opacity: .9, color: '#20dddc', symbol: 'diamond',
+        line: {color: '#0d3535', width: 1.3}},
+      customdata: remoteId.customdata,
+      text: remoteId.hover,
+      hovertemplate: '%{text}<extra></extra>'
+    };
 
-    var data_trace = [trace1, trace2, trace3, trace4, trace5];
+    var data_trace = [trace1, trace2, trace3, trace4, trace5, trace6];
     await Plotly.react('data', data_trace, layout, config);
     gridSignature = gridKey;
   }
   // case update plot
   else {
     var trace_update = {
-      x: [data.delay, detection.delay, adsb.delay, tracked.updated.delay, tracked.coasting.delay],
-      y: [data.doppler, detection.doppler, adsb.doppler, tracked.updated.doppler, tracked.coasting.doppler],
-      z: [data.data, [], [], [], []],
-      zmax: [Math.max(13, data.maxPower), [], [], [], []],
-      text: [[], [], adsb.hover, tracked.updated.hover, tracked.coasting.hover],
-      customdata: [[], [], adsb.customdata, [], []]
+      x: [data.delay, detection.delay, adsb.delay, tracked.updated.delay, tracked.coasting.delay, remoteId.delay],
+      y: [data.doppler, detection.doppler, adsb.doppler, tracked.updated.doppler, tracked.coasting.doppler, remoteId.doppler],
+      z: [data.data, [], [], [], [], []],
+      zmax: [Math.max(13, data.maxPower), [], [], [], [], []],
+      text: [[], [], adsb.hover, tracked.updated.hover, tracked.coasting.hover, remoteId.hover],
+      customdata: [[], [], adsb.customdata, [], [], remoteId.customdata]
     };
     await Plotly.update('data', trace_update);
   }

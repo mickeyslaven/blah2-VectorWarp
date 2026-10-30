@@ -1039,7 +1039,8 @@ function aircraftInfo(aircraft = {}) {
   const rawPositionSource = String(aircraft.position_source ||
     aircraft.vectorwarp?.position_source || aircraft.provenance?.position_source || '').toUpperCase();
   const positionSource = rawPositionSource === 'MLAT' || String(aircraft.type || '').toLowerCase() === 'mlat' ?
-    'MLAT' : rawPositionSource === 'ADSB_DIRECT' ? 'ADS-B' : rawPositionSource || 'ADS-B';
+    'MLAT' : rawPositionSource === 'ADSB_DIRECT' ? 'ADS-B' : rawPositionSource === 'REMOTE_ID' ?
+      'Remote ID' : rawPositionSource || 'ADS-B';
   const provider = String(aircraft.vectorwarp?.provider || aircraft.provenance?.provider ||
     aircraft.vectorwarp?.source_id || aircraft.provenance?.source_id || '').replace(/^exchange:/, '');
   const selectedSource = String(aircraft.vectorwarp?.source_id ||

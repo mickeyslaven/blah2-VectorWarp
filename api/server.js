@@ -26,6 +26,7 @@ const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
+const {createRemoteIdSource} = require('./remote-id-source.js');
 const {createAircraftPhotoLookup} = require('./aircraft-photo.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
@@ -71,6 +72,7 @@ try {
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const remoteIdSource = createRemoteIdSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const aircraftPhotoLookup = createAircraftPhotoLookup(config, {cacheFile:
   process.env.BLAH2_AIRCRAFT_PHOTO_CACHE || '/var/lib/vectorwarp-api/aircraft-photo-metadata.json'});
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
@@ -956,6 +958,7 @@ app.get('/api/system/status', async (req, res) => {
       sampleRate: processor.sampleRate, file: processor.file
     } : null;
     return res.json({radar, adsbEnabled: config.truth?.adsb?.enabled === true,
+      remoteIdEnabled: config.truth?.remote_id?.enabled === true,
       recordedAdsb: processor?.input === 'replay' && recordingTimeline.has(processor.file),
       restart: {state: restartState.state}, gainCheckPending: gainPublicationBlocked,
       processor: headerProcessor, processorFresh: processor !== null,
@@ -967,9 +970,10 @@ app.get('/api/system/status', async (req, res) => {
   const persistedRestart = sdrplayStartup && sdrplayStartup.updatedAt >= (restartState.requestedAt || 0) ?
     {state: sdrplayStartup.inProgress ? 'running' : sdrplayStartup.state === 'failed' ? 'failed' : 'command-complete',
       message: sdrplayStartup.message, startedAt: sdrplayStartup.updatedAt} : restartState;
-  const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
+  const [gpuSetup, adsb, remoteId] = await Promise.all([
+    gpuSetupStatus(() => currentGpuRuntime(freshness)), adsbSource.status(), remoteIdSource.status()
+  ]);
   const backend = currentTimingBackend();
-  const adsb = await adsbSource.status();
   const sourceRows = Array.isArray(adsb?.sources) ? adsb.sources : [];
   const positionSources = adsb?.fusion?.position_sources || {};
   const featureDiagnostics = {
@@ -1009,6 +1013,16 @@ app.get('/api/system/status', async (req, res) => {
       associationLagCpis: Number.isSafeInteger(adsb?.association_lag_cpis) ? adsb.association_lag_cpis : null,
       associationLagMs: Number.isSafeInteger(adsb?.association_lag_ms) ? adsb.association_lag_ms : null
     },
+    remoteId: {
+      enabled: config.truth?.remote_id?.enabled === true,
+      online: remoteId?.online === true,
+      drones: Number.isSafeInteger(remoteId?.drones) ? remoteId.drones : 0,
+      messages: Number.isSafeInteger(remoteId?.messages) ? remoteId.messages : 0,
+      bluetooth: remoteId?.transports?.bluetooth === true,
+      wifi: remoteId?.transports?.wifi === true,
+      ageMs: Number.isFinite(remoteId?.age_ms) ? remoteId.age_ms : null,
+      error: remoteId?.error || null
+    },
     processing: {
       acceleration: backend.acceleration?.active || null,
       clutterAcceleration: backend.clutterAcceleration?.active || null,
@@ -1029,9 +1043,10 @@ app.get('/api/system/status', async (req, res) => {
     clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
     restart: persistedRestart, sdrplayStartup, receiverSynchronization: receiverSyncState,
-    gainMonitor: gainMonitorStatus, adsb, featureDiagnostics,
+    gainMonitor: gainMonitorStatus, adsb, remoteId, featureDiagnostics,
     lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
+    remoteIdEnabled: config.truth?.remote_id?.enabled === true,
     gainCheckPending: gainPublicationBlocked,
     radar,
     processor: processor && {...processor, receivedAt: processorStatus.receivedAt},
@@ -1566,6 +1581,38 @@ app.get('/api/adsb/status', async (req, res) => {
     {enabled: true, online: true, replay: true, message: 'Recorded ADS-B timeline'});
   if (replayTruthDisabled()) return res.json(replayTruthStatus());
   res.json(await adsbSource.status());
+});
+for (const [route, kind] of [['/api/remote-id', 'aircraft'],
+  ['/api/remote-id/delay-doppler', 'delayDoppler']]) {
+  app.get(route, async (req, res) => {
+    if (config.truth?.remote_id?.enabled !== true)
+      return res.json({enabled: false, aircraft: [], drones: []});
+    try {
+      const presentation = req.query.presentation;
+      const requestedTimestamp = presentation === 'aligned' ?
+        requestedPresentationTimestamp(req) : null;
+      if (Number.isNaN(requestedTimestamp))
+        return res.status(400).json({error: 'frame_timestamp must be a non-negative integer'});
+      const value = presentation === 'aligned' && typeof remoteIdSource.getPresentationAt === 'function' ?
+        await remoteIdSource.getPresentationAt(kind, requestedTimestamp ?? Date.now() - presentationDelayMs) :
+        presentation && typeof remoteIdSource.getPresentation === 'function' ?
+          await remoteIdSource.getPresentation(kind) : await remoteIdSource.get(kind);
+      if (requestedTimestamp !== null)
+        res.set('X-VectorWarp-Presentation-Timestamp', String(requestedTimestamp));
+      if (kind === 'delayDoppler' && (req.query.presentation === 'overlay' || req.query.overlay === '1')) {
+        const compact = {};
+        for (const [id, drone] of Object.entries(value || {})) {
+          if (!drone || !Number.isFinite(drone.delay) || !Number.isFinite(drone.doppler)) continue;
+          compact[id] = drone;
+        }
+        return res.json(compact);
+      }
+      res.json(value);
+    } catch (error) { res.status(503).json({error: error.message}); }
+  });
+}
+app.get('/api/remote-id/status', async (_req, res) => {
+  res.json(await remoteIdSource.status());
 });
 app.get('/api/radar/coverage', (req, res) => {
   if (replayTruthDisabled()) return res.json(replayTruthStatus());

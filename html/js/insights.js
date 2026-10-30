@@ -585,14 +585,20 @@
   }
 
   function selectedAircraftMarkup(item, photo = null) {
-    if (!item) return `<section class="info-card aircraft-detail-card aircraft-detail-empty"><h2>Aircraft details</h2><div class="aircraft-detail-prompt">${aircraftSvgMarkup({})}<p>Tap an aircraft on the map to inspect its live ADS-B and radar geometry.</p></div></section>`;
+    if (!item) return `<section class="info-card aircraft-detail-card aircraft-detail-empty"><h2>Aircraft details</h2><div class="aircraft-detail-prompt">${aircraftSvgMarkup({})}<p>Tap an aircraft or drone to inspect its live identity and radar geometry.</p></div></section>`;
     const info = aircraftInfo(item);
-    const photoMarkup = photo?.available ?
+    const remoteId = item.remote_id && typeof item.remote_id === 'object' ? item.remote_id : null;
+    const photoMarkup = !remoteId && photo?.available ?
       `<figure class="aircraft-photo"><img src="${escapeHtml(photo.thumbnail)}" alt="${escapeHtml(info.label)} aircraft" loading="lazy" referrerpolicy="no-referrer"><figcaption>Photo by ${escapeHtml(photo.photographer || 'contributor')} · <a href="${escapeHtml(photo.link)}" target="_blank" rel="noopener noreferrer">Planespotters.net</a></figcaption></figure>` :
-      `<div class="aircraft-photo aircraft-photo-fallback">${aircraftSvgMarkup(item)}<span>${photo?.loading ? 'Looking for a photo…' : photo?.enabled === false ? 'Aircraft photos are off in ADS-B settings' : 'No photo available'}</span></div>`;
+      `<div class="aircraft-photo aircraft-photo-fallback">${aircraftSvgMarkup(item)}<span>${remoteId ? 'Broadcast Remote ID' : photo?.loading ? 'Looking for a photo…' : photo?.enabled === false ? 'Aircraft photos are off in ADS-B settings' : 'No photo available'}</span></div>`;
+    const remoteIdMarkup = remoteId ? `<details class="aircraft-detail-section" open><summary>Remote ID</summary><dl>
+      <div><dt>UAS identity</dt><dd>${aircraftValue(remoteId.id)} · ${aircraftValue(humanize(remoteId.id_type))}</dd></div><div><dt>Drone type</dt><dd>${aircraftValue(remoteId.ua_type)}</dd></div>
+      <div><dt>Broadcast transport</dt><dd>${array(remoteId.sources).length ? array(remoteId.sources).map(humanize).join(', ') : aircraftValue(humanize(remoteId.source))}</dd></div><div><dt>Purpose</dt><dd>${aircraftValue(remoteId.self_id)}</dd></div>
+      <div><dt>${remoteId.operator?.location_type === 'takeoff' ? 'Take-off location' : 'Operator location'}</dt><dd>${Number.isFinite(remoteId.operator?.latitude) && Number.isFinite(remoteId.operator?.longitude) ? `${number(remoteId.operator.latitude, 5)}, ${number(remoteId.operator.longitude, 5)}` : 'Not broadcast yet'}</dd></div>
+    </dl></details>` : '';
     return `<section class="info-card aircraft-detail-card"><header><div><span class="aircraft-detail-kind">${escapeHtml(humanize(aircraftKind(item)))}</span><h2>${escapeHtml(info.label)}</h2><span class="aircraft-detail-subtitle">${aircraftValue(info.registration)} · ${aircraftValue(info.type)}</span></div><button type="button" class="button-secondary aircraft-detail-close" aria-label="Close aircraft details">Close</button></header><div class="aircraft-primary-metrics">
       <div><strong>${info.altitude === null ? '—' : integer(info.altitude)}</strong><span>ft altitude</span></div><div><strong>${info.speed === null ? '—' : integer(info.speed)}</strong><span>kt speed</span></div><div><strong>${info.heading === null ? '—' : `${integer(info.heading)}°`}</strong><span>heading</span></div><div><strong>${info.verticalRate === null ? '—' : integer(info.verticalRate)}</strong><span>ft/min</span></div>
-    </div>${photoMarkup}<details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
+    </div>${photoMarkup}${remoteIdMarkup}<details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
       <div><dt>Description</dt><dd>${aircraftValue(info.description)}</dd></div><div><dt>ICAO / category</dt><dd>${aircraftValue(info.hex)} · ${aircraftValue(info.category)}</dd></div>
       <div><dt>Squawk / signal</dt><dd>${aircraftValue(info.squawk)} · ${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div><div><dt>Position</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''} · ${info.age === null ? '—' : `${number(info.age, 1)} s old`}</dd></div>
       <div><dt>Corroborated by</dt><dd>${info.corroboratedProviders.length ? info.corroboratedProviders.map(escapeHtml).join(', ') : 'No second fresh source'}</dd></div>
@@ -1366,17 +1372,30 @@
 
     let aircraft = [];
     let aircraftError = null;
-    if (config?.truth?.adsb?.enabled === true) {
+    const adsbEnabled = config?.truth?.adsb?.enabled === true;
+    const remoteIdEnabled = config?.truth?.remote_id?.enabled === true;
+    if (adsbEnabled || remoteIdEnabled) {
       try {
-        const [adsb, geometry] = await Promise.all([
-          apiJson('/api/adsb'), apiJson('/api/adsb/delay-doppler?overlay=1')
+        const loadTruth = async (base, enabled) => {
+          if (!enabled) return [];
+          const [feed, geometry] = await Promise.all([
+            apiJson(base), apiJson(`${base}/delay-doppler?overlay=1`)
+          ]);
+          const rows = feed?.disabledForReplay ? [] : array(feed?.aircraft).filter(item =>
+            finite(item.lat) !== null && finite(item.lon) !== null && (finite(item.seen_pos) ?? 0) < 120);
+          const byId = new Map(Object.entries(geometry || {}).map(([id, item]) =>
+            [String(item?.hex || id || '').toUpperCase(), item]));
+          return rows.map(item => ({...item,
+            ...(byId.get(String(item.hex || '').toUpperCase()) || {})}));
+        };
+        const results = await Promise.allSettled([
+          loadTruth('/api/adsb', adsbEnabled), loadTruth('/api/remote-id', remoteIdEnabled)
         ]);
-        aircraft = adsb?.disabledForReplay ? [] : array(adsb?.aircraft).filter(item =>
-          finite(item.lat) !== null && finite(item.lon) !== null && (finite(item.seen_pos) ?? 0) < 120);
-        const byHex = new Map(Object.entries(geometry || {}).map(([id, item]) =>
-          [String(item?.hex || id || '').toUpperCase(), item]));
-        aircraft = aircraft.map(item => ({...item,
-          ...(byHex.get(String(item.hex || '').toUpperCase()) || {})}));
+        aircraft = results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+        const failed = results.filter((result, index) =>
+          [adsbEnabled, remoteIdEnabled][index] && result.status === 'rejected');
+        if (!aircraft.length && failed.length) throw failed[0].reason;
+        if (failed.length) aircraftError = 'Some aircraft sources are temporarily unavailable';
         aircraft = stabilizeAircraftSnapshots(aircraft, {scope: 'map', graceMs: 10000});
         const delayGate = finite(config?.process?.bearing?.manifold_recorder?.max_delay_error_km) ?? .25;
         const dopplerGate = finite(config?.process?.bearing?.manifold_recorder?.max_doppler_error_hz) ?? 5;
@@ -1406,14 +1425,14 @@
               Object.fromEntries([...aircraftTrackHistories].slice(-200))));
           } catch (_) { /* A full/private browser cache must not affect the map. */ }
         }
-        prefetchAircraftPhotos(aircraft);
+        prefetchAircraftPhotos(aircraft.filter(item => !item.remote_id));
         selectedAircraftId = selectRadarAssociatedAircraft(selectedAircraftId, aircraft,
           autoSelectRadarAircraft);
         selectedAircraftSnapshot = aircraft.find(item => aircraftIdentity(item) === selectedAircraftId) ||
           selectedAircraftSnapshot;
       } catch (_) {
         aircraft = stabilizeAircraftSnapshots([], {scope: 'map', graceMs: 10000});
-        aircraftError = 'ADS-B aircraft positions temporarily unavailable';
+        aircraftError = 'Aircraft positions temporarily unavailable';
       }
     }
 
@@ -1467,7 +1486,8 @@
         zoom: Math.max(4, Math.min(12, 13 - Math.log2(spanKm)))
       };
     }
-    renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(mapAircraft.length, 'Aircraft shown')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
+    const remoteIdCount = mapAircraft.filter(item => item.remote_id).length;
+    renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(mapAircraft.length, 'Aircraft shown')}${remoteIdEnabled ? card(remoteIdCount, 'Remote ID drones') : ''}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
     renderDetail('');
     const map = await ensureLocationMap(locationMapViewport);
     syncBearingOverlayLayers(map, bearingRows);

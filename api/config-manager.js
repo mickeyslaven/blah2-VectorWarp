@@ -1240,6 +1240,30 @@ function validateConfig(config, baseline = null, options = {}) {
     'truth.adsb.delay_tolerance', {min: 0, max: 1000});
   if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,
     'truth.adsb.doppler_tolerance', {min: 0, max: 10000});
+  if (truth.remote_id !== undefined) {
+    const remoteId = requireObject(truth.remote_id, 'truth.remote_id');
+    boolean(remoteId.enabled, 'truth.remote_id.enabled');
+    string(remoteId.source, 'truth.remote_id.source');
+    try {
+      const endpoint = new URL(/^https?:\/\//i.test(remoteId.source) ? remoteId.source :
+        `http://${remoteId.source}`);
+      if (!['http:', 'https:'].includes(endpoint.protocol) || !endpoint.hostname ||
+          endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
+        throw new Error('invalid endpoint');
+    } catch (_) {
+      errors.push('truth.remote_id.source must be an HTTP(S) Remote ID feed without credentials or a query');
+    }
+    if (remoteId.poll_interval !== undefined)
+      number(remoteId.poll_interval, 'truth.remote_id.poll_interval', {min: .1, max: 10});
+    if (remoteId.source_timeout !== undefined)
+      number(remoteId.source_timeout, 'truth.remote_id.source_timeout', {min: .1, max: 10});
+    if (remoteId.smoothing_window !== undefined)
+      number(remoteId.smoothing_window, 'truth.remote_id.smoothing_window', {integer: true, min: 2, max: 64});
+    if (remoteId.max_position_age !== undefined)
+      number(remoteId.max_position_age, 'truth.remote_id.max_position_age', {min: .1, max: 300});
+    if (remoteId.wifi_enabled !== undefined)
+      boolean(remoteId.wifi_enabled, 'truth.remote_id.wifi_enabled');
+  }
   ['iq', 'map', 'detection', 'timing'].forEach(key =>
     boolean(save[key], `save.${key}`));
   string(save.path, 'save.path');

@@ -39,9 +39,12 @@ function lookGeometry(site, aircraft) {
 function optionalNumber(value) { return finite(value) ? value : null; }
 
 class DelayDopplerHistory {
-  constructor(config) { this.history = new Map(); this.output = new Map(); this.configure(config); }
+  constructor(config, {truthKey = 'adsb'} = {}) {
+    this.truthKey = truthKey;
+    this.history = new Map(); this.output = new Map(); this.configure(config);
+  }
   configure(config) {
-    const adsb = config.truth?.adsb || {}, rx = config.location?.rx || {}, tx = config.location?.tx || {};
+    const adsb = config.truth?.[this.truthKey] || {}, rx = config.location?.rx || {}, tx = config.location?.tx || {};
     this.window = Number.isInteger(adsb.smoothing_window) ? adsb.smoothing_window : 10;
     this.maxAge = finite(adsb.max_position_age) ? adsb.max_position_age : 30;
     this.rx = ecef(rx.latitude, rx.longitude, rx.altitude);
