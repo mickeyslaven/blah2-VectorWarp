@@ -1642,6 +1642,15 @@ function revealSmallSettingsGroups(root) {
   }
 }
 
+function moveArrayEditorToSites(panels, enabled) {
+  if (!enabled) return false;
+  const geometry = panels.querySelector('#settings-panel-capture .kraken-geometry');
+  const locationPanel = panels.querySelector('#settings-panel-location');
+  if (!geometry || !locationPanel) return false;
+  locationPanel.prepend(geometry);
+  return true;
+}
+
 function group(key, value, path, topLevel = false, options = {}) {
   const currentPath = [...path, key];
   const dotted = currentPath.join('.');
@@ -2394,6 +2403,9 @@ function renderEditor() {
   tabs.setAttribute('aria-label', 'Settings categories');
   const panels = document.createElement('div');
   panels.className = 'config-tab-panels';
+  const receiverType = activeConfig.capture?.device?.type;
+  const arrayAndSites = receiverType === 'Kraken' ||
+    receiverFeatureCapabilities(receiverType, capabilities.deviceProfiles || []).coherentArray === true;
   const tabOrder = ['capture', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
   const entries = Object.entries(activeConfig).filter(([key]) =>
     settingsMode === 'advanced' || key !== 'network').sort(([left], [right]) =>
@@ -2431,7 +2443,9 @@ function renderEditor() {
   };
   entries.forEach(([key, value]) => {
     const [title, description] = key === 'experimental' ?
-      ['Experimental', 'Shadow and evaluation features'] : metadata([key]);
+      ['Experimental', 'Shadow and evaluation features'] :
+      key === 'location' && arrayAndSites ?
+        ['Array & sites', 'Antenna layout and locations'] : metadata([key]);
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.tab = key;
@@ -2499,6 +2513,7 @@ function renderEditor() {
     }
     panels.appendChild(panel);
   });
+  moveArrayEditorToSites(panels, arrayAndSites);
   revealSmallSettingsGroups(panels);
   if (settingsMode === 'simple') {
     const heading = document.createElement('div');
