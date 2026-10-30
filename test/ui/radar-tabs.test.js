@@ -12,8 +12,8 @@ dom.window.renderRadarViewTabs('maxhold');
 
 const nav = dom.window.document.querySelector('[data-radar-view-tabs]');
 assert.equal(nav.hidden, false);
-assert.equal(nav.querySelectorAll('a').length, 2);
+assert.equal(nav.querySelectorAll('a').length, 3);
 assert.equal(nav.querySelector('[aria-current="page"]').textContent, 'Decaying max-hold');
 assert.deepEqual([...nav.querySelectorAll('a')].map(link => link.textContent),
-  ['Live delay–Doppler', 'Decaying max-hold']);
-console.log('Only delay/Doppler heatmaps share the Live radar tab bar.');
+  ['Live delay–Doppler', 'Decaying max-hold', 'Detection history']);
+console.log('Delay/Doppler maps and their history workspace share the Live radar tab bar.');

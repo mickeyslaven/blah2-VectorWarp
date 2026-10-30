@@ -40,7 +40,8 @@ function renderRadarViewTabs(active = 'live') {
   if (!target) return;
   const views = [
     ['live', '/', 'Live delay–Doppler'],
-    ['maxhold', '/display/signal?view=maxhold', 'Decaying max-hold']
+    ['maxhold', '/display/signal?view=maxhold', 'Decaying max-hold'],
+    ['history', '/display/detection?view=range-doppler', 'Detection history']
   ];
   target.className = 'view-tabs radar-view-tabs';
   target.setAttribute('aria-label', 'Live radar views');

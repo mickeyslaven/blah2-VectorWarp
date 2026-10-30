@@ -103,7 +103,8 @@ assert.match(controller, /href="\/display\/signal"/,
   'Spectrum and max-hold share one Signal destination');
 assert.match(controller, /href="\/display\/detection"/,
   'Detection history modes share one destination');
-for (const route of ['/', '/display/signal?view=maxhold'])
+for (const route of ['/', '/display/signal?view=maxhold',
+  '/display/detection?view=range-doppler'])
   assert.match(common, new RegExp(route.replace(/[?]/g, '\\?')),
     `Delay/Doppler map tabs retain ${route}`);
 for (const view of ['activity', 'timing', 'health', 'spectrum', 'maxhold', 'range', 'doppler', 'range-doppler'])
