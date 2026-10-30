@@ -372,11 +372,17 @@
     const processMs = finite(timing?.cpi);
     const load = processMs !== null && hop > 0 ? processMs / hop * 100 : null;
     const backlog = finite(timing?.capture_backlog_ms);
-    const ageMs = finite(timing?.timestamp) === null ? null : Math.max(0, Date.now() - timing.timestamp);
+    const frameAge = finite(timing?.frame_age_ms);
+    const presentationDelay = finite(timing?.presentation_delay_ms) ?? 0;
+    const ageMs = finite(timing?.frame_excess_age_ms) ?? (frameAge !== null ?
+      Math.max(0, frameAge - presentationDelay) :
+      (finite(timing?.timestamp) === null ? null :
+        Math.max(0, Date.now() - timing.timestamp - presentationDelay)));
     const freshLimit = Math.max(2500, (hop ?? 0) * 3);
     const freshnessTone = ageMs === null || ageMs > 10000 ? 'bad' : ageMs > freshLimit ? 'warning' : 'good';
     const loadTone = load === null ? 'neutral' : load > 100 ? 'bad' : load > 80 ? 'warning' : 'good';
-    const backlogTone = backlog === null || hop === null ? 'neutral' : backlog > hop ? 'bad' : backlog > Math.max(10, hop * .25) ? 'warning' : 'good';
+    const backlogTone = backlog === null || hop === null ? 'neutral' :
+      backlog > hop * 2 ? 'bad' : backlog > hop * 1.25 ? 'warning' : 'good';
     const trackerEnabled = config?.process?.tracker?.enable === true;
     const trackerTone = trackerEnabled ? (tracker ? 'good' : 'bad') : 'neutral';
     const adsbTone = !adsb.enabled ? 'neutral' : adsb.online ? 'good' : 'bad';
@@ -384,9 +390,13 @@
     if (adsb.enabled) tones.push(adsbTone);
     const overall = tones.includes('bad') ? 'Attention needed' : tones.includes('warning') ? 'Monitor' : 'Healthy';
     const overallTone = tones.includes('bad') ? 'bad' : tones.includes('warning') ? 'warning' : 'good';
-    const rows = healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, hop === null ? '' : `${number(hop, 0)} ms cadence`, freshnessTone) +
+    const frameDetail = [hop === null ? '' : `${number(hop, 0)} ms cadence`,
+      presentationDelay > 0 ? `${number(presentationDelay / 1000, 1)} s aligned hold` : '']
+      .filter(Boolean).join(' · ');
+    const backlogDetail = backlog === null || !(hop > 0) ? '' : `${number(backlog / hop, 2)} CPI queued`;
+    const rows = healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s late`, frameDetail, freshnessTone) +
       healthRow('Processing load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? '' : `${number(processMs, 1)} / ${number(hop, 1)} ms`, loadTone) +
-      healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, '', backlogTone) +
+      healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, backlogDetail, backlogTone) +
       healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} track candidates` : 'Optional processing is off', trackerTone) +
       healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.enabled ? 'Comparison only' : '', adsbTone);
     return {hop, processMs, load, backlog, overall, overallTone, rows};

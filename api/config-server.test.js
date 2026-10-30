@@ -366,7 +366,8 @@ function connect(port) {
       ['map', '/stash/map', {timestamp: 1000, nRows: 1, delay: [1], doppler: [2], data: [[3]]}],
       ['detection', '/stash/detection', {timestamp: 1000, delay: [1], doppler: [2], snr: [3]}],
       ['iqdata', '/stash/iqdata', {timestamp: 1000, frequency: [100], spectrum: [3]}],
-      ['timing', '/stash/timing', {timestamp: 1000, cpi: 10}]
+      ['timing', '/stash/timing', {timestamp: 1000, cpi: 10,
+        captureBacklogSamples: [2400, 4800]}]
     ]) {
       await new Promise((resolve, reject) => {
         const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports[stream]},
@@ -377,6 +378,23 @@ function connect(port) {
       const history = (await request('GET', endpoint)).body;
       assert.equal(history.frameTimestamp ?? history.timestamp, 1000, `${stream} must update without a polling timer`);
     }
+    const backlogTimingSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing},
+        () => {
+          socket.write(JSON.stringify({timestamp: 1001, cpi: 10,
+            captureBacklogSamples: [2400, 4800]}));
+          setTimeout(() => resolve(socket), 20);
+        });
+      socket.on('error', reject);
+    });
+    const timingFrame = (await request('GET', '/api/timing')).body;
+    backlogTimingSocket.end();
+    assert.equal(timingFrame.capture_backlog_samples, 4800);
+    assert.equal(timingFrame.capture_backlog_ms, 4800 / config.capture.fs * 1000,
+      'Timing converts the largest per-channel queue from samples to milliseconds');
+    assert.equal(timingFrame.presentation_delay_ms, 0);
+    assert.equal(timingFrame.frame_excess_age_ms, timingFrame.frame_age_ms,
+      'Unaligned timing reports the complete frame age as excess age');
     const ambiguityBackend = {requested: 'auto', active: 'vulkan', state: 'ready',
       device: 'simulated GPU', reason: '', cpuMs: 8, gpuMs: 2};
     for (const [index, clutterBackend] of [

@@ -384,6 +384,27 @@ function presentationFrame(req, name, current) {
   const cutoff = presentationCutoff(req);
   return cutoff === null ? current : presentationHistories[name].at(cutoff) ?? current;
 }
+function timingPresentationFrame(req) {
+  const frame = presentationFrame(req, 'timing', timing);
+  if (!frame) return frame;
+  try {
+    const parsed = typeof frame === 'string' ? JSON.parse(frame) : frame;
+    if (!parsed || typeof parsed !== 'object') return frame;
+    const sampleRate = Number(config.capture?.fs);
+    const backlogSamples = Array.isArray(parsed.captureBacklogSamples) ?
+      parsed.captureBacklogSamples.filter(Number.isFinite) : [];
+    const backlog = backlogSamples.length ? Math.max(...backlogSamples) : null;
+    const alignedDelay = req.query.presentation === 'aligned' ? presentationDelayMs : 0;
+    const age = Number.isFinite(parsed.timestamp) ? Math.max(0, Date.now() - parsed.timestamp) : null;
+    return JSON.stringify({...parsed,
+      capture_backlog_samples: backlog,
+      capture_backlog_ms: backlog !== null && sampleRate > 0 ? backlog / sampleRate * 1000 : null,
+      presentation_delay_ms: alignedDelay,
+      frame_age_ms: age,
+      frame_excess_age_ms: age === null ? null : Math.max(0, age - alignedDelay)
+    });
+  } catch (_) { return frame; }
+}
 var capture = false;
 var capturePaused = false;
 var captureStartedAt = null;
@@ -832,7 +853,7 @@ app.get('/api/timestamp', (req, res) => {
   res.send(timestamp);
 });
 app.get('/api/timing', (req, res) => {
-  res.send(presentationFrame(req, 'timing', timing));
+  res.type('json').send(timingPresentationFrame(req));
 });
 app.get('/api/presentation/status', (req, res) => {
   const now = Date.now();
