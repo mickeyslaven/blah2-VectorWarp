@@ -1673,7 +1673,7 @@
       ${card(percent(lifetime.tracking_yield, 1), 'All-time tracking yield')}
       ${card(integer(activeEligible.length), 'Eligible aircraft now')}
     </div>
-    <section class="statistics-section"><header><h2>Performance</h2></header><div class="statistics-grid">
+    <section class="statistics-section"><div class="statistics-grid">
       <section class="info-card statistics-score statistics-wide"><h2>Detection and tracking yield</h2>${yieldChart(periods, 'Detection and tracking yield')}<details class="statistics-table-details"><summary>Values</summary>${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}</details></section>
     </div></section>
     <section class="statistics-section"><header><h2>Past 24 hours</h2></header><div class="statistics-grid">
@@ -1681,7 +1681,7 @@
       <section class="info-card"><h2>Azimuth × elevation</h2>${jointRows.length ? `${angleMatrix}<details class="statistics-table-details"><summary>Values</summary>${table(['Azimuth', 'Elevation', 'Eligible', 'Detection yield', 'Tracking yield'], jointRows)}</details>` : empty('No angle data', '')}</section>
       <section class="info-card statistics-wide"><h2>Range bands</h2>${rangeRows.length ? `${bandChart([['Delay', coverage.delay_strata?.bands], ['Slant', coverage.receiver_slant_range_strata?.bands]], 'Detection and tracking yield by range')}<details class="statistics-table-details"><summary>Values</summary>${table(['Range measure', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], rangeRows)}</details>` : empty('No range data', '')}</section>
     </div></section>
-    <section class="statistics-section"><header><h2>Aircraft evidence</h2></header><div class="statistics-grid">
+    <section class="statistics-section"><div class="statistics-grid">
       <section class="info-card"><h2>Eligible aircraft now</h2>${activeRows.length ? `<div class="statistics-evidence-list">${table(['Aircraft', 'Status', 'Eligible', 'Detected', 'Tracked', 'Delay km', 'Doppler Hz'], activeRows)}</div>` : empty('No eligible aircraft now', '')}</section>
       <section class="info-card"><h2>Recent scored passes</h2>${finalizedRows.length ? `<div class="statistics-evidence-list">${table(['Aircraft', 'Outcome', 'Eligible', 'Detected', 'Tracked', 'Finalized'], finalizedRows)}</div>` : empty('No scored passes yet', '')}</section>
     </div></section>
