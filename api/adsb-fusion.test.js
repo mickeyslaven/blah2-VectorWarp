@@ -99,4 +99,32 @@ const bounded = fuseAircraftData([snapshot(local, nowMs / 1000 + 1.1, [
 ])], {nowMs});
 assert.deepEqual(bounded.aircraft, [], 'raw observations outside the absolute one-second policy are rejected');
 
+const metadataCache = new Map();
+const enriched = fuseAircraftData([
+  snapshot({id: 'local-readsb', kind: 'http', reliability: 1}, nowMs / 1000, [
+    {hex: 'abc123', flight: 'TEST1', lat: 40, lon: -80, alt_geom: 10000,
+      gs: 100, track: 90, seen_pos: .1}]),
+  snapshot({id: 'online-metadata', kind: 'exchange', reliability: .65}, nowMs / 1000, [
+    {hex: 'abc123', r: 'N123AB', t: 'C172', desc: 'Cessna 172 Skyhawk',
+      ownOp: 'Example Flying Club', year: '2001', category: 'A1'}])
+], {nowMs, metadataCache});
+assert.equal(enriched.aircraft[0].lat, 40,
+  'metadata-only online rows never replace the newest local position');
+assert.equal(enriched.aircraft[0].desc, 'Cessna 172 Skyhawk');
+assert.equal(enriched.aircraft[0].r, 'N123AB');
+assert.equal(enriched.aircraft[0].t, 'C172');
+assert.deepEqual(new Set(enriched.aircraft[0].vectorwarp.metadata_sources),
+  new Set(['local-readsb', 'online-metadata']));
+
+const retained = fuseAircraftData([
+  snapshot({id: 'local-readsb', kind: 'http', reliability: 1}, nowMs / 1000 + 1, [
+    {hex: 'abc123', flight: 'TEST1', lat: 40.001, lon: -80, alt_geom: 10020,
+      gs: 101, track: 91, seen_pos: .1}])
+], {nowMs: nowMs + 1000, metadataCache});
+assert.ok(Math.abs(retained.aircraft[0].lat - 40.001) < .00001);
+assert.equal(retained.aircraft[0].desc, 'Cessna 172 Skyhawk',
+  'rich metadata survives when a later local-only position wins');
+assert.equal(retained.aircraft[0].r, 'N123AB');
+assert.equal(retained.aircraft[0].vectorwarp.source_id, 'local-readsb');
+
 console.log('PASS ADS-B event-time normalization, freshness, deduplication and consensus fusion');

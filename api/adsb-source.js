@@ -134,6 +134,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   discover = discoverLocalAdsb, selectLocal = selectLocalAdsb,
   discoveryCacheMs = 30000, setTimeoutFn = setTimeout} = {}) {
   const cache = new Map();
+  const aircraftMetadataCache = new Map();
   const geometry = new DelayDopplerHistory(config);
   // Display polling must not perturb the event-time history used by scoring.
   // It also must not inherit the intentional multi-CPI association hold.
@@ -300,7 +301,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     // callers pass the exact historical CPI time and retain that projection.
     const fusionAtMs = Number.isFinite(targetAtMs) ? targetAtMs : now();
     const data = fuseAircraftData(healthy, {nowMs: fusionAtMs,
-      maxPositionAgeSeconds: geometry.maxAge, ...fusionOptions});
+      maxPositionAgeSeconds: geometry.maxAge, metadataCache: aircraftMetadataCache,
+      ...fusionOptions});
     fusionState = {...data.vectorwarp_fusion, fused_at: fusionAtMs,
       healthy_sources: healthy.length, failed_sources: failed};
     return data;
@@ -403,7 +405,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
           !online ? 'No healthy ADS-B source' : undefined}};
   }
   return {get, getAt, getPresentation, getPresentationAt, status, clear: () => {
-    cache.clear(); geometry.clear(); presentationGeometry.clear(); fusionState = null;
+    cache.clear(); aircraftMetadataCache.clear(); geometry.clear();
+    presentationGeometry.clear(); fusionState = null;
     for (const slot of slots) {
       slot.discoveryEntry = undefined;
       slot.lastValue = undefined;

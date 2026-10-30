@@ -3,6 +3,9 @@
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const normalizeHex = value => typeof value === 'string' && /^[0-9a-f]{6}$/i.test(value.trim()) ?
   value.trim().toLowerCase() : null;
+const AIRCRAFT_METADATA_FIELDS = ['flight', 'callsign', 'r', 't', 'aircraft_type',
+  'desc', 'ownOp', 'year', 'category'];
+const RICH_TEXT_METADATA_FIELDS = new Set(['desc', 'ownOp']);
 
 function radians(value) { return value * Math.PI / 180; }
 
@@ -72,6 +75,65 @@ function positionQuality(aircraft) {
   return .75;
 }
 
+function metadataValue(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function metadataObservations(snapshots) {
+  const byHex = new Map();
+  snapshots.forEach((snapshot, index) => {
+    const source = snapshot?.source || {};
+    for (const aircraft of Array.isArray(snapshot?.data?.aircraft) ? snapshot.data.aircraft : []) {
+      const hex = normalizeHex(aircraft?.hex);
+      if (!hex) continue;
+      const rows = byHex.get(hex) || [];
+      rows.push({aircraft, sourceId: sourceId(source, index)});
+      byHex.set(hex, rows);
+    }
+  });
+  return byHex;
+}
+
+function pruneMetadataCache(cache, nowSeconds, retentionSeconds) {
+  if (!(cache instanceof Map)) return;
+  const retention = finite(retentionSeconds) ? Math.max(60, retentionSeconds) : 86400;
+  for (const [hex, entry] of cache)
+    if (!finite(entry?.updatedAt) || nowSeconds - entry.updatedAt > retention) cache.delete(hex);
+  if (cache.size <= 4096) return;
+  const oldest = [...cache.entries()].sort((left, right) =>
+    (left[1]?.updatedAt || 0) - (right[1]?.updatedAt || 0));
+  for (const [hex] of oldest.slice(0, cache.size - 4096)) cache.delete(hex);
+}
+
+function retainedMetadata(hex, winner, observations, cache, nowSeconds) {
+  const previous = cache instanceof Map ? cache.get(hex) : null;
+  const current = [{aircraft: winner.aircraft, sourceId: winner.sourceId}, ...observations];
+  const values = {};
+  const sources = new Set();
+  for (const field of AIRCRAFT_METADATA_FIELDS) {
+    const candidates = current.map(row => ({value: metadataValue(row.aircraft?.[field]),
+      sourceId: row.sourceId})).filter(row => row.value !== null);
+    const prior = metadataValue(previous?.values?.[field]);
+    let selected = null;
+    if (RICH_TEXT_METADATA_FIELDS.has(field)) {
+      const available = [...candidates, ...(prior === null ? [] : [{value: prior, sourceId: null}])];
+      selected = available.sort((left, right) =>
+        String(right.value).length - String(left.value).length)[0] || null;
+    } else selected = candidates[0] || (prior === null ? null : {value: prior, sourceId: null});
+    if (!selected) continue;
+    values[field] = selected.value;
+    if (selected.sourceId) sources.add(selected.sourceId);
+    else for (const source of previous?.sources || []) sources.add(source);
+  }
+  const result = {values, sources: [...sources]};
+  if (cache instanceof Map) cache.set(hex, {...result, updatedAt: nowSeconds});
+  return result;
+}
+
 function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservationOffsetSeconds) {
   const output = [];
   snapshots.forEach((snapshot, index) => {
@@ -124,8 +186,11 @@ function cluster(rows, disagreementKm) {
  * the returned local `now`, so consumers retain the true position age.
  */
 function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds = 30,
-  maxObservationOffsetSeconds = 1, disagreementKm = .5} = {}) {
+  maxObservationOffsetSeconds = 1, disagreementKm = .5, metadataCache = null,
+  metadataRetentionSeconds = 86400} = {}) {
   const nowSeconds = nowMs / 1000;
+  pruneMetadataCache(metadataCache, nowSeconds, metadataRetentionSeconds);
+  const metadataByHex = metadataObservations(snapshots);
   const rows = candidates(snapshots, nowSeconds, maxPositionAgeSeconds,
     maxObservationOffsetSeconds);
   const contributions = new Map();
@@ -174,7 +239,9 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
     const sourceFields = Array.isArray(winner.aircraft?.mlat) ?
       winner.aircraft.mlat.map(value => String(value)) : [];
     const sourceClass = positionSource(winner.aircraft);
-    aircraft.push({...winner.projectedAircraft, hex, seen_pos: 0,
+    const metadata = retainedMetadata(hex, winner, metadataByHex.get(hex) || [],
+      metadataCache, nowSeconds);
+    aircraft.push({...winner.projectedAircraft, ...metadata.values, hex, seen_pos: 0,
       position_source: sourceClass, source_fields: sourceFields,
       vectorwarp: {
         position_source: sourceClass,
@@ -185,6 +252,7 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
         source_mode: winner.source.mode || null,
         source_endpoint: winner.source.endpoint || null,
         source_path: winner.source.path || null,
+        metadata_sources: metadata.sources,
         received_at_ms: winner.receivedAtMs,
         snapshot_timestamp_s: winner.eventTime + winner.aircraft.seen_pos,
         observation_position_timestamp_s: winner.eventTime,
