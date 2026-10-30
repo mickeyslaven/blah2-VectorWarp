@@ -2274,11 +2274,20 @@ function makeSettingsFilter(tabs, panels, activate) {
   status.setAttribute('role', 'status');
   search.append(searchLabel, input);
   toolbar.append(search, edited, status);
+  let restoreState = null;
+  let lastRevealedField = null;
 
   const apply = () => {
     const query = settingsSearch.trim().toLowerCase();
     const filtering = Boolean(query || settingsEditedOnly);
     const fields = [...panels.querySelectorAll('.config-field')];
+    if (filtering && !restoreState) {
+      restoreState = {
+        tab: tabs.querySelector('[role="tab"][aria-selected="true"]')?.dataset.tab,
+        disclosures: new Map([...panels.querySelectorAll('details')]
+          .map(details => [details, details.open]))
+      };
+    }
     let visible = 0;
     for (const field of fields) {
       const path = field.dataset.path || '';
@@ -2286,6 +2295,7 @@ function makeSettingsFilter(tabs, panels, activate) {
       const matchesEdit = !settingsEditedOnly || settingEdited(path);
       field.hidden = !(matchesText && matchesEdit);
       field.classList.toggle('config-field-edited', settingEdited(path));
+      field.classList.toggle('settings-search-match', Boolean(query && matchesText && matchesEdit));
       if (!field.hidden) visible += 1;
     }
     const groups = [...panels.querySelectorAll('[data-config-group]')].reverse();
@@ -2304,7 +2314,34 @@ function makeSettingsFilter(tabs, panels, activate) {
       if (matches) availableTabs.push(button.dataset.tab);
     }
     const selected = tabs.querySelector('[role="tab"][aria-selected="true"]');
-    if (selected?.hidden && availableTabs.length) activate(availableTabs[0]);
+    const selectedPanel = selected ? panels.querySelector(`[data-tab="${selected.dataset.tab}"]`) : null;
+    const firstVisibleField = fields.find(field => !field.hidden);
+    const matchedPanel = firstVisibleField?.closest('[role="tabpanel"]');
+    if (selected?.hidden && availableTabs.length) activate(availableTabs[0], false);
+    else if (query && matchedPanel && !selectedPanel?.contains(firstVisibleField))
+      activate(matchedPanel.dataset.tab, false);
+    if (filtering) {
+      for (const field of fields.filter(item => !item.hidden)) {
+        let ancestor = field.parentElement;
+        while (ancestor && ancestor !== panels) {
+          if (ancestor.tagName === 'DETAILS') ancestor.open = true;
+          ancestor = ancestor.parentElement;
+        }
+      }
+    } else if (restoreState) {
+      for (const [details, open] of restoreState.disclosures)
+        if (details.isConnected) details.open = open;
+      if (restoreState.tab && tabs.querySelector(`[data-tab="${restoreState.tab}"]`))
+        activate(restoreState.tab, false);
+      restoreState = null;
+      lastRevealedField = null;
+    }
+    if (query) {
+      if (firstVisibleField && firstVisibleField !== lastRevealedField) {
+        firstVisibleField.scrollIntoView?.({block: 'center', inline: 'nearest'});
+        lastRevealedField = firstVisibleField;
+      }
+    }
     status.textContent = filtering ? `${visible} matching setting${visible === 1 ? '' : 's'}` :
       `${fields.length} settings in this receiver profile`;
   };
@@ -2351,7 +2388,7 @@ function renderEditor() {
   const initialTab = capabilities.setupRequired ? 'capture' :
     entries.some(([key]) => key === requestedTab) ? requestedTab :
       entries.some(([key]) => key === savedTab) ? savedTab : entries[0]?.[0];
-  const activate = selectedKey => {
+  const activate = (selectedKey, remember = true) => {
     tabs.querySelectorAll('[role="tab"]').forEach(button => {
       const selected = button.dataset.tab === selectedKey;
       button.classList.toggle('active', selected);
@@ -2361,8 +2398,10 @@ function renderEditor() {
     panels.querySelectorAll('[role="tabpanel"]').forEach(panel => {
       panel.hidden = panel.dataset.tab !== selectedKey;
     });
-    try { sessionStorage.setItem('blah2-settings-tab', selectedKey); }
-    catch (_) { /* Remembering a tab is optional. */ }
+    if (remember) {
+      try { sessionStorage.setItem('blah2-settings-tab', selectedKey); }
+      catch (_) { /* Remembering a tab is optional. */ }
+    }
   };
   activateSettingsTab = selectedKey => {
     if (!tabs.querySelector(`[data-tab="${selectedKey}"]`)) return;
