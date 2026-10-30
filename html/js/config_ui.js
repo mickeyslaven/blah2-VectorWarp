@@ -5,7 +5,7 @@ const configProfiles = typeof module !== 'undefined' && module.exports ?
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
 const CONFIG_META = {
-  'capture': ['Receiver', 'Radio and antennas'],
+  'capture': ['Receiver', 'Tuning and sites'],
   'process': ['Radar', 'Detection and tracking'],
   'network': ['Connectivity', 'Ports'],
   'truth': ['ADS-B', 'Aircraft data'],
@@ -40,7 +40,7 @@ const CONFIG_META = {
   'capture.device.heimdall.control_port': ['Control port', 'Suite V2 status and command port. Usually 8092.'],
   'capture.device.heimdall.gain': ['Starting gain', 'Initial gain before automatic measurement'],
   'capture.device.heimdall.channel_gains': ['Per-channel gains', 'Measured or manual tuner gains'],
-  'capture.device.heimdall.gain_control': ['Gain mode', 'Automatic, automatic per channel, or manual'],
+  'capture.device.heimdall.gain_control': ['Gain', 'Automatic per channel or manual'],
   'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
