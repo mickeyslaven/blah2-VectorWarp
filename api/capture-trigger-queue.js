@@ -125,6 +125,8 @@ class CaptureTriggerQueue {
 
   remember(event) {
     const record = {eventId: event.id, passId: event.pass_id,
+      hex: typeof event.hex === 'string' ? event.hex.trim().toUpperCase() : '',
+      flight: typeof event.flight === 'string' ? event.flight.trim().toUpperCase() : '',
       requestedEventTime: event.observed_at, state: 'pending',
       clipRevisions: [], captureWindows: [], windowStart: null, windowEnd: null, failure: null};
     this.events.set(event.id, record);

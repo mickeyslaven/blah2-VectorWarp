@@ -1540,6 +1540,11 @@ class EvidenceStatistics {
       active_passes: active, recent_finalized_passes: finalized};
   }
 
+  recordingSubjects() {
+    return this.state.eligibilityEvents.map(event => ({pass_id: event.pass_id,
+      hex: event.hex || null, flight: event.flight || null}));
+  }
+
   radarCoverage(options = {}) {
     const retained = radarCoverageFromPasses([
       ...this.state.passes,

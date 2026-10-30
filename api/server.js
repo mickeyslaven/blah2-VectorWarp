@@ -139,6 +139,7 @@ async function finalizeCaptureAdmission(revision, file, samples) {
     state: captureArtifactState(integrity, admissions), integrity,
     config_epoch: captureEvidenceStatistics.configEpoch, receiver_epoch: captureEvidenceStatistics.receiverEpoch,
     events: records.map(record => ({event_id: record.eventId, pass_id: record.passId,
+      icao: record.hex || null, flight: record.flight || null,
       capture_ids: (record.captureWindows || []).filter(window => window.revision === revision)
         .map(window => window.captureId)})), captures: Object.fromEntries(Object.entries(admissions)
       .map(([id, truth]) => [id, {...truth,
@@ -579,7 +580,10 @@ app.get('/api/live-scorecard/provisional', (req, res) => {
 });
 function recordingPasses() {
   const scorecard = provisionalEvidenceStatistics.liveStatus();
-  return [...(scorecard.active_passes || []), ...(scorecard.recent_finalized_passes || [])];
+  const subjects = [...captureEvidenceStatistics.recordingSubjects(),
+    ...(scorecard.active_passes || []), ...(scorecard.recent_finalized_passes || [])];
+  return [...new Map(subjects.filter(item => item?.pass_id)
+    .map(item => [item.pass_id, item])).values()];
 }
 function publicRecording(item) {
   const {path: replay_file, ...value} = item;

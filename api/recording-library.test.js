@@ -18,7 +18,8 @@ fs.writeFileSync(`${automatic}.json`, JSON.stringify({schema: 'vectorwarp-kraken
   eventIds: ['eligibility:one']}));
 fs.writeFileSync(`${automatic}.admission.json`, JSON.stringify({state: 'admitted', captures: {
   one: {pass_id: 'pass-one', icao: 'a1b2c3', truth_samples: [{slant_range_km: 12.5,
-    elevation_deg: 4.2, bearing_deg_true: 90}]}}}));
+    elevation_deg: 4.2, bearing_deg_true: 90}]}}, events: [
+      {pass_id: 'pass-one', icao: 'a1b2c3', flight: 'TEST123'}]}));
 const old = new Date(now - 2 * 86400000);
 for (const filename of [automatic, `${automatic}.json`, `${automatic}.admission.json`])
   fs.utimesSync(filename, old, old);
@@ -44,6 +45,9 @@ assert.equal(listed.recordings[0].kind, 'manual');
 assert.equal(listed.recordings[1].aircraft[0].flight, 'TEST123');
 assert.match(listed.recordings[1].title, /TEST123/);
 assert.equal(listed.recordings[1].duration_seconds, 4);
+const durable = await library.list();
+assert.equal(durable.recordings[1].aircraft[0].flight, 'TEST123',
+  'automatic clip labels survive after the live pass ages out');
 assert.equal((await library.list({search: 'a1b2c3',
   passes: [{pass_id: 'pass-one', hex: 'a1b2c3', flight: 'TEST123'}]})).total, 1);
 assert.equal(decodeId(encodeId('aircraft.mchq')), 'aircraft.mchq');

@@ -56,19 +56,25 @@ const timestamp = (value, fallback) => {
 function aircraft(admission, passes = new Map()) {
   const captures = Object.values(admission?.captures || {});
   const result = new Map();
-  for (const capture of captures) {
+  const add = capture => {
     const truth = Array.isArray(capture.truth_samples) ? capture.truth_samples.find(Boolean) : null;
     const passId = capture.pass_id || null;
     const known = passId ? passes.get(passId) : null;
-    const icao = String(capture.icao || known?.hex || '').trim().toUpperCase();
-    const flight = String(known?.flight || truth?.flight || '').trim().toUpperCase();
+    const icao = String(capture.icao || capture.hex || known?.hex || truth?.icao ||
+      truth?.hex || '').trim().toUpperCase();
+    const flight = String(capture.flight || known?.flight || truth?.flight ||
+      truth?.callsign || '').trim().toUpperCase();
     const key = icao || flight || passId;
-    if (!key) continue;
-    result.set(key, {icao: icao || null, flight: flight || null, pass_id: passId,
+    if (!key) return;
+    const prior = result.get(key) || {};
+    result.set(key, {icao: icao || prior.icao || null, flight: flight || prior.flight || null,
+      pass_id: passId || prior.pass_id || null,
       slant_range_km: finite(truth?.slant_range_km) ? truth.slant_range_km : null,
       elevation_deg: finite(truth?.elevation_deg) ? truth.elevation_deg : null,
       bearing_deg_true: finite(truth?.bearing_deg_true) ? truth.bearing_deg_true : null});
-  }
+  };
+  for (const event of admission?.events || []) add(event);
+  for (const capture of captures) add(capture);
   return [...result.values()];
 }
 

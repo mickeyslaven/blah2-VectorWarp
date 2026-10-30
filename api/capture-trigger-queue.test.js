@@ -9,7 +9,8 @@ const {EvidenceStatistics} = require('./evidence-statistics');
 
 const epoch = 'a'.repeat(64);
 const event = (number, observedAt) => ({id: `eligibility:event-${number}`,
-  pass_id: `pass-${number}`, state: 'pending', observed_at: observedAt,
+  pass_id: `pass-${number}`, hex: `abc${number}`, flight: `TEST${number}`,
+  state: 'pending', observed_at: observedAt,
   predicted: {delay_km: 10, doppler_hz: 100, slant_range_km: 20,
     elevation_deg: 10},
   receiver_epoch: epoch, config_epoch: epoch, site_epoch: epoch});
@@ -140,6 +141,8 @@ assert.deepEqual(queue.eventsForRevision(2).map(item => item.eventId),
   ['eligibility:event-1', 'eligibility:event-2']);
 assert.equal(queue.eventsForRevision(2)[0].file, '/clips/clip-2.mchq');
 assert.equal(queue.eventsForRevision(2)[0].samples, 12000000);
+assert.equal(queue.eventsForRevision(2)[0].hex, 'ABC1');
+assert.equal(queue.eventsForRevision(2)[0].flight, 'TEST1');
 assert.equal(queue.request().clipRevision, 3, 'Acknowledgement advances to the next clip');
 assert.equal(queue.acknowledge(3, 'Disk full\nclip stopped'), true);
 assert.equal(queue.request().pending, false);
@@ -211,6 +214,7 @@ assert.equal(bounded.status().droppedEvents, 1);
 assert.deepEqual(bounded.clips.map(clip => clip.revision), [1, 2]);
 assert.deepEqual({...bounded.status().recentEvents.at(-1), captureWindows: undefined},
   {eventId: 'eligibility:event-12', passId: 'pass-12', requestedEventTime: 20000,
+    hex: 'ABC12', flight: 'TEST12',
     state: 'dropped', clipRevisions: [], windowStart: null, windowEnd: null,
     failure: 'queue-capacity', captureWindows: undefined});
 
