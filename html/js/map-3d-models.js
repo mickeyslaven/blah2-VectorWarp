@@ -133,9 +133,14 @@
     const context = canvas.getContext('2d', {alpha: true, desynchronized: true});
     if (!context) return {render() {}, available: false};
     canvas.dataset.renderer = 'vectorwarp-real-3d-v1';
-    const render = instances => {
+    const render = (instances, options = {}) => {
       const width = Math.max(1, canvas.clientWidth), height = Math.max(1, canvas.clientHeight);
-      const ratio = Math.min(2, global.devicePixelRatio || 1);
+      // The aircraft occupy only a few dozen CSS pixels. Rendering the entire
+      // full-screen transparent canvas at a 2x backing resolution wastes fill
+      // bandwidth on large displays without improving those small models.
+      const ratioCap = width * height > 1000000 ? 1.35 : 1.75;
+      const ratio = Math.min(ratioCap, global.devicePixelRatio || 1);
+      const fast = options.fast === true;
       if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
         canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
       }
@@ -170,13 +175,17 @@
             shade: face.shade * illumination};
         }).sort((left,right) => right.depth - left.depth);
         context.save();
-        context.shadowColor = 'rgba(0,0,0,.45)'; context.shadowBlur = 2; context.shadowOffsetY = 2;
+        if (!fast) {
+          context.shadowColor = 'rgba(0,0,0,.45)'; context.shadowBlur = 2; context.shadowOffsetY = 2;
+        }
         for (const face of visible) {
           context.beginPath(); face.points.forEach((point,index) => index ? context.lineTo(point.x,point.y) : context.moveTo(point.x,point.y)); context.closePath();
           const shade = clamp(face.shade, .18, 1.18);
           context.fillStyle = `rgb(${clamp(Math.round(color[0]*shade),0,255)} ${clamp(Math.round(color[1]*shade),0,255)} ${clamp(Math.round(color[2]*shade),0,255)})`;
           context.fill(); context.shadowColor = 'transparent';
-          context.strokeStyle = 'rgba(255,255,255,.16)'; context.lineWidth = .55; context.stroke();
+          if (!fast) {
+            context.strokeStyle = 'rgba(255,255,255,.16)'; context.lineWidth = .55; context.stroke();
+          }
         }
         context.restore();
       }

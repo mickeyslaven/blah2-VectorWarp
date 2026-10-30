@@ -1149,6 +1149,9 @@
           updateNow - layer._lastGeometryUpdate >= 90;
         const refreshLabels = settled || !layer._lastLabelUpdate ||
           updateNow - layer._lastLabelUpdate >= 120;
+        const modelInterval = window.innerWidth <= 760 ? 40 : 28;
+        const refreshModels = settled || !layer._lastModelUpdate ||
+          updateNow - layer._lastModelUpdate >= modelInterval;
         const mapBearing = finite(map.getBearing?.()) ?? 0;
         const mapPitch = finite(map.getPitch?.()) ?? 0;
         const mapZoom = finite(map.getZoom?.()) ?? 0;
@@ -1276,7 +1279,10 @@
           if (visible) { occupied.push(box); visibleLabels++; }
         }
         }
-        layer._modelRenderer?.render(modelInstances);
+        if (refreshModels) {
+          layer._lastModelUpdate = updateNow;
+          layer._modelRenderer?.render(modelInstances, {fast: !settled});
+        }
         if (refreshGeometry) {
         const history = selectedAircraftId ? aircraftTrackHistories.get(selectedAircraftId) || [] : [];
         const points = history.map(point => {
