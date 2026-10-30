@@ -41,6 +41,8 @@ const configured = () => {
 }
 {
   const config = configured();
+  config.process.detection.track_before_detect.enable = true;
+  config.process.surveillance_fusion.mode = 'coherent_beam_bank';
   profiles.applyTrackingProfile(config, 'balanced');
   assert.deepEqual({profile: config.process.tracker.profile,
     pfa: config.process.detection.pfa, minDoppler: config.process.detection.minDoppler,
@@ -50,7 +52,7 @@ const configured = () => {
     acceleration: config.process.tracker.initiate.acceleration_model,
     tbd: config.process.detection.track_before_detect.enable},
   {profile: 'balanced', pfa: .00001, minDoppler: 15, M: 3, N: 6,
-    minSnrDb: 5, deleteAfter: 3, acceleration: 'adaptive_gate', tbd: false});
+    minSnrDb: 5, deleteAfter: 3, acceleration: 'adaptive_gate', tbd: true});
   assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
   profiles.applyTrackingProfile(config, 'permissive');
   assert.deepEqual([config.process.detection.pfa, config.process.detection.minDoppler,

@@ -14,7 +14,8 @@
     research: 0.005
   });
 
-  // A tracking profile is a complete detector-to-track policy. Balanced is
+  // A tracking profile is a detector-to-track policy. Weak-target recovery
+  // remains an independent explicit choice. Balanced is
   // anchored to the OWL/Retina defaults (Pfa 1e-5, 15 Hz zero-Doppler blank,
   // M=3 of N=6) while retaining VectorWarp's shorter false-track lifetime.
   const trackingProfiles = Object.freeze({
@@ -95,9 +96,6 @@
     tracker.profile = profile;
     detection.pfa = values.pfa;
     detection.minDoppler = values.minDoppler;
-    detection.integration_cpis = 1;
-    detection.integration_motion_bins = 0;
-    ensure(detection, 'track_before_detect').enable = false;
     initiate.M = values.M;
     initiate.N = values.N;
     initiate.min_snr_db = values.minSnrDb;
