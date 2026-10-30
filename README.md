@@ -16,6 +16,22 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 
 [Install](docs/INSTALL.md) · [macOS / Homebrew](docs/MACOS_HOMEBREW.md) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md)
 
+## See VectorWarp in action
+
+### Live bistatic range–Doppler processing
+
+Watch radar detections, persistent tracks, and ADS-B truth update together in
+the browser.
+
+![VectorWarp live bistatic range-Doppler display](docs/media/vectorwarp-bistatic-range-doppler.gif)
+
+### 3D live airspace
+
+Explore terrain, altitude-separated aircraft, radar tracks, and flight
+histories in the same interactive map.
+
+![VectorWarp 3D live airspace map](docs/media/vectorwarp-3d-live-airspace.gif)
+
 ## Choose an installation path
 
 1. **Linux PC or ARM64 system:** install a matching signed DEB or RPM
