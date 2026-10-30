@@ -949,16 +949,14 @@
             const value = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             value.setAttribute('class', className); group.appendChild(value); return value;
           };
-          const path = makePath('location-radar-track-path location-radar-track-ground');
-          // Delay-only radar tracks do not measure altitude. The cage spans
-          // the practical civil-aircraft envelope so high traffic does not
-          // appear above it; an ADS-B match still gets its own exact slice.
-          const slices = [10000, 20000, 30000, 40000, 60000].map(() =>
-            makePath('location-radar-track-slice'));
-          const ribs = makePath('location-radar-track-ribs');
+          // A delay-only track is one bistatic uncertainty ellipse, not a
+          // measured 3D volume. Keep one mathematically honest outline. The
+          // previous five-slice cage was visually noisy and clipped badly as
+          // a pitched map rotated through the viewport.
+          const path = makePath('location-radar-track-path');
           const associated = makePath('location-radar-track-associated');
           layer._radarTrackGroup?.appendChild(group);
-          record = {group, path, slices, ribs, associated, item: track};
+          record = {group, path, associated, item: track};
           layer._radarTrackPaths.set(id, record);
         }
         record.item = track;
@@ -1107,26 +1105,15 @@
           return run.length > 1 ? `${radial}Z` : radial;
         }).join('') : '';
         layer._coveragePath?.setAttribute('d', layer._coverageUsesMapLayer ? '' : coveragePath);
-        for (const {item, path: radarPath, slices, ribs, associated} of layer._radarTrackPaths.values()) {
-          const ground = item.latitude.map((latitude, index) => ({latitude,
-            point: projectFlatRadarPoint(item.longitude[index], latitude)}));
-          radarPath.setAttribute('d', line(ground.map(value => value.point)));
-          const sliceAltitudes = [10000, 20000, 30000, 40000, 60000];
-          const lifted = altitude => ground.map(value => ({x: value.point.x,
-            y: value.point.y - altitudeLiftFor({lat: value.latitude, altitude})}));
-          slices.forEach((slice, index) => slice.setAttribute('d', line(lifted(sliceAltitudes[index]))));
-          const top = lifted(sliceAltitudes.at(-1));
-          const ribIndices = [0, .25, .5, .75].map(ratio =>
-            Math.min(ground.length - 1, Math.round((ground.length - 1) * ratio)));
-          ribs.setAttribute('d', ribIndices.map(index =>
-            `M${ground[index].point.x.toFixed(1)} ${ground[index].point.y.toFixed(1)}` +
-            `L${top[index].x.toFixed(1)} ${top[index].y.toFixed(1)}`).join(''));
-          const associatedAltitude = finite(item.associatedAltitude);
-          if (associatedAltitude === null) associated.setAttribute('d', '');
-          else {
-            associated.setAttribute('d', line(lifted(associatedAltitude)));
-            associated.setAttribute('stroke', item.associatedColor || '#5be7ff');
-          }
+        for (const {item, path: radarPath, associated} of layer._radarTrackPaths.values()) {
+          const points = item.latitude.map((latitude, index) =>
+            projectFlatRadarPoint(item.longitude[index], latitude))
+            .filter(point => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+          const outline = points.length > 2 ? line(points) : '';
+          radarPath.setAttribute('d', outline);
+          const hasAssociation = finite(item.associatedAltitude) !== null;
+          associated.setAttribute('d', hasAssociation ? outline : '');
+          if (hasAssociation) associated.setAttribute('stroke', item.associatedColor || '#5be7ff');
         }
         const modelInstances = [];
         const aircraftLabelCandidates = [];

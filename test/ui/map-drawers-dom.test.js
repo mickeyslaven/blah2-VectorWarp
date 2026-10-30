@@ -8,6 +8,8 @@ const {JSDOM} = require('./jsdom');
 const source = fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8');
 assert.match(source, /locationToScreenPoint\(LngLat\.convert\(\[longitude, latitude\]\), null\)/,
   'radar ellipses project on a flat reference plane instead of terrain');
+assert.doesNotMatch(source, /location-radar-track-slice|location-radar-track-ribs|sliceAltitudes/,
+  'radar tracks use one clean outline instead of a clipping 3D cage');
 
 const dom = new JSDOM(`<!doctype html><body data-insight-view="locations">
   <span id="view-state"></span><div id="view-root"></div></body>`,

@@ -304,10 +304,8 @@ a { color:inherit; } a:hover { color:var(--accent); }
 }
 .location-aircraft-trails { position:absolute; inset:0; width:100%; height:100%; overflow:hidden; pointer-events:none; contain:strict; }
 .location-aircraft-trails path { fill:none; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
-.location-radar-track-path { stroke:#ff8754; stroke-width:3; stroke-dasharray:7 6; opacity:.86; }
-.location-radar-track-slice { stroke:#ff8754; stroke-width:2; opacity:.48; }
-.location-radar-track-ribs { stroke:#ff8754; stroke-width:1.5; stroke-dasharray:4 6; opacity:.52; }
-.location-radar-track-associated { stroke-width:4; opacity:.98; }
+.location-radar-track-path { fill:none; stroke:#ff8754; stroke-width:3; stroke-dasharray:8 7; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; opacity:.9; }
+.location-radar-track-associated { fill:none; stroke-width:2; stroke-dasharray:2 7; stroke-linecap:round; vector-effect:non-scaling-stroke; opacity:.98; }
 .location-radar-coverage-path { fill:rgba(32,221,220,.09)!important; stroke:#20dddc; stroke-width:3;
   stroke-linejoin:round; opacity:.92; }
 .location-aircraft-ground-trail { stroke:rgba(243,238,233,.46); stroke-width:2; stroke-dasharray:4 6; }
