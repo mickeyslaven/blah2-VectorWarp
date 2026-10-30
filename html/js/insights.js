@@ -989,16 +989,19 @@
         // display frame during pinch zoom.  Mutating dozens of SVG trail legs
         // for each event leaves stale compositor tiles behind.  Coalesce all
         // transforms into the map's next animation frame instead.
-        layer._schedulePositionUpdate = () => {
+        layer._schedulePositionUpdate = (settled = false) => {
+          layer._settledUpdatePending = layer._settledUpdatePending || settled;
           if (layer._positionFrame) return;
           layer._positionFrame = schedule(() => {
             layer._positionFrame = 0;
-            layer._updatePositions?.();
+            const finalPass = layer._settledUpdatePending;
+            layer._settledUpdatePending = false;
+            layer._updatePositions?.(finalPass);
           });
         };
-        map.on('move', layer._schedulePositionUpdate);
-        map.on('resize', layer._schedulePositionUpdate);
-        const endMapTransform = () => layer._schedulePositionUpdate();
+        map.on('move', () => layer._schedulePositionUpdate(false));
+        map.on('resize', () => layer._schedulePositionUpdate(true));
+        const endMapTransform = () => layer._schedulePositionUpdate(true);
         ['moveend', 'zoomend', 'rotateend', 'pitchend'].forEach(name =>
           map.on(name, endMapTransform));
       }
@@ -1052,7 +1055,7 @@
           marker.tabIndex = -1;
           marker.innerHTML = '<span class="location-aircraft-icon"></span><span class="location-aircraft-label"></span>';
           record = {marker, icon: marker.children[0], label: marker.children[1],
-            item, heading, signature: '', isAircraft: true};
+            item, heading: finite(heading), signature: '', isAircraft: true};
           record.icon.tabIndex = 0;
           record.icon.setAttribute('role', 'button');
           const selectAircraft = event => {
@@ -1079,7 +1082,11 @@
           layer._aircraftMarkers.set(aircraftId, record);
         }
         record.item = item;
-        record.heading = heading;
+        // Public feeds occasionally omit course for one snapshot while
+        // retaining the position. Do not make a moving aircraft snap to
+        // north until the next snapshot restores the same course.
+        const nextHeading = finite(heading);
+        if (nextHeading !== null) record.heading = ((nextHeading % 360) + 360) % 360;
         record.flightPathAngle = aircraftFlightPathAngle(info.verticalRate, info.speed);
         const marker = record.marker;
         const color = aircraftAltitudeColor(item);
@@ -1125,19 +1132,26 @@
       }
       for (const [id, record] of layer._siteMarkers)
         if (!seenSites.has(id)) { record.marker.remove(); layer._siteMarkers.delete(id); }
-      const altitudeLiftFor = item => {
-        const pitch = finite(map.getPitch?.()) ?? 0;
+      const altitudeLiftFor = (item, pitch = finite(map.getPitch?.()) ?? 0,
+        zoom = finite(map.getZoom?.()) ?? 0) => {
         if (pitch <= 0) return 0;
         const altitudeFeet = Number.isFinite(item.altitude) ? item.altitude : aircraftInfo(item).altitude;
         const groundMeters = finite(sites[0]?.altitude) ?? 0;
         const heightMeters = altitudeFeet === null ? 0 : Math.max(0, altitudeFeet * .3048 - groundMeters);
-        const zoom = finite(map.getZoom?.()) ?? 0;
         const metersPerPixel = Math.cos(Number(item.lat) * Math.PI / 180) * 2 * Math.PI * 6378137 /
           (512 * Math.pow(2, zoom));
         return Math.min(240, heightMeters / Math.max(.01, metersPerPixel) *
           Math.sin(pitch * Math.PI / 180));
       };
-      layer._updatePositions = () => {
+      layer._updatePositions = (settled = false) => {
+        const updateNow = window.performance?.now?.() ?? Date.now();
+        const refreshGeometry = settled || !layer._lastGeometryUpdate ||
+          updateNow - layer._lastGeometryUpdate >= 90;
+        const refreshLabels = settled || !layer._lastLabelUpdate ||
+          updateNow - layer._lastLabelUpdate >= 120;
+        const mapBearing = finite(map.getBearing?.()) ?? 0;
+        const mapPitch = finite(map.getPitch?.()) ?? 0;
+        const mapZoom = finite(map.getZoom?.()) ?? 0;
         const line = points => points.map((point, index) =>
           `${index ? 'L' : 'M'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
         // MapLibre's public project() samples terrain elevation. That is right
@@ -1153,6 +1167,8 @@
           }
           return map.project([longitude, latitude]);
         };
+        if (refreshGeometry) {
+        layer._lastGeometryUpdate = updateNow;
         const coverageRows = Array.isArray(layer._radarCoverage?.points) ?
           layer._radarCoverage.points.map(point => ({bin: Number(point.bin),
             point: map.project([point.longitude, point.latitude])}))
@@ -1189,15 +1205,15 @@
           associated.setAttribute('d', hasAssociation ? outline : '');
           if (hasAssociation) associated.setAttribute('stroke', item.associatedColor || '#5be7ff');
         }
+        }
         const modelInstances = [];
         const aircraftLabelCandidates = [];
         const mapWidth = container.clientWidth || 0;
         const mapHeight = container.clientHeight || 0;
-        const mapZoom = finite(map.getZoom?.()) ?? 0;
         [...layer._aircraftMarkers.values(), ...layer._siteMarkers.values()].forEach(
           ({item, marker, icon, heading, flightPathAngle, isAircraft}) => {
         const point = map.project([Number(item.lon), Number(item.lat)]);
-        const altitudeLift = isAircraft ? altitudeLiftFor(item) : 0;
+        const altitudeLift = isAircraft ? altitudeLiftFor(item, mapPitch, mapZoom) : 0;
         marker.style.left = `${point.x}px`;
         marker.style.top = `${point.y - altitudeLift}px`;
         const onScreen = point.x >= -80 && point.x <= mapWidth + 80 &&
@@ -1208,7 +1224,7 @@
           if (onScreen) aircraftLabelCandidates.push({marker, item, x: point.x,
             y: point.y - altitudeLift, selected: selectedAircraftId === aircraftId,
             radarTracked: Boolean(item.radar_track_id)});
-          const rotation = aircraftScreenRotation(heading, map.getBearing?.());
+          const rotation = aircraftScreenRotation(heading, mapBearing);
           const yaw = rotation === null ? 0 : rotation;
           const pitch = Number.isFinite(flightPathAngle) ? flightPathAngle : 0;
           icon.dataset.flightPath = pitch > .5 ? 'climbing' : pitch < -.5 ? 'descending' : 'level';
@@ -1218,7 +1234,7 @@
             color: aircraftAltitudeColor(item)});
         } else if (onScreen) {
           modelInstances.push({model: item.kind === 'transmitter' ? 'transmitter' : 'receiver',
-            x: point.x, y: point.y - 23, yaw: -(finite(map.getBearing?.()) ?? 0), pitch: 0,
+            x: point.x, y: point.y - 23, yaw: -mapBearing, pitch: 0,
             size: item.kind === 'transmitter' ? 15 : 14, color: item.kind === 'transmitter' ? '#ff8754' : '#8fe7df'});
         }
         });
@@ -1227,6 +1243,8 @@
         // screen-space declutter pass on every camera update.  Selected and
         // radar-associated aircraft win, then fresh positions nearest the map
         // centre.  Icons remain visible; only overlapping labels are hidden.
+        if (refreshLabels) {
+        layer._lastLabelUpdate = updateNow;
         const occupied = [];
         for (const {item} of layer._siteMarkers.values()) {
           const point = map.project([Number(item.lon), Number(item.lat)]);
@@ -1257,12 +1275,14 @@
           candidate.marker.classList.toggle('label-hidden', !visible);
           if (visible) { occupied.push(box); visibleLabels++; }
         }
+        }
         layer._modelRenderer?.render(modelInstances);
+        if (refreshGeometry) {
         const history = selectedAircraftId ? aircraftTrackHistories.get(selectedAircraftId) || [] : [];
         const points = history.map(point => {
           const projected = map.project([point.lon, point.lat]);
           return {x: projected.x, groundY: projected.y,
-            flightY: projected.y - altitudeLiftFor(point), altitude: point.altitude};
+            flightY: projected.y - altitudeLiftFor(point, mapPitch, mapZoom), altitude: point.altitude};
         });
         const path = (values, y) => values.map((point, index) =>
           `${index ? 'L' : 'M'}${point.x.toFixed(1)} ${point[y].toFixed(1)}`).join(' ');
@@ -1295,8 +1315,9 @@
         layer._altitudeConnector?.setAttribute('stroke', aircraftAltitudeColor({altitude: last?.altitude}));
         layer._altitudeConnector?.setAttribute('d', last && Math.abs(last.groundY - last.flightY) > 1 ?
           `M${last.x.toFixed(1)} ${last.groundY.toFixed(1)}L${last.x.toFixed(1)} ${last.flightY.toFixed(1)}` : '');
+        }
       };
-      layer._schedulePositionUpdate?.();
+      layer._schedulePositionUpdate?.(true);
     });
   }
 
