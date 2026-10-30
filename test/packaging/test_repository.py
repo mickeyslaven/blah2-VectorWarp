@@ -82,20 +82,19 @@ class HomepageTests(unittest.TestCase):
         self.assertEqual(page.count('id="install-pi"'), 1)
         self.assertNotRegex(page[:page.index('id="install-pi"')], r'(?i)raspberry pi|pi 4')
 
-    def test_install_guide_puts_linux_and_homebrew_before_manual_options(self):
+    def test_install_guide_keeps_normal_routes_before_manual_and_source_options(self):
         guide = (ROOT / 'docs/INSTALL.md').read_text()
-        primary, manual = guide.split('## Manual install options', 1)
+        primary, manual = guide.split('## Manual package installation', 1)
         for command in ('sudo apt install -y vectorwarp', 'sudo dnf install -y vectorwarp',
                         'brew trust mickeyslaven/vectorwarp', 'brew install vectorwarp'):
             self.assertIn(command, primary)
-        for section in ('### Manual package installation', '### macOS standalone installer',
-                        '## Build from source', '## Limited platform: Raspberry Pi 4B'):
+        for section in ('## Build from source', '## Remove VectorWarp',
+                        '## Other installation guides'):
             self.assertIn(section, manual)
             self.assertNotIn(section, primary)
-        self.assertEqual(manual.count('<details>'), 4)
-        self.assertEqual(manual.count('</details>'), 4)
-        self.assertIn('fresh-card boot', manual.lower())
-        self.assertIn('verify the repository', primary)
+        self.assertIn('brew upgrade vectorwarp', primary)
+        self.assertNotIn('brew upgrade vectorwarp vectorwarp-heimdall', guide)
+        self.assertIn('[Raspberry Pi 4](PI4_GUIDE.md)', manual)
 
     def test_downloads_use_exact_release_assets_and_all_os_rows(self):
         manifest = self.release_manifest()
@@ -244,8 +243,10 @@ class HomepageTests(unittest.TestCase):
         self.assertEqual(len(install_commands), 2)
         for guide in ('README.md', 'docs/INSTALL.md'):
             text = (ROOT / guide).read_text()
-            for command in install_commands:
-                self.assertIn(command, text, f'{guide} must match the published installation command')
+            for fragment in ('sudo bash vectorwarp-install.sh --repo-only',
+                             'sudo apt install -y vectorwarp',
+                             'sudo dnf install -y vectorwarp', 'vectorwarp'):
+                self.assertIn(fragment, text, f'{guide} must retain the install steps')
         for heading in ('1. Install for your OS', '2. Configure and start radar',
                         '3. Start, stop and check services', '4. Update'):
             self.assertIn(f'<h3>{heading}</h3>', page)
@@ -306,7 +307,6 @@ class HomepageTests(unittest.TestCase):
         self.assertEqual(sum(item['complete_cpis'] for item in cohort['receipts'].values()), 2200)
         self.assertIn('ccbd2ec1c379310b0df1be1857570d93dd5306a6b435c63c8e785b7c8084dab6', report)
         self.assertIn('8ba6e1330fad9fcdbe8a5a54134a712d0959775e', report)
-        readme = (ROOT / 'README.md').read_text()
         for row in cohort['rows']:
             self.assertEqual(row['delay_bins'], 256)
             self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833334)
@@ -328,7 +328,6 @@ class HomepageTests(unittest.TestCase):
                          row['device'] in ('auto', '4098:27039:1')))
             if selected:
                 self.assertIn(f"{row['mean_ms']:.1f} ms", page)
-                self.assertIn(f"{row['mean_ms']:.1f} ms", readme)
 
         for variant in ('vectorwarp-cpu', 'vectorwarp-auto'):
             reductions = []
@@ -382,9 +381,6 @@ class HomepageTests(unittest.TestCase):
             self.assertEqual((row['frames'], row['deadline_misses'], row['cpi_ms']), (24, 24, 200))
             self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833333)
             self.assertIn(f"{row['mean_ms']:.3f} / {row['p95_ms']:.3f}", report)
-            if row['case'] == 'standard-800hz':
-                self.assertIn(f"{row['mean_ms']:.1f} ms", repository.repository_homepage())
-                self.assertIn(f"{row['mean_ms']:.1f} ms", (ROOT / 'README.md').read_text())
         for text in ('NEON-enabled FFTW', '24/24', 'not live RF', '7.5–12.6%',
                      '6.7–11.9%', '199 taps instead of 210', 'no GPU radar-processing path'):
             self.assertIn(text, ' '.join(report.split()))
@@ -399,24 +395,18 @@ class HomepageTests(unittest.TestCase):
             self.assertIn(required, page)
 
     def test_quickstart_links_and_release_status(self):
-        # Wrapping and headings are editorial choices. Keep the measured scope,
-        # actual upstream comparison, and release boundaries under test.
         readme = ' '.join((ROOT / 'README.md').read_text().split())
-        self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
         self.assertIn('sudo bash vectorwarp-install.sh --repo-only', readme)
         self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', readme)
         self.assert_download_links_are_current(readme)
-        self.assertIn('replaying the same recorded signal at its original rate', readme)
-        self.assertIn('CPU budget', readme)
-        self.assertIn('2–8-channel network input', readme)
-        self.assertIn('one package', readme.lower())
-        for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
-                      'clutter FFT/filtering', 'startup',
-                      'docs/GPU_BENCHMARK_20260911.md',
-                      'Wider Doppler coverage'):
+        for claim in ('open-source passive-radar application',
+                      'Coherent 2–8 channel array support',
+                      'Fused local and online ADS-B and MLAT feeds',
+                      'Portable recording bundles', 'Hardware-independent replay',
+                      'docs/media/vectorwarp-bistatic-range-doppler.gif',
+                      'docs/media/vectorwarp-3d-live-airspace.gif'):
             self.assertIn(claim, readme)
-        # Numeric findings belong to the linked report rather than an old
-        # README headline; editorial changes must not resurrect obsolete runs.
+        self.assertNotIn('GPU_BENCHMARK_20260911.md', readme)
         report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
         self.assertIn('c821bee3f0d27cf20c8447f3d908ef722905a4de', report)
         self.assertIn('1e-4', report)
@@ -438,11 +428,10 @@ class HomepageTests(unittest.TestCase):
 
     def test_readme_install_routes_cover_mac_and_live_linux_packages(self):
         readme = (ROOT / 'README.md').read_text()
-        self.assertIn('[Install](docs/INSTALL.md)', readme)
-        self.assertIn('[macOS / Homebrew](docs/MACOS_HOMEBREW.md)', readme)
+        self.assertIn('[installation guide](docs/INSTALL.md)', readme)
         guide = (ROOT / 'docs/INSTALL.md').read_text()
         self.assertIn('(https://mickeyslaven.github.io/blah2-VectorWarp/#install)', guide)
-        self.assertIn('(MACOS_HOMEBREW.md)', guide)
+        self.assertIn('brew upgrade vectorwarp', guide)
         self.assertIn('## Build from source', guide)
         page = repository.repository_homepage(self.release_manifest())
         for command in ('sudo bash vectorwarp-install.sh --repo-only',

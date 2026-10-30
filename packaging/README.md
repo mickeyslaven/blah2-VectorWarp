@@ -1,6 +1,6 @@
 # Native release packaging
 
-For macOS, use the [local Homebrew packaging guide](../docs/MACOS_HOMEBREW.md).
+For macOS, use the [Homebrew publishing guide](../docs/HOMEBREW_PUBLISHING.md).
 The Mac app and Kraken companion formulas live in `Formula/`;
 [automatic public tap updates](../docs/HOMEBREW_PUBLISHING.md) are prepared for
 merges to `main`, with first publication still pending. No bottles are supplied.

@@ -1,7 +1,7 @@
 # GPU acceleration
 
 For macOS, see [Vulkan/MoltenVK support and M2 validation](MACOS_GPU.md) and
-[Homebrew installation](MACOS_HOMEBREW.md). The driver and package instructions
+[macOS installation](INSTALL.md#macos). The driver and package instructions
 on this page describe Linux. Legacy modes retain CPU fallback on both platforms;
 the explicit resident mode described below is Linux-only.
 

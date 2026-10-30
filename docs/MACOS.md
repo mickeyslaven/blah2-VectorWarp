@@ -21,8 +21,8 @@ and installs at `/Applications/VectorWarp.app`. Published versions appear in the
 [release download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 See [MACOS_STANDALONE.md](MACOS_STANDALONE.md) for its target
 layout, commands and qualification boundaries.
-Homebrew is another macOS packaging path: see [MACOS_HOMEBREW.md](MACOS_HOMEBREW.md)
-for a local source snapshot, service lifecycle, upgrades and removal. CPU processing
+Homebrew installation, updates, and service commands are in
+[Install VectorWarp](INSTALL.md#macos). CPU processing
 is always available. Optional Vulkan/MoltenVK processing is described in
 [MACOS_GPU.md](MACOS_GPU.md); readiness comes from numerical checks on the running
 processor, independently for each stage.
@@ -107,8 +107,8 @@ The launcher alone does not register a login service. Homebrew’s explicit
 `brew services stop vectorwarp` stops and unregisters it. Start processing explicitly after
 choosing a valid receiver or replay file in Settings.
 
-For installed Homebrew command names, updates, and service restarts, see the
-[macOS Homebrew guide](MACOS_HOMEBREW.md#public-tap-updates).
+For installed Homebrew command names, updates, and service restarts, see
+[Install VectorWarp](INSTALL.md#macos).
 The local development tap must be regenerated from its source snapshot; it does
 not receive public-tap upgrades.
 

@@ -222,9 +222,30 @@ commands.
 
 For macOS source development, see the [macOS build guide](MACOS.md#build-and-run).
 
+## Remove VectorWarp
+
+Ubuntu or Debian:
+
+```bash
+sudo apt remove vectorwarp
+```
+
+Fedora:
+
+```bash
+sudo dnf remove vectorwarp
+```
+
+macOS:
+
+```sh
+brew services stop vectorwarp
+vectorwarp stop
+brew uninstall vectorwarp
+```
+
 ## Other installation guides
 
-- [macOS Homebrew](MACOS_HOMEBREW.md)
 - [macOS standalone package](MACOS_STANDALONE.md)
 - [SDRplay RSPduo](SDRPLAY_SETUP.md)
 - [DragonOS](DRAGONOS.md)

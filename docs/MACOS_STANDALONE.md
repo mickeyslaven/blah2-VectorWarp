@@ -69,9 +69,8 @@ the Suite is not bundled because its redistribution terms are not established.
 SDRplay remains a manually installed vendor SDK with a local adapter build. Its
 SDK and adapter are never bundled or downloaded by the installer.
 
-For the available local source/Homebrew path, see
-[MACOS_HOMEBREW.md](MACOS_HOMEBREW.md). Hardware, GPU, and platform limits remain
-in [MACOS_TEST_MATRIX.md](MACOS_TEST_MATRIX.md).
+For the Homebrew path, see [Install VectorWarp](INSTALL.md#macos). Hardware,
+GPU, and platform results remain in [MACOS_TEST_MATRIX.md](MACOS_TEST_MATRIX.md).
 
 ## Building and qualifying an installer
 

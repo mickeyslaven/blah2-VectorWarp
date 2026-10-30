@@ -1,8 +1,8 @@
 # Set up VectorWarp
 
 Install VectorWarp from the [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
-or follow the [macOS Homebrew guide](MACOS_HOMEBREW.md). Run `vectorwarp` to
-open the browser interface, then select **Settings**.
+or follow the [installation guide](INSTALL.md). Run `vectorwarp` to open the
+browser interface, then select **Settings**.
 
 ## Setup assistant
 

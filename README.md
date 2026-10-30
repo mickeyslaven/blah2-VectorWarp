@@ -124,7 +124,7 @@ guides the first working configuration. SDRplay support uses its vendor API and
 the setup action provided in Settings.
 
 For source builds and additional installation options, see the
-[installation guide](docs/INSTALL.md) and [macOS guide](docs/MACOS_HOMEBREW.md).
+[installation guide](docs/INSTALL.md).
 
 ## Learn more
 

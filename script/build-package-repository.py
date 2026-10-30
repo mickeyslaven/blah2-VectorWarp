@@ -163,7 +163,7 @@ if you need a specific package.</p>
 brew trust mickeyslaven/vectorwarp
 brew install vectorwarp
 vectorwarp</code></pre>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS_HOMEBREW.md">Homebrew setup and updates</a>.
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#macos">Homebrew setup and updates</a>.
 Apple Silicon is tested on M2; Intel remains experimental.
 A signed PKG, when available, is an <a href="#package-downloads">optional manual download</a>.</p>
 <h3>2. Configure and start radar</h3>
