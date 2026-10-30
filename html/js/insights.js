@@ -480,36 +480,6 @@
     };
   }
 
-  async function renderSite() {
-    setupPlotScaffold('insight-content-wide');
-    const config = await getConfig();
-    const receiver = config?.location?.rx || {};
-    const transmitter = config?.location?.tx || {};
-    if ([receiver.latitude, receiver.longitude, transmitter.latitude, transmitter.longitude].some(value => finite(value) === null)) {
-      renderHtml(document.getElementById('view-summary'), card('Unavailable', 'Site coordinates'));
-      renderDetail(empty('Site geometry is unavailable', 'Configure receiver and illuminator latitude and longitude in Settings.'));
-      await emptyPlot('Receiver and illuminator coordinates are required.');
-      setState('Configuration incomplete', 'warning');
-      return;
-    }
-    const tx = siteOffset(receiver, transmitter);
-    const baseline = Math.hypot(tx.x, tx.y);
-    const heading = Math.atan2(tx.y, tx.x);
-    const resolution = rangeResolutionKm(config);
-    const delayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
-    const maximumExcess = resolution === null ? 0 : delayBins * resolution;
-    const contourValues = [maximumExcess * .25, maximumExcess * .5, maximumExcess].filter(value => value > .01);
-    const traces = contourValues.map((value, index) => {
-      const path = ellipse(tx.x / 2, tx.y / 2, baseline, value, heading);
-      return {x: path.x, y: path.y, type: 'scatter', mode: 'lines', name: `${number(value, 1)} km bistatic range`, line: {color: colors[(index + 2) % colors.length], width: 1, dash: 'dot'}, hoverinfo: 'name'};
-    });
-    traces.push({x: [0, tx.x], y: [0, tx.y], type: 'scatter', mode: 'lines+markers+text', name: 'Sites', text: [receiver.name || 'Receiver', transmitter.name || 'Illuminator'], textposition: ['bottom center', 'top center'], marker: {size: [13, 13], color: [colors[0], colors[1]], symbol: ['circle', 'diamond']}, line: {color: '#ac9e94', width: 2}});
-    renderHtml(document.getElementById('view-summary'), `${card(`${number(baseline, 2)} km`, 'Site baseline')}${card(resolution === null ? '—' : `${number(resolution, 3)} km`, 'Range-bin resolution')}${card(frequencyLabel(config), 'Carrier frequency')}`);
-    renderDetail(`<section class="info-card"><h2>Configured sites</h2><dl><div><dt>Receiver</dt><dd>${escapeHtml(receiver.name || 'Receiver')} · ${number(receiver.latitude, 5)}, ${number(receiver.longitude, 5)} · ${number(receiver.altitude, 0)} m</dd></div><div><dt>Illuminator</dt><dd>${escapeHtml(transmitter.name || 'Illuminator')} · ${number(transmitter.latitude, 5)}, ${number(transmitter.longitude, 5)} · ${number(transmitter.altitude, 0)} m</dd></div><div><dt>Contours</dt><dd>Constant excess-path range derived from the configured delay window</dd></div></dl></section>`);
-    await Plotly.react('data', traces, {...plotBase, xaxis: {title: 'East / west from receiver (km)', gridcolor: '#47362e', zerolinecolor: '#47362e'}, yaxis: {title: 'North / south from receiver (km)', gridcolor: '#47362e', zerolinecolor: '#47362e', scaleanchor: 'x', scaleratio: 1}}, plotConfig);
-    setState('From active configuration', 'good');
-  }
-
   let locationMapViewport = null;
   let selectedAircraftId = null;
   let selectedAircraftSnapshot = null;
@@ -1789,7 +1759,7 @@
       automation.qualified ? 'Qualified measured manifold' : `Collecting · ${percent(completion, 0)} of minimum evidence gates`, tone);
   }
 
-  const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, site: renderSite, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics, calibration: renderCalibration};
+  const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics, calibration: renderCalibration};
 
   async function refresh() {
     const now = Date.now();

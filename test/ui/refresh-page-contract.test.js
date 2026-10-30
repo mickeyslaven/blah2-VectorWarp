@@ -21,7 +21,7 @@ const pages = ['index', ...indexPages(htmlRoot)].sort();
 
 const insightPages = new Set([
   'display/calibration', 'display/detections', 'display/locations',
-  'display/site', 'display/statistics', 'display/tracks'
+  'display/statistics', 'display/tracks'
 ]);
 const plotPages = new Map([
   ['index', 'plot_map.js']
@@ -30,6 +30,7 @@ const consolidatedPages = new Set(['controller', 'display/detection', 'display/d
 const nonLivePages = new Set(['display/configuration', 'display/recordings']);
 const redirectPages = new Set([
   'display/map', 'display/evaluation', 'display/overview',
+  'display/site',
   'display/activity', 'display/health', 'display/timing',
   'display/maxhold', 'display/spectrum',
   'display/detection/delay', 'display/detection/doppler',
