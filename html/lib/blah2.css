@@ -261,6 +261,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
 }
 @media (max-width:600px) {
   html { font-size:17px; }
+  .controller-status .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .statistics-page .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .metric-card { min-height:72px; padding:11px 12px; }
   .metric-card strong { font-size:20px; }
