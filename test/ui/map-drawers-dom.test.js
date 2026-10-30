@@ -14,6 +14,8 @@ assert.equal((source.match(/type: 'raster-dem'/g) || []).length, 2,
   'terrain and hillshade use separate DEM state as required by MapLibre');
 assert.match(source, /zoom_tiers[\s\S]*stable parent while a denser nested tier is loading/,
   'nested imagery coverage retains matching parent tiles during zoom and rotation');
+assert.match(source, /vectorwarp-basemap', 'visibility', aerial \? 'none' : 'visible'/,
+  'aerial mode never exposes mismatched street tiles beyond the local pack');
 assert.match(source, /maxTileCacheZoomLevels: 8[\s\S]*maxTileCacheSize: 192/,
   'map retains a bounded neighboring tile cache while rotating');
 assert.match(source, /if \(onScreen\) modelInstances\.push/,

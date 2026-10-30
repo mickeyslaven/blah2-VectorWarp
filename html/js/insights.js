@@ -702,7 +702,10 @@
         tileSize: 512, attribution: 'Terrain &copy; Mapterhorn'
       }
     };
-    const layers = [{id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'}];
+    const layers = [
+      {id: 'vectorwarp-background', type: 'background', paint: {'background-color': '#15110f'}},
+      {id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'}
+    ];
     const validBounds = bounds => Array.isArray(bounds) && bounds.length === 4 &&
       bounds.map(Number).every(Number.isFinite);
     const advertisedTiers = Array.isArray(imageryManifest.zoom_tiers) ?
@@ -743,6 +746,8 @@
   function syncMapBackground(map) {
     if (!map?.getLayer || !map?.setLayoutProperty) return;
     const aerial = mapBackgroundMode === 'aerial';
+    if (map.getLayer('vectorwarp-basemap'))
+      map.setLayoutProperty('vectorwarp-basemap', 'visibility', aerial ? 'none' : 'visible');
     const imageryLayers = (map.getStyle?.()?.layers || []).map(layer => layer.id)
       .filter(id => id.startsWith('vectorwarp-local-imagery-'));
     for (const id of imageryLayers)
