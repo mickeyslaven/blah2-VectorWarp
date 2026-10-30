@@ -6,7 +6,7 @@
   <title>VectorWarp · Live radar</title>
   <link rel="icon" href="/favicon/vectorwarp-vw.svg" type="image/svg+xml">
   <script src="./lib/plotly-2.20.0.min.js"></script>
-  <link rel="stylesheet" href="./lib/blah2.css?v=radar-view-menu-1">
+  <link rel="stylesheet" href="./lib/blah2.css?v=radar-view-menu-2">
 </head>
 <body class="delay-doppler-page" data-capture-controls="true" data-radar-view="live">
   <main class="app-shell"><header class="app-header"></header>
@@ -14,7 +14,7 @@
     <section class="panel radar-panel" aria-label="Live radar visualization"><div class="radar-toolbar"><div class="radar-overlay-key" aria-label="Radar marker key"><span data-overlay-kind="detections" title="Raw detection"><i class="raw"></i>Detection</span><span data-overlay-kind="tracks" title="Updated track"><i class="track"></i>Track</span><span data-overlay-kind="tracks" title="Coasting track"><i class="coasting"></i>Coast</span><span><i class="adsb"></i>ADS-B</span><span><i class="remote-id"></i>Remote ID</span></div><label class="radar-overlay-control"><span>Radar markers</span><select id="radar-overlay-mode"><option value="all">Detections + tracks</option><option value="tracks">Tracks only</option><option value="detections">Detections only</option></select></label></div><div class="visualization" id="data"></div></section>
   </main>
   <script>var urlMap = '/api/map';</script>
-  <script src="./js/common.js?v=radar-view-menu-1"></script><script>renderAppHeader('radar');</script>
+  <script src="./js/common.js?v=radar-view-menu-2"></script><script>renderAppHeader('radar');</script>
   <script src="./js/plot_map.js?v=exact-frame-1"></script>
 </body>
 </html>
