@@ -701,17 +701,15 @@
           // override builds the wrong terrain mesh and exposes seams/clipped
           // wedges while pitching or rotating the camera.
           tileSize: 512, attribution: 'Terrain &copy; Mapterhorn'
-        },
-        'vectorwarp-hillshade': {
-          type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
-          tileSize: 512
         }
       },
       terrain: {source: 'vectorwarp-terrain', exaggeration: 1.12},
       layers: [
         {id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'},
         {id: 'vectorwarp-local-imagery', type: 'raster', source: 'vectorwarp-local-imagery'},
-        {id: 'vectorwarp-hillshade', type: 'hillshade', source: 'vectorwarp-hillshade',
+        // Terrain and hillshade share one decoded DEM tile cache. Separate
+        // identical sources doubled network, decode, GPU and eviction work.
+        {id: 'vectorwarp-hillshade', type: 'hillshade', source: 'vectorwarp-terrain',
           paint: {'hillshade-exaggeration': .34, 'hillshade-shadow-color': '#30251f',
             'hillshade-highlight-color': '#f4d4ad', 'hillshade-accent-color': '#7d614f'}}
       ]
@@ -743,7 +741,13 @@
       cooperativeGestures: false,
       renderWorldCopies: false,
       dragRotate: true,
-      touchPitch: true
+      touchPitch: true,
+      // Keep several neighboring zoom rings resident so turning the camera
+      // reuses tiles instead of unloading and fetching the same view again.
+      // The explicit cap remains suitable for mobile memory budgets.
+      maxTileCacheZoomLevels: 8,
+      maxTileCacheSize: 192,
+      fadeDuration: 0
     });
     graph._vectorwarpMap = map;
     graph.dataset.mapRenderer = 'maplibre-terrain';
@@ -1129,19 +1133,23 @@
         const altitudeLift = isAircraft ? altitudeLiftFor(item) : 0;
         marker.style.left = `${point.x}px`;
         marker.style.top = `${point.y - altitudeLift}px`;
+        const onScreen = point.x >= -80 && point.x <= mapWidth + 80 &&
+          point.y - altitudeLift >= -80 && point.y - altitudeLift <= mapHeight + 80;
+        marker.style.visibility = onScreen ? 'visible' : 'hidden';
         if (isAircraft && icon) {
           const aircraftId = aircraftInfo(item).hex || aircraftInfo(item).label;
-          aircraftLabelCandidates.push({marker, item, x: point.x, y: point.y - altitudeLift,
-            selected: selectedAircraftId === aircraftId,
+          if (onScreen) aircraftLabelCandidates.push({marker, item, x: point.x,
+            y: point.y - altitudeLift, selected: selectedAircraftId === aircraftId,
             radarTracked: Boolean(item.radar_track_id)});
           const rotation = aircraftScreenRotation(heading, map.getBearing?.());
           const yaw = rotation === null ? 0 : rotation;
           const pitch = Number.isFinite(flightPathAngle) ? flightPathAngle : 0;
           icon.dataset.flightPath = pitch > .5 ? 'climbing' : pitch < -.5 ? 'descending' : 'level';
           const modelSize = mapZoom < 6 ? 11 : mapZoom < 7.5 ? 13.5 : 16.5;
-          modelInstances.push({model: aircraftKind(item), x: point.x, y: point.y - altitudeLift,
-            yaw, pitch, size: modelSize, color: aircraftAltitudeColor(item)});
-        } else {
+          if (onScreen) modelInstances.push({model: aircraftKind(item), x: point.x,
+            y: point.y - altitudeLift, yaw, pitch, size: modelSize,
+            color: aircraftAltitudeColor(item)});
+        } else if (onScreen) {
           modelInstances.push({model: item.kind === 'transmitter' ? 'transmitter' : 'receiver',
             x: point.x, y: point.y - 23, yaw: -(finite(map.getBearing?.()) ?? 0), pitch: 0,
             size: item.kind === 'transmitter' ? 15 : 14, color: item.kind === 'transmitter' ? '#ff8754' : '#8fe7df'});

@@ -142,7 +142,11 @@
       context.setTransform(ratio,0,0,ratio,0,0); context.clearRect(0,0,width,height);
       for (const instance of instances) {
         const mesh = model(instance.model), yaw = (instance.yaw || 0) * Math.PI / 180;
-        const pitch = (instance.pitch || 0) * Math.PI / 180, view = 34 * Math.PI / 180;
+        const pitch = (instance.pitch || 0) * Math.PI / 180;
+        // Retain real mesh depth while biasing the presentation toward a
+        // readable planform. At the old 34° view, headings perpendicular to
+        // the screen made small phone-size aircraft collapse edge-on.
+        const view = (global.innerWidth <= 760 ? 20 : 25) * Math.PI / 180;
         const cosineYaw = Math.cos(yaw), sineYaw = Math.sin(yaw);
         const cosinePitch = Math.cos(pitch), sinePitch = Math.sin(pitch);
         const cosineView = Math.cos(view), sineView = Math.sin(view);

@@ -10,8 +10,12 @@ assert.match(source, /locationToScreenPoint\(LngLat\.convert\(\[longitude, latit
   'radar ellipses project on a flat reference plane instead of terrain');
 assert.doesNotMatch(source, /location-radar-track-slice|location-radar-track-ribs|sliceAltitudes/,
   'radar tracks use one clean outline instead of a clipping 3D cage');
-assert.equal((source.match(/tileSize: 512/g) || []).length, 2,
-  'terrain and hillshade use Mapterhorn native 512 px tile geometry');
+assert.equal((source.match(/type: 'raster-dem'/g) || []).length, 1,
+  'terrain and hillshade share one decoded DEM source');
+assert.match(source, /maxTileCacheZoomLevels: 8[\s\S]*maxTileCacheSize: 192/,
+  'map retains a bounded neighboring tile cache while rotating');
+assert.match(source, /if \(onScreen\) modelInstances\.push/,
+  '3D renderer culls offscreen aircraft during map interaction');
 
 const dom = new JSDOM(`<!doctype html><body data-insight-view="locations">
   <span id="view-state"></span><div id="view-root"></div></body>`,
