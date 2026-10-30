@@ -37,14 +37,17 @@ assert.equal(root.querySelectorAll('details.config-group').length, 1,
   'Only a group containing at least three settings remains collapsible');
 assert.equal(root.querySelectorAll('.config-group-inline').length, 2,
   'One- and two-setting groups remain visible without another click');
+assert.equal(root.children[0].querySelector('.config-group-heading'), null,
+  'A one-setting group does not repeat a heading above its field label');
+assert.ok(root.children[0].classList.contains('config-group-single'));
 assert.equal(root.querySelectorAll('.config-field').length, 6,
   'Changing disclosure depth preserves every setting');
 const panels = window.document.createElement('div');
 panels.innerHTML = '<section id="settings-panel-capture"><details class="kraken-geometry"></details></section>' +
-  '<section id="settings-panel-location"><div class="site-settings"></div></section>';
-assert.equal(window.moveArrayEditorToSites(panels, true), true);
-assert.ok(panels.querySelector('#settings-panel-location > .kraken-geometry'),
-  'Coherent-array geometry moves beside receiver and transmitter sites');
+  '<section id="settings-panel-array"></section>';
+assert.equal(window.moveArrayEditorToArrayTab(panels, true), true);
+assert.ok(panels.querySelector('#settings-panel-array > .kraken-geometry'),
+  'Coherent-array geometry moves into its own visual settings tab');
 assert.equal(panels.querySelector('#settings-panel-capture .kraken-geometry'), null,
   'Receiver is no longer burdened with the full array editor');
-console.log('Small settings groups render directly; larger groups stay collapsible.');
+console.log('Single controls drop redundant headings; array geometry has its own tab.');

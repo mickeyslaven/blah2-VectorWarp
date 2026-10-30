@@ -1614,11 +1614,14 @@ function finishSettingsGroup(details, summary, content, topLevel) {
   }
   const section = document.createElement('section');
   section.dataset.configGroup = details.dataset.configGroup;
-  section.className = `${details.className} config-group-inline`;
-  const heading = document.createElement('div');
-  heading.className = 'config-group-heading';
-  while (summary.firstChild) heading.appendChild(summary.firstChild);
-  section.append(heading, content);
+  section.className = `${details.className} config-group-inline${fieldCount === 1 ? ' config-group-single' : ''}`;
+  if (fieldCount > 1) {
+    const heading = document.createElement('div');
+    heading.className = 'config-group-heading';
+    while (summary.firstChild) heading.appendChild(summary.firstChild);
+    section.appendChild(heading);
+  }
+  section.appendChild(content);
   return section;
 }
 
@@ -1631,23 +1634,25 @@ function revealSmallSettingsGroups(root) {
     const summary = details.querySelector(':scope > summary');
     if (!summary) continue;
     const section = document.createElement('section');
-    section.className = `${details.className} config-group-inline`;
+    section.className = `${details.className} config-group-inline${fieldCount === 1 ? ' config-group-single' : ''}`;
     for (const [key, value] of Object.entries(details.dataset)) section.dataset[key] = value;
-    const heading = document.createElement('div');
-    heading.className = 'config-group-heading';
-    while (summary.firstChild) heading.appendChild(summary.firstChild);
-    section.appendChild(heading);
+    if (fieldCount > 1) {
+      const heading = document.createElement('div');
+      heading.className = 'config-group-heading';
+      while (summary.firstChild) heading.appendChild(summary.firstChild);
+      section.appendChild(heading);
+    }
     while (details.children.length > 1) section.appendChild(details.children[1]);
     details.replaceWith(section);
   }
 }
 
-function moveArrayEditorToSites(panels, enabled) {
+function moveArrayEditorToArrayTab(panels, enabled) {
   if (!enabled) return false;
   const geometry = panels.querySelector('#settings-panel-capture .kraken-geometry');
-  const locationPanel = panels.querySelector('#settings-panel-location');
-  if (!geometry || !locationPanel) return false;
-  locationPanel.prepend(geometry);
+  const arrayPanel = panels.querySelector('#settings-panel-array');
+  if (!geometry || !arrayPanel) return false;
+  arrayPanel.appendChild(geometry);
   return true;
 }
 
@@ -1660,7 +1665,7 @@ function group(key, value, path, topLevel = false, options = {}) {
   if (dotted === 'capture.device') {
     const profile = capabilities.deviceProfiles?.find(item => item.type === value.type);
     title = profile ? profile.label : value.type || title;
-    description = kraken ? 'Gain, channels, and array' : 'Connection and controls';
+    description = kraken ? 'Tuning and receiver controls' : 'Connection and controls';
   }
   if (kraken && dotted === 'capture.device.heimdall') {
     title = settingsMode === 'advanced' ? 'Radio connection & gain' : 'Gain';
@@ -2404,11 +2409,13 @@ function renderEditor() {
   const panels = document.createElement('div');
   panels.className = 'config-tab-panels';
   const receiverType = activeConfig.capture?.device?.type;
-  const arrayAndSites = receiverType === 'Kraken' ||
+  const hasArrayTab = receiverType === 'Kraken' ||
     receiverFeatureCapabilities(receiverType, capabilities.deviceProfiles || []).coherentArray === true;
-  const tabOrder = ['capture', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
+  const tabOrder = ['capture', 'array', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
   const entries = Object.entries(activeConfig).filter(([key]) =>
-    settingsMode === 'advanced' || key !== 'network').sort(([left], [right]) =>
+    (settingsMode === 'advanced' || key !== 'network') && (!hasArrayTab || key !== 'location'));
+  if (hasArrayTab) entries.push(['array', {}]);
+  entries.sort(([left], [right]) =>
     (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
     (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
   if (settingsMode === 'advanced') entries.push(['experimental', {}]);
@@ -2418,7 +2425,9 @@ function renderEditor() {
   let savedTab = null;
   try { savedTab = sessionStorage.getItem('blah2-settings-tab'); }
   catch (_) { /* Remembering a tab is optional. */ }
-  const requestedTab = new URLSearchParams(window.location.search).get('tab');
+  const requestedTabRaw = new URLSearchParams(window.location.search).get('tab');
+  const requestedTab = hasArrayTab && requestedTabRaw === 'location' ? 'capture' : requestedTabRaw;
+  if (hasArrayTab && savedTab === 'location') savedTab = 'capture';
   const initialTab = capabilities.setupRequired ? 'capture' :
     entries.some(([key]) => key === requestedTab) ? requestedTab :
       entries.some(([key]) => key === savedTab) ? savedTab : entries[0]?.[0];
@@ -2438,14 +2447,14 @@ function renderEditor() {
     }
   };
   activateSettingsTab = selectedKey => {
-    if (!tabs.querySelector(`[data-tab="${selectedKey}"]`)) return;
-    activate(selectedKey);
+    const resolvedKey = hasArrayTab && selectedKey === 'location' ? 'capture' : selectedKey;
+    if (!tabs.querySelector(`[data-tab="${resolvedKey}"]`)) return;
+    activate(resolvedKey);
   };
   entries.forEach(([key, value]) => {
     const [title, description] = key === 'experimental' ?
       ['Experimental', 'Shadow and evaluation features'] :
-      key === 'location' && arrayAndSites ?
-        ['Array & sites', 'Antenna layout and locations'] : metadata([key]);
+      key === 'array' ? ['Array', 'Layout, roles, and measurements'] : metadata([key]);
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.tab = key;
@@ -2474,7 +2483,8 @@ function renderEditor() {
     panel.setAttribute('aria-label', title);
     panel.className = 'config-tab-panel';
     const receiverType = activeConfig.capture?.device?.type;
-    if (key === 'location') panel.appendChild(renderSiteSettings());
+    if (key === 'array') { /* The visual editor is moved here after capture renders. */ }
+    else if (key === 'location') panel.appendChild(renderSiteSettings());
     else if (key === 'save') panel.appendChild(renderRecordingSettings());
     else if (key === 'experimental') panel.appendChild(renderExperimentalSettings());
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
@@ -2486,6 +2496,7 @@ function renderEditor() {
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
+      if (hasArrayTab) panel.appendChild(renderSiteSettings());
       if (settingsMode === 'advanced') panel.appendChild(renderReceiverFeatures());
       else {
         const note = document.createElement('p');
@@ -2513,7 +2524,7 @@ function renderEditor() {
     }
     panels.appendChild(panel);
   });
-  moveArrayEditorToSites(panels, arrayAndSites);
+  moveArrayEditorToArrayTab(panels, hasArrayTab);
   revealSmallSettingsGroups(panels);
   if (settingsMode === 'simple') {
     const heading = document.createElement('div');
