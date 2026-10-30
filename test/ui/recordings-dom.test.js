@@ -129,5 +129,13 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   assert.match(window.document.getElementById('recording-operation-status').textContent,
     /Network disconnected.*try again/,
     'A failed delete reports a recoverable in-page error');
+  deferredRequests = [];
+  refresh.click();
+  deferredRequests[0]({ok: true, json: async () => ({total: 0, offset: 0, limit: 10,
+    indexing: true, metadata_indexing: true, storage: {}, retention: {}, recordings: []})});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(window.document.getElementById('recording-list').textContent, /Loading recordings/);
+  assert.doesNotMatch(window.document.getElementById('recording-list').textContent, /No matching recordings/,
+    'An indexing library is loading, not empty');
   console.log('Recording browser mobile pagination, compact layout and deletion passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

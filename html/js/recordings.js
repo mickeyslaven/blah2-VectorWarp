@@ -42,8 +42,10 @@
   function pageControls(result) {
     const start = result.total ? result.offset + 1 : 0;
     const end = Math.min(result.total, result.offset + result.recordings.length);
+    const indexing = result.indexing || result.metadata_indexing;
     document.getElementById('recording-page-status').textContent =
-      result.metadata_indexing ? `Showing ${start}–${end} of ${result.total}. Indexing aircraft metadata for complete search…` :
+      indexing && !result.recordings.length ? 'Loading recordings… The local library is still being indexed.' :
+        result.metadata_indexing ? `Showing ${start}–${end} of ${result.total}. Indexing aircraft metadata for complete search…` :
         `Showing ${start}–${end} of ${result.total}`;
     document.getElementById('recording-page').textContent =
       `Page ${result.total ? Math.floor(result.offset / pageSize()) + 1 : 1} of ${Math.max(1, Math.ceil(result.total / pageSize()))}`;
@@ -83,7 +85,10 @@
         retention.maximumTotalGb > 0 ? `${retention.maximumTotalGb} GB` : null].filter(Boolean).join(' or ');
       const lowSpace = retention.lowSpacePolicy === 'delete_oldest' ? 'Delete oldest aircraft clips' : 'Stop recording';
       summary.innerHTML = `<div><strong>${result.indexing ? 'Indexing recordings…' : `${result.total} matching recording${result.total === 1 ? '' : 's'}`}</strong><span>${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
-      list.innerHTML = result.recordings?.length ? result.recordings.map(card).join('') :
+      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+      const indexing = result.indexing || result.metadata_indexing;
+      list.innerHTML = recordings.length ? recordings.map(card).join('') : indexing ?
+        '<div class="empty-state recording-loading-state"><strong>Loading recordings…</strong><p>Indexing the local recording library and aircraft labels.</p></div>' :
         '<div class="empty-state"><strong>No matching recordings</strong><p>Change the filters, record manually, import a recording, or enable automatic aircraft clips.</p></div>';
       state.rendered = true;
       pageControls(result);

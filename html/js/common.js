@@ -15,6 +15,9 @@ function renderAppHeader(active) {
   if (!target) return;
   const current = name => active === name ? ' aria-current="page"' : '';
   target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}"${current('radar')}>Live radar</a><a href="/display/locations" class="${active === 'map' ? 'active' : ''}"${current('map')}>Map</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}"${current('controller')}>Displays</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}"${current('recordings')}>Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}"${current('settings')}>Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status" role="status" aria-live="polite"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" role="status" aria-live="polite" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
+  restoreLiveStatusLabel(document.getElementById('live-status'), 'RADAR');
+  if (restoreLiveStatusLabel(document.getElementById('adsb-status'), 'ADS-B'))
+    document.getElementById('adsb-status').hidden = false;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
@@ -745,6 +748,7 @@ async function refreshLiveStatus() {
       status.radar === 'receiving' ? 'ONLINE' : status.radar === 'stale' ? 'STALE' : 'OFFLINE';
     updateLiveStatusLabel(radarLabel, 'RADAR', label, label === 'ONLINE');
     radarLabel.title = processor?.error || status.errors?.[0] || status.message || '';
+    rememberLiveStatus('RADAR', label, label === 'ONLINE', radarLabel.title);
     if (processorAlert) {
       processorAlert.textContent = processor?.error || '';
       processorAlert.hidden = !processor?.error;
@@ -762,18 +766,22 @@ async function refreshLiveStatus() {
           const label = feeds.online ? 'ONLINE' : feeds.aircraft?.available || feeds.delayDoppler?.available ? 'PARTIAL' : 'OFFLINE';
           updateLiveStatusLabel(adsbLabel, 'ADS-B', label, feeds.online);
           adsbLabel.title = [feeds.aircraft?.message, feeds.delayDoppler?.message].filter(Boolean).join(' · ');
+          rememberLiveStatus('ADS-B', label, feeds.online, adsbLabel.title);
         } catch (_) {
-          updateLiveStatusLabel(adsbLabel, 'ADS-B', 'OFFLINE', false);
+          if (!restoreLiveStatusLabel(adsbLabel, 'ADS-B'))
+            updateLiveStatusLabel(adsbLabel, 'ADS-B', 'STATUS DELAYED', false);
         }
       }
     }
   } catch (_) {
     renderReplayTransport(null);
     renderReceiverHealth(null);
-    updateLiveStatusLabel(radarLabel, 'RADAR', 'OFFLINE', false);
+    if (!restoreLiveStatusLabel(radarLabel, 'RADAR'))
+      updateLiveStatusLabel(radarLabel, 'RADAR', 'STATUS DELAYED', false);
     if (adsbLabel && window.blah2AdsbEnabled) {
       adsbLabel.hidden = false;
-      updateLiveStatusLabel(adsbLabel, 'ADS-B', 'OFFLINE', false);
+      if (!restoreLiveStatusLabel(adsbLabel, 'ADS-B'))
+        updateLiveStatusLabel(adsbLabel, 'ADS-B', 'STATUS DELAYED', false);
     }
     if (processorAlert) processorAlert.hidden = true;
   } finally {
@@ -790,6 +798,28 @@ function updateLiveStatusLabel(target, prefix, label, healthy) {
   if (target._vectorwarpStatusSignature === signature) return;
   target._vectorwarpStatusSignature = signature;
   target.innerHTML = `<span class="live-dot${healthy ? '' : ' offline'}"></span>${prefix} ${label}`;
+}
+
+const LIVE_STATUS_CACHE_KEY = 'vectorwarp:service-status:v1';
+const LIVE_STATUS_CACHE_AGE_MS = 30000;
+function readLiveStatusCache() {
+  try { return JSON.parse(window.sessionStorage?.getItem(LIVE_STATUS_CACHE_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+function rememberLiveStatus(prefix, label, healthy, title = '') {
+  try {
+    const cache = readLiveStatusCache();
+    cache[prefix] = {label, healthy: healthy === true, title, at: Date.now()};
+    window.sessionStorage?.setItem(LIVE_STATUS_CACHE_KEY, JSON.stringify(cache));
+  } catch (_) { /* Status continuity must not depend on browser storage. */ }
+}
+function restoreLiveStatusLabel(target, prefix, now = Date.now()) {
+  const cached = readLiveStatusCache()[prefix];
+  if (!target || !cached || !Number.isFinite(cached.at) ||
+      now - cached.at < 0 || now - cached.at > LIVE_STATUS_CACHE_AGE_MS) return false;
+  updateLiveStatusLabel(target, prefix, cached.label, cached.healthy);
+  target.title = cached.title || 'Last confirmed status; checking for an update.';
+  return true;
 }
 
 // Only the API's loaded configuration controls display cadence. An editor draft

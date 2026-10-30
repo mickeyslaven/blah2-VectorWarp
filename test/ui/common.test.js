@@ -6,22 +6,25 @@ const vm = require('vm');
 function page(origin, apiOrigin = origin) {
   const calls = [];
   const storage = new Map();
+  const session = new Map();
   const labels = {'live-status': {innerHTML: ''}, 'adsb-status': {innerHTML: '', hidden: true},
     'processor-alert': {textContent: '', hidden: true},
     'receiver-device-alert': {textContent: '', hidden: true}};
   const state = {radar: 'receiving', adsbEnabled: false, errors: [], restart: {state: 'idle'},
     adsb: {online: true}, receivers: {setupRequired: false, receivers: []},
-    failWrite: false, stallBody: false};
+    failWrite: false, failStatus: false, stallBody: false};
   const context = vm.createContext({
     URL, URLSearchParams, AbortController,
     document: {hidden: false, getElementById: id => labels[id] || null, querySelectorAll: () => []},
     window: {location: new URL(origin), innerWidth: 1280, setTimeout, clearTimeout,
-      localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)}},
+      localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)},
+      sessionStorage: {getItem: key => session.get(key), setItem: (key, value) => session.set(key, value)}},
     fetch: async (url, options = {}) => {
       const target = new URL(url, origin);
       calls.push({url: target.href, method: options.method || 'GET', headers: options.headers || {}});
       if (target.origin !== apiOrigin) return {ok: true, status: 200, text: async () => '<html>Static web server</html>'};
       if (options.method === 'PUT' && state.failWrite) throw new Error('Response lost');
+      if (target.pathname === '/api/system/status' && state.failStatus) throw new Error('Status delayed');
       const status = {serverId: 'test-api', ...state};
       const data = target.pathname === '/api/system/status' ? status :
         target.pathname === '/api/adsb/status' ? state.adsb :
@@ -79,6 +82,13 @@ function page(origin, apiOrigin = origin) {
     await test.context.refreshLiveStatus();
     assert.ok(test.labels['live-status'].innerHTML.endsWith('RADAR ' + expected));
   }
+  test.state.radar = 'receiving';
+  await test.context.refreshLiveStatus();
+  test.state.failStatus = true;
+  await test.context.refreshLiveStatus();
+  assert.ok(test.labels['live-status'].innerHTML.endsWith('RADAR ONLINE'),
+    'A delayed status request preserves the last confirmed state instead of flashing offline');
+  test.state.failStatus = false;
   test.state.errors = ['Map port unavailable'];
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['live-status'].innerHTML.endsWith('RADAR ERROR'));
