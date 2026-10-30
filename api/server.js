@@ -1034,7 +1034,7 @@ app.get('/api/system/status', async (req, res) => {
       associationLagCpis: Number.isSafeInteger(adsb?.association_lag_cpis) ? adsb.association_lag_cpis : null,
       associationLagMs: Number.isSafeInteger(adsb?.association_lag_ms) ? adsb.association_lag_ms : null
     },
-    remoteId: {
+    ...(config.truth?.remote_id?.enabled === true ? {remoteId: {
       enabled: config.truth?.remote_id?.enabled === true,
       online: remoteId?.online === true,
       drones: Number.isSafeInteger(remoteId?.drones) ? remoteId.drones : 0,
@@ -1043,7 +1043,7 @@ app.get('/api/system/status', async (req, res) => {
       wifi: remoteId?.transports?.wifi === true,
       ageMs: Number.isFinite(remoteId?.age_ms) ? remoteId.age_ms : null,
       error: remoteId?.error || null
-    },
+    }} : {}),
     processing: {
       acceleration: backend.acceleration?.active || null,
       clutterAcceleration: backend.clutterAcceleration?.active || null,

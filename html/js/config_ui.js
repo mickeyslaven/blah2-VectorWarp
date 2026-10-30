@@ -190,8 +190,8 @@ const CONFIG_META = {
   'truth.adsb.association_lag_cpis': ['Frame alignment hold', 'Hold aircraft truth this many frames for exact CPI alignment.'],
   'truth.adsb.aircraft_photo_provider': ['Aircraft photos', 'Optional aircraft photos cached in the background and shown in Map details.'],
   'truth.adsb.provisional_event_time_uncertainty_s': ['Provisional UTC uncertainty', 'Seconds of SDR event-time uncertainty included in validation gates.'],
-  'truth.remote_id': ['Drone Remote ID', 'Nearby drone identity and position broadcasts received by this computer.'],
-  'truth.remote_id.enabled': ['Show Drone Remote ID', 'Receive and display nearby Remote ID drones beside ADS-B aircraft.'],
+  'truth.remote_id': ['Drone Remote ID', 'Experimental cooperative-drone receiver.'],
+  'truth.remote_id.enabled': ['Enable Drone Remote ID', 'Show nearby cooperative drones on the map and live radar.'],
   'truth.remote_id.source': ['Remote ID receiver', 'Built-in Bluetooth or dedicated Wi-Fi monitor adapter.'],
   'truth.remote_id.poll_interval': ['Remote ID update interval', 'Seconds between cached receiver snapshots.'],
   'truth.remote_id.source_timeout': ['Remote ID timeout', 'Maximum wait for the local receiver service.'],
@@ -459,6 +459,7 @@ const SIMPLE_SETTING_PATHS = new Set([
   'truth.adsb.enabled', 'truth.adsb.tar1090'
 ]);
 const EXPERIMENTAL_SETTING_PREFIXES = [
+  'truth.remote_id',
   'process.surveillance_fusion.detection_manifold_automation',
   'process.tracker.track_guided_shadow',
   'process.tracker.publication',
@@ -1798,6 +1799,7 @@ function renderExperimentalSettings() {
   const add = (key, value, path) => {
     if (value !== undefined) section.appendChild(group(key, value, path, false));
   };
+  add('remote_id', activeConfig.truth?.remote_id, ['truth']);
   if (coherentArray) add('detection_manifold_automation',
     process.surveillance_fusion?.detection_manifold_automation,
     ['process', 'surveillance_fusion']);
@@ -2494,7 +2496,7 @@ function renderEditor() {
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
       panel.appendChild(group(key, value, [], true, {skipPath: path =>
         (key === 'process' && receiverSpecificProcessPath(path)) ||
-        (key === 'process' && experimentalSettingPath(path)) ||
+        experimentalSettingPath(path) ||
         (key === 'capture' && path.startsWith('capture.aircraft_clips')) ||
         (key === 'capture' && path.startsWith('capture.replay')) ||
         simpleSettingHidden(path)}));

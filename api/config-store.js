@@ -271,7 +271,7 @@ function migrateKnownDefaults(filename) {
   }
   if (!parsed.truth?.remote_id) {
     parsed.truth ||= {};
-    parsed.truth.remote_id = {enabled: true, source: '127.0.0.1:8754',
+    parsed.truth.remote_id = {enabled: false, source: '127.0.0.1:8754',
       poll_interval: .5, source_timeout: 1.2, smoothing_window: 4,
       max_position_age: 10, wifi_enabled: false};
     changed = true;
