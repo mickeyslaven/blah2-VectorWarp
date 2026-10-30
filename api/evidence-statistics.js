@@ -165,16 +165,39 @@ function associationGates(span, prediction, timestamp, kind = 'detection',
     eventTimeUncertaintyS: boundedTimeUncertainty};
 }
 
+function siteCoordinates(site = {}) {
+  return {latitude: site.latitude ?? null, longitude: site.longitude ?? null,
+    altitude: site.altitude ?? null};
+}
+
+function scientificDevice(device = {}) {
+  const heimdall = device.heimdall && typeof device.heimdall === 'object' ?
+    Object.fromEntries(Object.entries(device.heimdall).filter(([key]) =>
+      !['host', 'port', 'control_port'].includes(key))) : device.heimdall;
+  const geometry = device.array_geometry && typeof device.array_geometry === 'object' ?
+    Object.fromEntries(Object.entries(device.array_geometry).filter(([key]) =>
+      key !== 'operator_notes')) : device.array_geometry;
+  return {...device, heimdall, array_geometry: geometry};
+}
+
 function siteKey(config) {
   const relevant = {frequency: config.capture?.fc, sampleRate: config.capture?.fs,
-    receiver: config.location?.rx, transmitter: config.location?.tx,
+    receiver: siteCoordinates(config.location?.rx),
+    transmitter: siteCoordinates(config.location?.tx),
+    device: scientificDevice(config.capture?.device),
+    data: config.process?.data,
     ambiguity: config.process?.ambiguity, clutter: config.process?.clutter,
     detection: config.process?.detection, tracker: config.process?.tracker,
     reference: config.process?.reference_synthesis,
     surveillanceFusion: config.process?.surveillance_fusion,
-    channels: config.capture?.device?.surveillance_channels,
-    mapping: config.process?.bearing?.channel_mapping,
-    geometry: config.capture?.device?.array_geometry};
+    bearing: config.process?.bearing,
+    adsbEvaluation: {
+      maxPositionAge: config.truth?.adsb?.max_position_age,
+      associationLagCpis: config.truth?.adsb?.association_lag_cpis,
+      delayTolerance: config.truth?.adsb?.delay_tolerance,
+      dopplerTolerance: config.truth?.adsb?.doppler_tolerance,
+      provisionalEventTimeUncertaintyS:
+        config.truth?.adsb?.provisional_event_time_uncertainty_s}};
   return crypto.createHash('sha256').update(JSON.stringify(relevant)).digest('hex');
 }
 
@@ -1457,9 +1480,10 @@ class EvidenceStatistics {
           bearing_deg_true: pass.lastTruth.bearing_deg_true,
           ground_range_km: pass.lastTruth.ground_range_km,
           elevation_deg: pass.lastTruth.elevation_deg} : null}));
-    const finalized = this.state.passes.filter(pass => pass.siteKey === this.key &&
+    const finalizedPasses = this.state.passes.filter(pass => pass.siteKey === this.key &&
       pass.startedAt >= contractStartedAt)
-      .slice(-50).reverse().map(pass => ({pass_id: pass.id, hex: pass.hex,
+      .sort((left, right) => right.lastAt - left.lastAt || right.startedAt - left.startedAt);
+    const passSummary = pass => ({pass_id: pass.id, hex: pass.hex,
         flight: pass.flight, started_at: pass.startedAt, finalized_at: pass.lastAt,
         outcome: eligibilityOutcome(pass), eligible_cpis: pass.eligibleFrames,
         detected_cpis: pass.detectedFrames, tracked_cpis: pass.trackedFrames,
@@ -1469,7 +1493,10 @@ class EvidenceStatistics {
         transmitter_range_km: {minimum: pass.minTransmitterRangeKm,
           maximum: pass.maxTransmitterRangeKm},
         bistatic_range_product_km2: {minimum: pass.minBistaticRangeProductKm2,
-          maximum: pass.maxBistaticRangeProductKm2}}));
+          maximum: pass.maxBistaticRangeProductKm2}});
+    const finalized = finalizedPasses.slice(0, 50).map(passSummary);
+    const scoredFinalized = finalizedPasses.filter(pass => pass.eligibleFrames >= 3)
+      .slice(0, 50).map(passSummary);
     const audits = [...this.state.passes.filter(pass => pass.siteKey === this.key &&
       pass.startedAt >= contractStartedAt).slice(-50),
       ...Object.values(this.state.active).filter(pass => pass.siteKey === this.key &&
@@ -1538,7 +1565,8 @@ class EvidenceStatistics {
           ...(this.state.associationDiagnostics || {detection: {}, tracker: {}})},
         recent_cpi_joins: [...joinFrames.values()].sort((left, right) =>
           left.timestamp_ms - right.timestamp_ms).slice(-20)},
-      active_passes: active, recent_finalized_passes: finalized};
+      active_passes: active, recent_finalized_passes: finalized,
+      recent_scored_passes: scoredFinalized};
   }
 
   recordingSubjects() {

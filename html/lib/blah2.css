@@ -126,7 +126,9 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .statistics-matrix > strong { justify-content:flex-start; padding-right:5px; }
 .statistics-matrix-cell { display:grid; min-height:58px; place-content:center; gap:1px; padding:5px; border:1px solid rgb(77 212 176 / calc(.16 + var(--matrix-strength) * .5)); border-radius:6px; background:rgb(77 212 176 / calc(.05 + var(--matrix-strength) * .3)); text-align:center; }
 .statistics-matrix-cell i { color:var(--ink); font-size:9px; font-style:normal; }.statistics-matrix-cell small { color:var(--muted); font-size:8px; }.statistics-matrix-cell.empty { border-color:rgb(71 54 46 / .45); background:rgb(18 14 13 / .35); }
-.statistics-visual-note { margin:8px 0 0; color:var(--muted); font-size:9px; line-height:1.4; }
+.statistics-compact-empty { display:grid; min-height:190px; place-items:center; color:var(--muted); font-size:12px; text-align:center; }
+.statistics-evidence-list .data-table-wrap { max-height:420px; }
+.statistics-evidence-list .data-table th { position:sticky; top:0; z-index:1; background:var(--surface); }
 .statistics-table-details { margin-top:11px; }.statistics-table-details > summary { color:var(--muted); font-size:10px; font-weight:700; cursor:pointer; }.statistics-table-details > .data-table-wrap { margin-top:8px; }
 .statistics-details { overflow:hidden; border:1px solid var(--line); border-radius:10px; background:rgb(28 23 21 / .55); }
 .statistics-details > summary { padding:13px 16px; color:var(--muted); font-size:11px; font-weight:750; letter-spacing:.04em; cursor:pointer; }

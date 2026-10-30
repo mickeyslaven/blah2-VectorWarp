@@ -21,7 +21,7 @@
   let refreshing = false;
   let nextRefreshAt = 0;
   let consecutiveRefreshFailures = 0;
-  const minimumRefreshIntervalMs = 2000;
+  const minimumRefreshIntervalMs = view === 'statistics' ? 5000 : 2000;
 
   function finite(value) {
     if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
@@ -1601,7 +1601,7 @@
       apiJson('/api/live-scorecard'), apiJson('/api/live-scorecard/provisional')]);
     const authoritativeFrames = authoritative?.data_quality?.exact_timed_cpi_frames || 0;
     const statistics = authoritativeFrames > 0 ? authoritative : provisional;
-    const decisionGrade = statistics?.decision_grade !== false;
+    const timingLabel = authoritativeFrames > 0 ? 'Exact timing' : 'Provisional timing';
     const windows = {...(statistics?.windows || {})};
     if (statistics?.current_setup_lifetime)
       windows.lifetime = statistics.current_setup_lifetime;
@@ -1613,22 +1613,34 @@
     const scoreRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.eligible_passes)}</td><td>${percent(item.detection_yield, 1)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
     const outcomeRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_config_passes)}</td><td>${integer(item.eligible_no_radar_return)}</td><td>${integer(item.detected_not_tracked)}</td><td>${integer(item.tracked_passes)}</td></tr>`);
     const exclusionRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_span?.below_detection_floor)}</td><td>${integer(item.out_of_span?.above_delay_ceiling)}</td><td>${integer(item.out_of_span?.outside_doppler_span)}</td><td>${integer(item.out_of_span?.stale_truth)}</td><td>${integer(item.out_of_span?.missing_exact_timing)}</td><td>${integer(item.out_of_span?.beyond_clutter_cancellation)}</td></tr>`);
-    const activeRows = array(statistics.active_passes).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.status))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${number(item.last_truth?.delay_km, 2)}</td><td>${number(item.last_truth?.doppler_hz, 1)}</td></tr>`);
-    const finalizedRows = array(statistics.recent_finalized_passes).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.outcome))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${timeLabel(item.finalized_at)}</td></tr>`);
+    const activePasses = array(statistics.active_passes);
+    const activeEligible = activePasses.filter(item => (finite(item.eligible_cpis) ?? 0) >= 3)
+      .sort((left, right) => (finite(right.tracked_cpis) ?? 0) - (finite(left.tracked_cpis) ?? 0) ||
+        (finite(right.detected_cpis) ?? 0) - (finite(left.detected_cpis) ?? 0) ||
+        (finite(right.eligible_cpis) ?? 0) - (finite(left.eligible_cpis) ?? 0));
+    const activeRows = activeEligible.map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.status))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${number(item.last_truth?.delay_km, 2)}</td><td>${number(item.last_truth?.doppler_hz, 1)}</td></tr>`);
+    const scoredFinalized = (array(statistics.recent_scored_passes).length ?
+      array(statistics.recent_scored_passes) : array(statistics.recent_finalized_passes)
+        .filter(item => (finite(item.eligible_cpis) ?? 0) >= 3))
+      .sort((left, right) => (finite(right.finalized_at) ?? 0) -
+        (finite(left.finalized_at) ?? 0));
+    const finalizedRows = scoredFinalized.slice(0, 25).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.outcome))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${timeLabel(item.finalized_at)}</td></tr>`);
     const quality = statistics.data_quality || {};
     const mix = statistics.mix_adjusted_previous_hour_comparison || {};
     const yieldFraction = value => Math.max(0, Math.min(1, finite(value) ?? 0));
     const yieldChart = (rows, label) => rows.length ? `<div class="statistics-yield-chart" role="img" aria-label="${escapeHtml(label)}">
       ${rows.map(([name, item = {}]) => `<div class="statistics-yield-row"><span>${escapeHtml(name)}</span><div class="statistics-yield-bars" title="Detection ${percent(item.detection_yield, 1)}; tracking ${percent(item.tracking_yield, 1)}"><i class="detected" style="width:${(yieldFraction(item.detection_yield) * 100).toFixed(1)}%"></i><i class="tracked" style="width:${(yieldFraction(item.tracking_yield) * 100).toFixed(1)}%"></i></div><b>${percent(item.detection_yield, 0)} / ${percent(item.tracking_yield, 0)}</b><small>n=${integer(item.eligible_passes)}</small></div>`).join('')}
       <div class="statistics-yield-legend"><span class="detected">Detected</span><span class="tracked">Tracked</span><small>Percentages · eligible sample count</small></div></div>` : '';
-    const bandEntries = bands => Object.entries(bands || {}).map(([name, item]) => [name, item]);
+    const bandOrder = value => finite(String(value).match(/-?\d+(?:\.\d+)?/)?.[0]) ?? Infinity;
+    const bandEntries = bands => Object.entries(bands || {}).map(([name, item]) => [name, item])
+      .sort((left, right) => (finite(left[1]?.minimum) ?? bandOrder(left[0])) -
+        (finite(right[1]?.minimum) ?? bandOrder(right[0])));
     const bandChart = (groups, label) => {
       const rows = groups.flatMap(([prefix, bands]) => bandEntries(bands).map(([name, item]) =>
         [`${prefix} ${name}`, item]));
       return yieldChart(rows, label);
     };
     const jointEntries = Object.entries(hour.azimuth_elevation_strata?.bands || {});
-    const bandOrder = value => finite(String(value).match(/-?\d+(?:\.\d+)?/)?.[0]) ?? Infinity;
     const azimuthBands = [...new Set(jointEntries.map(([name, item]) =>
       item.azimuth_band || name.split('|')[0]))].sort((a, b) => bandOrder(a) - bandOrder(b));
     const elevationBands = [...new Set(jointEntries.map(([name, item]) =>
@@ -1639,10 +1651,15 @@
       const item = jointByBand.get(`${azimuth}|${elevation}`);
       const tracking = yieldFraction(item?.tracking_yield);
       return `<span class="statistics-matrix-cell${item ? '' : ' empty'}" style="--matrix-strength:${tracking.toFixed(3)}" title="${escapeHtml(azimuth)}° azimuth, ${escapeHtml(elevation)}° elevation: detection ${percent(item?.detection_yield, 1)}, tracking ${percent(item?.tracking_yield, 1)}, n=${integer(item?.eligible_passes)}"><i>D ${percent(item?.detection_yield, 0)}</i><i>T ${percent(item?.tracking_yield, 0)}</i><small>${item ? `n=${integer(item.eligible_passes)}` : '—'}</small></span>`;
-    }).join('')}`).join('')}</div><p class="statistics-visual-note">Color intensity follows tracking yield. Every cell also shows detection, tracking, and its eligible-pass denominator.</p></div>` : '';
+    }).join('')}`).join('')}</div></div>` : '';
     const mixRows = [['Current hour', mix.current], ['Previous hour', mix.baseline]]
       .map(([label, item = {}]) => `<tr><td>${label}</td><td>${percent(item.detection_yield, 1)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
-    const stratumRows = (definition, bands) => Object.entries(bands || {}).map(([label, item]) =>
+    const mixReady = array(mix.common_strata).length > 0 &&
+      finite(mix.current?.detection_yield) !== null && finite(mix.baseline?.detection_yield) !== null;
+    const mixUnavailable = (finite(mix.baseline_passes) ?? 0) === 0 ?
+      'Waiting for eligible passes from the previous hour.' :
+      'Waiting for matching range bands in both hours.';
+    const stratumRows = (definition, bands) => bandEntries(bands).map(([label, item]) =>
       `<tr><td>${escapeHtml(definition)}</td><td>${escapeHtml(label)}</td><td>${integer(item.eligible_passes)}</td><td>${integer(item.detected_passes)}</td><td>${integer(item.tracked_passes)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
     const rangeRows = [
       ...stratumRows('Excess delay km', hour.delay_strata?.bands),
@@ -1650,36 +1667,41 @@
     const angleRows = [
       ...stratumRows('Elevation deg', hour.elevation_strata?.bands),
       ...stratumRows('True azimuth deg', hour.azimuth_strata?.bands)];
-    const jointRows = Object.entries(hour.azimuth_elevation_strata?.bands || {}).map(([label, item]) =>
+    const jointRows = Object.entries(hour.azimuth_elevation_strata?.bands || {})
+      .sort((left, right) => bandOrder(left[1]?.azimuth_band || left[0].split('|')[0]) -
+        bandOrder(right[1]?.azimuth_band || right[0].split('|')[0]) ||
+        bandOrder(left[1]?.elevation_band || left[0].split('|')[1]) -
+        bandOrder(right[1]?.elevation_band || right[0].split('|')[1]))
+      .map(([label, item]) =>
       `<tr><td>${escapeHtml(item.azimuth_band || label.split('|')[0])}</td><td>${escapeHtml(item.elevation_band || label.split('|')[1])}</td><td>${integer(item.eligible_passes)}</td><td>${percent(item.detection_yield, 1)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
     const adsbWarning = statistics.adsb_quality?.warning;
     renderHtml(root, `<div class="statistics-page">${adsbWarning ? `<div class="evaluation-note"><strong>ADS-B data note:</strong> ${escapeHtml(adsbWarning)}</div>` : ''}<div class="insight-stats insight-stats-four">
       ${card(integer(lifetime.eligible_passes), 'Current setup passes')}
       ${card(percent(lifetime.detection_yield, 1), 'Setup detection yield')}
       ${card(percent(lifetime.tracking_yield, 1), 'Setup tracking yield')}
-      ${card(integer(statistics.active_passes?.length), 'Aircraft live now')}
+      ${card(integer(activeEligible.length), 'Eligible aircraft now')}
     </div>
     <section class="statistics-section"><header><h2>Performance</h2></header><div class="statistics-grid">
-      <section class="info-card statistics-score"><h2>Detection and tracking yield</h2>${yieldChart(periods, 'Detection and tracking yield by time window')}${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}<p class="view-note">Each credited pass needs at least three unambiguous delay–Doppler matches. These raw yields describe observed traffic; use the controlled comparison for hour-to-hour changes.</p></section>
-      <section class="info-card"><h2>Traffic-mix controlled comparison</h2>${table(['Period', 'Detection yield', 'Tracking yield'], mixRows)}<dl><div><dt>Comparable traffic coverage</dt><dd>${percent(mix.common_support_coverage, 1)}</dd></div><div><dt>Shared geometry groups</dt><dd>${integer(mix.common_strata?.length)}</dd></div><div><dt>Interpretation</dt><dd>${mix.decision_grade ? 'Suitable for comparison' : 'Descriptive only'}</dd></div></dl><p class="view-note">Both hours are standardized to the same excess-delay and receiver-range mix, so a change in aircraft distance alone does not look like a detector change.</p></section>
+      <section class="info-card statistics-score"><h2>Detection and tracking yield</h2>${yieldChart(periods, 'Detection and tracking yield by time window')}<details class="statistics-table-details"><summary>Exact values</summary>${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}</details></section>
+      <section class="info-card"><h2>Previous-hour comparison</h2>${mixReady ? `${table(['Period', 'Detection yield', 'Tracking yield'], mixRows)}<dl><div><dt>Comparable traffic</dt><dd>${percent(mix.common_support_coverage, 1)}</dd></div><div><dt>Shared range groups</dt><dd>${integer(mix.common_strata?.length)}</dd></div><div><dt>Result</dt><dd>${mix.decision_grade ? 'Comparable' : 'Limited coverage'}</dd></div></dl>` : `<div class="statistics-compact-empty">${escapeHtml(mixUnavailable)}</div>`}</section>
     </div></section>
     <section class="statistics-section"><header><h2>Current-hour coverage</h2></header><div class="statistics-grid">
-      <section class="info-card"><h2>Angle bands</h2>${angleRows.length ? `${bandChart([['Elevation', hour.elevation_strata?.bands], ['Azimuth', hour.azimuth_strata?.bands]], 'Detection and tracking yield by elevation and azimuth')}${table(['Angle', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], angleRows)}` : empty('Angle coverage collecting', 'Finalized eligible passes will populate azimuth and elevation bands.')}</section>
+      <section class="info-card"><h2>Angle bands</h2>${angleRows.length ? `${bandChart([['Elevation', hour.elevation_strata?.bands], ['Azimuth', hour.azimuth_strata?.bands]], 'Detection and tracking yield by elevation and azimuth')}<details class="statistics-table-details"><summary>Exact values</summary>${table(['Angle', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], angleRows)}</details>` : empty('Angle coverage collecting', 'No eligible passes yet.')}</section>
       <section class="info-card"><h2>Azimuth × elevation</h2>${jointRows.length ? `${angleMatrix}<details class="statistics-table-details"><summary>Exact matrix values</summary>${table(['Azimuth', 'Elevation', 'Eligible', 'Detection yield', 'Tracking yield'], jointRows)}</details>` : empty('Joint angle coverage collecting', 'Finalized eligible passes will populate the array coverage matrix.')}</section>
-      <section class="info-card statistics-wide"><h2>Range bands</h2>${rangeRows.length ? `${bandChart([['Delay', hour.delay_strata?.bands], ['Slant', hour.receiver_slant_range_strata?.bands]], 'Detection and tracking yield by range')}${table(['Range measure', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], rangeRows)}` : empty('Range coverage collecting', 'Finalized eligible passes will populate delay and receiver-range bands.')}</section>
+      <section class="info-card statistics-wide"><h2>Range bands</h2>${rangeRows.length ? `${bandChart([['Delay', hour.delay_strata?.bands], ['Slant', hour.receiver_slant_range_strata?.bands]], 'Detection and tracking yield by range')}<details class="statistics-table-details"><summary>Exact values</summary>${table(['Range measure', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], rangeRows)}</details>` : empty('Range coverage collecting', 'No eligible passes yet.')}</section>
     </div></section>
     <section class="statistics-section"><header><h2>Aircraft evidence</h2></header><div class="statistics-grid">
-      <section class="info-card"><h2>Aircraft live now</h2>${activeRows.length ? table(['Aircraft', 'Status', 'Eligible', 'Detected', 'Tracked', 'Delay km', 'Doppler Hz'], activeRows) : empty('No eligible aircraft live', 'Waiting for an aircraft inside the searchable region.')}</section>
-      <section class="info-card"><h2>Recent finalized passes</h2>${finalizedRows.length ? table(['Aircraft', 'Outcome', 'Eligible', 'Detected', 'Tracked', 'Finalized'], finalizedRows) : empty('No finalized passes yet', 'A pass finalizes after the aircraft leaves the eligible region.')}</section>
+      <section class="info-card"><h2>Eligible aircraft now</h2>${activeRows.length ? `<div class="statistics-evidence-list">${table(['Aircraft', 'Status', 'Eligible', 'Detected', 'Tracked', 'Delay km', 'Doppler Hz'], activeRows)}</div>` : empty('No eligible aircraft now', '')}</section>
+      <section class="info-card"><h2>Recent scored passes</h2>${finalizedRows.length ? `<div class="statistics-evidence-list">${table(['Aircraft', 'Outcome', 'Eligible', 'Detected', 'Tracked', 'Finalized'], finalizedRows)}</div>` : empty('No scored passes yet', '')}</section>
     </div></section>
     <details class="statistics-details"><summary>Eligibility and scoring details</summary><div class="statistics-grid">
-      <section class="info-card"><h2>Pass outcomes</h2>${table(['Window', 'Out of config', 'No radar return', 'Detected, not tracked', 'Tracked'], outcomeRows)}<p class="view-note">Out-of-config passes never enter the performance denominator. No radar return means neither a strict detection nor a stable track was credited.</p></section>
-      <section class="info-card"><h2>Excluded opportunities</h2>${table(['Window', 'Below range', 'Above range', 'Outside Doppler', 'Stale truth', 'Unusable alignment', 'Beyond clutter'], exclusionRows)}<p class="view-note">Invalid or unusable truth is excluded, never counted as a miss. Beyond-clutter opportunities remain searchable but are reported separately.</p></section>
+      <section class="info-card"><h2>Pass outcomes</h2>${table(['Window', 'Out of config', 'No radar return', 'Detected, not tracked', 'Tracked'], outcomeRows)}</section>
+      <section class="info-card"><h2>Excluded opportunities</h2>${table(['Window', 'Below range', 'Above range', 'Outside Doppler', 'Stale truth', 'Unusable alignment', 'Beyond clutter'], exclusionRows)}</section>
       <section class="info-card"><h2>Search and match limits</h2><dl><div><dt>Physical delay span</dt><dd>${number(limits.delayMinKm, 3)}–${number(limits.delayMaxKm, 3)} km</dd></div><div><dt>Doppler span</dt><dd>${number(limits.dopplerMinHz, 0)} to ${number(limits.dopplerMaxHz, 0)} Hz</dd></div><div><dt>Clutter cancellation</dt><dd>Through ${number(limits.clutterMaxKm, 3)} km</dd></div><div><dt>Strict match gate</dt><dd>±${number(limits.matchDelayKm, 2)} km / ±${number(limits.matchDopplerHz, 1)} Hz</dd></div></dl></section>
-      <section class="info-card"><h2>Scoring method</h2><dl><div><dt>Scorecard use</dt><dd>${decisionGrade ? 'Decision-capable' : 'Operational and descriptive'}</dd></div><div><dt>Shared frame hold</dt><dd>${integer(statistics.association_lag_cpis)} CPIs · ${integer(statistics.association_lag_ms)} ms</dd></div><div><dt>Contract</dt><dd>${escapeHtml(String(statistics.evaluation_contract_hash || '').slice(0, 12))}</dd></div><div><dt>Nuisance accounting</dt><dd>${escapeHtml(humanize(quality.nuisance_accounting))}</dd></div></dl><p class="view-note">Radar detections, tracks and aircraft truth are joined at one CPI timestamp. Live states are provisional until a pass finalizes. Tracking credit requires at least three ACTIVE, measurement-supported associations. Held, stale, or contract-disagreeing truth is excluded instead of scored as a miss.</p></section>
+      <section class="info-card"><h2>Scoring method</h2><dl><div><dt>Timing</dt><dd>${escapeHtml(timingLabel)}</dd></div><div><dt>Frame hold</dt><dd>${integer(statistics.association_lag_cpis)} CPIs · ${integer(statistics.association_lag_ms)} ms</dd></div><div><dt>Contract</dt><dd>${escapeHtml(String(statistics.evaluation_contract_hash || '').slice(0, 12))}</dd></div><div><dt>Nuisance accounting</dt><dd>${escapeHtml(humanize(quality.nuisance_accounting))}</dd></div></dl></section>
     </div></details></div>`);
     setState(statistics.error ? `Collection warning · ${statistics.error}` :
-      statistics.updated_at ? `Updated ${timeLabel(statistics.updated_at)}` : 'Waiting for eligible ADS-B evidence',
+      statistics.updated_at ? `Updated ${timeLabel(statistics.updated_at)} · ${timingLabel}` : 'Waiting for eligible ADS-B evidence',
     statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
   }
 

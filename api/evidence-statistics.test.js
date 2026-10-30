@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates,
-  assignments, delayBand, limits, standardizedComparison} = require('./evidence-statistics');
+  assignments, delayBand, limits, standardizedComparison, siteKey} = require('./evidence-statistics');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-statistics-'));
 const filename = path.join(directory, 'statistics.json');
@@ -31,7 +31,51 @@ const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'T
     slant_range_km: 10, transmitter_range_km: 20}};
 const source = {async get() { return {abc123: {...prediction, timestamp: clock / 1000}}; }};
 
+const identityConfig = JSON.parse(JSON.stringify(config));
+identityConfig.capture.device = {type: 'Kraken', channel_count: 5,
+  heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092,
+    gain_control: 'measured_per_channel', channel_gains: [8.7, 8.7, 14.4, 3.7, 3.7]},
+  array_geometry: {shape: 'regular_polygon', operator_notes: 'installation note'}};
+const presentationEdit = JSON.parse(JSON.stringify(identityConfig));
+presentationEdit.location.rx.name = 'Short receiver name';
+presentationEdit.location.tx.name = 'Short transmitter name';
+presentationEdit.capture.device.heimdall.host = 'receiver.local';
+presentationEdit.capture.device.heimdall.port = 18091;
+presentationEdit.capture.device.array_geometry.operator_notes = 'updated note';
+assert.equal(siteKey(identityConfig), siteKey(presentationEdit),
+  'labels, connection ports and operator notes must not reset scientific statistics');
+const gainEdit = JSON.parse(JSON.stringify(identityConfig));
+gainEdit.capture.device.heimdall.channel_gains[2] = 15.7;
+assert.notEqual(siteKey(identityConfig), siteKey(gainEdit),
+  'applied receiver gain must start a separate statistics identity');
+const geometryEdit = JSON.parse(JSON.stringify(identityConfig));
+geometryEdit.location.rx.latitude += .001;
+assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
+  'physical site geometry must start a separate statistics identity');
+
 (async () => {
+  const orderStats = new EvidenceStatistics(config, source, {
+    filename: path.join(directory, 'ordered-live-status.json'), now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const finalizedPass = (id, lastAt, eligibleFrames) => ({id, hex: id, flight: id,
+    siteKey: orderStats.key, startedAt: lastAt - 1000, lastAt, frames: 4,
+    eligibleFrames, physicalEligibleFrames: eligibleFrames,
+    detectorEligibleFrames: eligibleFrames, detectedFrames: 0, trackedFrames: 0,
+    belowFloorFrames: 0, aboveDelayFrames: 0, outsideDopplerFrames: 0,
+    staleTruthFrames: 0, missingTimingFrames: 0, outsideClutterFrames: 0,
+    delayBands: {}, slantRangeBands: {}, elevationBands: {}, azimuthBands: {},
+    azimuthElevationBands: {}, geometryBands: {}});
+  orderStats.state.liveScoreContract.startedAt = 1;
+  orderStats.state.passes = [finalizedPass('newer', clock - 1000, 3),
+    finalizedPass('excluded', clock - 500, 0),
+    finalizedPass('older', clock - 2000, 3)];
+  const orderedLive = orderStats.liveStatus();
+  assert.deepEqual(orderedLive.recent_finalized_passes.map(item => item.flight),
+    ['excluded', 'newer', 'older'], 'finalized passes must be ordered by finalization time');
+  assert.deepEqual(orderedLive.recent_scored_passes.map(item => item.flight),
+    ['newer', 'older'], 'the primary recent list must contain only scored passes');
+  orderStats.close();
+
   const span = limits(config);
   assert.equal(span.delayMaxKm.toFixed(3), '62.457');
   assert.equal(span.detectionMinDelayKm.toFixed(3), '0.625');
