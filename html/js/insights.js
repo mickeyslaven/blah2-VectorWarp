@@ -697,11 +697,14 @@
         },
         'vectorwarp-terrain': {
           type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
-          tileSize: 256, attribution: 'Terrain &copy; Mapterhorn'
+          // Mapterhorn's TileJSON declares 512 px Terrarium tiles. A 256 px
+          // override builds the wrong terrain mesh and exposes seams/clipped
+          // wedges while pitching or rotating the camera.
+          tileSize: 512, attribution: 'Terrain &copy; Mapterhorn'
         },
         'vectorwarp-hillshade': {
           type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
-          tileSize: 256
+          tileSize: 512
         }
       },
       terrain: {source: 'vectorwarp-terrain', exaggeration: 1.12},
