@@ -77,8 +77,8 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   assert.equal(FakeUpload.last.headers['X-VectorWarp-Intent'], 'recording-import-v1');
   const replay = window.document.querySelector('.recording-replay');
   assert.equal(replay.tagName, 'A');
-  assert.match(replay.href, /\/display\/configuration\?replayFile=%2Frecordings%2Frecording-0\.blah2iq$/,
-    'Replay must be reviewed through the canonical Settings save/restart flow');
+  assert.match(replay.href, /\/display\/configuration\?replayFile=%2Frecordings%2Frecording-0\.blah2iq&replayId=id-0$/,
+    'Replay carries its package identity through the canonical Settings save/restart flow');
   window.document.getElementById('recording-next').click();
   await new Promise(resolve => setImmediate(resolve));
   assert.match(calls.at(-1).url, /offset=10/);
