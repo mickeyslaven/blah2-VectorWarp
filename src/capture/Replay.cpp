@@ -18,7 +18,7 @@ void rest() { std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
 void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
     const std::vector<IqData*>& buffers,uint32_t frameSamples,bool loop,
     const std::atomic<bool>& stopped,const Progress& publish,
-    const std::function<bool()>& consumerBusy) {
+    const std::function<bool()>& consumerBusy,const Control& control) {
   if(!frameSamples || buffers.size()!=options.channels) throw std::invalid_argument("Invalid playback channel/frame configuration");
   for(auto* buffer:buffers) if(!buffer || buffer->get_n()<frameSamples)
     throw std::invalid_argument("Playback buffer must hold at least one radar frame");
@@ -29,10 +29,27 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
   if(progress.total<frameSamples) throw std::runtime_error("Recording is shorter than one processing frame; reduce the frame interval");
   do {
     progress.state="playing"; progress.samples=0; progress.trailingSamples=0; publish(progress);
-    const auto start=Clock::now(); IqBlock block;
+    auto start=Clock::now(); IqBlock block; uint64_t controlRevision=0;
     while(!stopped.load() && reader.read(block)) {
       size_t offset=0;
       while(offset<block.front().size() && !stopped.load()) {
+        auto command=control();
+        if(command.revision!=controlRevision) {
+          controlRevision=command.revision;
+          reader.seek(std::min(command.seekSample,progress.total));
+          { Locks locks(buffers); for(auto* buffer:buffers)buffer->clear(); }
+          progress.samples=std::min(command.seekSample,progress.total);
+          ++progress.generation; progress.state=command.paused?"paused":"playing";publish(progress);
+          start=Clock::now()-std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(double(progress.samples)/progress.sampleRate));
+          block.clear(); break;
+        }
+        if(command.paused) {
+          if(progress.state!="paused"){progress.state="paused";publish(progress);}
+          rest(); start=Clock::now()-std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(double(progress.samples)/progress.sampleRate));
+          continue;
+        } else if(progress.state=="paused") { progress.state="playing";publish(progress); }
         const double elapsed=std::chrono::duration<double>(Clock::now()-start).count();
         const uint64_t permitted=uint64_t(elapsed*progress.sampleRate)+1;
         if(progress.samples>=permitted) { rest(); continue; }
@@ -69,7 +86,7 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
     }
     if(stopped.load()) break;
     if(!loop) { progress.state="complete"; publish(progress); return; }
-    ++progress.loops; reader.rewind();
+    ++progress.loops; ++progress.generation; reader.rewind();
   } while(!stopped.load());
   progress.state="stopped"; publish(progress);
 }

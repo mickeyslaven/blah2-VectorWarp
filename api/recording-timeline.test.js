@@ -1,0 +1,18 @@
+'use strict';
+const assert = require('assert'); const fs = require('fs'); const os = require('os'); const path = require('path');
+const {RecordingTimeline} = require('./recording-timeline');
+(async () => { const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vw-timeline-'));
+  const file = path.join(directory, 'clip.mchq'), timeline = new RecordingTimeline(); fs.writeFileSync(file, 'x');
+  timeline.add({timestamp_ms: 1000, aircraft: {a:{hex:'A'}}, delay_doppler:{a:{delay:1}}}, 1000);
+  timeline.add({timestamp_ms: 1500, aircraft: {b:{hex:'B'}}, delay_doppler:{b:{delay:2}}}, 1500);
+  await timeline.write(file, 1000, 2000, {sample_rate_hz: 1000});
+  assert.equal(timeline.at(file, 600, 1000, 'aircraft').b.hex, 'B');
+  const manual = path.join(directory, 'manual.blah2iq'); fs.writeFileSync(manual, 'x');
+  timeline.start(manual, 2000, {sample_rate_hz: 1000, receiver: 'RspDuo'});
+  timeline.add({timestamp_ms: 2200, aircraft: {c:{hex:'C'}}, delay_doppler:{}}, 2200);
+  timeline.add({timestamp_ms: 2700, aircraft: {d:{hex:'D'}}, delay_doppler:{}}, 2700);
+  await timeline.stop(manual, 3000);
+  assert.equal(timeline.at(manual, 800, 1000, 'aircraft').d.hex, 'D');
+  assert.equal(timeline.load(manual).receiver, 'RspDuo');
+  fs.rmSync(directory, {recursive:true,force:true}); console.log('Recording ADS-B timeline passed.');
+})().catch(error => { console.error(error); process.exitCode=1; });

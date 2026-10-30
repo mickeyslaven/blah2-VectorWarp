@@ -117,6 +117,18 @@ try {
     assert.deepEqual(readConfig(filename).config, candidate, `${name} save/load changed unrelated settings`);
     for (const key of keys) { assert.notDeepEqual(get(baseline, key), get(candidate, key), `${name} did not change ${key}`); assert.deepEqual(get(saved.config, key), get(candidate, key), `${name} did not persist ${key}`); edited.add(key); }
   };
+  const replayBase = shipped('config-usrp.yml');
+  replayBase.process.performance = {surveillance_workers: 1, fft_threads: 4, acceleration: 'auto'};
+  const portableReplay = clone(replayBase);
+  Object.assign(portableReplay.capture.replay, {state: true,
+    sample_rate_hz: 2400000, frequency_hz: 509000000, channel_count: 5,
+    reference_channel: 0, reference_mode: 'array_eigenbeam',
+    surveillance_channels: [0,1,2,3,4], reference_channels: [0,1,2,3,4]});
+  persistGroup('portable-replay-profile', replayBase, portableReplay, [
+    'capture.replay.sample_rate_hz', 'capture.replay.frequency_hz',
+    'capture.replay.channel_count', 'capture.replay.reference_channel',
+    'capture.replay.reference_mode', 'capture.replay.surveillance_channels',
+    'capture.replay.reference_channels']);
   const krakenBase = shipped('config-kraken.yml'); const kraken = clone(krakenBase);
   kraken.capture.device.channel_count = 6; kraken.capture.device.reference_channel = 1;
   kraken.capture.device.surveillance_channels = [0,2,3,4,5];

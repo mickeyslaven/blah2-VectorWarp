@@ -203,6 +203,11 @@ try
     tree["capture"]["replay"]["legacy_block_samples"] >> legacyReplayBlockSamples;
   if (tree["capture"]["replay"].has_child("provenance"))
     tree["capture"]["replay"]["provenance"] >> replayProvenanceMode;
+  if (state) {
+    auto replay = tree["capture"]["replay"];
+    if (replay.has_child("sample_rate_hz")) replay["sample_rate_hz"] >> fs;
+    if (replay.has_child("frequency_hz")) replay["frequency_hz"] >> fc;
+  }
   tree["network"]["ip"] >> ip_capture;
   tree["network"]["ports"]["api"] >> port_capture;
   if (fs == 0 || fc == 0 || port_capture == 0)
@@ -369,6 +374,23 @@ try
         uint32_t channel = std::numeric_limits<uint32_t>::max();
         child >> channel;
         surveillanceChannels.push_back(channel);
+      }
+  }
+  // A replay is an offline processing input, not a request to open the selected
+  // live SDR. Restore its recorded topology independently of that SDR profile.
+  if (state && tree["capture"]["replay"].has_child("channel_count")) {
+    auto replay = tree["capture"]["replay"];
+    replay["channel_count"] >> captureChannelCount;
+    if (replay.has_child("reference_channel")) replay["reference_channel"] >> referenceChannel;
+    if (replay.has_child("reference_mode")) replay["reference_mode"] >> referenceMode;
+    surveillanceChannels.clear(); referenceChannels.clear();
+    if (replay.has_child("surveillance_channels"))
+      for (auto child : replay["surveillance_channels"].children()) {
+        uint32_t channel=UINT32_MAX; child>>channel; surveillanceChannels.push_back(channel);
+      }
+    if (replay.has_child("reference_channels"))
+      for (auto child : replay["reference_channels"].children()) {
+        uint32_t channel=UINT32_MAX; child>>channel; referenceChannels.push_back(channel);
       }
   }
   if (referenceMode != "dedicated" && referenceMode != "array_eigenbeam")

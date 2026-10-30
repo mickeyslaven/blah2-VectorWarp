@@ -66,6 +66,8 @@ public:
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
   std::atomic<bool> pairedCpiQueueActive{false};
   std::atomic<uint64_t> replayGeneration{0};
+  std::atomic<uint64_t> replayControlRevision{0}, replaySeekSample{0};
+  std::atomic<bool> replayPaused{false};
   void request_stop() { inputStopped.store(true); stopping.store(true); }
   void request_input_stop() { inputStopped.store(true); }
   std::string status_json() const;

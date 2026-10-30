@@ -47,6 +47,7 @@ const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceive
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
 const {RecordingLibrary} = require('./recording-library.js');
+const {RecordingTimeline} = require('./recording-timeline.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {installMapImageryRoutes} = require('./map-imagery.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
@@ -85,6 +86,23 @@ const trackerPublication = createTrackerPublication(config);
 // eligible aircraft still coalesces into one bounded physical recording.
 const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions(process.env, config));
 const recordingLibrary = new RecordingLibrary(() => config);
+const recordingTimeline = new RecordingTimeline();
+function recordingReplayProfile() {
+  const device = config.capture?.device || {};
+  return {schema: 'vectorwarp-replay-profile-v1',
+    capture: {sample_rate_hz: config.capture?.fs || null,
+      frequency_hz: config.capture?.fc || null,
+      channel_count: device.channel_count || (device.type === 'Kraken' ? null : 2),
+      reference_channel: device.reference_channel ?? 0,
+      surveillance_channels: Array.isArray(device.surveillance_channels) ?
+        [...device.surveillance_channels] : [1],
+      source_receiver: device.type || null,
+      array_geometry: device.array_geometry || null},
+    process: {reference_synthesis: config.process?.reference_synthesis || null,
+      surveillance_fusion: config.process?.surveillance_fusion || null,
+      bearing: config.process?.bearing || null},
+    location: config.location || null};
+}
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 // A failed native request can reset the bounded raw ring.  Give it materially
 // more than the configured two-second pre-roll before issuing the one retry.
@@ -150,6 +168,13 @@ async function finalizeCaptureAdmission(revision, file, samples) {
       reasons: [...new Set([...(integrity.reasons || []), 'admission-sidecar-write'])], error: error.message};
   }
   integrity = {...integrity, admission_sidecar: admissionSidecar};
+  if (file && first) try {
+    await recordingTimeline.write(file, first.windowStart, first.windowEnd,
+      {sample_rate_hz: integrityMetadata?.sampleRate || config.capture?.fs || null,
+        frequency_hz: integrityMetadata?.frequency || config.capture?.fc || null,
+        channels: integrityMetadata?.channels || config.capture?.device?.channel_count || null,
+        replay_profile: recordingReplayProfile()});
+  } catch (error) { console.error(`Recording ADS-B timeline failed: ${error.message}`); }
   captureTriggerQueue.setAdmission(revision, admissions, integrity);
   captureEvidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
     [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
@@ -245,7 +270,14 @@ function replayTruthDisabled() {
 }
 function replayTruthStatus() {
   return {enabled: false, online: false, disabledForReplay: true,
-    message: 'Live ADS-B truth is not replayed.'};
+    message: 'This recording does not contain an ADS-B timeline.'};
+}
+function recordedReplayTruth(kind) {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return {replay: false, value: null};
+  return {replay: true, value: recordingTimeline.at(processor.file,
+    processor.positionSamples, processor.sampleRate,
+    kind === 'delayDoppler' ? 'delay_doppler' : 'aircraft')};
 }
 
 let restartCommand = null;
@@ -328,6 +360,9 @@ var capture = false;
 var capturePaused = false;
 var captureStartedAt = null;
 let captureRevision = 0;
+let replayControl = {paused: false, seekSample: 0, revision: 0};
+let replaySessionFile = '';
+let adsbSnapshotPending = false;
 // Keep the safety check cheap and independent of browser activity. A manual
 // recording is asked to stop before it can consume the configured reserve;
 // automatic clips are separately rejected before admission.
@@ -606,6 +641,35 @@ app.get('/api/recordings/directories', async (req, res, next) => {
   try { res.json(await recordingLibrary.directories()); }
   catch (error) { next(error); }
 });
+app.get('/api/recordings/:id/replay-profile', async (req, res) => {
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  const timeline = recordingTimeline.load(filename);
+  let metadata = {};
+  try { metadata = JSON.parse(await fs.promises.readFile(`${filename}.json`, 'utf8')); }
+  catch (_) { /* Portable recordings may only have a provenance sidecar. */ }
+  if (!metadata.channels) try {
+    const provenance = JSON.parse(await fs.promises.readFile(`${filename}.provenance.json`, 'utf8'));
+    metadata = {...metadata, channels: provenance.channels,
+      sampleRate: provenance.sampleRateHz, frequency: provenance.frequencyHz,
+      receiver: provenance.receiver};
+  } catch (_) { /* Header validation remains the final replay authority. */ }
+  const channels = timeline?.channels ?? metadata.channels ?? null;
+  const source = timeline?.replay_profile?.capture || {};
+  const referenceMode = timeline?.replay_profile?.process?.reference_synthesis?.mode ||
+    (channels > 2 ? 'array_eigenbeam' : 'dedicated');
+  const all = Number.isInteger(channels) ? Array.from({length: channels}, (_, index) => index) : [];
+  res.json({file: filename,
+    sample_rate_hz: timeline?.sample_rate_hz ?? metadata.sampleRate ?? null,
+    frequency_hz: timeline?.frequency_hz ?? metadata.frequency ?? null,
+    channel_count: channels,
+    reference_channel: source.reference_channel ?? 0,
+    surveillance_channels: source.surveillance_channels ||
+      (referenceMode === 'array_eigenbeam' ? all : all.filter(index => index !== 0)),
+    reference_mode: referenceMode,
+    reference_channels: timeline?.replay_profile?.process?.reference_synthesis?.channels ||
+      (referenceMode === 'array_eigenbeam' ? all : [])});
+});
 app.post('/api/recordings/directories', async (req, res, next) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-directory-v1')
     return res.status(403).json({error: 'Recording-folder changes require a trusted VectorWarp origin and intent.'});
@@ -816,9 +880,11 @@ app.get('/api/system/status', async (req, res) => {
     const headerProcessor = processor ? {
       input: processor.input, state: processor.state, error: processor.error || '',
       receiver: processor.receiver, receiverHealth: processor.receiverHealth,
-      totalSamples: processor.totalSamples, positionSamples: processor.positionSamples
+      totalSamples: processor.totalSamples, positionSamples: processor.positionSamples,
+      sampleRate: processor.sampleRate, file: processor.file
     } : null;
     return res.json({radar, adsbEnabled: config.truth?.adsb?.enabled === true,
+      recordedAdsb: processor?.input === 'replay' && recordingTimeline.has(processor.file),
       restart: {state: restartState.state}, gainCheckPending: gainPublicationBlocked,
       processor: headerProcessor, processorFresh: processor !== null,
       errors: [...serviceErrors.values()],
@@ -863,7 +929,27 @@ app.post('/api/processor/status', (req, res) => {
     if (req.body?.receiverHealth !== undefined) processorStatus = null;
     return res.status(422).json({ok: false, errors: checked.errors});
   }
-  processorStatus = {value: checked.value, receivedAt: Date.now()};
+  const previous = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  const now = Date.now();
+  processorStatus = {value: checked.value, receivedAt: now};
+  if (checked.value.input === 'replay' && checked.value.file !== replaySessionFile) {
+    replaySessionFile = checked.value.file;
+    replayControl = {paused: false, seekSample: 0, revision: replayControl.revision + 1};
+  } else if (checked.value.input === 'live' && replaySessionFile) {
+    replaySessionFile = '';
+    replayControl = {paused: false, seekSample: 0, revision: replayControl.revision + 1};
+  }
+  if (previous?.input === 'live' && previous.recording &&
+      (!checked.value.recording || checked.value.recordingFile !== previous.recordingFile))
+    void recordingTimeline.stop(previous.recordingFile, now)
+      .catch(error => console.error(`Manual recording ADS-B timeline failed: ${error.message}`));
+  if (checked.value.input === 'live' && checked.value.recording && checked.value.recordingFile) {
+    const startMs = now - checked.value.recordedSamples * 1000 / checked.value.sampleRate;
+    recordingTimeline.start(checked.value.recordingFile, startMs,
+      {sample_rate_hz: checked.value.sampleRate, frequency_hz: checked.value.frequency,
+        channels: config.capture?.device?.channel_count || 2,
+        receiver: checked.value.receiver, replay_profile: recordingReplayProfile()});
+  }
   completePendingGainRestart();
   if (checked.value.input === 'replay') adsbSource.clear();
   if (checked.value.input === 'live' && checked.value.recordingError &&
@@ -1288,21 +1374,27 @@ app.put('/api/config', async (req, res) => {
   }
 });
 app.get('/api/adsb2dd', (req, res) => {
-  if (replayTruthDisabled()) return res.json(replayTruthStatus());
+  if (replayTruthDisabled()) {
+    const recorded = recordedReplayTruth('delayDoppler');
+    return recorded.value === null ? res.json(replayTruthStatus()) :
+      res.json({url: '/api/adsb/delay-doppler', replay: true});
+  }
   if (!config.truth?.adsb?.enabled) return res.status(400).end();
   // Compatibility link now stays on this API; no converter URL or query is accepted.
   res.json({url: '/api/adsb/delay-doppler'});
 });
 for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-doppler', 'delayDoppler']]) {
   app.get(route, async (req, res) => {
-    if (replayTruthDisabled()) return res.json(replayTruthStatus());
+    const recorded = recordedReplayTruth(kind);
+    if (recorded.replay && recorded.value === null) return res.json(replayTruthStatus());
+    if (!recorded.replay && replayTruthDisabled()) return res.json(replayTruthStatus());
     try {
       const presentation = req.query.presentation;
       const requestedTimestamp = presentation === 'aligned' ?
         requestedPresentationTimestamp(req) : null;
       if (Number.isNaN(requestedTimestamp))
         return res.status(400).json({error: 'frame_timestamp must be a non-negative integer'});
-      const value = presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
+      const value = recorded.replay ? recorded.value : presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
         await adsbSource.getPresentationAt(kind,
           requestedTimestamp ?? Date.now() - presentationDelayMs) :
         presentation && typeof adsbSource.getPresentation === 'function' ?
@@ -1341,6 +1433,9 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
   });
 }
 app.get('/api/adsb/status', async (req, res) => {
+  const recorded = recordedReplayTruth('aircraft');
+  if (recorded.replay) return res.json(recorded.value === null ? replayTruthStatus() :
+    {enabled: true, online: true, replay: true, message: 'Recorded ADS-B timeline'});
   if (replayTruthDisabled()) return res.json(replayTruthStatus());
   res.json(await adsbSource.status());
 });
@@ -1439,7 +1534,31 @@ app.get('/capture', (req, res) => {
   res.send(capture);
 });
 app.get('/capture/request', (req, res) => res.json({recording: capture,
-  revision: captureRevision, clip: captureTriggerQueue.request(true)}));
+  revision: captureRevision, clip: captureTriggerQueue.request(true), replay: replayControl}));
+app.get('/api/replay/status', (req, res) => {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return res.json({active: false});
+  res.json({active: true, paused: replayControl.paused, file: processor.file,
+    position_samples: processor.positionSamples, total_samples: processor.totalSamples,
+    sample_rate_hz: processor.sampleRate, state: processor.state});
+});
+app.post('/api/replay/control', (req, res) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'replay-control-v1')
+    return res.status(403).json({error: 'Replay controls require a trusted VectorWarp origin and intent.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return res.status(409).json({error: 'No recording is being replayed.'});
+  const action = String(req.body?.action || '');
+  if (action === 'pause' || action === 'play') replayControl.paused = action === 'pause';
+  else if (action === 'seek' || action === 'skip') {
+    const seconds = Number(req.body?.seconds);
+    if (!Number.isFinite(seconds)) return res.status(400).json({error: 'Replay position must be finite.'});
+    const base = action === 'skip' ? processor.positionSamples : 0;
+    const target = Math.max(0, Math.min(processor.totalSamples,
+      Math.round(base + seconds * processor.sampleRate)));
+    replayControl = {...replayControl, seekSample: target, revision: replayControl.revision + 1};
+  } else return res.status(400).json({error: 'Choose play, pause, seek, or skip.'});
+  res.json({ok: true, ...replayControl});
+});
 app.get('/capture/status', (req, res) => {
   const now = Date.now();
   const receiving = lastFrameAt !== null && now - lastFrameAt <
@@ -1631,6 +1750,16 @@ const server_map = jsonStreamServer('map', frame => {
   map = frame;
   presentationHistories.map.add(frame);
   stash_map.update_data(map);
+  const at = frameTimestamp(frame);
+  if (Number.isSafeInteger(at) && !adsbSnapshotPending &&
+      typeof adsbSource.getPresentationAt === 'function') {
+    adsbSnapshotPending = true;
+    Promise.all([adsbSource.getPresentationAt('aircraft', at),
+      adsbSource.getPresentationAt('delayDoppler', at)])
+      .then(([aircraft, delayDoppler]) => recordingTimeline.add({timestamp_ms: at,
+        aircraft, delay_doppler: delayDoppler}))
+      .catch(() => {}).finally(() => { adsbSnapshotPending = false; });
+  }
 });
 listenData(server_map, 'map');
 

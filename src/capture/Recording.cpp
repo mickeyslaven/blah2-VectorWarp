@@ -125,7 +125,10 @@ RecordingProvenance read_provenance(const std::string& path,
   }
   result.receiver=json_string(document,"receiver");
   result.backend=json_string(document,"backend");
-  if(result.receiver!=options.receiver) fail("Recording provenance receiver differs from Settings");
+  // Receiver provenance describes the radio that produced the samples. Replay
+  // never opens that radio, so the currently selected live receiver is not a
+  // compatibility constraint. Channel/rate/frequency checks below still guard
+  // the processing contract.
   const auto required_uint=[&](const char* name,uint32_t expected) {
     if(!document.HasMember(name) || !document[name].IsUint() || document[name].GetUint()!=expected)
       fail(std::string("Recording provenance ")+name+" differs from the recording header");
@@ -294,12 +297,15 @@ void RecordingWriter::close() {
 }
 
 struct RecordingReader::Impl {
+  struct Segment { uint64_t offset=0, sample=0; uint32_t count=0; };
   File file;
   ReplayOptions options;
   RecordingMetadata metadata;
   RecordingProvenance provenance;
   uint64_t fileSize=0,start=0,position=0;
   uint32_t legacySize=0;
+  uint32_t skipSamples=0;
+  std::vector<Segment> segments;
   HeimdallFrame::Header firstMchq{};
   bool allMchqFramesTimed=false;
   Impl(const std::string& path,ReplayOptions o):file(path),options(std::move(o)) {
@@ -324,9 +330,11 @@ struct RecordingReader::Impl {
       if(u64(h.data()+48)!=1) fail("Recording was not finished cleanly; choose a completed recording");
       const uint64_t expected=u64(h.data()+40); start=64;
       while(file.position()<fileSize) {
+        const auto offset=file.position();
         std::array<uint8_t,16> b{}; file.read(b.data(),b.size()); const auto n=u32(b.data());
         if(!n || n>maxBlock || u32(b.data()+4) || u64(b.data()+8)!=metadata.samples)
           fail("Recording block sequence is invalid");
+        segments.push_back({offset,metadata.samples,n});
         skip(uint64_t(n)*metadata.channels*8); metadata.samples+=n;
       }
       if(expected!=metadata.samples) fail("Recording sample count does not match its header");
@@ -336,6 +344,7 @@ struct RecordingReader::Impl {
       HeimdallFrame::Header previous{};
       allMchqFramesTimed=true;
       while(file.position()<fileSize) {
+        const auto offset=file.position();
         auto h=mchqHeader();
         if(!metadata.samples) {
           firstMchq=h; metadata.channels=h.numChannels;
@@ -346,7 +355,8 @@ struct RecordingReader::Impl {
             !HeimdallFrame::timing_contiguous(previous,h))
           fail("Kraken recording timing is discontinuous");
         previous=h; firstFrame=false;
-        checkMchq(h); skip(HeimdallFrame::payload_size(h)); metadata.samples+=h.samplesPerChannel;
+        checkMchq(h); segments.push_back({offset,metadata.samples,h.samplesPerChannel});
+        skip(HeimdallFrame::payload_size(h)); metadata.samples+=h.samplesPerChannel;
       }
     } else if(format=="s16-interleaved" || format=="s8-interleaved" || format=="usrp-blocks") {
       if(options.channels!=2) fail("Legacy raw recordings require two channels");
@@ -404,7 +414,27 @@ RecordingReader::RecordingReader(const std::string& path,ReplayOptions o):impl_(
 RecordingReader::~RecordingReader()=default;
 const RecordingMetadata& RecordingReader::metadata() const { return impl_->metadata; }
 const RecordingProvenance& RecordingReader::provenance() const { return impl_->provenance; }
-void RecordingReader::rewind() { impl_->file.seek(impl_->start); impl_->position=0; }
+void RecordingReader::rewind() { impl_->file.seek(impl_->start); impl_->position=0; impl_->skipSamples=0; }
+void RecordingReader::seek(uint64_t sample) {
+  auto& s=*impl_;
+  if(sample>s.metadata.samples) fail("Replay seek exceeds recording length");
+  s.skipSamples=0;
+  if(sample==s.metadata.samples){s.file.seek(s.fileSize);s.position=sample;return;}
+  if(s.metadata.format=="s16-interleaved"||s.metadata.format=="s8-interleaved") {
+    s.file.seek(sample*s.legacySize);s.position=sample;return;
+  }
+  if(s.metadata.format=="usrp-blocks") {
+    const uint64_t first=(sample/s.options.legacyBlockSamples)*s.options.legacyBlockSamples;
+    s.file.seek(first*s.legacySize);s.position=first;
+    s.skipSamples=uint32_t(sample-first);return;
+  }
+  auto it=std::upper_bound(s.segments.begin(),s.segments.end(),sample,
+    [](uint64_t value,const Impl::Segment& segment){return value<segment.sample;});
+  if(it!=s.segments.begin())--it;
+  if(it==s.segments.end()||sample<it->sample||sample>=it->sample+it->count)
+    fail("Replay seek index is invalid");
+  s.file.seek(it->offset);s.position=it->sample;s.skipSamples=uint32_t(sample-it->sample);
+}
 bool RecordingReader::read(IqBlock& block) {
   auto& s=*impl_; if(s.position==s.metadata.samples) { block.clear(); return false; }
   uint32_t count=0;
@@ -439,6 +469,12 @@ bool RecordingReader::read(IqBlock& block) {
     }
   }
   if(count>s.metadata.samples-s.position) fail("Recording length changed during playback");
-  finite(block); s.position+=count; return true;
+  finite(block); s.position+=count;
+  if(s.skipSamples) {
+    const uint32_t discard=std::min(s.skipSamples,count);s.skipSamples-=discard;
+    for(auto& channel:block)channel.erase(channel.begin(),channel.begin()+discard);
+    if(block.front().empty())return read(block);
+  }
+  return true;
 }
 }

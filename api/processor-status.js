@@ -1,7 +1,7 @@
 'use strict';
 
 const RECEIVERS = new Set(['Kraken', 'RspDuo', 'Usrp', 'HackRF']);
-const STATES = new Set(['loading', 'playing', 'draining', 'complete', 'stopped', 'error', 'live']);
+const STATES = new Set(['loading', 'playing', 'paused', 'draining', 'complete', 'stopped', 'error', 'live']);
 const MAX_TEXT = 4096;
 const MAX_ERROR_TEXT = 512;
 const MAX_SAFE = Number.MAX_SAFE_INTEGER;

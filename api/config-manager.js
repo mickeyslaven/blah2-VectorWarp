@@ -356,6 +356,26 @@ function validateConfig(config, baseline = null, options = {}) {
       ['legacy-unqualified', 'decision-grade']);
   if (replay.legacy_block_samples !== undefined)
     number(replay.legacy_block_samples, 'capture.replay.legacy_block_samples', {integer: true, min: 1, max: 262144});
+  if (replay.sample_rate_hz !== undefined)
+    number(replay.sample_rate_hz, 'capture.replay.sample_rate_hz', {integer: true, min: 1, max: UINT32_MAX});
+  if (replay.frequency_hz !== undefined)
+    number(replay.frequency_hz, 'capture.replay.frequency_hz', {integer: true, min: 1, max: UINT32_MAX});
+  if (replay.channel_count !== undefined)
+    number(replay.channel_count, 'capture.replay.channel_count', {integer: true, min: 2, max: KRAKEN_MAX_CHANNELS});
+  if (replay.reference_channel !== undefined)
+    number(replay.reference_channel, 'capture.replay.reference_channel', {integer: true, min: 0, max: 7});
+  if (replay.reference_mode !== undefined)
+    oneOf(replay.reference_mode, 'capture.replay.reference_mode', ['dedicated', 'array_eigenbeam']);
+  const replaySurveillance = replay.surveillance_channels === undefined ? [] :
+    integerArray(replay.surveillance_channels, 'capture.replay.surveillance_channels');
+  const replayReferences = replay.reference_channels === undefined ? [] :
+    integerArray(replay.reference_channels, 'capture.replay.reference_channels');
+  if (Number.isInteger(replay.channel_count))
+    [...replaySurveillance, ...replayReferences, replay.reference_channel]
+      .filter(Number.isInteger).forEach(channel => {
+        if (channel >= replay.channel_count)
+          errors.push('capture.replay channel roles must be inside channel_count');
+      });
   if (replay.format === 'usrp-blocks' && replay.legacy_block_samples === undefined)
     errors.push('capture.replay.legacy_block_samples is required for usrp-blocks replay');
 

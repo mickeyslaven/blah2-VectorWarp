@@ -3007,10 +3007,24 @@ async function renderConfiguration() {
     receiverApplyPending = ['unknown', 'saved-pending', 'partial', 'indeterminate', 'failed',
       'receiver-confirmed-config-not-saved'].includes(capabilities.receiverSynchronization?.applicationState);
     rememberOriginalConfig(activeConfig);
-    const replayFile = new URLSearchParams(window.location.search).get('replayFile');
+    const replayParameters = new URLSearchParams(window.location.search);
+    const replayFile = replayParameters.get('replayFile');
     if (replayFile) {
+      let recorded = {};
+      const replayId = replayParameters.get('replayId');
+      if (replayId) try {
+        const response = await configFetch(liveApiUrl(`/api/recordings/${encodeURIComponent(replayId)}/replay-profile`),
+          {cache: 'no-store'});
+        if (response.ok) recorded = await response.json();
+      } catch (_) { /* Header validation will still protect a legacy recording. */ }
       activeConfig.capture.replay = {...activeConfig.capture.replay,
-        state: true, file: replayFile, format: 'auto'};
+        state: true, file: replayFile, format: 'auto',
+        ...Object.fromEntries(Object.entries({sample_rate_hz: recorded.sample_rate_hz,
+          frequency_hz: recorded.frequency_hz, channel_count: recorded.channel_count,
+          reference_channel: recorded.reference_channel, reference_mode: recorded.reference_mode,
+          surveillance_channels: recorded.surveillance_channels,
+          reference_channels: recorded.reference_channels})
+          .filter(([, value]) => value !== null && value !== undefined))};
       try { sessionStorage.setItem('blah2-settings-tab', 'capture'); } catch (_) {}
       if (window.history?.replaceState)
         window.history.replaceState(null, '', window.location.pathname);
@@ -3076,7 +3090,7 @@ async function renderConfiguration() {
       showMessage('');
     renderEditor();
     if (replayFile)
-      showMessage('Recording selected for replay. Review the receiver and replay settings, then choose Save & Restart.', 'warning');
+      showMessage('Recording selected. Its own sample rate, frequency and channel roles will be used; the installed live SDR will not be opened. Choose Save & Restart to play it.', 'warning');
     if (window.VectorWarpReports) window.VectorWarpReports.addSettingsEntry(target, () =>
       reportContext(window.VectorWarpReports.classify(lastReportingStatus) ||
         {code: 'MANUAL_REPORT', component: 'support', stage: 'manual', severity: 'degraded',

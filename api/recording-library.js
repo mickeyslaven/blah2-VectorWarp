@@ -5,7 +5,8 @@ const fsp = fs.promises;
 const path = require('path');
 
 const RECORDING_EXTENSIONS = new Set(['.blah2iq', '.mchq']);
-const SIDECAR_SUFFIXES = ['.admission.json', '.json'];
+const SIDECAR_SUFFIXES = ['.admission.json', '.timeline.json', '.timeline.jsonl.gz',
+  '.provenance.json', '.json'];
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 const METADATA_BATCH = 32;

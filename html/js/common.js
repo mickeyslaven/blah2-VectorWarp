@@ -279,7 +279,7 @@ function addFullscreenControl() {
   });
   panel.classList.add('fullscreen-target');
   panel.classList.add('has-fullscreen');
-  const toolbar = panel.querySelector('.radar-toolbar');
+  const toolbar = typeof panel.querySelector === 'function' ? panel.querySelector('.radar-toolbar') : null;
   (toolbar || panel).appendChild(button);
   let resizePending = false;
   let resizeInFlight = false;
@@ -552,6 +552,68 @@ function renderReceiverHealth(status, target = document.getElementById('receiver
   }
 }
 
+function replayTime(samples, rate) {
+  const seconds = rate > 0 ? Math.max(0, samples / rate) : 0;
+  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+}
+async function replayCommand(action, seconds) {
+  const response = await fetchStatusResource(liveApiUrl('/api/replay/control'), {
+    method: 'POST', cache: 'no-store', headers: {'Content-Type': 'application/json',
+      'X-VectorWarp-Intent': 'replay-control-v1'},
+    body: JSON.stringify(seconds === undefined ? {action} : {action, seconds})});
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Replay control failed');
+}
+function renderReplayTransport(processor) {
+  let bar = document.getElementById('replay-transport');
+  if (processor?.input !== 'replay') {
+    if (bar) bar.hidden = true;
+    if (window.blah2ReplayStatusTimer) {
+      window.clearInterval(window.blah2ReplayStatusTimer);
+      window.blah2ReplayStatusTimer = null;
+    }
+    return;
+  }
+  if (!document.body || typeof document.createElement !== 'function') return;
+  if (!bar) {
+    bar = document.createElement('aside'); bar.id = 'replay-transport'; bar.className = 'replay-transport';
+    bar.setAttribute('aria-label', 'Recording playback');
+    bar.innerHTML = '<button data-replay="skip" data-seconds="-10" title="Back 10 seconds">−10</button><button class="replay-play" data-replay="pause">Pause</button><button data-replay="skip" data-seconds="10" title="Forward 10 seconds">+10</button><span class="replay-current">0:00</span><input class="replay-scrubber" type="range" min="0" max="1" step="0.001" value="0" aria-label="Recording position"><span class="replay-total">0:00</span>';
+    document.body.appendChild(bar);
+    bar.addEventListener('click', async event => {
+      const button = event.target.closest('button[data-replay]'); if (!button) return;
+      button.disabled = true;
+      try { await replayCommand(button.dataset.replay, button.dataset.seconds === undefined ? undefined : Number(button.dataset.seconds)); }
+      catch (error) { button.title = error.message; }
+      finally { button.disabled = false; }
+    });
+    bar.querySelector('.replay-scrubber').addEventListener('change', event =>
+      replayCommand('seek', Number(event.target.value)).catch(() => {}));
+  }
+  bar.hidden = false;
+  const rate = processor.sampleRate || 1, total = processor.totalSamples || 0;
+  const position = Math.min(total, processor.positionSamples || 0);
+  const scrubber = bar.querySelector('.replay-scrubber');
+  if (document.activeElement !== scrubber) scrubber.value = String(position / rate);
+  scrubber.max = String(total / rate || 1);
+  bar.querySelector('.replay-current').textContent = replayTime(position, rate);
+  bar.querySelector('.replay-total').textContent = replayTime(total, rate);
+  const play = bar.querySelector('.replay-play'), paused = processor.state === 'paused';
+  play.textContent = paused ? 'Play' : 'Pause'; play.dataset.replay = paused ? 'play' : 'pause';
+  if (!window.blah2ReplayStatusTimer) window.blah2ReplayStatusTimer = window.setInterval(async () => {
+    if (document.hidden || window.blah2ReplayStatusPending) return;
+    window.blah2ReplayStatusPending = true;
+    try {
+      const response = await fetchStatusResource(liveApiUrl('/api/replay/status'), {cache: 'no-store'});
+      const value = response.ok ? await response.json() : null;
+      if (!value?.active) return renderReplayTransport(null);
+      renderReplayTransport({input: 'replay', state: value.state,
+        positionSamples: value.position_samples, totalSamples: value.total_samples,
+        sampleRate: value.sample_rate_hz});
+    } catch (_) { /* The normal health poll retains the last known position. */ }
+    finally { window.blah2ReplayStatusPending = false; }
+  }, 500);
+}
+
 async function refreshLiveStatus() {
   const radarLabel = document.getElementById('live-status');
   const adsbLabel = document.getElementById('adsb-status');
@@ -564,6 +626,7 @@ async function refreshLiveStatus() {
     const status = await response.json();
     renderReceiverHealth(status);
     const processor = status.processorFresh ? status.processor : null;
+    renderReplayTransport(processor);
     const replay = processor?.input === 'replay' ? processor : null;
     const restarting = ['scheduled', 'running'].includes(status.restart?.state);
     let label;
@@ -581,7 +644,7 @@ async function refreshLiveStatus() {
       processorAlert.textContent = processor?.error || '';
       processorAlert.hidden = !processor?.error;
     }
-    window.blah2AdsbEnabled = status.adsbEnabled === true && !replay;
+    window.blah2AdsbEnabled = replay ? status.recordedAdsb === true : status.adsbEnabled === true;
     if (adsbLabel) {
       adsbLabel.hidden = !window.blah2AdsbEnabled;
       const adsbDue = !window.blah2AdsbStatusAt || Date.now() - window.blah2AdsbStatusAt >= 10000;
@@ -600,6 +663,7 @@ async function refreshLiveStatus() {
       }
     }
   } catch (_) {
+    renderReplayTransport(null);
     renderReceiverHealth(null);
     updateLiveStatusLabel(radarLabel, 'RADAR', 'OFFLINE', false);
     if (adsbLabel && window.blah2AdsbEnabled) {

@@ -210,6 +210,16 @@ void Capture::process(const std::vector<IqData *>& buffers,
             applyRecordingRequest(payload["recording"].GetBool(),
               payload["revision"].GetUint64(), true);
             if (payload.HasMember("clip")) applyClipRequest(payload["clip"]);
+            if (replay && payload.HasMember("replay") && payload["replay"].IsObject()) {
+              const auto& command=payload["replay"];
+              if(command.HasMember("revision")&&command["revision"].IsUint64()&&
+                 command.HasMember("paused")&&command["paused"].IsBool()&&
+                 command.HasMember("seekSample")&&command["seekSample"].IsUint64()) {
+                replayPaused.store(command["paused"].GetBool());
+                replaySeekSample.store(command["seekSample"].GetUint64());
+                replayControlRevision.store(command["revision"].GetUint64());
+              }
+            }
           }
         } else if (request && request->status == 404) {
           const auto legacy = cli.Get("/capture");
@@ -236,8 +246,11 @@ void Capture::process(const std::vector<IqData *>& buffers,
       player.run(file, replayOptions, buffers, frameSamples, loop, inputStopped,
         [&](const blah2::ReplayProgress& value) {
           std::lock_guard<std::mutex> lock(statusMutex);
-          replayProgress = value; replayGeneration.store(value.loops);
-        }, [&] { return processingBusy.load(); });
+          replayProgress = value; replayGeneration.store(value.generation);
+        }, [&] { return processingBusy.load(); }, [&] {
+          return blah2::ReplayCommand{replayPaused.load(),replaySeekSample.load(),
+            replayControlRevision.load()};
+        });
     } else if (device) { device->start(); device->process(buffers); }
   } catch (const std::exception& error) {
     processing_error(error.what()); request_input_stop();

@@ -279,6 +279,24 @@ function connect(port) {
       positionSamples: 12, totalSamples: 24, loops: 0, trailingSamples: 0,
       recording: false, recordingFile: '', recordingError: '', recordedSamples: 0};
     assert.equal((await request('POST', '/api/processor/status', replayStatus)).status, 204);
+    const replayControlHeaders = {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+      'X-VectorWarp-Intent': 'replay-control-v1'};
+    let replayControl = await request('GET', '/api/replay/status');
+    assert.equal(replayControl.body.active, true);
+    assert.equal(replayControl.body.position_samples, 12);
+    replayControl = await request('POST', '/api/replay/control', {action: 'pause'},
+      replayControlHeaders);
+    assert.equal(replayControl.status, 200); assert.equal(replayControl.body.paused, true);
+    replayControl = await request('POST', '/api/replay/control', {action: 'skip', seconds: 1},
+      replayControlHeaders);
+    assert.equal(replayControl.body.seekSample, 24, 'Skip is bounded to the recording end');
+    replayControl = await request('POST', '/api/replay/control', {action: 'seek', seconds: 0.0000025},
+      replayControlHeaders);
+    assert.equal(replayControl.body.seekSample, 6);
+    assert.equal((await request('POST', '/api/replay/control', {action: 'seek', seconds: 'bad'},
+      replayControlHeaders)).status, 400);
+    assert.equal((await request('POST', '/api/replay/control', {action: 'play'},
+      {Origin: 'https://unrelated.example', 'X-VectorWarp-Intent': 'replay-control-v1'})).status, 403);
     const truthRequestsBeforeReplay = truthRequests.length;
     for (const route of ['/api/adsb', '/api/adsb/delay-doppler', '/api/adsb2dd', '/api/adsb/status']) {
       const disabled = await request('GET', route);
@@ -315,6 +333,9 @@ function connect(port) {
     assert.equal((await request('POST', '/api/processor/status', {
       ...replayStatus, input: 'live', state: 'live', file: ''
     })).status, 204);
+    assert.equal((await request('GET', '/api/replay/status')).body.active, false);
+    assert.equal((await request('POST', '/api/replay/control', {action: 'play'},
+      replayControlHeaders)).status, 409);
     const restoredTruth = await request('GET', '/api/adsb');
     assert.equal(restoredTruth.status, 200);
     assert.equal(restoredTruth.body.aircraft[0].hex, 'abc123');
