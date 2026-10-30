@@ -16,17 +16,7 @@ recording, replay, receiver setup, and a 3D airspace map.
 
 ## See VectorWarp in action
 
-### ADS-B-tracked aircraft
-
-See ADS-B-tracked aircraft alongside radar detections and tracks on the live
-bistatic range–Doppler display.
-
 ![VectorWarp live bistatic range-Doppler display](docs/media/vectorwarp-bistatic-range-doppler.gif)
-
-### 3D live airspace
-
-Explore terrain, altitude-separated aircraft, flight histories, radar tracks,
-coverage, transmitter sites, and receiver sites on the same map.
 
 ![VectorWarp 3D live airspace map](docs/media/vectorwarp-3d-live-airspace.gif)
 
