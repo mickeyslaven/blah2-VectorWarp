@@ -1609,6 +1609,7 @@
       ['Week', windows.week], ['Current setup', windows.lifetime]];
     const lifetime = windows.lifetime || {};
     const hour = windows.hour || {};
+    const liveHour = hour.live_to_date || hour;
     const limits = statistics?.limits || {};
     const scoreRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.eligible_passes)}</td><td>${percent(item.detection_yield, 1)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
     const outcomeRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_config_passes)}</td><td>${integer(item.eligible_no_radar_return)}</td><td>${integer(item.detected_not_tracked)}</td><td>${integer(item.tracked_passes)}</td></tr>`);
@@ -1640,7 +1641,7 @@
         [`${prefix} ${name}`, item]));
       return yieldChart(rows, label);
     };
-    const jointEntries = Object.entries(hour.azimuth_elevation_strata?.bands || {});
+    const jointEntries = Object.entries(liveHour.azimuth_elevation_strata?.bands || {});
     const azimuthBands = [...new Set(jointEntries.map(([name, item]) =>
       item.azimuth_band || name.split('|')[0]))].sort((a, b) => bandOrder(a) - bandOrder(b));
     const elevationBands = [...new Set(jointEntries.map(([name, item]) =>
@@ -1662,12 +1663,12 @@
     const stratumRows = (definition, bands) => bandEntries(bands).map(([label, item]) =>
       `<tr><td>${escapeHtml(definition)}</td><td>${escapeHtml(label)}</td><td>${integer(item.eligible_passes)}</td><td>${integer(item.detected_passes)}</td><td>${integer(item.tracked_passes)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
     const rangeRows = [
-      ...stratumRows('Excess delay km', hour.delay_strata?.bands),
-      ...stratumRows('Receiver slant km', hour.receiver_slant_range_strata?.bands)];
+      ...stratumRows('Excess delay km', liveHour.delay_strata?.bands),
+      ...stratumRows('Receiver slant km', liveHour.receiver_slant_range_strata?.bands)];
     const angleRows = [
-      ...stratumRows('Elevation deg', hour.elevation_strata?.bands),
-      ...stratumRows('True azimuth deg', hour.azimuth_strata?.bands)];
-    const jointRows = Object.entries(hour.azimuth_elevation_strata?.bands || {})
+      ...stratumRows('Elevation deg', liveHour.elevation_strata?.bands),
+      ...stratumRows('True azimuth deg', liveHour.azimuth_strata?.bands)];
+    const jointRows = Object.entries(liveHour.azimuth_elevation_strata?.bands || {})
       .sort((left, right) => bandOrder(left[1]?.azimuth_band || left[0].split('|')[0]) -
         bandOrder(right[1]?.azimuth_band || right[0].split('|')[0]) ||
         bandOrder(left[1]?.elevation_band || left[0].split('|')[1]) -
@@ -1685,10 +1686,10 @@
       <section class="info-card statistics-score"><h2>Detection and tracking yield</h2>${yieldChart(periods, 'Detection and tracking yield by time window')}<details class="statistics-table-details"><summary>Exact values</summary>${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}</details></section>
       <section class="info-card"><h2>Previous-hour comparison</h2>${mixReady ? `${table(['Period', 'Detection yield', 'Tracking yield'], mixRows)}<dl><div><dt>Comparable traffic</dt><dd>${percent(mix.common_support_coverage, 1)}</dd></div><div><dt>Shared range groups</dt><dd>${integer(mix.common_strata?.length)}</dd></div><div><dt>Result</dt><dd>${mix.decision_grade ? 'Comparable' : 'Limited coverage'}</dd></div></dl>` : `<div class="statistics-compact-empty">${escapeHtml(mixUnavailable)}</div>`}</section>
     </div></section>
-    <section class="statistics-section"><header><h2>Current-hour coverage</h2></header><div class="statistics-grid">
-      <section class="info-card"><h2>Angle bands</h2>${angleRows.length ? `${bandChart([['Elevation', hour.elevation_strata?.bands], ['Azimuth', hour.azimuth_strata?.bands]], 'Detection and tracking yield by elevation and azimuth')}<details class="statistics-table-details"><summary>Exact values</summary>${table(['Angle', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], angleRows)}</details>` : empty('Angle coverage collecting', 'No eligible passes yet.')}</section>
-      <section class="info-card"><h2>Azimuth × elevation</h2>${jointRows.length ? `${angleMatrix}<details class="statistics-table-details"><summary>Exact matrix values</summary>${table(['Azimuth', 'Elevation', 'Eligible', 'Detection yield', 'Tracking yield'], jointRows)}</details>` : empty('Joint angle coverage collecting', 'Finalized eligible passes will populate the array coverage matrix.')}</section>
-      <section class="info-card statistics-wide"><h2>Range bands</h2>${rangeRows.length ? `${bandChart([['Delay', hour.delay_strata?.bands], ['Slant', hour.receiver_slant_range_strata?.bands]], 'Detection and tracking yield by range')}<details class="statistics-table-details"><summary>Exact values</summary>${table(['Range measure', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], rangeRows)}</details>` : empty('Range coverage collecting', 'No eligible passes yet.')}</section>
+    <section class="statistics-section"><header><h2>Current hour</h2></header><div class="statistics-grid">
+      <section class="info-card"><h2>Angle bands</h2>${angleRows.length ? `${bandChart([['Elevation', liveHour.elevation_strata?.bands], ['Azimuth', liveHour.azimuth_strata?.bands]], 'Detection and tracking yield by elevation and azimuth')}<details class="statistics-table-details"><summary>Values</summary>${table(['Angle', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], angleRows)}</details>` : empty('No angle data', '')}</section>
+      <section class="info-card"><h2>Azimuth × elevation</h2>${jointRows.length ? `${angleMatrix}<details class="statistics-table-details"><summary>Values</summary>${table(['Azimuth', 'Elevation', 'Eligible', 'Detection yield', 'Tracking yield'], jointRows)}</details>` : empty('No angle data', '')}</section>
+      <section class="info-card statistics-wide"><h2>Range bands</h2>${rangeRows.length ? `${bandChart([['Delay', liveHour.delay_strata?.bands], ['Slant', liveHour.receiver_slant_range_strata?.bands]], 'Detection and tracking yield by range')}<details class="statistics-table-details"><summary>Values</summary>${table(['Range measure', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], rangeRows)}</details>` : empty('No range data', '')}</section>
     </div></section>
     <section class="statistics-section"><header><h2>Aircraft evidence</h2></header><div class="statistics-grid">
       <section class="info-card"><h2>Eligible aircraft now</h2>${activeRows.length ? `<div class="statistics-evidence-list">${table(['Aircraft', 'Status', 'Eligible', 'Detected', 'Tracked', 'Delay km', 'Doppler Hz'], activeRows)}</div>` : empty('No eligible aircraft now', '')}</section>

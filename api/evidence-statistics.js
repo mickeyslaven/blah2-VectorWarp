@@ -1402,6 +1402,11 @@ class EvidenceStatistics {
     const eligibleCount = eligible.length + base.eligible;
     const detectedCount = detected.length + base.detected;
     const trackedCount = tracked.length + base.tracked;
+    const liveEligible = observed.filter(pass => pass.eligibleFrames >= 3);
+    const liveDetected = liveEligible.filter(pass => pass.detectedFrames >= 3);
+    const liveTracked = liveEligible.filter(pass => pass.trackedFrames >= 3);
+    const liveStrata = (definition, edges, field) => ({definition, edges,
+      finalized_passes_only: false, bands: summarizeBands(observed, field)});
     return {passes: rows.length + base.passes, active_passes: active.length,
       provisional_eligible_passes: active.filter(pass => pass.eligibleFrames >= 3).length,
       eligible_passes: eligibleCount,
@@ -1414,6 +1419,20 @@ class EvidenceStatistics {
       detection_yield: ratio(detectedCount, eligibleCount),
       tracking_yield: ratio(trackedCount, eligibleCount),
       denominator_semantics: 'finalized passes with >=3 detector-searchable, fresh-truth CPIs',
+      live_to_date: {eligible_passes: liveEligible.length,
+        detected_passes: liveDetected.length, tracked_passes: liveTracked.length,
+        detection_yield: ratio(liveDetected.length, liveEligible.length),
+        tracking_yield: ratio(liveTracked.length, liveEligible.length),
+        delay_strata: liveStrata('excess_bistatic_path_km', delayBandEdges(this.limits),
+          'delayBands'),
+        receiver_slant_range_strata: liveStrata('receiver_to_aircraft_3d_slant_range_km',
+          SLANT_RANGE_EDGES_KM, 'slantRangeBands'),
+        elevation_strata: liveStrata('receiver_geometric_elevation_deg',
+          ELEVATION_EDGES_DEG, 'elevationBands'),
+        azimuth_strata: liveStrata('receiver_true_azimuth_deg',
+          AZIMUTH_EDGES_DEG, 'azimuthBands'),
+        azimuth_elevation_strata: liveStrata(
+          'receiver_true_azimuth_x_geometric_elevation', [], 'azimuthElevationBands')},
       map_eligible_passes: rows.filter(pass => pass.physicalEligibleFrames >= 3).length +
         (base.mapEligible || 0),
       detector_eligible_passes: rows.filter(pass => detectorFrames(pass) >= 3).length +

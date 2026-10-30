@@ -105,6 +105,10 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(result.windows.hour.active_passes, 1);
   assert.equal(result.windows.hour.eligible_passes, 0,
     'An in-progress pass must not be prematurely classified');
+  assert.equal(result.windows.hour.live_to_date.eligible_passes, 1,
+    'The live hour view must include a currently eligible pass');
+  assert.equal(result.windows.hour.live_to_date.detected_passes, 1);
+  assert.equal(result.windows.hour.live_to_date.tracked_passes, 1);
   clock += 121000;
   source.get = async () => ({});
   stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
