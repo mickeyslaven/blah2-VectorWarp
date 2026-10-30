@@ -20,6 +20,7 @@ const scorecard = () => ({
     day: {}, week: {},
     lifetime: {eligible_passes: 4, detection_yield: .5, tracking_yield: .25}
   },
+  current_setup_lifetime: {eligible_passes: 42, detection_yield: .75, tracking_yield: .5},
   active_passes: [], recent_finalized_passes: [], limits: {}
 });
 const context = vm.createContext({
@@ -42,6 +43,8 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
   const details = root.querySelector('.statistics-details');
   const table = root.querySelector('.data-table-wrap');
   assert.ok(details && table, 'statistics view rendered interactive content');
+  assert.match(root.textContent, /42/,
+    'statistics headline uses the persistent current-setup lifetime');
   details.open = true;
   table.scrollTop = 37;
   table.focus();

@@ -1602,9 +1602,11 @@
     const authoritativeFrames = authoritative?.data_quality?.exact_timed_cpi_frames || 0;
     const statistics = authoritativeFrames > 0 ? authoritative : provisional;
     const decisionGrade = statistics?.decision_grade !== false;
-    const windows = statistics?.windows || {};
+    const windows = {...(statistics?.windows || {})};
+    if (statistics?.current_setup_lifetime)
+      windows.lifetime = statistics.current_setup_lifetime;
     const periods = [['Hour', windows.hour], ['Day', windows.day],
-      ['Week', windows.week], ['Lifetime', windows.lifetime]];
+      ['Week', windows.week], ['Current setup', windows.lifetime]];
     const lifetime = windows.lifetime || {};
     const hour = windows.hour || {};
     const limits = statistics?.limits || {};
@@ -1652,9 +1654,9 @@
       `<tr><td>${escapeHtml(item.azimuth_band || label.split('|')[0])}</td><td>${escapeHtml(item.elevation_band || label.split('|')[1])}</td><td>${integer(item.eligible_passes)}</td><td>${percent(item.detection_yield, 1)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
     const adsbWarning = statistics.adsb_quality?.warning;
     renderHtml(root, `<div class="statistics-page">${adsbWarning ? `<div class="evaluation-note"><strong>ADS-B data note:</strong> ${escapeHtml(adsbWarning)}</div>` : ''}<div class="insight-stats insight-stats-four">
-      ${card(integer(lifetime.eligible_passes), 'Eligible aircraft passes')}
-      ${card(percent(lifetime.detection_yield, 1), 'Lifetime detection yield')}
-      ${card(percent(lifetime.tracking_yield, 1), 'Lifetime tracking yield')}
+      ${card(integer(lifetime.eligible_passes), 'Current setup passes')}
+      ${card(percent(lifetime.detection_yield, 1), 'Setup detection yield')}
+      ${card(percent(lifetime.tracking_yield, 1), 'Setup tracking yield')}
       ${card(integer(statistics.active_passes?.length), 'Aircraft live now')}
     </div>
     <section class="statistics-section"><header><h2>Performance</h2></header><div class="statistics-grid">

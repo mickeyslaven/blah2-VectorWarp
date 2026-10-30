@@ -1518,6 +1518,7 @@ class EvidenceStatistics {
         geometry_model: 'three-dimensional-WGS84-bistatic-slant-path'},
       windows: Object.fromEntries(Object.entries(WINDOWS).map(
         ([name, duration]) => [name, this.summarize(duration, timestamp, contractStartedAt)])),
+      current_setup_lifetime: this.summarize(Infinity, timestamp),
       mix_adjusted_previous_hour_comparison: {...mixAdjusted,
         decision_grade: decisionGrade && mixAdjusted.decision_grade,
         timing_decision_grade: decisionGrade,

@@ -246,6 +246,9 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(uncertainTruthCalls, 0,
     'inexact Kraken host-arrival time must not request exact ADS-B truth');
   const uncertainStatus = uncertainStats.liveStatus();
+  assert.deepEqual(uncertainStatus.current_setup_lifetime,
+    uncertainStats.status().windows.lifetime,
+    'Live scorecard must retain the persistent current-setup lifetime beyond its bounded contract window');
   assert.equal(uncertainStatus.decision_grade, false,
     'an exact-policy lane without exact RF time must fail closed');
   assert.match(uncertainStatus.warning, /blocked.*exact RF event time/i);
