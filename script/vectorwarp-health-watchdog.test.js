@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert');
-const {receiverSettlement, requested, sameSettings, synchronizeAfterRestart} =
+const {receiverSettlement, requested, sameSettings, synchronizeAfterRestart, applicationInterlock} =
   require('./vectorwarp-health-watchdog');
 
 const config = {capture: {fc: 563000000, fs: 2400000, device: {type: 'Kraken',
@@ -19,6 +19,19 @@ assert.throws(() => receiverSettlement('revision-b', wanted,
   {...receipt, requested: {...wanted, frequency: 527000000}}), /exact configuration/);
 assert.throws(() => receiverSettlement('revision-b', wanted,
   {...receipt, status: 'pending'}), /settle/);
+
+const document = {revision: 'revision-a'};
+assert.equal(applicationInterlock(document, {configRevision: 'revision-a',
+  loadedRevision: 'revision-a', gainCheckPending: false, restart: {state: 'idle'}}), null);
+assert.equal(applicationInterlock(document, {configRevision: 'revision-a',
+  loadedRevision: 'revision-old', gainCheckPending: true, restart: {state: 'failed'}}),
+  'configuration-restart-failed');
+assert.equal(applicationInterlock(document, {configRevision: 'revision-a',
+  loadedRevision: 'revision-old', gainCheckPending: true, restart: {state: 'running'}}),
+  'configuration-restart-pending');
+assert.equal(applicationInterlock(document, {configRevision: 'revision-a',
+  loadedRevision: 'revision-a', gainCheckPending: false, restart: {state: 'scheduled'}}),
+  'configuration-restart-pending');
 
 (async () => {
   let attempts = 0, clock = 0;

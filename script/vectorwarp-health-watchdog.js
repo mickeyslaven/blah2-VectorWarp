@@ -83,6 +83,22 @@ function sameSettings(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+// A saved configuration that the running API has not loaded is an application
+// lifecycle fault, not a receiver/frame fault. Restarting only the processor in
+// this state can never publish frames because the API deliberately rejects the
+// new revision. Leave the receiver alone and surface the failed/pending restart.
+function applicationInterlock(document, status) {
+  if (!status || typeof document?.revision !== 'string') return null;
+  const revisionMismatch = status.configRevision !== document.revision ||
+    status.loadedRevision !== document.revision;
+  const restartState = status.restart?.state;
+  if (revisionMismatch || status.gainCheckPending === true)
+    return restartState === 'failed' ? 'configuration-restart-failed' :
+      'configuration-restart-pending';
+  if (['scheduled', 'running'].includes(restartState)) return 'configuration-restart-pending';
+  return null;
+}
+
 function receiverSettlement(configRevision, wanted, receipt, now = Date.now()) {
   if (typeof configRevision !== 'string' || !configRevision ||
       !sameSettings(receipt?.requested, wanted) ||
@@ -207,6 +223,16 @@ async function main(argv = process.argv.slice(2)) {
   let status = null;
   try { status = await apiStatus(document.config); delete previous.lastProbeError; }
   catch (error) { previous.lastProbeError = String(error.message).slice(0, 240); }
+  const interlock = applicationInterlock(document, status);
+  if (interlock) {
+    writeState(stateFile, {...previous, status: 'application-pending',
+      configRevision: document.revision, lastProbeAt: Date.now(), lastProbeReason: interlock});
+    if (interlock === 'configuration-restart-failed') {
+      console.error('VECTORWARP_LIVENESS_ALERT configuration-restart-failed; processor recovery is blocked until the API loads the saved revision');
+      process.exitCode = 1;
+    }
+    return;
+  }
   const decision = evaluateFrameLiveness({now: Date.now(), processorActive, processorPid,
     lastFrameAt: status?.lastFrameAt ?? null}, previous);
   const next = {...previous, ...decision.state, configRevision: document.revision,
@@ -246,4 +272,4 @@ if (require.main === module)
   main().catch(error => { console.error(`VECTORWARP_LIVENESS_ALERT ${error.stack}`); process.exitCode = 1; });
 
 module.exports = {main, receiverSettlement, requested, sameSettings, startProcessor,
-  synchronizeAfterRestart};
+  synchronizeAfterRestart, applicationInterlock};
