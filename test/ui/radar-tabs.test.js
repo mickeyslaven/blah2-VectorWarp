@@ -8,12 +8,12 @@ const {JSDOM} = require('./jsdom');
 const dom = new JSDOM('<nav data-radar-view-tabs hidden></nav>', {runScripts: 'outside-only',
   url: 'http://radar.invalid/'});
 dom.window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/common.js'), 'utf8'));
-dom.window.renderRadarViewTabs('tracks');
+dom.window.renderRadarViewTabs('maxhold');
 
 const nav = dom.window.document.querySelector('[data-radar-view-tabs]');
 assert.equal(nav.hidden, false);
-assert.equal(nav.querySelectorAll('a').length, 5);
-assert.equal(nav.querySelector('[aria-current="page"]').textContent, 'Tracks');
+assert.equal(nav.querySelectorAll('a').length, 2);
+assert.equal(nav.querySelector('[aria-current="page"]').textContent, 'Decaying max-hold');
 assert.deepEqual([...nav.querySelectorAll('a')].map(link => link.textContent),
-  ['Live radar', 'Detections', 'Tracks', 'History', 'ADS-B truth']);
-console.log('Delay/Doppler views share the Live radar tab bar.');
+  ['Live delay–Doppler', 'Decaying max-hold']);
+console.log('Only delay/Doppler heatmaps share the Live radar tab bar.');

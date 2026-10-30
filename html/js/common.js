@@ -39,11 +39,8 @@ function renderRadarViewTabs(active = 'live') {
   const target = document.querySelector('[data-radar-view-tabs]');
   if (!target) return;
   const views = [
-    ['live', '/', 'Live radar'],
-    ['detections', '/display/detections', 'Detections'],
-    ['tracks', '/display/tracks', 'Tracks'],
-    ['history', '/display/detection?view=range-doppler', 'History'],
-    ['adsb', '/display/statistics?tab=adsb', 'ADS-B truth']
+    ['live', '/', 'Live delay–Doppler'],
+    ['maxhold', '/display/signal?view=maxhold', 'Decaying max-hold']
   ];
   target.className = 'view-tabs radar-view-tabs';
   target.setAttribute('aria-label', 'Live radar views');

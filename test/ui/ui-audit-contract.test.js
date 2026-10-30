@@ -101,12 +101,11 @@ assert.match(controller, /href="\/display\/diagnostics"/,
   'Activity, timing and health share one Diagnostics destination');
 assert.match(controller, /href="\/display\/signal"/,
   'Spectrum and max-hold share one Signal destination');
-assert.doesNotMatch(controller, /href="\/display\/(?:detections|tracks|detection)"/,
-  'Delay/Doppler views do not remain buried in Displays');
-for (const route of ['/', '/display/detections', '/display/tracks',
-  '/display/detection?view=range-doppler', '/display/statistics?tab=adsb'])
+assert.match(controller, /href="\/display\/detection"/,
+  'Detection history modes share one destination');
+for (const route of ['/', '/display/signal?view=maxhold'])
   assert.match(common, new RegExp(route.replace(/[?]/g, '\\?')),
-    `Live radar tabs retain ${route}`);
+    `Delay/Doppler map tabs retain ${route}`);
 for (const view of ['activity', 'timing', 'health', 'spectrum', 'maxhold', 'range', 'doppler', 'range-doppler'])
   assert.match(consolidated, new RegExp(`['"]${view}['"]`),
     `Consolidated page controller retains the ${view} view`);
