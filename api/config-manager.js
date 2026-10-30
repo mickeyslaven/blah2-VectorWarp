@@ -532,7 +532,11 @@ function validateConfig(config, baseline = null, options = {}) {
 
   const cpi = number(data.cpi, 'process.data.cpi', {exclusiveMin: 0});
   const buffer = number(data.buffer, 'process.data.buffer', {min: 1});
-  const sampleRate = Number.isFinite(capture.fs) ? capture.fs : null;
+  // Processing limits follow the recording while replay is active. The live
+  // receiver's saved rate remains untouched so cross-SDR replay does not make
+  // its device profile invalid.
+  const sampleRate = replay.state === true && Number.isFinite(replay.sample_rate_hz) ?
+    replay.sample_rate_hz : Number.isFinite(capture.fs) ? capture.fs : null;
   const cpiSamples = cpi !== null && sampleRate !== null ?
     Math.floor(cpi * sampleRate) : null;
   if (cpiSamples !== null && (cpiSamples < 2000 || cpiSamples > INT32_MAX))
@@ -620,8 +624,17 @@ function validateConfig(config, baseline = null, options = {}) {
   if (clutterMin !== null && clutterMax !== null && cpiSamples !== null &&
       clutterMax - clutterMin + cpiSamples + 1 > INT32_MAX)
     errors.push('process.clutter.delayMax: filter FFT exceeds the processor limit');
-  const channels = device.type === 'Kraken' ? device.channel_count : 2;
-  const paths = device.type === 'Kraken' ? device.surveillance_channels?.length : 1;
+  // Once the physical receiver is bypassed, validate processing against the
+  // recording's channel topology rather than the machine's installed SDR.
+  const processingDevice = replay.state === true && Number.isInteger(replay.channel_count) ?
+    {...device, type: replay.channel_count > 2 || replay.reference_mode === 'array_eigenbeam' ?
+        'Kraken' : device.type,
+      channel_count: replay.channel_count,
+      reference_channel: replay.reference_channel ?? 0,
+      surveillance_channels: replaySurveillance,
+      array_geometry: device.array_geometry} : device;
+  const channels = processingDevice.type === 'Kraken' ? processingDevice.channel_count : 2;
+  const paths = processingDevice.type === 'Kraken' ? processingDevice.surveillance_channels?.length : 1;
   // Lower-bound estimate only: FFT plans, allocator overhead and other services
   // need additional memory. Deployment-specific budgets may be set by the host.
   const estimatedBytes = 16 * (channels * cpiSamples * buffer +
@@ -850,16 +863,16 @@ function validateConfig(config, baseline = null, options = {}) {
           errors.push('enabled detection manifold automation requires an absolute corpus path');
         if (!['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
           errors.push('detection manifold automation requires coherent surveillance fusion');
-        if (device.type !== 'Kraken' || processConfig.detection?.enable !== true ||
+        if (processingDevice.type !== 'Kraken' || processConfig.detection?.enable !== true ||
             root.truth?.adsb?.enabled !== true)
           errors.push('detection manifold automation requires Kraken coherent detection and ADS-B truth');
       }
     }
     if (fusion.manifold_file !== undefined) {
-      const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
+      const heimdall=processingDevice.heimdall||{},geometry=processingDevice.array_geometry||{};
       const commonFixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
       const vectorFixed=Array.isArray(heimdall.channel_gains)&&
-        heimdall.channel_gains.length===device.channel_count&&
+        heimdall.channel_gains.length===processingDevice.channel_count&&
         heimdall.channel_gains.every(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=50);
       if(heimdall.gain_control!==undefined&&heimdall.gain_control!=='fixed')
         errors.push('measured surveillance manifold requires capture.device.heimdall.gain_control: fixed');
@@ -871,24 +884,24 @@ function validateConfig(config, baseline = null, options = {}) {
     }
     if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
       const label = fusion.mode;
-      if (device.type !== 'Kraken')
+      if (processingDevice.type !== 'Kraken')
         errors.push(`${label} surveillance fusion requires a Kraken receiver`);
-      if (!isObject(device.array_geometry) || !Array.isArray(device.array_geometry.elements))
+      if (!isObject(processingDevice.array_geometry) || !Array.isArray(processingDevice.array_geometry.elements))
         errors.push(`${label} surveillance fusion requires capture.device.array_geometry.elements`);
-      const geometryChannels = new Set((device.array_geometry?.elements || [])
+      const geometryChannels = new Set((processingDevice.array_geometry?.elements || [])
         .filter(isObject).filter(element => Array.isArray(element.position) &&
           element.position.length === 3 && element.position.every(Number.isFinite))
         .map(element => element.daq_channel));
-      if ((device.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
+      if ((processingDevice.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
         errors.push(`${label} geometry must include every surveillance channel`);
       if (processConfig.performance?.acceleration === 'gpu-resident' &&
-          device.array_geometry?.shape !== 'regular_polygon')
+          processingDevice.array_geometry?.shape !== 'regular_polygon')
         errors.push(`gpu-resident ${label} fusion requires regular_polygon geometry`);
       if (processConfig.performance?.acceleration === 'gpu-resident' &&
-          device.array_geometry?.shape === 'regular_polygon') {
-        const byChannel = new Map((device.array_geometry.elements || []).map(element =>
+          processingDevice.array_geometry?.shape === 'regular_polygon') {
+        const byChannel = new Map((processingDevice.array_geometry.elements || []).map(element =>
           [element?.daq_channel, element?.position]));
-        const positions = (device.surveillance_channels || []).map(channel => byChannel.get(channel));
+        const positions = (processingDevice.surveillance_channels || []).map(channel => byChannel.get(channel));
         let regular = positions.length >= 3 && positions.every(position =>
           Array.isArray(position) && position.length === 3 && position.every(Number.isFinite));
         if (regular) {
@@ -919,13 +932,13 @@ function validateConfig(config, baseline = null, options = {}) {
           processConfig.performance?.acceleration !== 'gpu-resident')
         errors.push('noise_whitened_beam_bank fusion requires gpu-resident acceleration');
       const reference = processConfig.reference_synthesis;
-      const surveillance = device.surveillance_channels || [];
+      const surveillance = processingDevice.surveillance_channels || [];
       if (reference?.mode !== 'array_eigenbeam' ||
           !Array.isArray(reference.channels) ||
           reference.channels.length !== surveillance.length ||
           reference.channels.some((channel, index) => channel !== surveillance[index]))
         errors.push('coherent fusion requires array_eigenbeam reference channels to match surveillance channels');
-      if (!Number.isFinite(device.array_geometry?.x_axis_bearing_deg_true))
+      if (!Number.isFinite(processingDevice.array_geometry?.x_axis_bearing_deg_true))
         errors.push('coherent fusion requires x_axis_bearing_deg_true');
     }
   }
@@ -989,8 +1002,8 @@ function validateConfig(config, baseline = null, options = {}) {
       const fusion = processConfig.surveillance_fusion;
       if (replay.state !== true || replay.format !== 'blah2')
         errors.push('fixed_site_projected is experimental and requires explicit native blah2 replay');
-      if (device.type !== 'Kraken' || device.channel_count !== 5 ||
-          !allFive(device.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
+      if (processingDevice.type !== 'Kraken' || processingDevice.channel_count !== 5 ||
+          !allFive(processingDevice.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
           !allFive(reference?.channels) || clutter.enable !== true ||
           processConfig.performance?.acceleration !== 'gpu-resident' ||
           bearing.enable !== true || bearing.method !== 'covariance_mvdr' ||
@@ -1014,10 +1027,10 @@ function validateConfig(config, baseline = null, options = {}) {
         (typeof bearing.manifold_file !== 'string' || !bearing.manifold_file.trim()))
       errors.push('process.bearing.manifold_file must be a non-empty path');
     if (bearing.manifold_file !== undefined) {
-      const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
+      const heimdall=processingDevice.heimdall||{},geometry=processingDevice.array_geometry||{};
       const fixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
       const vector=Array.isArray(heimdall.channel_gains)&&
-        heimdall.channel_gains.length===device.channel_count&&
+        heimdall.channel_gains.length===processingDevice.channel_count&&
         heimdall.channel_gains.every(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=50);
       if((heimdall.gain_control!==undefined&&heimdall.gain_control!=='fixed')||(!fixed&&!vector))
         errors.push('measured bearing manifold requires an explicit fixed requested gain vector');
@@ -1052,9 +1065,9 @@ function validateConfig(config, baseline = null, options = {}) {
       if (shadow.path !== undefined && (typeof shadow.path !== 'string' || !path.isAbsolute(shadow.path)))
         errors.push('process.bearing.frequency_resolved_shadow.path must be absolute');
       if ([true, 'on', 'auto'].includes(shadow.enabled)) {
-        const geometry = device.array_geometry;
+        const geometry = processingDevice.array_geometry;
         const referenceChannels = processConfig.reference_synthesis?.channels;
-        if (device.type !== 'Kraken' || processConfig.reference_synthesis?.mode !== 'array_eigenbeam' ||
+        if (processingDevice.type !== 'Kraken' || processConfig.reference_synthesis?.mode !== 'array_eigenbeam' ||
             !Array.isArray(referenceChannels) || referenceChannels.length < 2)
           errors.push('frequency-resolved shadow requires multi-channel Kraken array reference synthesis');
         if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
@@ -1082,14 +1095,14 @@ function validateConfig(config, baseline = null, options = {}) {
       number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
       number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
       if (recorder.enabled === true || recorder.enabled === 'on') {
-        if (device.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
+        if (processingDevice.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
               processConfig.surveillance_fusion?.mode) || !detection.enable)
           errors.push('manifold recording requires Kraken coherent detection');
         if (!root.truth?.adsb?.enabled)
           errors.push('manifold recording requires ADS-B truth');
         if (!Number.isInteger(ports.manifold) || ports.manifold < 1 || ports.manifold > 65535)
           errors.push('network.ports.manifold is required when manifold recording is enabled');
-        const geometry = device.array_geometry;
+        const geometry = processingDevice.array_geometry;
         if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
             geometry?.orientation_confirmed !== true || !Number.isFinite(geometry.x_axis_bearing_deg_true))
           errors.push('manifold recording requires confirmed array mapping, geometry, and orientation');
@@ -1110,9 +1123,9 @@ function validateConfig(config, baseline = null, options = {}) {
           bearing.training_radius <= bearing.guard_radius)
         errors.push('process.bearing.training_radius must exceed guard_radius');
       if (bearing.channel_mapping !== undefined &&
-          bearing.channel_mapping.length !== device.surveillance_channels?.length)
+          bearing.channel_mapping.length !== processingDevice.surveillance_channels?.length)
         errors.push('process.bearing.channel_mapping must include every surveillance channel once');
-      const geometry = device.array_geometry;
+      const geometry = processingDevice.array_geometry;
       if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
           geometry?.orientation_confirmed !== true)
         errors.push('bearing output requires confirmed mapping, geometry, and orientation');

@@ -14,5 +14,11 @@ const {RecordingTimeline} = require('./recording-timeline');
   await timeline.stop(manual, 3000);
   assert.equal(timeline.at(manual, 800, 1000, 'aircraft').d.hex, 'D');
   assert.equal(timeline.load(manual).receiver, 'RspDuo');
+  const profile = {schema:'vectorwarp-replay-profile-v2', configuration_complete:true,
+    capture:{channel_count:5}, process:{data:{cpi:0.5}}, location:{}};
+  await timeline.writeReplayProfile(manual, profile);
+  assert.deepEqual(timeline.loadReplayProfile(manual), profile);
+  fs.writeFileSync(`${manual}.replay.json`, '{bad');
+  assert.equal(timeline.loadReplayProfile(manual), null);
   fs.rmSync(directory, {recursive:true,force:true}); console.log('Recording ADS-B timeline passed.');
 })().catch(error => { console.error(error); process.exitCode=1; });

@@ -89,7 +89,29 @@ const recordingLibrary = new RecordingLibrary(() => config);
 const recordingTimeline = new RecordingTimeline();
 function recordingReplayProfile() {
   const device = config.capture?.device || {};
-  return {schema: 'vectorwarp-replay-profile-v1',
+  const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+  const processProfile = clone(config.process || {});
+  // Replay should reproduce the scientific pipeline, but local acceleration,
+  // output files and background calibration/publication remain properties of
+  // the machine doing the replay.
+  delete processProfile.performance;
+  if (processProfile.tracker) delete processProfile.tracker.publication;
+  if (processProfile.surveillance_fusion) {
+    delete processProfile.surveillance_fusion.detection_manifold_automation;
+    delete processProfile.surveillance_fusion.manifold_file;
+  }
+  if (processProfile.bearing?.manifold_automation)
+    processProfile.bearing.manifold_automation.auto_promote = false;
+  if (processProfile.bearing) delete processProfile.bearing.manifold_file;
+  if (processProfile.tracker?.track_guided_shadow)
+    delete processProfile.tracker.track_guided_shadow.evidence_path;
+  if (processProfile.bearing) delete processProfile.bearing.manifold_recorder;
+  if (processProfile.bearing?.frequency_resolved_shadow) {
+    processProfile.bearing.frequency_resolved_shadow.enabled = false;
+    delete processProfile.bearing.frequency_resolved_shadow.path;
+  }
+  return {schema: 'vectorwarp-replay-profile-v2', configuration_complete: true,
+    created_at: Date.now(),
     capture: {sample_rate_hz: config.capture?.fs || null,
       frequency_hz: config.capture?.fc || null,
       channel_count: device.channel_count || (device.type === 'Kraken' ? null : 2),
@@ -97,11 +119,9 @@ function recordingReplayProfile() {
       surveillance_channels: Array.isArray(device.surveillance_channels) ?
         [...device.surveillance_channels] : [1],
       source_receiver: device.type || null,
-      array_geometry: device.array_geometry || null},
-    process: {reference_synthesis: config.process?.reference_synthesis || null,
-      surveillance_fusion: config.process?.surveillance_fusion || null,
-      bearing: config.process?.bearing || null},
-    location: config.location || null};
+      array_geometry: clone(device.array_geometry) || null},
+    process: processProfile,
+    location: clone(config.location) || null};
 }
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 // A failed native request can reset the bounded raw ring.  Give it materially
@@ -168,6 +188,9 @@ async function finalizeCaptureAdmission(revision, file, samples) {
       reasons: [...new Set([...(integrity.reasons || []), 'admission-sidecar-write'])], error: error.message};
   }
   integrity = {...integrity, admission_sidecar: admissionSidecar};
+  if (file) try {
+    await recordingTimeline.writeReplayProfile(file, recordingReplayProfile());
+  } catch (error) { console.error(`Recording replay package failed: ${error.message}`); }
   if (file && first) try {
     await recordingTimeline.write(file, first.windowStart, first.windowEnd,
       {sample_rate_hz: integrityMetadata?.sampleRate || config.capture?.fs || null,
@@ -645,6 +668,7 @@ app.get('/api/recordings/:id/replay-profile', async (req, res) => {
   const filename = recordingLibrary.resolve(req.params.id);
   if (!filename) return res.status(404).json({error: 'Recording not found.'});
   const timeline = recordingTimeline.load(filename);
+  const packaged = recordingTimeline.loadReplayProfile(filename);
   let metadata = {};
   try { metadata = JSON.parse(await fs.promises.readFile(`${filename}.json`, 'utf8')); }
   catch (_) { /* Portable recordings may only have a provenance sidecar. */ }
@@ -655,11 +679,15 @@ app.get('/api/recordings/:id/replay-profile', async (req, res) => {
       receiver: provenance.receiver};
   } catch (_) { /* Header validation remains the final replay authority. */ }
   const channels = timeline?.channels ?? metadata.channels ?? null;
-  const source = timeline?.replay_profile?.capture || {};
-  const referenceMode = timeline?.replay_profile?.process?.reference_synthesis?.mode ||
+  const legacy = timeline?.replay_profile || null;
+  const profile = packaged || legacy;
+  const source = profile?.capture || {};
+  const referenceMode = profile?.process?.reference_synthesis?.mode ||
     (channels > 2 ? 'array_eigenbeam' : 'dedicated');
   const all = Number.isInteger(channels) ? Array.from({length: channels}, (_, index) => index) : [];
-  res.json({file: filename,
+  res.json({file: filename, profile: profile || null,
+    configuration_complete: packaged?.configuration_complete === true,
+    limitations: packaged ? [] : ['This legacy recording does not contain a complete scientific configuration.'],
     sample_rate_hz: timeline?.sample_rate_hz ?? metadata.sampleRate ?? null,
     frequency_hz: timeline?.frequency_hz ?? metadata.frequency ?? null,
     channel_count: channels,
@@ -667,7 +695,7 @@ app.get('/api/recordings/:id/replay-profile', async (req, res) => {
     surveillance_channels: source.surveillance_channels ||
       (referenceMode === 'array_eigenbeam' ? all : all.filter(index => index !== 0)),
     reference_mode: referenceMode,
-    reference_channels: timeline?.replay_profile?.process?.reference_synthesis?.channels ||
+    reference_channels: profile?.process?.reference_synthesis?.channels ||
       (referenceMode === 'array_eigenbeam' ? all : [])});
 });
 app.post('/api/recordings/directories', async (req, res, next) => {
@@ -995,11 +1023,16 @@ app.post('/api/processor/status', (req, res) => {
     void recordingTimeline.stop(previous.recordingFile, now)
       .catch(error => console.error(`Manual recording ADS-B timeline failed: ${error.message}`));
   if (checked.value.input === 'live' && checked.value.recording && checked.value.recordingFile) {
+    const isNewManualRecording = previous?.recording !== true ||
+      previous?.recordingFile !== checked.value.recordingFile;
     const startMs = now - checked.value.recordedSamples * 1000 / checked.value.sampleRate;
     recordingTimeline.start(checked.value.recordingFile, startMs,
       {sample_rate_hz: checked.value.sampleRate, frequency_hz: checked.value.frequency,
         channels: config.capture?.device?.channel_count || 2,
         receiver: checked.value.receiver, replay_profile: recordingReplayProfile()});
+    if (isNewManualRecording)
+      void recordingTimeline.writeReplayProfile(checked.value.recordingFile, recordingReplayProfile())
+        .catch(error => console.error(`Recording replay package failed: ${error.message}`));
   }
   completePendingGainRestart();
   if (checked.value.input === 'replay') adsbSource.clear();
@@ -1739,6 +1772,11 @@ app.get('/lib/plotly-2.20.0.min.js', (req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, '..', 'html'), {setHeaders(response, filename) {
   const extension = path.extname(filename).toLowerCase();
+  // The global API policy intentionally disables caching. Static assets have
+  // their own validators and must not inherit legacy no-cache headers or every
+  // page navigation redownloads the same UI on mobile.
+  response.removeHeader('Pragma');
+  response.removeHeader('Expires');
   if (path.basename(filename) === 'plotly-2.20.0.min.js')
     response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   else if (['.js', '.css', '.svg', '.png', '.woff', '.woff2'].includes(extension))

@@ -3009,6 +3009,8 @@ async function renderConfiguration() {
     rememberOriginalConfig(activeConfig);
     const replayParameters = new URLSearchParams(window.location.search);
     const replayFile = replayParameters.get('replayFile');
+    let replayConfigurationComplete = false;
+    let replayLimitations = [];
     if (replayFile) {
       let recorded = {};
       const replayId = replayParameters.get('replayId');
@@ -3017,6 +3019,18 @@ async function renderConfiguration() {
           {cache: 'no-store'});
         if (response.ok) recorded = await response.json();
       } catch (_) { /* Header validation will still protect a legacy recording. */ }
+      replayConfigurationComplete = recorded.configuration_complete === true;
+      replayLimitations = Array.isArray(recorded.limitations) ? recorded.limitations : [];
+      if (replayConfigurationComplete && recorded.profile) {
+        const recordedProcess = recorded.profile.process || {};
+        // Performance is intentionally local: Automatic can use this machine's
+        // GPU/CPU without inheriting worker counts from the recording host.
+        activeConfig.process = {...recordedProcess,
+          performance: activeConfig.process?.performance || {}};
+        if (recorded.profile.location) activeConfig.location = recorded.profile.location;
+        if (recorded.profile.capture?.array_geometry)
+          activeConfig.capture.device.array_geometry = recorded.profile.capture.array_geometry;
+      }
       activeConfig.capture.replay = {...activeConfig.capture.replay,
         state: true, file: replayFile, format: 'auto',
         ...Object.fromEntries(Object.entries({sample_rate_hz: recorded.sample_rate_hz,
@@ -3045,7 +3059,19 @@ async function renderConfiguration() {
     }
     const setup = document.createElement('div');
     setup.className = 'config-setup-note';
-    if (capabilities.setupRequired) {
+    if (replayFile) {
+      const title = document.createElement('strong');
+      const copy = document.createElement('span');
+      title.textContent = replayConfigurationComplete ? ' Recording configuration loaded.' :
+        ' Legacy recording configuration is incomplete.';
+      copy.textContent = replayConfigurationComplete ?
+        ' Start replay to use the recorded channel roles, array geometry, timing, clutter, detection, tracking, bearing, frequency, sample rate, and sites. This machine keeps its own Automatic GPU/CPU settings.' :
+        ` Only recording-header settings could be loaded. ${replayLimitations.join(' ')}`;
+      setup.append(title, copy);
+      const save = document.getElementById('config-save');
+      save.textContent = 'Start replay';
+      if (!replayConfigurationComplete) save.title = 'Review legacy replay settings before starting.';
+    } else if (capabilities.setupRequired) {
       const title = document.createElement('strong');
       const copy = document.createElement('span');
       title.textContent = ' First-run setup required.';

@@ -454,6 +454,111 @@ async function fetchStatusResource(url, options = {}, timeoutMs = 5000) {
   }
 }
 
+// Keep useful read-only API snapshots on the device between page navigations.
+// HTTP remains authoritative: live radar data is refreshed immediately in the
+// background and may only bridge a short transport interruption. Long-lived
+// entries are limited to metadata whose meaning does not change every CPI.
+const clientJsonMemoryCache = new Map();
+const clientJsonRequests = new Map();
+const CLIENT_JSON_CACHE_PREFIX = 'vectorwarp-json-v2:';
+
+function clientJsonCachePolicy(url) {
+  const parsed = new URL(url, pageOrigin());
+  const path = parsed.pathname;
+  if (/^\/(?:stash|capture)(?:\/|$)/.test(path) ||
+      /^\/api\/(?:iqdata|spectrum)(?:\/|$)/.test(path))
+    return {freshMs: 0, staleMs: 0, storage: null};
+  if (/^\/api\/adsb\/aircraft-photo\//.test(path))
+    return {freshMs: 24 * 3600000, staleMs: 30 * 86400000, storage: 'local'};
+  if (path === '/api/radar/coverage' || path === '/api/map/imagery')
+    return {freshMs: path === '/api/radar/coverage' ? 30000 : 3600000,
+      staleMs: 7 * 86400000, storage: 'local'};
+  if (/^\/api\/(?:runtime\/config|config\/capabilities|receiver-profiles)(?:\/|$)/.test(path))
+    return {freshMs: 2000, staleMs: 24 * 3600000, storage: 'session'};
+  if (/^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing)(?:\/|$)/.test(path))
+    return {freshMs: 100, staleMs: 30000, storage: 'session'};
+  if (path === '/api/system/status' || path === '/api/adsb/status')
+    return {freshMs: 1000, staleMs: 15000, storage: 'session'};
+  return {freshMs: 1000, staleMs: 300000, storage: 'session'};
+}
+
+function clientJsonStorage(kind) {
+  if (typeof window === 'undefined') return null;
+  try { return kind === 'local' ? window.localStorage : kind === 'session' ? window.sessionStorage : null; }
+  catch (_) { return null; }
+}
+
+function clientJsonKey(url) {
+  const parsed = new URL(url, pageOrigin());
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+function readClientJsonCache(key, policy) {
+  const memory = clientJsonMemoryCache.get(key);
+  if (memory && Date.now() - memory.at <= policy.staleMs) return memory;
+  if (memory) clientJsonMemoryCache.delete(key);
+  const storage = clientJsonStorage(policy.storage);
+  if (!storage) return null;
+  try {
+    const entry = JSON.parse(storage.getItem(CLIENT_JSON_CACHE_PREFIX + key) || 'null');
+    if (!entry || !Number.isFinite(entry.at) || Date.now() - entry.at > policy.staleMs) {
+      storage.removeItem(CLIENT_JSON_CACHE_PREFIX + key);
+      return null;
+    }
+    clientJsonMemoryCache.set(key, entry);
+    return entry;
+  } catch (_) { return null; }
+}
+
+function writeClientJsonCache(key, value, policy) {
+  const entry = {at: Date.now(), value};
+  clientJsonMemoryCache.set(key, entry);
+  const storage = clientJsonStorage(policy.storage);
+  if (!storage) return;
+  try {
+    const serialized = JSON.stringify(entry);
+    // Do not evict map tiles or user preferences for a giant API payload.
+    if (serialized.length <= 750000) storage.setItem(CLIENT_JSON_CACHE_PREFIX + key, serialized);
+  } catch (_) { /* A full/private browser cache must not affect live data. */ }
+}
+
+async function fetchCachedJsonResource(url, options = {}, overrides = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    const response = await fetchStatusResource(url, options, overrides.timeoutMs || 5000);
+    if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+    const text = await response.text();
+    return text.trim() ? JSON.parse(text) : null;
+  }
+  const policy = {...clientJsonCachePolicy(url), ...overrides};
+  const key = clientJsonKey(url);
+  const cached = readClientJsonCache(key, policy);
+  const age = cached ? Date.now() - cached.at : Infinity;
+  if (cached && age <= policy.freshMs) return cached.value;
+  const refresh = () => {
+    if (clientJsonRequests.has(key)) return clientJsonRequests.get(key);
+    const request = fetchStatusResource(url, {...options, cache: 'no-store'}, policy.timeoutMs || 5000)
+      .then(async response => {
+        if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+        const text = await response.text();
+        const value = text.trim() ? JSON.parse(text) : null;
+        writeClientJsonCache(key, value, policy);
+        return value;
+      }).finally(() => clientJsonRequests.delete(key));
+    clientJsonRequests.set(key, request);
+    return request;
+  };
+  if (cached && age <= policy.staleMs && overrides.awaitFresh !== true) {
+    refresh().catch(() => {});
+    return cached.value;
+  }
+  try { return await refresh(); }
+  catch (error) {
+    if (cached && age <= policy.staleMs) return cached.value;
+    throw error;
+  }
+}
+
 // The SDK reports overload events, not measured clipping or overall RF quality.
 // Counts keep events visible even if detection and recovery occur between polls.
 function rspDuoOverloadStatus(status, expected = false, now = Date.now()) {
@@ -694,10 +799,7 @@ let radarRuntimeReadAt = -Infinity;
 let radarRuntimePending = null;
 
 async function fetchRadarJson(url) {
-  const response = await fetchStatusResource(url, {cache: 'no-store'});
-  if (!response.ok) throw new Error(`Data request failed (${response.status})`);
-  const body = await response.text();
-  return body.trim() ? JSON.parse(body) : null;
+  return fetchCachedJsonResource(url);
 }
 
 function radarPresentationUrl(path) {
@@ -1178,6 +1280,7 @@ if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
+    fetchCachedJsonResource, clientJsonCachePolicy,
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
     aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftFlightPathAngle,
     aircraftPlotData, aircraftHoverText, aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,

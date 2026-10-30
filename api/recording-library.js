@@ -6,7 +6,7 @@ const path = require('path');
 
 const RECORDING_EXTENSIONS = new Set(['.blah2iq', '.mchq']);
 const SIDECAR_SUFFIXES = ['.admission.json', '.timeline.json', '.timeline.jsonl.gz',
-  '.provenance.json', '.json'];
+  '.provenance.json', '.replay.json', '.json'];
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 const METADATA_BATCH = 32;
@@ -122,7 +122,10 @@ class RecordingLibrary {
         try { stat = await fsp.stat(filename); } catch (_) { return null; }
         if (!stat.isFile()) return null;
         const item = {id: encodeId(name), filename: name, path: filename,
-          size_bytes: stat.size, created_at: stat.birthtimeMs || stat.mtimeMs,
+          // Linux birthtime is filesystem-dependent and can be the indexer's
+          // copy time rather than the recording time. File mtime is portable,
+          // stable for completed clips, and is later replaced by provenance.
+          size_bytes: stat.size, created_at: stat.mtimeMs,
           modified_at: stat.mtimeMs, format: path.extname(name).slice(1),
           receiver: null, channels: null, sample_rate_hz: null, frequency_hz: null,
           duration_seconds: null, complete: true,

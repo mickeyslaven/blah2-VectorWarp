@@ -28,6 +28,7 @@ fs.writeFileSync(manual, Buffer.alloc(128));
 fs.writeFileSync(`${manual}.json`, JSON.stringify({schema: 'vectorwarp-recording-provenance-v2',
   complete: true, createdAt: now - 1000, channels: 2, sampleRate: 1000000,
   frequency: 100000000, samples: 2000000, receiver: 'Usrp'}));
+fs.writeFileSync(`${manual}.replay.json`, JSON.stringify({schema: 'vectorwarp-replay-profile-v2'}));
 
 const library = new RecordingLibrary(() => config, {now: () => now});
 async function main() {
@@ -72,6 +73,7 @@ assert.equal(fs.existsSync(`${automatic}.json`), false);
 assert.equal(fs.existsSync(manual), true);
 assert.equal((await library.remove(encodeId('manual.blah2iq'))).removed, true);
 assert.equal(fs.existsSync(manual), false);
+assert.equal(fs.existsSync(`${manual}.replay.json`), false);
 fs.rmSync(directory, {recursive: true, force: true});
 
 const policyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-recording-policy-'));

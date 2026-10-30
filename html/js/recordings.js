@@ -64,10 +64,18 @@
     const pageStatus = document.getElementById('recording-page-status');
     if (pageStatus) pageStatus.textContent = 'Loading recordings…';
     try {
-      const response = await fetchStatusResource(liveApiUrl(`/api/recordings?${query()}`),
-        {cache: 'no-store', signal: controller.signal}, 15000);
-      if (!response.ok) throw new Error('Recording library unavailable');
-      const result = await response.json();
+      const recordingsUrl = liveApiUrl(`/api/recordings?${query()}`);
+      let result;
+      if (typeof fetchCachedJsonResource === 'function') {
+        result = await fetchCachedJsonResource(recordingsUrl, {signal: controller.signal},
+          {freshMs: 1000, staleMs: 3600000, storage: 'session', timeoutMs: 15000,
+            awaitFresh: true});
+      } else {
+        const response = await fetchStatusResource(recordingsUrl,
+          {cache: 'no-store', signal: controller.signal}, 15000);
+        if (!response.ok) throw new Error('Recording library unavailable');
+        result = await response.json();
+      }
       if (requestId !== state.requestId) return;
       state.total = result.total;
       const storage = result.storage || {}, retention = result.retention || {};

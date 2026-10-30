@@ -70,6 +70,23 @@ class RecordingTimeline {
     await this.io.promises.writeFile(temporary, `${JSON.stringify(value)}\n`, {mode: 0o640});
     await this.io.promises.rename(temporary, output); return output;
   }
+  async writeReplayProfile(file, profile) {
+    if (!file || profile?.schema !== 'vectorwarp-replay-profile-v2') return null;
+    const output = `${file}.replay.json`;
+    const temporary = `${output}.tmp-${process.pid}-${Date.now()}`;
+    await this.io.promises.writeFile(temporary, `${JSON.stringify(profile)}\n`, {mode: 0o640});
+    await this.io.promises.rename(temporary, output);
+    return output;
+  }
+  loadReplayProfile(file) {
+    if (!file) return null;
+    try {
+      const filename = `${file}.replay.json`, stat = this.io.statSync(filename);
+      if (!stat.isFile() || stat.size > 4 * 1024 * 1024) return null;
+      const value = JSON.parse(this.io.readFileSync(filename, 'utf8'));
+      return value?.schema === 'vectorwarp-replay-profile-v2' ? value : null;
+    } catch (_) { return null; }
+  }
   has(file) {
     if (!file) return false;
     try { return this.io.statSync(`${file}.timeline.json`).isFile(); } catch (_) {}

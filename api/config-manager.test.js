@@ -386,6 +386,18 @@ for (const profile of profiles) {
     assert.equal(validateConfig(switched).valid, false, `${profile.type}: reject ${threads} FFT threads`);
   }
 }
+const rspDuoKrakenReplay = configurationForReceiver('RspDuo', load('config.yml'));
+const rspDuoPerformance = clone(rspDuoKrakenReplay.process.performance);
+rspDuoKrakenReplay.process = clone(coherentFusion.process);
+rspDuoKrakenReplay.process.performance = rspDuoPerformance;
+rspDuoKrakenReplay.capture.device.array_geometry = clone(coherentFusion.capture.device.array_geometry);
+rspDuoKrakenReplay.capture.replay = {...rspDuoKrakenReplay.capture.replay, state: true,
+  file: '/tmp/kraken-recording.blah2iq', format: 'auto', sample_rate_hz: 2400000,
+  frequency_hz: 509000000, channel_count: 5, reference_channel: 0,
+  surveillance_channels: [0, 1, 2, 3, 4], reference_channels: [0, 1, 2, 3, 4],
+  reference_mode: 'array_eigenbeam'};
+assert.equal(validateConfig(rspDuoKrakenReplay).valid, true,
+  `Kraken replay on an RSPduo host: ${validateConfig(rspDuoKrakenReplay).errors.join('; ')}`);
 
 const tooManyChannels = clone(sixChannel);
 tooManyChannels.capture.device.channel_count = 9;

@@ -81,11 +81,12 @@
   }
 
   async function fetchJson(url, options = {}) {
+    if (typeof fetchCachedJsonResource === 'function')
+      return fetchCachedJsonResource(url, options);
     const response = await fetchStatusResource(url, {cache: 'no-store', ...options});
     if (!response.ok) throw new Error(`${url} returned ${response.status}`);
     const text = await response.text();
-    if (!text.trim()) return null;
-    return JSON.parse(text);
+    return text.trim() ? JSON.parse(text) : null;
   }
 
   async function apiJson(path) {
@@ -542,6 +543,14 @@
   } catch (_) { /* Trail continuity is an optional browser cache. */ }
   let aircraftTrailPersistAt = 0;
   const aircraftPhotoCache = new Map();
+  try {
+    const saved = JSON.parse(localStorage.getItem('vectorwarp-aircraft-photos-v1') || '{}');
+    const cutoff = Date.now() - 30 * 86400000;
+    Object.entries(saved).forEach(([hex, entry]) => {
+      if (/^[0-9a-f]{6}$/.test(hex) && Number(entry?.at) >= cutoff && entry?.value)
+        aircraftPhotoCache.set(hex, entry.value);
+    });
+  } catch (_) { /* Photo continuity is an optional browser cache. */ }
   const aircraftPhotoInFlight = new Map();
   const aircraftPhotoQueue = [];
   const queuedAircraftPhotos = new Set();
@@ -601,7 +610,15 @@
     aircraftPhotoCache.set(hex, {loading: true});
     const request = fetchJson(liveApiUrl(`/api/adsb/aircraft-photo/${encodeURIComponent(hex)}`))
       .then(value => value || {available: false}, () => ({available: false}))
-      .then(value => { aircraftPhotoCache.set(hex, value); return value; })
+      .then(value => {
+        aircraftPhotoCache.set(hex, value);
+        try {
+          const entries = [...aircraftPhotoCache.entries()].slice(-200);
+          localStorage.setItem('vectorwarp-aircraft-photos-v1', JSON.stringify(Object.fromEntries(
+            entries.map(([id, photo]) => [id, {at: Date.now(), value: photo}]))));
+        } catch (_) { /* A full/private browser cache must not affect photos. */ }
+        return value;
+      })
       .finally(() => aircraftPhotoInFlight.delete(hex));
     aircraftPhotoInFlight.set(hex, request);
     return request;
@@ -757,13 +774,19 @@
     if (!maplibre?.Map) throw new Error('Map renderer could not load');
     let imageryManifest = {};
     try { imageryManifest = await apiJson('/api/map/imagery'); } catch (_) {}
+    let savedCamera = null;
+    try {
+      const candidate = JSON.parse(localStorage.getItem('vectorwarp-map-camera-v1') || 'null');
+      if (candidate?.key === viewport.key && Array.isArray(candidate.center) &&
+          candidate.center.length === 2 && candidate.center.every(Number.isFinite)) savedCamera = candidate;
+    } catch (_) { /* Camera persistence is optional. */ }
     const map = new maplibre.Map({
       container: graph,
       style: locationMapStyle(imageryManifest),
-      center: [viewport.center.lon, viewport.center.lat],
-      zoom: viewport.zoom,
-      pitch: 58,
-      bearing: 0,
+      center: savedCamera?.center || [viewport.center.lon, viewport.center.lat],
+      zoom: Number.isFinite(savedCamera?.zoom) ? savedCamera.zoom : viewport.zoom,
+      pitch: Number.isFinite(savedCamera?.pitch) ? savedCamera.pitch : 58,
+      bearing: Number.isFinite(savedCamera?.bearing) ? savedCamera.bearing : 0,
       minPitch: 0,
       maxPitch: 85,
       attributionControl: true,
@@ -779,6 +802,14 @@
       fadeDuration: 220
     });
     graph._vectorwarpMap = map;
+    map.on('moveend', () => {
+      try {
+        const center = map.getCenter();
+        localStorage.setItem('vectorwarp-map-camera-v1', JSON.stringify({key: viewport.key,
+          center: [center.lng, center.lat], zoom: map.getZoom(), pitch: map.getPitch(),
+          bearing: map.getBearing(), at: Date.now()}));
+      } catch (_) { /* Camera persistence is optional. */ }
+    });
     graph.dataset.mapRenderer = 'maplibre-terrain';
     if (maplibre.NavigationControl && map.addControl) {
       const compass = new maplibre.NavigationControl({
