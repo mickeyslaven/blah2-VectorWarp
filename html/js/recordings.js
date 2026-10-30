@@ -80,12 +80,15 @@
       }
       if (requestId !== state.requestId) return;
       state.total = result.total;
+      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+      const indexError = String(result.index_error || '').trim();
+      if (indexError && !recordings.length)
+        throw new Error(`Recording library scan failed: ${indexError}`);
       const storage = result.storage || {}, retention = result.retention || {};
       const limits = [retention.maximumAgeDays > 0 ? `${retention.maximumAgeDays} days` : null,
         retention.maximumTotalGb > 0 ? `${retention.maximumTotalGb} GB` : null].filter(Boolean).join(' or ');
       const lowSpace = retention.lowSpacePolicy === 'delete_oldest' ? 'Delete oldest aircraft clips' : 'Stop recording';
-      summary.innerHTML = `<div><strong>${result.indexing ? 'Indexing recordings…' : `${result.total} matching recording${result.total === 1 ? '' : 's'}`}</strong><span>${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
-      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+      summary.innerHTML = `<div><strong>${indexError ? 'Showing the last available recording index' : result.indexing ? 'Indexing recordings…' : `${result.total} matching recording${result.total === 1 ? '' : 's'}`}</strong><span>${indexError ? `Refresh delayed: ${escape(indexError)}` : `${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free`}</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
       const indexing = result.indexing || result.metadata_indexing;
       list.innerHTML = recordings.length ? recordings.map(card).join('') : indexing ?
         '<div class="empty-state recording-loading-state"><strong>Loading recordings…</strong><p>Indexing the local recording library and aircraft labels.</p></div>' :
@@ -95,7 +98,7 @@
       // Metadata indexing is background work.  One slow, owned refresh is
       // enough; stacked timers used to abort each other and intermittently
       // replace a valid library with an error on mobile browsers.
-      if (result.indexing && !document.hidden)
+      if ((result.indexing || result.metadata_indexing) && !document.hidden)
         state.indexTimer = window.setTimeout(() => load(), 5000);
     } catch (error) {
       if (error?.name === 'AbortError' || requestId !== state.requestId) return;
