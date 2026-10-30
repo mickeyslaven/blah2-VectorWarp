@@ -67,7 +67,9 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
     aircraft_clips: {pre_seconds: 2, post_seconds: 2}},
   process: {data: {cpi: .5}, detection: {enable: true}, tracker: {enable: true},
     ambiguity: {delayMin: 0, delayMax: 100, dopplerMin: -100, dopplerMax: 100},
-    clutter: {followAmbiguity: false}}, location: {rx: {}, tx: {}}};
+    clutter: {followAmbiguity: false}}, truth: {adsb: {}},
+  location: {rx: {name: 'Receiver', latitude: 1, longitude: 1, altitude: 1},
+    tx: {name: 'Transmitter', latitude: 2, longitude: 2, altitude: 2}}};
   const writes = [], modes = [], target = dom.window.document.getElementById('assistant');
   const api = {getConfig: () => config, mode: () => 'simple', setMode: value => modes.push(value),
     set: (path, value) => { writes.push([path.join('.'), value]);
@@ -104,6 +106,25 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   target.querySelector('[data-wizard-next]').click();
   assert.ok(writes.some(([path, value]) => path === 'process.ambiguity.delayMax' && value === 801));
   assert.ok(target.querySelector('.setup-wizard'), 'The next guided step remains in the wizard');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(target.querySelector('.setup-wizard-content').textContent, /review storage/i);
+  assert.equal(target.querySelectorAll('[data-wizard-automatic]').length, 0,
+    'Recommended automatic choices are kept on the final page');
+  target.querySelector('[data-wizard-next]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  const automatic = [...target.querySelectorAll('[data-wizard-automatic]')];
+  assert.equal(automatic.length, 4);
+  assert.ok(automatic.every(input => input.checked), 'Every automatic feature defaults on');
+  assert.equal(target.querySelectorAll('.setup-wizard-options .setup-recommended').length, 4,
+    'Every automatic feature is labeled RECOMMENDED');
+  assert.equal(target.querySelector('.setup-wizard-automatic').open, false,
+    'Automatic features use a compact final-page dropdown');
+  target.querySelector('[data-wizard-next]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  for (const path of ['process.detection.enable', 'process.tracker.enable',
+    'truth.adsb.enabled', 'capture.aircraft_clips.enabled'])
+    assert.ok(writes.some(([written, value]) => written === path && value === true),
+      `${path} is applied from the recommended defaults`);
 });
 
 test('assistant automatically selects one discovered supported receiver', async () => {

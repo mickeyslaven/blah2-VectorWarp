@@ -41,6 +41,14 @@
   let wizardBusy = false;
   let wizardError = '';
   let wizardNotice = '';
+  let wizardAutomatic = null;
+
+  const recommendedAutomatic = () => ({
+    detection: true,
+    tracker: true,
+    adsb: true,
+    clips: true
+  });
 
   function receiverHardwareReady(device = {}) {
     if (device.type === 'HackRF')
@@ -93,10 +101,12 @@
       const site = (role, title) => { const item = config.location?.[role] || {}; return `<fieldset class="setup-wizard-site"><legend>${title}</legend><label>Name<input data-site="${role}.name" value="${valueAttr(item.name)}"></label><label>Latitude<input data-site="${role}.latitude" type="number" min="-90" max="90" step="any" value="${valueAttr(item.latitude)}"></label><label>Longitude<input data-site="${role}.longitude" type="number" min="-180" max="180" step="any" value="${valueAttr(item.longitude)}"></label><label>Altitude (m)<input data-site="${role}.altitude" type="number" step="any" value="${valueAttr(item.altitude)}"></label></fieldset>`; };
       return `<h2>Locate the receiver and illuminator</h2><div class="setup-wizard-sites">${site('rx','Receiver site')}${site('tx','Illuminator site')}</div>`;
     }
-    if (index === 3) return `<h2>Choose the radar search</h2><p>Range and speed set the delay and Doppler limits.</p><div class="setup-wizard-fields"><label class="setup-wizard-field">CPI (seconds)<input data-wizard-cpi type="number" min="0.01" step="0.01" value="${valueAttr(config.process?.data?.cpi)}"></label><label class="setup-wizard-field">Maximum range (km)<input data-wizard-range type="number" min="1" max="1000" value="50"></label><label class="setup-wizard-field">Maximum speed (m/s)<input data-wizard-speed type="number" min="10" max="3000" value="300"></label></div><div class="setup-wizard-options"><label><input data-wizard-detection type="checkbox"${checked(config.process?.detection?.enable)}> Detect radar returns</label><label><input data-wizard-tracker type="checkbox"${checked(config.process?.tracker?.enable)}> Build persistent tracks</label></div>`;
-    if (index === 4) return `<h2>Choose data collection</h2><div class="setup-wizard-options"><label><input data-wizard-adsb type="checkbox"${checked(config.truth?.adsb?.enabled)}> Enable ADS-B comparison</label>${config.capture?.aircraft_clips ? `<label><input data-wizard-clips type="checkbox"${checked(config.capture.aircraft_clips.enabled)}> Automatically record eligible aircraft clips</label>` : ''}</div><div class="setup-wizard-summary"><strong>Storage estimate</strong><span>${estimate.clipLabel}</span><span>Manual IQ: ${formatBytes(estimate.manualHour)} per hour</span><span>Aircraft clip: about ${formatBytes(estimate.clip)} each</span></div>`;
+    if (index === 3) return `<h2>Choose the radar search</h2><p>Range and speed set the delay and Doppler limits.</p><div class="setup-wizard-fields"><label class="setup-wizard-field">CPI (seconds)<input data-wizard-cpi type="number" min="0.01" step="0.01" value="${valueAttr(config.process?.data?.cpi)}"></label><label class="setup-wizard-field">Maximum range (km)<input data-wizard-range type="number" min="1" max="1000" value="50"></label><label class="setup-wizard-field">Maximum speed (m/s)<input data-wizard-speed type="number" min="10" max="3000" value="300"></label></div>`;
+    if (index === 4) return `<h2>Review storage</h2><div class="setup-wizard-summary"><strong>Storage estimate</strong><span>${estimate.clipLabel}</span><span>Manual IQ: ${formatBytes(estimate.manualHour)} per hour</span><span>Aircraft clip: about ${formatBytes(estimate.clip)} each</span></div>`;
     const checks = wizardChecks(config, profiles).slice(0, 5);
-    return `<h2>Review setup</h2><p>Finish applies these settings and starts the radar.</p><div class="setup-wizard-review">${checks.map(item => `<div class="${item.complete ? 'complete' : 'incomplete'}"><span>${item.complete ? '✓' : '!'}</span><strong>${escape(item.title)}</strong><small>${item.complete ? 'Ready' : 'Needs attention'}</small></div>`).join('')}</div><p class="setup-wizard-hint">Receiver: <strong>${escape(config.capture?.device?.type || 'Unconfigured')}</strong> · ${(Number(config.capture?.fc || 0) / 1e6).toFixed(3)} MHz · ${(Number(config.capture?.fs || 0) / 1e6).toFixed(3)} MS/s</p>`;
+    const automatic = wizardAutomatic || recommendedAutomatic();
+    const option = (key, label) => `<label><input data-wizard-automatic="${key}" type="checkbox"${checked(automatic[key])}><span>${label}</span><strong class="setup-recommended">RECOMMENDED</strong></label>`;
+    return `<h2>Review setup</h2><p>Finish applies these settings and starts the radar.</p><div class="setup-wizard-review">${checks.map(item => `<div class="${item.complete ? 'complete' : 'incomplete'}"><span>${item.complete ? '✓' : '!'}</span><strong>${escape(item.title)}</strong><small>${item.complete ? 'Ready' : 'Needs attention'}</small></div>`).join('')}</div><details class="setup-wizard-automatic"><summary>Automatic features <span class="setup-recommended">RECOMMENDED</span></summary><div class="setup-wizard-options">${option('detection', 'Detect radar returns')}${option('tracker', 'Build persistent tracks')}${option('adsb', 'Compare ADS-B aircraft')}${config.capture?.aircraft_clips ? option('clips', 'Record eligible aircraft clips') : ''}</div></details><p class="setup-wizard-hint">Receiver: <strong>${escape(config.capture?.device?.type || 'Unconfigured')}</strong> · ${(Number(config.capture?.fc || 0) / 1e6).toFixed(3)} MHz · ${(Number(config.capture?.fs || 0) / 1e6).toFixed(3)} MS/s</p>`;
   }
 
   function mountWizard(target, api) {
@@ -110,7 +120,8 @@
     dialog.setAttribute('aria-labelledby', 'setup-wizard-title');
     dialog.innerHTML = `<div class="setup-wizard-shell"><aside><div><strong id="setup-wizard-title">VectorWarp setup</strong><small>Step ${wizardStep + 1} of ${checks.length}</small></div><nav aria-label="Setup steps">${checks.map((item, index) => `<button type="button" data-wizard-step="${index}" class="${index === wizardStep ? 'active' : ''} ${item.complete ? 'complete' : ''}"${index === wizardStep ? ' aria-current="step"' : ''}${index > wizardStep && !item.complete ? ' disabled' : ''}><span>${item.complete ? '✓' : index + 1}</span>${escape(item.title)}</button>`).join('')}</nav></aside><section class="setup-wizard-content">${wizardPanel(config, wizardStep, profiles)}<p class="setup-wizard-notice" role="status"${wizardNotice ? '' : ' hidden'}>${escape(wizardNotice)}</p><p class="setup-wizard-error" role="alert"${wizardError ? '' : ' hidden'}>${escape(wizardError)}</p><footer><button type="button" class="button-secondary" data-wizard-close>Cancel</button><span></span>${wizardStep ? '<button type="button" class="button-secondary" data-wizard-back>Back</button>' : ''}<button type="button" class="button-primary" data-wizard-next>${wizardStep === checks.length - 1 ? 'Finish & Start radar' : 'Save step & Continue'}</button></footer></section></div>`;
     target.appendChild(dialog);
-    const close = () => { wizardOpen = false; if (typeof dialog.close === 'function') dialog.close(); dialog.remove(); };
+    const close = () => { wizardOpen = false; wizardAutomatic = null;
+      if (typeof dialog.close === 'function') dialog.close(); dialog.remove(); };
     dialog.querySelector('[data-wizard-close]').addEventListener('click', close);
     dialog.querySelector('[data-wizard-receiver]')?.addEventListener('change', event => {
       wizardError = '';
@@ -123,6 +134,8 @@
     dialog.querySelectorAll('[data-wizard-step]').forEach(button => button.addEventListener('click', () => {
       wizardStep = Number(button.dataset.wizardStep); render(target, api);
     }));
+    dialog.querySelectorAll('[data-wizard-automatic]').forEach(input =>
+      input.addEventListener('change', () => { wizardAutomatic[input.dataset.wizardAutomatic] = input.checked; }));
     dialog.querySelector('[data-wizard-back]')?.addEventListener('click', () => {
       wizardStep -= 1; render(target, api);
     });
@@ -156,19 +169,21 @@
         wizardVisited.add(2);
       } else if (wizardStep === 3) {
         api.set(['process','data','cpi'], Number(dialog.querySelector('[data-wizard-cpi]').value));
-        api.set(['process','detection','enable'], dialog.querySelector('[data-wizard-detection]').checked);
-        api.set(['process','tracker','enable'], dialog.querySelector('[data-wizard-tracker]').checked);
         const result = searchWindow(config, Number(dialog.querySelector('[data-wizard-range]').value), Number(dialog.querySelector('[data-wizard-speed]').value));
         if (result) { api.set(['process','ambiguity','delayMax'], result.delayMax); api.set(['process','ambiguity','dopplerMin'], -result.dopplerMax); api.set(['process','ambiguity','dopplerMax'], result.dopplerMax); }
         wizardVisited.add(3);
       } else if (wizardStep === 4) {
-        api.set(['truth','adsb','enabled'], dialog.querySelector('[data-wizard-adsb]').checked);
-        if (config.capture?.aircraft_clips) api.set(['capture','aircraft_clips','enabled'], dialog.querySelector('[data-wizard-clips]').checked);
         wizardVisited.add(4);
       } else {
         const ready = wizardChecks(config, api.receiverProfiles()).slice(0, 5)
           .every(item => item.complete);
         if (!ready) throw new Error('Complete every required setup step before starting the radar.');
+        const automatic = wizardAutomatic || recommendedAutomatic();
+        api.set(['process','detection','enable'], automatic.detection);
+        api.set(['process','tracker','enable'], automatic.tracker);
+        api.set(['truth','adsb','enabled'], automatic.adsb);
+        if (config.capture?.aircraft_clips)
+          api.set(['capture','aircraft_clips','enabled'], automatic.clips);
         const saved = await api.save();
         if (saved === false) throw new Error('VectorWarp could not apply the completed setup. Review the error above and try again.');
         close(); advance = false;
@@ -221,6 +236,7 @@
         wizardNotice = 'Automatic receiver detection was unavailable. You can still choose a receiver manually.';
       }
       wizardOpen = true;
+      wizardAutomatic = recommendedAutomatic();
       const refreshedChecks = wizardChecks(api.getConfig(), api.receiverProfiles()).slice(0, 5);
       wizardStep = refreshedChecks.findIndex(item => !item.complete);
       if (wizardStep < 0) wizardStep = 0;
