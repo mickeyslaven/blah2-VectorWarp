@@ -1,31 +1,9 @@
 # macOS installation and local development
 
-This port is under local validation. Public Homebrew formulas follow successful
-[main-merge publishing runs](HOMEBREW_PUBLISHING.md); the local source
-installation is available now. Linux release installation and systemd
-services remain separate. Apple Silicon
-(`arm64`) was exercised locally on an Apple M2 running macOS 26.6.1. That work
-covered CPU and replay processing, browser configuration and service lifecycle,
-the local Homebrew app and Kraken companion through revision 17, a calibrated
-local USB Kraken, and MoltenVK ambiguity/clutter processing. The
-[macOS CI run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739948)
-also passed all source checks and an installed Homebrew app/Heimdall lifecycle
-and synthetic-pipeline check on `macos-15`. Intel (`x86_64`)
-is an experimental source-level CI target. Its `macos-15-intel` job passed CPU,
-open receiver-adapter, synthetic Kraken, replay, API, browser and lifecycle
-checks. Physical Intel receivers, GPU processing and installed Homebrew remain
-unverified.
-
-The separate universal standalone `.pkg` is Developer ID signed, Apple-notarized
-and installs at `/Applications/VectorWarp.app`. Published versions appear in the
-[release download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
-Standalone package commands are in
-[Install VectorWarp](INSTALL.md#manual-package-installation).
-Homebrew installation, updates, and service commands are in
-[Install VectorWarp](INSTALL.md#macos). CPU processing
-is always available. Optional Vulkan/MoltenVK processing is described in
-[MACOS_GPU.md](MACOS_GPU.md); readiness comes from numerical checks on the running
-processor, independently for each stage.
+Install the signed package or Homebrew formula using the
+[installation guide](INSTALL.md#macos). The package includes CPU processing,
+the web application, receiver adapters, recording and replay. Apple Silicon can
+also use MoltenVK GPU processing and a locally attached KrakenSDR.
 
 ## Prerequisites
 
@@ -40,6 +18,12 @@ For the USRP/B210 and dual-HackRF adapters, install the open receiver libraries:
 
 ```sh
 brew install uhd hackrf
+```
+
+For GPU processing through MoltenVK, install:
+
+```sh
+brew install vulkan-loader vulkan-headers molten-vk glslang
 ```
 
 VectorWarp does not download receiver firmware or the proprietary SDRplay SDK.
@@ -63,9 +47,20 @@ The default `all` profile builds USRP and HackRF adapters using the installed
 open-source libraries. `--backend cpu` builds CPU/replay without those SDKs.
 `--backend usrp` and `--backend hackrf` select one optional adapter. Kraken's
 existing built-in network client remains compiled; these commands do not
-configure or connect to a Kraken host. Native local USB Kraken support uses
-the separately built Heimdall companion; see [MACOS_KRAKEN.md](MACOS_KRAKEN.md).
-The Homebrew formula installs that companion automatically.
+configure or connect to a Kraken host. The Homebrew formula installs the local
+Kraken companion automatically. For a source build, stage it into the same
+artifact:
+
+```sh
+brew install eigen libusb
+python3 script/build-kraken-macos.py --jobs 1 --output-dir build/macos/artifact
+```
+
+To include GPU processing in a source build, download VkFFT 1.3.4 and run:
+
+```sh
+VKFFT_ROOT=/absolute/path/to/VkFFT-1.3.4 script/build-macos.sh --backend all --gpu on --test
+```
 
 For RSPduo, install the vendor SDK first, then explicitly build against its local
 paths (adjust the paths to your installation):
@@ -140,9 +135,7 @@ Apple Silicon and Intel macOS need separate execution evidence. The presence of
 a Vulkan SDK or an Apple GPU does not qualify GPU processing; CPU fallback stays
 available.
 
-See [MACOS_COMPATIBILITY.md](MACOS_COMPATIBILITY.md) for vendor sources and the
-initial platform audit. Build commands and measured acceptance results below
-are updated as local validation completes.
+Build commands and repeatable checks are below.
 
 ## Repeatable software checks
 
@@ -194,9 +187,6 @@ An optional six-minute supervisor check is available with
 actual API/processor crash recovery, process-pause staleness and replay memory
 growth. Physical GPU application checks require a GPU-enabled artifact:
 `python3 test/macos/gpu_runtime_test.py /absolute/path/to/bin/blah2`.
-
-Measured local results and the configuration coverage boundary are recorded in
-[MACOS_TEST_MATRIX.md](MACOS_TEST_MATRIX.md).
 
 ## Local ADS-B feeds
 

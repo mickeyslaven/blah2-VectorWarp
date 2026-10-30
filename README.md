@@ -90,23 +90,23 @@ ARM64 from the [VectorWarp package page](https://mickeyslaven.github.io/blah2-Ve
 
 ```bash
 # Ubuntu or Debian
-sudo apt update && sudo apt install -y curl gnupg
+sudo apt update && sudo apt install -y curl gnupg && \
 curl --fail --location --proto '=https' --tlsv1.2 \
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh \
-  --output vectorwarp-install.sh
-sudo bash vectorwarp-install.sh --repo-only
-sudo apt update && sudo apt install -y vectorwarp
+  --output vectorwarp-install.sh && \
+sudo bash vectorwarp-install.sh --repo-only && \
+sudo apt update && sudo apt install -y vectorwarp && \
 vectorwarp
 ```
 
 ```bash
 # Fedora
-sudo dnf install -y curl gnupg2
+sudo dnf install -y curl gnupg2 && \
 curl --fail --location --proto '=https' --tlsv1.2 \
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh \
-  --output vectorwarp-install.sh
-sudo bash vectorwarp-install.sh --repo-only
-sudo dnf install -y vectorwarp
+  --output vectorwarp-install.sh && \
+sudo bash vectorwarp-install.sh --repo-only && \
+sudo dnf install -y vectorwarp && \
 vectorwarp
 ```
 
@@ -132,7 +132,6 @@ For source builds and additional installation options, see the
 - [GPU acceleration](docs/GPU_ACCELERATION.md)
 - [Bearing and bistatic geolocation](docs/BEARING_GEOLOCATION.md)
 - [3lips multi-node setup](docs/3LIPS_SETUP.md)
-- [Changes from blah2](docs/UPSTREAM_COMPARISON.md)
 
 ## Credits and license
 

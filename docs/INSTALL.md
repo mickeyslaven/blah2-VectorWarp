@@ -8,29 +8,31 @@ builds and standalone packages are available below.
 ### Ubuntu or Debian
 
 ```bash
-sudo apt update && sudo apt install -y curl gnupg
+sudo apt update && sudo apt install -y curl gnupg && \
 curl --fail --location --proto '=https' --tlsv1.2 \
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh \
-  --output vectorwarp-install.sh
-sudo bash vectorwarp-install.sh --repo-only
-sudo apt update && sudo apt install -y vectorwarp
+  --output vectorwarp-install.sh && \
+sudo bash vectorwarp-install.sh --repo-only && \
+sudo apt update && sudo apt install -y vectorwarp && \
 vectorwarp
 ```
 
 ### Fedora
 
 ```bash
-sudo dnf install -y curl gnupg2
+sudo dnf install -y curl gnupg2 && \
 curl --fail --location --proto '=https' --tlsv1.2 \
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh \
-  --output vectorwarp-install.sh
-sudo bash vectorwarp-install.sh --repo-only
-sudo dnf install -y vectorwarp
+  --output vectorwarp-install.sh && \
+sudo bash vectorwarp-install.sh --repo-only && \
+sudo dnf install -y vectorwarp && \
 vectorwarp
 ```
 
 The installer adds the VectorWarp package repository and signing key. The last
-command opens the browser interface.
+command opens the web API and browser interface, including on the first run.
+**Save for later** saves settings without starting radar; **Save & Restart**
+applies them and starts processing.
 
 ## macOS
 
@@ -124,6 +126,7 @@ Use the radar computer's hostname or IP address in place of
 | Debian | 13 Trixie | x86-64 or ARM64 | APT |
 | Fedora | 44 | x86-64 or ARM64 | DNF |
 | DragonOS | Matching supported Ubuntu base | x86-64 or ARM64 | APT |
+| Raspberry Pi OS | Debian 12 or 13 base | ARM64 | APT |
 | macOS | Current supported release | Apple Silicon | Homebrew |
 
 The [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
@@ -203,6 +206,7 @@ sudo dnf install vulkan-loader-devel glslang-devel vulkan-tools
 
 For RSPduo, install the SDRplay Hardware API before building the adapter. See
 [SDRplay setup](SDRPLAY_SETUP.md).
+USRP and B210 support requires UHD 4.1 or newer.
 
 ### 3. Build and install
 
@@ -247,5 +251,4 @@ brew uninstall vectorwarp
 ## Other installation guides
 
 - [SDRplay RSPduo](SDRPLAY_SETUP.md)
-- [DragonOS](DRAGONOS.md)
 - [Raspberry Pi 4](PI4_GUIDE.md)

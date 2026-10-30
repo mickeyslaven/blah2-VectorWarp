@@ -111,7 +111,7 @@ the reference and surveillance tuners.
 
 ### Ettus USRP / B210
 
-Select **Ettus USRP / UHD**. VectorWarp detects local UHD devices and fills the
+Install UHD 4.1 or newer, then select **Ettus USRP / UHD**. VectorWarp detects local UHD devices and fills the
 connection when one receiver is found. Device address, subdevice, antenna,
 clock, gain, and channel settings are under **Advanced → Receiver**.
 

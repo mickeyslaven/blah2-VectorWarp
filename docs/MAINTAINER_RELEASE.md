@@ -1,202 +1,82 @@
 # Maintainer release guide
 
-This is a one-time project-administration checklist, not an end-user install
-procedure. The package repository is not operational until every item below has
-completed successfully.
+VectorWarp publishes signed Linux packages, a notarized macOS package, a
+Homebrew formula, and the package download page through GitHub Actions.
 
 ## One-time setup
 
-1. Enable Actions in this fork, choose **Settings → Pages → Source: GitHub
-   Actions**, and protect the `github-pages` environment. See
-   [GitHub's Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
-2. Create the archive primary and signing subkey in the approved
-   maintainer-controlled process. Export only the signing subkey for CI and add it
-   as `VECTORWARP_ARCHIVE_SIGNING_KEY` in the protected `release-signing`
-   environment; never upload or commit the primary private key.
-3. Commit only its public key at `packaging/keys/vectorwarp.asc`, and set the
-   matching 40-hex `VECTORWARP_ARCHIVE_KEY_FINGERPRINT` repository variable.
-   Publication must fail closed while that value is absent or invalid.
-4. Grant the release workflow only `contents: write`; grant the Pages publication
-   job only the required Pages OIDC/write permissions. Protect manual publication.
-5. Verify the generated public key, APT metadata and RPM metadata in an isolated
-   test host before exposing Pages as an installation source.
+1. Enable GitHub Actions and select **GitHub Actions** as the Pages source.
+2. Protect the `release-signing`, `github-pages`, and `homebrew-publish`
+   environments.
+3. Add the package signing subkey as `VECTORWARP_ARCHIVE_SIGNING_KEY` and its
+   40-character public fingerprint as
+   `VECTORWARP_ARCHIVE_KEY_FINGERPRINT`. Commit only the public key at
+   `packaging/keys/vectorwarp.asc`.
+4. Add the Homebrew tap deploy key as `HOMEBREW_TAP_DEPLOY_KEY` in the
+   `homebrew-publish` environment. Give it write access only to
+   `mickeyslaven/homebrew-vectorwarp`.
+5. On the signing Mac, install the release agent:
 
-Use a dedicated package-signing key, not a personal authentication key. The
-configured trust anchor is certification-only RSA4096 primary fingerprint
-`A306 3601 F4C8 309F 2853 62AC CC75 9324 8896 A175`, expiring 2028-09-09.
-Its RSA4096 signing subkey is
-`342D C7F7 B525 BE15 431B 2434 1856 5937 18CE 92B9`, expiring 2027-09-10.
-The workflow expects the ASCII-armored output of `gpg --export-secret-subkeys`
-for that primary, usable without an interactive passphrase. A clean import must
-show an unavailable/stub primary secret (`sec#`) and the sole usable signing
-subkey (`ssb` with signing capability); it must not contain the primary
-secret. GitHub stores that subkey export as the protected environment secret.
-Keep its backup outside the source tree, and never paste it into issues or chat.
-The current backup is root-only on the maintainer host, not an encrypted,
-off-host or air-gapped backup.
-Add the secret under **Settings → Environments → release-signing → Environment
-secrets**, as described in [GitHub's secret guide](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
-The full 40-hex primary fingerprint (without spaces) is public and goes under
-**Secrets and variables → Actions → Variables**. Export the public key only
-after adding the signing subkey. Only that public `.asc` file belongs in Git.
+   ```sh
+   python3 script/install-macos-release-agent.py --check
+   python3 script/install-macos-release-agent.py
+   ```
 
-## Release process
+## Validate a change
 
-The build matrix is Ubuntu 22.04/24.04/26.04 and Debian 13 DEBs, plus Fedora
-44 RPMs, each for x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64). Releases
-before 0.1.10 retain that historical ten-package matrix. Starting with 0.1.10,
-add one Debian 12 Bookworm ARM64 DEB for an eleven-package matrix; Bookworm has
-no x86-64 package target. The x86-64 aliases cover both Intel and AMD CPUs.
-Preserve distribution-native architecture names in package metadata, filenames
-and commands.
-Ubuntu 22.04/26.04 and Debian 12/13 are built in their own
-pinned userspaces; the containers are build conveniences only and are never a
-VectorWarp runtime requirement. DragonOS receives the matching Ubuntu APT
-selection through `/etc/os-release`; it is not an independently built or
-boot-tested DragonOS target. Raspberry Pi OS Trixie selects the Debian 13
-ARM64 (arm64 / aarch64) package; its installation and Pi hardware performance need separate
-validation. Raspberry Pi OS Bookworm uses the Debian 12 ARM64 package in the
-separate Pi 4 preview image; see [Pi image packaging](PI_IMAGE_PACKAGING.md).
-No 32-bit package is produced.
-Each package includes compiled Kraken, USRP and dual-HackRF adapters, CPU
-processing with Vulkan auto-detection, and VectorWarp's locally buildable
-RSPduo source kit. The kit is not a compiled RSPduo adapter and contains no
-SDRplay files. The user installs SDRplay's separately licensed API and headers,
-then explicitly chooses **Build SDRplay support** in Settings. UHD, libhackrf,
-normal C++ compiler tools and binutils are native package dependencies.
+Pull requests run the CPU, API, browser, macOS, receiver, package, and bundled
+Kraken workflows. `release-packages.yml` builds the same native package profile
+used by releases without publishing it or receiving signing credentials.
 
-Stable and PR package jobs build the same `all` profile on every applicable
-target: eleven from 0.1.10, and the historical ten before it.
-`compiled_receivers=Usrp,HackRF,Kraken` and
-`local_build_receivers=RspDuo`. Neither job receives, downloads, accepts terms
-for, caches, uploads or packages the SDRplay SDK. The explicit `rspduo`
-source-build backend remains available only for a developer who has installed
-the SDK locally; it is not the release-package path. PR jobs use the empty
-`pr-packaging` environment and do not upload package assets. Trusted main/tag
-jobs may upload the same checked package inputs for the separate signing flow.
+To repeat an installed-package check on a disposable Linux host:
 
-1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
-   `Build release packages` runs every native package smoke check on PRs (eleven
-   from 0.1.10; ten for older release versions)
-   using the same three compiled adapters and RSPduo local source kit as a
-   stable package, without proprietary SDK inputs. Each target also runs the
-   [installed service and browser checks](PACKAGE_TESTING.md): Save & Restart,
-   fresh synthetic replay frames, failure/recovery and service permissions.
-   These test installed wiring, not physical receiver operation. PR jobs do not upload
-   assets and never receive signing secrets. Trusted main/tag builds use the
-   same package contract, then the separate protected `release-signing` flow
-   signs reviewed outputs. Use the immutable `vMAJOR.MINOR.PATCH` tag for a
-   draft release; its manual version input is dry-run only.
-2. Confirm every package asset: eleven from 0.1.10, or the historical ten for
-   an older release, plus `SHA256SUMS`, `package-manifest.json` and
-   `repository-manifest.json`. The tag creates a draft release. If the
-   [local macOS release agent](MACOS_RELEASE_AGENT.md) is installed and its
-   source/notices gates pass, it adds the notarized Mac package and source,
-   then publishes the draft. Dependency drift stops automatic publication for
-   review rather than publishing an outdated source bundle.
-3. Publishing the complete draft triggers `Publish verified package
-   repository`. It signs/generates repository metadata and deploys to Pages
-   only when the protected environments and key/fingerprint validate.
-4. On clean hosts, install from the APT and DNF repositories, verify the signing
-   key fingerprint, confirm ordinary package-manager updates, and verify that no
-   processor/radio starts automatically on a fresh install. On upgrade, verify
-   that previously running VectorWarp services restart and a stopped processor
-   stays stopped; test the version-0.1.7-or-newer `vectorwarp` launcher's
-   web-only default and full VectorWarp service start, stop and restart as well. The
-   commands must not stop separately managed receiver/vendor services.
-5. Verify the deployed page, installer, key and every package download return
-   successfully over HTTPS. The generated homepage uses the verified manifest
-   for its OS/architecture table and links to immutable GitHub release assets;
-   it includes signed APT/DNF setup and direct-download verification steps.
-6. Keep README's **Install on Linux** and **OS support** sections linked to the
-   generated installation page, whose per-OS downloads come from the verified
-   release manifest. Do not pin another release's filenames in README or INSTALL;
-   the documentation checks reject those stale links. Update INSTALL,
-   packaging/README, DragonOS and Pi setup pages together, removing their
-   **pending first release** wording. Keep source instructions and record which
-   platforms were tested; a successful package build is not a hardware test.
-   macOS uses the separate [Homebrew publishing workflow](HOMEBREW_PUBLISHING.md)
-   after merges to `main`; it does not require a Linux release tag or alter
-   this package-signing process.
-   Give each OS one complete copy/paste command: install curl and GnuPG from
-   the distribution, download the HTTPS installer, run `--repo-only`, install
-   VectorWarp with APT or DNF, then run `vectorwarp` to open the web interface.
-   Join steps with `&&` so errors stop the installation. Do not insert a pager
-   or require script review; link the source separately for anyone who wants it.
-   The repository-only option verifies the pinned key. A fresh installation
-   starts only the web interface, not radar. For later updates, leave repository
-   configuration in place: use `sudo dnf upgrade --refresh vectorwarp` on Fedora,
-   or `sudo apt update` then `sudo apt install vectorwarp` on APT.
+```sh
+npm ci --prefix test/browser
+test/browser/node_modules/.bin/playwright install --with-deps chromium --only-shell
+sudo env "PATH=$PATH" bash script/test-installed-package.sh \
+  --package /absolute/path/to/vectorwarp.deb \
+  --image docker.io/library/ubuntu:22.04 \
+  --browser-modules test/browser/node_modules --evidence service-evidence
+```
 
-The Pages layout is `/apt/dists/jammy|noble|resolute|bookworm|trixie` for APT,
-`/rpm/fedora/44/$basearch` for DNF, and `/keys/vectorwarp.asc` for the public
-key. It is a contract for the release workflow, not proof that those endpoints
-currently exist.
+Use the base image matching the package being tested.
 
-## Unsigned test packages
+## Publish a release
 
-Before signing is configured, a maintainer may publish an explicitly unsigned
-GitHub prerelease for local testing. It must not update the APT/DNF repository:
+1. Merge passing changes to `main` and create an immutable
+   `vMAJOR.MINOR.PATCH` tag.
+2. `release-packages.yml` builds the DEB and RPM matrix, checks every package,
+   and creates a draft release with checksums and manifests.
+3. The macOS release agent verifies the exact tag, signs and notarizes the Mac
+   package, attaches its source and receipt, and publishes the complete draft.
+4. `publish-package-repository.yml` verifies the release, signs APT/DNF
+   metadata, and deploys the download page through Pages.
+5. Verify the public install page, package matrix, checksums, signing key, and
+   clean-host installation.
 
-1. Merge passing CI, then manually run the package workflow on that exact
-   `main` commit with a new numeric package version.
-2. Require every native build/install check to pass. Download only that run's
-   artifacts and verify every package against its manifest and checksum.
-3. Publish under a `test-` tag, never a `v` tag, as a prerelease that is not
-   marked latest. Include checksums, the exact source commit and workflow run,
-   and clearly label it **unsigned, local-test-only**.
-4. Reserve that package version. A later stable release must use the identical
-   package bytes or a higher version; do not replace published files in place.
+The package matrix covers supported Ubuntu, Debian, Fedora, x86-64, and ARM64
+targets. DragonOS uses its matching Ubuntu repository. Raspberry Pi OS uses the
+matching Debian ARM64 package. The RSPduo package contains the local adapter
+source kit; users install SDRplay's API separately and build support in Settings.
 
-Do not disable repository signature checks to install a test package. Update
-the README separately for downloadable test packages and the signed repository;
-publishing one does not make the other available.
+## Publish Homebrew
 
-## Automatic page updates and renewal
+`homebrew.yml` runs after merges to `main`. It builds and tests both formulas on
+Apple Silicon, regenerates them before publication, verifies that the source is
+still current, and fast-forwards the public tap. It does not require a Linux
+release tag.
 
-The package page and repository regenerate when a reviewed release is published,
-after changes merge to `main`, and weekly on Monday at 03:17 UTC. Download links
-come from the latest stable release's verified manifest; there is no package
-list to edit in the page. A main-branch refresh does not publish a new software
-release or replace package files.
+For a local formula build:
 
-Every refresh verifies the release signatures, checksums and immutable tag before
-generating and signing metadata. Failed verification or generation leaves the
-existing page unchanged. After deployment, the workflow checks the public page,
-installer, manifest, key and every package download; missing or stale content
-fails the workflow. CI also checks the install link, download matrix and APT/DNF
-commands.
+```sh
+script/package-homebrew-local.sh build/homebrew-local --install-tap
+brew install --build-from-source vectorwarp/local/vectorwarp
+```
 
-The configured policy permits only `main` and `v*` tags in `release-signing`
-and `github-pages`, without required environment reviewers. The owner approves
-new releases by publishing reviewed drafts; weekly metadata renewal is
-unattended after the publication workflow is merged and a stable release exists.
+## Operations
 
-APT metadata expires after 30 days. Watch failed/disabled renewal runs: GitHub
-can delay scheduled jobs and disables schedules after 60 days of inactivity in
-a public repository. Re-enable the workflow and run a manual renewal if needed;
-do not disable APT signature or expiry checks. See
-[GitHub's schedule limits](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
-
-Calendar signing-subkey rotation well before 2027-09-10 and primary renewal
-before 2028-09-09. The current repository does not automatically refresh the
-static APT keyring already installed on client hosts. Before switching to a new
-subkey, keep the old signer valid, publish the new public export through
-protected `main`, and deliver it while metadata is still signed by the old
-subkey (for example by requiring users to rerun the fingerprint-pinned installer
-or by first adding a reviewed keyring-package upgrade). Prove the overlap on an
-existing install before changing CI to the new signer. Rotation also requires a
-matching CI subkey export and isolated APT/RPM verification. Never extend
-service by removing fingerprint, repository-signature or APT-expiry checks.
-Renewal requires the release-carried public key to exactly match trusted `main`;
-coordinate the public-key update with a reviewed release carrying that export.
-Do not leave scheduled renewal pointed at a release with the old key export.
-
-## Never claim
-
-- Do not describe packages or the repository as published before publication
-  and install checks prove it. A locally verified public signing fingerprint
-  does not prove that a release or package repository is available.
-- Do not describe Ubuntu/Debian/Fedora inclusion as automatic; this project
-  maintains its own APT/DNF repository.
-- Do not make package publishing or GitHub Pages part of an ordinary source build.
+- Inspect the macOS release agent with
+  `launchctl print gui/$(id -u)/com.vectorwarp.macos-release-agent`.
+- APT metadata is renewed by the scheduled package-repository workflow.
+- Rotate the signing subkey and Homebrew deploy key before they expire, keeping
+  an overlap period so existing installations can receive the new public key.

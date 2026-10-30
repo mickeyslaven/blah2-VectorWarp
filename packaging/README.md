@@ -1,9 +1,8 @@
 # Native release packaging
 
-For macOS, use the [Homebrew publishing guide](../docs/HOMEBREW_PUBLISHING.md).
+For macOS, use the [maintainer release guide](../docs/MAINTAINER_RELEASE.md).
 The Mac app and Kraken companion formulas live in `Formula/`;
-[automatic public tap updates](../docs/HOMEBREW_PUBLISHING.md) are prepared for
-merges to `main`, with first publication still pending. No bottles are supplied.
+automatic public tap updates run after merges to `main`. No bottles are supplied.
 The DEB/RPM instructions below apply to Linux.
 
 To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
@@ -91,6 +90,5 @@ never downloads the API or accepts its license. See
 Repository publication requires a maintainer-controlled OpenPGP key
 and GitHub Pages; neither a private key nor a live repository is in this tree.
 
-For capability and validation detail, link to the existing
-[upstream comparison](../docs/UPSTREAM_COMPARISON.md) and
-[Pi validation](../docs/PI4_VALIDATION_20260910.md).
+For installation and supported platforms, use the
+[installation guide](../docs/INSTALL.md).
