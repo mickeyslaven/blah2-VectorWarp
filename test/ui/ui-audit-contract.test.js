@@ -99,10 +99,10 @@ assert.match(controller, /id="view-root"/,
   'Displays and System Overview are one canonical page');
 assert.match(controller, /href="\/display\/diagnostics"/,
   'Activity, timing and health share one Diagnostics destination');
-assert.match(controller, /href="\/display\/signal"/,
-  'Spectrum and max-hold share one Signal destination');
-assert.match(controller, /href="\/display\/detection"/,
-  'Detection history modes share one destination');
+assert.doesNotMatch(controller, /href="\/display\/detection"/,
+  'Radar plot views are reached from the Live radar menu, not duplicated in Displays');
+assert.match(controller, /href="\/display\/signal\?view=spectrum"/,
+  'Displays retains the non-radar reference spectrum');
 for (const route of ['/', '/display/signal?view=maxhold', '/display/detection?view=range',
   '/display/detection?view=doppler', '/display/detection?view=range-doppler'])
   assert.match(common, new RegExp(route.replace(/[?]/g, '\\?')),
