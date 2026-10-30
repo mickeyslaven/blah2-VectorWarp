@@ -1001,7 +1001,9 @@ app.get('/api/system/status', async (req, res) => {
     {state: sdrplayStartup.inProgress ? 'running' : sdrplayStartup.state === 'failed' ? 'failed' : 'command-complete',
       message: sdrplayStartup.message, startedAt: sdrplayStartup.updatedAt} : restartState;
   const [gpuSetup, adsb, remoteId] = await Promise.all([
-    gpuSetupStatus(() => currentGpuRuntime(freshness)), adsbSource.status(), remoteIdSource.status()
+    gpuSetupStatus(() => currentGpuRuntime(freshness)), adsbSource.status(),
+    config.truth?.remote_id?.enabled === true ? remoteIdSource.status() :
+      Promise.resolve({enabled: false, online: false, aircraft: [], drones: []})
   ]);
   const backend = currentTimingBackend();
   const sourceRows = Array.isArray(adsb?.sources) ? adsb.sources : [];
@@ -1331,6 +1333,7 @@ app.put('/api/config', async (req, res) => {
       completedAt: Date.now(), receipt, configRevision: saved.revision,
       applicationVerified: true, reconciliationRequired: false};
     receiverJournal.write(receiverSyncState);
+    config = saved.config;
     upstreamCache = null;
     return res.json({ok: true, restarting: false, revision: saved.revision,
       config: saved.config, receiverSync: receipt,
@@ -1642,6 +1645,8 @@ for (const [route, kind] of [['/api/remote-id', 'aircraft'],
   });
 }
 app.get('/api/remote-id/status', async (_req, res) => {
+  if (config.truth?.remote_id?.enabled !== true)
+    return res.json({enabled: false, online: false, aircraft: [], drones: []});
   res.json(await remoteIdSource.status());
 });
 app.get('/api/radar/coverage', (req, res) => {
