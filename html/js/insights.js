@@ -341,19 +341,14 @@
     const strongest = [...detections].sort((left, right) => (right.snr ?? -Infinity) - (left.snr ?? -Infinity))[0];
     const hop = finite(config?.process?.data?.cpi) === null ? null : config.process.data.cpi * 1000;
     const load = hop && finite(timing?.cpi) !== null ? timing.cpi / hop * 100 : null;
-    const receiver = config?.location?.rx?.name || 'Receiver site';
-    const transmitter = config?.location?.tx?.name || 'Illuminator site';
     const health = healthSnapshot(config, timing, tracker, adsb);
     renderHtml(root, `<div class="insight-stats insight-stats-four">
       ${card(detections.length, 'Detections in latest CPI')}
       ${card(tracks.length, 'Persistent tracks')}
       ${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest detection')}
       ${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', load > 100 ? 'bad' : load > 80 ? 'warning' : 'good')}
-    </div><div class="overview-grid">
-      <section class="info-card"><h2>Radar</h2><dl><div><dt>Receiver</dt><dd>${escapeHtml(receiver)}</dd></div><div><dt>Illuminator</dt><dd>${escapeHtml(transmitter)}</dd></div><div><dt>Radio</dt><dd>${escapeHtml(config?.capture?.device?.type || 'Receiver')} · ${escapeHtml(frequencyLabel(config))}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(channelCount(config) ?? 'Unknown')} channels</dd></div></dl></section>
-      <section class="info-card"><h2>Current activity</h2>${strongest ? `<dl><div><dt>Bistatic range</dt><dd>${number(strongest.delay, 2)} km</dd></div><div><dt>Doppler</dt><dd>${number(strongest.doppler, 1)} Hz</dd></div><div><dt>Signal-to-noise ratio</dt><dd>${number(strongest.snr, 1)} dB</dd></div><div><dt>Frame</dt><dd>${escapeHtml(timeLabel(detection?.timestamp))}</dd></div></dl>` : empty('No detections in the latest CPI', 'The radar is running; no return currently passes the configured detector.')}</section>
-      <section class="info-card overview-links"><h2>Open a view</h2><a href="/display/locations">Map <b>→</b></a><a href="/display/detections">Current detections <b>→</b></a><a href="/display/tracks">Tracks <b>→</b></a><a href="/display/health">Detailed diagnostics <b>→</b></a><a href="/display/site">Site geometry <b>→</b></a></section>
-      <section class="overview-health"><header><div><h2>System health</h2><p>Everything a new operator needs to confirm before using the radar.</p></div><span class="state-pill ${health.overallTone === 'good' ? 'active' : health.overallTone === 'warning' ? 'coasting' : ''}">${escapeHtml(health.overall)}</span></header><div class="health-list">${health.rows}</div><a class="button-link" href="/display/health">Open stage timings and engineering diagnostics</a></section>
+    </div><div class="overview-grid controller-overview-grid">
+      <section class="overview-health"><header><div><h2>System health</h2><p>Live checks required before using the radar.</p></div><span class="state-pill ${health.overallTone === 'good' ? 'active' : health.overallTone === 'warning' ? 'coasting' : ''}">${escapeHtml(health.overall)}</span></header><div class="health-list">${health.rows}</div><a class="button-link" href="/display/diagnostics?view=health">Open diagnostics</a></section>
     </div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
@@ -431,7 +426,15 @@
       {x, y: activityHistory.map(item => Number.isFinite(item.snr) ? item.snr : null), name: 'Strongest SNR', type: 'scatter', mode: 'lines', line: {color: colors[2], width: 2}, yaxis: 'y2'},
       {x, y: activityHistory.map(item => item.load), name: 'Processing load', type: 'scatter', mode: 'lines', line: {color: colors[3], width: 2}, yaxis: 'y3'}
     ];
-    await Plotly.react('data', traces, {...plotBase, margin: {l: 72, r: 45, t: 34, b: 55}, xaxis: {gridcolor: '#47362e'}, yaxis: {title: 'Count', domain: [.7, 1], rangemode: 'tozero', gridcolor: '#47362e'}, yaxis2: {title: 'SNR (dB)', domain: [.35, .62], gridcolor: '#47362e'}, yaxis3: {title: 'Load (%)', domain: [0, .27], rangemode: 'tozero', gridcolor: '#47362e'}}, plotConfig);
+    const compact = typeof window !== 'undefined' && window.innerWidth <= 600;
+    await Plotly.react('data', traces, {...plotBase,
+      margin: compact ? {l: 55, r: 18, t: 42, b: 46} : {l: 72, r: 45, t: 34, b: 55},
+      legend: {...plotBase.legend, font: {size: compact ? 9 : 12}},
+      xaxis: {gridcolor: '#47362e', tickformat: compact ? '%H:%M:%S' : undefined,
+        nticks: compact ? 4 : undefined, tickangle: 0, automargin: true},
+      yaxis: {title: 'Count', domain: [.7, 1], rangemode: 'tozero', gridcolor: '#47362e'},
+      yaxis2: {title: 'SNR (dB)', domain: [.35, .62], gridcolor: '#47362e'},
+      yaxis3: {title: 'Load (%)', domain: [0, .27], rangemode: 'tozero', gridcolor: '#47362e'}}, plotConfig);
     setState(`Collecting · ${timeLabel(timestamp)}`, 'good');
   }
 

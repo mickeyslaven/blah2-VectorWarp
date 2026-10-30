@@ -20,20 +20,21 @@ function indexPages(directory, prefix = '') {
 const pages = ['index', ...indexPages(htmlRoot)].sort();
 
 const insightPages = new Set([
-  'display/activity', 'display/calibration', 'display/detections',
-  'display/health', 'display/locations',
-  'display/overview', 'display/site', 'display/statistics', 'display/tracks'
+  'display/calibration', 'display/detections', 'display/locations',
+  'display/site', 'display/statistics', 'display/tracks'
 ]);
 const plotPages = new Map([
-  ['index', 'plot_map.js'],
-  ['display/maxhold', 'plot_map.js'], ['display/spectrum', 'plot_spectrum.js'],
-  ['display/timing', 'plot_timing.js'],
-  ['display/detection/delay', 'plot_detection.js'],
-  ['display/detection/doppler', 'plot_detection.js'],
-  ['display/detection/delay-doppler', 'plot_detection.js']
+  ['index', 'plot_map.js']
 ]);
-const nonLivePages = new Set(['controller', 'display/configuration', 'display/recordings']);
-const redirectPages = new Set(['display/map', 'display/evaluation']);
+const consolidatedPages = new Set(['controller', 'display/detection', 'display/diagnostics', 'display/signal']);
+const nonLivePages = new Set(['display/configuration', 'display/recordings']);
+const redirectPages = new Set([
+  'display/map', 'display/evaluation', 'display/overview',
+  'display/activity', 'display/health', 'display/timing',
+  'display/maxhold', 'display/spectrum',
+  'display/detection/delay', 'display/detection/doppler',
+  'display/detection/delay-doppler'
+]);
 
 for (const page of pages) {
   const html = fs.readFileSync(page === 'index' ? path.join(htmlRoot, 'index.html') :
@@ -49,13 +50,16 @@ for (const page of pages) {
   } else if (plotPages.has(page)) {
     assert.match(html, new RegExp(plotPages.get(page).replace('.', '\\.')),
       `${page} must use the shared non-destructive plot refresh`);
+  } else if (consolidatedPages.has(page)) {
+    assert.match(html, /insights\.js|consolidated_views\.js/,
+      `${page} must use a shared snapshot-preserving consolidated controller`);
   } else {
     assert.ok(nonLivePages.has(page),
       `${page} is a new display page without an explicit refresh contract`);
   }
 }
 
-assert.deepEqual(pages, [...insightPages, ...plotPages.keys(), ...nonLivePages, ...redirectPages].sort(),
+assert.deepEqual(pages, [...insightPages, ...plotPages.keys(), ...consolidatedPages, ...nonLivePages, ...redirectPages].sort(),
   'every display page must be covered by a refresh behavior regression');
 
 const insights = fs.readFileSync(path.join(root, 'html/js/insights.js'), 'utf8');

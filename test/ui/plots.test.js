@@ -76,7 +76,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
     const frame = {
       map: {timestamp: 1000, nRows: 3, delay: [1], doppler: [1, 2, 3], data: [[1], [2], [3]], maxPower: 15},
       spectrum: {timestamp: [1000], frequency: [[100000, 100001]], spectrum: [[-92, -37]]},
-      timing: {timestamp: [1000], cpi: [20], frameTimestamp: 1000},
+      timing: {timestamp: [1000], captureEpoch: [0], captureFirstEpochSample: [8448789504],
+        captureEndEpochSample: [8449989504], gpu_resident_ready: [15], cpi: [20], frameTimestamp: 1000},
       detection: {timestamp: [1000], delay: [1], doppler: [2], snr: [3]}
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
@@ -113,7 +114,12 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(trace.zmax, -37);
       assert.match(trace.colorbar.title.text, /dB/);
     }
-    if (kind === 'timing') assert.equal(calls.at(-1).args[1].length, 1, 'Frame metadata is not a processing stage');
+    if (kind === 'timing') {
+      const traces = calls.at(-1).args[1];
+      assert.deepEqual(traces.map(trace => trace.name), ['gpu_resident_ready', 'cpi']);
+      assert.ok(traces.every(trace => Math.max(...trace.y) < 1000000),
+        'Epoch and absolute sample counters must never be graphed as stage milliseconds');
+    }
     const repeatStart = calls.length;
     await update(clone(frame));
     if (kind === 'map') {

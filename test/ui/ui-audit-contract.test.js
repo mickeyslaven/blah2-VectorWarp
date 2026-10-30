@@ -16,12 +16,21 @@ function collect(directory) {
 }
 collect(path.join(root, 'html'));
 
-assert.equal(pageFiles.length, 21, 'Every website route is included in the audit contract');
+assert.equal(pageFiles.length, 24, 'Every canonical page and compatibility redirect is included in the audit contract');
+const redirectRoutes = new Set([
+  'html/display/map/index.html', 'html/display/evaluation/index.html',
+  'html/display/overview/index.html', 'html/display/activity/index.html',
+  'html/display/health/index.html', 'html/display/timing/index.html',
+  'html/display/maxhold/index.html', 'html/display/spectrum/index.html',
+  'html/display/detection/delay/index.html',
+  'html/display/detection/doppler/index.html',
+  'html/display/detection/delay-doppler/index.html'
+]);
 for (const file of pageFiles) {
   const html = fs.readFileSync(file, 'utf8');
   const route = path.relative(root, file);
   assert.match(html, /<h1(?:\s|>)/i, `${route} must expose a page heading`);
-  if (route === 'html/display/map/index.html' || route === 'html/display/evaluation/index.html') {
+  if (redirectRoutes.has(route)) {
     assert.match(html, /location\.replace\(/,
       `${route} must redirect to its canonical replacement`);
     continue;
@@ -70,6 +79,7 @@ assert.match(assistant, /aria-labelledby.*setup-wizard-title/);
 const controller = read('html/controller/index.html');
 const statisticsPage = read('html/display/statistics/index.html');
 const insights = read('html/js/insights.js');
+const consolidated = read('html/js/consolidated_views.js');
 assert.doesNotMatch(controller, /href="\/display\/evaluation"/,
   'ADS-B evaluation must not remain a duplicate navigation destination');
 assert.match(statisticsPage, /data-validation-tab="results"/);
@@ -84,7 +94,18 @@ assert.doesNotMatch(locationsRenderer, /api\/bearing\/diagnostic/,
 assert.match(calibrationRenderer, /api\/bearing\/diagnostic/,
   'Array calibration owns known-angle and wiring diagnostics');
 assert.match(insights, /class="overview-health"/,
-  'Overview includes the beginner health checklist');
+  'Displays includes the compact system health checklist');
+assert.match(controller, /id="view-root"/,
+  'Displays and System Overview are one canonical page');
+assert.match(controller, /href="\/display\/diagnostics"/,
+  'Activity, timing and health share one Diagnostics destination');
+assert.match(controller, /href="\/display\/signal"/,
+  'Spectrum and max-hold share one Signal destination');
+assert.match(controller, /href="\/display\/detection"/,
+  'Detection history modes share one destination');
+for (const view of ['activity', 'timing', 'health', 'spectrum', 'maxhold', 'range', 'doppler', 'range-doppler'])
+  assert.match(consolidated, new RegExp(`['"]${view}['"]`),
+    `Consolidated page controller retains the ${view} view`);
 assert.match(insights, /addSource\(radarCoverageSourceId, \{type: 'geojson', data\}\)/,
   'Radar coverage uses a geographic Mapbox source so zoom cannot tear a screen-space path');
 assert.match(insights, /source\.setData\(data\)/,
@@ -104,4 +125,4 @@ assert.match(insights, /radar-map-overlay-mode/,
 assert.doesNotMatch(insights, /adsbMapRangeKm/,
   'Map display does not duplicate the ADS-B ingestion distance setting');
 
-console.log(`UI audit contract covers all ${pageFiles.length} website routes.`);
+console.log(`UI audit contract covers all ${pageFiles.length} canonical and compatibility routes.`);
