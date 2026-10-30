@@ -317,6 +317,11 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .location-map-panel #data, .location-map-panel .mapboxgl-map, .location-map-panel .mapboxgl-canvas-container,
 .location-map-panel .maplibregl-map, .location-map-panel .maplibregl-canvas-container { touch-action:none!important; overscroll-behavior:contain; }
 .location-map-panel .insight-plot { height:calc(100dvh - 138px); min-height:520px; }
+.location-map-panel .maplibregl-ctrl-top-left { top:12px; left:12px; }
+.location-map-panel .maplibregl-ctrl-top-left .maplibregl-ctrl { margin:0; }
+.location-map-panel .maplibregl-ctrl-compass { width:42px; height:42px; border:1px solid rgba(255,135,84,.42); border-radius:10px!important; background:rgba(24,18,16,.94); box-shadow:0 4px 16px rgba(0,0,0,.32); }
+.location-map-panel .maplibregl-ctrl-compass:hover { background:rgba(39,28,24,.98); }
+.location-map-panel .maplibregl-ctrl-compass .maplibregl-ctrl-icon { width:100%; height:100%; filter:sepia(1) saturate(2.2) hue-rotate(325deg) brightness(1.25); }
 .location-map-drawers { position:absolute; z-index:12; top:12px; right:12px; display:grid; gap:8px; width:min(330px,calc(100% - 24px)); max-height:calc(100% - 24px); pointer-events:none; }
 .location-map-sidebar { position:relative; width:100%; max-height:min(620px,calc(100dvh - 180px)); overflow:auto; border:1px solid rgba(255,135,84,.32); border-radius:12px; background:rgba(18,14,13,.96); box-shadow:0 8px 28px rgba(0,0,0,.34); pointer-events:auto; }
 .location-map-sidebar:not([open]) { justify-self:end; width:auto; min-width:44px; max-width:180px; overflow:hidden; }
@@ -392,6 +397,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
   .app-nav { grid-template-columns:repeat(5,minmax(0,1fr)); }
   .location-map-panel .insight-plot { height:calc(100svh - 116px); min-height:430px; }
   .location-map-panel > .fullscreen-button { top:8px; right:auto; bottom:auto; left:8px; width:42px; height:42px; padding:0; display:grid; place-items:center; }
+  .location-map-panel .maplibregl-ctrl-top-left { top:58px; left:8px; }
   .location-map-drawers { top:auto; right:8px; bottom:8px; left:8px; display:flex; align-items:flex-end; justify-content:flex-end; width:auto; max-height:min(48svh,390px); }
   .location-map-sidebar { width:min(100%,360px); max-height:min(48svh,390px); }
   .location-map-sidebar[open] { flex:1 1 100%; }

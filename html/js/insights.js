@@ -786,6 +786,13 @@
     });
     graph._vectorwarpMap = map;
     graph.dataset.mapRenderer = 'maplibre-terrain';
+    if (maplibre.NavigationControl && map.addControl) {
+      const compass = new maplibre.NavigationControl({
+        showCompass: true, showZoom: false, visualizePitch: true
+      });
+      map.addControl(compass, 'top-left');
+      graph.dataset.mapCompass = 'bearing-and-pitch';
+    }
     await new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error('Map renderer timed out')), 15000);
       map.once('load', () => { window.clearTimeout(timeout); resolve(); });
