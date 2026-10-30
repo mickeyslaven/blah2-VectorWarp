@@ -90,7 +90,7 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   assert.equal(target.querySelectorAll('[data-receiver-field]').length, 0,
     'Beginner setup must not expose receiver host, port, serial, or subdevice overrides');
   assert.match(target.querySelector('.setup-wizard-content').textContent,
-    /detected receiver connection automatically/i);
+    /detected receivers are selected automatically/i);
   assert.equal(target.querySelector('[data-wizard-step="0"]').disabled, false,
     'A completed receiver step remains directly selectable');
   assert.equal(target.querySelector('[data-wizard-step="1"]').disabled, false,
@@ -135,6 +135,6 @@ test('advanced mode collapses the beginner workflow instead of duplicating two s
     receiverProfiles: () => [], discoverReceivers: async () => [],
     switchReceiver() {}, saveStep() {}, save() {}});
   assert.equal(target.querySelectorAll('.setup-card').length, 0);
-  assert.match(target.textContent, /Expert receiver, DSP, service, and diagnostic controls/);
+  assert.doesNotMatch(target.textContent, /Expert receiver, DSP, service, and diagnostic controls/);
   assert.ok(target.querySelector('[data-mode="simple"]'), 'The operator can always return to Simple mode');
 });

@@ -136,7 +136,7 @@
   }
 
   function empty(title, detail, action = '') {
-    return `<div class="view-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>${action}</div>`;
+    return `<div class="view-empty"><strong>${escapeHtml(title)}</strong>${detail ? `<span>${escapeHtml(detail)}</span>` : ''}${action}</div>`;
   }
 
   // Polling views used to assign root.innerHTML on every frame. Besides making
@@ -348,7 +348,7 @@
       ${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest detection')}
       ${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', load > 100 ? 'bad' : load > 80 ? 'warning' : 'good')}
     </div><div class="overview-grid controller-overview-grid">
-      <section class="overview-health"><header><div><h2>System health</h2><p>Live checks required before using the radar.</p></div><span class="state-pill ${health.overallTone === 'good' ? 'active' : health.overallTone === 'warning' ? 'coasting' : ''}">${escapeHtml(health.overall)}</span></header><div class="health-list">${health.rows}</div><a class="button-link" href="/display/diagnostics?view=health">Open diagnostics</a></section>
+      <section class="overview-health"><header><div><h2>System health</h2></div><span class="state-pill ${health.overallTone === 'good' ? 'active' : health.overallTone === 'warning' ? 'coasting' : ''}">${escapeHtml(health.overall)}</span></header><div class="health-list">${health.rows}</div><a class="button-link" href="/display/diagnostics?view=health">Open diagnostics</a></section>
     </div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
@@ -358,12 +358,12 @@
     const rows = detectionRows(detection).sort((left, right) => (right.snr ?? -Infinity) - (left.snr ?? -Infinity));
     const strongest = rows[0];
     const body = rows.map(item => `<tr><td>${item.index + 1}</td><td>${number(item.delay, 2)}</td><td>${number(item.doppler, 1)}</td><td>${number(item.snr, 1)}</td></tr>`);
-    renderHtml(root, `<div class="insight-stats">${card(rows.length, 'Latest CPI')}${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest return')}</div>${rows.length ? table(['#', 'Bistatic range (km)', 'Doppler (Hz)', 'SNR (dB)'], body) : empty('No detections in the latest CPI', 'This is a valid live result; nothing currently passes the configured detector.')}`);
+    renderHtml(root, `<div class="insight-stats">${card(rows.length, 'Latest CPI')}${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest return')}</div>${rows.length ? table(['#', 'Bistatic range (km)', 'Doppler (Hz)', 'SNR (dB)'], body) : empty('No detections', '')}`);
     setState(`Frame ${timeLabel(detection?.timestamp)}`, 'good');
   }
 
   function healthRow(name, value, detail, tone) {
-    return `<article class="health-row"><span class="health-indicator ${tone}"></span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></div><b>${escapeHtml(value)}</b></article>`;
+    return `<article class="health-row"><span class="health-indicator ${tone}"></span><div><strong>${escapeHtml(name)}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ''}</div><b>${escapeHtml(value)}</b></article>`;
   }
 
   function healthSnapshot(config, timing, tracker, adsb) {
@@ -384,11 +384,11 @@
     if (adsb.enabled) tones.push(adsbTone);
     const overall = tones.includes('bad') ? 'Attention needed' : tones.includes('warning') ? 'Monitor' : 'Healthy';
     const overallTone = tones.includes('bad') ? 'bad' : tones.includes('warning') ? 'warning' : 'good';
-    const rows = healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, `Updates every ${number(hop, 0)} ms`, freshnessTone) +
-      healthRow('Processing load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? 'No timing data' : `${number(processMs, 1)} ms per ${number(hop, 1)} ms update`, loadTone) +
-      healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, 'Captured data waiting to be processed', backlogTone) +
+    const rows = healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, hop === null ? '' : `${number(hop, 0)} ms cadence`, freshnessTone) +
+      healthRow('Processing load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? '' : `${number(processMs, 1)} / ${number(hop, 1)} ms`, loadTone) +
+      healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, '', backlogTone) +
       healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} track candidates` : 'Optional processing is off', trackerTone) +
-      healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.disabledForReplay ? 'Not shown during replay.' : adsb.enabled ? 'For comparison only; not used by radar.' : 'Optional feed is off', adsbTone);
+      healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.enabled ? 'Comparison only' : '', adsbTone);
     return {hop, processMs, load, backlog, overall, overallTone, rows};
   }
 
@@ -397,7 +397,7 @@
     const adsb = await adsbHealth(config);
     const health = healthSnapshot(config, timing, tracker, adsb);
     const stages = Object.entries(timing || {}).filter(([key, value]) => typeof value === 'number' && finite(value) !== null && !['timestamp', 'nCpi', 'uptime_s', 'uptime_days', 'cpi_data_ms', 'cpi_hop_ms', 'cpi_overlap_fraction', 'capture_backlog_ms', 'cpi'].includes(key)).sort((left, right) => Number(right[1]) - Number(left[1]));
-    renderHtml(root, `<div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 100 ? 'bad' : health.load > 80 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', 'Shows current detections', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
+    renderHtml(root, `<div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 100 ? 'bad' : health.load > 80 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', '', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
 
@@ -1569,7 +1569,7 @@
       return;
     }
     const rows = tracks.map(track => `<tr><td>${escapeHtml(track.id)}</td><td><span class="state-pill ${escapeHtml(String(track.state || '').toLowerCase())}">${escapeHtml(humanize(track.state))}</span></td><td>${number(trackRangeKm(track.delay, config), 2)}</td><td>${number(track.doppler, 1)}</td><td>${integer(track.n)}</td></tr>`);
-    const stateGuide = '<p class="view-note"><strong>State guide:</strong> Tentative and associated rows are candidates still completing the M-of-N confirmation rule. Active is confirmed. Coasting was confirmed but has temporarily missed detections. Only confirmed active tracks appear on the operational Map.</p>';
+    const stateGuide = '<p class="view-note"><strong>States:</strong> Tentative/Associated are candidates. Active is confirmed. Coasting is a confirmed track with missed detections.</p>';
     renderHtml(detail, stateGuide + (tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Waiting for track confirmation' : 'No confirmed tracks', tracker?.nTentative ? `${tracker.nTentative} tentative track${tracker.nTentative === 1 ? ' needs' : 's need'} more detections.` : 'No detection sequence meets the tracking rules.')));
     const traces = [];
     tracks.forEach((track, index) => {
@@ -1644,16 +1644,16 @@
       ${card(percent(lifetime.tracking_yield, 1), 'Lifetime tracking yield')}
       ${card(integer(statistics.active_passes?.length), 'Aircraft live now')}
     </div>
-    <section class="statistics-section"><header><h2>Performance</h2><p>Eligible aircraft only; live passes are finalized after they leave the searchable region.</p></header><div class="statistics-grid">
+    <section class="statistics-section"><header><h2>Performance</h2></header><div class="statistics-grid">
       <section class="info-card statistics-score"><h2>Detection and tracking yield</h2>${yieldChart(periods, 'Detection and tracking yield by time window')}${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}<p class="view-note">Each credited pass needs at least three unambiguous delay–Doppler matches. These raw yields describe observed traffic; use the controlled comparison for hour-to-hour changes.</p></section>
       <section class="info-card"><h2>Traffic-mix controlled comparison</h2>${table(['Period', 'Detection yield', 'Tracking yield'], mixRows)}<dl><div><dt>Comparable traffic coverage</dt><dd>${percent(mix.common_support_coverage, 1)}</dd></div><div><dt>Shared geometry groups</dt><dd>${integer(mix.common_strata?.length)}</dd></div><div><dt>Interpretation</dt><dd>${mix.decision_grade ? 'Suitable for comparison' : 'Descriptive only'}</dd></div></dl><p class="view-note">Both hours are standardized to the same excess-delay and receiver-range mix, so a change in aircraft distance alone does not look like a detector change.</p></section>
     </div></section>
-    <section class="statistics-section"><header><h2>Current-hour coverage</h2><p>Where eligible aircraft tested the detector and tracker.</p></header><div class="statistics-grid">
+    <section class="statistics-section"><header><h2>Current-hour coverage</h2></header><div class="statistics-grid">
       <section class="info-card"><h2>Angle bands</h2>${angleRows.length ? `${bandChart([['Elevation', hour.elevation_strata?.bands], ['Azimuth', hour.azimuth_strata?.bands]], 'Detection and tracking yield by elevation and azimuth')}${table(['Angle', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], angleRows)}` : empty('Angle coverage collecting', 'Finalized eligible passes will populate azimuth and elevation bands.')}</section>
       <section class="info-card"><h2>Azimuth × elevation</h2>${jointRows.length ? `${angleMatrix}<details class="statistics-table-details"><summary>Exact matrix values</summary>${table(['Azimuth', 'Elevation', 'Eligible', 'Detection yield', 'Tracking yield'], jointRows)}</details>` : empty('Joint angle coverage collecting', 'Finalized eligible passes will populate the array coverage matrix.')}</section>
       <section class="info-card statistics-wide"><h2>Range bands</h2>${rangeRows.length ? `${bandChart([['Delay', hour.delay_strata?.bands], ['Slant', hour.receiver_slant_range_strata?.bands]], 'Detection and tracking yield by range')}${table(['Range measure', 'Band', 'Eligible', 'Detected', 'Tracked', 'Tracking yield'], rangeRows)}` : empty('Range coverage collecting', 'Finalized eligible passes will populate delay and receiver-range bands.')}</section>
     </div></section>
-    <section class="statistics-section"><header><h2>Aircraft evidence</h2><p>Live opportunities and the most recently completed passes.</p></header><div class="statistics-grid">
+    <section class="statistics-section"><header><h2>Aircraft evidence</h2></header><div class="statistics-grid">
       <section class="info-card"><h2>Aircraft live now</h2>${activeRows.length ? table(['Aircraft', 'Status', 'Eligible', 'Detected', 'Tracked', 'Delay km', 'Doppler Hz'], activeRows) : empty('No eligible aircraft live', 'Waiting for an aircraft inside the searchable region.')}</section>
       <section class="info-card"><h2>Recent finalized passes</h2>${finalizedRows.length ? table(['Aircraft', 'Outcome', 'Eligible', 'Detected', 'Tracked', 'Finalized'], finalizedRows) : empty('No finalized passes yet', 'A pass finalizes after the aircraft leaves the eligible region.')}</section>
     </div></section>

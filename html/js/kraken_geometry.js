@@ -336,7 +336,7 @@
     const device = config.capture.device, geometry = device.array_geometry;
     const shell = document.createElement('section'); shell.className = 'geometry-channel-editor';
     const heading = document.createElement('div'); heading.className = 'geometry-channel-heading';
-    heading.innerHTML = '<h3>Antennas and channel roles</h3><p>Click an antenna to configure its role, mapping, measured position, and gain.</p>';
+    heading.innerHTML = '<h3>Antennas and channel roles</h3><p>Select an antenna to edit it.</p>';
     const referenceLabel = document.createElement('label'); referenceLabel.className = 'geometry-reference-mode';
     const referenceTitle = document.createElement('span'); referenceTitle.textContent = 'Reference estimation';
     const referenceSelect = document.createElement('select');
@@ -418,7 +418,7 @@
     const shell = document.createElement('section'); shell.className = 'geometry-presets';
     const title = document.createElement('h3'); title.textContent = 'Common array layouts';
     const explanation = document.createElement('p');
-    explanation.textContent = 'Choose the number of connected antennas, then pick the matching shape. Applying a layout sets the active receiver channel count. Reference positions are guides: measure the installed coordinates and cable mapping before confirming them.';
+    explanation.textContent = 'Choose the antenna count and layout. Then measure positions and assign DAQ channels.';
     const countPicker = document.createElement('label'); countPicker.className = 'geometry-preset-counts';
     const countTitle = document.createElement('span'); countTitle.textContent = 'Antennas connected';
     const countSelect = document.createElement('select');

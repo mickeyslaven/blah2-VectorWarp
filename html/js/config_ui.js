@@ -5,12 +5,12 @@ const configProfiles = typeof module !== 'undefined' && module.exports ?
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
 const CONFIG_META = {
-  'capture': ['Receiver', 'Radio hardware, tuning and replay'],
-  'process': ['Radar', 'Timing, search area, filtering and tracking'],
-  'network': ['Connectivity', 'Service addresses and ports'],
-  'truth': ['ADS-B', 'Aircraft overlay'],
-  'location': ['Sites', 'Receiver and illuminator positions'],
-  'save': ['Recording', 'Files and recording folder'],
+  'capture': ['Receiver', 'Radio and antennas'],
+  'process': ['Radar', 'Detection and tracking'],
+  'network': ['Connectivity', 'Ports'],
+  'truth': ['ADS-B', 'Aircraft data'],
+  'location': ['Sites', 'Receiver and illuminator'],
+  'save': ['Recording', 'Files and clips'],
   'save.retention': ['Storage retention', 'Keep recordings bounded by age, total storage, and free disk space.'],
   'save.retention.automatic_cleanup': ['Delete old recordings automatically', 'Off until you enable it. Only completed, inactive recordings are removed.'],
   'save.retention.low_space_policy': ['When the disk reserve is reached', 'Stop recording or delete oldest aircraft clips. Manual recordings stay.'],
@@ -28,19 +28,19 @@ const CONFIG_META = {
   'capture.aircraft_clips.minimum_elevation_deg': ['Lowest aircraft elevation (°)', 'Ignore aircraft below this geometric elevation angle.'],
   'capture.aircraft_clips.maximum_elevation_deg': ['Highest aircraft elevation (°)', 'Ignore aircraft above this geometric elevation angle.'],
   'capture.aircraft_clips.minimum_interval_seconds': ['Minimum time between clips (s)', 'Limits recorder and disk load when several aircraft become eligible together.'],
-  'capture.device': ['Receiver hardware', 'Connect the radio, assign channel roles, and describe the antenna array.'],
-  'capture.device.type': ['Receiver type', 'Choose your SDR.'],
-  'capture.device.array_geometry': ['Array setup', 'Choose the physical layout, map DAQ channels, and enter measured antenna positions.'],
-  'capture.device.channel_count': ['Input channels', 'Coherent Kraken channels sent by HeIMDALL. Allowed: 2–8.'],
+  'capture.device': ['Receiver hardware', 'Radio, channels, and array'],
+  'capture.device.type': ['Receiver type', 'Connected SDR'],
+  'capture.device.array_geometry': ['Array setup', 'Layout, channel map, and measurements'],
+  'capture.device.channel_count': ['Input channels', 'Active coherent inputs (2–8)'],
   'capture.device.reference_channel': ['Dedicated reference input', 'Channel aimed at the transmitter when Reference mode is Dedicated input.'],
-  'capture.device.surveillance_channels': ['Surveillance inputs', 'Antenna channels searched for aircraft reflections. Select every surveillance antenna in use.'],
-  'capture.device.heimdall': ['Radio connection & gain', 'Connect to KrakenSDR Suite V2 and set tuner gain.'],
-  'capture.device.heimdall.host': ['Suite computer', 'Host name or IP address of the computer running KrakenSDR Suite V2. Use 127.0.0.1 when it runs here.'],
+  'capture.device.surveillance_channels': ['Surveillance inputs', 'Inputs searched for aircraft reflections.'],
+  'capture.device.heimdall': ['Radio connection & gain', 'Suite connection and tuner gain'],
+  'capture.device.heimdall.host': ['Suite computer', 'Suite V2 host or IP. Use 127.0.0.1 when it runs here.'],
   'capture.device.heimdall.port': ['IQ stream port', 'Suite V2 TCP port carrying coherent samples. Usually 8091.'],
   'capture.device.heimdall.control_port': ['Control port', 'Suite V2 status and command port. Usually 8092.'],
-  'capture.device.heimdall.gain': ['Starting gain', 'Shared starting gain in dB. Manual keeps it; Automatic measures each channel and replaces it safely.'],
-  'capture.device.heimdall.channel_gains': ['Per-channel gains', 'One fixed tuner gain per channel. Automatic per channel measures and fills this vector.'],
-  'capture.device.heimdall.gain_control': ['Gain mode', 'Fixed preserves requested gains. Automatic measures one shared gain. Automatic per channel measures every tuner independently.'],
+  'capture.device.heimdall.gain': ['Starting gain', 'Initial gain before automatic measurement'],
+  'capture.device.heimdall.channel_gains': ['Per-channel gains', 'Measured or manual tuner gains'],
+  'capture.device.heimdall.gain_control': ['Gain mode', 'Automatic, automatic per channel, or manual'],
   'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
@@ -68,7 +68,7 @@ const CONFIG_META = {
   'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU accuracy and speed. Falls back to CPU if needed.'],
   'process.data': ['Frame timing', ''],
   'process.data.cpi': ['Frame interval (CPI)', 'Seconds per radar frame and display update. Applies after restart.'],
-  'process.data.buffer': ['Live capture queue (CPI frames)', 'Processing backlog capacity, measured in complete CPI frames. This is separate from the automatic IQ recorder’s seconds of pre-roll.'],
+  'process.data.buffer': ['Live capture queue (CPI frames)', 'Queue capacity in CPI frames; unrelated to IQ pre-roll.'],
   'process.data.overlap': ['Frame overlap', 'Not used by this processor. Frames do not overlap.'],
   'process.ambiguity': ['Delay & Doppler', 'Limits of the radar map'],
   'process.ambiguity.delayMin': ['Minimum delay bin', 'First extra-path sample shown in the radar map.'],
@@ -81,7 +81,7 @@ const CONFIG_META = {
   'process.clutter.delayMin': ['Minimum filter delay bin', 'Manual first filter sample; ignored while following the radar delay range.'],
   'process.clutter.delayMax': ['Maximum filter delay bin', 'Manual exclusive filter endpoint; ignored while following the radar delay range.'],
   'process.reference_synthesis': ['Reference input', 'Choose a dedicated transmitter antenna or let VectorWarp combine array inputs.'],
-  'process.reference_synthesis.mode': ['Reference mode', 'Dedicated uses one input; combined mode estimates the broadcast waveform from selected coherent inputs.'],
+  'process.reference_synthesis.mode': ['Reference mode', 'Dedicated uses one input; combined estimates the broadcast from selected inputs.'],
   'process.reference_synthesis.channels': ['Reference source inputs', 'Inputs VectorWarp may combine when using the array-derived reference.'],
   'process.reference_synthesis.analysis_samples': ['Analysis samples', 'Samples per reference estimate. Minimum: 64.'],
   'process.reference_synthesis.analysis_interval': ['Analysis interval', 'Frames between reference-weight updates'],
@@ -102,7 +102,7 @@ const CONFIG_META = {
   'process.bearing.guard_radius': ['Covariance guard radius', 'Target-neighborhood cells excluded from the local covariance estimate.'],
   'process.bearing.training_radius': ['Covariance training radius', 'Delay and Doppler neighborhood used to estimate local interference.'],
   'process.bearing.diagonal_loading': ['Covariance stability', 'Diagonal loading applied before adaptive bearing inversion.'],
-  'process.bearing.max_rate_deg_s': ['Bearing motion limit', 'Maximum plausible azimuth rate used to retain and score multiple bearing lobes across a track. Zero preserves the legacy temporal histogram.'],
+  'process.bearing.max_rate_deg_s': ['Bearing motion limit', 'Maximum azimuth rate for bearing lobes. 0 uses the legacy histogram.'],
   'process.bearing.manifold_file': ['Measured array manifold', 'Optional v1 JSON calibration measured across the configured bearing scan. Empty uses ideal regular-polygon steering.'],
   'process.bearing.manifold_automation': ['Automatic manifold qualification', 'Fit and shadow-test installed-site calibration in a background worker.'],
   'process.bearing.manifold_automation.auto_promote': ['Promote qualified manifold', 'Activate only after withheld flight passes beat default steering.'],
@@ -145,15 +145,15 @@ const CONFIG_META = {
   'process.detection.track_before_detect.max_cpis': ['Longest weak-target bank', 'Use 2/4 banks or 2/4/8 banks; longer banks add sensitivity and latency.'],
   'process.detection.track_before_detect.motion_bins': ['Trajectory search radius', 'Delay and Doppler cells allowed to move per CPI along a constant path.'],
   'process.tracker': ['Tracking', 'Joins repeated detections into persistent tracks.'],
-  'process.tracker.enable': ['Multi-CPI data-association tracker', 'Associate thresholded detections across CPIs using M-of-N confirmation and state estimation. This does not add CPI power; multi-CPI integration and track-before-detect are configured separately.'],
-  'process.tracker.profile': ['Tracking strictness', 'Conservative rejects weak one-off returns before track initiation. Permissive preserves the legacy behavior and may create many false candidates.'],
+  'process.tracker.enable': ['Multi-CPI data-association tracker', 'M-of-N association and state estimation across CPIs. This does not integrate power.'],
+  'process.tracker.profile': ['Tracking strictness', 'Conservative rejects weak one-offs. Permissive may create more false candidates.'],
   'process.tracker.initiate': ['Track confirmation', 'Detections needed to start a track'],
   'process.tracker.initiate.M': ['Required detections', 'Detections required inside the confirmation window'],
   'process.tracker.initiate.N': ['Confirmation window', 'Frames examined when starting a track'],
   'process.tracker.initiate.maxAcc': ['Maximum Doppler acceleration', 'Largest Doppler change allowed when starting a track, in Hz/s.'],
-  'process.tracker.initiate.min_snr_db': ['Minimum initiation SNR', 'Conservative mode uses this threshold: weaker detections may update an existing track but cannot start one. Permissive mode disables this gate.'],
+  'process.tracker.initiate.min_snr_db': ['Minimum initiation SNR', 'Minimum SNR for a new conservative track. Existing tracks may update below it.'],
   'process.tracker.initiate.acceleration_model': ['Acceleration initiation', 'Choose duplicate acceleration hypotheses or one adaptive tentative track.'],
-  'process.tracker.initiate.stationary_clutter': ['Persistent clutter initiation filter', 'Learn recurring low-Doppler cells and prevent only new tracks from starting there. Existing moving tracks may cross zero Doppler.'],
+  'process.tracker.initiate.stationary_clutter': ['Persistent clutter initiation filter', 'Blocks new tracks in recurring low-Doppler cells. Existing tracks are unaffected.'],
   'process.tracker.initiate.stationary_clutter.enable': ['Enable persistent clutter filter', 'Apply the learned clutter map only when starting a new GPU-resident track.'],
   'process.tracker.initiate.stationary_clutter.persistence_cpis': ['Clutter persistence', 'Repeated low-Doppler frames required before a cell blocks new track initiation.'],
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': ['Stationary Doppler band', 'Absolute Doppler range learned as persistent clutter, in Hz.'],
@@ -187,17 +187,17 @@ const CONFIG_META = {
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
-  'truth.adsb.association_lag_cpis': ['Frame alignment hold', 'Wait this many complete radar frames before scoring and displaying aircraft truth. Every radar and ADS-B layer is then projected to one exact CPI timestamp.'],
+  'truth.adsb.association_lag_cpis': ['Frame alignment hold', 'Hold aircraft truth this many frames for exact CPI alignment.'],
   'truth.adsb.aircraft_photo_provider': ['Aircraft photos', 'Optional aircraft photos cached in the background and shown in Map details.'],
   'truth.adsb.provisional_event_time_uncertainty_s': ['Provisional UTC uncertainty', 'Seconds of SDR event-time uncertainty included in validation gates.'],
   'truth.remote_id': ['Drone Remote ID', 'Nearby drone identity and position broadcasts received by this computer.'],
   'truth.remote_id.enabled': ['Show Drone Remote ID', 'Receive and display nearby Remote ID drones beside ADS-B aircraft.'],
-  'truth.remote_id.source': ['Remote ID receiver', 'Local receiver feed. The built-in service uses this computer’s Bluetooth radio and an optional dedicated Wi-Fi monitor adapter.'],
+  'truth.remote_id.source': ['Remote ID receiver', 'Built-in Bluetooth or dedicated Wi-Fi monitor adapter.'],
   'truth.remote_id.poll_interval': ['Remote ID update interval', 'Seconds between cached receiver snapshots.'],
   'truth.remote_id.source_timeout': ['Remote ID timeout', 'Maximum wait for the local receiver service.'],
   'truth.remote_id.smoothing_window': ['Drone motion smoothing', 'Recent Remote ID positions used to estimate bistatic Doppler.'],
   'truth.remote_id.max_position_age': ['Maximum drone position age', 'Hide Remote ID positions older than this many seconds.'],
-  'truth.remote_id.wifi_enabled': ['Wi-Fi Remote ID receiver', 'Read-only hardware state. Requires a dedicated monitor-mode adapter so VectorWarp never disconnects the web interface.'],
+  'truth.remote_id.wifi_enabled': ['Wi-Fi Remote ID receiver', 'Requires a dedicated monitor-mode adapter.'],
   'truth.ais': ['AIS (not implemented)', 'Reserved maritime-feed settings; preserved but not editable.'],
   'truth.ais.enabled': ['AIS evaluation', 'Not implemented in this processor.'],
   'truth.ais.ip': ['Reserved AIS address', 'Not used by this processor.'],
@@ -213,8 +213,8 @@ const CONFIG_META = {
   'location.rx.name': ['Site name', 'Receiver location name'],
   'location.tx.name': ['Site name', 'Transmitter location name'],
   'save.iq': ['Legacy manual-IQ flag', 'Compatibility value only. Manual IQ recording is controlled from Live radar.'],
-  'save.map': ['Export processed radar maps', 'Writes processed delay–Doppler values for offline diagnostics. This is not IQ and does not control aircraft clips.'],
-  'save.detection': ['Export detection metadata', 'Writes detector output for offline diagnostics. This is not IQ and does not control aircraft clips.'],
+  'save.map': ['Export processed radar maps', 'Processed delay–Doppler export. Does not control IQ or aircraft clips.'],
+  'save.detection': ['Export detection metadata', 'Detector metadata export. Does not control IQ or aircraft clips.'],
   'save.timing': ['Export timing metadata', 'Compatibility diagnostic flag. This is not IQ and does not control aircraft clips.'],
   'save.path': ['Recording folder', 'Directory used for saved data']
 };
@@ -1207,7 +1207,7 @@ function adsbSourcesInput(legacyValue, path) {
     wrapper.appendChild(exchangeHeading);
     const exchangeTimingNote = document.createElement('p');
     exchangeTimingNote.className = 'adsb-source-note warning';
-    exchangeTimingNote.textContent = 'Why add an online source? Stock readsb commonly publishes its local aircraft.json only once per second. That default is too slow for reliable CPI-level VectorWarp pass hit/miss statistics. Configure readsb for 250 ms publishing (for example, --write-json-every 0.25) or use an online source as an independent coverage and observation-time cross-check. VectorWarp still selects the newest fresh position; an online source does not make estimated SDR timing exact.';
+    exchangeTimingNote.textContent = 'Stock readsb usually publishes aircraft.json once per second, which is too slow for CPI-level pass scoring. Set --write-json-every 0.25 or add an online source. VectorWarp uses the newest fresh position.';
     wrapper.appendChild(exchangeTimingNote);
     const hasSite = ADSB_PUBLIC_EXCHANGES.every(exchange => adsbPublicSource(exchange.id));
     for (const exchange of ADSB_PUBLIC_EXCHANGES) {
@@ -1282,7 +1282,7 @@ function adsbSourcesInput(legacyValue, path) {
     wrapper.appendChild(photoRow);
     const photoNote = document.createElement('p');
     photoNote.className = 'adsb-source-note';
-    photoNote.textContent = 'When enabled, Planespotters receives visible aircraft ICAO addresses. VectorWarp caches bounded photo metadata, loads images only in Map details, and preserves photographer credit plus the original link.';
+    photoNote.textContent = 'Sends visible aircraft ICAO addresses to Planespotters. Photos and credits are cached.';
     wrapper.appendChild(photoNote);
 
     const custom = sources.map((source, index) => ({source, index}))
@@ -1615,14 +1615,12 @@ function group(key, value, path, topLevel = false, options = {}) {
   if (dotted === 'capture.device') {
     const profile = capabilities.deviceProfiles?.find(item => item.type === value.type);
     title = profile ? profile.label : value.type || title;
-    description = kraken ? 'Radio, gain, channel roles, and array setup' :
-      'Connection and receiver-specific settings';
+    description = kraken ? 'Gain, channels, and array' : 'Connection and controls';
   }
   if (kraken && dotted === 'capture.device.heimdall') {
     title = settingsMode === 'advanced' ? 'Radio connection & gain' : 'Gain';
-    description = settingsMode === 'advanced' ?
-      'KrakenSDR Suite V2 connection and tuner levels' :
-      'Automatic measures every tuner independently; Manual preserves the requested levels';
+    description = settingsMode === 'advanced' ? 'Suite connection and gain' :
+      'Automatic per channel or Manual';
   }
   const details = document.createElement('details');
   details.dataset.configGroup = dotted;
@@ -1638,14 +1636,6 @@ function group(key, value, path, topLevel = false, options = {}) {
   summary.append(heading);
   const content = document.createElement('div');
   content.className = 'config-fields';
-  if (kraken && dotted === 'capture.device') {
-    const guide = document.createElement('div');
-    guide.className = 'kraken-settings-guide';
-    guide.innerHTML = '<span><b>1</b><strong>Gain</strong><small>Choose manual or automatic levels</small></span>' +
-      '<span><b>2</b><strong>Channel roles</strong><small>Choose reference and surveillance inputs</small></span>' +
-      '<span><b>3</b><strong>Array setup</strong><small>Match the physical antenna layout</small></span>';
-    content.appendChild(guide);
-  }
   if (dotted === 'capture' && value.device?.type !== undefined)
     content.appendChild(field(value.device.type, ['capture', 'device', 'type']));
   const order = {
@@ -1729,9 +1719,7 @@ function renderReceiverFeatures() {
   }
   const heading = document.createElement('h3');
   heading.textContent = 'Kraken array processing';
-  const copy = document.createElement('p');
-  copy.textContent = 'Advanced tracker capacity and array-only recovery diagnostics. Array combining, reference estimation, and bearing are configured inside Array setup above.';
-  section.append(heading, copy);
+  section.append(heading);
   const featureOptions = {groupMeta: {
     'process.detection': ['Coherent integration', 'Combine consecutive radar intervals and search short motion paths.'],
     'process.tracker': ['Array recovery experiments', 'Bounded array-only recovery tests; normal tracking remains in Radar.']
@@ -1752,7 +1740,7 @@ function renderReceiverFeatures() {
 function renderExperimentalSettings() {
   const section = document.createElement('section');
   section.className = 'experimental-settings';
-  section.innerHTML = '<div class="config-section-heading"><h2>Experimental</h2><p>Shadow collectors and optional publication paths for evaluation. These controls can add storage, network, or processing load and never promote a learned model automatically.</p></div>';
+  section.innerHTML = '<div class="config-section-heading"><h2>Experimental</h2><p>Optional shadow features. May increase load. Never auto-promotes models.</p></div>';
   const process = activeConfig.process || {};
   const coherentArray = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
     capabilities.deviceProfiles || []).coherentArray;
@@ -1801,7 +1789,7 @@ function renderRecordingSettings() {
   section.className = 'recording-settings';
   const intro = document.createElement('div');
   intro.className = 'config-section-heading';
-  intro.innerHTML = '<h2>IQ recordings</h2><p>Raw receiver samples are recorded manually from Live radar or automatically for eligible aircraft below. Processed radar-map and detection exports are separate advanced diagnostics.</p>';
+  intro.innerHTML = '<h2>IQ recordings</h2><p>Raw IQ only. Radar maps and detections are separate exports.</p>';
   section.appendChild(intro);
   if (activeConfig.capture?.aircraft_clips &&
       typeof activeConfig.capture.aircraft_clips === 'object') {
@@ -1819,7 +1807,7 @@ function renderRecordingSettings() {
     section.appendChild(group('retention', activeConfig.save.retention, ['save']));
   const note = document.createElement('p');
   note.className = 'config-capability-note';
-  note.textContent = 'Manual raw-IQ recording is controlled from Live radar. Automatic clips run only when enabled and an eligible ADS-B aircraft meets the selected bounds.';
+  note.textContent = 'Manual recording starts from Live radar. Automatic clips use the limits below.';
   section.appendChild(note);
   return section;
 }
@@ -2454,7 +2442,7 @@ function renderEditor() {
       else {
         const note = document.createElement('p');
         note.className = 'config-simple-note';
-        note.textContent = 'Advanced mode adds low-level processing, synchronization, performance, and diagnostic controls. Array setup and channel roles remain available here.';
+        note.textContent = 'Low-level receiver, processing, and diagnostic controls.';
         panel.appendChild(note);
       }
       if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
@@ -2480,7 +2468,7 @@ function renderEditor() {
   if (settingsMode === 'simple') {
     const heading = document.createElement('div');
     heading.className = 'config-section-heading';
-    heading.innerHTML = '<h2>Essential settings</h2><p>Routine controls only. Receiver wiring, service ports, DSP internals, and diagnostics remain under Advanced.</p>';
+    heading.innerHTML = '<h2>Essential settings</h2>';
     target.append(heading);
     refreshSettingsFilter = () => {};
   } else {
@@ -3121,8 +3109,8 @@ async function renderConfiguration() {
     } else if (capabilities.setupRequired) {
       const title = document.createElement('strong');
       const copy = document.createElement('span');
-      title.textContent = ' First-run setup required.';
-      copy.textContent = ' Choose your receiver, verify the tuning frequency and sample rate, then review the receiver and transmitter sites before Save & Restart.';
+      title.textContent = ' Setup required.';
+      copy.textContent = ' Complete the setup assistant before starting.';
       setup.append(title, copy);
     }
     target.querySelector('.config-toolbar').after(setup);

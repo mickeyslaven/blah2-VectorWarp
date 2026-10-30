@@ -27,13 +27,8 @@
 
   if (kind === 'diagnostics') {
     const content = document.getElementById('consolidated-content');
-    const titles = {
-      activity: ['Activity', 'Detections, tracks, signal strength and processing load'],
-      timing: ['Timing', 'Frame cadence and processing-stage latency on the shared presentation timeline'],
-      health: ['Health', 'Processing stages, backlog, sources and resource diagnostics']
-    };
-    document.getElementById('view-title').textContent = titles[view][0];
-    document.getElementById('view-description').textContent = titles[view][1];
+    const titles = {activity: 'Activity', timing: 'Timing', health: 'Health'};
+    document.getElementById('view-title').textContent = titles[view];
     if (view === 'timing') {
       window.xTitle = 'Timestamp';
       window.yTitle = 'Time (ms)';
