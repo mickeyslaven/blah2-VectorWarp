@@ -680,47 +680,75 @@
   const radarCoverageLineLayerId = 'vectorwarp-radar-coverage-line';
   const bearingOverlaySourceId = 'vectorwarp-bearing-overlays';
 
-  function locationMapStyle() {
+  function locationMapStyle(imageryManifest = {}) {
+    const sources = {
+      'vectorwarp-basemap': {
+        type: 'raster', tileSize: 256,
+        tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        attribution: '&copy; OpenStreetMap contributors'
+      },
+      'vectorwarp-terrain': {
+        type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
+        // Mapterhorn's TileJSON declares 512 px Terrarium tiles. A 256 px
+        // override builds the wrong terrain mesh and exposes seams/clipped
+        // wedges while pitching or rotating the camera.
+        tileSize: 512, attribution: 'Terrain &copy; Mapterhorn'
+      },
+      // MapLibre warns against sharing a DEM source between terrain and
+      // hillshade because the two render paths need independent tile state.
+      'vectorwarp-hillshade-dem': {
+        type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
+        tileSize: 512, attribution: 'Terrain &copy; Mapterhorn'
+      }
+    };
+    const layers = [{id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'}];
+    const validBounds = bounds => Array.isArray(bounds) && bounds.length === 4 &&
+      bounds.map(Number).every(Number.isFinite);
+    const advertisedTiers = Array.isArray(imageryManifest.zoom_tiers) ?
+      imageryManifest.zoom_tiers : [];
+    const tiers = advertisedTiers.length ? advertisedTiers : (imageryManifest.available ? [{
+      id: 'local', bounds: imageryManifest.bounds,
+      minzoom: imageryManifest.minzoom, maxzoom: imageryManifest.maxzoom
+    }] : []);
+    tiers.sort((left, right) => Number(left.minzoom) - Number(right.minzoom));
+    tiers.forEach((tier, index) => {
+      if (!validBounds(tier.bounds)) return;
+      const slug = String(tier.id || `tier-${index + 1}`).replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+      const id = `vectorwarp-local-imagery-${slug}-${index}`;
+      sources[id] = {
+        type: 'raster', tileSize: 256, bounds: tier.bounds.map(Number),
+        minzoom: Number(tier.minzoom), maxzoom: Number(tier.maxzoom),
+        tiles: ['/api/map/imagery/local/{z}/{x}/{y}'],
+        attribution: imageryManifest.attribution || 'Aerial imagery &copy; USGS, USDA, The National Map'
+      };
+      // Do not set a layer maxzoom: MapLibre then keeps overzooming the last
+      // real tile as a stable parent while a denser nested tier is loading.
+      layers.push({id, type: 'raster', source: id, minzoom: Number(tier.minzoom)});
+    });
+    layers.push({
+      id: 'vectorwarp-hillshade', type: 'hillshade', source: 'vectorwarp-hillshade-dem',
+      layout: {visibility: 'none'},
+      paint: {'hillshade-exaggeration': .34, 'hillshade-shadow-color': '#30251f',
+        'hillshade-highlight-color': '#f4d4ad', 'hillshade-accent-color': '#7d614f'}
+    });
     return {
       version: 8,
-      sources: {
-        'vectorwarp-basemap': {
-          type: 'raster', tileSize: 256,
-          tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-          attribution: '&copy; OpenStreetMap contributors'
-        },
-        'vectorwarp-local-imagery': {
-          type: 'raster', tileSize: 256, minzoom: 6, maxzoom: 16,
-          tiles: ['/api/map/imagery/local/{z}/{x}/{y}'],
-          attribution: 'Aerial imagery &copy; USGS, USDA, The National Map'
-        },
-        'vectorwarp-terrain': {
-          type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
-          // Mapterhorn's TileJSON declares 512 px Terrarium tiles. A 256 px
-          // override builds the wrong terrain mesh and exposes seams/clipped
-          // wedges while pitching or rotating the camera.
-          tileSize: 512, attribution: 'Terrain &copy; Mapterhorn'
-        }
-      },
+      sources,
       terrain: {source: 'vectorwarp-terrain', exaggeration: 1.12},
-      layers: [
-        {id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'},
-        {id: 'vectorwarp-local-imagery', type: 'raster', source: 'vectorwarp-local-imagery'},
-        // Terrain and hillshade share one decoded DEM tile cache. Separate
-        // identical sources doubled network, decode, GPU and eviction work.
-        {id: 'vectorwarp-hillshade', type: 'hillshade', source: 'vectorwarp-terrain',
-          paint: {'hillshade-exaggeration': .34, 'hillshade-shadow-color': '#30251f',
-            'hillshade-highlight-color': '#f4d4ad', 'hillshade-accent-color': '#7d614f'}}
-      ]
+      layers
     };
   }
 
   function syncMapBackground(map) {
     if (!map?.getLayer || !map?.setLayoutProperty) return;
     const aerial = mapBackgroundMode === 'aerial';
-    for (const id of ['vectorwarp-local-imagery'])
-      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', aerial ? 'visible' : 'none');
+    const imageryLayers = (map.getStyle?.()?.layers || []).map(layer => layer.id)
+      .filter(id => id.startsWith('vectorwarp-local-imagery-'));
+    for (const id of imageryLayers)
+      map.setLayoutProperty(id, 'visibility', aerial ? 'visible' : 'none');
+    if (map.getLayer('vectorwarp-hillshade'))
+      map.setLayoutProperty('vectorwarp-hillshade', 'visibility', aerial ? 'none' : 'visible');
   }
 
   async function ensureLocationMap(viewport) {
@@ -728,9 +756,11 @@
     if (graph?._vectorwarpMap) return graph._vectorwarpMap;
     const maplibre = await (window.vectorwarpMapLibreReady || Promise.resolve(window.maplibregl));
     if (!maplibre?.Map) throw new Error('Map renderer could not load');
+    let imageryManifest = {};
+    try { imageryManifest = await apiJson('/api/map/imagery'); } catch (_) {}
     const map = new maplibre.Map({
       container: graph,
-      style: locationMapStyle(),
+      style: locationMapStyle(imageryManifest),
       center: [viewport.center.lon, viewport.center.lat],
       zoom: viewport.zoom,
       pitch: 58,
@@ -747,7 +777,7 @@
       // The explicit cap remains suitable for mobile memory budgets.
       maxTileCacheZoomLevels: 8,
       maxTileCacheSize: 192,
-      fadeDuration: 0
+      fadeDuration: 220
     });
     graph._vectorwarpMap = map;
     graph.dataset.mapRenderer = 'maplibre-terrain';

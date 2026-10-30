@@ -6,14 +6,24 @@ const DEFAULT_ROOT = '/var/lib/vectorwarp-api/map-imagery';
 function readManifest(root) {
   try {
     const value = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+    const validBounds = bounds => Array.isArray(bounds) && bounds.length === 4 &&
+      bounds.map(Number).every(Number.isFinite) ? bounds.slice(0, 4).map(Number) : null;
+    const zoomTiers = Array.isArray(value.zoom_tiers) ? value.zoom_tiers.map((tier, index) => ({
+      id: String(tier?.id || `tier-${index + 1}`).replace(/[^a-z0-9-]/gi, '-').toLowerCase(),
+      bounds: validBounds(tier?.bounds),
+      minzoom: Number(tier?.minzoom), maxzoom: Number(tier?.maxzoom)
+    })).filter(tier => tier.bounds && Number.isInteger(tier.minzoom) &&
+      Number.isInteger(tier.maxzoom) && tier.minzoom >= 0 && tier.maxzoom <= 22 &&
+      tier.minzoom <= tier.maxzoom) : [];
     return {
       available: true,
       source: value.source || 'NAIP',
       label: value.label || 'Local aerial imagery',
-      bounds: Array.isArray(value.bounds) ? value.bounds.slice(0, 4).map(Number) : null,
+      bounds: validBounds(value.bounds),
       minzoom: Number.isInteger(value.minzoom) ? value.minzoom : 0,
       maxzoom: Number.isInteger(value.maxzoom) ? value.maxzoom : 16,
-      attribution: value.attribution || 'USGS, USDA, The National Map'
+      attribution: value.attribution || 'USGS, USDA, The National Map',
+      ...(zoomTiers.length ? {zoom_tiers: zoomTiers} : {})
     };
   } catch (_) {
     return {available: false};

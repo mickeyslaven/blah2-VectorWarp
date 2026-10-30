@@ -10,8 +10,10 @@ assert.match(source, /locationToScreenPoint\(LngLat\.convert\(\[longitude, latit
   'radar ellipses project on a flat reference plane instead of terrain');
 assert.doesNotMatch(source, /location-radar-track-slice|location-radar-track-ribs|sliceAltitudes/,
   'radar tracks use one clean outline instead of a clipping 3D cage');
-assert.equal((source.match(/type: 'raster-dem'/g) || []).length, 1,
-  'terrain and hillshade share one decoded DEM source');
+assert.equal((source.match(/type: 'raster-dem'/g) || []).length, 2,
+  'terrain and hillshade use separate DEM state as required by MapLibre');
+assert.match(source, /zoom_tiers[\s\S]*stable parent while a denser nested tier is loading/,
+  'nested imagery coverage retains matching parent tiles during zoom and rotation');
 assert.match(source, /maxTileCacheZoomLevels: 8[\s\S]*maxTileCacheSize: 192/,
   'map retains a bounded neighboring tile cache while rotating');
 assert.match(source, /if \(onScreen\) modelInstances\.push/,
