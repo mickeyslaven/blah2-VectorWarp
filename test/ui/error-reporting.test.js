@@ -9,7 +9,15 @@ const base = {serverId: 'server-1', configRevision: 'sha256:c0ffee', loadedRevis
     frequency: 527000000, channels: 5, totalSamples: 100, loops: 10},
   restart: {state: 'idle'}, acceleration: {active: 'vulkan'},
   system: {os: 'Linux', architecture: 'arm64', kernel: '6.12'},
-  build: {version: '0.1.29', commit: 'a'.repeat(40), package: 'deb'}};
+  build: {version: '0.1.29', commit: 'a'.repeat(40), package: 'deb'},
+  featureDiagnostics: {recording: {requested: true, paused: false, active: true,
+    recordedSamples: 4800000, timelineCaptureAvailable: true, lowSpacePolicy: 'stop_recording'},
+  replay: {active: false, paused: false, seekable: false, timelineAvailable: false},
+  adsb: {enabled: true, online: true, degraded: false, sourceCount: 4, healthySourceCount: 3,
+    aircraftCount: 42, directAircraftCount: 40, mlatAircraftCount: 2,
+    associationLagCpis: 4, associationLagMs: 2000},
+  processing: {acceleration: 'vulkan-resident', clutterAcceleration: 'vulkan-resident', configuredCpiMs: 500},
+  presentation: {timestampConnections: 2, associationLagCpis: 4, associationLagMs: 2000}}};
 const config = {capture: {fc: 527000000, fs: 2400000, device: {type: 'Kraken', channel_count: 5,
   serial: 'DO-NOT-SEND'}}, truth: {adsb: {source: 'http://192.168.1.2:30005'}}};
 const status = value => ({...base, ...value, processor: value.processor === null ? null :
@@ -85,6 +93,10 @@ const procedural = [
   assert.doesNotMatch(issue.body, forbidden);
   assert.deepEqual(normalized.runtime.details, {attemptCount: 2, lastFrameAgeMs: null,
     timestampConnections: 2, processorFresh: true});
+  assert.equal(normalized.features.recording.timelineCaptureAvailable, true);
+  assert.equal(normalized.features.adsb.mlatAircraftCount, 2);
+  assert.equal(normalized.features.processing.configuredCpiMs, 500);
+  assert.equal(normalized.features.presentation.associationLagMs, 2000);
 
   const legacyId = '123e4567-e89b-42d3-a456-426614174000';
   const legacy = {...dirty, submissionId: legacyId,

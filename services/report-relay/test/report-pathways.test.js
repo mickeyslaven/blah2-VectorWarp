@@ -59,7 +59,18 @@ function baseReport(pathway) {
       severity: 'degraded', message: 'Synthetic preceding event',
       firstSeenAt: '2026-10-24T19:59:58Z', lastSeenAt: '2026-10-24T19:59:59Z',
       occurrences: 1, recovered: true
-    }],
+    }], features: {recording: {requested: false, paused: false, active: false,
+      errorPresent: false, recordedSamples: 0, clipRevision: 1, clipErrorPresent: false,
+      clipSamples: 0, timelineCaptureAvailable: true, automaticCleanup: false,
+      lowSpacePolicy: 'stop_recording', maximumAgeDays: 30, maximumTotalGb: 100, minimumFreeGb: 5},
+    replay: {active: pathway.receiverType === 'Replay', paused: false, seekable: pathway.receiverType === 'Replay',
+      positionSamples: 0, totalSamples: 0, sampleRateHz: 2000000, timelineAvailable: false},
+    adsb: {enabled: true, online: true, degraded: false, sourceCount: 2, healthySourceCount: 2,
+      aircraftCount: 10, directAircraftCount: 9, mlatAircraftCount: 1,
+      associationLagCpis: 4, associationLagMs: 2000},
+    processing: {acceleration: pathway.backend || 'cpu', clutterAcceleration: pathway.backend || 'cpu',
+      configuredCpiMs: 500},
+    presentation: {timestampConnections: 1, associationLagCpis: 4, associationLagMs: 2000}},
     comment: 'Automated pathway contract verification; no user data.'
   };
 }

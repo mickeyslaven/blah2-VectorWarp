@@ -181,6 +181,46 @@
     const milliseconds = typeof value === 'string' || typeof value === 'number' ? Date.parse(value) : NaN;
     return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : new Date(fallback).toISOString();
   }
+  function booleanValue(value) { return typeof value === 'boolean' ? value : null; }
+  function diagnosticInteger(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
+  function normalizeFeatures(value = {}) {
+    const recording = value.recording || {}; const replay = value.replay || {};
+    const adsb = value.adsb || {}; const processing = value.processing || {};
+    const presentation = value.presentation || {};
+    const lowSpacePolicies = new Set(['stop_recording', 'delete_oldest']);
+    return {
+      recording: {requested: booleanValue(recording.requested), paused: booleanValue(recording.paused),
+        active: booleanValue(recording.active), errorPresent: booleanValue(recording.errorPresent),
+        recordedSamples: diagnosticInteger(recording.recordedSamples),
+        clipRevision: diagnosticInteger(recording.clipRevision),
+        clipErrorPresent: booleanValue(recording.clipErrorPresent),
+        clipSamples: diagnosticInteger(recording.clipSamples),
+        timelineCaptureAvailable: booleanValue(recording.timelineCaptureAvailable),
+        automaticCleanup: booleanValue(recording.automaticCleanup),
+        lowSpacePolicy: lowSpacePolicies.has(recording.lowSpacePolicy) ? recording.lowSpacePolicy : null,
+        maximumAgeDays: diagnosticInteger(recording.maximumAgeDays),
+        maximumTotalGb: diagnosticInteger(recording.maximumTotalGb),
+        minimumFreeGb: diagnosticInteger(recording.minimumFreeGb)},
+      replay: {active: booleanValue(replay.active), paused: booleanValue(replay.paused),
+        seekable: booleanValue(replay.seekable), positionSamples: diagnosticInteger(replay.positionSamples),
+        totalSamples: diagnosticInteger(replay.totalSamples), sampleRateHz: diagnosticInteger(replay.sampleRateHz),
+        timelineAvailable: booleanValue(replay.timelineAvailable)},
+      adsb: {enabled: booleanValue(adsb.enabled), online: booleanValue(adsb.online),
+        degraded: booleanValue(adsb.degraded), sourceCount: diagnosticInteger(adsb.sourceCount),
+        healthySourceCount: diagnosticInteger(adsb.healthySourceCount),
+        aircraftCount: diagnosticInteger(adsb.aircraftCount),
+        directAircraftCount: diagnosticInteger(adsb.directAircraftCount),
+        mlatAircraftCount: diagnosticInteger(adsb.mlatAircraftCount),
+        associationLagCpis: diagnosticInteger(adsb.associationLagCpis),
+        associationLagMs: diagnosticInteger(adsb.associationLagMs)},
+      processing: {acceleration: identifierValue(processing.acceleration, 64),
+        clutterAcceleration: identifierValue(processing.clutterAcceleration, 64),
+        configuredCpiMs: diagnosticInteger(processing.configuredCpiMs)},
+      presentation: {timestampConnections: diagnosticInteger(presentation.timestampConnections),
+        associationLagCpis: diagnosticInteger(presentation.associationLagCpis),
+        associationLagMs: diagnosticInteger(presentation.associationLagMs)}
+    };
+  }
   function normalizedIncident(value = {}, now = Date.now()) {
     const code = incidentTypes.has(value.code) ? value.code : 'MANUAL_REPORT';
     const [component, stage] = incidentTypes.get(code);
@@ -217,7 +257,8 @@
           runtime.configRevision : null,
         uptimeSeconds: integer(runtime.uptimeSeconds), details: scalars(runtime.details)},
       recentEvents: Array.isArray(value.recentEvents) ? value.recentEvents.slice(0, 20)
-        .map(event => normalizedIncident(event, now)) : [], comment: clean(value.comment, 2000)};
+        .map(event => normalizedIncident(event, now)) : [],
+      features: normalizeFeatures(value.features), comment: clean(value.comment, 2000)};
   }
   function buildReport({incident, status = {}, config = {}, comment = '', now = Date.now()}) {
     const type = receiverType(status, config);
@@ -254,7 +295,8 @@
       uptimeSeconds: integer(status.uptimeSeconds),
       details: scalars({...incident.details, lastFrameAgeMs: integer(status.lastFrameAt ? Math.max(0, now - status.lastFrameAt) : null),
         timestampConnections: integer(status.timestampConnections), processorFresh: status.processorFresh === true})},
-    recentEvents: [], comment: clean(comment, 2000)};
+    recentEvents: [], features: normalizeFeatures(status.featureDiagnostics),
+    comment: clean(comment, 2000)};
   }
   function retain(report, storage = reportStorage()) { storage.setItem(STORAGE_KEY, JSON.stringify(report)); }
   function clear(storage = reportStorage()) { storage.removeItem(STORAGE_KEY); }
@@ -276,7 +318,7 @@
     document.getElementById('report-dialog')?.remove();
     const report = normalizeReport(retainedReport || buildReport({incident, status, config, comment}));
     const dialog = document.createElement('dialog'); dialog.id = 'report-dialog'; dialog.className = 'site-dialog report-dialog';
-    dialog.innerHTML = '<h2>Send diagnostic report?</h2><p>VectorWarp will send diagnostic information to the project maintainer for analysis and bug fixing. This includes a controlled error category, VectorWarp and system versions, receiver type and operating measurements, and service state.</p><p>It will not include your location, network addresses, receiver serial numbers, full configuration, ADS-B data, recordings, raw IQ, or credentials. Your optional description is sanitized before it is sent; do not include passwords or other secrets.</p><p>Select View report to inspect the exact data. If you have privacy concerns or want complete control over what is shared, cancel and file a <a href="https://github.com/mickeyslaven/blah2-VectorWarp/issues/new" target="_blank" rel="noreferrer">GitHub issue</a> instead.</p>';
+    dialog.innerHTML = '<h2>Send diagnostic report?</h2><p>VectorWarp will send diagnostic information to the project maintainer for analysis and bug fixing. This includes a controlled error category, VectorWarp and system versions, receiver measurements, service state, and aggregate recording, replay, ADS-B, GPU, clutter, and presentation-timing health.</p><p>It will not include your location, network addresses, receiver serial numbers, full configuration, aircraft identities, recording names or contents, raw IQ, or credentials. Your optional description is sanitized before it is sent; do not include passwords or other secrets.</p><p>Select View report to inspect the exact data. If you have privacy concerns or want complete control over what is shared, cancel and file a <a href="https://github.com/mickeyslaven/blah2-VectorWarp/issues/new" target="_blank" rel="noreferrer">GitHub issue</a> instead.</p>';
     const commentLabel = document.createElement('label');
     commentLabel.className = 'report-comment'; commentLabel.textContent = 'What happened?';
     const commentInput = document.createElement('textarea');
@@ -314,5 +356,5 @@
     action.dataset.incidentKey = key; action.onclick = () => open(context()); container.append(action); return action;
   }
   return {ENDPOINT, STORAGE_KEY, clean, scalars, classify, classifyFailure, buildReport,
-    normalizeReport, submit, pending, addSettingsEntry, addContextAction, open};
+    normalizeReport, normalizeFeatures, submit, pending, addSettingsEntry, addContextAction, open};
 });

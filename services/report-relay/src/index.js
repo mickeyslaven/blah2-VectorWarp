@@ -4,7 +4,7 @@ const GITHUB_API_VERSION = '2026-03-10';
 const IPV6_PATTERN = /(?<![A-Fa-f0-9:])(?:(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,7}:|(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}|(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}|(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}|(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}|[A-Fa-f0-9]{1,4}:(?:(?::[A-Fa-f0-9]{1,4}){1,6})|:(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:))(?![A-Fa-f0-9:])/g;
 const REPORT_KEYS = new Set([
   'schema', 'consent', 'submissionId', 'incident', 'build', 'system', 'receiver', 'runtime',
-  'recentEvents', 'comment'
+  'recentEvents', 'features', 'comment'
 ]);
 const INCIDENT_TYPES = new Map(Object.entries({
   SDR_ENUMERATION_FAILED: ['receiver', 'enumerate'], SDR_OPEN_FAILED: ['receiver', 'open'],
@@ -155,6 +155,70 @@ function safeDetails(value, name) {
   return result;
 }
 
+function diagnosticObject(value, allowed, name) {
+  value = value ?? {};
+  onlyKeys(value, allowed, name);
+  return value;
+}
+
+function normalizeFeatures(value) {
+  value = diagnosticObject(value, new Set(['recording', 'replay', 'adsb', 'processing', 'presentation']), 'features');
+  const recording = diagnosticObject(value.recording, new Set(['requested', 'paused', 'active',
+    'errorPresent', 'recordedSamples', 'clipRevision', 'clipErrorPresent', 'clipSamples',
+    'timelineCaptureAvailable', 'automaticCleanup', 'lowSpacePolicy', 'maximumAgeDays',
+    'maximumTotalGb', 'minimumFreeGb']), 'features.recording');
+  const replay = diagnosticObject(value.replay, new Set(['active', 'paused', 'seekable',
+    'positionSamples', 'totalSamples', 'sampleRateHz', 'timelineAvailable']), 'features.replay');
+  const adsb = diagnosticObject(value.adsb, new Set(['enabled', 'online', 'degraded', 'sourceCount',
+    'healthySourceCount', 'aircraftCount', 'directAircraftCount', 'mlatAircraftCount',
+    'associationLagCpis', 'associationLagMs']), 'features.adsb');
+  const processing = diagnosticObject(value.processing, new Set(['acceleration',
+    'clutterAcceleration', 'configuredCpiMs']), 'features.processing');
+  const presentation = diagnosticObject(value.presentation, new Set(['timestampConnections',
+    'associationLagCpis', 'associationLagMs']), 'features.presentation');
+  const positive = (entry, name) => boundedInteger(entry, 0, Number.MAX_SAFE_INTEGER, name);
+  return {
+    recording: {requested: booleanOrNull(recording.requested, 'features.recording.requested'),
+      paused: booleanOrNull(recording.paused, 'features.recording.paused'),
+      active: booleanOrNull(recording.active, 'features.recording.active'),
+      errorPresent: booleanOrNull(recording.errorPresent, 'features.recording.errorPresent'),
+      recordedSamples: positive(recording.recordedSamples, 'features.recording.recordedSamples'),
+      clipRevision: positive(recording.clipRevision, 'features.recording.clipRevision'),
+      clipErrorPresent: booleanOrNull(recording.clipErrorPresent, 'features.recording.clipErrorPresent'),
+      clipSamples: positive(recording.clipSamples, 'features.recording.clipSamples'),
+      timelineCaptureAvailable: booleanOrNull(recording.timelineCaptureAvailable, 'features.recording.timelineCaptureAvailable'),
+      automaticCleanup: booleanOrNull(recording.automaticCleanup, 'features.recording.automaticCleanup'),
+      lowSpacePolicy: enumValue(recording.lowSpacePolicy, new Set(['stop_recording', 'delete_oldest']),
+        'features.recording.lowSpacePolicy'),
+      maximumAgeDays: positive(recording.maximumAgeDays, 'features.recording.maximumAgeDays'),
+      maximumTotalGb: positive(recording.maximumTotalGb, 'features.recording.maximumTotalGb'),
+      minimumFreeGb: positive(recording.minimumFreeGb, 'features.recording.minimumFreeGb')},
+    replay: {active: booleanOrNull(replay.active, 'features.replay.active'),
+      paused: booleanOrNull(replay.paused, 'features.replay.paused'),
+      seekable: booleanOrNull(replay.seekable, 'features.replay.seekable'),
+      positionSamples: positive(replay.positionSamples, 'features.replay.positionSamples'),
+      totalSamples: positive(replay.totalSamples, 'features.replay.totalSamples'),
+      sampleRateHz: positive(replay.sampleRateHz, 'features.replay.sampleRateHz'),
+      timelineAvailable: booleanOrNull(replay.timelineAvailable, 'features.replay.timelineAvailable')},
+    adsb: {enabled: booleanOrNull(adsb.enabled, 'features.adsb.enabled'),
+      online: booleanOrNull(adsb.online, 'features.adsb.online'),
+      degraded: booleanOrNull(adsb.degraded, 'features.adsb.degraded'),
+      sourceCount: positive(adsb.sourceCount, 'features.adsb.sourceCount'),
+      healthySourceCount: positive(adsb.healthySourceCount, 'features.adsb.healthySourceCount'),
+      aircraftCount: positive(adsb.aircraftCount, 'features.adsb.aircraftCount'),
+      directAircraftCount: positive(adsb.directAircraftCount, 'features.adsb.directAircraftCount'),
+      mlatAircraftCount: positive(adsb.mlatAircraftCount, 'features.adsb.mlatAircraftCount'),
+      associationLagCpis: positive(adsb.associationLagCpis, 'features.adsb.associationLagCpis'),
+      associationLagMs: positive(adsb.associationLagMs, 'features.adsb.associationLagMs')},
+    processing: {acceleration: identifier(processing.acceleration, 64, 'features.processing.acceleration'),
+      clutterAcceleration: identifier(processing.clutterAcceleration, 64, 'features.processing.clutterAcceleration'),
+      configuredCpiMs: positive(processing.configuredCpiMs, 'features.processing.configuredCpiMs')},
+    presentation: {timestampConnections: positive(presentation.timestampConnections, 'features.presentation.timestampConnections'),
+      associationLagCpis: positive(presentation.associationLagCpis, 'features.presentation.associationLagCpis'),
+      associationLagMs: positive(presentation.associationLagMs, 'features.presentation.associationLagMs')}
+  };
+}
+
 class ReportError extends Error {
   constructor(message, status = 422, ambiguous = false) {
     super(message); this.status = status; this.ambiguous = ambiguous;
@@ -259,7 +323,7 @@ export function normalizeReport(value) {
       details: safeDetails(runtime.details, 'runtime.details')
     },
     recentEvents: recentEvents.map((event, index) => normalizeIncident(event,
-      `recentEvents[${index}]`)),
+      `recentEvents[${index}]`)), features: normalizeFeatures(value.features),
     comment: redactText(value.comment, 2000, 'comment')
   };
 }

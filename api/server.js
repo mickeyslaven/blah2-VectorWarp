@@ -898,6 +898,57 @@ app.get('/api/system/status', async (req, res) => {
   const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
   const backend = currentTimingBackend();
   const adsb = await adsbSource.status();
+  const sourceRows = Array.isArray(adsb?.sources) ? adsb.sources : [];
+  const positionSources = adsb?.fusion?.position_sources || {};
+  const featureDiagnostics = {
+    recording: {
+      requested: capture, paused: capturePaused,
+      active: processor?.input === 'live' && processor.recording === true,
+      errorPresent: Boolean(processor?.recordingError),
+      recordedSamples: Number.isSafeInteger(processor?.recordedSamples) ? processor.recordedSamples : 0,
+      clipRevision: Number.isSafeInteger(processor?.clipRevision) ? processor.clipRevision : 0,
+      clipErrorPresent: Boolean(processor?.clipError),
+      clipSamples: Number.isSafeInteger(processor?.clipSamples) ? processor.clipSamples : 0,
+      timelineCaptureAvailable: true,
+      automaticCleanup: config.save?.retention?.automatic_cleanup === true,
+      lowSpacePolicy: config.save?.retention?.low_space_policy || null,
+      maximumAgeDays: Number.isSafeInteger(config.save?.retention?.maximum_age_days) ?
+        config.save.retention.maximum_age_days : null,
+      maximumTotalGb: Number.isSafeInteger(config.save?.retention?.maximum_total_gb) ?
+        config.save.retention.maximum_total_gb : null,
+      minimumFreeGb: Number.isSafeInteger(config.save?.retention?.minimum_free_gb) ?
+        config.save.retention.minimum_free_gb : null
+    },
+    replay: {
+      active: processor?.input === 'replay', paused: replayControl.paused,
+      seekable: processor?.input === 'replay' && Number.isSafeInteger(processor.totalSamples),
+      positionSamples: Number.isSafeInteger(processor?.positionSamples) ? processor.positionSamples : null,
+      totalSamples: Number.isSafeInteger(processor?.totalSamples) ? processor.totalSamples : null,
+      sampleRateHz: Number.isSafeInteger(processor?.sampleRate) ? processor.sampleRate : null,
+      timelineAvailable: processor?.input === 'replay' && recordingTimeline.has(processor.file)
+    },
+    adsb: {
+      enabled: config.truth?.adsb?.enabled === true, online: adsb?.online === true,
+      degraded: adsb?.degraded === true, sourceCount: sourceRows.length,
+      healthySourceCount: sourceRows.filter(source => source?.healthy === true).length,
+      aircraftCount: Number.isSafeInteger(adsb?.fusion?.aircraft) ? adsb.fusion.aircraft : null,
+      directAircraftCount: Number.isSafeInteger(positionSources.ADSB_DIRECT) ? positionSources.ADSB_DIRECT : 0,
+      mlatAircraftCount: Number.isSafeInteger(positionSources.MLAT) ? positionSources.MLAT : 0,
+      associationLagCpis: Number.isSafeInteger(adsb?.association_lag_cpis) ? adsb.association_lag_cpis : null,
+      associationLagMs: Number.isSafeInteger(adsb?.association_lag_ms) ? adsb.association_lag_ms : null
+    },
+    processing: {
+      acceleration: backend.acceleration?.active || null,
+      clutterAcceleration: backend.clutterAcceleration?.active || null,
+      configuredCpiMs: Number.isFinite(config.process?.data?.cpi) ?
+        Math.round(config.process.data.cpi * 1000) : null
+    },
+    presentation: {
+      timestampConnections,
+      associationLagCpis: Number.isSafeInteger(adsb?.association_lag_cpis) ? adsb.association_lag_cpis : null,
+      associationLagMs: Number.isSafeInteger(adsb?.association_lag_ms) ? adsb.association_lag_ms : null
+    }
+  };
   res.json({serverId, configRevision: document.revision,
     build: releaseBuild,
     system: {os: os.platform(), architecture: os.arch(), kernel: os.release()},
@@ -906,7 +957,7 @@ app.get('/api/system/status', async (req, res) => {
     clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
     restart: persistedRestart, sdrplayStartup, receiverSynchronization: receiverSyncState,
-    gainMonitor: gainMonitorStatus, adsb,
+    gainMonitor: gainMonitorStatus, adsb, featureDiagnostics,
     lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
     gainCheckPending: gainPublicationBlocked,
