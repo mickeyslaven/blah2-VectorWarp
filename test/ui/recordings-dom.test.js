@@ -30,6 +30,8 @@ window.XMLHttpRequest = FakeUpload;
 const calls = [];
 let deferredRequests = null;
 let deleteFailure = false;
+let downloadHref = null;
+window.HTMLAnchorElement.prototype.click = function () { downloadHref = this.href; };
 const item = index => ({id: `id-${index}`, filename: `recording-${index}.blah2iq`,
   replay_file: `/recordings/recording-${index}.blah2iq`, title: `TEST${index}`,
   created_at: Date.now() - index, duration_seconds: 4, size_bytes: 1024,
@@ -49,6 +51,8 @@ window.fetchStatusResource = async (url, options = {}) => {
   }
   if (String(url).startsWith('/api/recordings/import'))
     return {ok: true, json: async () => ({filename: 'import.blah2iq', size_bytes: 4})};
+  if (String(url).endsWith('/share'))
+    return {ok: true, json: async () => ({action: 'download', url: '/api/recordings/id-0/package'})};
   if (options.method === 'DELETE') {
     if (deleteFailure) throw new Error('Network disconnected');
     return {ok: true, json: async () => ({removed: true})};
@@ -64,8 +68,13 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   assert.equal(window.document.querySelectorAll('.recording-card').length, 10);
   assert.equal(window.document.querySelector('.recording-card').open, false,
     'Mobile details start collapsed');
-  assert.equal(window.document.body.textContent.includes('Download'), false,
-    'Local browser does not offer redundant downloads');
+  const share = window.document.querySelector('.recording-share');
+  assert.equal(share.textContent, 'Share recording');
+  share.click(); await new Promise(resolve => setImmediate(resolve));
+  assert.match(downloadHref, /\/api\/recordings\/id-0\/package$/,
+    'remote viewers download the complete replay package');
+  assert.match(window.document.getElementById('recording-operation-status').textContent,
+    /replay settings, ADS-B timeline, and metadata/);
   const importInput = window.document.getElementById('recording-import');
   Object.defineProperty(importInput, 'files', {configurable: true,
     value: [new window.File(['test'], 'portable.blah2iq')]});
@@ -75,6 +84,8 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   assert.match(window.document.getElementById('recording-import-status').textContent,
     /Imported portable\.blah2iq/);
   assert.equal(FakeUpload.last.headers['X-VectorWarp-Intent'], 'recording-import-v1');
+  assert.match(importInput.accept, /\.vwr/,
+    'the browser accepts complete portable replay packages');
   const replay = window.document.querySelector('.recording-replay');
   assert.equal(replay.tagName, 'A');
   assert.match(replay.href, /\/display\/configuration\?replayFile=%2Frecordings%2Frecording-0\.blah2iq&replayId=id-0$/,

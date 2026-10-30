@@ -30,7 +30,7 @@
     const expanded = typeof window === 'undefined' || window.innerWidth > 760 ? ' open' : '';
     const quick = [duration(item.duration_seconds), bytes(item.size_bytes), frequency(item.frequency_hz)].filter(value => value !== '—').join(' · ');
     const replay = `/display/configuration?replayFile=${encodeURIComponent(item.replay_file || '')}&replayId=${encodeURIComponent(item.id || '')}`;
-    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><a class="button-link recording-replay" href="${escape(replay)}">Replay recording</a><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
+    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><a class="button-link recording-replay" href="${escape(replay)}">Replay recording</a><button class="button-secondary recording-share" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled title="Finish recording before sharing"' : ''}>Share recording</button><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
   }
   function query() {
     const params = new URLSearchParams({offset: state.offset, limit: pageSize(),
@@ -139,6 +139,28 @@
       if (status) status.textContent = `${error.message || 'Delete failed'} The recording list was not changed; try again.`;
     }
   }
+  async function shareRecording(button) {
+    const name = button.dataset.name || 'recording';
+    const status = document.getElementById('recording-operation-status');
+    button.disabled = true; button.textContent = 'Preparing…';
+    try {
+      const response = await fetchStatusResource(liveApiUrl(`/api/recordings/${button.dataset.id}/share`),
+        {method: 'POST', headers: {'X-VectorWarp-Intent': 'recording-share-v1'}, cache: 'no-store'}, 15000);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'The recording could not be shared.');
+      if (body.action === 'revealed') {
+        if (status) status.textContent = body.selected === false ?
+          `Opened the folder containing ${name}.` : `Opened ${name} in the recording folder.`;
+      } else if (body.action === 'download' && body.url) {
+        const link = document.createElement('a');
+        link.href = liveApiUrl(body.url); link.download = ''; link.hidden = true;
+        document.body.appendChild(link); link.click(); link.remove();
+        if (status) status.textContent = `Downloading ${name} with its replay settings, ADS-B timeline, and metadata.`;
+      } else throw new Error('The sharing response was incomplete.');
+    } catch (error) {
+      if (status) status.textContent = `${error.message || 'Sharing failed'} Try again.`;
+    } finally { button.disabled = false; button.textContent = 'Share recording'; }
+  }
   async function importRecording(input) {
     const file = input.files?.[0]; if (!file) return;
     const status = document.getElementById('recording-import-status');
@@ -188,6 +210,7 @@
       state.offset += pageSize(); load(); window.scrollTo({top: 0, behavior: 'smooth'});
     });
     document.getElementById('recording-list')?.addEventListener('click', event => {
+      const share = event.target.closest('.recording-share'); if (share) { shareRecording(share); return; }
       const remove = event.target.closest('.recording-delete'); if (remove) deleteRecording(remove);
     });
     document.getElementById('recording-import')?.addEventListener('change', event => importRecording(event.target));

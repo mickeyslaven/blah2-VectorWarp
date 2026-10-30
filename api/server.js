@@ -48,6 +48,9 @@ const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceive
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
 const {RecordingLibrary} = require('./recording-library.js');
 const {RecordingTimeline} = require('./recording-timeline.js');
+const {descriptor: recordingPackageDescriptor, streamPackage: streamRecordingPackage,
+  extractPackage: extractRecordingPackage} = require('./recording-package.js');
+const {isLocalDeviceRequest, reveal: revealRecording} = require('./recording-share.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {installMapImageryRoutes} = require('./map-imagery.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
@@ -711,6 +714,39 @@ app.get('/api/recordings/:id/file', (req, res) => {
   res.set('Content-Disposition', `attachment; filename="${path.basename(filename).replace(/["\\]/g, '_')}"`);
   res.sendFile(filename);
 });
+app.get('/api/recordings/:id/package', async (req, res, next) => {
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (path.resolve(processor?.recordingFile || '') === filename)
+    return res.status(409).json({error: 'Finish this recording before sharing it.'});
+  try {
+    const value = await recordingPackageDescriptor(filename);
+    res.type('application/vnd.vectorwarp.recording');
+    res.set('Content-Length', String(value.size));
+    res.set('Content-Disposition',
+      `attachment; filename="${value.downloadName.replace(/[^A-Za-z0-9._-]/g, '_')}"`);
+    await streamRecordingPackage(value, res);
+  } catch (error) {
+    if (!res.headersSent) next(error);
+    else res.destroy(error);
+  }
+});
+app.post('/api/recordings/:id/share', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-share-v1')
+    return res.status(403).json({error: 'Sharing a recording requires a trusted VectorWarp origin and intent.'});
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (path.resolve(processor?.recordingFile || '') === filename)
+    return res.status(409).json({error: 'Finish this recording before sharing it.'});
+  if (!isLocalDeviceRequest(req))
+    return res.json({action: 'download', url: `/api/recordings/${encodeURIComponent(req.params.id)}/package`});
+  try {
+    const result = await revealRecording(filename);
+    res.json({action: 'revealed', filename: path.basename(filename), selected: result.selected});
+  } catch (error) { next(Object.assign(new Error(`Could not open the recording folder: ${error.message}`), {status: 500})); }
+});
 app.delete('/api/recordings/:id', async (req, res, next) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-delete-v1')
     return res.status(403).json({error: 'Deleting a recording requires a trusted VectorWarp origin and intent.'});
@@ -727,27 +763,35 @@ app.post('/api/recordings/import', async (req, res, next) => {
     return res.status(403).json({error: 'Importing a recording requires a trusted VectorWarp origin and intent.'});
   const original = path.basename(String(req.query.filename || ''));
   const extension = path.extname(original).toLowerCase();
-  if (!original || !['.blah2iq', '.mchq'].includes(extension))
-    return res.status(400).json({error: 'Choose a .blah2iq or .mchq recording.'});
+  if (!original || !['.blah2iq', '.mchq', '.vwr'].includes(extension))
+    return res.status(400).json({error: 'Choose a .vwr package, .blah2iq recording, or .mchq clip.'});
   let temporary = null;
   try {
     const disk = await recordingLibrary.prepareForRecording({});
     const length = Number(req.get('Content-Length'));
-    if (!disk.allowed || (Number.isFinite(length) && disk.free_bytes !== null &&
-        disk.free_bytes - length <= disk.required_free_bytes))
+    const requiredBytes = Number.isFinite(length) ? length * (extension === '.vwr' ? 2 : 1) : 0;
+    if (!disk.allowed || (requiredBytes && disk.free_bytes !== null &&
+        disk.free_bytes - requiredBytes <= disk.required_free_bytes))
       return res.status(507).json({error: 'The import would cross the configured free-disk reserve.'});
     const directory = recordingLibrary.directory();
     await fs.promises.mkdir(directory, {recursive: true, mode: 0o770});
-    const stem = path.basename(original, extension).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 120) || 'recording';
-    let filename = path.join(directory, `${stem}${extension}`);
-    if (fs.existsSync(filename)) filename = path.join(directory, `${stem}-${Date.now()}${extension}`);
     temporary = path.join(directory, `.import-${crypto.randomUUID()}.partial`);
     await pipeline(req, fs.createWriteStream(temporary, {flags: 'wx', mode: 0o660}));
     const stat = await fs.promises.stat(temporary);
     if (!stat.size) throw Object.assign(new Error('The selected recording was empty.'), {status: 400});
-    await fs.promises.rename(temporary, filename); temporary = null;
+    let imported;
+    if (extension === '.vwr') {
+      imported = await extractRecordingPackage(temporary, directory);
+      await fs.promises.rm(temporary, {force: true}); temporary = null;
+    } else {
+      const stem = path.basename(original, extension).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 120) || 'recording';
+      let filename = path.join(directory, `${stem}${extension}`);
+      if (fs.existsSync(filename)) filename = path.join(directory, `${stem}-${Date.now()}${extension}`);
+      await fs.promises.rename(temporary, filename); temporary = null;
+      imported = {filename: path.basename(filename), size_bytes: stat.size, files: [path.basename(filename)]};
+    }
     recordingLibrary.cache = null;
-    res.status(201).json({imported: true, filename: path.basename(filename), size_bytes: stat.size});
+    res.status(201).json({imported: true, packaged: extension === '.vwr', ...imported});
   } catch (error) {
     if (temporary) await fs.promises.rm(temporary, {force: true}).catch(() => {});
     next(error);
