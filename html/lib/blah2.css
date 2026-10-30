@@ -88,9 +88,12 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .overview-health > header h2 { margin:0; font-size:16px; }
 .overview-health > header p { margin:4px 0 0; color:var(--muted); font-size:12px; }
 .overview-health .health-list { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); }
-.overview-health .health-row { grid-template-columns:8px minmax(0,1fr); min-height:76px; border-right:1px solid rgb(71 54 46 / .65); border-bottom:0; }
-.overview-health .health-row:last-child { border-right:0; }
-.overview-health .health-row b { grid-column:2; grid-row:1; align-self:end; }
+@media (min-width:1101px) {
+  .overview-health .health-row { grid-template-columns:8px minmax(0,1fr); min-height:104px; align-content:start; border-right:1px solid rgb(71 54 46 / .65); border-bottom:0; }
+  .overview-health .health-row:last-child { border-right:0; }
+  .overview-health .health-row > div { grid-column:2; grid-row:2; }
+  .overview-health .health-row b { grid-column:2; grid-row:1; align-self:start; }
+}
 .overview-health .button-link { justify-self:start; margin:0; }
 .info-card { min-width:0; overflow:hidden; padding:16px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }.info-card h2 { margin:0 0 12px; color:var(--muted); font-size:12px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
 .info-card dl { display:grid; gap:0; margin:0; }.info-card dl > div { display:grid; grid-template-columns:minmax(100px,.8fr) minmax(0,1.4fr); gap:16px; padding:9px 0; border-top:1px solid rgb(71 54 46 / .65); }.info-card dl > div:first-child { border-top:0; }.info-card dt { color:var(--muted); font-size:13px; }.info-card dd { min-width:0; margin:0; font-size:14px; line-height:1.4; text-align:right; overflow-wrap:anywhere; }
