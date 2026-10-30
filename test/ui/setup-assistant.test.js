@@ -99,8 +99,8 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
     'A completed tuning step remains directly selectable');
   assert.equal(target.querySelector('[data-wizard-step="3"]').disabled, false,
     'A completed radar step remains directly selectable even when an earlier site step is active');
-  assert.equal(target.querySelector('[data-wizard-step="4"]').disabled, true,
-    'Future steps cannot be skipped before current settings are saved');
+  assert.equal(target.querySelector('[data-wizard-step="4"]').disabled, false,
+    'The next incomplete step is directly selectable once earlier sections are ready');
   target.querySelector('[data-wizard-step="3"]').click();
   assert.match(target.querySelector('.setup-wizard-content').textContent, /radar search/i);
   target.querySelector('[data-wizard-next]').click();
@@ -146,6 +146,25 @@ test('assistant automatically selects one discovered supported receiver', async 
   assert.equal(selected, 'Usrp');
   assert.equal(config.capture.device.type, 'Usrp');
   assert.match(target.textContent, /detected and selected automatically/i);
+});
+
+test('Review setup opens the unlocked final page when essentials are ready', async () => {
+  const dom = new JSDOM('<div id="assistant"></div>');
+  const target = dom.window.document.getElementById('assistant');
+  const config = configurationForReceiver('Kraken');
+  config.location.rx = {name: 'Receiver', latitude: 1, longitude: 1, altitude: 1};
+  config.location.tx = {name: 'Transmitter', latitude: 2, longitude: 2, altitude: 2};
+  const api = {getConfig: () => config, mode: () => 'simple', setMode() {}, set() {},
+    receiverProfiles: () => [{type: 'Kraken', label: 'KrakenSDR', liveAvailable: true}],
+    discoverReceivers: async () => [], switchReceiver() {}, saveStep: async () => true,
+    save: async () => true, refresh: () => render(target, api)};
+  render(target, api);
+  assert.equal(target.querySelector('[data-start-setup]').textContent, 'Review setup');
+  target.querySelector('[data-start-setup]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(target.querySelector('.setup-wizard-content').textContent, /Review setup/);
+  assert.equal(target.querySelector('[data-wizard-step="5"]').disabled, false);
+  assert.equal(target.querySelectorAll('[data-wizard-automatic]:checked').length, 4);
 });
 
 test('advanced mode collapses the beginner workflow instead of duplicating two settings systems', () => {

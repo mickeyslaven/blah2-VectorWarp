@@ -115,10 +115,11 @@
     const profiles = api.receiverProfiles();
     const checks = wizardChecks(config, profiles);
     wizardStep = Math.max(0, Math.min(checks.length - 1, wizardStep));
+    const locked = index => index > 0 && checks.slice(0, index).some(item => !item.complete);
     const dialog = target.ownerDocument.createElement('dialog');
     dialog.className = 'setup-wizard';
     dialog.setAttribute('aria-labelledby', 'setup-wizard-title');
-    dialog.innerHTML = `<div class="setup-wizard-shell"><aside><div><strong id="setup-wizard-title">VectorWarp setup</strong><small>Step ${wizardStep + 1} of ${checks.length}</small></div><nav aria-label="Setup steps">${checks.map((item, index) => `<button type="button" data-wizard-step="${index}" class="${index === wizardStep ? 'active' : ''} ${item.complete ? 'complete' : ''}"${index === wizardStep ? ' aria-current="step"' : ''}${index > wizardStep && !item.complete ? ' disabled' : ''}><span>${item.complete ? '✓' : index + 1}</span>${escape(item.title)}</button>`).join('')}</nav></aside><section class="setup-wizard-content">${wizardPanel(config, wizardStep, profiles)}<p class="setup-wizard-notice" role="status"${wizardNotice ? '' : ' hidden'}>${escape(wizardNotice)}</p><p class="setup-wizard-error" role="alert"${wizardError ? '' : ' hidden'}>${escape(wizardError)}</p><footer><button type="button" class="button-secondary" data-wizard-close>Cancel</button><span></span>${wizardStep ? '<button type="button" class="button-secondary" data-wizard-back>Back</button>' : ''}<button type="button" class="button-primary" data-wizard-next>${wizardStep === checks.length - 1 ? 'Finish & Start radar' : 'Save step & Continue'}</button></footer></section></div>`;
+    dialog.innerHTML = `<div class="setup-wizard-shell"><aside><div><strong id="setup-wizard-title">VectorWarp setup</strong><small>Step ${wizardStep + 1} of ${checks.length}</small></div><nav aria-label="Setup steps">${checks.map((item, index) => `<button type="button" data-wizard-step="${index}" class="${index === wizardStep ? 'active' : ''} ${item.complete ? 'complete' : ''}"${index === wizardStep ? ' aria-current="step"' : ''}${locked(index) ? ' disabled' : ''}><span>${item.complete ? '✓' : index + 1}</span>${escape(item.title)}</button>`).join('')}</nav></aside><section class="setup-wizard-content">${wizardPanel(config, wizardStep, profiles)}<p class="setup-wizard-notice" role="status"${wizardNotice ? '' : ' hidden'}>${escape(wizardNotice)}</p><p class="setup-wizard-error" role="alert"${wizardError ? '' : ' hidden'}>${escape(wizardError)}</p><footer><button type="button" class="button-secondary" data-wizard-close>Cancel</button><span></span>${wizardStep ? '<button type="button" class="button-secondary" data-wizard-back>Back</button>' : ''}<button type="button" class="button-primary" data-wizard-next>${wizardStep === checks.length - 1 ? 'Finish & Start radar' : 'Save step & Continue'}</button></footer></section></div>`;
     target.appendChild(dialog);
     const close = () => { wizardOpen = false; wizardAutomatic = null;
       if (typeof dialog.close === 'function') dialog.close(); dialog.remove(); };
@@ -239,7 +240,7 @@
       wizardAutomatic = recommendedAutomatic();
       const refreshedChecks = wizardChecks(api.getConfig(), api.receiverProfiles()).slice(0, 5);
       wizardStep = refreshedChecks.findIndex(item => !item.complete);
-      if (wizardStep < 0) wizardStep = 0;
+      if (wizardStep < 0) wizardStep = refreshedChecks.length;
       api.refresh();
     });
     mountWizard(target, api);
