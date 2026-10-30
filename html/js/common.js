@@ -35,24 +35,35 @@ function renderAppHeader(active) {
   addFullscreenControl();
 }
 
-function renderRadarViewTabs(active = 'live') {
-  const target = document.querySelector('[data-radar-view-tabs]');
-  if (!target) return;
+function addRadarViewControl(panel, target) {
+  const active = document.body?.dataset.radarView;
+  if (!active || !panel || !target || panel.querySelector('.radar-view-control')) return;
   const views = [
     ['live', '/', 'Live delay–Doppler'],
     ['maxhold', '/display/signal?view=maxhold', 'Decaying max-hold'],
-    ['history', '/display/detection?view=range-doppler', 'Detection history']
+    ['range', '/display/detection?view=range', 'Range over time'],
+    ['doppler', '/display/detection?view=doppler', 'Doppler over time'],
+    ['range-doppler', '/display/detection?view=range-doppler', 'Range–Doppler']
   ];
-  target.className = 'view-tabs radar-view-tabs';
-  target.setAttribute('aria-label', 'Live radar views');
-  target.hidden = false;
-  target.replaceChildren(...views.map(([key, href, label]) => {
+  const control = document.createElement('details');
+  control.className = 'radar-view-control';
+  const summary = document.createElement('summary');
+  summary.setAttribute('aria-label', 'Choose radar map');
+  summary.setAttribute('title', 'Choose radar map');
+  summary.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/><rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/><rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/><rect x="17" y="17" width="4" height="4"/></svg>';
+  const menu = document.createElement('div');
+  menu.className = 'radar-view-menu';
+  menu.setAttribute('role', 'menu');
+  menu.replaceChildren(...views.map(([key, href, label]) => {
     const link = document.createElement('a');
     link.href = href;
     link.textContent = label;
+    link.setAttribute('role', 'menuitem');
     if (key === active) link.setAttribute('aria-current', 'page');
     return link;
   }));
+  control.append(summary, menu);
+  target.appendChild(control);
 }
 
 // Discovery is read-only. A newly connected receiver is offered to the user,
@@ -303,7 +314,9 @@ function addFullscreenControl() {
   panel.classList.add('fullscreen-target');
   panel.classList.add('has-fullscreen');
   const toolbar = typeof panel.querySelector === 'function' ? panel.querySelector('.radar-toolbar') : null;
-  (toolbar || panel).appendChild(button);
+  const controlTarget = toolbar || panel;
+  addRadarViewControl(panel, controlTarget);
+  controlTarget.appendChild(button);
   let resizePending = false;
   let resizeInFlight = false;
   let resizeRequested = false;

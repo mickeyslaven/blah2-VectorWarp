@@ -5,15 +5,18 @@ const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('./jsdom');
 
-const dom = new JSDOM('<nav data-radar-view-tabs hidden></nav>', {runScripts: 'outside-only',
+const dom = new JSDOM('<body data-radar-view="range-doppler"><section id="panel"></section></body>', {runScripts: 'outside-only',
   url: 'http://radar.invalid/'});
 dom.window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/common.js'), 'utf8'));
-dom.window.renderRadarViewTabs('maxhold');
+const panel = dom.window.document.getElementById('panel');
+dom.window.addRadarViewControl(panel, panel);
 
-const nav = dom.window.document.querySelector('[data-radar-view-tabs]');
-assert.equal(nav.hidden, false);
-assert.equal(nav.querySelectorAll('a').length, 3);
-assert.equal(nav.querySelector('[aria-current="page"]').textContent, 'Decaying max-hold');
-assert.deepEqual([...nav.querySelectorAll('a')].map(link => link.textContent),
-  ['Live delay–Doppler', 'Decaying max-hold', 'Detection history']);
-console.log('Delay/Doppler maps and their history workspace share the Live radar tab bar.');
+const control = panel.querySelector('.radar-view-control');
+assert.ok(control);
+assert.equal(control.querySelector('summary').getAttribute('aria-label'), 'Choose radar map');
+assert.equal(control.querySelectorAll('a').length, 5);
+assert.equal(control.querySelector('[aria-current="page"]').textContent, 'Range–Doppler');
+assert.deepEqual([...control.querySelectorAll('a')].map(link => link.textContent),
+  ['Live delay–Doppler', 'Decaying max-hold', 'Range over time', 'Doppler over time',
+    'Range–Doppler']);
+console.log('All delay/Doppler views are directly available from the plot menu.');
