@@ -60,14 +60,11 @@ vm.runInContext(source, context,
 
   const filter = dom.window.document.getElementById('adsb-map-filter-mode');
   assert.deepEqual([...filter.options].map(option => option.value),
-    ['all', 'range', 'radar', 'tracked']);
-  const range = dom.window.document.getElementById('adsb-map-range-km');
-  filter.value = 'range';
-  filter.dispatchEvent(new dom.window.Event('change'));
-  assert.equal(range.closest('label').hidden, false, 'range input appears for distance filtering');
-  range.value = '75';
-  range.dispatchEvent(new dom.window.Event('change'));
-  assert.equal(dom.window.localStorage.getItem('vectorwarp-adsb-map-range-km'), '75',
-    'selected map range is retained');
+    ['all', 'tracked', 'none']);
+  assert.equal(filter.value, 'all', 'map shows every ingested aircraft by default');
+  assert.equal(dom.window.document.getElementById('adsb-map-range-km'), null,
+    'map does not duplicate the configured ADS-B ingestion range');
+  assert.equal(dom.window.document.getElementById('radar-map-overlay-mode').value, 'all',
+    'confirmed radar ellipses are visible by default');
   console.log('Map drawers are separate, mobile-safe, and expose all ADS-B filters.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

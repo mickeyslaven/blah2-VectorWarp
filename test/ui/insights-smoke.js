@@ -227,8 +227,8 @@ setTimeout(() => {
       (!rendered.includes('Bearing estimates') || !rendered.includes('Unresolved shown')))
     errors.push('bearing diagnostic counts were not rendered');
   if (view === 'locations' && mode === 'rich' &&
-      !rendered.includes('Only radar-tracked ADS-B/MLAT aircraft are shown'))
-    errors.push('geographic radar tracks were not hidden by the safe default');
+      !state.textContent.includes('ellipses shown'))
+    errors.push('map did not show confirmed radar ellipses by default');
   if (view === 'statistics' && mode === 'rich' &&
       (!rendered.includes('statistics-yield-chart') || !rendered.includes('Detected') ||
        !rendered.includes('Tracked') || !rendered.includes('statistics-matrix-cell')))

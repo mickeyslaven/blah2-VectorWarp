@@ -97,12 +97,11 @@ assert.match(insights, /class="location-map-sidebar location-map-controls"/,
   'Map controls have their own compact drawer');
 assert.match(insights, /class="location-map-sidebar location-aircraft-sidebar"/,
   'Aircraft details have a separate drawer');
-for (const label of ['Show all', 'All within selected range',
-  'All within observed radar range', 'Only radar-tracked'])
+for (const label of ['All aircraft', 'Radar tracked', 'None'])
   assert.match(insights, new RegExp(label), `ADS-B map filter offers ${label}`);
 assert.match(insights, /radar-map-overlay-mode/,
   'Radar uncertainty ellipses are controlled independently from ADS-B filtering');
-assert.match(insights, /function aircraftWithinObservedRadarRange/,
-  'Observed radar-range filtering respects the supported directional coverage bins');
+assert.doesNotMatch(insights, /adsbMapRangeKm/,
+  'Map display does not duplicate the ADS-B ingestion distance setting');
 
 console.log(`UI audit contract covers all ${pageFiles.length} website routes.`);

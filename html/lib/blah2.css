@@ -347,9 +347,6 @@ a { color:inherit; } a:hover { color:var(--accent); }
   align-items:center; gap:8px; color:var(--muted); font-size:10px; }
 .map-coverage-filter select { min-width:0; width:100%; padding:7px 8px; }
 .map-coverage-filter > small { grid-column:1 / -1; color:var(--muted); font-size:9px; line-height:1.35; }
-.map-range-input { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px; }
-.map-range-input input { min-width:0; width:100%; padding:7px 8px; }
-.map-range-input > span { color:var(--muted); }
 .location-aircraft-sidebar:not([open]) { justify-self:end; }
 .location-map-sidebar .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; }
 .location-map-sidebar .metric-card { min-height:48px; padding:7px 8px; }

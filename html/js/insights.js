@@ -248,7 +248,8 @@
     }));
     const radarOverlayMode = document.getElementById('radar-map-overlay-mode');
     const adsbFilterMode = document.getElementById('adsb-map-filter-mode');
-    const adsbRange = document.getElementById('adsb-map-range-km');
+    if (adsbFilterMode) adsbFilterMode.innerHTML = '<option value="all">All aircraft</option><option value="tracked">Radar tracked</option><option value="none">None</option>';
+    root.querySelector?.('.map-adsb-range')?.remove();
     const backgroundMode = document.getElementById('map-background-mode');
     const showCoverage = document.getElementById('show-radar-coverage-on-map');
     const coverageAltitude = document.getElementById('radar-coverage-altitude');
@@ -256,10 +257,6 @@
     const syncTrackControls = () => {
       if (radarOverlayMode) radarOverlayMode.value = showRadarTracksOnMap ? 'all' : 'off';
       if (adsbFilterMode) adsbFilterMode.value = adsbMapFilterMode;
-      if (adsbRange) {
-        adsbRange.value = String(adsbMapRangeKm);
-        adsbRange.closest?.('label')?.toggleAttribute('hidden', adsbMapFilterMode !== 'range');
-      }
       if (showCoverage) showCoverage.checked = showRadarCoverageOnMap;
       if (coverageAltitude) {
         coverageAltitude.value = radarCoverageAltitudeBand;
@@ -289,18 +286,11 @@
       renderLocations().catch(error => { window.blah2ViewLastError = error?.message || String(error); });
     });
     adsbFilterMode?.addEventListener?.('change', () => {
-      adsbMapFilterMode = ['all', 'range', 'radar', 'tracked'].includes(adsbFilterMode.value) ?
+      adsbMapFilterMode = ['all', 'tracked', 'none'].includes(adsbFilterMode.value) ?
         adsbFilterMode.value : 'all';
       try { localStorage.setItem('vectorwarp-adsb-map-filter-mode', adsbMapFilterMode); }
       catch (_) { /* Persistence is optional. */ }
       syncTrackControls();
-      renderLocations().catch(error => { window.blah2ViewLastError = error?.message || String(error); });
-    });
-    adsbRange?.addEventListener?.('change', () => {
-      adsbMapRangeKm = Math.max(1, Math.min(1000, finite(Number(adsbRange.value)) ?? 100));
-      adsbRange.value = String(adsbMapRangeKm);
-      try { localStorage.setItem('vectorwarp-adsb-map-range-km', String(adsbMapRangeKm)); }
-      catch (_) { /* Persistence is optional. */ }
       renderLocations().catch(error => { window.blah2ViewLastError = error?.message || String(error); });
     });
     showCoverage?.addEventListener?.('change', () => {
@@ -507,9 +497,8 @@
   let selectedAircraftId = null;
   let selectedAircraftSnapshot = null;
   let autoSelectRadarAircraft = false;
-  let showRadarTracksOnMap = false;
-  let adsbMapFilterMode = 'tracked';
-  let adsbMapRangeKm = 100;
+  let showRadarTracksOnMap = true;
+  let adsbMapFilterMode = 'all';
   let showRadarCoverageOnMap = true;
   let radarCoverageAltitudeBand = 'all';
   let radarCoverageCache = null;
@@ -517,15 +506,22 @@
   try { autoSelectRadarAircraft = localStorage.getItem('vectorwarp-auto-select-radar-aircraft') === 'true'; }
   catch (_) { /* Persistence is optional. */ }
   try {
-    const savedMode = localStorage.getItem('vectorwarp-radar-map-display-mode');
-    const savedEllipses = localStorage.getItem('vectorwarp-show-radar-tracks-on-map');
-    showRadarTracksOnMap = savedEllipses === null ? savedMode === 'all' : savedEllipses === 'true';
-    const savedAircraftFilter = localStorage.getItem('vectorwarp-adsb-map-filter-mode');
-    adsbMapFilterMode = ['all', 'range', 'radar', 'tracked'].includes(savedAircraftFilter) ?
-      savedAircraftFilter : savedMode === 'adsb' || savedMode === 'all' ? 'all' : 'tracked';
-    const savedRange = localStorage.getItem('vectorwarp-adsb-map-range-km');
-    adsbMapRangeKm = savedRange === null ? 100 :
-      Math.max(1, Math.min(1000, finite(Number(savedRange)) ?? 100));
+    const defaultsVersion = localStorage.getItem('vectorwarp-map-display-defaults');
+    if (defaultsVersion === 'show-all-v1') {
+      showRadarTracksOnMap = localStorage.getItem('vectorwarp-show-radar-tracks-on-map') !== 'false';
+      const savedAircraftFilter = localStorage.getItem('vectorwarp-adsb-map-filter-mode');
+      adsbMapFilterMode = ['all', 'tracked', 'none'].includes(savedAircraftFilter) ?
+        savedAircraftFilter : 'all';
+    } else {
+      // Replace the earlier opt-in defaults once. Subsequent choices remain
+      // personal browser preferences.
+      showRadarTracksOnMap = true;
+      adsbMapFilterMode = 'all';
+      localStorage.setItem('vectorwarp-show-radar-tracks-on-map', 'true');
+      localStorage.setItem('vectorwarp-adsb-map-filter-mode', 'all');
+      localStorage.removeItem('vectorwarp-adsb-map-range-km');
+      localStorage.setItem('vectorwarp-map-display-defaults', 'show-all-v1');
+    }
   } catch (_) { /* Persistence is optional. */ }
   try { mapBackgroundMode = localStorage.getItem('vectorwarp-map-background-mode') || 'aerial'; }
   catch (_) { /* Persistence is optional. */ }
@@ -552,7 +548,7 @@
   let aircraftPhotoPumpActive = false;
 
   async function radarCoverage() {
-    if (!showRadarCoverageOnMap && adsbMapFilterMode !== 'radar') return null;
+    if (!showRadarCoverageOnMap) return null;
     const key = radarCoverageAltitudeBand;
     const now = Date.now();
     if (radarCoverageCache?.key === key && now - radarCoverageCache.at < 30000)
@@ -571,24 +567,11 @@
     return value === null || value === undefined || value === '' ? '—' : `${escapeHtml(value)}${suffix}`;
   }
 
-  function aircraftWithinObservedRadarRange(item, coverage) {
-    const bearing = finite(item?.bearing_deg_true);
-    const range = finite(item?.ground_range_km);
-    const bins = Math.max(1, Math.round(finite(coverage?.bins) ?? 72));
-    if (bearing === null || range === null) return false;
-    const bin = Math.floor((((bearing % 360) + 360) % 360) / 360 * bins) % bins;
-    const boundary = array(coverage?.points).find(point => Number(point?.bin) === bin);
-    const maximum = finite(boundary?.ground_range_km);
-    return maximum !== null && range <= maximum;
-  }
-
   function filterMapAircraft(aircraft, coverage) {
     if (adsbMapFilterMode === 'tracked')
-      return aircraft.filter(item => item.radar_track_id !== undefined);
-    if (adsbMapFilterMode === 'range')
-      return aircraft.filter(item => (finite(item?.ground_range_km) ?? Infinity) <= adsbMapRangeKm);
-    if (adsbMapFilterMode === 'radar')
-      return aircraft.filter(item => aircraftWithinObservedRadarRange(item, coverage));
+      return aircraft.filter(item => item.radar_track_id !== undefined &&
+        item.radar_track_id !== null && item.radar_track_id !== '');
+    if (adsbMapFilterMode === 'none') return [];
     return aircraft;
   }
 
