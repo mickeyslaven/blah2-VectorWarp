@@ -41,6 +41,31 @@ const configured = () => {
 }
 {
   const config = configured();
+  profiles.applyTrackingProfile(config, 'balanced');
+  assert.deepEqual({profile: config.process.tracker.profile,
+    pfa: config.process.detection.pfa, minDoppler: config.process.detection.minDoppler,
+    M: config.process.tracker.initiate.M, N: config.process.tracker.initiate.N,
+    minSnrDb: config.process.tracker.initiate.min_snr_db,
+    deleteAfter: config.process.tracker.delete,
+    acceleration: config.process.tracker.initiate.acceleration_model,
+    tbd: config.process.detection.track_before_detect.enable},
+  {profile: 'balanced', pfa: .00001, minDoppler: 15, M: 3, N: 6,
+    minSnrDb: 5, deleteAfter: 3, acceleration: 'adaptive_gate', tbd: false});
+  assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
+  profiles.applyTrackingProfile(config, 'permissive');
+  assert.deepEqual([config.process.detection.pfa, config.process.detection.minDoppler,
+    config.process.tracker.initiate.M, config.process.tracker.initiate.N,
+    config.process.tracker.initiate.min_snr_db, config.process.tracker.delete],
+  [.0001, 5, 2, 5, 4, 5]);
+  profiles.applyTrackingProfile(config, 'conservative');
+  assert.deepEqual([config.process.detection.pfa, config.process.detection.minDoppler,
+    config.process.tracker.initiate.M, config.process.tracker.initiate.N,
+    config.process.tracker.initiate.min_snr_db, config.process.tracker.delete],
+  [.000001, 20, 4, 8, 7, 3]);
+  assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
+}
+{
+  const config = configured();
   profiles.applyDetectionSensitivity(config, 'sensitive');
   assert.equal(config.process.detection.pfa, .0001);
   assert.equal(profiles.detectionSensitivity(config), 'sensitive');

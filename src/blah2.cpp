@@ -1009,8 +1009,8 @@ try
   // set up process tracker
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
-  std::string smooth,trackerAccelerationModel="hypothesis_bank",trackerProfile="permissive";
-  double trackerMinInitiationSnrDb=-100;
+  std::string smooth,trackerAccelerationModel="hypothesis_bank",trackerProfile="balanced";
+  double trackerMinInitiationSnrDb=5.0;
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
   // Zero means the full configured ambiguity Doppler span. A positive legacy
@@ -1025,11 +1025,11 @@ try
   tree["process"]["tracker"]["initiate"]["maxAcc"] >> maxAcc;
   if(tree["process"]["tracker"].has_child("profile"))
     tree["process"]["tracker"]["profile"] >> trackerProfile;
-  if(trackerProfile!="conservative"&&trackerProfile!="permissive")
-    throw std::invalid_argument("Tracker profile must be conservative or permissive");
+  if(trackerProfile!="conservative"&&trackerProfile!="balanced"&&trackerProfile!="permissive")
+    throw std::invalid_argument("Tracker profile must be conservative, balanced, or permissive");
   if(trackerProfile=="conservative")trackerMinInitiationSnrDb=7.0;
-  if(trackerProfile=="conservative"&&
-     tree["process"]["tracker"]["initiate"].has_child("min_snr_db"))
+  if(trackerProfile=="permissive")trackerMinInitiationSnrDb=4.0;
+  if(tree["process"]["tracker"]["initiate"].has_child("min_snr_db"))
     tree["process"]["tracker"]["initiate"]["min_snr_db"] >> trackerMinInitiationSnrDb;
   if(!std::isfinite(trackerMinInitiationSnrDb)||trackerMinInitiationSnrDb < -100 ||
      trackerMinInitiationSnrDb > 100)

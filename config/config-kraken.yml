@@ -110,6 +110,7 @@ process:
       motion_bins: 1
   tracker:
     enable: true
+    profile: balanced
     # GPU-resident counterfactual only. It never changes authoritative tracks.
     # Work is bounded to one CUT plus its small CFAR training window per track.
     track_guided_shadow:
@@ -118,10 +119,11 @@ process:
       max_tracks: 64
     initiate:
       M: 3
-      N: 5
+      N: 6
       maxAcc: 10
+      min_snr_db: 5
       acceleration_model: hypothesis_bank
-    delete: 10
+    delete: 3
     # Optional maximum circular winning-beam change for track association.
     # Omit to preserve delay/Doppler-only association.
     # beam_tolerance: 1

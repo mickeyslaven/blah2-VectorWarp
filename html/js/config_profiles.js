@@ -14,6 +14,18 @@
     research: 0.005
   });
 
+  // A tracking profile is a complete detector-to-track policy. Balanced is
+  // anchored to the OWL/Retina defaults (Pfa 1e-5, 15 Hz zero-Doppler blank,
+  // M=3 of N=6) while retaining VectorWarp's shorter false-track lifetime.
+  const trackingProfiles = Object.freeze({
+    permissive: Object.freeze({pfa: 0.0001, minDoppler: 5, M: 2, N: 5,
+      minSnrDb: 4, deleteAfter: 5, accelerationModel: 'hypothesis_bank'}),
+    balanced: Object.freeze({pfa: 0.00001, minDoppler: 15, M: 3, N: 6,
+      minSnrDb: 5, deleteAfter: 3, accelerationModel: 'automatic'}),
+    conservative: Object.freeze({pfa: 0.000001, minDoppler: 20, M: 4, N: 8,
+      minSnrDb: 7, deleteAfter: 3, accelerationModel: 'automatic'})
+  });
+
   function gainMode(config) {
     const value = config?.capture?.device?.heimdall?.gain_control;
     return value === 'fixed' ? 'manual' :
@@ -70,6 +82,28 @@
   function applyDetectionSensitivity(config, profile) {
     const detection = ensure(ensure(config, 'process'), 'detection');
     if (detectionProfiles[profile] !== undefined) detection.pfa = detectionProfiles[profile];
+    return config;
+  }
+
+  function applyTrackingProfile(config, profile) {
+    const values = trackingProfiles[profile];
+    if (!values) return config;
+    const process = ensure(config, 'process');
+    const detection = ensure(process, 'detection');
+    const tracker = ensure(process, 'tracker');
+    const initiate = ensure(tracker, 'initiate');
+    tracker.profile = profile;
+    detection.pfa = values.pfa;
+    detection.minDoppler = values.minDoppler;
+    detection.integration_cpis = 1;
+    detection.integration_motion_bins = 0;
+    ensure(detection, 'track_before_detect').enable = false;
+    initiate.M = values.M;
+    initiate.N = values.N;
+    initiate.min_snr_db = values.minSnrDb;
+    initiate.acceleration_model = values.accelerationModel === 'automatic' &&
+      process.performance?.acceleration === 'gpu-resident' ? 'adaptive_gate' : 'hypothesis_bank';
+    tracker.delete = values.deleteAfter;
     return config;
   }
 
@@ -148,7 +182,7 @@
     return config;
   }
 
-  return {detectionProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
+  return {detectionProfiles, trackingProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
     detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode,
-    processingMode, applyProcessingMode};
+    applyTrackingProfile, processingMode, applyProcessingMode};
 });

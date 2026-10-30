@@ -146,7 +146,7 @@ const CONFIG_META = {
   'process.detection.track_before_detect.motion_bins': ['Trajectory search radius', 'Delay and Doppler cells allowed to move per CPI along a constant path.'],
   'process.tracker': ['Tracking', 'Joins repeated detections into persistent tracks.'],
   'process.tracker.enable': ['Multi-CPI data-association tracker', 'M-of-N association and state estimation across CPIs. This does not integrate power.'],
-  'process.tracker.profile': ['Tracking strictness', 'Conservative rejects weak one-offs. Permissive may create more false candidates.'],
+  'process.tracker.profile': ['Detection and tracking profile', 'Balanced matches the OWL-style detector and M-of-N confirmation.'],
   'process.tracker.initiate': ['Track confirmation', 'Detections needed to start a track'],
   'process.tracker.initiate.M': ['Required detections', 'Detections required inside the confirmation window'],
   'process.tracker.initiate.N': ['Confirmation window', 'Frames examined when starting a track'],
@@ -365,7 +365,7 @@ function renderTrackerSettings() {
     'Turn repeated detections into persistent tracks without changing detector sensitivity.');
   details.open = true;
   body.appendChild(field(tracker.enable, ['process', 'tracker', 'enable']));
-  body.appendChild(field(tracker.profile ?? 'permissive', ['process', 'tracker', 'profile']));
+  body.appendChild(field(tracker.profile ?? 'balanced', ['process', 'tracker', 'profile']));
   const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
   const summary = document.createElement('summary'); summary.textContent = 'Track confirmation and lifetime';
   const fields = document.createElement('div'); fields.className = 'config-fields';
@@ -1383,9 +1383,10 @@ function typedInput(value, path) {
       value === 'cpu' ? 'cpu' : 'auto', selected => applyComposite(config =>
         configProfiles.applyProcessingMode(config, selected === 'cpu' ? 'cpu' : 'automatic')));
   if (key === 'process.tracker.profile')
-    return selectInput([{value: 'conservative', label: 'Conservative (recommended)'},
-      {value: 'permissive', label: 'Permissive (legacy)'}], value,
-      selected => setValue(path, selected));
+    return selectInput([{value: 'balanced', label: 'Balanced (recommended)'},
+      {value: 'conservative', label: 'Conservative'},
+      {value: 'permissive', label: 'Permissive'}], value,
+      selected => applyComposite(config => configProfiles.applyTrackingProfile(config, selected)));
   if (Array.isArray(value)) return arrayInput(value, path);
   if (rule.choices && !['capture.device.type',
     'process.reference_synthesis.mode', 'capture.device.channel_count',

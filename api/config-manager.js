@@ -698,7 +698,7 @@ function validateConfig(config, baseline = null, options = {}) {
     errors.push('process.detection.minDoppler must be inside the Doppler span');
   boolean(tracker.enable, 'process.tracker.enable');
   if (tracker.profile !== undefined)
-    oneOf(tracker.profile, 'process.tracker.profile', ['conservative', 'permissive']);
+    oneOf(tracker.profile, 'process.tracker.profile', ['conservative', 'balanced', 'permissive']);
   ['M', 'N'].forEach(key => number(initiate[key],
     `process.tracker.initiate.${key}`, {integer: true, min: 1, max: 255}));
   if (Number.isInteger(initiate.M) && Number.isInteger(initiate.N) &&

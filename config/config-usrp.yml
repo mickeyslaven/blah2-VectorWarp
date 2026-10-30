@@ -49,16 +49,18 @@ process:
       motion_bins: 1
   tracker:
     enable: true
+    profile: balanced
     track_guided_shadow:
       enable: false
       promote: false
       max_tracks: 64
     initiate:
       M: 3
-      N: 5
+      N: 6
       maxAcc: 10
+      min_snr_db: 5
       acceleration_model: hypothesis_bank
-    delete: 10
+    delete: 3
   bearing:
     enable: false
     min_consistent: 3
