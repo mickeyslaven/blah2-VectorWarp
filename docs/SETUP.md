@@ -94,9 +94,16 @@ active channels.
 
 ### SDRplay RSPduo
 
-Select **SDRplay RSPduo**, then open receiver software setup if the SDRplay API
-or VectorWarp adapter needs installation. The setup action checks the installed
-API, builds the adapter, and reports when the receiver is ready.
+Select **SDRplay RSPduo**. If the SDRplay API is missing, the assistant shows
+**Receiver software required**:
+
+1. Select **Open receiver software setup**.
+2. Select **Install SDRplay support** to open SDRplay's Hardware API download
+   page.
+3. Install the API, then return to VectorWarp and check receiver software again.
+4. Select **Install SDRplay support** to build and configure the VectorWarp
+   RSPduo adapter.
+5. When SDRplay support reports ready, select **Save & Restart**.
 
 Choose automatic gain, automatic gain per channel, or manual gain under
 **Receiver**. The live header and Receiver settings show overload events for
