@@ -115,7 +115,7 @@ truth:
     max_position_age: 30
     provisional_event_time_uncertainty_s: 1
   remote_id:
-    enabled: false
+    enabled: true
     source: '127.0.0.1:8754'
     poll_interval: 0.5
     source_timeout: 1.2

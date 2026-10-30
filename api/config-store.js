@@ -263,10 +263,20 @@ function migrateKnownDefaults(filename) {
   let parsed;
   try { parsed = yaml.load(fs.readFileSync(filename, 'utf8'), {schema: yaml.JSON_SCHEMA}); }
   catch (_) { return false; }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
-      parsed.capture?.device?.type !== 'Usrp' ||
-      parsed.capture.device.address !== 'localhost') return false;
-  parsed.capture.device.address = 'type=b200';
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  let changed = false;
+  if (parsed.capture?.device?.type === 'Usrp' && parsed.capture.device.address === 'localhost') {
+    parsed.capture.device.address = 'type=b200';
+    changed = true;
+  }
+  if (!parsed.truth?.remote_id) {
+    parsed.truth ||= {};
+    parsed.truth.remote_id = {enabled: true, source: '127.0.0.1:8754',
+      poll_interval: .5, source_timeout: 1.2, smoothing_window: 4,
+      max_position_age: 10, wifi_enabled: false};
+    changed = true;
+  }
+  if (!changed) return false;
   writeConfigAtomically(filename, parsed);
   return true;
 }

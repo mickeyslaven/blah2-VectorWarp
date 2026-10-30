@@ -65,9 +65,9 @@ const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW 
 const configFile = path.resolve(process.argv[2] || 'config/config.yml');
 try {
   if (migrateKnownDefaults(configFile))
-    console.error('Migrated the invalid v0.1.28 USRP selector localhost to type=b200; the previous file is in config.yml.bak.');
+    console.error('Migrated known safe configuration defaults; the previous file is in config.yml.bak.');
 } catch (error) {
-  console.error(`Could not migrate the invalid v0.1.28 USRP selector: ${error.message}`);
+  console.error(`Could not migrate known configuration defaults: ${error.message}`);
 }
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;

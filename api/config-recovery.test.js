@@ -71,6 +71,9 @@ function availablePort(usedPorts) {
     assert.equal(migrateKnownDefaults(file), false,
       'the migration must be one-shot and leave current selectors untouched');
     legacyUsrp.capture.device.address = 'addr=192.168.10.2';
+    legacyUsrp.truth.remote_id = {enabled: true, source: '127.0.0.1:8754',
+      poll_interval: .5, source_timeout: 1.2, smoothing_window: 4,
+      max_position_age: 10, wifi_enabled: false};
     fs.writeFileSync(file, yaml.dump(legacyUsrp));
     assert.equal(migrateKnownDefaults(file), false,
       'an operator-selected network USRP address must never be rewritten');
