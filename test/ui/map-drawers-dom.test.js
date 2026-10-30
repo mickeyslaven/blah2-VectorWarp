@@ -36,6 +36,8 @@ vm.runInContext(source, context,
   const controls = dom.window.document.querySelector('.location-map-controls');
   const aircraft = dom.window.document.querySelector('.location-aircraft-sidebar');
   assert.ok(controls && aircraft, 'map controls and aircraft details use separate drawers');
+  assert.ok(controls.querySelector('.map-sidebar-icon svg'), 'map options use a settings icon');
+  assert.ok(aircraft.querySelector('.map-sidebar-icon svg'), 'aircraft details use a plane icon');
   assert.equal(controls.open, false, 'mobile starts with map controls collapsed');
   assert.equal(aircraft.open, false, 'mobile starts with aircraft details collapsed');
   assert.equal(dom.window.document.querySelector('.location-map-notes'), null,
