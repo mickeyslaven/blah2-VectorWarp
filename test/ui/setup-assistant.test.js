@@ -81,9 +81,9 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   render(target, api);
   assert.equal(target.querySelectorAll('.setup-card').length, 0,
     'The assistant no longer duplicates settings as a card wall');
-  assert.match(target.textContent, /essentials ready/i);
-  target.querySelector('[data-mode="advanced"]').click();
-  assert.deepEqual(modes, ['advanced']);
+  assert.match(target.textContent, /setup steps ready/i);
+  assert.equal(target.querySelectorAll('[data-mode]').length, 0);
+  assert.deepEqual(modes, []);
   target.querySelector('[data-start-setup]').click();
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(target.querySelector('.setup-wizard'), 'Start setup opens a modal wizard');
@@ -167,7 +167,7 @@ test('Review setup opens the unlocked final page when essentials are ready', asy
   assert.equal(target.querySelectorAll('[data-wizard-automatic]:checked').length, 4);
 });
 
-test('advanced mode collapses the beginner workflow instead of duplicating two settings systems', () => {
+test('assistant uses one compact summary without a second settings mode', () => {
   const dom = new JSDOM('<div id="assistant"></div>');
   const target = dom.window.document.getElementById('assistant');
   render(target, {getConfig: () => ({capture: {device: {type: 'Kraken'}}}),
@@ -175,6 +175,6 @@ test('advanced mode collapses the beginner workflow instead of duplicating two s
     receiverProfiles: () => [], discoverReceivers: async () => [],
     switchReceiver() {}, saveStep() {}, save() {}});
   assert.equal(target.querySelectorAll('.setup-card').length, 0);
-  assert.doesNotMatch(target.textContent, /Expert receiver, DSP, service, and diagnostic controls/);
-  assert.ok(target.querySelector('[data-mode="simple"]'), 'The operator can always return to Simple mode');
+  assert.equal(target.querySelectorAll('[data-mode]').length, 0);
+  assert.ok(target.querySelector('.setup-assistant-summary'));
 });

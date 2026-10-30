@@ -205,21 +205,25 @@
   function render(target, api) {
     if (!target) return;
     const config = api.getConfig();
-    if (api.mode() === 'advanced') {
-      wizardOpen = false;
-      target.innerHTML = '<section class="setup-assistant setup-assistant-compact"><div class="setup-assistant-heading"><div><h2>Advanced settings</h2></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple" aria-pressed="false">Simple</button><button type="button" data-mode="advanced" class="active" aria-pressed="true">Advanced</button></div></div></section>';
-      target.querySelectorAll('[data-mode]').forEach(button =>
-        button.addEventListener('click', () => api.setMode(button.dataset.mode)));
-      return;
-    }
     const checks = wizardChecks(config, api.receiverProfiles()).slice(0, 5);
     const ready = checks.filter(item => item.complete).length;
-    target.innerHTML = `<section class="setup-assistant setup-assistant-launcher"><div class="setup-assistant-heading"><div><h2>Setup assistant</h2></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple" class="active" aria-pressed="true">Simple</button><button type="button" data-mode="advanced" aria-pressed="false">Advanced</button></div></div><div class="setup-launcher-body"><div class="setup-launcher-progress"><strong>${ready} of ${checks.length} essentials ready</strong><div>${checks.map(item => `<span class="${item.complete ? 'complete' : ''}">${item.complete ? '✓' : '○'} ${escape(item.title)}</span>`).join('')}</div></div><button type="button" class="button-primary" data-start-setup>${ready === checks.length ? 'Review setup' : 'Start setup'}</button></div></section>`;
-    target.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
-      wizardOpen = false; api.setMode(button.dataset.mode);
-    }));
+    const receiver = api.receiverProfiles().find(profile =>
+      profile.type === config.capture?.device?.type);
+    const frequency = Number(config.capture?.fc || 0) / 1e6;
+    const count = channels(config);
+    const complete = ready === checks.length;
+    const status = complete ? 'Setup complete' : `${ready} of ${checks.length} setup steps ready`;
+    const summary = `${escape(receiver?.label || config.capture?.device?.type || 'No receiver')} · ${frequency.toFixed(3)} MHz · ${count} channel${count === 1 ? '' : 's'}`;
+    target.innerHTML = `<section class="setup-assistant setup-assistant-launcher setup-assistant-summary"><div><strong>${status}</strong><span>${summary}</span></div><button type="button" class="button-secondary" data-start-setup>${complete ? 'Review setup' : 'Finish setup'}</button></section>`;
     target.querySelector('[data-start-setup]').addEventListener('click', async event => {
       const button = event.currentTarget;
+      if (complete) {
+        wizardOpen = true;
+        wizardAutomatic = recommendedAutomatic();
+        wizardStep = checks.length;
+        api.refresh();
+        return;
+      }
       button.disabled = true; button.textContent = 'Looking for SDR…';
       wizardError = ''; wizardNotice = '';
       try {

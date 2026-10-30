@@ -80,23 +80,20 @@ function change(input, value, event = 'input') {
     saved.capture.aircraft_clips = aircraftClipSettings;
     await window.renderConfiguration();
     await window.validateActiveConfiguration();
-    assert.equal(window.document.querySelectorAll('[role=tab]').length, 5,
-      'Simple settings are the default and expose only task-level categories');
-    assert.equal(window.document.querySelector('[data-tab="experimental"]'), null,
-      'Experimental controls are not part of the default settings surface');
-    assert.equal(query('capture.device.serial'), null,
-      'Simple settings hide receiver identity and connection internals');
-    window.__settingsModeApi.setMode('advanced');
+    assert.equal(window.document.querySelectorAll('[role=tab]').length, 7,
+      'The unified settings surface exposes every task category');
+    assert.ok(window.document.querySelector('[data-tab="experimental"]'),
+      'Experimental controls have one dedicated category');
+    assert.ok(query('capture.device.serial'),
+      'Receiver identity remains available under Technical controls');
     const optionalSerial = query('capture.device.serial').querySelector('input');
     assert.equal(optionalSerial.value, '');
     assert.equal(optionalSerial.required, false, 'One unambiguous RSPduo does not require an explicit serial');
     assert.equal(optionalSerial.checkValidity(), true);
     assert.equal(query('capture.device.serial').querySelector('label').textContent, 'RSPduo serial');
-    assert.equal(window.document.querySelectorAll('[role=tab]').length, 7);
-    assert.ok(window.document.querySelector('[data-tab="experimental"]'),
-      'Advanced settings expose one dedicated Experimental category');
+    assert.ok(query('capture.device.serial').closest('.settings-technical'));
     const settingsSearch = window.document.querySelector('.settings-search input');
-    assert.ok(settingsSearch, 'Advanced settings provide a searchable expert surface');
+    assert.ok(settingsSearch, 'Settings remain searchable without changing modes');
     change(settingsSearch, 'AGC target');
     assert.equal(query('capture.device.agcSetPoint')?.hidden, false,
       'Search retains the matching expert setting');
@@ -478,14 +475,11 @@ function change(input, value, event = 'input') {
       window.Storage.prototype.getItem = previousGet;
       window.Storage.prototype.setItem = previousSet;
     }
-    window.__settingsModeApi.setMode('simple');
-    assert.ok(query('capture.fc'), 'Simple mode keeps essential tuning controls');
-    assert.equal(query('capture.device.heimdall.host'), null,
-      'Simple Kraken setup hides Suite connection internals');
-    assert.equal(query('capture.device.heimdall.control_port'), null,
-      'Simple Kraken setup hides the Suite control port');
-    assert.deepEqual([...query('capture.device.heimdall.gain_control').querySelectorAll('option')]
-      .map(option => option.textContent), ['Fixed', 'Automatic', 'Automatic per channel']);
+    assert.ok(query('capture.fc'), 'Primary tuning controls remain immediately available');
+    assert.ok(query('capture.device.heimdall.host').closest('.settings-technical'),
+      'Suite connection internals live under Technical controls');
+    assert.ok(query('capture.device.heimdall.control_port').closest('.settings-technical'),
+      'The Suite control port lives under Technical controls');
     window.setValue(['capture', 'device', 'heimdall', 'channel_gains'], [7.7, 7.7, 12.5, 3.7, 2.7]);
     window.setValue(['capture', 'device', 'heimdall', 'gain_control'], 'measured_per_channel');
     window.renderEditor();
@@ -493,30 +487,24 @@ function change(input, value, event = 'input') {
       'Automatic per channel (7.7, 7.7, 12.5, 3.7, 2.7 dB selected)',
       'Automatic mode keeps its retained policy visible alongside the verified selected gains');
     assert.ok(query('process.reference_synthesis.mode'),
-      'Simple Kraken setup exposes the essential reference choice');
-    assert.ok(window.document.querySelector('#settings-panel-capture .kraken-geometry'),
-      'Array setup remains available without enabling Advanced mode');
-    assert.equal(query('process.reference_synthesis.analysis_samples'), null,
-      'Simple mode keeps low-level reference solver tuning hidden');
-    assert.equal(query('process.data.buffer'), null,
-      'Simple mode must not leak performance buffer internals');
-    assert.equal(window.document.querySelector('[role=tab][data-tab=network]'), null,
-      'Simple mode hides service/network internals');
-    assert.match(window.document.getElementById('config-fields').textContent, /Essential settings/);
+      'Array setup exposes the reference choice');
+    assert.ok(window.document.querySelector('#settings-panel-array .kraken-geometry'),
+      'Array setup has its own page');
+    assert.ok(query('process.reference_synthesis.analysis_samples').closest('.settings-technical'));
+    assert.ok(query('process.data.buffer').closest('.settings-technical'));
+    assert.ok(window.document.querySelector('[role=tab][data-tab=network]'));
     window.switchDevice('Usrp');
-    assert.equal(query('capture.device.subdev'), null,
-      'Simple USRP setup hides low-level channel mapping after setup');
+    assert.ok(query('capture.device.subdev').closest('.settings-technical'));
     window.switchDevice('HackRF');
     for (const path of ['capture.device.gain_lna', 'capture.device.gain_vga', 'capture.device.amp_enable'])
-      assert.equal(query(path), null, `Simple HackRF setup hides expert control ${path}`);
+      assert.ok(query(path).closest('.settings-technical'), `Technical controls contain ${path}`);
     window.switchDevice('Kraken');
-    window.__settingsModeApi.setMode('advanced');
-    assert.ok(query('capture.device.heimdall.host'), 'Advanced mode exposes the Suite host');
-    assert.ok(query('capture.device.heimdall.control_port'), 'Advanced mode exposes the Suite control port');
-    assert.ok(query('process.reference_synthesis.mode'), 'Advanced mode restores receiver internals');
+    assert.ok(query('capture.device.heimdall.host'));
+    assert.ok(query('capture.device.heimdall.control_port'));
+    assert.ok(query('process.reference_synthesis.mode'));
     assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 1,
-      'Changing detail level must not duplicate reference controls');
-    assert.ok(query('process.data.buffer'), 'Advanced mode restores performance internals');
+      'The unified editor must not duplicate reference controls');
+    assert.ok(query('process.data.buffer'));
     console.log('Browser DOM tests passed: all-device layout audit, site add/edit/cancel/select, grouped frequency, errors, stale validation, discard and save payloads.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

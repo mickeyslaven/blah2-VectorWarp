@@ -433,30 +433,23 @@ let receiverApplyPending = false;
 let recentSites = [];
 let receiverInvalidatedGeometry = false;
 let lastDetectedReceiverTypes = new Set();
-let settingsMode = 'simple';
-let settingsModeStored = false;
+// Settings now use one task-based surface. Expert values stay available in a
+// single Technical controls disclosure on each page instead of a second mode.
+let settingsMode = 'advanced';
 let settingsSearch = '';
 let settingsEditedOnly = false;
 let refreshSettingsFilter = () => {};
 let activateSettingsTab = () => {};
-try {
-  const storedMode = window.localStorage.getItem('vectorwarp-settings-mode');
-  if (storedMode === 'advanced' || storedMode === 'simple') {
-    settingsMode = storedMode;
-    settingsModeStored = true;
-  }
-} catch (_) { /* Remembering the preferred detail level is optional. */ }
-
-const SIMPLE_SETTING_PATHS = new Set([
+const PRIMARY_SETTING_PATHS = new Set([
   'capture.fc', 'capture.fs', 'capture.device.type', 'capture.device.channel_count',
-  'capture.device.reference_channel', 'capture.device.surveillance_channels',
-  'capture.device.heimdall.gain', 'capture.device.heimdall.gain_control',
-  'capture.device.heimdall.channel_gains',
-  'process.reference_synthesis.mode', 'process.reference_synthesis.channels',
-  'capture.replay.state', 'capture.replay.file', 'capture.replay.loop',
-  'process.data.cpi', 'process.clutter.enable', 'process.detection.enable',
-  'process.tracker.enable', 'process.tracker.profile',
-  'truth.adsb.enabled', 'truth.adsb.tar1090'
+  'capture.device.heimdall.gain_control', 'capture.device.bandwidthNumber',
+  'capture.device.agcSetPoint', 'capture.device.gain', 'capture.device.gain_lna',
+  'capture.device.gain_vga', 'process.data.cpi',
+  'process.clutter.enable', 'process.detection.enable', 'process.detection.pfa',
+  'process.detection.minDelay', 'process.detection.minDoppler',
+  'process.detection.integration_cpis', 'process.tracker.enable',
+  'process.tracker.profile', 'process.performance.acceleration',
+  'truth.adsb.enabled', 'truth.adsb.tar1090', 'save.path', 'network.ip'
 ]);
 const EXPERIMENTAL_SETTING_PREFIXES = [
   'truth.remote_id',
@@ -469,11 +462,7 @@ function experimentalSettingPath(path) {
   return EXPERIMENTAL_SETTING_PREFIXES.some(prefix => path === prefix || path.startsWith(`${prefix}.`));
 }
 function simpleSettingHidden(path) {
-  if (settingsMode === 'advanced') return false;
-  if (path === 'network' || path.startsWith('network.')) return true;
-  if (path.startsWith('save.') || path.startsWith('location.')) return false;
-  if ([...SIMPLE_SETTING_PATHS].some(allowed => allowed.startsWith(`${path}.`))) return false;
-  return !SIMPLE_SETTING_PATHS.has(path);
+  return false;
 }
 
 function exposeLegacyTrackerProfile(config) {
@@ -492,11 +481,7 @@ function refreshSetupAssistant() {
   if (!target || !window.VectorWarpSetupAssistant || !activeConfig) return;
   window.VectorWarpSetupAssistant.render(target, {
     getConfig: () => activeConfig, mode: () => settingsMode,
-    setMode(mode) {
-      settingsMode = mode === 'advanced' ? 'advanced' : 'simple';
-      try { window.localStorage.setItem('vectorwarp-settings-mode', settingsMode); } catch (_) {}
-      renderEditor();
-    },
+    setMode() {},
     openTab(tab) { activateSettingsTab(tab); document.getElementById('config-fields')?.scrollIntoView({behavior: 'smooth'}); },
     set: setValue, refresh: renderEditor, refreshEditor: renderEditor,
     receiverProfiles: () => capabilities.deviceProfiles || [],
@@ -1841,10 +1826,8 @@ function renderRecordingSettings() {
   section.className = 'recording-settings';
   const intro = document.createElement('div');
   intro.className = 'config-section-heading';
-  intro.innerHTML = '<h2>Recording & replay</h2>';
+  intro.innerHTML = '<h2>Recording</h2>';
   section.appendChild(intro);
-  if (activeConfig.capture?.replay && typeof activeConfig.capture.replay === 'object')
-    section.appendChild(group('replay', activeConfig.capture.replay, ['capture'], true));
   if (activeConfig.capture?.aircraft_clips &&
       typeof activeConfig.capture.aircraft_clips === 'object') {
     section.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
@@ -1859,10 +1842,6 @@ function renderRecordingSettings() {
     section.appendChild(field(activeConfig.save.path, ['save', 'path']));
   if (activeConfig.save?.retention && typeof activeConfig.save.retention === 'object')
     section.appendChild(group('retention', activeConfig.save.retention, ['save']));
-  const note = document.createElement('p');
-  note.className = 'config-capability-note';
-  note.textContent = 'Manual recording starts from Live radar. Automatic clips use the limits below.';
-  section.appendChild(note);
   return section;
 }
 
@@ -1884,7 +1863,7 @@ function makeGeometryEditor() {
     if (Object.keys(tuning).length)
       content.appendChild(group('reference_synthesis', tuning, ['process'], false,
         {groupMeta: {'process.reference_synthesis': ['Reference estimation tuning',
-          'Advanced update cadence and numerical stability for the array-derived reference.']}}));
+          'Update cadence and numerical stability for the array-derived reference.']}}));
   }
   if (process.surveillance_fusion)
     content.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process'], false,
@@ -1912,6 +1891,11 @@ function refreshGeometryEditor() {
 
 function updateDirtyState() {
   const dirty = serializeConfig(activeConfig) !== originalConfig;
+  const editedPaths = new Set([...document.querySelectorAll('.config-field[data-path]')]
+    .map(item => item.dataset.path).filter(path => path && settingEdited(path)));
+  const editedCount = dirty ? Math.max(1, editedPaths.size) : 0;
+  document.querySelector('.config-toolbar')?.classList.toggle('has-changes',
+    dirty || receiverApplyPending || restartRetry || capabilities.setupRequired);
   const action = document.getElementById('config-save');
   const later = document.getElementById('config-save-later');
   const reset = document.getElementById('config-reset');
@@ -1930,7 +1914,8 @@ function updateDirtyState() {
   }
   const state = document.getElementById('config-state');
   if (state) state.textContent = pendingLiveConfig !== null ?
-    'Saved settings changed' : dirty ? 'Unsaved changes' : receiverApplyPending ? 'Apply settings to confirm' : 'Matches saved file';
+    'Saved settings changed' : dirty ? `${editedCount} unsaved change${editedCount === 1 ? '' : 's'}` :
+      receiverApplyPending ? 'Apply settings to confirm' : 'Up to date';
   window.onbeforeunload = dirty ? () => true : null;
 }
 
@@ -2403,6 +2388,60 @@ function invalidateGeometryAfterReceiverChange() {
   refreshGeometryEditor();
 }
 
+function primarySettingPath(tab, path) {
+  if (!path) return true;
+  if (tab === 'array') return path.startsWith('capture.device.array_geometry') ||
+    ['capture.device.channel_count', 'capture.device.reference_channel',
+      'capture.device.surveillance_channels', 'process.reference_synthesis.mode',
+      'process.reference_synthesis.channels', 'process.surveillance_fusion.mode',
+      'process.bearing.enable', 'process.bearing.method'].includes(path);
+  if (tab === 'capture') return path.startsWith('location.') ||
+    PRIMARY_SETTING_PATHS.has(path);
+  if (tab === 'process') return PRIMARY_SETTING_PATHS.has(path);
+  if (tab === 'truth') return ['truth.adsb.enabled', 'truth.adsb.tar1090',
+    'truth.adsb.aircraft_photo_provider'].includes(path);
+  if (tab === 'save') return path === 'save.path' ||
+    path.startsWith('capture.aircraft_clips.') || path.startsWith('save.retention.');
+  if (tab === 'network') return path === 'network.ip' ||
+    path.startsWith('network.tracker_forward.');
+  return tab === 'experimental';
+}
+
+function removeEmptySettingsGroups(panel, technical) {
+  [...panel.querySelectorAll('.config-group')].reverse().forEach(group => {
+    if (group === technical || group.classList.contains('kraken-geometry')) return;
+    if (group.querySelector('.config-field,input,select,button')) return;
+    group.remove();
+  });
+}
+
+function organizeTechnicalControls(panel, tab) {
+  const fields = [...panel.querySelectorAll('.config-field')];
+  const technicalFields = fields.filter(item => item.closest('.composite-tuning') ||
+    !primarySettingPath(tab, item.dataset.path || ''));
+  if (!technicalFields.length) return;
+  const details = document.createElement('details');
+  details.className = 'config-group settings-technical';
+  details.dataset.configGroup = `${tab}.technical`;
+  const summary = document.createElement('summary');
+  const heading = document.createElement('span');
+  const title = document.createElement('strong');
+  const description = document.createElement('small');
+  title.textContent = 'Technical controls';
+  description.textContent = 'Connection, solver, timing, and diagnostic values';
+  heading.append(title, description);
+  const count = document.createElement('b');
+  count.textContent = String(technicalFields.length);
+  summary.append(heading, count);
+  const body = document.createElement('div');
+  body.className = 'config-fields';
+  technicalFields.forEach(field => body.appendChild(field));
+  details.append(summary, body);
+  removeEmptySettingsGroups(panel, details);
+  panel.appendChild(details);
+  revealSmallSettingsGroups(panel);
+}
+
 function renderEditor() {
   const target = document.getElementById('config-fields');
   const upstream = document.getElementById('upstream-status');
@@ -2418,13 +2457,12 @@ function renderEditor() {
   const hasArrayTab = receiverType === 'Kraken' ||
     receiverFeatureCapabilities(receiverType, capabilities.deviceProfiles || []).coherentArray === true;
   const tabOrder = ['capture', 'array', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
-  const entries = Object.entries(activeConfig).filter(([key]) =>
-    (settingsMode === 'advanced' || key !== 'network') && (!hasArrayTab || key !== 'location'));
+  const entries = Object.entries(activeConfig).filter(([key]) => key !== 'location');
   if (hasArrayTab) entries.push(['array', {}]);
   entries.sort(([left], [right]) =>
     (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
     (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
-  if (settingsMode === 'advanced') entries.push(['experimental', {}]);
+  entries.push(['experimental', {}]);
   entries.sort(([left], [right]) =>
     (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
     (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
@@ -2432,8 +2470,8 @@ function renderEditor() {
   try { savedTab = sessionStorage.getItem('blah2-settings-tab'); }
   catch (_) { /* Remembering a tab is optional. */ }
   const requestedTabRaw = new URLSearchParams(window.location.search).get('tab');
-  const requestedTab = hasArrayTab && requestedTabRaw === 'location' ? 'capture' : requestedTabRaw;
-  if (hasArrayTab && savedTab === 'location') savedTab = 'capture';
+  const requestedTab = requestedTabRaw === 'location' ? 'capture' : requestedTabRaw;
+  if (savedTab === 'location') savedTab = 'capture';
   const initialTab = capabilities.setupRequired ? 'capture' :
     entries.some(([key]) => key === requestedTab) ? requestedTab :
       entries.some(([key]) => key === savedTab) ? savedTab : entries[0]?.[0];
@@ -2453,14 +2491,19 @@ function renderEditor() {
     }
   };
   activateSettingsTab = selectedKey => {
-    const resolvedKey = hasArrayTab && selectedKey === 'location' ? 'capture' : selectedKey;
+    const resolvedKey = selectedKey === 'location' ? 'capture' : selectedKey;
     if (!tabs.querySelector(`[data-tab="${resolvedKey}"]`)) return;
     activate(resolvedKey);
   };
   entries.forEach(([key, value]) => {
     const [title, description] = key === 'experimental' ?
-      ['Experimental', 'Shadow and evaluation features'] :
-      key === 'array' ? ['Array', 'Layout, roles, and measurements'] : metadata([key]);
+      ['Experimental', 'Optional features'] :
+      key === 'array' ? ['Array', 'Antennas and layout'] :
+      key === 'truth' ? ['Aircraft', 'ADS-B sources'] :
+      key === 'capture' ? ['Receiver', 'Radio and sites'] :
+      key === 'process' ? ['Radar', 'Detection and tracking'] :
+      key === 'save' ? ['Recording', 'Automatic clips and storage'] :
+      key === 'network' ? ['Connectivity', 'Network and integrations'] : metadata([key]);
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.tab = key;
@@ -2503,14 +2546,8 @@ function renderEditor() {
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
-      if (hasArrayTab) panel.appendChild(renderSiteSettings());
-      if (settingsMode === 'advanced') panel.appendChild(renderReceiverFeatures());
-      else {
-        const note = document.createElement('p');
-        note.className = 'config-simple-note';
-        note.textContent = 'Low-level receiver, processing, and diagnostic controls.';
-        panel.appendChild(note);
-      }
+      panel.appendChild(renderSiteSettings());
+      panel.appendChild(renderReceiverFeatures());
       if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
@@ -2533,15 +2570,9 @@ function renderEditor() {
   });
   moveArrayEditorToArrayTab(panels, hasArrayTab);
   revealSmallSettingsGroups(panels);
-  if (settingsMode === 'simple') {
-    const heading = document.createElement('div');
-    heading.className = 'config-section-heading';
-    heading.innerHTML = '<h2>Essential settings</h2>';
-    target.append(heading);
-    refreshSettingsFilter = () => {};
-  } else {
-    target.append(makeSettingsFilter(tabs, panels, activate));
-  }
+  panels.querySelectorAll('[role="tabpanel"]').forEach(panel =>
+    organizeTechnicalControls(panel, panel.dataset.tab));
+  target.append(makeSettingsFilter(tabs, panels, activate));
   target.append(tabs, panels);
   activate(initialTab);
   displayFieldErrors(validationErrors);
@@ -3106,7 +3137,6 @@ async function renderConfiguration() {
     configRevision = configResponse.headers.get('ETag')?.replace(/^"|"$/g, '');
     capabilities = capabilitiesResponse.ok ? await capabilitiesResponse.json() :
       {editable: false, restartAvailable: false, changesRequireRestart: true};
-    if (capabilities.setupRequired && !settingsModeStored) settingsMode = 'simple';
     receiverApplyPending = ['unknown', 'saved-pending', 'partial', 'indeterminate', 'failed',
       'receiver-confirmed-config-not-saved'].includes(capabilities.receiverSynchronization?.applicationState);
     rememberOriginalConfig(activeConfig);
@@ -3189,11 +3219,6 @@ async function renderConfiguration() {
     diagnostics.id = 'config-diagnostics';
     diagnostics.setAttribute('role', 'status');
     assistant.after(diagnostics);
-    const acceleration = document.createElement('div');
-    acceleration.id = 'acceleration-status';
-    acceleration.className = 'config-setup-note';
-    acceleration.setAttribute('role', 'status');
-    diagnostics.after(acceleration);
     document.getElementById('config-save').addEventListener('click', saveConfiguration);
     document.getElementById('config-reset').addEventListener('click', () => {
       if (validationTimer) window.clearTimeout(validationTimer);
