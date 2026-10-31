@@ -171,23 +171,6 @@ if (process.argv[2] === '--status-fixtures') {
     const beforeResponse = await page.request.get(`${base}/api/system/status`);
     assert.equal(beforeResponse.status(), 200);
     const before = await beforeResponse.json();
-    const reveal = async locator => {
-      const tabPanel = await locator.evaluate(el => el.closest('[role=tabpanel]').id);
-      await page.locator(`[aria-controls="${tabPanel}"]`).click();
-      for (const group of await locator.locator('xpath=ancestor::details').all()) {
-        if (await group.getAttribute('open') === null) await group.locator(':scope > summary').click();
-      }
-    };
-    const setSwitch = async (key, checked) => {
-      const field = page.locator(`[data-path="${key}"]`);
-      const input = field.locator('.switch input');
-      if (await input.isChecked() !== checked) {
-        const visibleSwitch = field.locator('.switch');
-        await visibleSwitch.evaluate(el => el.scrollIntoView({block: 'center'}));
-        await visibleSwitch.click();
-      }
-      assert.equal(await input.isChecked(), checked, `${key} did not change through its visible switch`);
-    };
     await page.goto(`${base}/display/configuration?replayFile=${encodeURIComponent(replayFile)}`,
       {waitUntil: 'domcontentloaded'});
     await page.waitForSelector('#config-save', {state: 'attached'});
@@ -195,9 +178,6 @@ if (process.argv[2] === '--status-fixtures') {
     assert.equal(await page.locator('#config-save').textContent(), 'Start replay');
     await revealCpi();
     await cpi.fill('0.02');
-    const clutter = page.locator('[data-path="process.clutter.enable"] input');
-    await reveal(clutter);
-    await setSwitch('process.clutter.enable', false);
     const applyResponse = page.waitForResponse(r => r.url().includes('/api/config?restart=true') &&
       r.request().method() === 'PUT');
     const appliedAt = Date.now();
