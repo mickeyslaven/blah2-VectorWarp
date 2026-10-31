@@ -112,11 +112,14 @@ formulas = rows.sort_by { |row| row[0, 2] }.map do |formula, version, usages, re
   seen[identity] = true
   before = file_sha(recipe)
   metadata = api_metadata.fetch(formula, {})
-  api_recipe = metadata.dig("ruby_source_checksum", "sha256")
-  abort "Homebrew API recipe differs from installed recipe: #{formula}" if api_recipe && api_recipe != before
   loaded = Formulary.factory(recipe)
   abort "frozen recipe identity differs: expected #{formula}|#{version}, got #{loaded.name}|#{loaded.pkg_version}" \
     unless loaded.name == formula && loaded.pkg_version.to_s == version
+  api_version = metadata.dig("versions", "stable")
+  api_checksum = metadata.dig("urls", "stable", "checksum")
+  loaded_checksum = loaded.stable.checksum&.hexdigest
+  abort "Homebrew API source identity differs: #{formula}" \
+    unless api_version == loaded.version.to_s && api_checksum == loaded_checksum
   recipe_copy = root / "recipes" / formula / version / "formula.rb"
   recipe_copy.dirname.mkpath
   FileUtils.copy_file(recipe, recipe_copy)
