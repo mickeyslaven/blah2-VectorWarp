@@ -77,6 +77,17 @@ function availablePort(usedPorts) {
     fs.writeFileSync(file, yaml.dump(legacyUsrp));
     assert.equal(migrateKnownDefaults(file), false,
       'an operator-selected network USRP address must never be rewritten');
+    delete legacyUsrp.truth.remote_id;
+    const withoutRemoteId = yaml.dump(legacyUsrp);
+    fs.writeFileSync(file, withoutRemoteId);
+    const optionalRemoteId = readConfig(file);
+    assert.equal(optionalRemoteId.config.truth.remote_id.enabled, false);
+    assert.equal(optionalRemoteId.suppliedDefaults.some(item => item.startsWith('truth.remote_id')), false,
+      'disabled Remote ID defaults must remain optional for older configurations');
+    assert.equal(optionalRemoteId.setupRequired, false);
+    assert.equal(migrateKnownDefaults(file), false,
+      'optional Remote ID defaults must not rewrite an operator configuration');
+    assert.equal(fs.readFileSync(file, 'utf8'), withoutRemoteId);
     fs.unlinkSync(file);
     const missing = readConfig(file);
     assert.equal(missing.setupRequired, true);

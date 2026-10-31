@@ -58,7 +58,10 @@ function setupDefaults() {
       timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
     truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1,
       smoothing_window: 10, max_position_age: 30,
-      provisional_event_time_uncertainty_s: 1}},
+      provisional_event_time_uncertainty_s: 1},
+      remote_id: {enabled: false, source: '127.0.0.1:8754', poll_interval: .5,
+        source_timeout: 1.2, smoothing_window: 4, max_position_age: 10,
+        wifi_enabled: false}},
     location: {rx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set receiver site'},
       tx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set transmitter site'}},
     save: {iq: false, map: false, detection: false, timing: false,
@@ -202,6 +205,7 @@ function readConfig(filename) {
     if (current === undefined) {
       if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.') &&
           prefix !== 'capture.aircraft_clips' && !prefix.startsWith('capture.aircraft_clips.') &&
+          prefix !== 'truth.remote_id' && !prefix.startsWith('truth.remote_id.') &&
           prefix !== 'save.retention' && !prefix.startsWith('save.retention.'))
         suppliedDefaults.push(prefix);
       return base;
@@ -267,13 +271,6 @@ function migrateKnownDefaults(filename) {
   let changed = false;
   if (parsed.capture?.device?.type === 'Usrp' && parsed.capture.device.address === 'localhost') {
     parsed.capture.device.address = 'type=b200';
-    changed = true;
-  }
-  if (!parsed.truth?.remote_id) {
-    parsed.truth ||= {};
-    parsed.truth.remote_id = {enabled: false, source: '127.0.0.1:8754',
-      poll_interval: .5, source_timeout: 1.2, smoothing_window: 4,
-      max_position_age: 10, wifi_enabled: false};
     changed = true;
   }
   if (!changed) return false;
