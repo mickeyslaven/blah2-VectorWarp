@@ -113,7 +113,7 @@ jobs:
             printf '%s\t%s\tcompile-header\n' "$formula" "$version" >> "$raw_specs"
           done
           python3 - "$raw_specs" "$specs" "$(brew --cellar)" "$api_metadata" <<'PY'
-          import json, pathlib, subprocess, sys
+          import json, pathlib, subprocess, sys, urllib.parse, urllib.request
           raw, output, cellar, api_output = map(pathlib.Path, sys.argv[1:])
           values = {}
           for line in raw.read_text().splitlines():
@@ -121,8 +121,14 @@ jobs:
               values.setdefault((formula, version), set()).add(usage)
           lines = []; metadata = {}
           for (formula, version), usages in sorted(values.items()):
-              identifier = "vectorwarp/release-build/vectorwarp-uhd" if formula == "vectorwarp-uhd" else formula
-              info = json.loads(subprocess.check_output(["brew", "info", "--json=v2", identifier], text=True))["formulae"][0]
+              if formula == "vectorwarp-uhd":
+                  info = json.loads(subprocess.check_output(
+                      ["brew", "info", "--json=v2", "vectorwarp/release-build/vectorwarp-uhd"], text=True
+                  ))["formulae"][0]
+              else:
+                  api_url = "https://formulae.brew.sh/api/formula/" + urllib.parse.quote(formula, safe="") + ".json"
+                  with urllib.request.urlopen(api_url, timeout=30) as response:
+                      info = json.load(response)
               metadata[formula] = info
               source = cellar / formula / version / ".brew" / (formula + ".rb")
               if not source.is_file(): raise SystemExit("missing installed recipe: " + str(source))
