@@ -10,7 +10,7 @@ Config configuration(uint32_t cpis,bool coherent){Config c;auto& g=c.geometry;
  c.correlation=9;c.sampleRate=128000;c.epoch=9;c.surveillanceChannels={0,1};c.delayAxis={-1,0,1};
  const double r=1.0/(63.0/128000);c.dopplerAxis={-3*r,-2*r,-r,0,r,2*r,3*r};c.spectrumBins=64;c.reference.channels={0,1};c.reference.analysisSamples=64;
  c.detector.enabled=true;c.detector.guard=0;c.detector.train=2;c.detector.pfa=.001;c.detector.centroidDopplerResolution=2;c.detector.integrationCpis=cpis;
- if(coherent)c.fusion={FusionMode::coherentRegularPolygon,12,539000000,.193548,0,-1.2566370614359172,-.75,6};
+ if(coherent)c.fusion={FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
  if(cpis>2){c.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,1);c.detector.integrationBeamTolerance=1;}
  c.device="cpu-contract-only";rr::test::enable(c);return c;}
 int main(){try{

@@ -11,6 +11,8 @@ endforeach()
 string(SHA256 BLAH2_RECEIVER_COHORT "${BLAH2_RECEIVER_ABI_INPUT}")
 set(BLAH2_RECEIVER_CODE_INPUT "")
 foreach(source src/capture/Source.cpp src/capture/Recording.cpp
+    src/capture/PortableClipRecorder.cpp src/capture/PortableClipRecorder.h
+    src/capture/IqClip.h src/capture/Sha256.h
     src/capture/kraken/Kraken.cpp src/capture/rspduo/RspDuo.cpp
     src/capture/usrp/Usrp.cpp src/capture/hackrf/HackRf.cpp)
   file(SHA256 "${PROJECT_ROOT}/${source}" source_hash)
@@ -31,6 +33,7 @@ endif()
 add_library(blah2CaptureCore SHARED
   ${PROJECT_ROOT}/src/capture/Source.cpp
   ${PROJECT_ROOT}/src/capture/Recording.cpp
+  ${PROJECT_ROOT}/src/capture/PortableClipRecorder.cpp
   ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp
   ${PROJECT_ROOT}/src/data/IqData.cpp)
 target_compile_features(blah2CaptureCore PUBLIC cxx_std_17)

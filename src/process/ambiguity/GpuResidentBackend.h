@@ -93,6 +93,7 @@ struct TrackerConfig {
  uint32_t capacity=0,m=0,n=0,nDelete=0;
  TrackerInitiationMode initiationMode=TrackerInitiationMode::hypothesisBank;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
+ double minInitiationSnrDb=-100;
  bool stationaryClutter=false;
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;

@@ -109,9 +109,9 @@ def main():
             if success and result.returncode:
                 raise AssertionError(f'{action}: {result.stdout}{result.stderr}')
             return result
-        def request(endpoint, method='GET', body=None, revision=None):
+        def request(endpoint, method='GET', body=None, revision=None, intent='config-write-v1'):
             headers = {'Origin': base_url, 'Content-Type': 'application/json',
-                       'X-VectorWarp-Intent': 'config-write-v1',
+                       'X-VectorWarp-Intent': intent,
                        'X-VectorWarp-Receiver-Sync': 'synchronize-v1'}
             if revision:
                 headers['If-Match'] = f'"{revision}"'
@@ -137,15 +137,21 @@ def main():
             assert set(capabilities['compiledLiveTypes']) == expected, \
                 f'Browser adapters {capabilities["compiledLiveTypes"]} must match native {sorted(expected)}'
             assert len(capabilities['compiledLiveTypes']) == len(expected), 'Compiled receiver names must be unique'
-            receivers = request('/api/receivers')
-            assert len(receivers['receivers']) == 4
+            passive = request('/api/receivers')
+            assert passive['receivers'] == []
+            assert passive['management']['code'] == 'EXPLICIT_CHECK_REQUIRED'
+            receivers = request('/api/receivers/discover', 'POST', {},
+                                intent='receiver-discovery-v2')
+            discovered = {item['type']: item for item in receivers['receivers']}
+            assert set(discovered) == {'RspDuo', 'Usrp', 'HackRF', 'Kraken'}
+            assert {name for name, item in discovered.items()
+                    if item['capabilities']['liveCompiled']} == expected
             if args.standalone:
                 assert receivers['managementAvailable'] is False
                 assert receivers['management']['code'] == 'STANDALONE_COMPANION_REQUIRED'
                 assert receivers['management']['actions'] == []
                 kraken = next(item for item in receivers['receivers'] if item['type'] == 'Kraken')
-                assert any('separately installed local Heimdall companion' in step['text']
-                           for step in kraken['setupGuide'])
+                assert 'setupGuide' not in kraken
             elif any(Path(path).is_file() for path in ('/opt/homebrew/bin/brew', '/usr/local/bin/brew')):
                 assert receivers['managementAvailable'] is True
                 assert {action['id'] for action in receivers['management']['actions']} == {

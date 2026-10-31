@@ -15,7 +15,7 @@ TEST_CASE("bearing refinement follows the ambiguity-map phase convention")
 {
   constexpr uint32_t channels = 5;
   constexpr uint32_t beams = 60;
-  const double radius = .193548;
+  const double radius = .2;
   const double waveNumber = 2 * PI * 539000000.0 / C;
   const double direct = 51 * PI / 180;
   const uint32_t target = 7;

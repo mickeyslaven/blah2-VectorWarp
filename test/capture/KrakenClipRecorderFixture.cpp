@@ -243,6 +243,11 @@ int main()
         {"auto", "Kraken", CHANNELS, SAMPLE_RATE, FREQUENCY, 0});
       assert(reader.metadata().format == "mchq" &&
         reader.metadata().samples == status.samples);
+      assert(reader.provenance().sourceSampleAvailable &&
+        reader.provenance().epoch == 0 &&
+        reader.provenance().sourceFirstSample == FRAME_SAMPLES);
+      assert(!reader.provenance().contractValid &&
+        !reader.provenance().decisionGrade);
       blah2::IqBlock block;
       uint64_t observed = 0;
       for (const auto& wanted : expected)
@@ -295,6 +300,11 @@ int main()
       }
       assert(!reader.read(block));
       if (withTiming) {
+        assert(reader.provenance().sourceSampleAvailable &&
+          reader.provenance().epoch == 1 &&
+          reader.provenance().sourceFirstSample == 60600);
+        assert(!reader.provenance().contractValid &&
+          !reader.provenance().decisionGrade);
         std::ifstream file(status.file, std::ios::binary);
         std::array<uint8_t, 32> fixed{}; file.read(reinterpret_cast<char*>(fixed.data()), fixed.size());
         auto header = HeimdallFrame::decode_header(fixed);
@@ -306,6 +316,15 @@ int main()
         const auto sidecar = json_file(status.file + ".json");
         assert(!sidecar["upstreamTiming"]["hardwareUtc"].GetBool());
         assert(!sidecar["eventTime"]["exact"].GetBool());
+      } else {
+        // Legacy MCHQ frames have no embedded timing, but the authenticated
+        // native clip sidecar still supplies the recorder's coherent sample
+        // interval for offline truth alignment.
+        assert(reader.provenance().sourceSampleAvailable &&
+          reader.provenance().epoch == 0 &&
+          reader.provenance().sourceFirstSample == 600);
+        assert(!reader.provenance().contractValid &&
+          !reader.provenance().decisionGrade);
       }
     }
 

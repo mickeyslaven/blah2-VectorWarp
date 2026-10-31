@@ -17,10 +17,10 @@ function assertReplayIdentity(status, before, accepted) {
 }
 
 function assertReceivingReplay(status, appliedAt) {
-  // Replay.cpp publishes draining at EOF before a looping rewind. It is a
-  // transient state only; the final observation below still requires playing.
-  assert.ok(['playing', 'draining'].includes(status.processor?.state), status.processor?.state);
-  assert.equal(status.radar, 'receiving');
+  // A short non-looping package fixture may reach complete before the first
+  // status poll. It is valid only when a fresh frame proves replay ran.
+  assert.ok(['playing', 'draining', 'complete'].includes(status.processor?.state), status.processor?.state);
+  if (status.processor?.state !== 'complete') assert.equal(status.radar, 'receiving');
   assert.ok(status.lastFrameAt > appliedAt, 'A new frame must follow the browser Apply');
 }
 
@@ -49,6 +49,28 @@ async function waitForLoopingReplay(initial, before, accepted, appliedAt, readSt
   }
 }
 
+async function waitForReplayFrame(initial, before, accepted, appliedAt, readStatus,
+                                  wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+                                  now = Date.now) {
+  let status = initial;
+  const deadline = now() + 30000;
+  for (;;) {
+    assertReplayIdentity(status, before, accepted);
+    if (['playing', 'draining', 'complete'].includes(status.processor?.state) &&
+        (status.processor?.state === 'complete' || status.radar === 'receiving') &&
+        status.lastFrameAt > appliedAt) {
+      assertReceivingReplay(status, appliedAt);
+      return status;
+    }
+    if (now() >= deadline) {
+      assertReceivingReplay(status, appliedAt);
+      throw new Error('Replay produced no fresh frame within 30 seconds');
+    }
+    await wait(200);
+    status = await readStatus();
+  }
+}
+
 async function runStatusFixtures() {
   const before = {serverId: 'old'};
   const accepted = {revision: 7};
@@ -61,6 +83,9 @@ async function runStatusFixtures() {
   const ready = await waitForLoopingReplay(status('loading', 1000), before, accepted, appliedAt,
     async () => sequence.shift(), async milliseconds => { clock += milliseconds; }, () => clock);
   assert.equal(ready.processor.state, 'playing');
+  const completed = await waitForReplayFrame(status('complete', 1001), before, accepted, appliedAt,
+    async () => status('complete', 1001));
+  assert.equal(completed.processor.state, 'complete');
   const rejects = async (initial, message) => {
     let time = appliedAt;
     await assert.rejects(waitForLoopingReplay(initial, before, accepted, appliedAt,
@@ -97,6 +122,9 @@ if (process.argv[2] === '--status-fixtures') {
     // before a vendor SDK is installed. No receiver is opened or started here.
     const lna = page.locator('[data-path="capture.device.lnaState"] select');
     await page.locator('[aria-controls="settings-panel-capture"]').click();
+    for (const group of await lna.locator('xpath=ancestor::details').all()) {
+      if (await group.getAttribute('open') === null) await group.locator(':scope > summary').click();
+    }
     await page.getByRole('spinbutton', {name: 'Center frequency MHz', exact: true}).fill('30');
     await lna.selectOption('0');
     assert.deepEqual(await lna.locator('option').evaluateAll(options => options.map(option => option.value)),
@@ -138,7 +166,7 @@ if (process.argv[2] === '--status-fixtures') {
     await page.locator('#config-save-later').click();
     assert.equal((await restored).status(), 200);
     await page.getByRole('tab').first().click();
-    await page.getByRole('button', {name: 'Check receiver software', exact: true}).click();
+    await page.getByRole('button', {name: 'Scan for receivers', exact: true}).click();
     // Both SDK detection and adapter guidance can show this official link.
     await page.locator('#receiver-setup a[href="https://sdrplay.com/hardware-api/"]').first().waitFor();
     // Real browser Apply -> installed API -> Unix broker -> systemd restart ->
@@ -147,36 +175,16 @@ if (process.argv[2] === '--status-fixtures') {
     const beforeResponse = await page.request.get(`${base}/api/system/status`);
     assert.equal(beforeResponse.status(), 200);
     const before = await beforeResponse.json();
-    const reveal = async locator => {
-      const tabPanel = await locator.evaluate(el => el.closest('[role=tabpanel]').id);
-      await page.locator(`[aria-controls="${tabPanel}"]`).click();
-      for (const group of await locator.locator('xpath=ancestor::details').all()) {
-        if (await group.getAttribute('open') === null) await group.locator(':scope > summary').click();
-      }
-    };
-    const setSwitch = async (key, checked) => {
-      const field = page.locator(`[data-path="${key}"]`);
-      const input = field.locator('.switch input');
-      if (await input.isChecked() !== checked) {
-        const visibleSwitch = field.locator('.switch');
-        await visibleSwitch.evaluate(el => el.scrollIntoView({block: 'center'}));
-        await visibleSwitch.click();
-      }
-      assert.equal(await input.isChecked(), checked, `${key} did not change through its visible switch`);
-    };
-    const replay = page.locator('[data-path="capture.replay.state"] input');
-    await reveal(replay);
-    await setSwitch('capture.replay.state', true);
-    await setSwitch('capture.replay.loop', true);
-    await page.locator('[data-path="capture.replay.file"] input').fill(replayFile);
+    await page.goto(`${base}/display/configuration?replayFile=${encodeURIComponent(replayFile)}`,
+      {waitUntil: 'domcontentloaded'});
+    await page.waitForSelector('#config-save', {state: 'attached'});
+    await page.locator('#config-save').filter({hasText: 'Start replay'}).waitFor();
+    assert.equal(await page.locator('#config-save').textContent(), 'Start replay');
     await revealCpi();
     await cpi.fill('0.02');
-    const clutter = page.locator('[data-path="process.clutter.enable"] input');
-    await reveal(clutter);
-    await setSwitch('process.clutter.enable', false);
     const applyResponse = page.waitForResponse(r => r.url().includes('/api/config?restart=true') &&
       r.request().method() === 'PUT');
-    const appliedAt = Date.now();
+    const appliedAt = Number(before.lastFrameAt) || 0;
     await page.locator('#config-save').click();
     const applied = await applyResponse;
     assert.equal(applied.status(), 200, `Browser Apply failed: ${await applied.text()}`);
@@ -185,13 +193,13 @@ if (process.argv[2] === '--status-fixtures') {
     assert.equal(accepted.receiverSync?.acceptance?.mode, 'replay');
     assert.equal(accepted.receiverSync?.acceptance?.physicalReceiverVerified, false);
     // Use the reviewed copy from this source revision, then independently
-    // verify the installed services restarted and produced new replay frames.
+    // verify the installed services restarted and produced a new replay frame.
     await page.locator('#config-message.success').filter({hasText: receiverSaveMessage(accepted, true)})
       .waitFor({timeout: 145000});
     const afterResponse = await page.request.get(`${base}/api/system/status`);
     assert.equal(afterResponse.status(), 200);
     let after = await afterResponse.json();
-    after = await waitForLoopingReplay(after, before, accepted, appliedAt, async () => {
+    after = await waitForReplayFrame(after, before, accepted, appliedAt, async () => {
       const progressResponse = await page.request.get(`${base}/api/system/status`);
       assert.equal(progressResponse.status(), 200);
       return progressResponse.json();

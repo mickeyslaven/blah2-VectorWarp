@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates,
-  assignments, delayBand, limits, standardizedComparison} = require('./evidence-statistics');
+  assignments, delayBand, limits, standardizedComparison, siteKey} = require('./evidence-statistics');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-statistics-'));
 const filename = path.join(directory, 'statistics.json');
@@ -31,7 +31,51 @@ const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'T
     slant_range_km: 10, transmitter_range_km: 20}};
 const source = {async get() { return {abc123: {...prediction, timestamp: clock / 1000}}; }};
 
+const identityConfig = JSON.parse(JSON.stringify(config));
+identityConfig.capture.device = {type: 'Kraken', channel_count: 5,
+  heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092,
+    gain_control: 'measured_per_channel', channel_gains: [8.7, 8.7, 14.4, 3.7, 3.7]},
+  array_geometry: {shape: 'regular_polygon', operator_notes: 'installation note'}};
+const presentationEdit = JSON.parse(JSON.stringify(identityConfig));
+presentationEdit.location.rx.name = 'Short receiver name';
+presentationEdit.location.tx.name = 'Short transmitter name';
+presentationEdit.capture.device.heimdall.host = 'receiver.local';
+presentationEdit.capture.device.heimdall.port = 18091;
+presentationEdit.capture.device.array_geometry.operator_notes = 'updated note';
+assert.equal(siteKey(identityConfig), siteKey(presentationEdit),
+  'labels, connection ports and operator notes must not reset scientific statistics');
+const gainEdit = JSON.parse(JSON.stringify(identityConfig));
+gainEdit.capture.device.heimdall.channel_gains[2] = 15.7;
+assert.notEqual(siteKey(identityConfig), siteKey(gainEdit),
+  'applied receiver gain must start a separate statistics identity');
+const geometryEdit = JSON.parse(JSON.stringify(identityConfig));
+geometryEdit.location.rx.latitude += .001;
+assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
+  'physical site geometry must start a separate statistics identity');
+
 (async () => {
+  const orderStats = new EvidenceStatistics(config, source, {
+    filename: path.join(directory, 'ordered-live-status.json'), now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const finalizedPass = (id, lastAt, eligibleFrames) => ({id, hex: id, flight: id,
+    siteKey: orderStats.key, startedAt: lastAt - 1000, lastAt, frames: 4,
+    eligibleFrames, physicalEligibleFrames: eligibleFrames,
+    detectorEligibleFrames: eligibleFrames, detectedFrames: 0, trackedFrames: 0,
+    belowFloorFrames: 0, aboveDelayFrames: 0, outsideDopplerFrames: 0,
+    staleTruthFrames: 0, missingTimingFrames: 0, outsideClutterFrames: 0,
+    delayBands: {}, slantRangeBands: {}, elevationBands: {}, azimuthBands: {},
+    azimuthElevationBands: {}, geometryBands: {}});
+  orderStats.state.liveScoreContract.startedAt = 1;
+  orderStats.state.passes = [finalizedPass('newer', clock - 1000, 3),
+    finalizedPass('excluded', clock - 500, 0),
+    finalizedPass('older', clock - 2000, 3)];
+  const orderedLive = orderStats.liveStatus();
+  assert.deepEqual(orderedLive.recent_finalized_passes.map(item => item.flight),
+    ['excluded', 'newer', 'older'], 'finalized passes must be ordered by finalization time');
+  assert.deepEqual(orderedLive.recent_scored_passes.map(item => item.flight),
+    ['newer', 'older'], 'the primary recent list must contain only scored passes');
+  orderStats.close();
+
   const span = limits(config);
   assert.equal(span.delayMaxKm.toFixed(3), '62.457');
   assert.equal(span.detectionMinDelayKm.toFixed(3), '0.625');
@@ -61,6 +105,10 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.windows.hour.active_passes, 1);
   assert.equal(result.windows.hour.eligible_passes, 0,
     'An in-progress pass must not be prematurely classified');
+  assert.equal(result.windows.hour.live_to_date.eligible_passes, 1,
+    'The live hour view must include a currently eligible pass');
+  assert.equal(result.windows.hour.live_to_date.detected_passes, 1);
+  assert.equal(result.windows.hour.live_to_date.tracked_passes, 1);
   clock += 121000;
   source.get = async () => ({});
   stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
@@ -204,10 +252,10 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     retentionClock += 1000;
   }
   const retained = retention.status().eligibility_events[0].truth_samples;
-  assert.equal(retained.length, 65);
+  assert.equal(retained.length, 30);
   assert.deepEqual(retained.map(item => item.timestamp_ms),
-    Array.from({length: 65}, (_, index) => 2_000_000_000_000 + index * 1000),
-    'The retained trajectory must remain continuous without a minute-wide middle gap');
+    Array.from({length: 30}, (_, index) => 2_000_000_035_000 + index * 1000),
+    'The recent trajectory must remain continuous while aggregate pass statistics retain the full outcome');
   retention.close();
 
   const timingFilename = path.join(directory, 'timing-provenance.json');
@@ -246,6 +294,9 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(uncertainTruthCalls, 0,
     'inexact Kraken host-arrival time must not request exact ADS-B truth');
   const uncertainStatus = uncertainStats.liveStatus();
+  assert.deepEqual(uncertainStatus.current_setup_lifetime,
+    uncertainStats.status().windows.lifetime,
+    'Live scorecard must retain the persistent current-setup lifetime beyond its bounded contract window');
   assert.equal(uncertainStatus.decision_grade, false,
     'an exact-policy lane without exact RF time must fail closed');
   assert.match(uncertainStatus.warning, /blocked.*exact RF event time/i);
@@ -374,6 +425,14 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(floorStatus.delay_strata.bands[floorBand.id].detected_passes, 1);
   assert.equal(floorStatus.receiver_slant_range_strata.bands['10-20'].eligible_passes, 1,
     'Scorecard must stratify the denominator by 3-D receiver slant range');
+  assert.equal(floorStatus.elevation_strata.bands['10-15'].eligible_passes, 1,
+    'Scorecard must stratify the denominator by geometric elevation');
+  assert.equal(floorStatus.azimuth_strata.bands['90-135'].detected_passes, 1,
+    'Scorecard must stratify detections by true azimuth');
+  assert.equal(floorStatus.azimuth_elevation_strata.bands['90-135|10-15'].tracked_passes, 0,
+    'Joint angle strata must preserve detection and tracking as separate outcomes');
+  assert.equal(floorStats.liveStatus().adsb_quality.local_only, true);
+  assert.match(floorStats.liveStatus().adsb_quality.warning, /Local-only ADS-B/);
 
   const pass = (band, detected) => ({geometryBands: {[band]: {eligibleFrames: 10}},
     detectedFrames: detected ? 3 : 0, trackedFrames: detected ? 3 : 0});
@@ -449,9 +508,25 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     'Detailed finalized passes must remain bounded for restart-safe persistence');
   assert.equal(boundedState.state.rollup.passes, 1);
   assert.equal(boundedState.state.rollup.tracked, 1);
-  assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 16);
-  assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 16);
+  assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 4);
+  assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 0);
+  boundedState.state.active.abcdef = {id: 'active-pass', hex: 'abcdef',
+    siteKey: boundedState.key, startedAt: 1, lastAt: 2, frames: 1000,
+    sampledBuckets: Array.from({length: 1000}, (_, row) => row),
+    cpiAudit: Array.from({length: 1000}, (_, row) => ({timestamp_ms: row,
+      timing: {epoch: 1, first_epoch_sample: row * 1200000}}))};
+  boundedState.state.eligibilityEvents.push({id: 'active-event', state: 'pending',
+    truth_samples: Array.from({length: 1000}, (_, row) => ({timestamp_ms: row,
+      position: {latitude: 1, longitude: 2}})), capture_windows: [{
+      capture_id: 'clip-1', truth_samples: Array.from({length: 12}, (_, row) =>
+        ({timestamp_ms: row}))}]});
   boundedState.persist();
+  assert.equal(boundedState.state.active.abcdef.cpiAudit.length, 16,
+    'Active engineering detail must not make persistence block the API event loop');
+  assert.equal(boundedState.state.active.abcdef.sampledBuckets.length, 16);
+  assert.equal(boundedState.state.eligibilityEvents.at(-1).truth_samples.length, 30);
+  assert.equal(boundedState.state.eligibilityEvents.at(-1).capture_windows[0].truth_samples.length, 12,
+    'Compaction must preserve the exact truth bracket copied into a recording window');
   assert.ok(fs.statSync(path.join(directory, 'bounded-state.json')).size < 8 * 1024 * 1024,
     'Bounded synthetic state must remain well below the loader safety cap');
   boundedState.close();

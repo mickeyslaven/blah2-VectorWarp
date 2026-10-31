@@ -42,6 +42,25 @@ global.window = {
   location: new URL('http://radar.example.invalid:8080/'),
   setInterval: () => 0
 };
+class MockMap {
+  constructor(options) {
+    this.options = options;
+    this.sources = new Map();
+    this.layers = new Map();
+    this.terrain = options.style.terrain;
+  }
+  once(name, callback) { if (name === 'load') callback(); }
+  on() {}
+  isStyleLoaded() { return true; }
+  getStyle() { return this.options.style; }
+  getContainer() { return null; }
+  getSource(id) { return this.sources.get(id); }
+  addSource(id, source) { this.sources.set(id, {...source, setData(data) { this.data = data; }}); }
+  getLayer(id) { return this.layers.get(id); }
+  addLayer(layer) { this.layers.set(layer.id, layer); }
+  getTerrain() { return this.terrain; }
+}
+global.window.vectorwarpMapLibreReady = Promise.resolve({Map: MockMap});
 global.sessionStorage = {getItem: () => null, setItem: () => {}};
 global.addFullscreenControl = () => {};
 global.addRecordingControl = () => {};
@@ -85,7 +104,7 @@ const portable = {
 const rich = {
   '/api/config': {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', gain: [10, 10, 10, 10, 10, 10]}}, location: {rx: {name: 'Test receiver', latitude: 40.0, longitude: -80.0, altitude: 250}, tx: {name: 'Test illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}}, process: {data: {cpi: .2, overlap: .1}, ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -800, dopplerMax: 800}, detection: {enable: true, pfa: .0001}, tracker: {enable: true, initiate: {M: 3, N: 5}}, bearing: {enable: true}, spectrum: {enable: true}}, truth: {adsb: {enabled: true, display_range_km: 30}, ais: {enabled: false}}},
   '/api/detection': {timestamp: Date.now(), delay: [1.25], doppler: [42], snr: [18]},
-  '/api/tracker': {timestamp: Date.now(), n: 1, nTentative: 0, nAssociated: 1, nActive: 0, nCoasting: 0, data: [{id: 'T1', state: 'ASSOCIATED', delay: 10, doppler: 42, n: 3, associated_delay: [8, 9, 10], associated_doppler: [38, 40, 42], associated_state: ['TENTATIVE', 'ASSOCIATED', 'ASSOCIATED']}]},
+  '/api/tracker': {timestamp: Date.now(), n: 15, nTentative: 1, nAssociated: 12, nActive: 1, nCoasting: 1, data: [...Array.from({length: 13}, (_, index) => ({id: `T${index + 1}`, state: index === 0 ? 'ACTIVE' : 'ASSOCIATED', delay: 10 + index, doppler: 42, n: 3, associated_delay: [8, 9, 10], associated_doppler: [38, 40, 42], associated_state: ['TENTATIVE', 'ASSOCIATED', index === 0 ? 'ACTIVE' : 'ASSOCIATED']})), {id: 'tentative', state: 'TENTATIVE', delay: 8, doppler: 5, n: 1}, {id: 'coasting', state: 'COASTING', delay: 9, doppler: 6, n: 5}]},
   '/api/timing': {timestamp: Date.now(), nCpi: 10, uptime_s: 50, cpi_data_ms: 200, cpi_hop_ms: 100, capture_backlog_ms: 4, reference_synthesis: 4, ambiguity_processing: 20, detector: 1, tracker: .1, cpi: 35},
   '/api/statistics': {schema: 'vectorwarp-evidence-statistics-v1', collecting: true,
     updated_at: Date.now(), limits: {detectionMinDelayKm: .624, delayMaxKm: 62.456,
@@ -137,6 +156,20 @@ const rich = {
   '/api/dd': {abc123: {flight: 'TEST1', delay: 1.3, doppler: 40, timestamp: Date.now() / 1000}}
 };
 
+Object.assign(rich['/api/statistics'].windows.day, {
+  elevation_strata: {bands: {'5-10': {eligible_passes: 6, detected_passes: 4,
+    tracked_passes: 3, detection_yield: .667, tracking_yield: .5}}},
+  azimuth_strata: {bands: {'90-135': {eligible_passes: 6, detected_passes: 4,
+    tracked_passes: 3, detection_yield: .667, tracking_yield: .5}}},
+  delay_strata: {bands: {'5-10': {eligible_passes: 4, detected_passes: 3,
+    tracked_passes: 2, detection_yield: .75, tracking_yield: .5}}},
+  receiver_slant_range_strata: {bands: {'10-20': {eligible_passes: 5,
+    detected_passes: 3, tracked_passes: 2, detection_yield: .6, tracking_yield: .4}}},
+  azimuth_elevation_strata: {bands: {'90-135|5-10': {azimuth_band: '90-135',
+    elevation_band: '5-10', eligible_passes: 6, detected_passes: 4,
+    tracked_passes: 3, detection_yield: .667, tracking_yield: .5}}}
+});
+
 global.fetchStatusResource = async (url, options = {}) => {
   url = new URL(url, window.location.origin).href;
   const fixtures = mode === 'rich' ? rich : portable;
@@ -158,41 +191,54 @@ global.fetch = global.fetchStatusResource;
 const common = require('../../html/js/common.js');
 global.getRadarRuntimeConfig = common.getRadarRuntimeConfig;
 global.startRadarUpdates = common.startRadarUpdates;
+global.radarPresentationUrl = common.radarPresentationUrl;
+global.aircraftKind = common.aircraftKind;
+global.aircraftPlotSymbol = common.aircraftPlotSymbol;
+global.aircraftLabel = common.aircraftLabel;
+global.aircraftInfo = common.aircraftInfo;
+global.aircraftIdentity = common.aircraftIdentity;
+global.aircraftPlotData = common.aircraftPlotData;
+global.aircraftHoverText = common.aircraftHoverText;
+global.aircraftHoverTemplate = common.aircraftHoverTemplate;
+global.aircraftSvgMarkup = common.aircraftSvgMarkup;
+global.aircraftAltitudeColor = common.aircraftAltitudeColor;
+global.stabilizeAircraftSnapshots = common.stabilizeAircraftSnapshots;
+global.updateAircraftTrackHistories = common.updateAircraftTrackHistories;
+global.selectRadarAssociatedAircraft = common.selectRadarAssociatedAircraft;
 
 vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 
 setTimeout(() => {
-  const plotViews = new Set(['activity', 'site', 'locations', 'evaluation', 'tracks', 'calibration']);
+  const plotViews = new Set(['activity', 'site', 'evaluation', 'tracks', 'calibration']);
   const errors = [];
   const rendered = [...elements.values()].map(element => element.innerHTML).join('');
   if (!root.children.length) errors.push('view root remained empty');
   if (!state.textContent) errors.push('view state was not updated');
   if (state.textContent === 'Data unavailable') errors.push('renderer reported unavailable data');
   if (plotViews.has(view) && plotCalls < 1) errors.push('plot renderer was not called');
-  if (view === 'locations' && (!lastPlot?.layout?.mapbox || !lastPlot.layout.uirevision))
-    errors.push('location map viewport is not persistent');
+  const map = elements.get('data')?._vectorwarpMap;
+  if (view === 'locations' && (!map || elements.get('data')?.dataset?.mapRenderer !== 'maplibre-terrain'))
+    errors.push('location map did not initialize the persistent terrain renderer');
   if (view === 'locations' && mode === 'rich' &&
-      !lastPlot?.traces?.some(trace => trace.name === 'ADS-B' &&
-        Number(trace.marker?.size) >= 24))
-    errors.push('ADS-B plane symbols were not rendered');
-  if (view === 'locations' && mode === 'rich' &&
-      !lastPlot?.traces?.some(trace => trace.name === 'Unresolved estimate T2'))
+      !map?.getSource('vectorwarp-bearing-overlays')?.data?.features?.some(feature =>
+        feature.properties.kind === 'estimate' && feature.properties.track === 'T2'))
     errors.push('unresolved coasting bearing estimate was not rendered');
   if (view === 'locations' && mode === 'rich' &&
-      (!rendered.includes('Bearing estimates') || !rendered.includes('Unresolved shown')))
-    errors.push('bearing diagnostic counts were not rendered');
-  if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
-    errors.push('unconfirmed radar returns were plotted as ellipses');
+      !state.textContent.includes('ellipses shown'))
+    errors.push('map did not show confirmed radar ellipses by default');
+  if (view === 'statistics' && mode === 'rich' &&
+      (!rendered.includes('statistics-yield-chart') || !rendered.includes('Detected') ||
+       !rendered.includes('Tracked') || !rendered.includes('statistics-matrix-cell')))
+    errors.push('statistics yield and joint-angle visuals were not rendered');
   if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||
-      !rendered.includes('Never automatic') ||
-      !(mode === 'rich' ? rendered.includes('Replay-only dense artifact available') :
-        rendered.includes('sparse offline model')) ||
-      !rendered.includes('production qualification disabled') ||
-      !rendered.includes('receipt harness ready / native export required')))
+      !rendered.includes('Hard-disabled — never automatic') ||
+      !rendered.includes('Support / uncertainty') ||
+      !rendered.includes('Active detection model') ||
+      !rendered.includes('2-D candidate') ||
+      !rendered.includes('Native 2-D shadow fit') ||
+      !rendered.includes('Pass-disjoint complex projection only') ||
+      !rendered.includes('physical paired A/B qualification still required')))
     errors.push('detection manifold progress and promotion policy were not rendered');
-  if (view === 'locations' && lastPlot?.layout?.mapbox?.style === 'open-street-map' &&
-      lastPlot.traces.some(trace => trace.mode?.includes('text')))
-    errors.push('raster OSM style cannot render text symbols without a glyph source');
   if (/\b(?:undefined|NaN)\b/.test(rendered)) errors.push('view rendered an invalid value');
   if (rendered.length < 100) errors.push('view rendered too little content');
   if (errors.length) {

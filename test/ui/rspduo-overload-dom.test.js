@@ -27,7 +27,7 @@ window.fetch = async (url, options = {}) => {
   else if (url === '/api/config/capabilities')
     body = {editable: true, deviceProfiles: getDeviceProfiles(), fieldRules: FIELD_RULES};
   else if (url === '/api/config/validate') body = validateConfig(JSON.parse(options.body), saved);
-  else if (url === '/api/system/status') {
+  else if (url.startsWith('/api/system/status')) {
     if (statusFails) throw new Error('Connection lost');
     body = status;
   } else if (url === '/api/upstream/status') body = {supported: false};
@@ -35,7 +35,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: true, status: 200, headers: {get: () => '"' + 'a'.repeat(64) + '"'},
     json: async () => JSON.parse(JSON.stringify(body))};
 };
-for (const file of ['common.js', 'kraken_geometry.js', 'config_ui.js'])
+for (const file of ['common.js', 'config_profiles.js', 'kraken_geometry.js', 'config_ui.js'])
   window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
 window.liveApiUrl = value => value;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);

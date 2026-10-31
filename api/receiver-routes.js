@@ -5,8 +5,8 @@ const {createReceiverManager, RECEIVER_TYPES} = require('./receiver-manager');
 const {createReceiverProbes} = require('./receiver-probes');
 const {createReceiverHelperClient} = require('./receiver-helper-client');
 const {createMacReceiverManagement} = require('./macos-receiver-management');
-const {receiverSetupGuide} = require('./receiver-setup-guide');
 const INTENT = 'receiver-management-v1';
+const DISCOVERY_INTENT = 'receiver-discovery-v2';
 
 function trustedOrigins(port, extra = [], networkInterfaces = os.networkInterfaces, warn = console.warn) {
   const explicit = [];
@@ -63,7 +63,7 @@ function installReceiverRoutes(app, options) {
     throw new Error('The receiver helper executable must be an installed absolute path.');
   const grants = new Map();
   let cached, running = false;
-  function guard(req, res, mutation = false) {
+  function guard(req, res, mutation = false, intent = INTENT) {
     const trusted = sameReceiverOrigin(req, allowed);
     res.removeHeader('Access-Control-Allow-Origin');
     if (trusted && req.get('Origin')) {
@@ -72,7 +72,7 @@ function installReceiverRoutes(app, options) {
     }
     res.set('Cache-Control', 'no-store');
     if (!trusted || (mutation &&
-        (req.get('X-VectorWarp-Intent') !== INTENT ||
+        (req.get('X-VectorWarp-Intent') !== intent ||
          !/^application\/json(?:\s*;|$)/i.test(req.get('Content-Type') || '')))) {
       res.status(403).json({ok: false, code: 'RECEIVER_ORIGIN_REQUIRED',
         errors: ['Open Receiver setup from the trusted VectorWarp address and review the action there.']});
@@ -108,8 +108,7 @@ function installReceiverRoutes(app, options) {
             {...action, available: false, code: 'REMOTE_ENDPOINT',
               message: 'The saved Suite endpoint is remote; local receiver service control does not apply.'} : action)};
         return {...discovery,
-        receivers: discovery.receivers.map(receiver => ({...receiver,
-          setupGuide: receiverSetupGuide(receiver, helperExecutable, {platform})})),
+        receivers: discovery.receivers,
         configRevision: document.revision,
         setupRequired: document.setupRequired === true, buildCapabilitiesKnown: compiledLiveTypes !== null,
         preview, managementAvailable: managed.available, management: managed,
@@ -119,12 +118,25 @@ function installReceiverRoutes(app, options) {
     promise.catch(() => { if (cached?.promise === promise) cached = null; });
     return promise;
   }
+  function passiveSnapshot() {
+    const document = readDocument();
+    if (cached && cached.revision === document.revision) return cached.promise;
+    // GET is used by legacy/shared headers. It must remain a zero-probe status
+    // read so an open radar page cannot launch USB, linker, systemd or upstream
+    // checks in the real-time receiver process. Explicit discovery is POST-only.
+    return Promise.resolve({schemaVersion: 1, receivers: [], configRevision: document.revision,
+      setupRequired: document.setupRequired === true, buildCapabilitiesKnown: compiledLiveTypes !== null,
+      preview, managementAvailable: false,
+      management: {available: false, actions: [], code: 'EXPLICIT_CHECK_REQUIRED',
+        message: 'Open Receiver settings and choose Check receiver software.'},
+      processor: options.processorStatus?.() || null});
+  }
   app.get('/api/receivers', async (req, res) => {
     if (!guard(req, res)) return;
-    try { res.json(await snapshot()); } catch (error) { failure(res, error); }
+    try { res.json(await passiveSnapshot()); } catch (error) { failure(res, error); }
   });
   app.post('/api/receivers/discover', async (req, res) => {
-    if (!guard(req, res, true)) return;
+    if (!guard(req, res, true, DISCOVERY_INTENT)) return;
     if (!validBody(req.body, [])) return res.status(422).json({ok: false, errors: ['Discovery takes no receiver or endpoint overrides.']});
     try { res.json(await snapshot(true)); } catch (error) { failure(res, error); }
   });

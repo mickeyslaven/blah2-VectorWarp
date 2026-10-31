@@ -8,13 +8,22 @@ const {SOURCE_CHOICES} = require('./adsb-discovery');
 const rules = {
   'capture.fs': integer(1, 4294967295),
   'capture.fc': integer(1, 4294967295),
+  'capture.aircraft_clips.enabled': {type: 'boolean', optional: true},
+  'capture.aircraft_clips.pre_seconds': {...numeric(0, 10), optional: true},
+  'capture.aircraft_clips.post_seconds': {...numeric(0, 10), optional: true},
+  'capture.aircraft_clips.minimum_slant_range_km': {...numeric(0, 1000), optional: true},
+  'capture.aircraft_clips.maximum_slant_range_km': {...numeric(0, 1000), optional: true},
+  'capture.aircraft_clips.minimum_elevation_deg': {...numeric(-10, 90), optional: true},
+  'capture.aircraft_clips.maximum_elevation_deg': {...numeric(-10, 90), optional: true},
+  'capture.aircraft_clips.minimum_interval_seconds': {...numeric(0, 3600), optional: true},
   'capture.device.channel_count': {...integer(2, 8), choices: [2,3,4,5,6,7,8]},
   'capture.device.reference_channel': integer(0, 7),
   'capture.device.heimdall.port': integer(1, 65535),
   'capture.device.heimdall.control_port': {...integer(1, 65535), optional: true},
   'capture.device.heimdall.gain': {type: 'gain', optional: true},
   'capture.device.heimdall.channel_gains': {type: 'array', optional: true},
-  'capture.device.heimdall.gain_control': {type: 'string', choices: ['fixed', 'measured'], optional: true},
+  'capture.device.heimdall.gain_control': {type: 'string',
+    choices: ['fixed', 'measured', 'measured_per_channel'], optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
   // Published SDRplay API 3.09 section 5: RSPduo 50-ohm inputs, not Hi-Z.
@@ -23,9 +32,15 @@ const rules = {
       {belowHz: 1000000000, max: 9}, {belowHz: 2000000001, max: 8}]},
   'capture.replay.format': {type: 'string', choices: ['auto', 'blah2', 'mchq', 's16-interleaved', 's8-interleaved', 'usrp-blocks'], optional: true},
   'capture.replay.legacy_block_samples': {...integer(1, 262144), optional: true},
+  'capture.replay.sample_rate_hz': {...integer(1, 4294967295), optional: true},
+  'capture.replay.frequency_hz': {...integer(1, 4294967295), optional: true},
+  'capture.replay.channel_count': {...integer(2, 8), optional: true},
+  'capture.replay.reference_channel': {...integer(0, 7), optional: true},
+  'capture.replay.reference_mode': {type: 'string', choices: ['dedicated', 'array_eigenbeam'], optional: true},
+  'capture.replay.surveillance_channels': {type: 'array', optional: true},
+  'capture.replay.reference_channels': {type: 'array', optional: true},
   'process.data.cpi': {...numeric(), exclusiveMin: 0},
   'process.data.buffer': numeric(1),
-  'process.data.overlap': {...numeric(0), readOnly: 'Not used by this processor.'},
   'process.detection.pfa': {...numeric(), exclusiveMin: 0, exclusiveMax: 1},
   'process.detection.nGuard': integer(0, 127),
   'process.detection.nTrain': integer(1, 127),
@@ -34,15 +49,6 @@ const rules = {
   'process.detection.minDoppler': numeric(0),
   'process.detection.integration_cpis': {...integer(1, 2), optional: true},
   'process.detection.integration_motion_bins': {...integer(0, 1), optional: true},
-  'process.detection.integration_shadow.enabled': {type: 'boolean', optional: true},
-  'process.detection.integration_shadow.queue_path': {type: 'string', optional: true},
-  'process.detection.integration_shadow.results_path': {type: 'string', optional: true},
-  'process.detection.integration_shadow.receipt_key_path': {type: 'string', optional: true},
-  'process.detection.integration_shadow.dwell_seconds': {type: 'array', optional: true},
-  'process.detection.integration_shadow.fusion_modes': {type: 'array', optional: true},
-  'process.detection.integration_shadow.max_pending': {...integer(1, 1024), optional: true},
-  'process.detection.integration_shadow.max_wall_seconds_per_clip':
-    {...integer(30, 86400), optional: true},
   'process.detection.track_before_detect.enable': {type: 'boolean', optional: true},
   'process.detection.track_before_detect.max_cpis': {...integer(4, 8), choices: [4,8], optional: true},
   'process.detection.track_before_detect.motion_bins': {...integer(0, 1), optional: true},
@@ -84,6 +90,8 @@ const rules = {
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
+  'process.tracker.profile': {type: 'string', choices: ['conservative', 'balanced', 'permissive'], optional: true},
+  'process.tracker.initiate.min_snr_db': {...numeric(-100, 100), optional: true},
   'process.tracker.initiate.acceleration_model': {type: 'string', choices: ['hypothesis_bank', 'adaptive_gate'], optional: true},
   'process.tracker.initiate.stationary_clutter.enable': {type: 'boolean', optional: true},
   'process.tracker.initiate.stationary_clutter.persistence_cpis': {...integer(2, 65535), optional: true},
@@ -106,7 +114,6 @@ const rules = {
   'process.tracker.publication.native_min_associations': {...integer(1, 65535), optional: true},
   'process.tracker.publication.delay_tolerance': {...numeric(0, 1000), optional: true},
   'process.tracker.publication.doppler_tolerance': {...numeric(0, 10000), optional: true},
-  'process.tracker.smooth': {type: 'string', readOnly: 'Not used by this processor.'},
   'process.performance.surveillance_workers': integer(0, 8),
   'process.performance.fft_threads': integer(0, 256),
   'process.performance.acceleration': {type: 'string', choices: ['auto', 'cpu', 'gpu', 'gpu-resident']},
@@ -136,16 +143,31 @@ const rules = {
     readOnly: 'Advanced multi-source setting; edit the YAML or configuration API.'},
   'truth.adsb.sources': {type: 'array', optional: true,
     structuredControl: 'truth.adsb.tar1090'},
+  'truth.adsb.aircraft_photo_provider': {type: 'string', optional: true,
+    choices: ['disabled', 'planespotters'], structuredControl: 'truth.adsb.tar1090'},
   'truth.adsb.delay_tolerance': {...numeric(0, 1000), optional: true},
   'truth.adsb.doppler_tolerance': {...numeric(0, 10000), optional: true},
+  'truth.remote_id.enabled': {type: 'boolean', optional: true},
+  'truth.remote_id.source': {type: 'string', optional: true},
+  'truth.remote_id.poll_interval': {...numeric(.1, 10), optional: true},
+  'truth.remote_id.source_timeout': {...numeric(.1, 10), optional: true},
+  'truth.remote_id.smoothing_window': {...integer(2, 64), optional: true},
+  'truth.remote_id.max_position_age': {...numeric(.1, 300), optional: true},
+  'truth.remote_id.wifi_enabled': {type: 'boolean', optional: true,
+    readOnly: 'Wi-Fi Remote ID is enabled automatically when a dedicated monitor-mode adapter is configured.'},
+  'save.retention.automatic_cleanup': {type: 'boolean', optional: true},
+  'save.retention.low_space_policy': {type: 'string',
+    choices: ['stop_recording', 'delete_oldest'], optional: true},
+  'save.retention.maximum_age_days': {...numeric(0, 3650), optional: true},
+  'save.retention.maximum_total_gb': {...numeric(0, 100000), optional: true},
+  'save.retention.minimum_free_gb': {...numeric(0, 10000), optional: true},
   'network.tracker_forward.enabled': {type: 'boolean', optional: true},
   'network.tracker_forward.host': {type: 'string', optional: true},
   'network.tracker_forward.port': {...integer(1, 65535), optional: true},
   'network.tracker_forward.annotate_adsb': {type: 'boolean', optional: true},
   'network.tracker_forward.unassisted.enabled': {type: 'boolean', optional: true},
   'network.tracker_forward.unassisted.host': {type: 'string', optional: true},
-  'network.tracker_forward.unassisted.port': {...integer(1, 65535), optional: true},
-  'truth.ais.port': {...integer(1, 65535), readOnly: 'AIS input is not implemented.'}
+  'network.tracker_forward.unassisted.port': {...integer(1, 65535), optional: true}
 };
 for (const group of ['ambiguity', 'clutter']) {
   for (const name of ['delayMin', 'delayMax', ...(group === 'ambiguity' ?
@@ -169,18 +191,18 @@ for (const name of ['capture.replay.state','capture.replay.loop',
   'capture.device.dabNotch','capture.device.rfNotch','process.clutter.enable',
   'process.clutter.followAmbiguity',
   'process.detection.enable','process.tracker.enable','truth.adsb.enabled',
-  'truth.ais.enabled','save.iq','save.map','save.detection','save.timing'])
+  'save.iq','save.map','save.detection','save.timing'])
   rules[name] = {type: 'boolean'};
 for (const name of ['capture.device.type','capture.device.heimdall.host',
   'capture.device.address','capture.device.subdev','capture.device.serial','capture.replay.file',
-  'network.ip','truth.adsb.tar1090','truth.ais.ip','save.path'])
+  'network.ip','truth.adsb.tar1090','save.path'])
   rules[name] = {type: 'string'};
 for (const name of ['capture.device.surveillance_channels','capture.device.serial',
   'capture.device.antenna','capture.device.gain','capture.device.gain_lna',
   'capture.device.gain_vga','capture.device.gainReduction',
   'capture.device.amp_enable','process.reference_synthesis.channels'])
   rules[name] = {type: 'array'};
-for (const name of ['truth.ais.enabled','truth.ais.ip','save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
+for (const name of ['save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
 rules['truth.adsb.tar1090'].sourceChoices = SOURCE_CHOICES;
 rules['capture.device.serial'] = {type: 'serial'};
 rules['capture.replay.provenance'] = {type: 'string',

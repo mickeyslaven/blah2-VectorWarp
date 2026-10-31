@@ -125,7 +125,10 @@ RecordingProvenance read_provenance(const std::string& path,
   }
   result.receiver=json_string(document,"receiver");
   result.backend=json_string(document,"backend");
-  if(result.receiver!=options.receiver) fail("Recording provenance receiver differs from Settings");
+  // Receiver provenance describes the radio that produced the samples. Replay
+  // never opens that radio, so the currently selected live receiver is not a
+  // compatibility constraint. Channel/rate/frequency checks below still guard
+  // the processing contract.
   const auto required_uint=[&](const char* name,uint32_t expected) {
     if(!document.HasMember(name) || !document[name].IsUint() || document[name].GetUint()!=expected)
       fail(std::string("Recording provenance ")+name+" differs from the recording header");
@@ -211,6 +214,43 @@ RecordingProvenance read_provenance(const std::string& path,
       "Replay provenance is valid but RF time is not exact and bounded";
   return result;
 }
+void read_native_mchq_sidecar(const std::string& path,
+    const RecordingMetadata& metadata,uint64_t fileSize,
+    RecordingProvenance& result) {
+  const std::filesystem::path sidecar(path+".json");
+  if(!std::filesystem::exists(sidecar))return;
+  std::error_code sizeError;
+  const auto size=std::filesystem::file_size(sidecar,sizeError);
+  if(sizeError||!size||size>1048576)fail("Kraken clip sidecar is empty or too large");
+  std::ifstream input(sidecar,std::ios::binary);
+  const std::string json(std::istreambuf_iterator<char>(input),{});
+  if(input.bad())fail("Cannot read Kraken clip sidecar");
+  rapidjson::Document document;document.Parse(json.c_str());
+  const auto unsigned_value=[&](const char* name)->uint64_t{
+    if(!document.HasMember(name)||!document[name].IsUint64())
+      fail(std::string("Kraken clip sidecar has invalid ")+name);
+    return document[name].GetUint64();
+  };
+  if(document.HasParseError()||!document.IsObject()||
+      !document.HasMember("schema")||!document["schema"].IsString()||
+      std::string(document["schema"].GetString(),document["schema"].GetStringLength())!=
+        "vectorwarp-kraken-iq-clip-v1"||
+      !document.HasMember("format")||!document["format"].IsString()||
+      std::string(document["format"].GetString(),document["format"].GetStringLength())!="mchq"||
+      unsigned_value("channels")!=metadata.channels||
+      unsigned_value("sampleRate")!=metadata.sampleRate||
+      unsigned_value("frequency")!=metadata.frequency||
+      unsigned_value("samplesPerChannel")!=metadata.samples||
+      unsigned_value("dataBytes")!=fileSize)
+    fail("Kraken clip sidecar differs from recording metadata");
+  const uint64_t first=unsigned_value("firstEpochSample");
+  const uint64_t end=unsigned_value("endEpochSample");
+  if(end<=first||end-first!=metadata.samples)
+    fail("Kraken clip sidecar sample interval differs from recording");
+  result.epoch=unsigned_value("epoch");
+  result.sourceFirstSample=first;
+  result.sourceSampleAvailable=true;
+}
 }
 
 struct RecordingWriter::Impl {
@@ -257,13 +297,17 @@ void RecordingWriter::close() {
 }
 
 struct RecordingReader::Impl {
+  struct Segment { uint64_t offset=0, sample=0; uint32_t count=0; };
   File file;
   ReplayOptions options;
   RecordingMetadata metadata;
   RecordingProvenance provenance;
   uint64_t fileSize=0,start=0,position=0;
   uint32_t legacySize=0;
+  uint32_t skipSamples=0;
+  std::vector<Segment> segments;
   HeimdallFrame::Header firstMchq{};
+  bool allMchqFramesTimed=false;
   Impl(const std::string& path,ReplayOptions o):file(path),options(std::move(o)) {
     fileSize=file.size(); if(fileSize<8) fail("Replay file is empty or too short");
     std::array<uint8_t,8> prefix{}; file.read(prefix.data(),prefix.size()); file.seek(0);
@@ -286,21 +330,33 @@ struct RecordingReader::Impl {
       if(u64(h.data()+48)!=1) fail("Recording was not finished cleanly; choose a completed recording");
       const uint64_t expected=u64(h.data()+40); start=64;
       while(file.position()<fileSize) {
+        const auto offset=file.position();
         std::array<uint8_t,16> b{}; file.read(b.data(),b.size()); const auto n=u32(b.data());
         if(!n || n>maxBlock || u32(b.data()+4) || u64(b.data()+8)!=metadata.samples)
           fail("Recording block sequence is invalid");
+        segments.push_back({offset,metadata.samples,n});
         skip(uint64_t(n)*metadata.channels*8); metadata.samples+=n;
       }
       if(expected!=metadata.samples) fail("Recording sample count does not match its header");
     } else if(format=="mchq") {
       metadata.sampleRate=2400000;
+      bool firstFrame=true;
+      HeimdallFrame::Header previous{};
+      allMchqFramesTimed=true;
       while(file.position()<fileSize) {
+        const auto offset=file.position();
         auto h=mchqHeader();
         if(!metadata.samples) {
           firstMchq=h; metadata.channels=h.numChannels;
           metadata.frequency=static_cast<uint32_t>(std::llround(h.frequencies[0]));
         }
-        checkMchq(h); skip(HeimdallFrame::payload_size(h)); metadata.samples+=h.samplesPerChannel;
+        if(!h.timing.available) allMchqFramesTimed=false;
+        if(!firstFrame && previous.timing.available && h.timing.available &&
+            !HeimdallFrame::timing_contiguous(previous,h))
+          fail("Kraken recording timing is discontinuous");
+        previous=h; firstFrame=false;
+        checkMchq(h); segments.push_back({offset,metadata.samples,h.samplesPerChannel});
+        skip(HeimdallFrame::payload_size(h)); metadata.samples+=h.samplesPerChannel;
       }
     } else if(format=="s16-interleaved" || format=="s8-interleaved" || format=="usrp-blocks") {
       if(options.channels!=2) fail("Legacy raw recordings require two channels");
@@ -318,8 +374,19 @@ struct RecordingReader::Impl {
     const uint64_t delta=metadata.frequency>options.frequency ? metadata.frequency-options.frequency : options.frequency-metadata.frequency;
     if(delta>(format=="mchq" ? 256U : 0U)) fail("Recording frequency differs from Settings");
     provenance=read_provenance(path,options,metadata);
-    if(format=="mchq")provenance.perChannelGainDb.assign(
-      firstMchq.gains.begin(),firstMchq.gains.end());
+    if(format=="mchq") {
+      provenance.perChannelGainDb.assign(firstMchq.gains.begin(),firstMchq.gains.end());
+      read_native_mchq_sidecar(path,metadata,fileSize,provenance);
+      // Native MCHT clips retain their original coherent sample epoch in every
+      // frame. This is relative sample provenance, not exact UTC and not a v2
+      // decision-grade recording contract. Preserve it so offline replay can
+      // join processor output to the separately authenticated clip sidecar.
+      if(allMchqFramesTimed && firstMchq.timing.available) {
+        provenance.epoch=firstMchq.timing.epoch;
+        provenance.sourceFirstSample=firstMchq.timing.firstSample;
+        provenance.sourceSampleAvailable=true;
+      }
+    }
     if(options.provenanceMode!="legacy-unqualified" && options.provenanceMode!="decision-grade")
       fail("Replay provenance mode must be legacy-unqualified or decision-grade");
     if(options.provenanceMode=="decision-grade" && !provenance.decisionGrade)
@@ -347,12 +414,36 @@ RecordingReader::RecordingReader(const std::string& path,ReplayOptions o):impl_(
 RecordingReader::~RecordingReader()=default;
 const RecordingMetadata& RecordingReader::metadata() const { return impl_->metadata; }
 const RecordingProvenance& RecordingReader::provenance() const { return impl_->provenance; }
-void RecordingReader::rewind() { impl_->file.seek(impl_->start); impl_->position=0; }
+void RecordingReader::rewind() { impl_->file.seek(impl_->start); impl_->position=0; impl_->skipSamples=0; }
+void RecordingReader::seek(uint64_t sample) {
+  auto& s=*impl_;
+  if(sample>s.metadata.samples) fail("Replay seek exceeds recording length");
+  s.skipSamples=0;
+  if(sample==s.metadata.samples){s.file.seek(s.fileSize);s.position=sample;return;}
+  if(s.metadata.format=="s16-interleaved"||s.metadata.format=="s8-interleaved") {
+    s.file.seek(sample*s.legacySize);s.position=sample;return;
+  }
+  if(s.metadata.format=="usrp-blocks") {
+    const uint64_t first=(sample/s.options.legacyBlockSamples)*s.options.legacyBlockSamples;
+    s.file.seek(first*s.legacySize);s.position=first;
+    s.skipSamples=uint32_t(sample-first);return;
+  }
+  auto it=std::upper_bound(s.segments.begin(),s.segments.end(),sample,
+    [](uint64_t value,const Impl::Segment& segment){return value<segment.sample;});
+  if(it!=s.segments.begin())--it;
+  if(it==s.segments.end()||sample<it->sample||sample>=it->sample+it->count)
+    fail("Replay seek index is invalid");
+  s.file.seek(it->offset);s.position=it->sample;s.skipSamples=uint32_t(sample-it->sample);
+}
 bool RecordingReader::read(IqBlock& block) {
   auto& s=*impl_; if(s.position==s.metadata.samples) { block.clear(); return false; }
   uint32_t count=0;
   if(s.metadata.format=="mchq") {
     auto h=s.mchqHeader(); s.checkMchq(h); count=h.samplesPerChannel;
+    if(s.provenance.sourceSampleAvailable && h.timing.available &&
+        (h.timing.epoch!=s.provenance.epoch ||
+         h.timing.firstSample!=s.provenance.sourceFirstSample+s.position))
+      fail("Kraken replay sample provenance changed during playback");
     std::vector<uint8_t> payload(HeimdallFrame::payload_size(h)); s.file.read(payload.data(),payload.size());
     block=HeimdallFrame::decode_payload(h,payload);
   } else {
@@ -378,6 +469,12 @@ bool RecordingReader::read(IqBlock& block) {
     }
   }
   if(count>s.metadata.samples-s.position) fail("Recording length changed during playback");
-  finite(block); s.position+=count; return true;
+  finite(block); s.position+=count;
+  if(s.skipSamples) {
+    const uint32_t discard=std::min(s.skipSamples,count);s.skipSamples-=discard;
+    for(auto& channel:block)channel.erase(channel.begin(),channel.begin()+discard);
+    if(block.front().empty())return read(block);
+  }
+  return true;
 }
 }

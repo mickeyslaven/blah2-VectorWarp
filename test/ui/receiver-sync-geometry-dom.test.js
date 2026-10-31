@@ -44,7 +44,7 @@ window.fetch = async (url, options = {}) => {
   } else throw new Error(`Unexpected fixture URL ${url}`);
   return {ok: status === 200, status, headers: {get: () => `"${revision}"`}, json: async () => clone(body)};
 };
-for (const file of ['kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
+for (const file of ['config_profiles.js', 'kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
 const query = key => window.document.querySelector(`[data-path="${key}"] input, [data-path="${key}"] select`);
 const mapping = () => query('capture.device.array_geometry.mapping_confirmed');
 const message = () => window.document.getElementById('config-message').textContent;

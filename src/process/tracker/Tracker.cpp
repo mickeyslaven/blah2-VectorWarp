@@ -6,17 +6,21 @@
 
 // constructor
 Tracker::Tracker(uint32_t _m, uint32_t _n, uint32_t _nDelete, 
-  double _cpi, double _maxAccInit, double _rangeRes, double _lambda)
+  double _cpi, double _maxAccInit, double _rangeRes, double _lambda,
+  double _minInitiationSnr)
 {
   if (_m == 0 || _m > _n || _n > 255 || !std::isfinite(_cpi) || _cpi <= 0 ||
       !std::isfinite(_rangeRes) || _rangeRes <= 0 || !std::isfinite(_lambda) ||
-      _lambda <= 0 || !std::isfinite(_maxAccInit) || _maxAccInit < 0)
+      _lambda <= 0 || !std::isfinite(_maxAccInit) || _maxAccInit < 0 ||
+      !std::isfinite(_minInitiationSnr) || _minInitiationSnr < -100 ||
+      _minInitiationSnr > 100)
     throw std::invalid_argument("Invalid tracking window, frame timing or radar geometry");
   m = _m;
   n = _n;
   nDelete = _nDelete;
   cpi = _cpi;
   maxAccInit = _maxAccInit;
+  minInitiationSnr = _minInitiationSnr;
   timestamp = 0;
   rangeRes = _rangeRes;
   lambda = _lambda;
@@ -164,7 +168,7 @@ void Tracker::initiate(Detection *detection)
   for (size_t i = 0; i < detection->get_nDetections(); i++)
   {
     // skip if detection used in update
-    if (doNotInitiate.at(i))
+    if (doNotInitiate.at(i) || snr[i] < minInitiationSnr)
     {
       continue;
     }

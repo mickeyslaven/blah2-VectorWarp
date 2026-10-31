@@ -24,6 +24,9 @@ fs.renameSync = function(from, to) { const result = rename.call(fs, from, to); r
 fs.fsyncSync = function(fd) { if (renamedConfig && fs.fstatSync(fd).isDirectory() && fs.existsSync(${JSON.stringify(fsyncMarker)}))
   throw new Error('simulated directory fsync failure after rename'); return original.call(fs, fd); };`);
 const config = yaml.load(fs.readFileSync(path.join(root, 'config/config-kraken.yml'), 'utf8'));
+// This receiver-sync fixture exercises pending persistence and an offline Suite,
+// not the installed Linux automatic-gain helper transaction.
+config.capture.device.heimdall.gain_control = 'fixed';
 let child, dom, base, stderr = '', connections = 0, bytes = 0;
 const sockets = new Set(), reservations = [];
 const receiver = net.createServer(socket => {
@@ -68,6 +71,7 @@ async function browser() {
   dom = new JSDOM('<div id="configuration"></div>', {url: `${base}/display/configuration/`, runScripts: 'outside-only'});
   const window = dom.window;
   window.liveApiUrl = value => value; window.rememberApiPort = () => {};
+  window.localStorage.setItem('vectorwarp-settings-mode', 'advanced');
   window.fetch = async (url, options = {}) => {
     // The separate periodic status display is read-only and is not this save
     // transaction. Keep it offline so receiver connection counts are exact.
@@ -76,7 +80,7 @@ async function browser() {
     return request(url, options);
   };
   window.fetchStatusResource = (url, options) => window.fetch(url, options);
-  for (const file of ['html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
+  for (const file of ['html/js/config_profiles.js', 'html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
   await window.renderConfiguration();
   return window;
 }

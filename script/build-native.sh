@@ -273,9 +273,14 @@ run mkdir -p "$ARTIFACT_TMP/config-examples"
 # profiles are supplied by the API and selected explicitly in Settings.
 run install -m 0644 "$SOURCE_DIR/config/config.yml" "$ARTIFACT_TMP/config-examples/config.yml"
 run cp -a "$SOURCE_DIR/docs" "$ARTIFACT_TMP/docs"
-run rm -f "$ARTIFACT_TMP/docs/GPU_ACCELERATION_WORK.md" \
-  "$ARTIFACT_TMP/docs/UI_CONFIG_REVIEW.md" \
-  "$ARTIFACT_TMP/docs/REAL_IQ_BENCHMARK_PLAN.md"
+# Reports ship with compact, reviewable benchmark summaries. Raw per-run logs,
+# frame dumps and machine-local receipts belong in CI/release artifacts, not an
+# installed VectorWarp runtime package.
+run find "$ARTIFACT_TMP/docs/benchmarks" -type f \( \
+  -name '*.log' -o -name '*.jsonl' -o -name '*.frames.csv' -o \
+  -name '*.command.json' -o -name '*.geometry.json' -o \
+  -name '*.profile.json' -o -name '*.summary.json' -o \
+  -name '*-per-cpi.csv' -o -name 'per-cpi.csv' \) -delete
 run cp -a "$SOURCE_DIR/contrib/systemd" "$ARTIFACT_TMP/systemd"
 run mkdir -p "$ARTIFACT_TMP/licenses"
 if $DRY_RUN; then

@@ -38,7 +38,6 @@ async function save(headers, suffix = '?restart=true') {
     port = config.network.ports.api;
     origin = `http://127.0.0.1:${port}`;
     fs.writeFileSync(filename, yaml.dump(config));
-    original = fs.readFileSync(filename);
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {
       env: {...process.env, BLAH2_RECEIVER_TYPES: 'RspDuo,Kraken',
         BLAH2_CONFIG_RESTART_COMMAND: JSON.stringify([process.execPath, '-e',
@@ -50,6 +49,8 @@ async function save(headers, suffix = '?restart=true') {
       await delay(50);
     }
     assert.ok(ready, `API did not become ready: ${errors}`); revision = ready.configRevision;
+    // Compare rejected writes with the settled post-migration document.
+    original = fs.readFileSync(filename);
     for (const [headers, expected] of [[{}, 403], [{'X-VectorWarp-Receiver-Sync': 'synchronize-v1'}, 403],
       [{Origin: origin}, 403], [{Origin: origin, 'X-VectorWarp-Receiver-Sync': 'wrong',
         'X-VectorWarp-Intent': 'config-write-v1'}, 428],

@@ -10,14 +10,15 @@ const {configurationForReceiver} = require('../../api/config-store');
 const clone = value => JSON.parse(JSON.stringify(value));
 let saved = configurationForReceiver('RspDuo');
 let writes = 0;
-saved.location.rx.latitude = 40.4420304;
-saved.location.rx.longitude = -80.0566972;
-saved.truth.adsb.tar1090 = 'http://pi-zero.local/tar1090';
+saved.location.rx.latitude = 40;
+saved.location.rx.longitude = -80;
+saved.truth.adsb.tar1090 = 'http://adsb-primary.example.invalid/tar1090';
 saved.truth.adsb.sources = [
-  'http://pi-zero.local/tar1090',
-  'http://strix.local:8080',
-  'exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60'
+  'http://adsb-primary.example.invalid/tar1090',
+  'http://adsb-secondary.example.invalid/tar1090',
+  'exchange:https://opendata.adsb.fi/api/v3/lat/40/lon/-80/dist/60'
 ];
+saved.truth.adsb.aircraft_photo_provider = 'disabled';
 let candidate = null;
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
@@ -51,6 +52,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: true, status: 200, headers: {get: key => key === 'ETag' ? '"adsb-test"' : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
 
 (async () => {
@@ -64,11 +66,17 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     assert.equal(field.querySelector('label').textContent, 'ADS-B sources');
     const locals = field.querySelectorAll('[data-adsb-source="local"]');
     assert.deepEqual([...locals].map(input => input.value),
-      ['http://pi-zero.local/tar1090', 'http://strix.local:8080']);
+      ['http://adsb-primary.example.invalid/tar1090',
+        'http://adsb-secondary.example.invalid/tar1090']);
     assert.equal(field.querySelector('[data-adsb-exchange="adsb-fi"]').checked, true);
     assert.equal(field.querySelector('[data-adsb-exchange="adsb-lol"]').checked, false);
-    assert.match(field.textContent, /newest healthy observation wins/i);
-    assert.match(field.textContent, /not averaged/i);
+    assert.match(field.textContent, /newest healthy position wins/i);
+    assert.match(field.textContent, /Stock readsb 1 s JSON is too slow for CPI pass scoring/i);
+    assert.match(field.textContent, /--write-json-every 0\.25/i);
+    assert.match(field.textContent, /Public exchange/i);
+    const photoProvider = field.querySelector('[data-adsb-photo-provider]');
+    assert.equal(photoProvider.value, 'disabled');
+    assert.match(field.textContent, /loaded only after a map selection/i);
 
     field.querySelector('.adsb-source-add').click();
     const updatedLocals = field.querySelectorAll('[data-adsb-source="local"]');
@@ -78,16 +86,20 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     const lol = field.querySelector('[data-adsb-exchange="adsb-lol"]');
     lol.checked = true;
     lol.dispatchEvent(new window.Event('change', {bubbles: true}));
+    photoProvider.value = 'planespotters';
+    photoProvider.dispatchEvent(new window.Event('change', {bubbles: true}));
     const valid = await window.validateActiveConfiguration();
     assert.equal(valid, true, JSON.stringify(validateConfig(candidate, saved)));
     assert.deepEqual(candidate.truth.adsb.sources, [
-      'http://pi-zero.local/tar1090',
-      'http://strix.local:8080',
+      'http://adsb-primary.example.invalid/tar1090',
+      'http://adsb-secondary.example.invalid/tar1090',
       'http://backup.local/tar1090',
-      'exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60',
-      'exchange:https://api.adsb.lol/v2/point/40.4420304/-80.0566972/60'
+      'exchange:https://opendata.adsb.fi/api/v3/lat/40/lon/-80/dist/60',
+      'exchange:https://api.adsb.lol/v2/point/40/-80/60'
     ]);
-    assert.equal(candidate.truth.adsb.tar1090, 'http://pi-zero.local/tar1090');
+    assert.equal(candidate.truth.adsb.tar1090,
+      'http://adsb-primary.example.invalid/tar1090');
+    assert.equal(candidate.truth.adsb.aircraft_photo_provider, 'planespotters');
     const expectedSources = clone(candidate.truth.adsb.sources);
     await window.saveConfiguration();
     assert.equal(writes, 1, 'Structured local inputs and exchange switches save successfully');

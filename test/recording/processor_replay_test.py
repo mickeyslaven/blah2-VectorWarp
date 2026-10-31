@@ -193,14 +193,14 @@ def config(receiver, channels, recording, api_port, sink_ports, loop=False, mism
                       gain_vga=[0, 0], amp_enable=[False, False])
     process = {
         "performance": {"surveillance_workers": 1, "fft_threads": 1, "acceleration": "cpu"},
-        "data": {"cpi": .02, "buffer": 2, "overlap": 0},
+        "data": {"cpi": .02, "buffer": 2},
         # ±1000 Hz produces a legal FFT geometry for the legacy CPU path.
         "ambiguity": {"delayMin": -4, "delayMax": 59, "dopplerMin": -1000, "dopplerMax": 1000},
         # Isolate replay ingress from clutter rank behaviour in this harness.
         "clutter": {"enable": False, "delayMin": -4, "delayMax": 59},
         "detection": {"enable": True, "pfa": .01, "nGuard": 2, "nTrain": 6,
                       "minDelay": 1, "minDoppler": 1, "nCentroid": 1},
-        "tracker": {"enable": False, "initiate": {"M": 1, "N": 1, "maxAcc": 1}, "delete": 1, "smooth": "none"},
+        "tracker": {"enable": False, "initiate": {"M": 1, "N": 1, "maxAcc": 1}, "delete": 1},
     }
     if receiver == "Kraken":
         process["reference_synthesis"] = {"mode": "dedicated", "channels": [0]}
@@ -318,9 +318,10 @@ def assert_processor_outputs(sinks, receiver):
             raise AssertionError(f"{receiver} legacy replay {output_name} lacks an uncertainty reason")
         if receiver == "Usrp" and provenance.get("deviceTimeAvailable") is not False:
             raise AssertionError("Legacy USRP replay must not invent UHD device time")
-    timestamp = bytes(sinks.payloads["timestamp"]).strip()
-    if not timestamp or not timestamp.isdigit():
-        raise AssertionError("timestamp output is not numeric")
+    timestamp_frame = first_json(sinks.payloads["timestamp"], "timestamp")
+    timestamp = timestamp_frame.get("timestamp") if isinstance(timestamp_frame, dict) else None
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
+        raise AssertionError("timestamp output has no non-negative integer timestamp")
 
 
 def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, cpi=.02, clutter=False):

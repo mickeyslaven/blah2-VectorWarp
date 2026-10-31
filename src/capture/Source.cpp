@@ -64,6 +64,23 @@ Source::Source(std::string _type, uint32_t _fc, uint32_t _fs,
   recordingChannels = channels;
 }
 
+void Source::configure_portable_clips(double preSeconds,
+    double maximumClipSeconds) {
+  blah2::PortableClipRecorder::Options options;
+  options.ringSeconds = preSeconds;
+  options.maximumClipSeconds = maximumClipSeconds;
+  portableClipRecorder = std::make_unique<blah2::PortableClipRecorder>(path,
+    type, recordingChannels, fs, fc, std::move(options));
+}
+
+void Source::request_clip(const blah2::IqClipRequest& request) {
+  if (portableClipRecorder) portableClipRecorder->request(request);
+}
+
+blah2::IqClipStatus Source::clip_status() const {
+  return portableClipRecorder ? portableClipRecorder->status() : blah2::IqClipStatus{};
+}
+
 void Source::process(const std::vector<IqData *>& buffers)
 {
   if (buffers.size() != 2)
@@ -267,11 +284,16 @@ Source::RecordingStatus Source::recording_status() const {
 }
 
 void Source::recording_discontinuity(const std::string& error) {
+  processingEpoch.fetch_add(1, std::memory_order_acq_rel);
+  if (portableClipRecorder) portableClipRecorder->discontinuity(error);
   std::lock_guard<std::mutex> lock(recordingMutex);
   if (recordingWriter) recording_failed(error);
 }
 
-void Source::recording_epoch_discontinuity(const std::string& error) {
+void Source::recording_epoch_discontinuity(const std::string& error,
+    bool advanceProcessingEpoch) {
+  if (advanceProcessingEpoch) advance_processing_epoch();
+  if (portableClipRecorder) portableClipRecorder->discontinuity(error);
   std::lock_guard<std::mutex> lock(recordingMutex);
   if (!recordingWriter || !recordingActive) return;
   recording_failed(error);
@@ -303,6 +325,7 @@ void Source::flush_recording_locked() {
 
 void Source::record_block(const blah2::IqBlock& samples) {
   if (!recording_wants_samples()) return;
+  if (portableClipRecorder) portableClipRecorder->ingest(samples);
   std::lock_guard<std::mutex> lock(recordingMutex);
   record_block_locked(samples, nullptr);
 }
@@ -310,6 +333,8 @@ void Source::record_block(const blah2::IqBlock& samples) {
 void Source::record_block(const blah2::IqBlock& samples,
     const SampleTimePosition& startPosition) {
   if (!recording_wants_samples()) return;
+  if (portableClipRecorder) portableClipRecorder->ingest(samples,
+    startPosition.epoch, startPosition.nextSample, startPosition.available);
   std::lock_guard<std::mutex> lock(recordingMutex);
   record_block_locked(samples, &startPosition);
 }

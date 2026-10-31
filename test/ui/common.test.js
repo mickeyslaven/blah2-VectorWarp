@@ -6,22 +6,25 @@ const vm = require('vm');
 function page(origin, apiOrigin = origin) {
   const calls = [];
   const storage = new Map();
+  const session = new Map();
   const labels = {'live-status': {innerHTML: ''}, 'adsb-status': {innerHTML: '', hidden: true},
     'processor-alert': {textContent: '', hidden: true},
     'receiver-device-alert': {textContent: '', hidden: true}};
   const state = {radar: 'receiving', adsbEnabled: false, errors: [], restart: {state: 'idle'},
     adsb: {online: true}, receivers: {setupRequired: false, receivers: []},
-    failWrite: false, stallBody: false};
+    failWrite: false, failStatus: false, stallBody: false};
   const context = vm.createContext({
     URL, URLSearchParams, AbortController,
-    document: {getElementById: id => labels[id] || null, querySelectorAll: () => []},
-    window: {location: new URL(origin), setTimeout, clearTimeout,
-      localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)}},
+    document: {hidden: false, getElementById: id => labels[id] || null, querySelectorAll: () => []},
+    window: {location: new URL(origin), innerWidth: 1280, setTimeout, clearTimeout,
+      localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)},
+      sessionStorage: {getItem: key => session.get(key), setItem: (key, value) => session.set(key, value)}},
     fetch: async (url, options = {}) => {
       const target = new URL(url, origin);
       calls.push({url: target.href, method: options.method || 'GET', headers: options.headers || {}});
       if (target.origin !== apiOrigin) return {ok: true, status: 200, text: async () => '<html>Static web server</html>'};
       if (options.method === 'PUT' && state.failWrite) throw new Error('Response lost');
+      if (target.pathname === '/api/system/status' && state.failStatus) throw new Error('Status delayed');
       const status = {serverId: 'test-api', ...state};
       const data = target.pathname === '/api/system/status' ? status :
         target.pathname === '/api/adsb/status' ? state.adsb :
@@ -46,8 +49,8 @@ function page(origin, apiOrigin = origin) {
     const {context, calls} = page(origin, apiOrigin);
     await context.fetchStatusResource(context.liveApiUrl('/api/config'));
     assert.equal(calls.at(-1).url, apiOrigin + '/api/config');
-    await context.fetchStatusResource(context.liveApiUrl('/capture/status'));
-    assert.equal(calls.at(-1).url, apiOrigin + '/capture/status');
+    await context.fetchStatusResource(context.liveApiUrl('/capture/status?summary=1'));
+    assert.equal(calls.at(-1).url, apiOrigin + '/capture/status?summary=1');
     assert.ok(calls.every(call => !call.url.includes('/adsb2dd/')));
   }
   const explicit = page('http://radar.local:49152', 'http://radar.local:3456');
@@ -60,11 +63,32 @@ function page(origin, apiOrigin = origin) {
   assert.equal(toggle.headers['X-VectorWarp-Intent'], 'recording-toggle-v1');
 
   const test = page('http://radar.local:9876');
+  const stableStatus = {writes: 0, _html: '', set innerHTML(value) {
+    this.writes++; this._html = value;
+  }, get innerHTML() { return this._html; }};
+  test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'ONLINE', true);
+  test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'ONLINE', true);
+  assert.equal(stableStatus.writes, 1,
+    'An unchanged status poll must preserve the existing header DOM');
+  test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'STALE', false);
+  assert.equal(stableStatus.writes, 2, 'A real status transition updates the label once');
+  const commonSource = fs.readFileSync(require.resolve('../../html/js/common.js'), 'utf8');
+  assert.doesNotMatch(commonSource, /setInterval\(refreshReceiverDevices/,
+    'Shared radar/display headers must never schedule receiver host probes');
+  assert.doesNotMatch(commonSource, /\n\s*refreshReceiverDevices\(\);\n/,
+    'Shared radar/display headers must never launch receiver host probes on page load');
   for (const [radar, expected] of [['receiving', 'ONLINE'], ['stale', 'STALE'], ['no-data', 'OFFLINE']]) {
     test.state.radar = radar;
     await test.context.refreshLiveStatus();
     assert.ok(test.labels['live-status'].innerHTML.endsWith('RADAR ' + expected));
   }
+  test.state.radar = 'receiving';
+  await test.context.refreshLiveStatus();
+  test.state.failStatus = true;
+  await test.context.refreshLiveStatus();
+  assert.ok(test.labels['live-status'].innerHTML.endsWith('RADAR ONLINE'),
+    'A delayed status request preserves the last confirmed state instead of flashing offline');
+  test.state.failStatus = false;
   test.state.errors = ['Map port unavailable'];
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['live-status'].innerHTML.endsWith('RADAR ERROR'));
@@ -100,6 +124,7 @@ function page(origin, apiOrigin = origin) {
   assert.equal(test.calls.filter(call => call.url.endsWith('/api/adsb/status')).length, adsbCallsBeforeReplay,
     'Replay must not request a live ADS-B status');
   test.state.processor = {input: 'live', state: 'live', error: ''};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.equal(test.labels['adsb-status'].hidden, false);
   test.state.processorFresh = false;
@@ -107,13 +132,16 @@ function page(origin, apiOrigin = origin) {
   assert.equal(test.labels['adsb-status'].hidden, false);
   test.state.adsbEnabled = true;
   test.state.adsb = {online: false, aircraft: {available: true}, delayDoppler: {available: false, message: 'Converter unavailable'}};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['adsb-status'].innerHTML.endsWith('ADS-B PARTIAL'));
   assert.equal(test.labels['adsb-status'].title, 'Converter unavailable');
   test.state.adsb = {online: false};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['adsb-status'].innerHTML.endsWith('ADS-B OFFLINE'));
   test.state.adsb = {online: true};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['adsb-status'].innerHTML.endsWith('ADS-B ONLINE'));
   assert.ok(!test.calls.some(call => call.url.endsWith('/api/timestamp')), 'Status must not treat an old timestamp as online');
@@ -135,16 +163,120 @@ function page(origin, apiOrigin = origin) {
   test.state.failWrite = true;
   await assert.rejects(test.context.fetchStatusResource('/api/config', {method: 'PUT'}), /Response lost/);
   assert.equal(test.calls.filter(call => call.method === 'PUT').length, 1, 'Never automatically retry a write');
+  await test.context.fetchStatusResource('/api/config');
   test.state.stallBody = true;
+  const discoveryCallsBeforeTimeout = test.calls.filter(call =>
+    call.url.includes('/api/system/status')).length;
   await assert.rejects(test.context.fetchStatusResource('/api/config', {}, 20), /timed out/);
+  test.state.stallBody = false;
+  await test.context.fetchStatusResource('/api/config');
+  assert.equal(test.calls.filter(call => call.url.includes('/api/system/status')).length,
+    discoveryCallsBeforeTimeout,
+    'A transient body timeout must not trigger an API endpoint rediscovery storm');
   assert.equal(test.context.recordingDuration(3723000), '01:02:03');
+  const hover = test.context.aircraftHoverText({flight: 'TEST1', r: 'N123', t: 'C172',
+    hex: 'abc123', alt_baro: 5200, gs: 101, track: 87, seen_pos: .4},
+  {delay: 12.34, doppler: -56.7});
+  assert.match(hover, /TEST1/);
+  assert.match(hover, /12\.34 km/);
+  assert.doesNotMatch(hover, /%\{/,
+    'Radar aircraft hover text must contain values, never unresolved Plotly expressions');
+  const nestedHover = test.context.aircraftHoverText({flight: 'NESTED', hex: 'abc123', position: {
+    altitude_geom_ft: 12000, ground_speed_kt: 210, track_deg_true: 87,
+    baro_rate_fpm: 512, category: 'A1', squawk: '1200', rssi_dbfs: -8.5, seen_pos_s: .2}});
+  assert.match(nestedHover, /12,000 ft/);
+  assert.match(nestedHover, /210 kt/);
+  const mlatHover = test.context.aircraftHoverText({flight: 'MLAT1', type: 'mlat',
+    position_source: 'MLAT', vectorwarp: {provider: 'api.adsb.lol'}, hex: 'def456',
+    alt_baro: 9000, gs: 120, track: 45, seen_pos: .8});
+  assert.match(mlatHover, /Position MLAT · api\.adsb\.lol/,
+    'MLAT provenance is explicit in radar hover text');
+  assert.equal(test.context.aircraftInfo({type: 'mlat'}).positionSource, 'MLAT');
+  assert.equal(test.context.aircraftScreenRotation(90, 0), 90,
+    'Eastbound aircraft points east on a north-up map');
+  assert.equal(test.context.aircraftScreenRotation(90, 45), 45,
+    'Aircraft orientation compensates for clockwise map rotation');
+  assert.equal(test.context.aircraftScreenRotation(350, 10), 340,
+    'Aircraft orientation wraps cleanly around true north');
+  assert.equal(test.context.aircraftScreenRotation(null, 10), null,
+    'Unknown course remains unknown');
+  assert.ok(test.context.aircraftFlightPathAngle(1500, 180) > 0,
+    'a climb produces a nose-up flight-path angle');
+  assert.ok(test.context.aircraftFlightPathAngle(-1500, 180) < 0,
+    'a descent produces a nose-down flight-path angle');
+  assert.equal(test.context.aircraftFlightPathAngle(10000, 0), 20,
+    'near-vertical movement remains bounded for a legible marker');
+  assert.equal(test.context.aircraftFlightPathAngle(null, 180), 0,
+    'missing vertical rate keeps the marker level');
+  assert.equal(test.context.aircraftInfo({true_heading: 123}).heading, 123,
+    'True heading is a fallback when ground track is unavailable');
+  const rotorcraftIcon = test.context.aircraftSvgMarkup({category: 'A7'});
+  assert.match(rotorcraftIcon, /viewBox="0 0 100 100"/);
+  assert.match(rotorcraftIcon, /aircraft-3d-depth/,
+    'aircraft icons include a lightweight depth layer');
+  assert.match(rotorcraftIcon, /M10 8 90 70M90 8 10 70/,
+    'Rotorcraft markers must retain the selected Minimal X rotor silhouette');
+  assert.match(rotorcraftIcon, /v35h-6V59/,
+    'Rotorcraft markers must retain the selected single straight tail boom');
+  assert.equal(test.context.aircraftKind({t: 'GLID'}), 'glider');
+  assert.match(test.context.aircraftSvgMarkup({t: 'GLID'}), /viewBox="0 0 100 100"/,
+    'Gliders must use the distinct long-wing planform');
+  assert.match(test.context.aircraftSvgMarkup({category: 'B6'}), /M29 83h42/,
+    'Fixed-wing UAVs must retain the visible rear pusher propeller');
+  assert.match(test.context.siteSvgMarkup('receiver'), /site-3d-mast/,
+    'the receiver uses a distinct 3D array/mast model');
+  assert.match(test.context.siteSvgMarkup('transmitter'), /M32 8 49 62/,
+    'the illuminator uses a distinct 3D broadcast-tower model');
+  assert.equal(test.context.aircraftAltitudeColor({alt_baro: 'ground'}), '#8f9994');
+  assert.equal(test.context.aircraftAltitudeColor({}), '#a7b0ac');
+  assert.equal(test.context.aircraftAltitudeColor({altitude: 10000}),
+    test.context.aircraftAltitudeColor({alt_baro: 10000}),
+    'normalized history altitude uses the same palette as live ADS-B rows');
+  assert.notEqual(test.context.aircraftAltitudeColor({alt_baro: 1000}),
+    test.context.aircraftAltitudeColor({alt_baro: 30000}));
+  const snapshot = test.context.stabilizeAircraftSnapshots([{hex: 'abc123', flight: 'TEST',
+    lat: 40, lon: -80, r: 'N123'}], {scope: 'test', now: 1000, graceMs: 10000});
+  const held = test.context.stabilizeAircraftSnapshots([], {scope: 'test', now: 2000, graceMs: 10000});
+  const refreshed = test.context.stabilizeAircraftSnapshots([{hex: 'abc123', lat: 40.01, lon: -80}],
+    {scope: 'test', now: 3000, graceMs: 10000});
+  assert.equal(snapshot.length, 1);
+  assert.equal(held[0]._snapshot_stale, true);
+  assert.equal(refreshed[0].r, 'N123', 'Metadata survives sparse position updates');
+  const histories = new Map();
+  test.context.updateAircraftTrackHistories(histories, [
+    {hex: 'abc123', lat: 40, lon: -80, alt_baro: 10000}
+  ], {now: 1000, maxAgeMs: 10000, maxPoints: 3});
+  test.context.updateAircraftTrackHistories(histories, [
+    {hex: 'abc123', lat: 40, lon: -80, alt_baro: 10000},
+    {hex: 'def456', lat: 41, lon: -81, alt_baro: 5000}
+  ], {now: 2000, maxAgeMs: 10000, maxPoints: 3});
+  test.context.updateAircraftTrackHistories(histories, [
+    {hex: 'abc123', lat: 40.01, lon: -80.01, alt_baro: 10500}
+  ], {now: 3000, maxAgeMs: 10000, maxPoints: 3});
+  assert.equal(histories.get('ABC123').length, 2,
+    'Aircraft trails append moved positions without duplicating unchanged CPIs');
+  const radarRows = [
+    {hex: 'aaa111', radar_track_id: 4, radar_track_state: 'ASSOCIATED', seen_pos: .1},
+    {hex: 'bbb222', radar_track_id: 5, radar_track_state: 'ACTIVE', seen_pos: .3}
+  ];
+  assert.equal(test.context.selectRadarAssociatedAircraft(null, radarRows, true), 'BBB222',
+    'Auto-select prefers an active radar association');
+  assert.equal(test.context.selectRadarAssociatedAircraft('AAA111', radarRows, true), 'AAA111',
+    'Auto-select holds the current associated aircraft instead of jumping every CPI');
+  assert.equal(test.context.selectRadarAssociatedAircraft('MANUAL', radarRows, false), 'MANUAL',
+    'Disabled auto-select preserves the manual selection');
   // ResizeObserver fires during Mapbox initialization, before the first plot
   // finishes. Relayout at that point throws asynchronously inside Mapbox.
   const mapTest = page('http://radar.local:9876');
   const raf = [], afterPlot = [];
   let styleLoaded = false, observedResize, relayoutCalls = 0, width = 800;
-  let finishResize;
-  const panel = {classList: {add() {}}, appendChild() {}};
+  let finishResize, fullscreenClick, fullscreenButton;
+  const panelClasses = new Set(), pageClasses = new Set();
+  const classList = set => ({
+    add: value => set.add(value), contains: value => set.has(value),
+    toggle: (value, active) => active ? set.add(value) : set.delete(value)
+  });
+  const panel = {classList: classList(panelClasses), appendChild() {}};
   const visual = {closest: () => panel, layout: {},
     _fullLayout: {mapbox: {_subplot: {map: {isStyleLoaded: () => styleLoaded}}}},
     getBoundingClientRect: () => ({width, height: 600}),
@@ -152,7 +284,11 @@ function page(origin, apiOrigin = origin) {
   Object.assign(mapTest.context.document, {
     getElementById: id => id === 'data' ? visual : null,
     querySelector: () => null,
-    createElement: () => ({addEventListener() {}}), addEventListener() {}
+    documentElement: {classList: classList(pageClasses)},
+    body: {classList: classList(pageClasses)},
+    createElement: () => (fullscreenButton = {setAttribute(name, value) { this[name] = value; }, addEventListener(event, callback) {
+      if (event === 'click') fullscreenClick = callback;
+    }}), addEventListener() {}
   });
   Object.assign(mapTest.context.window, {
     addEventListener() {}, requestAnimationFrame: callback => raf.push(callback),
@@ -163,6 +299,13 @@ function page(origin, apiOrigin = origin) {
     }}
   });
   mapTest.context.addFullscreenControl();
+  await fullscreenClick();
+  assert.ok(panelClasses.has('fullscreen-fallback'),
+    'Mobile browsers without the Fullscreen API need an in-page fullscreen fallback');
+  assert.equal(fullscreenButton.textContent, '×');
+  assert.equal(fullscreenButton['aria-label'], 'Exit fullscreen');
+  await fullscreenClick();
+  assert.ok(!panelClasses.has('fullscreen-fallback'));
   raf.shift()();
   assert.equal(relayoutCalls, 0);
   observedResize(); raf.shift()();

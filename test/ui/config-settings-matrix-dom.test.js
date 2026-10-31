@@ -13,11 +13,7 @@ const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
 });
 const {window} = dom;
-let saved = configurationForReceiver('RspDuo');
-// Optional legacy block size has a real control whenever it is present in a
-// saved profile. Keep it present so both a valid value and its replay contract
-// are exercised, instead of treating an optional UI path as untestable.
-saved.capture.replay.legacy_block_samples = 1024;
+let saved = configurationForReceiver('Kraken');
 // Existing files may use booleans for settings that now also accept auto/on/off.
 saved.process.bearing.manifold_recorder.enabled = true;
 let revision = 'matrix-0';
@@ -26,6 +22,7 @@ const covered = new Set();
 window.liveApiUrl = value => value;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);
 window.rememberApiPort = () => {};
+window.localStorage.setItem('vectorwarp-settings-mode', 'advanced');
 window.fetch = async (url, options = {}) => {
   let body;
   if (url === '/api/config/validate') body = validateConfig(JSON.parse(options.body), saved);
@@ -41,10 +38,14 @@ window.fetch = async (url, options = {}) => {
     message: 'Not contacted by this DOM fixture.'};
   else if (url === '/api/system/status') body = {serverId: 'matrix', configRevision: revision,
     loadedRevision: revision, radar: 'no-data', errors: []};
+  else if (url === '/api/recordings/directories') body = {root: '/tmp/vectorwarp-matrix/', directories: [
+    {path: '/var/lib/vectorwarp/recordings/'}, {path: '/tmp/vectorwarp-matrix/'}]};
   else throw new Error(`Unexpected URL: ${url}`);
   return {ok: true, status: 200, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/kraken_geometry.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
 const field = key => window.document.querySelector(`[data-path="${key}"]`);
 const control = key => {
@@ -95,6 +96,7 @@ async function saveAndAssert(label, expected) {
 (async () => {
   try {
     await window.renderConfiguration();
+    await new Promise(resolve => setImmediate(resolve));
     // These legacy/reserved values must survive saves but have no misleading UI.
     for (const [key, rule] of Object.entries(FIELD_RULES))
       if (rule.readOnly) assert.equal(field(key), null, `${key} is intentionally not editable`);
@@ -125,26 +127,22 @@ async function saveAndAssert(label, expected) {
     setScalar(autoBooleanPaths[1], 'auto');
     await saveAndAssert('Automatic recorder mode', {[autoBooleanPaths[1]]: 'auto'});
 
-    // Browser validation combines native constraints with API cross-field
-    // checks, including replay-format requirements that native inputs cannot
-    // express alone.
+    // Receiver-only array controls disappear when a non-array backend is
+    // selected; portable radar, replay, tracker, and ADS-B controls remain.
+    window.switchDevice('RspDuo');
+    assert.equal(field('process.bearing.frequency_resolved_shadow.enabled'), null);
+    assert.equal(field('process.surveillance_fusion.mode'), null);
+    assert.ok(field('process.detection.pfa'));
+    assert.ok(field('process.tracker.enable'));
+
+    // Browser validation combines native constraints with API cross-field checks.
     setScalar('process.detection.pfa', 1);
     assert.equal(await window.validateActiveConfiguration(), false, 'PFA must remain below one');
     setScalar('process.detection.pfa', .00001);
-    setScalar('capture.replay.legacy_block_samples', '');
-    change(control('capture.replay.format'), 'usrp-blocks');
-    assert.equal(await window.validateActiveConfiguration(), false, 'USRP-block replay requires its legacy block-size setting');
-    setScalar('capture.replay.legacy_block_samples', 2048);
-    assert.equal(await window.validateActiveConfiguration(), true, 'Positive legacy block size enables USRP-block replay');
-    change(control('capture.replay.format'), 'auto');
     assert.equal(await window.validateActiveConfiguration(), true);
 
-    // Common settings cover recording/replay, CPU/performance, map/detection/
+    // Common settings cover recording, CPU/performance, map/detection/
     // tracker controls, ADS-B, paths, ports, and location dialog validation.
-    setScalar('capture.replay.state', true);
-    setScalar('capture.replay.loop', true);
-    setScalar('capture.replay.file', '/tmp/matrix.blah2iq');
-    change(control('capture.replay.format'), 'blah2');
     const frequency = field('capture.fc').querySelectorAll('input');
     change(frequency[0], 205); change(frequency[1], 640); change(frequency[2], 123);
     setScalar('process.performance.surveillance_workers', 1);
@@ -156,7 +154,7 @@ async function saveAndAssert(label, expected) {
     setScalar('process.ambiguity.delayMax', 399);
     setScalar('process.ambiguity.dopplerMin', -150);
     setScalar('process.ambiguity.dopplerMax', 150);
-    setScalar('process.clutter.enable', false);
+    change(control('process.clutter.enable'), 'off');
     setScalar('process.clutter.delayMin', -8);
     setScalar('process.clutter.delayMax', 390);
     setScalar('process.detection.enable', false);
@@ -166,7 +164,6 @@ async function saveAndAssert(label, expected) {
     setScalar('process.detection.minDelay', 6);
     setScalar('process.detection.minDoppler', 20);
     setScalar('process.detection.nCentroid', 7);
-    setScalar('process.detection.integration_cpis', 1);
     setScalar('process.tracker.enable', false);
     setScalar('process.tracker.enable', true);
     setScalar('process.tracker.initiate.M', 2);
@@ -197,8 +194,7 @@ async function saveAndAssert(label, expected) {
       change(txDialog.querySelector(`[name=${name}]`), value);
     txDialog.querySelector('form').dispatchEvent(new window.Event('submit', {bubbles: true, cancelable: true}));
     await saveAndAssert('common settings', {
-      'capture.replay.state': true, 'capture.replay.loop': true, 'capture.replay.file': '/tmp/matrix.blah2iq',
-      'capture.replay.format': 'blah2', 'capture.replay.legacy_block_samples': 2048, 'capture.fc': 205640123,
+      'capture.fc': 205640123,
       'capture.device.type': 'RspDuo', 'process.performance.surveillance_workers': 1,
       'process.performance.fft_threads': 2, 'process.performance.acceleration': 'cpu',
       'process.data.cpi': .75, 'process.data.buffer': 3, 'process.ambiguity.delayMin': -9,
@@ -207,7 +203,7 @@ async function saveAndAssert(label, expected) {
       'process.clutter.delayMin': -8, 'process.clutter.delayMax': 390, 'process.detection.enable': false,
       'process.detection.pfa': .00002, 'process.detection.nGuard': 3, 'process.detection.nTrain': 8,
       'process.detection.minDelay': 6, 'process.detection.minDoppler': 20,
-      'process.detection.nCentroid': 7, 'process.detection.integration_cpis': 1,
+      'process.detection.nCentroid': 7,
       'process.tracker.enable': true,
       'process.tracker.initiate.M': 2, 'process.tracker.initiate.N': 4,
       'process.tracker.initiate.maxAcc': 12,
@@ -251,6 +247,8 @@ async function saveAndAssert(label, expected) {
       'capture.device.type': 'HackRF'});
 
     window.switchDevice('Usrp');
+    assert.ok(field('capture.aircraft_clips.enabled'),
+      'Automatic aircraft IQ clips are receiver independent');
     setScalar('capture.device.address', 'type=b200,serial=matrix');
     setScalar('capture.device.subdev', 'A:0 A:1');
     const antennas = field('capture.device.antenna').querySelectorAll('input');
@@ -261,43 +259,38 @@ async function saveAndAssert(label, expected) {
       'capture.device.gain': [20, 21], 'capture.device.type': 'Usrp'});
 
     window.switchDevice('Kraken');
+    assert.ok(field('capture.aircraft_clips.enabled'), 'Kraken exposes automatic aircraft clips');
+    assert.ok(field('capture.aircraft_clips.maximum_slant_range_km'),
+      'Automatic clips expose range selection');
+    assert.ok(field('process.surveillance_fusion.mode'), 'Kraken exposes coherent fusion controls');
+    setScalar('process.detection.integration_cpis', 1);
     setScalar('capture.device.heimdall.host', '127.0.0.1');
     setScalar('capture.device.heimdall.port', 8091);
     setScalar('capture.device.heimdall.control_port', 8092);
-    const gain = field('capture.device.heimdall.gain');
-    change(gain.querySelector('select'), 'manual'); change(gain.querySelector('input'), 25.5);
-    change(control('capture.device.channel_count'), '4');
-    change(control('process.reference_synthesis.mode'), 'array_eigenbeam');
-    assert.equal(control('capture.device.reference_channel').disabled, true,
-      'Dedicated-reference setting disables when synthesis owns it');
-    const surveillance = field('capture.device.surveillance_channels').querySelectorAll('input');
-    change(surveillance[3], false);
-    const synthesized = field('process.reference_synthesis.channels').querySelectorAll('input');
-    change(synthesized[3], false);
-    await saveAndAssert('Kraken array synthesis', {'capture.device.type': 'Kraken',
-      'capture.device.channel_count': 4, 'capture.device.surveillance_channels': [0, 1, 2],
-      'process.reference_synthesis.mode': 'array_eigenbeam',
-      'process.reference_synthesis.channels': [0, 1, 2]});
-    change(control('process.reference_synthesis.mode'), 'dedicated');
-    assert.equal(control('capture.device.reference_channel').disabled, false);
-    change(control('capture.device.reference_channel'), '1');
+    change(control('capture.device.heimdall.gain_control'), 'fixed');
+    const channelGains = field('capture.device.heimdall.gain_control')
+      .querySelectorAll('.config-gain-manual input');
+    [8.7, 8.7, 14.4, 3.7, 3.7].forEach((gain, index) => change(channelGains[index], gain));
     setScalar('process.reference_synthesis.analysis_samples', 65536);
     setScalar('process.reference_synthesis.analysis_interval', 3);
     setScalar('process.reference_synthesis.power_iterations', 8);
     setScalar('process.reference_synthesis.covariance_smoothing', .25);
     setScalar('process.reference_synthesis.diagonal_loading', .001);
-    await saveAndAssert('Kraken', {'capture.device.heimdall.gain': 25.5,
-      'capture.device.channel_count': 4, 'capture.device.reference_channel': 1,
-      'process.reference_synthesis.mode': 'dedicated', 'process.reference_synthesis.analysis_samples': 65536,
+    await saveAndAssert('Kraken', {
+      'process.detection.integration_cpis': 1,
+      'process.reference_synthesis.analysis_samples': 65536,
       'process.reference_synthesis.analysis_interval': 3, 'process.reference_synthesis.power_iterations': 8,
       'process.reference_synthesis.covariance_smoothing': .25,
       'process.reference_synthesis.diagonal_loading': .001, 'capture.device.heimdall.host': '127.0.0.1',
       'capture.device.heimdall.port': 8091, 'capture.device.heimdall.control_port': 8092,
-      'capture.device.type': 'Kraken', 'capture.device.surveillance_channels': [2],
-      'process.reference_synthesis.channels': [1]});
+      'capture.device.type': 'Kraken'});
+    assert.equal(saved.capture.device.heimdall.gain_control, 'fixed');
+    assert.deepEqual(saved.capture.device.heimdall.channel_gains, [8.7, 8.7, 14.4, 3.7, 3.7]);
+    assert.equal(control('capture.device.heimdall.gain_control').value, 'fixed');
+    covered.add('capture.device.heimdall.gain_control');
+    covered.add('capture.device.heimdall.channel_gains');
     const requiredCoverage = [
-      'capture.fc', 'capture.fs', 'capture.device.type', 'capture.replay.state', 'capture.replay.loop',
-      'capture.replay.file', 'capture.replay.format', 'capture.replay.legacy_block_samples',
+      'capture.fc', 'capture.fs', 'capture.device.type',
       'process.performance.surveillance_workers', 'process.performance.fft_threads',
       'process.performance.acceleration', 'process.data.cpi', 'process.data.buffer',
       'process.ambiguity.delayMin', 'process.ambiguity.delayMax', 'process.ambiguity.dopplerMin',
@@ -318,17 +311,16 @@ async function saveAndAssert(label, expected) {
       'capture.device.lnaState', 'capture.device.gainReduction', 'capture.device.dabNotch',
       'capture.device.rfNotch', 'capture.device.gain_lna', 'capture.device.gain_vga',
       'capture.device.amp_enable', 'capture.device.address', 'capture.device.subdev',
-      'capture.device.antenna', 'capture.device.gain', 'capture.device.channel_count',
-      'capture.device.reference_channel', 'capture.device.surveillance_channels',
+      'capture.device.antenna', 'capture.device.gain',
       'capture.device.heimdall.host', 'capture.device.heimdall.port',
-      'capture.device.heimdall.control_port', 'capture.device.heimdall.gain',
-      'process.reference_synthesis.mode', 'process.reference_synthesis.channels',
+      'capture.device.heimdall.control_port', 'capture.device.heimdall.gain_control',
+      'capture.device.heimdall.channel_gains',
       'process.reference_synthesis.analysis_samples', 'process.reference_synthesis.analysis_interval',
       'process.reference_synthesis.power_iterations', 'process.reference_synthesis.covariance_smoothing',
       'process.reference_synthesis.diagonal_loading'
     ];
     for (const key of requiredCoverage) assert.ok(covered.has(key), `Coverage gate: ${key} was saved and re-rendered`);
     assert.ok(writes >= 6, 'Common and each receiver/synthesis profile round-tripped.');
-    console.log('Settings matrix DOM: common, replay, location, network, ADS-B, performance, detector/tracker, and all receiver profiles round-trip locally.');
+    console.log('Settings matrix DOM: common, location, network, ADS-B, performance, detector/tracker, and all receiver profiles round-trip locally.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -43,9 +43,10 @@ function publishesHybridWithoutDuplicate() {
   assert.equal(frame.publication.nativeSupplement, 1);
   assert.deepEqual(frame.data.map(item => item.id), ['u1', 'native-extra']);
   assert.equal(frame.data[0].source, 'unassisted');
+  assert.equal(frame.data[0].sourceTimestamp, 1000);
   assert.equal(frame.data[1].confidence, 'supplement');
   assert.deepEqual(frame.data[1], {...JSON.parse(native()).data[2],
-    id: 'native-extra', source: 'native', confidence: 'supplement'});
+    id: 'native-extra', source: 'native', confidence: 'supplement', sourceTimestamp: 1000});
   assert.equal(publication.status().fusion.nativeDeduplicated, 1);
   now += 2001;
   assert.equal(publication.frame(), native());
@@ -149,6 +150,49 @@ function supportsExternalOnlyAndRejectsBadEvents() {
   assert.equal(publication.status().counters.invalid, 1);
 }
 
+function neverPublishesMixedOrUntimedTrackerEpochs() {
+  for (const mode of ['external', 'hybrid']) {
+    let now = 10;
+    const publication = new TrackerPublication(config(mode), {now: () => now});
+    const raw = native(1000);
+    publication.acceptNative(raw);
+    publication.acceptInput({timestamp: 1000}, true);
+    assert.strictEqual(publication.frame(), raw,
+      `${mode}: no external frame must fall back to native bytes`);
+    assert.equal(publication.acceptExternal(event('old', 10_000, 1, 1)), true);
+    assert.strictEqual(publication.frame(), raw,
+      `${mode}: external and detector timestamps from different epochs must not mix`);
+    publication.acceptInput({timestamp: 10_000}, true);
+    const frame = JSON.parse(publication.frame());
+    assert.equal(frame.timestamp, 10_000);
+    assert.equal(frame.data[0].sourceTimestamp, 10_000);
+    if (mode === 'hybrid') assert.equal(frame.publication.nativeSupplement, 0,
+      'an incompatible native frame must not supplement a current external frame');
+    now += 2001;
+    assert.strictEqual(publication.frame(), raw,
+      `${mode}: a stale external frame must fall back to native bytes`);
+  }
+}
+
+function neverFusesDifferentCaptureEpochsInsideFreshnessWindow() {
+  for (const mode of ['external', 'hybrid']) {
+    const publication = new TrackerPublication(config(mode), {now: () => 10});
+    const epoch1 = {source: 'kraken_heimdall_host_arrival_estimate', epoch: '1'};
+    const epoch2 = {source: 'kraken_heimdall_host_arrival_estimate', epoch: '2'};
+    publication.acceptInput({timestamp: 1000, eventTime: epoch1}, true);
+    assert.equal(publication.acceptExternal(event('old', 1000, 1, 1)), true);
+    const newerNative = JSON.parse(native(1500));
+    newerNative.eventTime = epoch2;
+    publication.acceptNative(newerNative);
+    publication.acceptInput({timestamp: 1500, eventTime: epoch2}, true);
+    const frame = JSON.parse(publication.frame());
+    assert.equal(frame.timestamp, 1000);
+    assert.deepEqual(frame.eventTime, epoch1);
+    assert.deepEqual(frame.data.map(track => track.id), ['old'],
+      `${mode}: epoch-2 native tracks must not supplement epoch-1 external tracks`);
+  }
+}
+
 function parsesBoundedJsonLines() {
   let callback;
   const events = [];
@@ -190,6 +234,8 @@ async function tailsOnlyNewEventsAndFollowsRotation() {
   convertsExternalDelayAndHistory();
   rejectsInvalidSampleRatesWithFullNativeFallback();
   supportsExternalOnlyAndRejectsBadEvents();
+  neverPublishesMixedOrUntimedTrackerEpochs();
+  neverFusesDifferentCaptureEpochsInsideFreshnessWindow();
   parsesBoundedJsonLines();
   await tailsOnlyNewEventsAndFollowsRotation();
   console.log('tracker-publication tests passed');

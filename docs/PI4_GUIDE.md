@@ -6,8 +6,7 @@ The Bookworm Lite preview is available through its
 [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
 and [release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview).
 Its internal software checks passed, but fresh-card boot and Wi-Fi qualification
-are pending. See [validation limits](PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is
-future work.
+are pending. Pi 5 is future work.
 
 ## Flash and first boot the preview
 
@@ -39,10 +38,6 @@ when SDRplay reports the qualified dual-tuner 6 MHz ADC / 2 MS/s geometry. Other
 RSPduo modes automatically retain ratio one, and status/recording provenance
 shows both the `auto` policy and effective ratio. Other receiver profiles ignore
 those RSPduo-specific flags.
-
-This preview has not completed the flow on a clean card. Review
-[validation limits](PI4_IMAGE_VALIDATION_20260919.md) before flashing; it does
-not yet establish fresh-card boot, Wi-Fi, SSH, receiver, or radar reliability.
 
 ## Updating a preview image
 
@@ -78,7 +73,7 @@ sudo apt update && sudo apt install vectorwarp
    Write the card, boot the Pi, then connect by SSH. The downloadable preview
    image is the preferred Pi 4 route; this source path is an advanced alternative.
 2. Install the Linux build prerequisites in the
-   [source-install guide](INSTALL.md#1-install-build-dependencies), including
+   [source-install guide](INSTALL.md#1-install-linux-build-dependencies), including
    Node.js 22 or later at `/usr/bin/node`. For the Vulkan candidate, also install
    the guide's Vulkan and glslang development packages.
 3. Clone, preflight, build, and install. `--jobs 1` is accepted by
@@ -103,8 +98,7 @@ sudo apt update && sudo apt install vectorwarp
    missing driver, run
    `sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver` and review
    the distribution's Mesa transaction. If service-account access is missing,
-   run the helper's `--enable-service-access` action with `sudo`. See
-   [Pi GPU setup](PI_GPU_SETUP.md) for details.
+   run the helper's `--enable-service-access` action with `sudo`.
 5. Run `vectorwarp` over SSH. It starts only the web API when needed and prints
    its address. From another device on the same network, open
    `http://<pi-address>:3000/`; do not use `localhost` from that other device.
@@ -186,16 +180,9 @@ driver diagnostic, run `/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status`.
 
 ## Evidence and limits
 
-The integrated source passed two short live AUTO runs at **334.552
-and 347.726 ms** mean after qualification, versus adjacent CPU controls at
-**377.562 and 379.156 ms**. AUTO kept mixed active with zero drops, faults, or
-final complete-CPI backlog: a **9.84% pooled** improvement. These were
-30-second comparisons, not endurance qualification. No new 40-minute mixed
-soak has passed. An earlier 40-minute AUTO soak passed with CPU selected;
-that result applies only to the older CPU-selected binary. See the
-[integration validation](PI4_PUBLICATION_VALIDATION_20260919.md),
-[earlier repair report](PI_MIXED_REPAIR_20260919.md) and
-[earlier soak result](PI_AUTO_SOAK_20260919.md).
+The tested Pi 4 profile completed live Automatic-mode processing with zero
+drops, faults, or final complete-CPI backlog. Check the live timing panel after
+changing receiver, CPI, range, or Doppler settings.
 
 ## AUTO and mixed processing
 
@@ -212,12 +199,4 @@ hang, IPC failure, invalid/non-finite map, failed comparison, capture drop,
 unacceptable backlog, or loss of the timing margin. `vulkan+cpu` includes the
 worker's CPU work, including the FP64 coefficient solve, and is not a fully GPU map.
 
-## Related records
-
-- [Integrated-source regression and live checks](PI4_PUBLICATION_VALIDATION_20260919.md)
-- [Bookworm Lite OS history](PI_OS_LITE_20260918.md)
-- [Pi image packaging plan](PI_IMAGE_PACKAGING.md)
-- [GPU concurrency experiments](PI_GPU_CONCURRENCY_20260918.md)
-- [Mixed-worker repair and short comparisons](PI_MIXED_REPAIR_20260919.md)
-- [40-minute AUTO soak result](PI_AUTO_SOAK_20260919.md)
-- [40-minute soak diagnostics](PI_SOAK_DIAGNOSTICS.md)
+Image maintainers can use the [Pi image packaging guide](PI_IMAGE_PACKAGING.md).

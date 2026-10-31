@@ -17,6 +17,9 @@ const runtime = {acceleration: ready, clutterAcceleration: ready, fresh: true};
   assert.equal(fromRuntime(older, {...runtime, clutterAcceleration: fallback}).state, 'partially-qualified');
   assert.equal(fromRuntime(older, {...runtime, acceleration: fallback}).state, 'partially-qualified');
   assert.equal(fromRuntime(older, runtime).state, 'qualified', 'A working backport overrides a source-version hint');
+  assert.equal(fromRuntime(older, {acceleration: {...ready, active: 'vulkan-resident'},
+    clutterAcceleration: {...ready, active: 'vulkan-resident'}, fresh: true}).state, 'qualified',
+  'Fully resident Vulkan telemetry is still active GPU processing');
   assert.equal(fromRuntime(older, runtime).qualification, 'current-telemetry-generation');
   assert.match(fromRuntime(older, runtime).message, /^Current GPU checks passed: ambiguity and clutter\.$/);
   let calls = 0, at = 0;

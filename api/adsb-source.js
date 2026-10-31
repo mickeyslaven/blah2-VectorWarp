@@ -7,6 +7,12 @@ const {fuseAircraftData} = require('./adsb-fusion');
 const {classifyAdsbSource, discoverLocalAdsb, selectLocalAdsb,
   validateAircraftData} = require('./adsb-discovery');
 
+// ADS-B sources are polled continuously. Reusing transport connections avoids
+// paying a TCP/TLS (and, for remote peers, overlay-network) handshake on every
+// snapshot without changing source cadence or event-time semantics.
+const httpAgent = new http.Agent({keepAlive: true, maxSockets: 8, scheduling: 'lifo'});
+const httpsAgent = new https.Agent({keepAlive: true, maxSockets: 8, scheduling: 'lifo'});
+
 function sourceAddress(value) {
   if (typeof value !== 'string' || !value || /[\s\\]/.test(value)) throw new Error('Invalid source address');
   const url = new URL(/^https?:\/\//i.test(value) ? value : `http://${value}`);
@@ -57,6 +63,29 @@ function configuredSources(config) {
   return Array.isArray(values) && values.length ? [...values] : [config.truth?.adsb?.tar1090];
 }
 
+function publicationCadence(slot, snapshotNow) {
+  if (!Number.isFinite(snapshotNow)) return slot.state.publication_cadence || null;
+  if (Number.isFinite(slot.lastPublishedSnapshot) && snapshotNow !== slot.lastPublishedSnapshot) {
+    const interval = snapshotNow - slot.lastPublishedSnapshot;
+    if (interval > 0 && interval < 60) {
+      slot.publicationIntervals ||= [];
+      slot.publicationIntervals.push(interval);
+      if (slot.publicationIntervals.length > 32) slot.publicationIntervals.shift();
+    }
+  }
+  if (!Number.isFinite(slot.lastPublishedSnapshot) || snapshotNow !== slot.lastPublishedSnapshot)
+    slot.lastPublishedSnapshot = snapshotNow;
+  const samples = slot.publicationIntervals || [];
+  if (!samples.length) return {samples: 0, state: 'measuring'};
+  const sorted = [...samples].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return {samples: samples.length, median_interval_s: median,
+    observed_hz: median > 0 ? 1 / median : null,
+    statistics_suitable: median <= .5,
+    recommendation: median <= .5 ? 'CPI-level statistics cadence' :
+      'Publish aircraft.json every 0.5 seconds or faster; 0.25 seconds is recommended'};
+}
+
 
 function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
   return new Promise((resolve, reject) => {
@@ -74,6 +103,7 @@ function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
     timer = setTimeout(() => finish(new Error('ADS-B source timed out')), timeoutMs);
     try {
       request = (url.protocol === 'https:' ? https : http).get(url, {
+        agent: url.protocol === 'https:' ? httpsAgent : httpAgent,
         headers: {Accept: 'application/json', 'Accept-Encoding': 'identity',
           'User-Agent': 'VectorWarp/1.0 ADS-B client'}
       }, incoming => {
@@ -104,7 +134,11 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   discover = discoverLocalAdsb, selectLocal = selectLocalAdsb,
   discoveryCacheMs = 30000, setTimeoutFn = setTimeout} = {}) {
   const cache = new Map();
+  const aircraftMetadataCache = new Map();
   const geometry = new DelayDopplerHistory(config);
+  // Display polling must not perturb the event-time history used by scoring.
+  // It also must not inherit the intentional multi-CPI association hold.
+  const presentationGeometry = new DelayDopplerHistory(config);
   let warmup = [];
   let fusionState = null;
   const sourceTimeoutMs = Number.isFinite(config.truth?.adsb?.source_timeout) ?
@@ -124,6 +158,12 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   });
   const pollMs = Number.isFinite(config.truth?.adsb?.poll_interval) ?
     Math.max(100, Math.min(60000, config.truth.adsb.poll_interval * 1000)) : 1000;
+  // Public exchange APIs commonly enforce a lower request rate than a LAN
+  // readsb feed. Keep local truth at the configured cadence while sharing the
+  // latest validated exchange snapshot between faster CPI/UI consumers.
+  const exchangePollMs = Number.isFinite(config.truth?.adsb?.exchange_poll_interval) ?
+    Math.max(pollMs, Math.min(60000, config.truth.adsb.exchange_poll_interval * 1000)) :
+    Math.max(pollMs, 2000);
   const cpiMs = Number.isFinite(config.process?.data?.cpi) ?
     Math.max(1, config.process.data.cpi * 1000) : 500;
   const associationLagMs = Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
@@ -160,9 +200,18 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const startedAt = now();
     try {
       const selection = await resolveSource(slot);
-      const data = validateAircraftData(await selection.read(),
-        {now, maxAgeSeconds: geometry.maxAge});
+      let data;
+      try {
+        data = validateAircraftData(await selection.read(),
+          {now, maxAgeSeconds: geometry.maxAge});
+      } catch (error) {
+        // A transport failure may temporarily reuse a prior validated frame;
+        // invalid or stale payloads must never make that fallback look healthy.
+        error.invalidSnapshot = true;
+        throw error;
+      }
       const receivedAtMs = now();
+      const cadence = publicationCadence(slot, data.now);
       const ages = data.aircraft.filter(aircraft => Number.isFinite(aircraft?.lat) &&
         Number.isFinite(aircraft?.lon) && Number.isFinite(aircraft?.seen_pos) &&
         aircraft.seen_pos >= 0).map(aircraft => receivedAtMs / 1000 -
@@ -179,6 +228,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
         consecutive_failures: 0,
         consecutive_successes: (slot.state.consecutive_successes || 0) + 1,
         last_success_at: receivedAtMs, latency_ms: Math.max(0, receivedAtMs - startedAt),
+        publication_cadence: cadence,
         freshness: {snapshot_age_s: receivedAtMs / 1000 - data.now,
           positioned: ages.length, usable_positions: usable.length,
           fresh_positions: fresh.length, stale_positions: ages.length - usable.length,
@@ -194,11 +244,34 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       throw error;
     }
   }
+  async function readSourcePaced(slot) {
+    const interval = slot.state.kind === 'exchange' ? exchangePollMs : pollMs;
+    const failures = Math.max(0, Number(slot.state.consecutive_failures) || 0);
+    const retryInterval = interval * Math.min(8, 2 ** failures);
+    if (slot.lastValue && now() - (slot.lastAttemptAt || slot.lastReadAt) < retryInterval)
+      return slot.lastValue;
+    if (!slot.lastValue && slot.lastAttemptAt && now() - slot.lastAttemptAt < retryInterval)
+      throw new Error('ADS-B source retry backoff active');
+    slot.lastAttemptAt = now();
+    try {
+      const value = await readSource(slot);
+      slot.lastReadAt = now();
+      slot.lastValue = value;
+      return value;
+    } catch (error) {
+      // A failed refresh must not erase a previously validated feed. Event-time
+      // filtering retires its aircraft naturally, while exponential backoff
+      // prevents a throttled public endpoint from being hammered every CPI.
+      if (error.invalidSnapshot === true) slot.lastAttemptAt = now() - interval;
+      if (slot.lastValue && error.invalidSnapshot !== true) return slot.lastValue;
+      throw error;
+    }
+  }
   async function rawSnapshots() {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    entry.promise = Promise.allSettled(slots.map(readSource)).then(results => {
+    entry.promise = Promise.allSettled(slots.map(readSourcePaced)).then(results => {
       const healthy = results.filter(result => result.status === 'fulfilled')
         .map(result => result.value);
       if (!healthy.length) throw new Error(`All ADS-B sources failed: ${results.map((result, index) =>
@@ -208,11 +281,29 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
   }
-  async function rawAircraft(targetAtMs = now()) {
-    const {healthy, failed} = await rawSnapshots();
-    const data = fuseAircraftData(healthy, {nowMs: targetAtMs,
-      maxPositionAgeSeconds: geometry.maxAge});
-    fusionState = {...data.vectorwarp_fusion, fused_at: targetAtMs,
+  async function presentationSnapshots() {
+    // Rendering must never wait behind a slow WAN request. Reuse every last
+    // validated source snapshot while a refresh proceeds independently; the
+    // fusion age limits naturally retire stale aircraft. This also prevents a
+    // transient 429/timeout from erasing an otherwise usable source between
+    // screen frames.
+    const refresh = rawSnapshots();
+    const healthy = slots.map(slot => slot.lastValue).filter(Boolean);
+    if (!healthy.length) return refresh;
+    void refresh.catch(() => {});
+    return {healthy, failed: slots.length - healthy.length};
+  }
+  async function rawAircraft(targetAtMs, fusionOptions = {}, snapshots = rawSnapshots) {
+    const {healthy, failed} = await snapshots();
+    // Presentation callers intentionally omit a target. Stamp those snapshots
+    // after I/O completes; otherwise source latency makes newly acquired local
+    // positions look future-dated and distorts freshness diagnostics. Scoring
+    // callers pass the exact historical CPI time and retain that projection.
+    const fusionAtMs = Number.isFinite(targetAtMs) ? targetAtMs : now();
+    const data = fuseAircraftData(healthy, {nowMs: fusionAtMs,
+      maxPositionAgeSeconds: geometry.maxAge, metadataCache: aircraftMetadataCache,
+      ...fusionOptions});
+    fusionState = {...data.vectorwarp_fusion, fused_at: fusionAtMs,
       healthy_sources: healthy.length, failed_sources: failed};
     return data;
   }
@@ -252,6 +343,29 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     cache.set(kind, entry);
     return entry.promise;
   }
+  async function getPresentation(kind) {
+    if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
+    if (preview) throw new Error('Preview: no live ADS-B connection');
+    if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
+    // UI positions are a newest-known display, not a CPI truth association.
+    // Accept any observation already allowed by max_position_age and project it
+    // to now. This avoids the delayed-scoring request time rejecting otherwise
+    // fresh feeder snapshots and making every aircraft flash on and off.
+    const data = await rawAircraft(undefined, {maxObservationOffsetSeconds: geometry.maxAge},
+      presentationSnapshots);
+    if (kind === 'aircraft') return data;
+    return presentationGeometry.update(data).data;
+  }
+  async function getPresentationAt(kind, targetAtMs) {
+    if (!Number.isFinite(targetAtMs)) throw new Error('ADS-B presentation time is invalid');
+    if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
+    if (preview) throw new Error('Preview: no live ADS-B connection');
+    if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
+    const data = await rawAircraft(targetAtMs,
+      {maxObservationOffsetSeconds: geometry.maxAge}, presentationSnapshots);
+    if (kind === 'aircraft') return data;
+    return presentationGeometry.update(data).data;
+  }
   async function status() {
     if (!config.truth?.adsb?.enabled) {
       const sources = slots.map(slot => ({...slot.state, state: 'disabled'}));
@@ -290,11 +404,17 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
         message: online && warmup.length ? 'Feed online; waiting for motion updates.' :
           !online ? 'No healthy ADS-B source' : undefined}};
   }
-  return {get, getAt, status, clear: () => {
-    cache.clear(); geometry.clear(); fusionState = null;
-    for (const slot of slots) slot.discoveryEntry = undefined;
+  return {get, getAt, getPresentation, getPresentationAt, status, clear: () => {
+    cache.clear(); aircraftMetadataCache.clear(); geometry.clear();
+    presentationGeometry.clear(); fusionState = null;
+    for (const slot of slots) {
+      slot.discoveryEntry = undefined;
+      slot.lastValue = undefined;
+      slot.lastReadAt = undefined;
+      slot.lastAttemptAt = undefined;
+    }
   }};
 }
 
 module.exports = {sourceAddress, aircraftUrl, configuredSources, configuredAircraftSource,
-  normalizeAircraftSnapshot, readJson, createAdsbSource};
+  normalizeAircraftSnapshot, publicationCadence, readJson, createAdsbSource};

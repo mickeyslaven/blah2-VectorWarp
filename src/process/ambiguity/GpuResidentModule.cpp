@@ -81,7 +81,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  const auto&t=c.tracker;
  v.tracker={t.enabled,t.capacity,t.m,t.n,t.nDelete,
   t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
-  t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.stationaryClutter,
+  t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.minInitiationSnrDb,t.stationaryClutter,
   t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,
   t.trackGuidedShadow,t.trackGuidedPromote,t.trackGuidedShadowMaxTracks,c.epoch};
  return v;

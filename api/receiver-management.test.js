@@ -96,7 +96,8 @@ async function main() {
     return new Promise((resolve, reject) => {
       const request = http.request({hostname: '127.0.0.1', port: server.address().port, method, path: route,
         headers: {Host: '100.64.12.34:3000', Referer: `${lan}/display/configuration/`,
-          ...(method === 'POST' ? {'Content-Type': 'application/json', 'X-VectorWarp-Intent': 'receiver-management-v1'} : {}), ...headers}}, response => {
+          ...(method === 'POST' ? {'Content-Type': 'application/json',
+            'X-VectorWarp-Intent': route === '/api/receivers/discover' ? 'receiver-discovery-v2' : 'receiver-management-v1'} : {}), ...headers}}, response => {
         response.resume(); response.on('end', () => resolve({status: response.statusCode, headers: response.headers}));
       });
       request.on('error', reject); request.end(method === 'POST' ? '{}' : undefined);

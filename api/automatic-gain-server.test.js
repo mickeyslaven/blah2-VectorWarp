@@ -210,7 +210,7 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal((await request('POST', '/api/processor/status', processor)).status, 204);
     await new Promise(resolve => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.end(String(Date.now())); setTimeout(resolve, 25);
+        socket.end(JSON.stringify({timestamp: Date.now()})); setTimeout(resolve, 25);
       });
     });
     assert.notEqual((await request('GET', '/api/detection')).status, 503,
@@ -265,7 +265,7 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal((await request('POST', '/api/processor/status', processor)).status, 204);
     await new Promise(resolve => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.end(String(Date.now())); setTimeout(resolve, 25);
+        socket.end(JSON.stringify({timestamp: Date.now()})); setTimeout(resolve, 25);
       });
     });
     assert.notEqual((await request('GET', '/api/detection')).status, 503,
@@ -273,6 +273,19 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     const reconciled = JSON.parse(fs.readFileSync(filename + '.receiver-state.json', 'utf8'));
     assert.equal(reconciled.reconciliationRequired, false);
     assert.equal(reconciled.receipt.automaticGain.restartPendingAt, undefined);
+    const metadataConfig = (await request('GET', '/api/config')).body;
+    metadataConfig.location.rx.name = 'Home';
+    metadataConfig.location.tx.name = 'Tower';
+    const commandCount = commands.length, probeCount = probes;
+    const metadataSave = await request('PUT', '/api/config?restart=false', metadataConfig);
+    assert.equal(metadataSave.status, 200, JSON.stringify(metadataSave.body));
+    assert.equal(metadataSave.body.restarting, false);
+    assert.equal(metadataSave.body.receiverSync.metadataOnly, true);
+    assert.equal(commands.length, commandCount, 'Site labels must not command the receiver');
+    assert.equal(probes, probeCount, 'Site labels must not rerun automatic gain');
+    const metadataJournal = JSON.parse(fs.readFileSync(filename + '.receiver-state.json', 'utf8'));
+    assert.equal(metadataJournal.configRevision, metadataSave.body.revision);
+    assert.equal(metadataJournal.applicationVerified, true);
     console.log('automatic gain API loopback: verified selection, no-restart rejection, publication interlock, rollback, crash and final-journal failure recovery passed');
   } finally {
     await stop(); for (const socket of sockets) socket.destroy(); suite.close(); iq.close();

@@ -102,8 +102,15 @@ run_with_log 'previous package install' "$evidence/previous-install.log" \
   podman exec "$container" "${install_cmd[@]}" "/tmp/previous.$format"
 before=$(podman exec "$container" "${query_cmd[@]}" vectorwarp)
 podman exec "$container" sh -c "$ecosystem_cmd" >"$evidence/ecosystem-before.tsv"
+# Model a configured pre-journal RSPduo installation. Published packages ship
+# with an intentionally invalid first-run Unconfigured marker; leaving that in
+# place would correctly exercise config-invalid instead of the receiver-journal
+# recovery path this upgrade test is intended to prove.
+podman exec "$container" sed -i 's/type: "Unconfigured"/type: "RspDuo"/' /etc/vectorwarp/config.yml
+podman exec "$container" grep -Fq 'type: "RspDuo"' /etc/vectorwarp/config.yml ||
+  die 'published-package fixture could not select RSPduo'
 # Make the conffile byte-distinct without exposing its contents in evidence.
-# A comment is valid YAML and models an operator-owned pre-journal config.
+# A comment is valid YAML and models operator-owned state.
 podman exec "$container" sh -c "printf '\n# upgrade-matrix-user-state\n' >>/etc/vectorwarp/config.yml"
 config_before=$(podman exec "$container" sha256sum /etc/vectorwarp/config.yml | awk '{print $1}')
 podman exec "$container" test ! -e /etc/vectorwarp/config.yml.receiver-state.json || die 'published-package fixture unexpectedly has a receiver journal'

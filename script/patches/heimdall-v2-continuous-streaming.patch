@@ -1,0 +1,28 @@
+diff --git a/heimdall_v2/config.h b/heimdall_v2/config.h
+--- a/heimdall_v2/config.h
++++ b/heimdall_v2/config.h
+@@ -158,6 +158,11 @@
+ // can also force an immediate recalibration from the web UI at any time. These
+ // are only DEFAULTS - the enable flag and period are runtime-configurable from
+ // the web UI and persisted in heimdall_settings.conf.
+-#define PERIODIC_RECAL_DEFAULT_ENABLED  1      // default ON
++//
++// A check switches the calibration noise source into the antenna stream for
++// about one second. That gap is unacceptable to continuous consumers such as
++// passive radar, so make the intrusive check opt-in. Startup calibration and
++// transport-integrity recovery remain enabled and still recover sample loss.
++#define PERIODIC_RECAL_DEFAULT_ENABLED  0      // opt-in; continuous stream by default
+ #define PERIODIC_RECAL_DEFAULT_MINUTES  5      // default 5 minute check period
+ // Thresholds for declaring the calibration "bad". Set well above the converged
+diff --git a/heimdall_v2/src/core/settings.hpp b/heimdall_v2/src/core/settings.hpp
+--- a/heimdall_v2/src/core/settings.hpp
++++ b/heimdall_v2/src/core/settings.hpp
+@@ -5,7 +5,7 @@
+ // Stores a small key=value text file (heimdall_settings.conf) in the working
+ // directory so user choices survive restarts. Currently persists:
+ //   - per_bin_eq             : optional per-bin phase calibration toggle (default OFF)
+-//   - periodic_recal_enabled : periodic calibration check on/off (default ON)
++//   - periodic_recal_enabled : intrusive periodic calibration check (default OFF)
+ //   - periodic_recal_minutes : periodic calibration check period in minutes (default 5)
+ //   - antenna_bias_tee_mask  : per-port antenna bias tee bitmask, bit N = channel N
+ //                              (default 0 = all OFF; applied once devices are open)

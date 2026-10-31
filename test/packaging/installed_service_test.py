@@ -155,7 +155,8 @@ def restart_replay(replay_file):
     assert code == 200 and current['capture']['replay']['state'] is True
     changed = copy.deepcopy(current)
     changed['capture']['replay']['file'] = replay_file
-    started = int(time.time() * 1000)
+    changed['capture']['replay']['loop'] = replay_file == str(REPLAY)
+    previous_frame = previous.get('lastFrameAt') or 0
     code, result, _ = request('/api/config?restart=true', 'PUT', changed,
                               intent(headers['ETag']))
     assert code == 200 and result['restarting'] and result['receiverSync']['acceptance']['mode'] == 'replay', (code, result)
@@ -166,16 +167,18 @@ def restart_replay(replay_file):
                          'Installed API did not rotate and load the requested replay configuration', 90)
     assert status['restart']['state'] == 'command-complete', status
     assert run('systemctl', 'show', '-p', 'Result', '--value', 'vectorwarp-restart.service') == 'success'
-    return result, status, started
+    return result, status, previous_frame
 
 
 def verify_replay():
     assert REPLAY.is_file() and os.geteuid() == 0 and Path('/run/.containerenv').exists()
     assert Path('/proc/1/comm').read_text().strip() == 'systemd'
     assert not Path('/usr/local/lib/libsdrplay_api.so').exists()
-    status = wait_status(lambda item: item['processorFresh'] and item['radar'] == 'receiving' and
+    status = wait_status(lambda item: item['processorFresh'] and
                          item['processor']['input'] == 'replay' and
-                         item['processor']['state'] == 'playing' and item['lastFrameAt'],
+                         item['processor']['state'] in ('playing', 'draining', 'complete') and
+                         (item['processor']['state'] == 'complete' or item['radar'] == 'receiving') and
+                         item['lastFrameAt'],
                          'Browser-applied replay did not produce fresh installed-service frames')
     api_pid = int(run('systemctl', 'show', '-p', 'MainPID', '--value', 'vectorwarp-api.service'))
     assert api_pid > 0 and 'NoNewPrivs:\t1' in Path(f'/proc/{api_pid}/status').read_text()
@@ -203,11 +206,11 @@ def verify_replay():
     assert stale['serverId'] == failed_start['serverId'] and stale['lastFrameAt'] is None and stale['radar'] == 'no-data', stale
     checks.append('missing replay file reports a processor error without reusing pre-restart frames')
 
-    _, restored, started = restart_replay(str(REPLAY))
+    _, restored, previous_frame = restart_replay(str(REPLAY))
     recovered = wait_status(lambda item: item['serverId'] == restored['serverId'] and
                             item['processorFresh'] and item['processor']['state'] == 'playing' and
                             item['radar'] == 'receiving' and item['lastFrameAt'] and
-                            item['lastFrameAt'] > started,
+                            item['lastFrameAt'] > previous_frame,
                             'Restored replay did not produce new frames', 45)
     assert recovered['processor']['file'] == str(REPLAY)
     checks.append('corrected replay file recovers through a second installed restart with new frames')

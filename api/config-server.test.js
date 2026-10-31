@@ -8,12 +8,17 @@ const os = require('os');
 const path = require('path');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
+const {encodeId} = require('./recording-library');
 
 const source = path.join(__dirname, '..', 'config', 'config-kraken.yml');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-api-test-'));
 const filename = path.join(directory, 'config.yml');
 const restartMarker = path.join(directory, 'restart-called');
 const config = yaml.load(fs.readFileSync(source, 'utf8'));
+// Generic API validation does not exercise the separately covered automatic-
+// gain transaction; keep this fixture fixed so unrelated validation failures
+// are returned before any receiver lifecycle work.
+config.capture.device.heimdall.gain_control = 'fixed';
 const basePort = 20000 + (process.pid % 10000);
 const truthPort = basePort + 20;
 const suitePort = basePort + 21;
@@ -45,6 +50,11 @@ const suiteFixture = net.createServer(socket => {
 suiteFixture.listen(suitePort, '127.0.0.1');
 config.capture.device.heimdall.host = '127.0.0.1';
 config.capture.device.heimdall.control_port = suitePort;
+config.save.path = `${path.join(directory, 'recordings')}/`;
+// The fixture validates import semantics, not the developer workstation's
+// current free-space reserve.
+config.save.retention.minimum_free_gb = 0;
+fs.mkdirSync(config.save.path, {recursive: true});
 const truthRequests = [];
 const truthFixture = http.createServer((req, res) => {
   truthRequests.push(req.url);
@@ -115,6 +125,22 @@ function requestOnce(method, pathname, body, headers = {}) {
   });
 }
 
+function requestBinary(pathname, data, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({hostname: '127.0.0.1', port: config.network.ports.api,
+      path: pathname, method: 'POST', headers: {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'Content-Type': 'application/octet-stream', 'Content-Length': data.length,
+        'X-VectorWarp-Intent': 'recording-import-v1', ...headers}}, response => {
+      let text = ''; response.setEncoding('utf8'); response.on('data', chunk => { text += chunk; });
+      response.on('end', () => {
+        let body = text; try { body = text ? JSON.parse(text) : null; } catch (_) {}
+        resolve({status: response.statusCode, body});
+      });
+    });
+    req.on('error', reject); req.end(data);
+  });
+}
+
 async function request(method, pathname, body, headers = {}) {
   try {
     return await requestOnce(method, pathname, body, headers);
@@ -163,6 +189,19 @@ function connect(port) {
     revision = capabilities.body.configRevision;
     assert.equal(capabilities.body.editable, true);
     assert.equal(capabilities.body.restartAvailable, true);
+    const compactStatus = await request('GET', '/api/system/status?summary=1');
+    assert.equal(compactStatus.status, 200);
+    assert.equal(compactStatus.body.radar, 'no-data');
+    assert.equal(compactStatus.body.build, undefined,
+      'The continuously polled header status must omit full build/setup data');
+    const plotlyHeaders = await request('HEAD', '/lib/plotly-2.20.0.min.js');
+    assert.match(plotlyHeaders.headers['cache-control'] || '', /immutable/,
+      'The large versioned plotting library must be reusable across pages');
+    const compressedPlotly = await request('HEAD', '/lib/plotly-2.20.0.min.js', undefined,
+      {'Accept-Encoding': 'gzip'});
+    assert.equal(compressedPlotly.headers['content-encoding'], 'gzip');
+    assert.ok(Number(compressedPlotly.headers['content-length']) < 1_500_000,
+      'Plotting-library first load should be compressed for mobile browsers');
     // Query parsing is exposed by every HTTP route. These hostile-looking
     // inputs must stay data, never poison objects or take the API down.
     for (const query of [
@@ -194,16 +233,44 @@ function connect(port) {
     assert.equal(capabilities.body.deviceProfiles.find(item => item.type === 'Kraken').liveAvailable, true);
     for (const type of ['RspDuo', 'Usrp', 'HackRF'])
       assert.equal(capabilities.body.deviceProfiles.find(item => item.type === type).liveAvailable, false);
+    const folders = await request('GET', '/api/recordings/directories');
+    assert.equal(folders.status, 200);
+    assert.ok(folders.body.directories.some(item => item.path === config.save.path));
+    const createdFolder = await request('POST', '/api/recordings/directories', {name: 'portable/session-a'},
+      {'X-VectorWarp-Intent': 'recording-directory-v1'});
+    assert.equal(createdFolder.status, 200);
+    assert.ok(fs.statSync(createdFolder.body.path).isDirectory());
+    const imported = await requestBinary('/api/recordings/import?filename=portable.blah2iq',
+      Buffer.from('portable-recording-fixture'));
+    assert.equal(imported.status, 201);
+    assert.equal(fs.readFileSync(path.join(config.save.path, imported.body.filename), 'utf8'),
+      'portable-recording-fixture');
+    const removedImport = await request('DELETE', `/api/recordings/${encodeId(imported.body.filename)}`,
+      undefined, {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-delete-v1'});
+    assert.equal(removedImport.status, 200);
+    assert.equal(fs.existsSync(path.join(config.save.path, imported.body.filename)), false);
     const aircraft = await request('GET', '/api/adsb');
     assert.equal(aircraft.status, 200);
     assert.equal(aircraft.body.aircraft[0].hex, 'abc123');
     const dd = await request('GET', '/api/adsb/delay-doppler');
     assert.equal(dd.status, 200);
     assert.deepEqual(dd.body, {}, 'One raw position is motion warmup');
+    const alignedDd = await request('GET',
+      '/api/adsb/delay-doppler?presentation=aligned&frame_timestamp=123456');
+    assert.equal(alignedDd.status, 200);
+    assert.equal(alignedDd.headers['x-vectorwarp-presentation-timestamp'], '123456',
+      'ADS-B exposes the exact radar frame used for projection');
     const legacyLink = await request('GET', '/api/adsb2dd');
     assert.equal(legacyLink.body.url, '/api/adsb/delay-doppler');
     const feeds = await request('GET', '/api/adsb/status');
     assert.equal(feeds.body.online, true);
+    const presentation = await request('GET', '/api/presentation/status');
+    assert.equal(presentation.status, 200);
+    assert.equal(presentation.body.presentation_delay_cpis, 0);
+    assert.equal(presentation.body.expected_frame_interval_ms, config.process.data.cpi * 1000);
+    assert.equal(presentation.body.relative_alignment_ms, null,
+      'No radar frame must not impersonate an aligned presentation epoch');
     assert.equal((await request('GET', '/api/system/status')).body.adsbEnabled, true);
     assert.ok(truthRequests.some(url => url === '/receiver/data/aircraft.json'));
 
@@ -212,6 +279,24 @@ function connect(port) {
       positionSamples: 12, totalSamples: 24, loops: 0, trailingSamples: 0,
       recording: false, recordingFile: '', recordingError: '', recordedSamples: 0};
     assert.equal((await request('POST', '/api/processor/status', replayStatus)).status, 204);
+    const replayControlHeaders = {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+      'X-VectorWarp-Intent': 'replay-control-v1'};
+    let replayControl = await request('GET', '/api/replay/status');
+    assert.equal(replayControl.body.active, true);
+    assert.equal(replayControl.body.position_samples, 12);
+    replayControl = await request('POST', '/api/replay/control', {action: 'pause'},
+      replayControlHeaders);
+    assert.equal(replayControl.status, 200); assert.equal(replayControl.body.paused, true);
+    replayControl = await request('POST', '/api/replay/control', {action: 'skip', seconds: 1},
+      replayControlHeaders);
+    assert.equal(replayControl.body.seekSample, 24, 'Skip is bounded to the recording end');
+    replayControl = await request('POST', '/api/replay/control', {action: 'seek', seconds: 0.0000025},
+      replayControlHeaders);
+    assert.equal(replayControl.body.seekSample, 6);
+    assert.equal((await request('POST', '/api/replay/control', {action: 'seek', seconds: 'bad'},
+      replayControlHeaders)).status, 400);
+    assert.equal((await request('POST', '/api/replay/control', {action: 'play'},
+      {Origin: 'https://unrelated.example', 'X-VectorWarp-Intent': 'replay-control-v1'})).status, 403);
     const truthRequestsBeforeReplay = truthRequests.length;
     for (const route of ['/api/adsb', '/api/adsb/delay-doppler', '/api/adsb2dd', '/api/adsb/status']) {
       const disabled = await request('GET', route);
@@ -248,6 +333,9 @@ function connect(port) {
     assert.equal((await request('POST', '/api/processor/status', {
       ...replayStatus, input: 'live', state: 'live', file: ''
     })).status, 204);
+    assert.equal((await request('GET', '/api/replay/status')).body.active, false);
+    assert.equal((await request('POST', '/api/replay/control', {action: 'play'},
+      replayControlHeaders)).status, 409);
     const restoredTruth = await request('GET', '/api/adsb');
     assert.equal(restoredTruth.status, 200);
     assert.equal(restoredTruth.body.aircraft[0].hex, 'abc123');
@@ -261,6 +349,10 @@ function connect(port) {
     assert.equal(idleCapture.body.available, false);
     assert.equal(idleCapture.body.clip.clipRevision, 0);
     assert.equal(idleCapture.body.clip.queuedClips, 0);
+    const compactCapture = (await request('GET', '/capture/status?summary=1')).body;
+    assert.equal(compactCapture.recording, false);
+    assert.equal('clip' in compactCapture, false,
+      'The global header status must not transfer the automatic-clip event ledger');
     const idleRequest = (await request('GET', '/capture/request')).body;
     assert.equal(idleRequest.recording, false); assert.equal(idleRequest.revision, 0);
     assert.equal(idleRequest.clip.clipRevision, 0);
@@ -274,7 +366,8 @@ function connect(port) {
       ['map', '/stash/map', {timestamp: 1000, nRows: 1, delay: [1], doppler: [2], data: [[3]]}],
       ['detection', '/stash/detection', {timestamp: 1000, delay: [1], doppler: [2], snr: [3]}],
       ['iqdata', '/stash/iqdata', {timestamp: 1000, frequency: [100], spectrum: [3]}],
-      ['timing', '/stash/timing', {timestamp: 1000, cpi: 10}]
+      ['timing', '/stash/timing', {timestamp: 1000, cpi: 10,
+        captureBacklogSamples: [2400, 4800]}]
     ]) {
       await new Promise((resolve, reject) => {
         const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports[stream]},
@@ -285,6 +378,23 @@ function connect(port) {
       const history = (await request('GET', endpoint)).body;
       assert.equal(history.frameTimestamp ?? history.timestamp, 1000, `${stream} must update without a polling timer`);
     }
+    const backlogTimingSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing},
+        () => {
+          socket.write(JSON.stringify({timestamp: 1001, cpi: 10,
+            captureBacklogSamples: [2400, 4800]}));
+          setTimeout(() => resolve(socket), 20);
+        });
+      socket.on('error', reject);
+    });
+    const timingFrame = (await request('GET', '/api/timing')).body;
+    backlogTimingSocket.end();
+    assert.equal(timingFrame.capture_backlog_samples, 4800);
+    assert.equal(timingFrame.capture_backlog_ms, 4800 / config.capture.fs * 1000,
+      'Timing converts the largest per-channel queue from samples to milliseconds');
+    assert.equal(timingFrame.presentation_delay_ms, 0);
+    assert.equal(timingFrame.frame_excess_age_ms, timingFrame.frame_age_ms,
+      'Unaligned timing reports the complete frame age as excess age');
     const ambiguityBackend = {requested: 'auto', active: 'vulkan', state: 'ready',
       device: 'simulated GPU', reason: '', cpuMs: 8, gpuMs: 2};
     for (const [index, clutterBackend] of [
@@ -324,14 +434,22 @@ function connect(port) {
       'A new timing connection cannot reuse telemetry from the previous generation');
     await closeSocket(reconnectedTimingSocket);
     // Test-only frame marker; never touches a physical receiver.
+    const timestampOne = Date.now();
+    const timestampTwo = timestampOne + 1;
     const timestampSocket = await new Promise((resolve, reject) => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.write(String(Date.now())); resolve(socket);
+        const first = JSON.stringify({timestamp: timestampOne});
+        const second = JSON.stringify({timestamp: timestampTwo});
+        socket.write(first.slice(0, 7));
+        socket.write(first.slice(7) + second);
+        resolve(socket);
       });
       socket.on('error', reject);
     });
     await waitForSystemStatus(status => status.lastFrameAt !== null,
       'Timestamp frame was not observed while its socket remained connected');
+    assert.equal((await request('GET', '/api/timestamp')).body, timestampTwo,
+      'Fragmented/coalesced timestamp frames did not preserve the newest complete value');
     const timestampProbe = await connect(config.network.ports.timestamp);
     assert.notEqual((await request('GET', '/api/system/status')).body.lastFrameAt, null,
       'An empty probe must not steal the active timestamp stream');
@@ -361,15 +479,36 @@ function connect(port) {
     assert.equal(activeCapture.body.acknowledged, true);
     assert.equal(activeCapture.body.recordingFile, '/tmp/new.blah2');
     assert.equal(activeCapture.body.recordedSamples, 128);
+    const pausedCapture = await request('POST', '/capture/pause', {paused: true},
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-pause-v1'});
+    assert.equal(pausedCapture.body.requested, false);
+    assert.equal(pausedCapture.body.paused, true);
+    assert.equal(pausedCapture.body.segmented, true);
+    assert.equal(pausedCapture.body.revision, 2);
+    assert.equal((await request('POST', '/api/processor/status', {
+      ...liveRecording, recording: false, recordingRequestId: 2, recordingFile: ''
+    })).status, 204);
+    assert.equal((await request('GET', '/capture/status')).body.paused, true);
+    const resumedCapture = await request('POST', '/capture/pause', {paused: false},
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-pause-v1'});
+    assert.equal(resumedCapture.body.requested, true);
+    assert.equal(resumedCapture.body.paused, false);
+    assert.equal(resumedCapture.body.revision, 3);
+    assert.equal((await request('POST', '/api/processor/status', {
+      ...liveRecording, recording: true, recordingRequestId: 3,
+      recordingFile: '/tmp/new-segment.blah2'
+    })).status, 204);
     const stoppedCapture = await request('POST', '/capture/toggle', undefined,
       {Origin: `http://127.0.0.1:${config.network.ports.api}`,
         'X-VectorWarp-Intent': 'recording-toggle-v1'});
     assert.equal(stoppedCapture.body.requested, false);
-    assert.equal(stoppedCapture.body.revision, 2);
+    assert.equal(stoppedCapture.body.revision, 4);
     assert.equal(stoppedCapture.body.recording, true);
     assert.equal(stoppedCapture.body.startedAt, null);
     assert.equal((await request('POST', '/api/processor/status', {
-      ...liveRecording, recording: false, recordingRequestId: 2, recordingFile: ''
+      ...liveRecording, recording: false, recordingRequestId: 4, recordingFile: ''
     })).status, 204);
     assert.equal((await request('GET', '/capture/status')).body.acknowledged, true);
     assert.equal((await request('GET', '/capture/toggle')).status, 404);
@@ -383,7 +522,7 @@ function connect(port) {
       {Origin: `http://127.0.0.1:${config.network.ports.api}`,
         'X-VectorWarp-Intent': 'recording-toggle-v1'})).body.requested, true);
     assert.equal((await request('POST', '/api/processor/status', {
-      ...liveRecording, recording: false, recordingRequestId: 3, recordingError: 'Disk full\nrecording stopped'
+      ...liveRecording, recording: false, recordingRequestId: 5, recordingError: 'Disk full\nrecording stopped'
     })).status, 204);
     const failedCapture = await request('GET', '/capture/status');
     assert.equal(failedCapture.body.requested, false,
@@ -438,7 +577,7 @@ function connect(port) {
     });
     const liveTimestampSocket = await new Promise((resolve, reject) => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.write(String(Date.now())); resolve(socket);
+        socket.write(JSON.stringify({timestamp: Date.now()})); resolve(socket);
       });
       socket.on('error', reject);
     });
@@ -490,7 +629,7 @@ function connect(port) {
       switched.capture.fs = profile.sampleRate;
       switched.capture.device = profile.device;
       if (profile.type === 'Kraken') switched.capture.device.heimdall = {...profile.device.heimdall,
-        host: '127.0.0.1', control_port: suitePort};
+        host: '127.0.0.1', control_port: suitePort, gain_control: 'fixed'};
       switched.capture.replay.state = profile.liveAvailable === false;
       if (profile.type === 'HackRF') switched.capture.device.serial = ['0001', '0002'];
       for (const key of ['performance', 'reference_synthesis']) {

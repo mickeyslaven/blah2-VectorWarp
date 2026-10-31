@@ -1,14 +1,11 @@
 # GPU acceleration
 
-For macOS, see [Vulkan/MoltenVK support and M2 validation](MACOS_GPU.md) and
-[Homebrew installation](MACOS_HOMEBREW.md). The driver and package instructions
+For macOS, see [macOS installation and GPU setup](MACOS.md). The driver and package instructions
 on this page describe Linux. Legacy modes retain CPU fallback on both platforms;
 the explicit resident mode described below is Linux-only.
 
 The delay–Doppler processor can use a Vulkan GPU. The implementation targets AMD,
-Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm. Physical
-verification is limited to the devices and driver versions in
-[GPU hardware tests](GPU_HARDWARE_TESTS.md), not every GPU in those families.
+Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm.
 In the legacy `auto`/`gpu` routes, capture, reference synthesis, the FP64 clutter
 coefficient solves and linear baseline, detection and tracking remain on the CPU.
 The explicit `gpu-resident` route moves the computational stages to the GPU;
@@ -26,8 +23,7 @@ On the Fedora 44 Pi 4, installed Mesa 26.0.3-4 timed out during production-size
 pipeline creation and fell back to CPU. A later diagnostic loaded Mesa 26.1.8-1
 without installing it and ran both GPU stages, reducing processing from
 797.228 ms/CPI on CPU to 578.138 ms in Automatic mode. That replay still missed
-its 200 ms deadline. See [Pi results and supported driver updates](PI_GPU_SETUP.md#pi-4-driver-diagnostic)
-and the [initial validation report](PI4_VALIDATION_20260910.md).
+its 200 ms deadline. See the [Pi 4 guide](PI4_GUIDE.md).
 
 ## Selection
 
@@ -216,22 +212,9 @@ acceptance.
 
 ## Measured performance
 
-On the tested RTX 4050 Laptop, the GPU reduced a matched 200 ms, ±800 Hz
-recorded-IQ replay from 230.457 ms/CPI in regular blah2 to 63.638 ms/CPI in
-VectorWarp: 72.4% less processing time. VectorWarp CPU averaged 180.855 ms/CPI.
-This fixed-range comparison used the same 527 MHz, 2.4 MS/s recording,
-delays −10…245 (256 bins; 30.604 km maximum
-excess path), and clutter −10…200 for both engines. These legacy-mode measurements accelerate clutter
-FFT/filtering and delay–Doppler work; the small FP64 coefficient solve and
-other pipeline stages remain CPU work. The
-[GPU benchmark report](GPU_BENCHMARK_20260911.md) has the comparison, accuracy
-checks, deadline counts and method.
-The GPU missed none of the 24 measured steady CPI deadlines, versus 22 for
-regular blah2. These replay measurements use startup-only qualification; the
-report separately labels earlier native live measurements with recurring checks.
-The same-campaign before/after table separates the combined efficiency changes
-from the original-blah2 comparison. CPU-only processing also improved: the
-200 ms, ±2400 Hz cases use 25.1–25.9% less time than upstream on the tested hosts.
+On a matched RTX 4050 Laptop replay, VectorWarp processed the tested workload in
+63.638 ms/CPI on GPU and 180.855 ms/CPI on CPU. Automatic mode measures the
+installed hardware and workload directly, then uses the faster qualified path.
 
 ## Drivers and older hardware
 

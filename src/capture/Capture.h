@@ -45,6 +45,8 @@ private:
   uint64_t recordingRequestId = 0;
   uint64_t unsupportedClipRevision = 0;
   std::string unsupportedClipError;
+  bool automaticClips = false;
+  double clipPreSeconds = 0, clipMaximumSeconds = 0;
 
 public:
   struct SamplePosition
@@ -64,6 +66,8 @@ public:
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
   std::atomic<bool> pairedCpiQueueActive{false};
   std::atomic<uint64_t> replayGeneration{0};
+  std::atomic<uint64_t> replayControlRevision{0}, replaySeekSample{0};
+  std::atomic<bool> replayPaused{false};
   void request_stop() { inputStopped.store(true); stopping.store(true); }
   void request_input_stop() { inputStopped.store(true); }
   std::string status_json() const;
@@ -88,6 +92,8 @@ public:
   /// @param path Absolute path to IQ save location.
   /// @return The object.
   Capture(std::string type, uint32_t fs, uint32_t fc, std::string path);
+  void configure_aircraft_clips(bool enabled, double preSeconds,
+    double postSeconds);
 
   /// @brief Implement the capture process.
   /// @param buffer1 Buffer for reference samples.
@@ -119,6 +125,7 @@ public:
   void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }
   SamplePosition live_sample_position() const;
   std::vector<double> input_gain_db() const;
+  uint64_t input_generation() const;
   bool requires_kraken_time_provenance() const {
     // Replay retains the configured receiver identity, but the recording
     // format has no stored RF-time epoch. Mark it inexact too instead of

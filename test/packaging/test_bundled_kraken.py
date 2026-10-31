@@ -17,6 +17,25 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class BundledKraken(unittest.TestCase):
+    def test_git_patch_fallback_isolated_from_parent_repository(self):
+        apply = runpy.run_path(str(ROOT / 'script/build-kraken-macos.py'))['apply_source_patch']
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp)
+            subprocess.run(['git', 'init', '-q', parent], check=True)
+            tree = parent / 'build/source'; tree.mkdir(parents=True)
+            target = tree / 'value.txt'; target.write_text('old\n')
+            patch_file = parent / 'change.patch'
+            patch_file.write_text('''diff --git a/value.txt b/value.txt
+--- a/value.txt
++++ b/value.txt
+@@ -1 +1 @@
+-old
++new
+''')
+            with patch('shutil.which', return_value=None):
+                apply(tree, patch_file)
+            self.assertEqual(target.read_text(), 'new\n')
+
     def test_rpm_manifest_owns_kraken_system_integration(self):
         spec = (ROOT / 'packaging/rpm/vectorwarp.spec.in').read_text()
         files = set(spec.split('\n%files\n', 1)[1].split('\n%changelog', 1)[0].splitlines())
@@ -112,22 +131,27 @@ class BundledKraken(unittest.TestCase):
         profile = dict(frequency=101000000, channels=2, gain=20, channel_gains=[19.7, 22.9])
         live = dict(instance_token='owned', settings=dict(center_freq=101000000, sample_rate=2400000, gain=20),
                     num_channels=2, operating_mode='coherent', calibration_state='CALIBRATED', channel_gains=[20, 20])
-        self.assertIsNone(adapter['matching_status'](live, profile))
+        self.assertEqual(adapter['matching_status'](live, profile), 'CHANNEL_GAINS_PENDING')
         live['channel_gains'] = profile['channel_gains']
         self.assertEqual(adapter['matching_status'](live, profile), 'CALIBRATED')
         class Connection:
             sent = None
+            token = 'owned'
             def __enter__(self): return self
             def __exit__(self, *_): pass
-            def recv(self, _): return (json.dumps(live) + '\n').encode()
+            def settimeout(self, _): pass
+            def recv(self, _):
+                status = {'status': 'success', 'channel_gains': profile['channel_gains']}
+                report = {**live, 'instance_token': self.token}
+                return (json.dumps(status) + '\n' + json.dumps(report) + '\n').encode()
             def sendall(self, value): self.sent = json.loads(value)
         connection = Connection()
         with patch('socket.create_connection', return_value=connection):
-            adapter['telemetry'](8092, profile['channel_gains'], 'owned')
+            adapter['apply_channel_gains'](8092, profile, 'owned')
             self.assertEqual(connection.sent, {'command': 'set_channel_gains', 'gains': [19.7, 22.9]})
             connection.sent = None
-            with self.assertRaises(ValueError): adapter['telemetry'](8092, profile['channel_gains'], 'foreign')
-            self.assertIsNone(connection.sent)
+            connection.token = 'foreign'
+            with self.assertRaises(ValueError): adapter['apply_channel_gains'](8092, profile, 'owned')
 
     def test_receipt_rejects_missing_external_or_replaced_receiver(self):
         verify = runpy.run_path(str(ROOT / 'script/vectorwarp-heimdall.py'))['verify']

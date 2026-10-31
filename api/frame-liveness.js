@@ -23,9 +23,20 @@ function evaluateFrameLiveness(input, previous = {}, limits = {}) {
   const processorSeenAt = pidChanged ? now : finiteTimestamp(previous.processorSeenAt) ?? now;
   const base = {...previous, processorPid: pid, processorSeenAt, attempts};
 
-  if (!input.processorActive || pid === 0)
-    return {state: {...base, status: 'processor-inactive', unhealthySince: null},
-      action: null, reason: 'processor-inactive'};
+  if (!input.processorActive || pid === 0) {
+    const unhealthySince = finiteTimestamp(previous.unhealthySince) ?? now;
+    const inactive = {...base, status: 'processor-inactive', unhealthySince};
+    if (now - unhealthySince < policy.staleAfterMs)
+      return {state: inactive, action: null, reason: 'processor-inactive-confirmation'};
+    const lastAttemptAt = attempts.length ? attempts[attempts.length - 1] : null;
+    if (lastAttemptAt !== null && now - lastAttemptAt < policy.cooldownMs)
+      return {state: {...inactive, status: 'cooldown'}, action: null, reason: 'cooldown'};
+    if (attempts.length >= policy.maxAttempts)
+      return {state: {...inactive, status: 'restart-loop-blocked'}, action: null,
+        reason: 'restart-loop-blocked'};
+    return {state: {...inactive, status: 'processor-start-requested', attempts: [...attempts, now],
+      lastAttemptAt: now}, action: 'start-processor', reason: 'processor-inactive'};
+  }
   const lastFrameAt = finiteTimestamp(input.lastFrameAt);
   const advancing = lastFrameAt !== null && lastFrameAt > (finiteTimestamp(previous.lastFrameAt) ?? -1);
   const fresh = lastFrameAt !== null && Math.abs(now - lastFrameAt) <= policy.staleAfterMs;

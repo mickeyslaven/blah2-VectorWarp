@@ -1,57 +1,42 @@
 # Install VectorWarp
 
-**Use your package manager for most installations:**
+Use the signed Linux packages or Homebrew for a normal installation. Source
+builds and standalone packages are available below.
 
-- **Linux:** [APT for Ubuntu, Debian and compatible DragonOS; DNF for Fedora](#linux-packages).
-- **macOS:** [Homebrew](#macos-with-homebrew).
+## Linux
 
-Copy the command for your OS below, then configure your receiver in Settings.
-These routes handle dependencies and updates without choosing among individual
-release files. [Manual DEB/RPM and PKG downloads and source builds](#manual-install-options)
-remain available for other needs.
-
-## Linux packages
-
-**APT/DNF is the recommended Linux installation.** The installer selects the
-signed repository for your supported OS version and architecture. You do not
-need to choose a DEB or RPM file. See the [supported systems](#supported-systems)
-if you are unsure of your OS; DragonOS follows its Ubuntu base.
-
-### 1. Install VectorWarp
-
-Copy the command for your OS. It installs the prerequisites, adds our signed
-repository, installs VectorWarp, and opens the web interface. Enter your
-administrator password if prompted. The command stops if a step fails.
+### Ubuntu or Debian
 
 ```bash
-# Ubuntu or Debian
-sudo apt update && sudo apt install -y curl gnupg && curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && sudo bash vectorwarp-install.sh --repo-only && sudo apt update && sudo apt install -y vectorwarp && vectorwarp
+sudo apt update && sudo apt install -y curl gnupg && \
+curl --fail --location --proto '=https' --tlsv1.2 \
+  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh \
+  --output vectorwarp-install.sh && \
+sudo bash vectorwarp-install.sh --repo-only && \
+sudo apt update && sudo apt install -y vectorwarp && \
+vectorwarp
 ```
+
+### Fedora
 
 ```bash
-# Fedora
-sudo dnf install -y curl gnupg2 && curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && sudo bash vectorwarp-install.sh --repo-only && sudo dnf install -y vectorwarp && vectorwarp
+sudo dnf install -y curl gnupg2 && \
+curl --fail --location --proto '=https' --tlsv1.2 \
+  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh \
+  --output vectorwarp-install.sh && \
+sudo bash vectorwarp-install.sh --repo-only && \
+sudo dnf install -y vectorwarp && \
+vectorwarp
 ```
 
-The [installer source](../script/install-release.sh) is available to read separately.
-The commands download over HTTPS and verify the repository's pinned signing key.
-They open only the web interface; configure the receiver before starting radar.
-
-<details><summary>Scripted Linux installation</summary>
-
-For scripted installations, the installer also accepts `--start-web` instead
-of `--repo-only` and the following package-manager commands. It installs the
-package, enables the web API at boot and starts only that service directly.
-On upgrades, package hooks may restore previously running radar.
-
-</details>
+The installer adds the VectorWarp package repository and signing key. The last
+command opens the web API and browser interface, including on the first run.
+**Save for later** saves settings without starting radar; **Save & Restart**
+applies them and starts processing.
 
 ## macOS
 
-### macOS with Homebrew
-
-**Homebrew is the recommended Mac installation.** With Homebrew and Xcode
-Command Line Tools installed:
+Install Homebrew and the Xcode Command Line Tools, then run:
 
 ```sh
 brew tap mickeyslaven/vectorwarp
@@ -60,423 +45,210 @@ brew install vectorwarp
 vectorwarp
 ```
 
-The formula builds VectorWarp, its local USB Kraken companion, the UHD/HackRF
-adapters and optional Vulkan/MoltenVK processing with CPU fallback. It does not
-include or download the proprietary SDRplay SDK. `vectorwarp` opens Settings
-without starting radar; configure a receiver or replay file, then choose
-**Save & Restart**. See the [Homebrew guide](MACOS_HOMEBREW.md) for updates,
-services, and removal.
+Homebrew builds VectorWarp and installs its local KrakenSDR companion, UHD,
+HackRF, and GPU dependencies. The Kraken companion is a dependency of
+VectorWarp and does not need to be installed or upgraded separately.
 
-Update an existing Homebrew installation with:
+## Complete setup
 
-```sh
-brew upgrade vectorwarp vectorwarp-heimdall
-```
+`vectorwarp` opens **Settings**. Select **Start setup** and complete Receiver,
+Tuning, Sites, Radar, Data, and Review. **Finish & Start radar** saves the
+configuration, applies it to the receiver, and starts processing.
 
-## Configure and manage Linux installations
+See [Set up VectorWarp](SETUP.md) for the complete guided setup, receiver,
+array, ADS-B, recording, and replay instructions.
 
-### 2. Configure and start radar
+## Update
 
-Open **Settings**, select and configure the receiver, then choose **Save &
-Restart**. This saves the configuration and starts radar, including on the first run.
-**Save for later** saves without starting it; use `vectorwarp start` later to start the
-full stack with saved settings.
-
-Packaged Linux recording output stays below
-`/var/lib/vectorwarp/recordings/`, the directory shared by the non-root
-processor and API sandboxes. Replay files may also use another system-readable
-absolute path such as `/srv/radar/`; paths below `/home`, `/root`, `/run/user`,
-`/tmp`, or `/var/tmp` are unavailable to the packaged services and Settings
-rejects them before restart. Source builds do not inherit this systemd path
-policy.
-
-### 3. Use controls and help
-
-The following launcher behavior is included in version 0.1.7 and newer.
-`vectorwarp` opens the configured web address (or prints it over SSH) without
-starting radar. `vectorwarp --help` lists its fixed actions:
-
-| Command | What it does |
-| --- | --- |
-| `vectorwarp` / `vectorwarp open` | Open the web interface without starting radar. |
-| `vectorwarp start` | Start the full stack with saved settings. |
-| `vectorwarp stop` | Stop the full stack, including the web interface. |
-| `vectorwarp restart` | Stop and start the full stack with saved settings. |
-| `vectorwarp status` | Show service status. |
-| `vectorwarp logs` | Show recent logs. |
-| `vectorwarp build-kraken` | Build the pinned local Kraken companion from source; never start RF. |
-| `vectorwarp version` | Show the installed version. |
-| `vectorwarp help` | Show all commands and examples. |
-
-`open` (the default) starts only the web API. `start` brings up the full
-VectorWarp stack: receiver helper, web API, and checked radar processor using
-saved settings. If radar is active but the web page is down, `start` repairs
-the web and helper without interrupting radar; use `restart` to apply changed
-settings. `stop` safely drains privileged receiver work before stopping the
-VectorWarp processor, web API, helper and socket; `restart` stops and starts
-the full stack in order. `version` reports the installed package version. A
-pending package upgrade, receiver build or restart can make a command refuse
-until it is safe to retry. Neither these commands nor package upgrades stop
-shared Kraken Suite, SDRplay API or other vendor services. Checked receiver
-startup can still start an approved installed receiver service when the
-selected profile requires it.
-Check `status` or `logs` after a request. A service-changing command may ask
-for your administrator password. If your user cannot read the system journal,
-use `sudo vectorwarp logs`. Packages older than 0.1.7 do not contain the
-launcher; update them with the package-manager commands below before using it.
-
-### 4. Update
-
-Keep the configured repository; do not rerun the installer. Choose one block:
+### Ubuntu or Debian
 
 ```bash
-# Ubuntu or Debian
-sudo apt update && sudo apt install vectorwarp
+sudo apt update
+sudo apt install vectorwarp
 ```
 
+### Fedora
+
 ```bash
-# Fedora
 sudo dnf upgrade --refresh vectorwarp
 ```
 
-If an earlier installation completed but the page does not load, start and
-inspect only the web API:
+### macOS
 
-```bash
-sudo systemctl enable --now vectorwarp-api.service
-sudo systemctl status vectorwarp-api.service --no-pager
+```sh
+brew update
+brew upgrade vectorwarp
+vectorwarp restart
 ```
 
-On an upgrade to version 0.1.7 or newer, the package pauses its own services before replacing files,
-waits for privileged receiver work to finish,
-and restarts only VectorWarp services that were running beforehand. A stopped
-processor stays stopped. Pending receiver-management approvals expire; review
-them again after the upgrade. An active local SDRplay build or Save & Restart
-blocks the upgrade until it finishes. No Kraken Suite, SDRplay API or other
-vendor software is upgraded by these hooks.
-If you use a locally built RSPduo adapter, a changed VectorWarp core can make
-that adapter stale. The package does not build it automatically: check
-**Receiver setup → Build SDRplay support** in Settings and rebuild if prompted,
-then use **Save & Restart**. Restarting the previously active processor unit
-does not guarantee that its receiver became ready.
+When VectorWarp runs as a Homebrew service, restart it with:
 
-If preflight reports that the broker cannot be safely drained (for example on
-an unsupported cgroup layout or an overridden broker unit), no new package
-files are unpacked; follow the printed status guidance and retry after the
-receiver action finishes. If activation fails after unpack, processing remains
-stopped and the package reports a failure. Inspect the four VectorWarp unit
-statuses named in that error before starting only the services you intend.
-If systemd itself cannot reload, the package retains its upgrade marker and
-the launcher refuses service actions; repair systemd first, then rerun
-`sudo systemctl daemon-reload`. On APT systems, then run
-`sudo dpkg --configure vectorwarp`; its post-install hook will consume the
-marker and restore the prior active services. On Fedora, run
-`sudo /opt/vectorwarp/libexec/vectorwarp-activate-upgrade` once instead.
-If activation itself failed, its marker was consumed; inspect the printed
-previously-active state and service errors. An APT reconfiguration will mark
-the package configured without replaying that failed start. Start only the
-services you choose after fixing the error.
+```sh
+brew services restart vectorwarp
+```
+
+## Commands
+
+| Command | Action |
+| --- | --- |
+| `vectorwarp` or `vectorwarp open` | Open the browser interface. |
+| `vectorwarp start` | Start the receiver, API, and radar processor. |
+| `vectorwarp stop` | Stop VectorWarp. |
+| `vectorwarp restart` | Restart VectorWarp with the saved settings. |
+| `vectorwarp status` | Show service status. |
+| `vectorwarp logs` | Show recent logs. |
+| `vectorwarp version` | Show the installed Linux package version. |
+| `vectorwarp help` | List available commands. |
+
+On macOS, show the installed version with:
+
+```sh
+brew list --versions vectorwarp
+```
+
+## Open VectorWarp from another device
+
+Open this address in a browser on the same network:
+
+```text
+http://<radar-computer-address>:3000/
+```
+
+Use the radar computer's hostname or IP address in place of
+`<radar-computer-address>`.
 
 ## Supported systems
 
-| System | Version or base | Architecture | Current package selection |
+| System | Version or base | Architecture | Install method |
 | --- | --- | --- | --- |
-| Ubuntu | 22.04, 24.04, or 26.04 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| Debian | 12 (Bookworm) | ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| Debian | 13 (Trixie) | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| Fedora | 44 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | [Use `/etc/os-release` metadata](DRAGONOS.md) |
+| Ubuntu | 22.04, 24.04, or 26.04 | x86-64 or ARM64 | APT |
+| Debian | 12 Bookworm | ARM64 | APT |
+| Debian | 13 Trixie | x86-64 or ARM64 | APT |
+| Fedora | 44 | x86-64 or ARM64 | DNF |
+| DragonOS | Matching supported Ubuntu base | x86-64 or ARM64 | APT |
+| Raspberry Pi OS | Debian 12 or 13 base | ARM64 | APT |
+| macOS | Current supported release | Apple Silicon | Homebrew |
 
-Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
+The [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+selects the matching download for each supported Linux system.
 
-## Manual install options
+## Manual package installation
 
-APT/DNF and Homebrew above are preferred for normal installations. Expand an
-alternative only when you need a local package or a source build.
-
-<details><summary>Manual Linux DEB/RPM installation</summary>
-
-### Manual package installation
-
-Use the current [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
-to select one package matching the operating system version and architecture.
-Install a downloaded local package with the distribution package manager so its
-dependencies resolve; do not use `dpkg` alone or mix libraries from another
-release. Replace `matching.deb` or `matching.rpm` with the downloaded filename:
+Download the matching package from the
+[package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install), then
+install it with the system package manager.
 
 ```bash
-# Ubuntu, Debian, or DragonOS using its matching Ubuntu base
-sudo apt install ./matching.deb
+# Ubuntu, Debian, or DragonOS
+sudo apt install ./vectorwarp-package.deb
 ```
 
 ```bash
 # Fedora
-sudo dnf install ./matching.rpm
+sudo dnf install ./vectorwarp-package.rpm
 ```
 
-
-</details>
-
-<details><summary>macOS signed PKG — optional standalone installer</summary>
-
-### macOS standalone installer
-
-When the [release matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
-lists a signed PKG, it installs `VectorWarp.app` at
-`/Applications/VectorWarp.app`. Open it in Finder, then launch:
-
-```sh
-/Applications/VectorWarp.app/Contents/MacOS/VectorWarp
-```
-
-The app does not start radar automatically. See [the standalone guide](MACOS_STANDALONE.md)
-for verification scope and limitations.
-
-
-</details>
-
-<details><summary>Build from source — development and other systems</summary>
-
-<a id="build-from-source"></a>
+When a signed macOS PKG is listed on the package page, open it and follow the
+installer. The application is installed at `/Applications/VectorWarp.app`.
 
 ## Build from source
 
-These source-build commands target Linux. For macOS, use the
-[Mac source-build guide](MACOS.md#build-and-run) or Homebrew above.
-Use this route for development or a system outside the Linux package targets.
+Source builds support Linux systems with Node.js 22 or newer, CMake, a C++
+compiler, and the receiver libraries selected below.
 
-### 1. Install build dependencies
+### 1. Install Linux build dependencies
 
-Install [Node.js](https://nodejs.org/en/download) 22 or later with npm, then
-the build dependencies below. On Ubuntu or Debian:
+Ubuntu or Debian:
 
 ```bash
-sudo apt update && \
-sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config sudo python3 python3-apt \
-  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
+sudo apt update
+sudo apt install build-essential cmake ninja-build git curl tar zip unzip \
+  pkg-config sudo python3 python3-apt libfftw3-dev libarmadillo-dev \
+  libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev \
+  libeigen3-dev libssl-dev zlib1g-dev patch
 ```
 
-On Fedora:
+Fedora:
 
 ```bash
-sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config sudo python3 python3-libdnf5 python3-rpm \
-  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
+sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip \
+  pkgconf-pkg-config sudo python3 python3-libdnf5 python3-rpm fftw-devel \
+  armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel \
+  eigen3-devel openssl-devel zlib-devel patch
 ```
 
-The native installer requires Node.js 22 or newer at `/usr/bin/node`, not only
-inside your shell's version manager. Check it before building:
+Install Node.js 22 or newer, then check:
 
 ```bash
 /usr/bin/node --version
 npm --version
 ```
 
-If Node is missing or older than 22, finish a system-wide Node installation
-before continuing. The official download page also offers shell-only version
-managers; those do not satisfy the `/usr/bin/node` requirement by themselves.
-
-### GPU build dependencies
-
-For GPU support, also install the development packages for your system:
+For GPU processing, install Vulkan development tools:
 
 ```bash
 # Ubuntu or Debian
 sudo apt install libvulkan-dev glslang-dev glslang-tools
-```
 
-```bash
 # Fedora
 sudo dnf install vulkan-loader-devel glslang-devel vulkan-tools
 ```
 
-Install your GPU's Vulkan driver before using acceleration. `--gpu auto` does
-not install drivers or development packages.
-If the GPU module was omitted from a build, installing a driver alone is not
-enough: rebuild and reinstall VectorWarp with those dependencies present.
+### 2. Choose receiver support
 
-### 2. Choose the receivers to include
+| Backend | Included receivers |
+| --- | --- |
+| `all` | KrakenSDR, USRP/UHD, dual HackRF, and the local RSPduo adapter kit |
+| `kraken` | KrakenSDR |
+| `usrp` | USRP/UHD and KrakenSDR |
+| `hackrf` | Dual HackRF and KrakenSDR |
+| `rspduo` | SDRplay RSPduo and KrakenSDR |
 
-| `--backend` | Live receivers included | Additional receiver software |
-| --- | --- | --- |
-| `kraken` | Kraken | Local or remote KrakenSDR Suite V2 |
-| `usrp` | USRP and Kraken | UHD 4.1+ |
-| `hackrf` | Dual HackRF and Kraken | libhackrf |
-| `rspduo` | RSPduo and Kraken | SDRplay Hardware API 3.15 and its development headers |
-| `all` (default) | Kraken, USRP, dual HackRF; locally buildable RSPduo | UHD and libhackrf; SDRplay API only if using RSPduo |
-
-These are source-build choices, not separate release products. UHD and HackRF
-development packages are included above. `all` does not need the SDRplay SDK at
-build time: it includes our small adapter source kit for local compilation from
-Settings. Before choosing the precompiled `rspduo` source-build option,
-install and license the [SDRplay API yourself](SDRPLAY_SETUP.md).
-Set `BLAH2_SDRPLAY_INCLUDE_DIR` and `BLAH2_SDRPLAY_LIBRARY` if its headers and
-library are outside the standard paths. VectorWarp never downloads the SDK or
-accepts its license.
+For RSPduo, install the SDRplay Hardware API before building the adapter. See
+[SDRplay setup](SDRPLAY_SETUP.md).
+USRP and B210 support requires UHD 4.1 or newer.
 
 ### 3. Build and install
 
-Set `VW_BACKEND` below to your choice. Keep the same value for both build
-commands; omitting `--backend` defaults to `all` without downloading an SDRplay SDK.
-
 ```bash
-git clone https://github.com/mickeyslaven/blah2-VectorWarp.git && \
-cd blah2-VectorWarp && \
-VW_BACKEND=all && \
-script/build-native.sh --preflight --backend "$VW_BACKEND" --gpu auto && \
-script/build-native.sh --backend "$VW_BACKEND" --gpu auto && \
-sudo script/install-native.sh --preflight && \
+git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
+cd blah2-VectorWarp
+VW_BACKEND=all
+script/build-native.sh --preflight --backend "$VW_BACKEND" --gpu auto
+script/build-native.sh --backend "$VW_BACKEND" --gpu auto
+sudo script/install-native.sh --preflight
 sudo script/install-native.sh
-```
-
-The build creates `build/native/artifact`. `--backend all` is the default and
-builds Kraken, USRP and HackRF plus the local RSPduo source kit; it does not
-compile an RSPduo adapter without the separately installed SDRplay API. The
-build wrapper's default GPU setting is `auto`; use `--gpu off` in both build
-commands for a CPU-only build. Installation preserves an existing
-`/etc/vectorwarp/config.yml` and does not enable or start VectorWarp services.
-A first RSPduo-enabled installation can start an already-installed standard
-SDRplay API service; upgrades do not. See [SDRplay setup](SDRPLAY_SETUP.md).
-
-<a id="start-the-interface-and-configure-vectorwarp"></a>
-
-### 4. Open the interface and configure your receiver
-
-Open the web interface without starting radar processing:
-
-```bash
 vectorwarp
 ```
 
-The default launcher action starts only the web API when needed and prints its
-configured address; on a local desktop it also opens the browser. The default address on
-the server is `http://localhost:3000/`. From another device, use
-`http://<server-IP>:3000/`, replacing `<server-IP>` with the Linux machine's
-address. Do not use `localhost` from your phone or another computer.
-The default configuration listens on all network interfaces. The UI has no
-login: keep it on a trusted LAN/VPN or behind an authenticated gateway.
-If the launcher reports a web-service error, an administrator can inspect and
-retry that unit directly:
+For a CPU-only build, replace `--gpu auto` with `--gpu off` in both build
+commands.
+
+For macOS source development, see the [macOS build guide](MACOS.md#build-and-run).
+
+## Remove VectorWarp
+
+Ubuntu or Debian:
 
 ```bash
-sudo systemctl status vectorwarp-api.service --no-pager
-sudo systemctl start vectorwarp-api.service
+sudo apt remove vectorwarp
 ```
 
-This starts only the API, not radar processing.
-For a native source installation using a custom prefix, the full-stack
-`vectorwarp stop` and `vectorwarp restart` actions refuse rather than assume
-the standard package service layout. After receiver actions finish, an
-administrator must inspect that installation's units and stop them manually.
-
-In **Settings**, select a receiver profile; supply its endpoint or device
-details; set frequency, sample rate, site coordinates, and a writable recording
-directory; then correct any validation errors. Install and configure
-the pinned local Kraken companion with `vectorwarp build-kraken` when using a
-DEB/RPM package and the loopback endpoint `127.0.0.1`. This explicit administrator
-action downloads checksum-pinned sources and builds under a restricted compiler
-account; package installation and ordinary start never download or build it.
-The packages do not redistribute the upstream Heimdall binary. Native source
-builds already include the companion. A remote Kraken endpoint remains separately
-managed. Do not run an unrelated local Heimdall on the same ports.
-Follow the [receiver-specific steps](SETUP.md) for Kraken, RSPduo, USRP or HackRF.
-
-For SDRplay RSPduo, obtain and license SDRplay's vendor Hardware API yourself.
-VectorWarp never downloads it or accepts its license. On a first real native or
-package installation only, VectorWarp may prepare an already-installed local
-vendor service when the local RSPduo kit and policy allow it; it
-does not enable it at boot or start VectorWarp itself. If preparation cannot be
-verified, use the official [SDRplay Hardware API page](https://sdrplay.com/hardware-api/),
-then recheck in Settings. With the unified package, choose **Build SDRplay support**
-after installing the API and its headers. This compiles only our adapter; it does
-not start radar. Then use **Save & Restart**. See
-[SDRplay setup](SDRPLAY_SETUP.md).
-
-Choose **Save & Restart** (or **Apply & Restart** for previously saved changes)
-to apply the settings and start processing. **Save for later**, when offered,
-writes the configuration without applying receiver changes or starting radar.
-The page shows restart progress and any startup error. Software discovery does not prove
-that the receiver is correctly wired or receiving a coherent signal.
-
-To start only the web interface automatically after future reboots, enable its
-service. Enable radar processing at boot separately, only after confirming the
-receiver configuration works and choosing that behavior deliberately:
+Fedora:
 
 ```bash
-sudo systemctl enable vectorwarp-api.service
-# Optional: also start radar processing after reboot
-sudo systemctl enable vectorwarp-processor.service
+sudo dnf remove vectorwarp
 ```
 
-For ordinary status and recent web/radar logs, use:
+macOS:
 
-```bash
-vectorwarp status
-vectorwarp logs
+```sh
+brew services stop vectorwarp
+vectorwarp stop
+brew uninstall vectorwarp
 ```
 
-Administrators can still use `systemctl status` for detailed unit-level repair.
+## Other installation guides
 
-<a id="future-package-route"></a>
-
-### Package notes
-
-The repository installer and direct-package links above cover Ubuntu 22.04,
-24.04, and 26.04; Debian 12/13; Fedora 44; and matching DragonOS bases. See
-[DragonOS](DRAGONOS.md) for Ubuntu-base selection.
-
-</details>
-
-## Limited platform: Raspberry Pi 4B
-
-Raspberry Pi 4B is retained as a compatibility/preview target, not a recommended
-primary VectorWarp platform. Its production-size radar workloads may not keep
-up in real time. Prefer a supported x86-64 PC or Apple Silicon Mac when possible.
-
-| System | Version or base | Architecture | Current package selection |
-| --- | --- | --- | --- |
-| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Pi 4 preview](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview) |
-
-<details><summary>Pi 4B Bookworm Lite preview and advanced setup</summary>
-
-Download the preview's versioned
-[`vectorwarp-pi4-0.1.10.rpi-imager-manifest`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
-and open it in Raspberry Pi Imager. The manifest enables hostname, locale,
-Wi-Fi, country, login, and SSH customization. Do not select the bare image when
-you need headless Wi-Fi or SSH setup.
-
-The constrained baseline is an 8 GB Pi 4B with Raspberry Pi OS Lite 64-bit
-Bookworm and a 32 GB microSD card. Fresh-card boot and Wi-Fi provisioning remain
-unqualified. Review the [Pi 4 guide](PI4_GUIDE.md) and
-[validation limits](PI4_IMAGE_VALIDATION_20260919.md) before flashing. The
-preview is independent of the stable package release and does not preconfigure
-the Bookworm repository. Existing Trixie installations are not automatically
-migrated or downgraded.
-
-Before writing the card, set a hostname, login credentials or SSH key, locale,
-time zone, and network settings. After boot, browse to
-`http://<hostname>.local:3000/` or its DHCP address. RSPduo users must install
-SDRplay's vendor API and choose **Build SDRplay support** in Settings.
-
-Source installation is an advanced alternative. Use the normal source route
-above, then follow the [Pi 4 guide](PI4_GUIDE.md) for its bounded RSPduo workload
-and AUTO behavior. There is no Pi-specific build flag; `--gpu auto` builds the
-optional Vulkan path when dependencies are available.
-
-### Raspberry Pi GPU
-
-Inspect the optional GPU path after installation:
-
-```bash
-/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status
-```
-
-The separate administrator command can offer the operating system's Mesa
-packages without starting or restarting radar:
-
-```bash
-sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver
-```
-
-See [Pi GPU setup](PI_GPU_SETUP.md) for driver and account-access details.
-
-</details>
+- [SDRplay RSPduo](SDRPLAY_SETUP.md)
+- [Raspberry Pi 4](PI4_GUIDE.md)

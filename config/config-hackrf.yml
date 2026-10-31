@@ -1,6 +1,10 @@
 capture:
   fs: 2000000
   fc: 204640000
+  aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
+    minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
+    minimum_elevation_deg: 0, maximum_elevation_deg: 90,
+    minimum_interval_seconds: 5}
   device:
     type: "HackRF"
     serial: 
@@ -20,7 +24,6 @@ process:
   data:
     cpi: 0.5
     buffer: 1.5
-    overlap: 0
   ambiguity:
     delayMin: -10
     delayMax: 400
@@ -48,17 +51,18 @@ process:
       motion_bins: 1
   tracker:
     enable: true
+    profile: balanced
     track_guided_shadow:
       enable: false
       promote: false
       max_tracks: 64
     initiate:
       M: 3
-      N: 5
+      N: 6
       maxAcc: 10
+      min_snr_db: 5
       acceleration_model: hypothesis_bank
-    delete: 10
-    smooth: "none"
+    delete: 3
   bearing:
     enable: false
     min_consistent: 3
@@ -104,14 +108,19 @@ truth:
   adsb:
     enabled: false
     tar1090: 'localhost:8080'
+    aircraft_photo_provider: disabled
     poll_interval: 1
     smoothing_window: 10
     max_position_age: 30
     provisional_event_time_uncertainty_s: 1
-  ais:
+  remote_id:
     enabled: false
-    ip: 0.0.0.0
-    port: 30001
+    source: '127.0.0.1:8754'
+    poll_interval: 0.5
+    source_timeout: 1.2
+    smoothing_window: 4
+    max_position_age: 10
+    wifi_enabled: false
 
 location:
   rx:
@@ -132,3 +141,9 @@ save:
   detection: false
   timing: false
   path: "/var/lib/vectorwarp/recordings/"
+  retention:
+    automatic_cleanup: false
+    low_space_policy: stop_recording
+    maximum_age_days: 30
+    maximum_total_gb: 100
+    minimum_free_gb: 5

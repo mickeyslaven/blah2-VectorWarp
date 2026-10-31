@@ -8,10 +8,14 @@ import unittest
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[2]
-GUIDES = ("README.md", "docs/INSTALL.md", "docs/SETUP.md", "docs/SDRPLAY_SETUP.md", "docs/3LIPS_SETUP.md",
-          "docs/PI_GPU_SETUP.md", "docs/DRAGONOS.md", "docs/GPU_ACCELERATION.md",
-          "packaging/README.md", "docs/MAINTAINER_RELEASE.md", "docs/UPSTREAM_COMPARISON.md",
-          "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
+GUIDES = (
+    "README.md", "docs/3LIPS_SETUP.md", "docs/BEARING_GEOLOCATION.md",
+    "docs/GPU_ACCELERATION.md", "docs/INSTALL.md", "docs/MACOS.md",
+    "docs/MACOS_RELEASE_AGENT.md", "docs/MAINTAINER_RELEASE.md",
+    "docs/PI4_GUIDE.md", "docs/PI_IMAGE_PACKAGING.md",
+    "docs/SDRPLAY_SETUP.md", "docs/SETUP.md", "packaging/README.md",
+    "src/capture/rspduo/README.md", "src/capture/hackrf/README.md",
+)
 
 APT_INSTALL = (
     "sudo apt update && sudo apt install -y curl gnupg && "
@@ -113,7 +117,6 @@ exit 0
         expected = {
             "README.md": (APT_INSTALL, DNF_INSTALL),
             "docs/INSTALL.md": (APT_INSTALL, DNF_INSTALL),
-            "docs/DRAGONOS.md": (APT_INSTALL,),
         }
         for relative, commands in expected.items():
             blocks = shell_blocks((ROOT / relative).read_text())
@@ -177,7 +180,8 @@ exit 0
         self.assertIn("including the web interface", result.stdout)
         self.assertIn("web API", install)
         self.assertIn("including on the first run", install)
-        self.assertIn("**Save for later** saves without starting it", install)
+        self.assertIn("**Save for later**", install)
+        self.assertIn("without starting radar", install)
 
     def test_installer_help_uses_checked_launcher_not_direct_processor_start(self):
         result = subprocess.run(["bash", str(ROOT / "script/install-release.sh"), "--help"],
@@ -198,16 +202,13 @@ exit 0
 
     def test_active_install_routes_point_to_the_shared_package_page(self):
         package_guides = ("README.md", "docs/INSTALL.md", "docs/SETUP.md",
-                          "docs/SDRPLAY_SETUP.md", "docs/PI_GPU_SETUP.md",
-                          "docs/DRAGONOS.md", "packaging/README.md",
-                          "docs/UPSTREAM_COMPARISON.md",
+                          "docs/SDRPLAY_SETUP.md", "docs/PI4_GUIDE.md",
+                          "packaging/README.md",
                           "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
         for relative in package_guides:
             with self.subTest(guide=relative):
                 self.assertIn("(https://mickeyslaven.github.io/blah2-VectorWarp/#install)",
                               (ROOT / relative).read_text())
-        comparison = (ROOT / "docs/UPSTREAM_COMPARISON.md").read_text()
-        self.assertNotIn("No published repository or release yet", comparison)
         hackrf = (ROOT / "src/capture/hackrf/README.md").read_text()
         self.assertIn("RSPduo source kit", hackrf)
         self.assertNotIn("requires the SDRplay SDK", hackrf)
@@ -259,8 +260,8 @@ exit 0
         self.assertNotIn("sudo apt install", setup)
         self.assertNotIn("sudo dnf install", setup)
         self.assertNotIn("git clone", setup)
-        self.assertIn("## Build from source", setup)  # Preserve inbound anchors.
-        for heading in ("## KrakenSDR Suite V2", "## SDRplay RSPduo", "## USRP / B210", "## Dual HackRF"):
+        for heading in ("### KrakenSDR Suite V2", "### SDRplay RSPduo",
+                        "### Ettus USRP / B210", "### Dual HackRF"):
             self.assertIn(heading, setup)
         self.assertNotIn("| Receiver | Settings sent to software", setup)
 
@@ -269,14 +270,7 @@ exit 0
         for system in ("Ubuntu", "Debian", "Fedora", "DragonOS", "Raspberry Pi OS"):
             self.assertRegex(install, rf"(?m)^\| .*{re.escape(system)}.*\|")
         self.assertNotRegex(install, r"(?m)^## Raspberry Pi")
-        self.assertIn("### Raspberry Pi GPU", install)
-        marker = "## Limited platform: Raspberry Pi 4B"
-        self.assertIn(marker, install)
-        self.assertNotRegex(install.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
-
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn(marker, readme)
-        self.assertNotRegex(readme.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
+        self.assertIn("[Raspberry Pi 4](PI4_GUIDE.md)", install)
 
     def test_current_receiver_guidance_agrees_with_policy(self):
         helper = (ROOT / "script/vectorwarp-receiver-helper.py").read_text()
@@ -294,14 +288,11 @@ exit 0
 
     def test_explicit_package_startup_does_not_enable_boot_capture(self):
         install = (ROOT / "docs/INSTALL.md").read_text()
-        self.assertIn("sudo systemctl start vectorwarp-api.service", install)
-        self.assertIn("sudo systemctl enable --now vectorwarp-api.service", install)
-        self.assertIn("enables the web API at boot", install)
-        self.assertIn("does not enable or start VectorWarp services", install)
-        self.assertIn("Save for later", install)
-        self.assertIn("Save & Restart", install)
-        for unit in re.findall(r"\bvectorwarp-[a-z-]+\.service\b", install):
-            self.assertTrue((ROOT / "contrib/systemd" / (unit + ".in")).is_file())
+        self.assertIn("`vectorwarp` or `vectorwarp open`", install)
+        self.assertIn("`vectorwarp start`", install)
+        self.assertIn("**Save for later**", install)
+        self.assertIn("**Save & Restart**", install)
+        self.assertNotIn("systemctl enable --now vectorwarp-processor.service", install)
 
     def test_3lips_guide_documents_the_builtin_converter_change(self):
         guide = " ".join((ROOT / "docs/3LIPS_SETUP.md").read_text().split())

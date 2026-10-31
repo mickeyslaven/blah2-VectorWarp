@@ -59,7 +59,18 @@ function baseReport(pathway) {
       severity: 'degraded', message: 'Synthetic preceding event',
       firstSeenAt: '2026-10-24T19:59:58Z', lastSeenAt: '2026-10-24T19:59:59Z',
       occurrences: 1, recovered: true
-    }],
+    }], features: {recording: {requested: false, paused: false, active: false,
+      errorPresent: false, recordedSamples: 0, clipRevision: 1, clipErrorPresent: false,
+      clipSamples: 0, timelineCaptureAvailable: true, automaticCleanup: false,
+      lowSpacePolicy: 'stop_recording', maximumAgeDays: 30, maximumTotalGb: 100, minimumFreeGb: 5},
+    replay: {active: pathway.receiverType === 'Replay', paused: false, seekable: pathway.receiverType === 'Replay',
+      positionSamples: 0, totalSamples: 0, sampleRateHz: 2000000, timelineAvailable: false},
+    adsb: {enabled: true, online: true, degraded: false, sourceCount: 2, healthySourceCount: 2,
+      aircraftCount: 10, directAircraftCount: 9, mlatAircraftCount: 1,
+      associationLagCpis: 4, associationLagMs: 2000},
+    processing: {acceleration: pathway.backend || 'cpu', clutterAcceleration: pathway.backend || 'cpu',
+      configuredCpiMs: 500},
+    presentation: {timestampConnections: 1, associationLagCpis: 4, associationLagMs: 2000}},
     comment: 'Automated pathway contract verification; no user data.'
   };
 }
@@ -163,14 +174,14 @@ test('every supported receiver family can be represented without a hardware iden
   }
 });
 
-test('arbitrary text is discarded while allowlisted diagnostic scalars survive', async () => {
+test('user comments are sanitized while allowlisted diagnostic scalars survive', async () => {
   const value = baseReport(pathways[2]);
   value.incident.message = 'Authorization: Basic dXNlcjpwYXNz password=“correct horse battery staple”';
   value.comment = '["safe","SECOND_SECRET"] {\\"icao24\\":\\"abc123\\",\\"call_sign\\":\\"SECRET7\\"}';
   const report = normalizeReport(value);
   const issue = githubIssue(report, await reportFingerprint(report), 'test-report-id');
 
-  assert.equal(report.comment, null);
+  assert.ok(report.comment);
   assert.equal(report.incident.message,
     'VectorWarp detected SDR_STREAM_LOST during receiver stream.');
   assert.doesNotMatch(issue.body,

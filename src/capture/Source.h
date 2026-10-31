@@ -15,6 +15,7 @@
 #include <mutex>
 #include <deque>
 #include "Recording.h"
+#include "PortableClipRecorder.h"
 #include "data/IqData.h"
 
 class Source
@@ -50,6 +51,10 @@ protected:
   uint32_t recordingChannels = 2;
 
 private:
+  // Monotonic signal-processing epoch. Receiver discontinuities advance this
+  // even when recording is disabled so adaptive DSP never spans incompatible
+  // hardware/sample epochs.
+  std::atomic<uint64_t> processingEpoch{0};
   mutable std::mutex recordingMutex;
   std::atomic<bool> recordingActive{false};
   std::atomic<bool> recordingResumePending{false};
@@ -61,6 +66,7 @@ private:
   std::vector<bool> channelStarted;
   SampleTimePosition recordingStartPosition;
   std::vector<std::string> recordingDiscontinuities;
+  std::unique_ptr<blah2::PortableClipRecorder> portableClipRecorder;
   std::string open_file_locked(const SampleTimePosition* startPosition = nullptr);
   void record_block_locked(const blah2::IqBlock& samples,
     const SampleTimePosition* startPosition);
@@ -115,16 +121,25 @@ public:
   };
   bool is_recording() const { return recordingActive.load(); }
   bool recording_wants_samples() const {
-    return recordingActive.load() || recordingResumePending.load();
+    return recordingActive.load() || recordingResumePending.load() ||
+      bool(portableClipRecorder);
   }
+  void configure_portable_clips(double preSeconds, double maximumClipSeconds);
+  virtual void request_clip(const blah2::IqClipRequest& request);
+  virtual blah2::IqClipStatus clip_status() const;
   RecordingStatus recording_status() const;
+  uint64_t processing_epoch() const { return processingEpoch.load(std::memory_order_acquire); }
   // Preserve a partial file for diagnosis, but never mark it complete after a
   // receiver reports a gap, reset, overrun, or malformed callback.
   void recording_discontinuity(const std::string& error);
   // Close only the ambiguous epoch, then lazily start a new file on the first
   // qualified post-boundary block. This preserves receiver operation without
   // ever joining samples from different hardware-setting epochs.
-  void recording_epoch_discontinuity(const std::string& error);
+  void recording_epoch_discontinuity(const std::string& error,
+    bool advanceProcessingEpoch=true);
+  void advance_processing_epoch() noexcept {
+    processingEpoch.fetch_add(1, std::memory_order_acq_rel);
+  }
   void record_block(const blah2::IqBlock& samples);
   void record_block(const blah2::IqBlock& samples,
     const SampleTimePosition& startPosition);

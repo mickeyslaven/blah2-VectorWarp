@@ -203,6 +203,11 @@ try
     tree["capture"]["replay"]["legacy_block_samples"] >> legacyReplayBlockSamples;
   if (tree["capture"]["replay"].has_child("provenance"))
     tree["capture"]["replay"]["provenance"] >> replayProvenanceMode;
+  if (state) {
+    auto replay = tree["capture"]["replay"];
+    if (replay.has_child("sample_rate_hz")) replay["sample_rate_hz"] >> fs;
+    if (replay.has_child("frequency_hz")) replay["frequency_hz"] >> fc;
+  }
   tree["network"]["ip"] >> ip_capture;
   tree["network"]["ports"]["api"] >> port_capture;
   if (fs == 0 || fc == 0 || port_capture == 0)
@@ -369,6 +374,23 @@ try
         uint32_t channel = std::numeric_limits<uint32_t>::max();
         child >> channel;
         surveillanceChannels.push_back(channel);
+      }
+  }
+  // A replay is an offline processing input, not a request to open the selected
+  // live SDR. Restore its recorded topology independently of that SDR profile.
+  if (state && tree["capture"]["replay"].has_child("channel_count")) {
+    auto replay = tree["capture"]["replay"];
+    replay["channel_count"] >> captureChannelCount;
+    if (replay.has_child("reference_channel")) replay["reference_channel"] >> referenceChannel;
+    if (replay.has_child("reference_mode")) replay["reference_mode"] >> referenceMode;
+    surveillanceChannels.clear(); referenceChannels.clear();
+    if (replay.has_child("surveillance_channels"))
+      for (auto child : replay["surveillance_channels"].children()) {
+        uint32_t channel=UINT32_MAX; child>>channel; surveillanceChannels.push_back(channel);
+      }
+    if (replay.has_child("reference_channels"))
+      for (auto child : replay["reference_channels"].children()) {
+        uint32_t channel=UINT32_MAX; child>>channel; referenceChannels.push_back(channel);
       }
   }
   if (referenceMode != "dedicated" && referenceMode != "array_eigenbeam")
@@ -542,6 +564,15 @@ try
   Capture *capture = new Capture(type, fs, fc, path);
   if (state) capture->set_replay(loop, replayFile, replayFormat,
     legacyReplayBlockSamples, replayProvenanceMode);
+  if (!state && tree["capture"].has_child("aircraft_clips")) {
+    bool enabled = false;
+    double preSeconds = 0, postSeconds = 0;
+    auto clips = tree["capture"]["aircraft_clips"];
+    if (clips.has_child("enabled")) clips["enabled"] >> enabled;
+    if (clips.has_child("pre_seconds")) clips["pre_seconds"] >> preSeconds;
+    if (clips.has_child("post_seconds")) clips["post_seconds"] >> postSeconds;
+    capture->configure_aircraft_clips(enabled, preSeconds, postSeconds);
+  }
 
   // Keep one bounded capture queue per coherent input.
   double tCpi, tBuffer;
@@ -978,7 +1009,8 @@ try
   // set up process tracker
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
-  std::string smooth,trackerAccelerationModel="hypothesis_bank";
+  std::string smooth,trackerAccelerationModel="hypothesis_bank",trackerProfile="balanced";
+  double trackerMinInitiationSnrDb=5.0;
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
   // Zero means the full configured ambiguity Doppler span. A positive legacy
@@ -991,6 +1023,17 @@ try
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
   tree["process"]["tracker"]["initiate"]["maxAcc"] >> maxAcc;
+  if(tree["process"]["tracker"].has_child("profile"))
+    tree["process"]["tracker"]["profile"] >> trackerProfile;
+  if(trackerProfile!="conservative"&&trackerProfile!="balanced"&&trackerProfile!="permissive")
+    throw std::invalid_argument("Tracker profile must be conservative, balanced, or permissive");
+  if(trackerProfile=="conservative")trackerMinInitiationSnrDb=7.0;
+  if(trackerProfile=="permissive")trackerMinInitiationSnrDb=4.0;
+  if(tree["process"]["tracker"]["initiate"].has_child("min_snr_db"))
+    tree["process"]["tracker"]["initiate"]["min_snr_db"] >> trackerMinInitiationSnrDb;
+  if(!std::isfinite(trackerMinInitiationSnrDb)||trackerMinInitiationSnrDb < -100 ||
+     trackerMinInitiationSnrDb > 100)
+    throw std::invalid_argument("Tracker min_snr_db must be between -100 and 100 dB");
   if(tree["process"]["tracker"]["initiate"].has_child("acceleration_model"))
     tree["process"]["tracker"]["initiate"]["acceleration_model"] >> trackerAccelerationModel;
   if(tree["process"]["tracker"]["initiate"].has_child("stationary_clutter")){
@@ -1011,7 +1054,8 @@ try
   rangeRes = (double)Constants::c/fs;
   lambda = (double)Constants::c/fc;
   Tracker *tracker = new Tracker(m, n, nDelete,
-    ambiguity.front()->get_cpi(), maxAcc, rangeRes, lambda);
+    ambiguity.front()->get_cpi(), maxAcc, rangeRes, lambda,
+    trackerMinInitiationSnrDb);
 
   // set up process spectrum analyser
   double spectrumBandwidth = 2000;
@@ -1057,19 +1101,32 @@ try
       if(geometry.has_child("shape"))geometry["shape"]>>shape;
       if(shape!="regular_polygon"||coherentPositions.size()<3)
         throw std::invalid_argument("Resident coherent fusion requires regular-polygon geometry");
-      double centreX=0,centreY=0;
-      for(const auto& position:coherentPositions){centreX+=position[0];centreY+=position[1];}
-      centreX/=coherentPositions.size();centreY/=coherentPositions.size();
+      double centreX=0,centreY=0,centreZ=0;
+      for(const auto& position:coherentPositions){centreX+=position[0];centreY+=position[1];centreZ+=position[2];}
+      centreX/=coherentPositions.size();centreY/=coherentPositions.size();centreZ/=coherentPositions.size();
       std::vector<double> angles,radii;
       for(const auto& position:coherentPositions){const double x=position[0]-centreX,y=position[1]-centreY;
         angles.push_back(std::atan2(y,x));radii.push_back(std::hypot(x,y));}
       const double radius=std::accumulate(radii.begin(),radii.end(),0.0)/radii.size();
       const double step=std::remainder(angles[1]-angles[0],2*std::acos(-1.0));
-      const double tolerance=std::max(.001,radius*.05);
+      // The resident ABI represents an exact regular polygon. Do not silently
+      // replace a merely-near-regular configured array with its mean radius and
+      // uniform angles: the CPU path uses the exact coordinates and would then
+      // be steering a different physical array.
+      const double tolerance=std::max(1e-6,radius*1e-5);
+      const double angularTolerance=1e-5;
+      if(std::abs(step)<=angularTolerance||
+         std::abs(std::remainder(coherentPositions.size()*step,2*std::acos(-1.0)))>
+           angularTolerance)
+        throw std::invalid_argument("Resident coherent fusion channel order does not form one complete regular-polygon cycle");
       for(size_t channel=0;channel<radii.size();++channel)
         if(std::abs(radii[channel]-radius)>tolerance||
-           std::abs(std::remainder(angles[channel]-angles[0]-channel*step,2*std::acos(-1.0)))>.0873)
-          throw std::invalid_argument("Resident coherent fusion geometry/order is not a regular polygon");
+           std::abs(coherentPositions[channel][2]-centreZ)>tolerance||
+           std::abs(std::remainder(angles[channel]-angles[0]-channel*step,2*std::acos(-1.0)))>angularTolerance||
+           std::any_of(angles.begin(),angles.begin()+channel,[&](double prior){
+             return std::abs(std::remainder(angles[channel]-prior,2*std::acos(-1.0)))<=angularTolerance;
+           }))
+          throw std::invalid_argument("Resident coherent fusion geometry/order is not a uniformly stepped regular polygon");
       const auto fusionMode=surveillanceFusionMode == "noise_whitened_beam_bank"
         ? blah2::resident::FusionMode::noiseWhitenedRegularPolygon
         : blah2::resident::FusionMode::coherentRegularPolygon;
@@ -1101,7 +1158,7 @@ try
       tree["process"]["tracker"]["gpu_capacity"] >> capacity;
       residentConfig.tracker={true,capacity,m,n,nDelete,
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
-        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,stationaryClutter,
+        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,trackerMinInitiationSnrDb,stationaryClutter,
         stationaryPersistenceCpis,stationaryMaxDopplerHz,
         trackGuidedShadow,trackGuidedPromote,trackGuidedShadowMaxTracks};
     }
@@ -1164,7 +1221,8 @@ try
   });
   std::thread t2([&]{
     try {
-      uint64_t replayGeneration = capture->replayGeneration.load();
+      uint64_t inputGeneration = 0;
+      bool haveInputGeneration = false;
       bool pairedQueueWasActive = false;
       while (!capture->stopping.load() || (pairedQueueWasActive &&
         (capture->pairedCpiQueueActive.load() || pairedCpiQueue->backlog_samples() >= nSamples)))
@@ -1177,6 +1235,7 @@ try
         const auto residentWholeStart=std::chrono::steady_clock::now();
         bool ready = false;
         uint64_t captureStartUs = 0;
+        uint64_t extractedInputGeneration = 0;
         std::vector<uint64_t> captureBacklogSamples, captureDroppedSamples;
         bool captureSamplePositionAvailable = false;
         uint64_t captureEpoch = 0, captureFirstEpochSample = 0,
@@ -1247,6 +1306,7 @@ try
                 captureEndEpochSample = uint64_t(block.first) + nSamples;
               }
               ready = true;
+              extractedInputGeneration = capture->input_generation();
             } catch (...) { pairedCpiQueue->release(slot); throw; }
             if (!pairedCpiQueue->release(slot)) ready = false;
           }
@@ -1295,6 +1355,7 @@ try
             }
             for (std::size_t channel = 0; channel < captureChannelCount; channel++)
               captureData[channel]->replace(captureBuffers[channel]->drain_front(nSamples));
+            extractedInputGeneration = capture->input_generation();
           }
           captureLocks.unlock();
         }
@@ -1303,6 +1364,15 @@ try
           // Keep ReplayPlayer's EOF/loop drain from observing an empty queue
           // between extraction and setting the consumer-busy state.
           AtomicFlagGuard processing(capture->processingBusy);
+          // Bind processing to the epoch observed during extraction. A
+          // boundary after extraction invalidates this CPI instead of letting
+          // old samples consume the new epoch's state reset.
+          const uint64_t currentInputGeneration = capture->input_generation();
+          if (currentInputGeneration != extractedInputGeneration) continue;
+          if (!haveInputGeneration) {
+            inputGeneration = extractedInputGeneration;
+            haveInputGeneration = true;
+          }
           const auto captureGainDb=capture->input_gain_db();
           std::vector<double> surveillanceGainDb;
           if(manifoldRecorderEnabled||surveillanceManifoldCalibration||bearingManifoldCalibration){
@@ -1350,10 +1420,9 @@ try
           const auto attachEventTime = [&](std::string json) {
             return blah2::annotate_event_time(std::move(json), eventTime);
           };
-          const uint64_t nextReplayGeneration = capture->replayGeneration.load();
-          if (nextReplayGeneration != replayGeneration)
+          if (extractedInputGeneration != inputGeneration)
           {
-            replayGeneration = nextReplayGeneration;
+            inputGeneration = extractedInputGeneration;
             cpuStages.resetReference();
             reportedReferenceUpdate = 0;
             replayProcessedFrames = 0;
@@ -1364,7 +1433,7 @@ try
             }
             delete tracker;
             tracker = new Tracker(m, n, nDelete, ambiguity.front()->get_cpi(),
-              maxAcc, rangeRes, lambda);
+              maxAcc, rangeRes, lambda, trackerMinInitiationSnrDb);
           }
           // Advance signal time for every accepted input CPI, even if clutter
           // later rejects it. UI publication timestamps remain wall-clock.
@@ -1597,6 +1666,10 @@ try
                stationaryClutter?stationaryPersistenceCpis:0u,
                stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled,
                evidenceBearing,{surveillanceGainDb.data(),surveillanceGainDb.size()});
+            if(residentOracle)resident->checkProducts(residentPublication,
+              map->to_json_km(frameTimestampMs,fs),
+              isDetection?detection->to_json_km(frameTimestampMs,fs):std::string{},
+              isTracker?track->to_json(frameTimestampMs):std::string{});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
@@ -1720,7 +1793,9 @@ try
           timing_name.clear();
 
           // output CPI timestamp for updating data
-          std::string t0_string = std::to_string(frameTimestampMs);
+          // TCP is a byte stream, so delimit each timestamp as a complete JSON
+          // object. The API parser must tolerate fragmentation and coalescing.
+          std::string t0_string = "{\"timestamp\":" + std::to_string(frameTimestampMs) + "}";
           socket_timestamp->sendData(t0_string);
           if(resident){
             // sendData is a completed local TCP write, not a browser/application

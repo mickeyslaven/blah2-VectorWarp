@@ -166,7 +166,9 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
    if(candidate>prior)prior=candidate;
   }
  }
- precise double power=m[49]!=0u?(historyReady&&finiteD(prior)&&prior>=0.0LF?0.5LF*(current+prior):current):0.0LF;
+ // Display-map power exists independently of CFAR. Disabling detection must
+ // not flatten the user's map; integration history is used only when present.
+ precise double power=historyReady&&finiteD(prior)&&prior>=0.0LF?0.5LF*(current+prior):current;
  double amplitude=sqrt(max(power,0.0LF));
  double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(power)){reject(202u);return;}
@@ -338,7 +340,9 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==
  for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>second){second=power;secondBeam=beam;}}
  for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85])||excluded(beam,secondBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>third){third=power;thirdBeam=beam;}}
  double refined=double(sqrt(max(best,0.0))),base=fused[i].x;uint record=m[42]+6u*i;
- if(m[87]==0u&&refined>base&&base>0.0LF){double gain=20.0LF*positiveLog10(refined/base);double snr=readS(record+4u)+gain;
+ // Owl OS/Retina/blah2arm define map level as 10*log10(|complex value|).
+ // Fine-beam refinement must stay on that same legacy-compatible scale.
+ if(m[87]==0u&&refined>base&&base>0.0LF){double gain=10.0LF*positiveLog10(refined/base);double snr=readS(record+4u)+gain;
   if(!finiteD(snr)){reject(210u);return;}writeS(record+4u,snr);writeS(m[38]+2u*i,readS(m[38]+2u*i)+gain);}
  uint ratio2=second>0.0?uint(clamp(round(31.0*second/best),0.0,31.0)):0u;
  uint ratio3=third>0.0?uint(clamp(round(31.0*third/best),0.0,31.0)):0u;

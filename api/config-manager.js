@@ -17,10 +17,18 @@ const DEVICE_PROFILES = [
     type: 'Kraken',
     label: 'KrakenSDR Suite V2',
     description: '2–8 coherent channels streamed by HeIMDALL',
+    features: {
+      coherentArray: true,
+      residentIntegration: true,
+      bearing: true,
+      manifold: true,
+      frequencyResolvedShadow: true
+    },
     sampleRate: 2400000,
     device: {
       type: 'Kraken',
-      heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092, gain: 'keep'},
+      heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092,
+        gain: 'keep', gain_control: 'measured_per_channel'},
       channel_count: 5,
       reference_channel: 0,
       surveillance_channels: [0, 1, 2, 3, 4]
@@ -35,6 +43,11 @@ const DEVICE_PROFILES = [
         power_iterations: 12,
         covariance_smoothing: 0.8,
         diagonal_loading: 0.001
+      },
+      surveillance_fusion: {
+        mode: 'noncoherent', beams: 12, effective_beam_trials: 12,
+        direct_path_null_db: 0,
+        detection_manifold_automation: {enabled: false}
       }
     }
   },
@@ -43,6 +56,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'SDRplay RSPduo',
     description: 'Two coherent tuners in dual-tuner mode',
+    features: {},
     sampleRate: 2000000,
     device: {
       type: 'RspDuo', agcSetPoint: -20, bandwidthNumber: 5,
@@ -56,6 +70,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'Ettus USRP',
     description: 'Two coherent receive channels through UHD',
+    features: {},
     sampleRate: 2000000,
     device: {
       type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
@@ -67,6 +82,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'Dual HackRF',
     description: 'Two synchronized HackRF receivers',
+    features: {},
     sampleRate: 2000000,
     device: {
       type: 'HackRF',
@@ -239,6 +255,8 @@ function validateConfig(config, baseline = null, options = {}) {
   };
   inspectFields(root);
   const capture = requireObject(root.capture, 'capture');
+  const aircraftClips = capture.aircraft_clips === undefined ? null :
+    requireObject(capture.aircraft_clips, 'capture.aircraft_clips');
   const device = requireObject(capture.device, 'capture.device');
   const replay = requireObject(capture.replay, 'capture.replay');
   const processConfig = requireObject(root.process, 'process');
@@ -263,6 +281,37 @@ function validateConfig(config, baseline = null, options = {}) {
 
   number(capture.fs, 'capture.fs', {integer: true, min: 1, max: UINT32_MAX});
   number(capture.fc, 'capture.fc', {integer: true, min: 1, max: UINT32_MAX});
+  if (aircraftClips) {
+    boolean(aircraftClips.enabled, 'capture.aircraft_clips.enabled');
+    number(aircraftClips.pre_seconds, 'capture.aircraft_clips.pre_seconds', {min: 0, max: 10});
+    number(aircraftClips.post_seconds, 'capture.aircraft_clips.post_seconds', {min: 0, max: 10});
+    if (aircraftClips.minimum_slant_range_km !== undefined)
+      number(aircraftClips.minimum_slant_range_km,
+        'capture.aircraft_clips.minimum_slant_range_km', {min: 0, max: 1000});
+    if (aircraftClips.maximum_slant_range_km !== undefined)
+      number(aircraftClips.maximum_slant_range_km,
+        'capture.aircraft_clips.maximum_slant_range_km', {min: 0, max: 1000});
+    if (aircraftClips.minimum_elevation_deg !== undefined)
+      number(aircraftClips.minimum_elevation_deg,
+        'capture.aircraft_clips.minimum_elevation_deg', {min: -10, max: 90});
+    if (aircraftClips.maximum_elevation_deg !== undefined)
+      number(aircraftClips.maximum_elevation_deg,
+        'capture.aircraft_clips.maximum_elevation_deg', {min: -10, max: 90});
+    if (aircraftClips.minimum_interval_seconds !== undefined)
+      number(aircraftClips.minimum_interval_seconds,
+        'capture.aircraft_clips.minimum_interval_seconds', {min: 0, max: 3600});
+    if (Number.isFinite(aircraftClips.pre_seconds) && Number.isFinite(aircraftClips.post_seconds) &&
+        aircraftClips.pre_seconds + aircraftClips.post_seconds > 10)
+      errors.push('capture.aircraft_clips pre_seconds plus post_seconds cannot exceed 10 seconds');
+    if (Number.isFinite(aircraftClips.minimum_slant_range_km) &&
+        Number.isFinite(aircraftClips.maximum_slant_range_km) &&
+        aircraftClips.minimum_slant_range_km > aircraftClips.maximum_slant_range_km)
+      errors.push('capture.aircraft_clips minimum slant range cannot exceed maximum slant range');
+    if (Number.isFinite(aircraftClips.minimum_elevation_deg) &&
+        Number.isFinite(aircraftClips.maximum_elevation_deg) &&
+        aircraftClips.minimum_elevation_deg > aircraftClips.maximum_elevation_deg)
+      errors.push('capture.aircraft_clips minimum elevation cannot exceed maximum elevation');
+  }
   string(device.type, 'capture.device.type');
   const profile = DEVICE_PROFILES.find(item => item.type === device.type);
   if (!profile) errors.push('capture.device.type is not supported');
@@ -307,6 +356,26 @@ function validateConfig(config, baseline = null, options = {}) {
       ['legacy-unqualified', 'decision-grade']);
   if (replay.legacy_block_samples !== undefined)
     number(replay.legacy_block_samples, 'capture.replay.legacy_block_samples', {integer: true, min: 1, max: 262144});
+  if (replay.sample_rate_hz !== undefined)
+    number(replay.sample_rate_hz, 'capture.replay.sample_rate_hz', {integer: true, min: 1, max: UINT32_MAX});
+  if (replay.frequency_hz !== undefined)
+    number(replay.frequency_hz, 'capture.replay.frequency_hz', {integer: true, min: 1, max: UINT32_MAX});
+  if (replay.channel_count !== undefined)
+    number(replay.channel_count, 'capture.replay.channel_count', {integer: true, min: 2, max: KRAKEN_MAX_CHANNELS});
+  if (replay.reference_channel !== undefined)
+    number(replay.reference_channel, 'capture.replay.reference_channel', {integer: true, min: 0, max: 7});
+  if (replay.reference_mode !== undefined)
+    oneOf(replay.reference_mode, 'capture.replay.reference_mode', ['dedicated', 'array_eigenbeam']);
+  const replaySurveillance = replay.surveillance_channels === undefined ? [] :
+    integerArray(replay.surveillance_channels, 'capture.replay.surveillance_channels');
+  const replayReferences = replay.reference_channels === undefined ? [] :
+    integerArray(replay.reference_channels, 'capture.replay.reference_channels');
+  if (Number.isInteger(replay.channel_count))
+    [...replaySurveillance, ...replayReferences, replay.reference_channel]
+      .filter(Number.isInteger).forEach(channel => {
+        if (channel >= replay.channel_count)
+          errors.push('capture.replay channel roles must be inside channel_count');
+      });
   if (replay.format === 'usrp-blocks' && replay.legacy_block_samples === undefined)
     errors.push('capture.replay.legacy_block_samples is required for usrp-blocks replay');
 
@@ -358,7 +427,7 @@ function validateConfig(config, baseline = null, options = {}) {
     if (heimdall.gain !== undefined && !(heimdall.gain === 'keep' || heimdall.gain === -1 ||
         (typeof heimdall.gain === 'number' && Number.isFinite(heimdall.gain) && heimdall.gain >= 0 && heimdall.gain <= 50 && Math.round(heimdall.gain * 10) === heimdall.gain * 10)))
       errors.push('capture.device.heimdall.gain must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps');
-    if (heimdall.gain_control === 'measured' && heimdall.gain === -1)
+    if (['measured', 'measured_per_channel'].includes(heimdall.gain_control) && heimdall.gain === -1)
       errors.push('capture.device.heimdall.gain must be keep or a fixed starting gain when automatic headroom selection is enabled; Suite AGC cannot provide a stable measurement.');
     if (heimdall.channel_gains !== undefined) {
       if (!Array.isArray(heimdall.channel_gains) || heimdall.channel_gains.length !== channelCount)
@@ -463,8 +532,11 @@ function validateConfig(config, baseline = null, options = {}) {
 
   const cpi = number(data.cpi, 'process.data.cpi', {exclusiveMin: 0});
   const buffer = number(data.buffer, 'process.data.buffer', {min: 1});
-  number(data.overlap, 'process.data.overlap', {min: 0});
-  const sampleRate = Number.isFinite(capture.fs) ? capture.fs : null;
+  // Processing limits follow the recording while replay is active. The live
+  // receiver's saved rate remains untouched so cross-SDR replay does not make
+  // its device profile invalid.
+  const sampleRate = replay.state === true && Number.isFinite(replay.sample_rate_hz) ?
+    replay.sample_rate_hz : Number.isFinite(capture.fs) ? capture.fs : null;
   const cpiSamples = cpi !== null && sampleRate !== null ?
     Math.floor(cpi * sampleRate) : null;
   if (cpiSamples !== null && (cpiSamples < 2000 || cpiSamples > INT32_MAX))
@@ -552,8 +624,17 @@ function validateConfig(config, baseline = null, options = {}) {
   if (clutterMin !== null && clutterMax !== null && cpiSamples !== null &&
       clutterMax - clutterMin + cpiSamples + 1 > INT32_MAX)
     errors.push('process.clutter.delayMax: filter FFT exceeds the processor limit');
-  const channels = device.type === 'Kraken' ? device.channel_count : 2;
-  const paths = device.type === 'Kraken' ? device.surveillance_channels?.length : 1;
+  // Once the physical receiver is bypassed, validate processing against the
+  // recording's channel topology rather than the machine's installed SDR.
+  const processingDevice = replay.state === true && Number.isInteger(replay.channel_count) ?
+    {...device, type: replay.channel_count > 2 || replay.reference_mode === 'array_eigenbeam' ?
+        'Kraken' : device.type,
+      channel_count: replay.channel_count,
+      reference_channel: replay.reference_channel ?? 0,
+      surveillance_channels: replaySurveillance,
+      array_geometry: device.array_geometry} : device;
+  const channels = processingDevice.type === 'Kraken' ? processingDevice.channel_count : 2;
+  const paths = processingDevice.type === 'Kraken' ? processingDevice.surveillance_channels?.length : 1;
   // Lower-bound estimate only: FFT plans, allocator overhead and other services
   // need additional memory. Deployment-specific budgets may be set by the host.
   const estimatedBytes = 16 * (channels * cpiSamples * buffer +
@@ -579,54 +660,6 @@ function validateConfig(config, baseline = null, options = {}) {
   if (detection.integration_motion_bins !== undefined)
     number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
       {integer: true, min: 0, max: 1});
-  if (detection.integration_shadow !== undefined) {
-    const shadow = requireObject(detection.integration_shadow,
-      'process.detection.integration_shadow');
-    boolean(shadow.enabled, 'process.detection.integration_shadow.enabled');
-    for (const field of ['queue_path', 'results_path', 'receipt_key_path']) if (shadow[field] !== undefined) {
-      string(shadow[field], `process.detection.integration_shadow.${field}`);
-      if (typeof shadow[field] === 'string' && !path.isAbsolute(shadow[field]))
-        errors.push(`process.detection.integration_shadow.${field} must be an absolute path`);
-    }
-    if (shadow.enabled === true && !shadow.receipt_key_path)
-      errors.push('process.detection.integration_shadow.receipt_key_path is required when enabled');
-    if (shadow.dwell_seconds !== undefined) {
-      if (!Array.isArray(shadow.dwell_seconds) || !shadow.dwell_seconds.length ||
-          shadow.dwell_seconds.length > 8)
-        errors.push('process.detection.integration_shadow.dwell_seconds must contain 1 through 8 dwell lengths');
-      else {
-        shadow.dwell_seconds.forEach((value, index) => number(value,
-          `process.detection.integration_shadow.dwell_seconds[${index}]`,
-          {min: .02, max: 2}));
-        if (new Set(shadow.dwell_seconds).size !== shadow.dwell_seconds.length)
-          errors.push('process.detection.integration_shadow.dwell_seconds must not contain duplicates');
-      }
-    }
-    const modes = ['production', 'coherent_beam_bank', 'noise_whitened_beam_bank',
-      'noncoherent', 'physical_channels'];
-    if (shadow.fusion_modes !== undefined) {
-      if (!Array.isArray(shadow.fusion_modes) || !shadow.fusion_modes.length)
-        errors.push('process.detection.integration_shadow.fusion_modes must not be empty');
-      else {
-        shadow.fusion_modes.forEach((value, index) => {
-          string(value, `process.detection.integration_shadow.fusion_modes[${index}]`);
-          if (!modes.includes(value))
-            errors.push(`process.detection.integration_shadow.fusion_modes[${index}] is not supported`);
-        });
-        if (new Set(shadow.fusion_modes).size !== shadow.fusion_modes.length)
-          errors.push('process.detection.integration_shadow.fusion_modes must not contain duplicates');
-        if (shadow.enabled === true && shadow.fusion_modes.filter(value => value === 'production').length !== 1)
-          errors.push('process.detection.integration_shadow.fusion_modes must contain exactly one production baseline when enabled');
-      }
-    }
-    if (shadow.max_pending !== undefined)
-      number(shadow.max_pending, 'process.detection.integration_shadow.max_pending',
-        {integer: true, min: 1, max: 1024});
-    if (shadow.max_wall_seconds_per_clip !== undefined)
-      number(shadow.max_wall_seconds_per_clip,
-        'process.detection.integration_shadow.max_wall_seconds_per_clip',
-        {integer: true, min: 30, max: 86400});
-  }
   let trackBeforeDetect = null;
   if (detection.track_before_detect !== undefined) {
     trackBeforeDetect = requireObject(detection.track_before_detect,
@@ -664,6 +697,8 @@ function validateConfig(config, baseline = null, options = {}) {
       detection.minDoppler > Math.max(Math.abs(dopplerMin), Math.abs(dopplerMax)))
     errors.push('process.detection.minDoppler must be inside the Doppler span');
   boolean(tracker.enable, 'process.tracker.enable');
+  if (tracker.profile !== undefined)
+    oneOf(tracker.profile, 'process.tracker.profile', ['conservative', 'balanced', 'permissive']);
   ['M', 'N'].forEach(key => number(initiate[key],
     `process.tracker.initiate.${key}`, {integer: true, min: 1, max: 255}));
   if (Number.isInteger(initiate.M) && Number.isInteger(initiate.N) &&
@@ -671,6 +706,9 @@ function validateConfig(config, baseline = null, options = {}) {
     errors.push('process.tracker.initiate.M cannot exceed process.tracker.initiate.N');
   const maxAcc = number(initiate.maxAcc,
     'process.tracker.initiate.maxAcc', {min: 0, max: INT32_MAX});
+  if (initiate.min_snr_db !== undefined)
+    number(initiate.min_snr_db, 'process.tracker.initiate.min_snr_db',
+      {min: -100, max: 100});
   if (initiate.acceleration_model !== undefined)
     oneOf(initiate.acceleration_model, 'process.tracker.initiate.acceleration_model',
       ['hypothesis_bank', 'adaptive_gate']);
@@ -700,7 +738,6 @@ function validateConfig(config, baseline = null, options = {}) {
   if (tracker.beam_tolerance !== undefined)
     number(tracker.beam_tolerance, 'process.tracker.beam_tolerance',
       {integer: true, min: 0, max: 180});
-  string(tracker.smooth, 'process.tracker.smooth');
   if (processConfig.performance !== undefined) {
     const performance = requireObject(processConfig.performance,
       'process.performance');
@@ -789,11 +826,15 @@ function validateConfig(config, baseline = null, options = {}) {
       number(fusion.beams, 'process.surveillance_fusion.beams',
         {integer: true, min: 4, max: 360});
     if (fusion.effective_beam_trials !== undefined) {
+      const configuredBeams = fusion.beams ?? 12;
       number(fusion.effective_beam_trials,
         'process.surveillance_fusion.effective_beam_trials', {min: 1, max: 360});
-      if (Number.isFinite(fusion.beams) &&
-          fusion.effective_beam_trials > fusion.beams)
+      if (Number.isFinite(configuredBeams) &&
+          fusion.effective_beam_trials > configuredBeams)
         errors.push('effective_beam_trials cannot exceed surveillance_fusion.beams');
+      if (fusion.mode === 'noncoherent' && Number.isFinite(configuredBeams) &&
+          fusion.effective_beam_trials !== configuredBeams)
+        errors.push('noncoherent fusion does not support reduced effective beam trials');
     }
     if (fusion.direct_path_null_db !== undefined)
       number(fusion.direct_path_null_db,
@@ -822,16 +863,16 @@ function validateConfig(config, baseline = null, options = {}) {
           errors.push('enabled detection manifold automation requires an absolute corpus path');
         if (!['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
           errors.push('detection manifold automation requires coherent surveillance fusion');
-        if (device.type !== 'Kraken' || processConfig.detection?.enable !== true ||
+        if (processingDevice.type !== 'Kraken' || processConfig.detection?.enable !== true ||
             root.truth?.adsb?.enabled !== true)
           errors.push('detection manifold automation requires Kraken coherent detection and ADS-B truth');
       }
     }
     if (fusion.manifold_file !== undefined) {
-      const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
+      const heimdall=processingDevice.heimdall||{},geometry=processingDevice.array_geometry||{};
       const commonFixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
       const vectorFixed=Array.isArray(heimdall.channel_gains)&&
-        heimdall.channel_gains.length===device.channel_count&&
+        heimdall.channel_gains.length===processingDevice.channel_count&&
         heimdall.channel_gains.every(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=50);
       if(heimdall.gain_control!==undefined&&heimdall.gain_control!=='fixed')
         errors.push('measured surveillance manifold requires capture.device.heimdall.gain_control: fixed');
@@ -843,30 +884,61 @@ function validateConfig(config, baseline = null, options = {}) {
     }
     if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
       const label = fusion.mode;
-      if (device.type !== 'Kraken')
+      if (processingDevice.type !== 'Kraken')
         errors.push(`${label} surveillance fusion requires a Kraken receiver`);
-      if (!isObject(device.array_geometry) || !Array.isArray(device.array_geometry.elements))
+      if (!isObject(processingDevice.array_geometry) || !Array.isArray(processingDevice.array_geometry.elements))
         errors.push(`${label} surveillance fusion requires capture.device.array_geometry.elements`);
-      const geometryChannels = new Set((device.array_geometry?.elements || [])
+      const geometryChannels = new Set((processingDevice.array_geometry?.elements || [])
         .filter(isObject).filter(element => Array.isArray(element.position) &&
           element.position.length === 3 && element.position.every(Number.isFinite))
         .map(element => element.daq_channel));
-      if ((device.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
+      if ((processingDevice.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
         errors.push(`${label} geometry must include every surveillance channel`);
       if (processConfig.performance?.acceleration === 'gpu-resident' &&
-          device.array_geometry?.shape !== 'regular_polygon')
+          processingDevice.array_geometry?.shape !== 'regular_polygon')
         errors.push(`gpu-resident ${label} fusion requires regular_polygon geometry`);
+      if (processConfig.performance?.acceleration === 'gpu-resident' &&
+          processingDevice.array_geometry?.shape === 'regular_polygon') {
+        const byChannel = new Map((processingDevice.array_geometry.elements || []).map(element =>
+          [element?.daq_channel, element?.position]));
+        const positions = (processingDevice.surveillance_channels || []).map(channel => byChannel.get(channel));
+        let regular = positions.length >= 3 && positions.every(position =>
+          Array.isArray(position) && position.length === 3 && position.every(Number.isFinite));
+        if (regular) {
+          const centre = [0, 1, 2].map(axis =>
+            positions.reduce((sum, position) => sum + position[axis], 0) / positions.length);
+          const radii = positions.map(position => Math.hypot(position[0] - centre[0],
+            position[1] - centre[1]));
+          const angles = positions.map(position => Math.atan2(position[1] - centre[1],
+            position[0] - centre[0]));
+          const radius = radii.reduce((sum, value) => sum + value, 0) / radii.length;
+          const wrap = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
+          const step = wrap(angles[1] - angles[0]);
+          const tolerance = Math.max(1e-6, radius * 1e-5);
+          const angularTolerance = 1e-5;
+          regular = Number.isFinite(radius) && radius > 0 && Math.abs(step) > angularTolerance &&
+            Math.abs(wrap(positions.length * step)) <= angularTolerance &&
+            positions.every((position, index) =>
+              Math.abs(radii[index] - radius) <= tolerance &&
+              Math.abs(position[2] - centre[2]) <= tolerance &&
+              Math.abs(wrap(angles[index] - angles[0] - index * step)) <= angularTolerance &&
+              angles.slice(0, index).every(prior =>
+                Math.abs(wrap(angles[index] - prior)) > angularTolerance));
+        }
+        if (!regular)
+          errors.push(`gpu-resident ${label} geometry must be an exact planar uniformly stepped regular polygon`);
+      }
       if (fusion.mode === 'noise_whitened_beam_bank' &&
           processConfig.performance?.acceleration !== 'gpu-resident')
         errors.push('noise_whitened_beam_bank fusion requires gpu-resident acceleration');
       const reference = processConfig.reference_synthesis;
-      const surveillance = device.surveillance_channels || [];
+      const surveillance = processingDevice.surveillance_channels || [];
       if (reference?.mode !== 'array_eigenbeam' ||
           !Array.isArray(reference.channels) ||
           reference.channels.length !== surveillance.length ||
           reference.channels.some((channel, index) => channel !== surveillance[index]))
         errors.push('coherent fusion requires array_eigenbeam reference channels to match surveillance channels');
-      if (!Number.isFinite(device.array_geometry?.x_axis_bearing_deg_true))
+      if (!Number.isFinite(processingDevice.array_geometry?.x_axis_bearing_deg_true))
         errors.push('coherent fusion requires x_axis_bearing_deg_true');
     }
   }
@@ -930,8 +1002,8 @@ function validateConfig(config, baseline = null, options = {}) {
       const fusion = processConfig.surveillance_fusion;
       if (replay.state !== true || replay.format !== 'blah2')
         errors.push('fixed_site_projected is experimental and requires explicit native blah2 replay');
-      if (device.type !== 'Kraken' || device.channel_count !== 5 ||
-          !allFive(device.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
+      if (processingDevice.type !== 'Kraken' || processingDevice.channel_count !== 5 ||
+          !allFive(processingDevice.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
           !allFive(reference?.channels) || clutter.enable !== true ||
           processConfig.performance?.acceleration !== 'gpu-resident' ||
           bearing.enable !== true || bearing.method !== 'covariance_mvdr' ||
@@ -955,10 +1027,10 @@ function validateConfig(config, baseline = null, options = {}) {
         (typeof bearing.manifold_file !== 'string' || !bearing.manifold_file.trim()))
       errors.push('process.bearing.manifold_file must be a non-empty path');
     if (bearing.manifold_file !== undefined) {
-      const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
+      const heimdall=processingDevice.heimdall||{},geometry=processingDevice.array_geometry||{};
       const fixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
       const vector=Array.isArray(heimdall.channel_gains)&&
-        heimdall.channel_gains.length===device.channel_count&&
+        heimdall.channel_gains.length===processingDevice.channel_count&&
         heimdall.channel_gains.every(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=50);
       if((heimdall.gain_control!==undefined&&heimdall.gain_control!=='fixed')||(!fixed&&!vector))
         errors.push('measured bearing manifold requires an explicit fixed requested gain vector');
@@ -993,9 +1065,9 @@ function validateConfig(config, baseline = null, options = {}) {
       if (shadow.path !== undefined && (typeof shadow.path !== 'string' || !path.isAbsolute(shadow.path)))
         errors.push('process.bearing.frequency_resolved_shadow.path must be absolute');
       if ([true, 'on', 'auto'].includes(shadow.enabled)) {
-        const geometry = device.array_geometry;
+        const geometry = processingDevice.array_geometry;
         const referenceChannels = processConfig.reference_synthesis?.channels;
-        if (device.type !== 'Kraken' || processConfig.reference_synthesis?.mode !== 'array_eigenbeam' ||
+        if (processingDevice.type !== 'Kraken' || processConfig.reference_synthesis?.mode !== 'array_eigenbeam' ||
             !Array.isArray(referenceChannels) || referenceChannels.length < 2)
           errors.push('frequency-resolved shadow requires multi-channel Kraken array reference synthesis');
         if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
@@ -1023,14 +1095,14 @@ function validateConfig(config, baseline = null, options = {}) {
       number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
       number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
       if (recorder.enabled === true || recorder.enabled === 'on') {
-        if (device.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
+        if (processingDevice.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
               processConfig.surveillance_fusion?.mode) || !detection.enable)
           errors.push('manifold recording requires Kraken coherent detection');
         if (!root.truth?.adsb?.enabled)
           errors.push('manifold recording requires ADS-B truth');
         if (!Number.isInteger(ports.manifold) || ports.manifold < 1 || ports.manifold > 65535)
           errors.push('network.ports.manifold is required when manifold recording is enabled');
-        const geometry = device.array_geometry;
+        const geometry = processingDevice.array_geometry;
         if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
             geometry?.orientation_confirmed !== true || !Number.isFinite(geometry.x_axis_bearing_deg_true))
           errors.push('manifold recording requires confirmed array mapping, geometry, and orientation');
@@ -1051,9 +1123,9 @@ function validateConfig(config, baseline = null, options = {}) {
           bearing.training_radius <= bearing.guard_radius)
         errors.push('process.bearing.training_radius must exceed guard_radius');
       if (bearing.channel_mapping !== undefined &&
-          bearing.channel_mapping.length !== device.surveillance_channels?.length)
+          bearing.channel_mapping.length !== processingDevice.surveillance_channels?.length)
         errors.push('process.bearing.channel_mapping must include every surveillance channel once');
-      const geometry = device.array_geometry;
+      const geometry = processingDevice.array_geometry;
       if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
           geometry?.orientation_confirmed !== true)
         errors.push('bearing output requires confirmed mapping, geometry, and orientation');
@@ -1078,20 +1150,26 @@ function validateConfig(config, baseline = null, options = {}) {
     });
   if (trackerForward) {
     boolean(trackerForward.enabled, 'network.tracker_forward.enabled');
-    string(trackerForward.host, 'network.tracker_forward.host');
-    number(trackerForward.port, 'network.tracker_forward.port',
-      {integer: true, min: 1, max: 65535});
+    // A disabled live-site feed has no endpoint to validate or reconnect to.
+    // Keep endpoint validation for every configuration that could open a socket.
+    if (trackerForward.enabled === true) {
+      string(trackerForward.host, 'network.tracker_forward.host');
+      number(trackerForward.port, 'network.tracker_forward.port',
+        {integer: true, min: 1, max: 65535});
+    }
     if (trackerForward.annotate_adsb !== undefined)
       boolean(trackerForward.annotate_adsb, 'network.tracker_forward.annotate_adsb');
   }
   if (unassistedTrackerForward) {
     boolean(unassistedTrackerForward.enabled,
       'network.tracker_forward.unassisted.enabled');
-    string(unassistedTrackerForward.host,
-      'network.tracker_forward.unassisted.host');
-    number(unassistedTrackerForward.port,
-      'network.tracker_forward.unassisted.port',
-      {integer: true, min: 1, max: 65535});
+    if (unassistedTrackerForward.enabled === true) {
+      string(unassistedTrackerForward.host,
+        'network.tracker_forward.unassisted.host');
+      number(unassistedTrackerForward.port,
+        'network.tracker_forward.unassisted.port',
+        {integer: true, min: 1, max: 65535});
+    }
   }
 
   for (const [name, site] of [['rx', receiver], ['tx', transmitter]]) {
@@ -1105,7 +1183,6 @@ function validateConfig(config, baseline = null, options = {}) {
   if (receiver.latitude === transmitter.latitude && receiver.longitude === transmitter.longitude)
     advise('location', 'Set separate receiver and transmitter locations to use the map.');
   const adsb = requireObject(truth.adsb, 'truth.adsb');
-  const ais = requireObject(truth.ais, 'truth.ais');
   boolean(adsb.enabled, 'truth.adsb.enabled');
   string(adsb.tar1090, 'truth.adsb.tar1090');
   const validateAdsbSource = (source, key) => {
@@ -1148,6 +1225,9 @@ function validateConfig(config, baseline = null, options = {}) {
   }
   if (adsb.source_timeout !== undefined) number(adsb.source_timeout,
     'truth.adsb.source_timeout', {min: .1, max: 10});
+  if (adsb.aircraft_photo_provider !== undefined &&
+      !['disabled', 'planespotters'].includes(adsb.aircraft_photo_provider))
+    errors.push('truth.adsb.aircraft_photo_provider must be disabled or planespotters');
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});
@@ -1160,9 +1240,30 @@ function validateConfig(config, baseline = null, options = {}) {
     'truth.adsb.delay_tolerance', {min: 0, max: 1000});
   if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,
     'truth.adsb.doppler_tolerance', {min: 0, max: 10000});
-  boolean(ais.enabled, 'truth.ais.enabled');
-  string(ais.ip, 'truth.ais.ip');
-  number(ais.port, 'truth.ais.port', {integer: true, min: 1, max: 65535});
+  if (truth.remote_id !== undefined) {
+    const remoteId = requireObject(truth.remote_id, 'truth.remote_id');
+    boolean(remoteId.enabled, 'truth.remote_id.enabled');
+    string(remoteId.source, 'truth.remote_id.source');
+    try {
+      const endpoint = new URL(/^https?:\/\//i.test(remoteId.source) ? remoteId.source :
+        `http://${remoteId.source}`);
+      if (!['http:', 'https:'].includes(endpoint.protocol) || !endpoint.hostname ||
+          endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
+        throw new Error('invalid endpoint');
+    } catch (_) {
+      errors.push('truth.remote_id.source must be an HTTP(S) Remote ID feed without credentials or a query');
+    }
+    if (remoteId.poll_interval !== undefined)
+      number(remoteId.poll_interval, 'truth.remote_id.poll_interval', {min: .1, max: 10});
+    if (remoteId.source_timeout !== undefined)
+      number(remoteId.source_timeout, 'truth.remote_id.source_timeout', {min: .1, max: 10});
+    if (remoteId.smoothing_window !== undefined)
+      number(remoteId.smoothing_window, 'truth.remote_id.smoothing_window', {integer: true, min: 2, max: 64});
+    if (remoteId.max_position_age !== undefined)
+      number(remoteId.max_position_age, 'truth.remote_id.max_position_age', {min: .1, max: 300});
+    if (remoteId.wifi_enabled !== undefined)
+      boolean(remoteId.wifi_enabled, 'truth.remote_id.wifi_enabled');
+  }
   ['iq', 'map', 'detection', 'timing'].forEach(key =>
     boolean(save[key], `save.${key}`));
   string(save.path, 'save.path');
@@ -1171,6 +1272,15 @@ function validateConfig(config, baseline = null, options = {}) {
   if (pathPolicy?.kind === 'systemd-linux' && typeof save.path === 'string' &&
       path.isAbsolute(save.path) && !servicePathWithin(pathPolicy.recordingRoot, save.path))
     errors.push(`save.path must remain under ${pathPolicy.recordingRoot}/ for the packaged Linux service`);
+  if (pathPolicy?.kind === 'systemd-linux' && typeof save.path === 'string' &&
+      fs.existsSync(pathPolicy.recordingRoot)) {
+    if (!fs.existsSync(save.path) || !fs.statSync(save.path).isDirectory())
+      errors.push('save.path must be an existing recording folder created in VectorWarp');
+    else {
+      try { fs.accessSync(save.path, fs.constants.R_OK | fs.constants.W_OK); }
+      catch (_) { errors.push('save.path is not readable and writable by the VectorWarp service'); }
+    }
+  }
   return {valid: errors.length === 0, errors: [...new Set(errors)], notices, arrayGeometry,
     warnings: notices.map(notice => notice.message),
     estimatedMemoryBytes: Number.isFinite(estimatedBytes) ? estimatedBytes : null};

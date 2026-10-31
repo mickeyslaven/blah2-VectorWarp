@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const dns = require('dns');
 const path = require('path');
 const os = require('os');
+const zlib = require('zlib');
+const {pipeline} = require('stream/promises');
 const {buildMetadata} = require('./build-metadata');
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
@@ -24,6 +26,8 @@ const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
+const {createRemoteIdSource} = require('./remote-id-source.js');
+const {createAircraftPhotoLookup} = require('./aircraft-photo.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
 const {DetectionManifoldAutomation} = require('./detection-manifold-automation.js');
@@ -37,17 +41,23 @@ const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
-const {IntegrationShadowQueue} = require('./integration-shadow-queue.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
   require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateFastSweep: evaluateFastIlluminatorSweep,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
+const {RecordingLibrary} = require('./recording-library.js');
+const {RecordingTimeline} = require('./recording-timeline.js');
+const {descriptor: recordingPackageDescriptor, streamPackage: streamRecordingPackage,
+  extractPackage: extractRecordingPackage} = require('./recording-package.js');
+const {isLocalDeviceRequest, reveal: revealRecording} = require('./recording-share.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
+const {installMapImageryRoutes} = require('./map-imagery.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
+const {PresentationHistory, frameTimestamp} = require('./presentation-history.js');
 const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
@@ -55,13 +65,16 @@ const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW 
 const configFile = path.resolve(process.argv[2] || 'config/config.yml');
 try {
   if (migrateKnownDefaults(configFile))
-    console.error('Migrated the invalid v0.1.28 USRP selector localhost to type=b200; the previous file is in config.yml.bak.');
+    console.error('Migrated known safe configuration defaults; the previous file is in config.yml.bak.');
 } catch (error) {
-  console.error(`Could not migrate the invalid v0.1.28 USRP selector: ${error.message}`);
+  console.error(`Could not migrate known configuration defaults: ${error.message}`);
 }
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const remoteIdSource = createRemoteIdSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const aircraftPhotoLookup = createAircraftPhotoLookup(config, {cacheFile:
+  process.env.BLAH2_AIRCRAFT_PHOTO_CACHE || '/var/lib/vectorwarp-api/aircraft-photo-metadata.json'});
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
   {onQualified: promoteQualifiedManifold});
@@ -74,11 +87,47 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
-// The native recorder copies roughly 96 MB for each four-second five-channel
-// clip.  Space physical claims so a burst of simultaneously eligible aircraft
-// coalesces instead of saturating the one-copy raw ring.
-const captureTriggerQueue = createCaptureTriggerQueue({...captureTriggerOptions(process.env, config),
-  minimumExposureIntervalMs: 5000});
+// Receiver-independent policy comes from Settings. A burst of simultaneously
+// eligible aircraft still coalesces into one bounded physical recording.
+const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions(process.env, config));
+const recordingLibrary = new RecordingLibrary(() => config);
+const recordingTimeline = new RecordingTimeline();
+function recordingReplayProfile() {
+  const device = config.capture?.device || {};
+  const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+  const processProfile = clone(config.process || {});
+  // Replay should reproduce the scientific pipeline, but local acceleration,
+  // output files and background calibration/publication remain properties of
+  // the machine doing the replay.
+  delete processProfile.performance;
+  if (processProfile.tracker) delete processProfile.tracker.publication;
+  if (processProfile.surveillance_fusion) {
+    delete processProfile.surveillance_fusion.detection_manifold_automation;
+    delete processProfile.surveillance_fusion.manifold_file;
+  }
+  if (processProfile.bearing?.manifold_automation)
+    processProfile.bearing.manifold_automation.auto_promote = false;
+  if (processProfile.bearing) delete processProfile.bearing.manifold_file;
+  if (processProfile.tracker?.track_guided_shadow)
+    delete processProfile.tracker.track_guided_shadow.evidence_path;
+  if (processProfile.bearing) delete processProfile.bearing.manifold_recorder;
+  if (processProfile.bearing?.frequency_resolved_shadow) {
+    processProfile.bearing.frequency_resolved_shadow.enabled = false;
+    delete processProfile.bearing.frequency_resolved_shadow.path;
+  }
+  return {schema: 'vectorwarp-replay-profile-v2', configuration_complete: true,
+    created_at: Date.now(),
+    capture: {sample_rate_hz: config.capture?.fs || null,
+      frequency_hz: config.capture?.fc || null,
+      channel_count: device.channel_count || (device.type === 'Kraken' ? null : 2),
+      reference_channel: device.reference_channel ?? 0,
+      surveillance_channels: Array.isArray(device.surveillance_channels) ?
+        [...device.surveillance_channels] : [1],
+      source_receiver: device.type || null,
+      array_geometry: clone(device.array_geometry) || null},
+    process: processProfile,
+    location: clone(config.location) || null};
+}
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 // A failed native request can reset the bounded raw ring.  Give it materially
 // more than the configured two-second pre-roll before issuing the one retry.
@@ -91,13 +140,18 @@ const {exact: evidenceStatistics, operational: provisionalEvidenceStatistics} =
   createEvidenceStatisticsLanes(config, adsbSource, {operational: {
     filename: process.env.BLAH2_PROVISIONAL_STATISTICS_PATH ||
       '/var/lib/vectorwarp-api/evidence-statistics-provisional.json',
-    onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event, Date.now()),
-    onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
-    onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)}});
+    onEligibilityEvent: event => recordingLibrary.canRecord().allowed ?
+      captureTriggerQueue.acceptEligibilityEvent(event, Date.now()) :
+      ({accepted: false, reason: 'recording-storage-floor'}),
+    onPeriodicCapture: (event, timestamp) => recordingLibrary.canRecord().allowed ?
+      captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp) :
+      ({accepted: false, reason: 'recording-storage-floor'}),
+    onTrackCapture: (event, timestamp) => recordingLibrary.canRecord().allowed ?
+      captureTriggerQueue.acceptTrackSnapshot(event, timestamp) :
+      ({accepted: false, reason: 'recording-storage-floor'})}});
 const captureEvidenceStatistics = provisionalEvidenceStatistics;
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
-const integrationShadowQueue = new IntegrationShadowQueue(config);
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
@@ -128,6 +182,7 @@ async function finalizeCaptureAdmission(revision, file, samples) {
     state: captureArtifactState(integrity, admissions), integrity,
     config_epoch: captureEvidenceStatistics.configEpoch, receiver_epoch: captureEvidenceStatistics.receiverEpoch,
     events: records.map(record => ({event_id: record.eventId, pass_id: record.passId,
+      icao: record.hex || null, flight: record.flight || null,
       capture_ids: (record.captureWindows || []).filter(window => window.revision === revision)
         .map(window => window.captureId)})), captures: Object.fromEntries(Object.entries(admissions)
       .map(([id, truth]) => [id, {...truth,
@@ -138,14 +193,20 @@ async function finalizeCaptureAdmission(revision, file, samples) {
       reasons: [...new Set([...(integrity.reasons || []), 'admission-sidecar-write'])], error: error.message};
   }
   integrity = {...integrity, admission_sidecar: admissionSidecar};
+  if (file) try {
+    await recordingTimeline.writeReplayProfile(file, recordingReplayProfile());
+  } catch (error) { console.error(`Recording replay package failed: ${error.message}`); }
+  if (file && first) try {
+    await recordingTimeline.write(file, first.windowStart, first.windowEnd,
+      {sample_rate_hz: integrityMetadata?.sampleRate || config.capture?.fs || null,
+        frequency_hz: integrityMetadata?.frequency || config.capture?.fc || null,
+        channels: integrityMetadata?.channels || config.capture?.device?.channel_count || null,
+        replay_profile: recordingReplayProfile()});
+  } catch (error) { console.error(`Recording ADS-B timeline failed: ${error.message}`); }
   captureTriggerQueue.setAdmission(revision, admissions, integrity);
   captureEvidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
     [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
   captureEvidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
-  // Bind shadow work to the exact immutable admission document written above.
-  // Later in-memory bookkeeping adds admission_sidecar to `integrity`; that
-  // field is deliberately not allowed to change the queued sidecar digest.
-  if (admissionSidecar) integrationShadowQueue.accept(file, artifact, revision);
 }
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
@@ -170,7 +231,7 @@ let processorStatus = null;
 let configWriteInProgress = false;
 // A saved file or API restart is not evidence of receiver application.
 const receiverJournal = createReceiverJournal(configFile);
-let receiverSyncState = receiverJournal.recover();
+let receiverSyncState = receiverJournal.recover(startupDocument.revision);
 let receiverReconciliationRequired = receiverSyncState.reconciliationRequired;
 function receiverTimeoutOption(name, maximum) {
   if (process.env[name] === undefined) return undefined;
@@ -237,7 +298,14 @@ function replayTruthDisabled() {
 }
 function replayTruthStatus() {
   return {enabled: false, online: false, disabledForReplay: true,
-    message: 'Live ADS-B truth is not replayed.'};
+    message: 'This recording does not contain an ADS-B timeline.'};
+}
+function recordedReplayTruth(kind) {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return {replay: false, value: null};
+  return {replay: true, value: recordingTimeline.at(processor.file,
+    processor.positionSamples, processor.sampleRate,
+    kind === 'delayDoppler' ? 'delay_doppler' : 'aircraft')};
 }
 
 let restartCommand = null;
@@ -248,6 +316,15 @@ var stash_map = require('./stash/maxhold.js');
 var stash_detection = require('./stash/detection.js');
 var stash_iqdata = require('./stash/iqdata.js');
 var stash_timing = require('./stash/timing.js');
+const {encodeMapResponseAsync, presentationQuery} = require('./map-presentation');
+
+async function sendMapResponse(req, res, frame) {
+  const encoded = await encodeMapResponseAsync(frame, presentationQuery(req),
+    req.get('Accept-Encoding') || '');
+  res.type('application/json').vary('Accept-Encoding');
+  if (encoded.contentEncoding) res.set('Content-Encoding', encoded.contentEncoding);
+  res.send(encoded.body);
+}
 
 // constants
 const setupPort = Number(process.env.BLAH2_SETUP_PORT || 3000);
@@ -258,6 +335,26 @@ const HOST = net.isIP(config.network?.ip || '') ? config.network.ip : '0.0.0.0';
 const receiverOrigins = trustedOrigins(PORT, (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean));
 const CONFIG_INTENT = 'config-write-v1';
 const RECORDING_INTENT = 'recording-toggle-v1';
+function receiverIndependentChange(before, after) {
+  const currentRx = before?.location?.rx?.name;
+  const currentTx = before?.location?.tx?.name;
+  const nextRx = after?.location?.rx?.name;
+  const nextTx = after?.location?.tx?.name;
+  const normalized = JSON.parse(JSON.stringify(after));
+  let changed = false;
+  if (currentRx !== nextRx || currentTx !== nextTx) {
+    if (normalized.location?.rx) normalized.location.rx.name = currentRx;
+    if (normalized.location?.tx) normalized.location.tx.name = currentTx;
+    changed = true;
+  }
+  if (JSON.stringify(before?.truth?.remote_id) !== JSON.stringify(after?.truth?.remote_id)) {
+    normalized.truth ||= {};
+    if (before?.truth?.remote_id === undefined) delete normalized.truth.remote_id;
+    else normalized.truth.remote_id = JSON.parse(JSON.stringify(before.truth.remote_id));
+    changed = true;
+  }
+  return changed && JSON.stringify(normalized) === JSON.stringify(before);
+}
 var map = '';
 var detection = '';
 var track = '';
@@ -266,9 +363,88 @@ const bearingHypotheses = new BistaticHypothesisTracker();
 var timestamp = '';
 var timing = '';
 var iqdata = '';
+const presentationDelayMs = Math.max(0,
+  (Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
+    config.truth.adsb.association_lag_cpis : 0) *
+  (Number.isFinite(config.process?.data?.cpi) ? config.process.data.cpi * 1000 : 0));
+const presentationHistories = Object.fromEntries(['map', 'detection', 'tracker',
+  'bearing', 'timing', 'iqdata'].map(name => [name, new PresentationHistory()]));
+function presentationCutoff(req) {
+  return req.query.presentation === 'aligned' ? Date.now() - presentationDelayMs : null;
+}
+function requestedPresentationTimestamp(req) {
+  if (req.query.frame_timestamp !== undefined) {
+    const requested = Number(req.query.frame_timestamp);
+    return Number.isSafeInteger(requested) && requested >= 0 ? requested : NaN;
+  }
+  const cutoff = presentationCutoff(req);
+  if (cutoff === null) return null;
+  // Map is the visual presentation clock. Selecting it once prevents requests
+  // that arrive on opposite sides of a CPI boundary from mixing adjacent radar
+  // frames across heatmap, detection, tracker, timing and ADS-B layers.
+  return presentationHistories.map.timestampAt(cutoff);
+}
+function presentationFrame(req, name, current) {
+  if (req.query.presentation === 'aligned') {
+    const requested = requestedPresentationTimestamp(req);
+    if (Number.isNaN(requested)) return '';
+    if (requested !== null) return presentationHistories[name].exact(requested) ?? '';
+  }
+  const cutoff = presentationCutoff(req);
+  return cutoff === null ? current : presentationHistories[name].at(cutoff) ?? current;
+}
+function timingPresentationFrame(req) {
+  const frame = presentationFrame(req, 'timing', timing);
+  if (!frame) return frame;
+  try {
+    const parsed = typeof frame === 'string' ? JSON.parse(frame) : frame;
+    if (!parsed || typeof parsed !== 'object') return frame;
+    const sampleRate = Number(config.capture?.fs);
+    const backlogSamples = Array.isArray(parsed.captureBacklogSamples) ?
+      parsed.captureBacklogSamples.filter(Number.isFinite) : [];
+    const backlog = backlogSamples.length ? Math.max(...backlogSamples) : null;
+    const alignedDelay = req.query.presentation === 'aligned' ? presentationDelayMs : 0;
+    const age = Number.isFinite(parsed.timestamp) ? Math.max(0, Date.now() - parsed.timestamp) : null;
+    return JSON.stringify({...parsed,
+      capture_backlog_samples: backlog,
+      capture_backlog_ms: backlog !== null && sampleRate > 0 ? backlog / sampleRate * 1000 : null,
+      presentation_delay_ms: alignedDelay,
+      frame_age_ms: age,
+      frame_excess_age_ms: age === null ? null : Math.max(0, age - alignedDelay)
+    });
+  } catch (_) { return frame; }
+}
 var capture = false;
+var capturePaused = false;
 var captureStartedAt = null;
 let captureRevision = 0;
+let replayControl = {paused: false, seekSample: 0, revision: 0};
+let replaySessionFile = '';
+let adsbSnapshotPending = false;
+// Keep the safety check cheap and independent of browser activity. A manual
+// recording is asked to stop before it can consume the configured reserve;
+// automatic clips are separately rejected before admission.
+setInterval(async () => {
+  let disk = recordingLibrary.canRecord();
+  if (!disk.allowed && recordingLibrary.retention().lowSpacePolicy === 'delete_oldest') {
+    const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+    try { await recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''}); }
+    catch (error) { console.error(`Low-space clip cleanup failed: ${error.message}`); }
+    disk = recordingLibrary.canRecord();
+  }
+  if (capture && !disk.allowed) {
+    capture = false; capturePaused = false; captureRevision += 1; captureStartedAt = null;
+    console.error('Recording stopped to preserve the configured free-disk reserve.');
+  }
+}, 15000).unref();
+setInterval(async () => {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  try {
+    const result = await recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''});
+    if (result.deleted?.length)
+      console.error(`Recording retention removed ${result.deleted.length} completed recording(s).`);
+  } catch (error) { console.error(`Recording retention failed: ${error.message}`); }
+}, 15 * 60 * 1000).unref();
 
 function invalidateTimestampTelemetry() {
   timestampGeneration += 1;
@@ -318,12 +494,22 @@ function currentGpuRuntime(freshness) {
 // api server
 const app = express();
 const {readSdrplayStartup} = require('./sdrplay-startup');
+// SDRplay's durable startup receipt is receiver-specific.  A stale receipt
+// from an earlier RSPduo session must never make Kraken, USRP or HackRF look
+// like their restart failed (or block their settings transactions).
+function activeSdrplayStartup(revision = null, receiverType = config.capture?.device?.type) {
+  return receiverType === 'RspDuo' ? readSdrplayStartup(revision) : null;
+}
 function completePendingGainRestart() {
   if (!gainPublicationBlocked || !gainRestart.pending(receiverSyncState)) return;
   try {
     const document = readConfig(configFile);
     const next = gainRestart.complete({state: receiverSyncState, config,
       revision: document.revision, loadedRevision: startupDocument.revision, serverId,
+      // The installed Linux restart helper writes this legacy-named receipt
+      // for automatic Kraken gain restarts too.  Keep it for the gain
+      // publication interlock; only operator-facing generic restart state is
+      // gated by receiver type below.
       restartReceipt: readSdrplayStartup(document.revision), processorStatus,
       timestampReceivedAt: gainRestartTimestampAt,
       timestampMaxAgeMs: Math.max(10000, (config.process?.data?.cpi || 1) * 3000)},
@@ -358,7 +544,7 @@ app.use(function(req, res, next) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Vary', 'Origin');
   }
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', `Content-Type, If-Match, ${RECEIVER_SYNC_HEADER}, X-VectorWarp-Intent`);
   res.header('Access-Control-Expose-Headers', 'ETag');
   res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
@@ -366,6 +552,7 @@ app.use(function(req, res, next) {
   res.header('Pragma', 'no-cache');
   next();
 });
+installMapImageryRoutes(app);
 app.options('*', (req, res) => {
   if (['/api/config', '/api/config/validate', '/capture/toggle'].includes(req.path) && !configWriteOriginAllowed(req))
     return res.status(403).json({ok: false,
@@ -452,14 +639,15 @@ app.get('/', (req, res, next) => {
   if (fs.existsSync(path.join(__dirname, '..', 'html', 'index.html'))) return next();
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });
-app.get('/api/map', (req, res) => {
-  res.send(map);
+app.get('/api/map', async (req, res, next) => {
+  try { await sendMapResponse(req, res, presentationFrame(req, 'map', map)); }
+  catch (error) { next(error); }
 });
 app.get('/api/detection', (req, res) => {
-  res.send(detection);
+  res.send(presentationFrame(req, 'detection', detection));
 });
 app.get('/api/tracker', (req, res) => {
-  res.send(trackerPublication.frame());
+  res.send(presentationFrame(req, 'tracker', trackerPublication.frame()));
 });
 app.get('/api/tracker/native', (req, res) => {
   res.send(trackerPublication.nativeOnly());
@@ -483,25 +671,188 @@ app.get('/api/live-scorecard', (req, res) => {
 app.get('/api/live-scorecard/provisional', (req, res) => {
   res.json(provisionalEvidenceStatistics.liveStatus());
 });
+function recordingPasses() {
+  const scorecard = provisionalEvidenceStatistics.liveStatus();
+  const subjects = [...captureEvidenceStatistics.recordingSubjects(),
+    ...(scorecard.active_passes || []), ...(scorecard.recent_finalized_passes || [])];
+  return [...new Map(subjects.filter(item => item?.pass_id)
+    .map(item => [item.pass_id, item])).values()];
+}
+function publicRecording(item) {
+  const {path: replay_file, ...value} = item;
+  return {...value, replay_file};
+}
+app.get('/api/recordings', async (req, res, next) => {
+  try {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  const offset = Number.parseInt(req.query.offset, 10);
+  const limit = Number.parseInt(req.query.limit, 10);
+  const result = await recordingLibrary.list({activeFile: processor?.recordingFile || '',
+    passes: recordingPasses(), search: req.query.search, kind: req.query.kind,
+    receiver: req.query.receiver, frequency: req.query.frequency, sort: req.query.sort,
+    offset: Number.isInteger(offset) ? offset : 0,
+    limit: Number.isInteger(limit) ? limit : undefined, waitForIndex: false});
+  res.json({...result, recordings: result.recordings.map(publicRecording)});
+  } catch (error) { next(error); }
+});
+app.get('/api/recordings/directories', async (req, res, next) => {
+  try { res.json(await recordingLibrary.directories()); }
+  catch (error) { next(error); }
+});
+app.get('/api/recordings/:id/replay-profile', async (req, res) => {
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  const timeline = recordingTimeline.load(filename);
+  const packaged = recordingTimeline.loadReplayProfile(filename);
+  let metadata = {};
+  try { metadata = JSON.parse(await fs.promises.readFile(`${filename}.json`, 'utf8')); }
+  catch (_) { /* Portable recordings may only have a provenance sidecar. */ }
+  if (!metadata.channels) try {
+    const provenance = JSON.parse(await fs.promises.readFile(`${filename}.provenance.json`, 'utf8'));
+    metadata = {...metadata, channels: provenance.channels,
+      sampleRate: provenance.sampleRateHz, frequency: provenance.frequencyHz,
+      receiver: provenance.receiver};
+  } catch (_) { /* Header validation remains the final replay authority. */ }
+  const channels = timeline?.channels ?? metadata.channels ?? null;
+  const legacy = timeline?.replay_profile || null;
+  const profile = packaged || legacy;
+  const source = profile?.capture || {};
+  const referenceMode = profile?.process?.reference_synthesis?.mode ||
+    (channels > 2 ? 'array_eigenbeam' : 'dedicated');
+  const all = Number.isInteger(channels) ? Array.from({length: channels}, (_, index) => index) : [];
+  res.json({file: filename, profile: profile || null,
+    configuration_complete: packaged?.configuration_complete === true,
+    limitations: packaged ? [] : ['This legacy recording does not contain a complete scientific configuration.'],
+    sample_rate_hz: timeline?.sample_rate_hz ?? metadata.sampleRate ?? null,
+    frequency_hz: timeline?.frequency_hz ?? metadata.frequency ?? null,
+    channel_count: channels,
+    reference_channel: source.reference_channel ?? 0,
+    surveillance_channels: source.surveillance_channels ||
+      (referenceMode === 'array_eigenbeam' ? all : all.filter(index => index !== 0)),
+    reference_mode: referenceMode,
+    reference_channels: profile?.process?.reference_synthesis?.channels ||
+      (referenceMode === 'array_eigenbeam' ? all : [])});
+});
+app.post('/api/recordings/directories', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-directory-v1')
+    return res.status(403).json({error: 'Recording-folder changes require a trusted VectorWarp origin and intent.'});
+  try { res.json(await recordingLibrary.createDirectory(req.body?.name)); }
+  catch (error) { next(error); }
+});
+app.get('/api/recordings/:id/file', (req, res) => {
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  res.type('application/octet-stream');
+  res.set('Content-Disposition', `attachment; filename="${path.basename(filename).replace(/["\\]/g, '_')}"`);
+  res.sendFile(filename);
+});
+app.get('/api/recordings/:id/package', async (req, res, next) => {
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (path.resolve(processor?.recordingFile || '') === filename)
+    return res.status(409).json({error: 'Finish this recording before sharing it.'});
+  try {
+    const value = await recordingPackageDescriptor(filename);
+    res.type('application/vnd.vectorwarp.recording');
+    res.set('Content-Length', String(value.size));
+    res.set('Content-Disposition',
+      `attachment; filename="${value.downloadName.replace(/[^A-Za-z0-9._-]/g, '_')}"`);
+    await streamRecordingPackage(value, res);
+  } catch (error) {
+    if (!res.headersSent) next(error);
+    else res.destroy(error);
+  }
+});
+app.post('/api/recordings/:id/share', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-share-v1')
+    return res.status(403).json({error: 'Sharing a recording requires a trusted VectorWarp origin and intent.'});
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (path.resolve(processor?.recordingFile || '') === filename)
+    return res.status(409).json({error: 'Finish this recording before sharing it.'});
+  if (!isLocalDeviceRequest(req))
+    return res.json({action: 'download', url: `/api/recordings/${encodeURIComponent(req.params.id)}/package`});
+  try {
+    const result = await revealRecording(filename);
+    res.json({action: 'revealed', filename: path.basename(filename), selected: result.selected});
+  } catch (error) { next(Object.assign(new Error(`Could not open the recording folder: ${error.message}`), {status: 500})); }
+});
+app.delete('/api/recordings/:id', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-delete-v1')
+    return res.status(403).json({error: 'Deleting a recording requires a trusted VectorWarp origin and intent.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  try {
+    const result = await recordingLibrary.remove(req.params.id,
+      {activeFile: processor?.recordingFile || ''});
+    if (!result.removed) return res.status(result.reason === 'active' ? 409 : 404).json(result);
+    res.json(result);
+  } catch (error) { next(error); }
+});
+app.post('/api/recordings/import', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-import-v1')
+    return res.status(403).json({error: 'Importing a recording requires a trusted VectorWarp origin and intent.'});
+  const original = path.basename(String(req.query.filename || ''));
+  const extension = path.extname(original).toLowerCase();
+  if (!original || !['.blah2iq', '.mchq', '.vwr'].includes(extension))
+    return res.status(400).json({error: 'Choose a .vwr package, .blah2iq recording, or .mchq clip.'});
+  let temporary = null;
+  try {
+    const disk = await recordingLibrary.prepareForRecording({});
+    const length = Number(req.get('Content-Length'));
+    const requiredBytes = Number.isFinite(length) ? length * (extension === '.vwr' ? 2 : 1) : 0;
+    if (!disk.allowed || (requiredBytes && disk.free_bytes !== null &&
+        disk.free_bytes - requiredBytes <= disk.required_free_bytes))
+      return res.status(507).json({error: 'The import would cross the configured free-disk reserve.'});
+    const directory = recordingLibrary.directory();
+    await fs.promises.mkdir(directory, {recursive: true, mode: 0o770});
+    temporary = path.join(directory, `.import-${crypto.randomUUID()}.partial`);
+    await pipeline(req, fs.createWriteStream(temporary, {flags: 'wx', mode: 0o660}));
+    const stat = await fs.promises.stat(temporary);
+    if (!stat.size) throw Object.assign(new Error('The selected recording was empty.'), {status: 400});
+    let imported;
+    if (extension === '.vwr') {
+      imported = await extractRecordingPackage(temporary, directory);
+      await fs.promises.rm(temporary, {force: true}); temporary = null;
+    } else {
+      const stem = path.basename(original, extension).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 120) || 'recording';
+      let filename = path.join(directory, `${stem}${extension}`);
+      if (fs.existsSync(filename)) filename = path.join(directory, `${stem}-${Date.now()}${extension}`);
+      await fs.promises.rename(temporary, filename); temporary = null;
+      imported = {filename: path.basename(filename), size_bytes: stat.size, files: [path.basename(filename)]};
+    }
+    recordingLibrary.cache = null;
+    res.status(201).json({imported: true, packaged: extension === '.vwr', ...imported});
+  } catch (error) {
+    if (temporary) await fs.promises.rm(temporary, {force: true}).catch(() => {});
+    next(error);
+  }
+});
+app.post('/api/recordings/cleanup', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-cleanup-v1')
+    return res.status(403).json({error: 'Recording cleanup requires a trusted VectorWarp origin and intent.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  try { res.json(await recordingLibrary.cleanup({activeFile: processor?.recordingFile || '', force: true})); }
+  catch (error) { next(error); }
+});
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
 });
 app.get('/api/tracker/guided-shadow', (req, res) => {
   res.json(trackGuidedShadowRecorder.status());
 });
-app.get('/api/detection/integration-shadow', (req, res) => {
-  res.json(integrationShadowQueue.status());
-});
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
     return res.json({enabled: false, reason: 'Bearing processing is disabled.', data: []});
   if (!bearing) return res.status(503).json({enabled: true, available: false,
     reason: 'No bearing frame has arrived.', data: []});
-  res.type('json').send(bearing);
+  res.type('json').send(presentationFrame(req, 'bearing', bearing));
 });
 app.get('/api/locations', (req, res) => {
   let frame = null;
-  try { frame = bearing ? JSON.parse(bearing) : null; }
+  const presentedBearing = presentationFrame(req, 'bearing', bearing);
+  try { frame = presentedBearing ? JSON.parse(presentedBearing) : null; }
   catch (_) { return res.status(503).json({enabled: true, available: false,
     reason: 'The current bearing frame is invalid.', data: []}); }
   const result = locationsFromBearing(frame, config, bearingHypotheses);
@@ -511,10 +862,37 @@ app.get('/api/timestamp', (req, res) => {
   res.send(timestamp);
 });
 app.get('/api/timing', (req, res) => {
-  res.send(timing);
+  res.type('json').send(timingPresentationFrame(req));
+});
+app.get('/api/presentation/status', (req, res) => {
+  const now = Date.now();
+  const expectedIntervalMs = Number.isFinite(config.process?.data?.cpi) ?
+    config.process.data.cpi * 1000 : null;
+  const selectedTimestamp = presentationHistories.map.timestampAt(now - presentationDelayMs);
+  const aligned = selectedTimestamp === null ? {} : Object.fromEntries(
+    Object.entries(presentationHistories).map(([name, history]) =>
+      [name, history.exact(selectedTimestamp) !== null]));
+  const latest = currentTimingBackend();
+  res.json({
+    presentation_delay_cpis: Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
+      config.truth.adsb.association_lag_cpis : 0,
+    presentation_delay_ms: presentationDelayMs,
+    expected_frame_interval_ms: expectedIntervalMs,
+    selected_frame_timestamp: selectedTimestamp,
+    selected_frame_age_ms: selectedTimestamp === null ? null : now - selectedTimestamp,
+    aligned_layers: aligned,
+    relative_alignment_ms: selectedTimestamp === null ? null : 0,
+    cadence: presentationHistories.map.diagnostics(expectedIntervalMs),
+    event_time: latest?.eventTime ? {
+      source: latest.eventTime.source,
+      exact: latest.eventTime.exact === true,
+      uncertainty_bounded: latest.eventTime.uncertaintyBounded === true,
+      reason: latest.eventTime.reason || null
+    } : null
+  });
 });
 app.get('/api/iqdata', (req, res) => {
-  res.send(iqdata);
+  res.send(presentationFrame(req, 'iqdata', iqdata));
 });
 app.get('/api/config', (req, res) => {
   const document = readConfig(configFile);
@@ -595,16 +973,100 @@ app.post('/api/illuminator-survey/fast-evaluate', (req, res) => {
   }
 });
 app.get('/api/system/status', async (req, res) => {
+  const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  const radar = gainPublicationBlocked || lastFrameAt === null ? 'no-data' :
+    Date.now() - lastFrameAt < freshness ? 'receiving' : 'stale';
+  // The header is present on every page and polls continuously. Keep its
+  // response cheap: receiver discovery, GPU setup, build metadata and the full
+  // ADS-B source report belong to their dedicated/settings views.
+  if (req.query.summary === '1') {
+    const headerProcessor = processor ? {
+      input: processor.input, state: processor.state, error: processor.error || '',
+      receiver: processor.receiver, receiverHealth: processor.receiverHealth,
+      totalSamples: processor.totalSamples, positionSamples: processor.positionSamples,
+      sampleRate: processor.sampleRate, file: processor.file
+    } : null;
+    return res.json({radar, adsbEnabled: config.truth?.adsb?.enabled === true,
+      remoteIdEnabled: config.truth?.remote_id?.enabled === true,
+      recordedAdsb: processor?.input === 'replay' && recordingTimeline.has(processor.file),
+      restart: {state: restartState.state}, gainCheckPending: gainPublicationBlocked,
+      processor: headerProcessor, processorFresh: processor !== null,
+      errors: [...serviceErrors.values()],
+      message: lastFrameAt === null ? 'No radar frames received.' : null});
+  }
   const document = readConfig(configFile);
-  const sdrplayStartup = readSdrplayStartup(document.revision);
+  const sdrplayStartup = activeSdrplayStartup(document.revision, document.config.capture?.device?.type);
   const persistedRestart = sdrplayStartup && sdrplayStartup.updatedAt >= (restartState.requestedAt || 0) ?
     {state: sdrplayStartup.inProgress ? 'running' : sdrplayStartup.state === 'failed' ? 'failed' : 'command-complete',
       message: sdrplayStartup.message, startedAt: sdrplayStartup.updatedAt} : restartState;
-  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
-  const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
-  const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
+  const [gpuSetup, adsb, remoteId] = await Promise.all([
+    gpuSetupStatus(() => currentGpuRuntime(freshness)), adsbSource.status(),
+    config.truth?.remote_id?.enabled === true ? remoteIdSource.status() :
+      Promise.resolve({enabled: false, online: false, aircraft: [], drones: []})
+  ]);
   const backend = currentTimingBackend();
-  const adsb = await adsbSource.status();
+  const sourceRows = Array.isArray(adsb?.sources) ? adsb.sources : [];
+  const positionSources = adsb?.fusion?.position_sources || {};
+  const featureDiagnostics = {
+    recording: {
+      requested: capture, paused: capturePaused,
+      active: processor?.input === 'live' && processor.recording === true,
+      errorPresent: Boolean(processor?.recordingError),
+      recordedSamples: Number.isSafeInteger(processor?.recordedSamples) ? processor.recordedSamples : 0,
+      clipRevision: Number.isSafeInteger(processor?.clipRevision) ? processor.clipRevision : 0,
+      clipErrorPresent: Boolean(processor?.clipError),
+      clipSamples: Number.isSafeInteger(processor?.clipSamples) ? processor.clipSamples : 0,
+      timelineCaptureAvailable: true,
+      automaticCleanup: config.save?.retention?.automatic_cleanup === true,
+      lowSpacePolicy: config.save?.retention?.low_space_policy || null,
+      maximumAgeDays: Number.isSafeInteger(config.save?.retention?.maximum_age_days) ?
+        config.save.retention.maximum_age_days : null,
+      maximumTotalGb: Number.isSafeInteger(config.save?.retention?.maximum_total_gb) ?
+        config.save.retention.maximum_total_gb : null,
+      minimumFreeGb: Number.isSafeInteger(config.save?.retention?.minimum_free_gb) ?
+        config.save.retention.minimum_free_gb : null
+    },
+    replay: {
+      active: processor?.input === 'replay', paused: replayControl.paused,
+      seekable: processor?.input === 'replay' && Number.isSafeInteger(processor.totalSamples),
+      positionSamples: Number.isSafeInteger(processor?.positionSamples) ? processor.positionSamples : null,
+      totalSamples: Number.isSafeInteger(processor?.totalSamples) ? processor.totalSamples : null,
+      sampleRateHz: Number.isSafeInteger(processor?.sampleRate) ? processor.sampleRate : null,
+      timelineAvailable: processor?.input === 'replay' && recordingTimeline.has(processor.file)
+    },
+    adsb: {
+      enabled: config.truth?.adsb?.enabled === true, online: adsb?.online === true,
+      degraded: adsb?.degraded === true, sourceCount: sourceRows.length,
+      healthySourceCount: sourceRows.filter(source => source?.healthy === true).length,
+      aircraftCount: Number.isSafeInteger(adsb?.fusion?.aircraft) ? adsb.fusion.aircraft : null,
+      directAircraftCount: Number.isSafeInteger(positionSources.ADSB_DIRECT) ? positionSources.ADSB_DIRECT : 0,
+      mlatAircraftCount: Number.isSafeInteger(positionSources.MLAT) ? positionSources.MLAT : 0,
+      associationLagCpis: Number.isSafeInteger(adsb?.association_lag_cpis) ? adsb.association_lag_cpis : null,
+      associationLagMs: Number.isSafeInteger(adsb?.association_lag_ms) ? adsb.association_lag_ms : null
+    },
+    ...(config.truth?.remote_id?.enabled === true ? {remoteId: {
+      enabled: config.truth?.remote_id?.enabled === true,
+      online: remoteId?.online === true,
+      drones: Number.isSafeInteger(remoteId?.drones) ? remoteId.drones : 0,
+      messages: Number.isSafeInteger(remoteId?.messages) ? remoteId.messages : 0,
+      bluetooth: remoteId?.transports?.bluetooth === true,
+      wifi: remoteId?.transports?.wifi === true,
+      ageMs: Number.isFinite(remoteId?.age_ms) ? remoteId.age_ms : null,
+      error: remoteId?.error || null
+    }} : {}),
+    processing: {
+      acceleration: backend.acceleration?.active || null,
+      clutterAcceleration: backend.clutterAcceleration?.active || null,
+      configuredCpiMs: Number.isFinite(config.process?.data?.cpi) ?
+        Math.round(config.process.data.cpi * 1000) : null
+    },
+    presentation: {
+      timestampConnections,
+      associationLagCpis: Number.isSafeInteger(adsb?.association_lag_cpis) ? adsb.association_lag_cpis : null,
+      associationLagMs: Number.isSafeInteger(adsb?.association_lag_ms) ? adsb.association_lag_ms : null
+    }
+  };
   res.json({serverId, configRevision: document.revision,
     build: releaseBuild,
     system: {os: os.platform(), architecture: os.arch(), kernel: os.release()},
@@ -613,12 +1075,12 @@ app.get('/api/system/status', async (req, res) => {
     clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
     restart: persistedRestart, sdrplayStartup, receiverSynchronization: receiverSyncState,
-    gainMonitor: gainMonitorStatus, adsb,
+    gainMonitor: gainMonitorStatus, adsb, remoteId, featureDiagnostics,
     lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
+    remoteIdEnabled: config.truth?.remote_id?.enabled === true,
     gainCheckPending: gainPublicationBlocked,
-    radar: gainPublicationBlocked || lastFrameAt === null ? 'no-data' : Date.now() - lastFrameAt <
-      Math.max(10000, (config.process?.data?.cpi || 1) * 3000) ? 'receiving' : 'stale',
+    radar,
     processor: processor && {...processor, receivedAt: processorStatus.receivedAt},
     processorFresh: processor !== null,
     errors: [...serviceErrors.values()],
@@ -637,7 +1099,32 @@ app.post('/api/processor/status', (req, res) => {
     if (req.body?.receiverHealth !== undefined) processorStatus = null;
     return res.status(422).json({ok: false, errors: checked.errors});
   }
-  processorStatus = {value: checked.value, receivedAt: Date.now()};
+  const previous = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  const now = Date.now();
+  processorStatus = {value: checked.value, receivedAt: now};
+  if (checked.value.input === 'replay' && checked.value.file !== replaySessionFile) {
+    replaySessionFile = checked.value.file;
+    replayControl = {paused: false, seekSample: 0, revision: replayControl.revision + 1};
+  } else if (checked.value.input === 'live' && replaySessionFile) {
+    replaySessionFile = '';
+    replayControl = {paused: false, seekSample: 0, revision: replayControl.revision + 1};
+  }
+  if (previous?.input === 'live' && previous.recording &&
+      (!checked.value.recording || checked.value.recordingFile !== previous.recordingFile))
+    void recordingTimeline.stop(previous.recordingFile, now)
+      .catch(error => console.error(`Manual recording ADS-B timeline failed: ${error.message}`));
+  if (checked.value.input === 'live' && checked.value.recording && checked.value.recordingFile) {
+    const isNewManualRecording = previous?.recording !== true ||
+      previous?.recordingFile !== checked.value.recordingFile;
+    const startMs = now - checked.value.recordedSamples * 1000 / checked.value.sampleRate;
+    recordingTimeline.start(checked.value.recordingFile, startMs,
+      {sample_rate_hz: checked.value.sampleRate, frequency_hz: checked.value.frequency,
+        channels: config.capture?.device?.channel_count || 2,
+        receiver: checked.value.receiver, replay_profile: recordingReplayProfile()});
+    if (isNewManualRecording)
+      void recordingTimeline.writeReplayProfile(checked.value.recordingFile, recordingReplayProfile())
+        .catch(error => console.error(`Recording replay package failed: ${error.message}`));
+  }
   completePendingGainRestart();
   if (checked.value.input === 'replay') adsbSource.clear();
   if (checked.value.input === 'live' && checked.value.recordingError &&
@@ -683,7 +1170,7 @@ const receiverManagement = installReceiverRoutes(app, {
   helperExecutable: process.env.BLAH2_RECEIVER_HELPER,
   extraOrigins: (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean),
   transactionBusy: () => configWriteInProgress || macRspduoBuild?.busy() || ['running', 'scheduled'].includes(restartState.state) ||
-    readSdrplayStartup(null)?.inProgress === true,
+    activeSdrplayStartup(null)?.inProgress === true,
   processorStatus: () => processorStatusFresh(processorStatus) ? processorStatus.value : null,
   preview: process.env.BLAH2_PREVIEW === 'true',
   compiledLiveTypes: process.env.BLAH2_RECEIVER_TYPES ?
@@ -691,7 +1178,7 @@ const receiverManagement = installReceiverRoutes(app, {
 });
 if (macRspduoBuild) installMacRspduoBuildRoutes(app, {allowedOrigins: receiverOrigins, build: macRspduoBuild,
   transactionBusy: () => configWriteInProgress || receiverManagement.busy() ||
-    ['running', 'scheduled'].includes(restartState.state) || readSdrplayStartup(null)?.inProgress === true});
+    ['running', 'scheduled'].includes(restartState.state) || activeSdrplayStartup(null)?.inProgress === true});
 else installSdrplayBuildRoutes(app, {allowedOrigins: receiverOrigins,
   helper: process.env.BLAH2_SDRPLAY_BUILD_HELPER || '/opt/vectorwarp/libexec/vectorwarp-build-sdrplay'});
 app.post('/api/config/validate', async (req, res) => {
@@ -793,7 +1280,7 @@ app.put('/api/config', async (req, res) => {
       (req.get(RECEIVER_SYNC_HEADER) !== RECEIVER_SYNC_INTENT || !sameReceiverOrigin(req, receiverOrigins)))
     return res.status(428).json({ok: false, code: 'SDRPLAY_START_INTENT_REQUIRED',
       errors: ['Apply RSPduo settings from the trusted VectorWarp page. Starting installed SDRplay requires explicit same-origin Apply intent.']});
-  if (readSdrplayStartup(null)?.inProgress)
+  if (activeSdrplayStartup(null, req.body?.capture?.device?.type)?.inProgress)
     return res.status(409).json({ok: false, errors: ['A receiver restart is already in progress. Wait for its result.']});
   if (saveLater && (req.query.restart !== 'false' ||
       req.get(RECEIVER_SYNC_HEADER) !== 'save-pending-v1' || !sameReceiverOrigin(req, receiverOrigins)))
@@ -831,6 +1318,27 @@ app.put('/api/config', async (req, res) => {
   const validation = validateConfig(req.body, currentDocument.config);
   if (!validation.valid)
     return res.status(422).json({ok: false, errors: validation.errors});
+  // Site labels and cooperative truth-source presentation do not retune the
+  // receiver, change radar geometry or alter processing. Persist them without
+  // disturbing a healthy receiver or processor.
+  if (!saveLater && !wantsRestart && receiverIndependentChange(currentDocument.config, req.body)) {
+    const saved = saveConfig(configFile, req.body, currentDocument.revision);
+    const priorReceipt = receiverSyncState.receipt || {schemaVersion: 1,
+      receiverType: req.body.capture.device.type, status: 'not-required', operations: []};
+    const receipt = {...priorReceipt, configRevision: saved.revision,
+      configPersisted: true, metadataOnly: true};
+    const settledState = ['synchronized', 'already-matched', 'not-required'].includes(
+      receiverSyncState.state) ? receiverSyncState.state : receipt.status;
+    receiverSyncState = {...receiverSyncState, state: settledState,
+      completedAt: Date.now(), receipt, configRevision: saved.revision,
+      applicationVerified: true, reconciliationRequired: false};
+    receiverJournal.write(receiverSyncState);
+    config = saved.config;
+    upstreamCache = null;
+    return res.json({ok: true, restarting: false, revision: saved.revision,
+      config: saved.config, receiverSync: receipt,
+      message: 'Presentation settings saved. Live receiver and radar processing were not restarted.'});
+  }
   const measuredGain = !saveLater && automaticGainEnabled(req.body);
   if (measuredGain && !gainRestart.installedGainRestartSupported(restartCommand))
     return res.status(409).json({ok: false, code: 'GAIN_CHECK_RESTART_UNSUPPORTED',
@@ -883,7 +1391,8 @@ app.put('/api/config', async (req, res) => {
     const networkErrors = await checkNetworkBindings(req.body, config, ownedPorts);
     if (networkErrors.length) return res.status(422).json({ok: false, errors: networkErrors});
     // Another request can finish while the asynchronous bind checks run.
-    if (restartState.state === 'running' || restartState.state === 'scheduled' || readSdrplayStartup(null)?.inProgress)
+    if (restartState.state === 'running' || restartState.state === 'scheduled' ||
+        activeSdrplayStartup(null, req.body?.capture?.device?.type)?.inProgress)
       return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
     if (readConfig(configFile).revision !== currentDocument.revision)
       return res.status(409).json({ok: false,
@@ -943,8 +1452,12 @@ app.put('/api/config', async (req, res) => {
       receiverSync = await receiverSynchronizer.synchronize(currentDocument.config, req.body,
         {force: observeLiveReceiver});
     }
+    // Operator confirmations describe the physical array installation. RF
+    // retunes, calibration resets and gain writes change the scientific
+    // identity, but do not move elements or remap DAQ channels. Only a
+    // topology-changing receiver command invalidates those attestations.
     if (receiverSync.operations?.some(operation => operation.commandSent &&
-        (!measuredGain || !['set_gain', 'reset_lag_compensation'].includes(operation.operation))))
+        operation.operation === 'set_num_elements'))
       invalidateGeometry(req.body?.capture?.device?.array_geometry);
     let saved;
     try {
@@ -986,8 +1499,11 @@ app.put('/api/config', async (req, res) => {
       receiverSync = {...receiverSync, priorOutcomeUnverified: true,
         priorReceiverReceipt: previousReceiverReceipt};
     if (receiverSyncRequired || startupOwned) receiverReconciliationRequired = false;
+    const applicationVerified = ['synchronized', 'already-matched', 'not-required'].includes(
+      receiverSync.status) && receiverReconciliationRequired === false;
     receiverSyncState = {state: receiverSync.status, completedAt: Date.now(),
       receipt: receiverSync, configRevision: saved.revision,
+      applicationVerified,
       reconciliationRequired: receiverReconciliationRequired};
     try { receiverJournal.write(receiverSyncState); }
     catch (error) {
@@ -1034,21 +1550,121 @@ app.put('/api/config', async (req, res) => {
   }
 });
 app.get('/api/adsb2dd', (req, res) => {
-  if (replayTruthDisabled()) return res.json(replayTruthStatus());
+  if (replayTruthDisabled()) {
+    const recorded = recordedReplayTruth('delayDoppler');
+    return recorded.value === null ? res.json(replayTruthStatus()) :
+      res.json({url: '/api/adsb/delay-doppler', replay: true});
+  }
   if (!config.truth?.adsb?.enabled) return res.status(400).end();
   // Compatibility link now stays on this API; no converter URL or query is accepted.
   res.json({url: '/api/adsb/delay-doppler'});
 });
 for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-doppler', 'delayDoppler']]) {
   app.get(route, async (req, res) => {
-    if (replayTruthDisabled()) return res.json(replayTruthStatus());
-    try { res.json(await adsbSource.get(kind)); }
+    const recorded = recordedReplayTruth(kind);
+    if (recorded.replay && recorded.value === null) return res.json(replayTruthStatus());
+    if (!recorded.replay && replayTruthDisabled()) return res.json(replayTruthStatus());
+    try {
+      const presentation = req.query.presentation;
+      const requestedTimestamp = presentation === 'aligned' ?
+        requestedPresentationTimestamp(req) : null;
+      if (Number.isNaN(requestedTimestamp))
+        return res.status(400).json({error: 'frame_timestamp must be a non-negative integer'});
+      const value = recorded.replay ? recorded.value : presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
+        await adsbSource.getPresentationAt(kind,
+          requestedTimestamp ?? Date.now() - presentationDelayMs) :
+        presentation && typeof adsbSource.getPresentation === 'function' ?
+          await adsbSource.getPresentation(kind) : await adsbSource.get(kind);
+      if (requestedTimestamp !== null)
+        res.set('X-VectorWarp-Presentation-Timestamp', String(requestedTimestamp));
+      if (kind === 'delayDoppler' &&
+          (req.query.presentation === 'overlay' || req.query.overlay === '1')) {
+        const compact = {};
+        for (const [id, aircraft] of Object.entries(value || {})) {
+          if (!aircraft || !Number.isFinite(aircraft.delay) || !Number.isFinite(aircraft.doppler)) continue;
+          const position = aircraft.position && typeof aircraft.position === 'object' ? aircraft.position : {};
+          compact[id] = {...Object.fromEntries([
+            'delay', 'doppler', 'hex', 'flight', 'r', 't', 'type', 'desc', 'category',
+            'position_source', 'source_fields',
+            'alt_baro', 'alt_geom', 'gs', 'track', 'geom_rate', 'baro_rate',
+            'squawk', 'rssi', 'seen_pos'
+          ].filter(key => aircraft[key] !== undefined).map(key => [key, aircraft[key]])),
+          hex: aircraft.hex || id,
+          category: aircraft.category ?? position.category,
+          alt_baro: aircraft.alt_baro ?? position.altitude_baro_ft,
+          alt_geom: aircraft.alt_geom ?? position.altitude_geom_ft,
+          gs: aircraft.gs ?? position.ground_speed_kt,
+          track: aircraft.track ?? position.track_deg_true,
+          geom_rate: aircraft.geom_rate ?? position.geom_rate_fpm,
+          baro_rate: aircraft.baro_rate ?? position.baro_rate_fpm,
+          squawk: aircraft.squawk ?? position.squawk,
+          rssi: aircraft.rssi ?? position.rssi_dbfs,
+          seen_pos: aircraft.seen_pos ?? position.seen_pos_s};
+        }
+        return res.json(compact);
+      }
+      res.json(value);
+    }
     catch (error) { res.status(503).json({error: error.message}); }
   });
 }
 app.get('/api/adsb/status', async (req, res) => {
+  const recorded = recordedReplayTruth('aircraft');
+  if (recorded.replay) return res.json(recorded.value === null ? replayTruthStatus() :
+    {enabled: true, online: true, replay: true, message: 'Recorded ADS-B timeline'});
   if (replayTruthDisabled()) return res.json(replayTruthStatus());
   res.json(await adsbSource.status());
+});
+for (const [route, kind] of [['/api/remote-id', 'aircraft'],
+  ['/api/remote-id/delay-doppler', 'delayDoppler']]) {
+  app.get(route, async (req, res) => {
+    if (config.truth?.remote_id?.enabled !== true)
+      return res.json({enabled: false, aircraft: [], drones: []});
+    try {
+      const presentation = req.query.presentation;
+      const requestedTimestamp = presentation === 'aligned' ?
+        requestedPresentationTimestamp(req) : null;
+      if (Number.isNaN(requestedTimestamp))
+        return res.status(400).json({error: 'frame_timestamp must be a non-negative integer'});
+      const value = presentation === 'aligned' && typeof remoteIdSource.getPresentationAt === 'function' ?
+        await remoteIdSource.getPresentationAt(kind, requestedTimestamp ?? Date.now() - presentationDelayMs) :
+        presentation && typeof remoteIdSource.getPresentation === 'function' ?
+          await remoteIdSource.getPresentation(kind) : await remoteIdSource.get(kind);
+      if (requestedTimestamp !== null)
+        res.set('X-VectorWarp-Presentation-Timestamp', String(requestedTimestamp));
+      if (kind === 'delayDoppler' && (req.query.presentation === 'overlay' || req.query.overlay === '1')) {
+        const compact = {};
+        for (const [id, drone] of Object.entries(value || {})) {
+          if (!drone || !Number.isFinite(drone.delay) || !Number.isFinite(drone.doppler)) continue;
+          compact[id] = drone;
+        }
+        return res.json(compact);
+      }
+      res.json(value);
+    } catch (error) { res.status(503).json({error: error.message}); }
+  });
+}
+app.get('/api/remote-id/status', async (_req, res) => {
+  if (config.truth?.remote_id?.enabled !== true)
+    return res.json({enabled: false, online: false, aircraft: [], drones: []});
+  res.json(await remoteIdSource.status());
+});
+app.get('/api/radar/coverage', (req, res) => {
+  if (replayTruthDisabled()) return res.json(replayTruthStatus());
+  const hours = Number(req.query.hours || 24);
+  const bins = Number(req.query.bins || 72);
+  const altitudeBand = String(req.query.altitude || 'all');
+  res.set('Cache-Control', 'private, max-age=30');
+  res.json(provisionalEvidenceStatistics.radarCoverage({hours, bins, altitudeBand}));
+});
+app.get('/api/adsb/aircraft-photo/:hex', async (req, res) => {
+  try {
+    const value = await aircraftPhotoLookup.lookup(req.params.hex);
+    res.set('Cache-Control', value.available ? 'private, max-age=86400' : 'private, max-age=900');
+    res.json(value);
+  } catch (error) {
+    res.status(error.statusCode || 503).json({available: false, error: error.message});
+  }
 });
 app.get('/api/bearing/manifold-recorder', (req, res) => {
   res.json(manifoldRecorder.status());
@@ -1109,8 +1725,9 @@ app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
 });
 
 // stash API
-app.get('/stash/map', (req, res) => {
-  res.send(stash_map.get_data_map());
+app.get('/stash/map', async (req, res, next) => {
+  try { await sendMapResponse(req, res, stash_map.get_data_map()); }
+  catch (error) { next(error); }
 });
 app.get('/stash/detection', (req, res) => {
   res.send(stash_detection.get_data_detection());
@@ -1127,7 +1744,31 @@ app.get('/capture', (req, res) => {
   res.send(capture);
 });
 app.get('/capture/request', (req, res) => res.json({recording: capture,
-  revision: captureRevision, clip: captureTriggerQueue.request(true)}));
+  revision: captureRevision, clip: captureTriggerQueue.request(true), replay: replayControl}));
+app.get('/api/replay/status', (req, res) => {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return res.json({active: false});
+  res.json({active: true, paused: replayControl.paused, file: processor.file,
+    position_samples: processor.positionSamples, total_samples: processor.totalSamples,
+    sample_rate_hz: processor.sampleRate, state: processor.state});
+});
+app.post('/api/replay/control', (req, res) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'replay-control-v1')
+    return res.status(403).json({error: 'Replay controls require a trusted VectorWarp origin and intent.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return res.status(409).json({error: 'No recording is being replayed.'});
+  const action = String(req.body?.action || '');
+  if (action === 'pause' || action === 'play') replayControl.paused = action === 'pause';
+  else if (action === 'seek' || action === 'skip') {
+    const seconds = Number(req.body?.seconds);
+    if (!Number.isFinite(seconds)) return res.status(400).json({error: 'Replay position must be finite.'});
+    const base = action === 'skip' ? processor.positionSamples : 0;
+    const target = Math.max(0, Math.min(processor.totalSamples,
+      Math.round(base + seconds * processor.sampleRate)));
+    replayControl = {...replayControl, seekSample: target, revision: replayControl.revision + 1};
+  } else return res.status(400).json({error: 'Choose play, pause, seek, or skip.'});
+  res.json({ok: true, ...replayControl});
+});
 app.get('/capture/status', (req, res) => {
   const now = Date.now();
   const receiving = lastFrameAt !== null && now - lastFrameAt <
@@ -1143,14 +1784,16 @@ app.get('/capture/status', (req, res) => {
     capture = false;
     captureStartedAt = null;
   }
-  res.json({
+  const disk = recordingLibrary.canRecord();
+  const status = {
     supported: !replay,
-    available: !replay && (capture ? acknowledgement !== null : receiving),
+    available: !replay && disk.allowed && (capture ? acknowledgement !== null : receiving),
     reason: replay ? 'Recording is unavailable while replay is active.' : recordingError ||
-      (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null),
+      (!disk.allowed ? 'Recording paused to preserve the configured free-disk reserve.' :
+        (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null)),
     requested: capture,
+    paused: capturePaused,
     revision: captureRevision,
-    clip: captureTriggerQueue.status(),
     acknowledged: acknowledged === true,
     recording,
     recordingFile: acknowledgement?.recordingFile || '',
@@ -1158,11 +1801,17 @@ app.get('/capture/status', (req, res) => {
     recordedSamples: acknowledgement?.recordedSamples || 0,
     startedAt: recording ? captureStartedAt : null,
     elapsedSeconds: recording && captureStartedAt ?
-      Math.max(0, Math.floor((now - captureStartedAt) / 1000)) : 0
-  });
+      Math.max(0, Math.floor((now - captureStartedAt) / 1000)) : 0,
+    storage: disk
+  };
+  // Header controls only need manual-recording state.  The full automatic-clip
+  // ledger can be several megabytes and must not be transferred every four
+  // seconds by every open display.
+  if (req.query.summary !== '1') status.clip = captureTriggerQueue.status();
+  res.json(status);
 });
 // toggle state of capture
-app.post('/capture/toggle', (req, res) => {
+app.post('/capture/toggle', async (req, res, next) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== RECORDING_INTENT)
     return res.status(403).json({error: 'Recording changes require a trusted VectorWarp origin and intent.'});
   if (gainPublicationBlocked)
@@ -1170,15 +1819,45 @@ app.post('/capture/toggle', (req, res) => {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   if (processor?.input === 'replay' || config.capture.replay?.state === true)
     return res.status(409).json({error: 'Recording is unavailable while replay is active.'});
+  if (!capture) {
+    let disk;
+    try { disk = await recordingLibrary.prepareForRecording({activeFile: processor?.recordingFile || ''}); }
+    catch (error) { return next(error); }
+    if (!disk.allowed)
+      return res.status(507).json({error: 'Recording would cross the configured free-disk reserve. Clean up recordings or change the retention settings.'});
+  }
   if (!capture && (lastFrameAt === null || Date.now() - lastFrameAt >
       Math.max(10000, (config.process.data.cpi || 1) * 3000)))
     return res.status(409).json({error: 'No live radar frames. Start the radar before recording.'});
-  capture = !capture;
+  if (capturePaused) { capture = false; capturePaused = false; }
+  else capture = !capture;
   captureRevision += 1;
   captureStartedAt = capture ? Date.now() : null;
-  res.json({requested: capture, revision: captureRevision, recording: processor?.recording === true,
+  res.json({requested: capture, paused: capturePaused, revision: captureRevision, recording: processor?.recording === true,
     acknowledged: processor?.input === 'live' && processor.recordingRequestId === captureRevision && processor.recording === capture,
     startedAt: captureStartedAt});
+});
+app.post('/capture/pause', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-pause-v1')
+    return res.status(403).json({error: 'Recording changes require a trusted VectorWarp origin and intent.'});
+  const pause = req.body?.paused === true;
+  if (pause && !capture)
+    return res.status(409).json({error: 'Start a manual recording before pausing it.'});
+  if (!pause && !capturePaused)
+    return res.status(409).json({error: 'No paused manual recording is available to resume.'});
+  if (!pause) {
+    const disk = await recordingLibrary.prepareForRecording({});
+    if (!disk.allowed)
+      return res.status(507).json({error: 'Recording cannot resume without crossing the free-disk reserve.'});
+  }
+  capture = !pause;
+  capturePaused = pause;
+  captureRevision += 1;
+  captureStartedAt = capture ? Date.now() : null;
+  // A safe pause finalizes the current portable recording. Resume starts a new
+  // segment so no discontinuous sample epochs are silently joined.
+  res.json({requested: capture, paused: capturePaused, revision: captureRevision,
+    startedAt: captureStartedAt, segmented: true});
 });
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError || error.type === 'entity.too.large')
@@ -1203,7 +1882,32 @@ app.use((req, res, next) => {
     .replace(/<body([^>]*)>/, `<body$1>${preview}`);
   res.type('html').send(html);
 });
-app.use(express.static(path.join(__dirname, '..', 'html')));
+let compressedPlotly = null;
+app.get('/lib/plotly-2.20.0.min.js', (req, res, next) => {
+  if (!/(^|,)\s*gzip\b/.test(req.get('Accept-Encoding') || '')) return next();
+  try {
+    if (!compressedPlotly) {
+      const filename = path.join(__dirname, '..', 'html', 'lib', 'plotly-2.20.0.min.js');
+      compressedPlotly = zlib.gzipSync(fs.readFileSync(filename), {level: 6});
+    }
+    res.set('Content-Encoding', 'gzip');
+    res.set('Vary', 'Accept-Encoding');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type('application/javascript').send(compressedPlotly);
+  } catch (_) { next(); }
+});
+app.use(express.static(path.join(__dirname, '..', 'html'), {setHeaders(response, filename) {
+  const extension = path.extname(filename).toLowerCase();
+  // The global API policy intentionally disables caching. Static assets have
+  // their own validators and must not inherit legacy no-cache headers or every
+  // page navigation redownloads the same UI on mobile.
+  response.removeHeader('Pragma');
+  response.removeHeader('Expires');
+  if (path.basename(filename) === 'plotly-2.20.0.min.js')
+    response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  else if (['.js', '.css', '.svg', '.png', '.woff', '.woff2'].includes(extension))
+    response.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+}}));
 app.use((error, req, res, next) => {
   console.error(`API request failed: ${error.message}`);
   res.status(500).json({ok: false, errors: ['The server could not complete this request. Check the VectorWarp API log.']});
@@ -1259,12 +1963,24 @@ function jsonStreamServer(name, onFrame) {
 // Each JSON payload stream has per-connection framing. Timestamp stays plain.
 const server_map = jsonStreamServer('map', frame => {
   map = frame;
+  presentationHistories.map.add(frame);
   stash_map.update_data(map);
+  const at = frameTimestamp(frame);
+  if (Number.isSafeInteger(at) && !adsbSnapshotPending &&
+      typeof adsbSource.getPresentationAt === 'function') {
+    adsbSnapshotPending = true;
+    Promise.all([adsbSource.getPresentationAt('aircraft', at),
+      adsbSource.getPresentationAt('delayDoppler', at)])
+      .then(([aircraft, delayDoppler]) => recordingTimeline.add({timestamp_ms: at,
+        aircraft, delay_doppler: delayDoppler}))
+      .catch(() => {}).finally(() => { adsbSnapshotPending = false; });
+  }
 });
 listenData(server_map, 'map');
 
 const server_detection = jsonStreamServer('detection', frame => {
   detection = frame;
+  presentationHistories.detection.add(frame);
   stash_detection.update_data(detection);
   trackerForwarder.accept(frame);
   trackGuidedShadowRecorder.accept(frame);
@@ -1279,6 +1995,7 @@ const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
   trackerPublication.acceptNative(frame);
   const published = trackerPublication.frame();
+  presentationHistories.tracker.add(published);
   evidenceStatistics.acceptTracker(published);
   provisionalEvidenceStatistics.acceptTracker(published);
   oprsEventRecorder.acceptTracker(published);
@@ -1288,6 +2005,7 @@ listenData(server_tracker, 'track');
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
   const server_bearing = jsonStreamServer('bearing', frame => {
     bearing = frame;
+    presentationHistories.bearing.add(frame);
     evidenceStatistics.acceptBearing(frame);
   });
   listenData(server_bearing, 'bearing');
@@ -1304,13 +2022,11 @@ const server_timestamp = net.createServer((socket)=>{
   const connection = {restart: restartGeneration, generation: timestampGeneration,
     id: ++timestampConnectionSequence};
   timestampConnections += 1;
-  socket.on("data",(msg)=>{
-    const value = msg.toString();
-    if (!/^\s*\d{10,}(?:\.\d+)?\s*$/.test(value)) {
-      serviceErrors.set('timestamp', 'timestamp connection: Expected numeric radar timestamp');
-      socket.destroy();
-      return;
-    }
+  const feed = jsonFrames(frame => {
+    const parsed = JSON.parse(frame);
+    const value = parsed?.timestamp;
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new Error('Expected a non-negative safe-integer radar timestamp');
     if (!timestampConnectionEligible(connection)) return;
     activeTimestampConnection = connection.id;
     serviceErrors.delete('timestamp');
@@ -1318,7 +2034,14 @@ const server_timestamp = net.createServer((socket)=>{
     completePendingGainRestart();
     if (gainPublicationBlocked) return;
     lastFrameAt = Date.now();
-    timestamp = value;
+    timestamp = String(value);
+  });
+  socket.on("data",(msg)=>{
+    try { feed(msg); }
+    catch (error) {
+      serviceErrors.set('timestamp', `timestamp connection: ${error.message}`);
+      socket.destroy();
+    }
   });
   socket.on("close",()=>{
       if (timestampConnectionCurrent(connection)) {
@@ -1339,6 +2062,7 @@ const server_timing = net.createServer(socket => {
     if (!timingConnectionEligible(connection)) return;
     activeTimingConnection = connection.id;
     timing = frame;
+    presentationHistories.timing.add(frame);
     oprsEventRecorder.acceptTiming(frame);
     evidenceStatistics.acceptTiming(frame);
     provisionalEvidenceStatistics.acceptTiming(frame);
@@ -1367,6 +2091,7 @@ listenData(server_timing, 'timing');
 
 const server_iqdata = jsonStreamServer('iqdata', frame => {
   iqdata = frame;
+  presentationHistories.iqdata.add(frame);
   stash_iqdata.update_data(iqdata);
 });
 listenData(server_iqdata, 'iqdata');

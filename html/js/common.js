@@ -13,25 +13,64 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
-  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
+  const current = name => active === name ? ' aria-current="page"' : '';
+  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}"${current('radar')}>Live radar</a><a href="/display/locations" class="${active === 'map' ? 'active' : ''}"${current('map')}>Map</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}"${current('controller')}>System</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}"${current('recordings')}>Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}"${current('settings')}>Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status" role="status" aria-live="polite"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" role="status" aria-live="polite" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
+  restoreLiveStatusLabel(document.getElementById('live-status'), 'RADAR');
+  if (restoreLiveStatusLabel(document.getElementById('adsb-status'), 'ADS-B'))
+    document.getElementById('adsb-status').hidden = false;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
-  window.blah2LiveStatusTimer = window.setInterval(refreshLiveStatus, 2000);
-  refreshReceiverDevices();
+  const compactDevice = typeof window !== 'undefined' && window.innerWidth <= 1024;
+  window.blah2LiveStatusTimer = window.setInterval(refreshLiveStatus, compactDevice ? 5000 : 2500);
+  // Hardware/software discovery can launch several bounded host probes. Never
+  // run it from the shared header: every radar/display tab used to repeat those
+  // probes every five minutes and starve the real-time processor. Receiver
+  // setup exposes an explicit "Scan for receivers" action instead.
   if (window.blah2ReceiverDeviceTimer)
     window.clearInterval(window.blah2ReceiverDeviceTimer);
-  window.blah2ReceiverDeviceTimer = window.setInterval(refreshReceiverDevices, 30000);
+  window.blah2ReceiverDeviceTimer = null;
   routeApiLinks();
   addRecordingControl();
   addFullscreenControl();
+}
+
+function addRadarViewControl(panel, target) {
+  const active = document.body?.dataset?.radarView;
+  if (!active || !panel || !target || panel.querySelector('.radar-view-control')) return;
+  const views = [
+    ['live', '/', 'Live delay–Doppler'],
+    ['maxhold', '/display/signal?view=maxhold', 'Decaying max-hold'],
+    ['range', '/display/detection?view=range', 'Range over time'],
+    ['doppler', '/display/detection?view=doppler', 'Doppler over time'],
+    ['range-doppler', '/display/detection?view=range-doppler', 'Range–Doppler']
+  ];
+  const control = document.createElement('details');
+  control.className = 'radar-view-control';
+  const summary = document.createElement('summary');
+  summary.setAttribute('aria-label', 'Choose radar map');
+  summary.setAttribute('title', 'Choose radar map');
+  summary.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/><rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/><rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/><rect x="17" y="17" width="4" height="4"/></svg>';
+  const menu = document.createElement('div');
+  menu.className = 'radar-view-menu';
+  menu.setAttribute('role', 'menu');
+  menu.replaceChildren(...views.map(([key, href, label]) => {
+    const link = document.createElement('a');
+    link.href = href;
+    link.textContent = label;
+    link.setAttribute('role', 'menuitem');
+    if (key === active) link.setAttribute('aria-current', 'page');
+    return link;
+  }));
+  control.append(summary, menu);
+  target.appendChild(control);
 }
 
 // Discovery is read-only. A newly connected receiver is offered to the user,
 // but the running receiver and saved configuration are never changed here.
 async function refreshReceiverDevices() {
   const target = document.getElementById('receiver-device-alert');
-  if (!target || window.blah2ReceiverDevicePending) return;
+  if (!target || document.hidden || window.blah2ReceiverDevicePending) return;
   window.blah2ReceiverDevicePending = true;
   try {
     const response = await fetchStatusResource(liveApiUrl('/api/receivers'), {cache: 'no-store'});
@@ -68,7 +107,8 @@ function routeApiLinks() {
   });
 }
 
-let recordingState = {recording: false, requested: false, acknowledged: false, startedAt: null, available: true};
+let recordingState = {recording: false, requested: false, paused: false,
+  acknowledged: false, startedAt: null, available: true};
 let recordingRequestPending = false;
 
 function recordingDuration(milliseconds) {
@@ -86,21 +126,32 @@ function renderRecordingState() {
   const status = control.querySelector('.recording-status');
   const copy = control.querySelector('.recording-copy');
   const button = control.querySelector('.recording-toggle');
+  const pause = control.querySelector('.recording-pause');
   control.classList.toggle('recording', recordingState.recording);
   control.classList.toggle('unavailable', !recordingState.available);
   button.disabled = recordingRequestPending || !recordingState.available;
+  if (pause) pause.disabled = recordingRequestPending ||
+    (!recordingState.recording && !recordingState.paused);
   if (!recordingState.available) {
     status.innerHTML = '<span class="recording-dot"></span>Recording unavailable';
     copy.textContent = recordingState.reason || 'The recording control cannot reach the VectorWarp API.';
     button.textContent = 'Unavailable';
+    if (pause) pause.hidden = true;
     return;
   }
+  if (pause) pause.hidden = false;
   if (recordingState.recording) {
     const elapsed = recordingState.startedAt ?
       recordingDuration(Date.now() - recordingState.startedAt) : 'Recording';
     status.innerHTML = `<span class="recording-dot"></span><strong>REC</strong><time>${elapsed}</time>`;
     copy.textContent = recordingState.file ? `Writing ${recordingState.file}` : 'Recording confirmed.';
     button.textContent = 'Stop recording';
+    if (pause) pause.textContent = 'Pause';
+  } else if (recordingState.paused) {
+    status.innerHTML = '<span class="recording-dot"></span><strong>PAUSED</strong>';
+    copy.textContent = 'The previous file is safely finalized. Resume starts a new linked segment.';
+    button.textContent = 'End session';
+    if (pause) pause.textContent = 'Resume';
   } else if (recordingState.requested) {
     status.innerHTML = '<span class="recording-dot"></span>Starting recording';
     copy.textContent = recordingState.reason || 'Waiting for recording to start.';
@@ -114,11 +165,12 @@ function renderRecordingState() {
 
 async function readRecordingState() {
   try {
-    let response = await fetchStatusResource(liveApiUrl('/capture/status'),
+    let response = await fetchStatusResource(liveApiUrl('/capture/status?summary=1'),
       {cache: 'no-store'});
     if (response.ok) {
       const state = await response.json();
       recordingState = {recording: state.recording === true, requested: state.requested === true,
+        paused: state.paused === true,
         acknowledged: state.acknowledged === true,
         startedAt: Number.isFinite(state.startedAt) ? state.startedAt : null,
         available: state.supported !== false && state.available !== false, reason: state.recordingError || state.reason,
@@ -128,7 +180,7 @@ async function readRecordingState() {
       if (!response.ok) throw new Error('Recording status unavailable');
       const active = (await response.text()).trim() === 'true';
       recordingState = {recording: active, requested: active, acknowledged: false,
-        startedAt: active ? recordingState.startedAt : null, available: true};
+        paused: false, startedAt: active ? recordingState.startedAt : null, available: true};
     }
   } catch (_) {
     recordingState.available = false;
@@ -148,6 +200,7 @@ async function toggleRecording() {
     try { state = await response.json(); } catch (_) { /* Older API. */ }
     if (typeof state?.requested === 'boolean') {
       recordingState = {recording: state.recording === true, requested: state.requested,
+        paused: state.paused === true,
         acknowledged: state.acknowledged === true,
         startedAt: state.recording && Number.isFinite(state.startedAt) ? state.startedAt : null,
         available: true};
@@ -162,7 +215,26 @@ async function toggleRecording() {
   }
 }
 
+async function pauseRecording() {
+  if (recordingRequestPending || (!recordingState.recording && !recordingState.paused)) return;
+  recordingRequestPending = true; renderRecordingState();
+  try {
+    const response = await fetchStatusResource(liveApiUrl('/capture/pause'), {method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-VectorWarp-Intent': 'recording-pause-v1'},
+      body: JSON.stringify({paused: !recordingState.paused}), cache: 'no-store'});
+    if (!response.ok) throw new Error('Recording pause unavailable');
+    const state = await response.json();
+    recordingState = {...recordingState, requested: state.requested === true,
+      paused: state.paused === true, recording: false,
+      startedAt: Number.isFinite(state.startedAt) ? state.startedAt : null};
+  } catch (_) { await readRecordingState(); }
+  finally { recordingRequestPending = false; renderRecordingState(); }
+}
+
 function addRecordingControl() {
+  // Starting/stopping raw-IQ capture is an operational action, not a chart
+  // feature. Only explicitly opted-in live radar pages may expose it.
+  if (document.body?.dataset.captureControls !== 'true') return;
   const visual = document.getElementById('data');
   if (!visual || document.getElementById('recording-control')) return;
   const panel = visual.closest('.panel') || visual.parentElement;
@@ -171,7 +243,8 @@ function addRecordingControl() {
   control.className = 'recording-control';
   control.setAttribute('role', 'status');
   control.setAttribute('aria-live', 'polite');
-  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space to start. Press again to stop.</div><button class="recording-toggle" type="button">Start recording</button>';
+  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space to start. Press again to stop. <a href="/display/recordings">Browse recordings</a></div><button class="recording-pause button-secondary" type="button" hidden>Pause</button><button class="recording-toggle" type="button">Start recording</button>';
+  control.querySelector('.recording-pause').addEventListener('click', pauseRecording);
   control.querySelector('.recording-toggle')
     .addEventListener('click', toggleRecording);
   panel.classList.add('recording-panel');
@@ -206,16 +279,44 @@ function addFullscreenControl() {
   const button = document.createElement('button');
   button.className = 'fullscreen-button';
   button.type = 'button';
-  button.textContent = 'Fullscreen';
+  const labelFullscreen = active => {
+    const label = active ? 'Exit fullscreen' : 'Fullscreen';
+    button.textContent = active ? '×' : '⛶';
+    button.setAttribute('aria-label', label);
+    button.setAttribute('title', label);
+  };
+  labelFullscreen(false);
+  const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+  const fallbackActive = () => panel.classList.contains('fullscreen-fallback');
+  const setFallback = active => {
+    panel.classList.toggle('fullscreen-fallback', active);
+    document.documentElement.classList.toggle('fullscreen-page', active);
+    document.body.classList.toggle('fullscreen-page', active);
+    labelFullscreen(active);
+  };
   button.addEventListener('click', async () => {
+    if (fallbackActive()) {
+      setFallback(false);
+      return;
+    }
+    const exitFullscreen = document.exitFullscreen || document.webkitExitFullscreen;
+    const requestFullscreen = panel.requestFullscreen || panel.webkitRequestFullscreen;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await panel.requestFullscreen();
-    } catch (_) { /* Browser policy or unsupported fullscreen. */ }
+      if (fullscreenElement() && exitFullscreen) await exitFullscreen.call(document);
+      else if (requestFullscreen) await requestFullscreen.call(panel);
+      else setFallback(true);
+    } catch (_) {
+      // iPhone Safari does not expose element fullscreen. Keep the radar usable
+      // with an in-page fullscreen mode instead of leaving a dead control.
+      setFallback(true);
+    }
   });
   panel.classList.add('fullscreen-target');
   panel.classList.add('has-fullscreen');
-  panel.appendChild(button);
+  const toolbar = typeof panel.querySelector === 'function' ? panel.querySelector('.radar-toolbar') : null;
+  const controlTarget = toolbar || panel;
+  addRadarViewControl(panel, controlTarget);
+  controlTarget.appendChild(button);
   let resizePending = false;
   let resizeInFlight = false;
   let resizeRequested = false;
@@ -269,11 +370,16 @@ function addFullscreenControl() {
     observer.observe(visual);
   }
   window.addEventListener('resize', resizePlot);
-  document.addEventListener('fullscreenchange', () => {
-    button.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+  const fullscreenChanged = () => {
+    labelFullscreen(Boolean(fullscreenElement()));
     resizePlot();
     window.setTimeout(resizePlot, 120);
     window.setTimeout(resizePlot, 360);
+  };
+  document.addEventListener('fullscreenchange', fullscreenChanged);
+  document.addEventListener('webkitfullscreenchange', fullscreenChanged);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && fallbackActive()) setFallback(false);
   });
 }
 
@@ -312,7 +418,10 @@ function pageOrigin() {
   return window.location.origin || `${window.location.protocol}//${window.location.hostname}${window.location.port ? `:${window.location.port}` : ''}`;
 }
 
-async function readResponse(url, options = {}, timeoutMs = 1800) {
+// Mobile browsers and remote LAN/VPN routes can briefly take longer than a
+// local desktop request without the radar being unavailable.  Keep a bounded
+// timeout, but do not turn normal network jitter into a page-wide failure.
+async function readResponse(url, options = {}, timeoutMs = 5000) {
   const controller = new AbortController();
   let timeout;
   try {
@@ -361,7 +470,7 @@ async function discoverApiEndpoint() {
   return apiDiscovery;
 }
 
-async function fetchStatusResource(url, options = {}, timeoutMs = 1800) {
+async function fetchStatusResource(url, options = {}, timeoutMs = 5000) {
   const parsed = new URL(url, pageOrigin());
   const internal = /^\/(api|stash|capture)(\/|$)/.test(parsed.pathname) &&
     parsed.hostname === new URL(pageOrigin()).hostname;
@@ -371,7 +480,117 @@ async function fetchStatusResource(url, options = {}, timeoutMs = 1800) {
     // URLs created before discovery/restart must also follow the selected API.
     return await readResponse(liveApiUrl(parsed.pathname + parsed.search), options, timeoutMs);
   } catch (error) {
-    apiEndpoint = null; // Rediscover on the next request; never replay a write/toggle.
+    // A slow response does not invalidate a successfully discovered endpoint.
+    // Clearing it here caused every timeout to start another discovery request,
+    // amplifying a brief mobile-network delay into a refresh storm.  Real
+    // transport failures still trigger discovery on the next request.  Writes
+    // are never replayed in either case.
+    if (error?.message !== 'Request timed out') apiEndpoint = null;
+    throw error;
+  }
+}
+
+// Keep useful read-only API snapshots on the device between page navigations.
+// HTTP remains authoritative: live radar data is refreshed immediately in the
+// background and may only bridge a short transport interruption. Long-lived
+// entries are limited to metadata whose meaning does not change every CPI.
+const clientJsonMemoryCache = new Map();
+const clientJsonRequests = new Map();
+const CLIENT_JSON_CACHE_PREFIX = 'vectorwarp-json-v2:';
+
+function clientJsonCachePolicy(url) {
+  const parsed = new URL(url, pageOrigin());
+  const path = parsed.pathname;
+  if (/^\/(?:stash|capture)(?:\/|$)/.test(path) ||
+      /^\/api\/(?:iqdata|spectrum)(?:\/|$)/.test(path))
+    return {freshMs: 0, staleMs: 0, storage: null};
+  if (/^\/api\/adsb\/aircraft-photo\//.test(path))
+    return {freshMs: 24 * 3600000, staleMs: 30 * 86400000, storage: 'local'};
+  if (path === '/api/radar/coverage' || path === '/api/map/imagery')
+    return {freshMs: path === '/api/radar/coverage' ? 30000 : 3600000,
+      staleMs: 7 * 86400000, storage: 'local'};
+  if (/^\/api\/(?:runtime\/config|config\/capabilities|receiver-profiles)(?:\/|$)/.test(path))
+    return {freshMs: 2000, staleMs: 24 * 3600000, storage: 'session'};
+  if (/^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing)(?:\/|$)/.test(path))
+    return {freshMs: 100, staleMs: 30000, storage: 'session'};
+  if (path === '/api/system/status' || path === '/api/adsb/status')
+    return {freshMs: 1000, staleMs: 15000, storage: 'session'};
+  return {freshMs: 1000, staleMs: 300000, storage: 'session'};
+}
+
+function clientJsonStorage(kind) {
+  if (typeof window === 'undefined') return null;
+  try { return kind === 'local' ? window.localStorage : kind === 'session' ? window.sessionStorage : null; }
+  catch (_) { return null; }
+}
+
+function clientJsonKey(url) {
+  const parsed = new URL(url, pageOrigin());
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+function readClientJsonCache(key, policy) {
+  const memory = clientJsonMemoryCache.get(key);
+  if (memory && Date.now() - memory.at <= policy.staleMs) return memory;
+  if (memory) clientJsonMemoryCache.delete(key);
+  const storage = clientJsonStorage(policy.storage);
+  if (!storage) return null;
+  try {
+    const entry = JSON.parse(storage.getItem(CLIENT_JSON_CACHE_PREFIX + key) || 'null');
+    if (!entry || !Number.isFinite(entry.at) || Date.now() - entry.at > policy.staleMs) {
+      storage.removeItem(CLIENT_JSON_CACHE_PREFIX + key);
+      return null;
+    }
+    clientJsonMemoryCache.set(key, entry);
+    return entry;
+  } catch (_) { return null; }
+}
+
+function writeClientJsonCache(key, value, policy) {
+  const entry = {at: Date.now(), value};
+  clientJsonMemoryCache.set(key, entry);
+  const storage = clientJsonStorage(policy.storage);
+  if (!storage) return;
+  try {
+    const serialized = JSON.stringify(entry);
+    // Do not evict map tiles or user preferences for a giant API payload.
+    if (serialized.length <= 750000) storage.setItem(CLIENT_JSON_CACHE_PREFIX + key, serialized);
+  } catch (_) { /* A full/private browser cache must not affect live data. */ }
+}
+
+async function fetchCachedJsonResource(url, options = {}, overrides = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    const response = await fetchStatusResource(url, options, overrides.timeoutMs || 5000);
+    if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+    const text = await response.text();
+    return text.trim() ? JSON.parse(text) : null;
+  }
+  const policy = {...clientJsonCachePolicy(url), ...overrides};
+  const key = clientJsonKey(url);
+  const cached = readClientJsonCache(key, policy);
+  const age = cached ? Date.now() - cached.at : Infinity;
+  if (cached && age <= policy.freshMs) return cached.value;
+  const refresh = () => {
+    if (clientJsonRequests.has(key)) return clientJsonRequests.get(key);
+    const request = fetchStatusResource(url, {...options, cache: 'no-store'}, policy.timeoutMs || 5000)
+      .then(async response => {
+        if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+        const text = await response.text();
+        const value = text.trim() ? JSON.parse(text) : null;
+        writeClientJsonCache(key, value, policy);
+        return value;
+      }).finally(() => clientJsonRequests.delete(key));
+    clientJsonRequests.set(key, request);
+    return request;
+  };
+  if (cached && age <= policy.staleMs && overrides.awaitFresh !== true) {
+    refresh().catch(() => {});
+    return cached.value;
+  }
+  try { return await refresh(); }
+  catch (error) {
+    if (cached && age <= policy.staleMs) return cached.value;
     throw error;
   }
 }
@@ -474,18 +693,81 @@ function renderReceiverHealth(status, target = document.getElementById('receiver
   }
 }
 
+function replayTime(samples, rate) {
+  const seconds = rate > 0 ? Math.max(0, samples / rate) : 0;
+  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+}
+async function replayCommand(action, seconds) {
+  const response = await fetchStatusResource(liveApiUrl('/api/replay/control'), {
+    method: 'POST', cache: 'no-store', headers: {'Content-Type': 'application/json',
+      'X-VectorWarp-Intent': 'replay-control-v1'},
+    body: JSON.stringify(seconds === undefined ? {action} : {action, seconds})});
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Replay control failed');
+}
+function renderReplayTransport(processor) {
+  let bar = document.getElementById('replay-transport');
+  if (processor?.input !== 'replay') {
+    if (bar) bar.hidden = true;
+    if (window.blah2ReplayStatusTimer) {
+      window.clearInterval(window.blah2ReplayStatusTimer);
+      window.blah2ReplayStatusTimer = null;
+    }
+    return;
+  }
+  if (!document.body || typeof document.createElement !== 'function') return;
+  if (!bar) {
+    bar = document.createElement('aside'); bar.id = 'replay-transport'; bar.className = 'replay-transport';
+    bar.setAttribute('aria-label', 'Recording playback');
+    bar.innerHTML = '<button data-replay="skip" data-seconds="-10" title="Back 10 seconds">−10</button><button class="replay-play" data-replay="pause">Pause</button><button data-replay="skip" data-seconds="10" title="Forward 10 seconds">+10</button><span class="replay-current">0:00</span><input class="replay-scrubber" type="range" min="0" max="1" step="0.001" value="0" aria-label="Recording position"><span class="replay-total">0:00</span>';
+    document.body.appendChild(bar);
+    bar.addEventListener('click', async event => {
+      const button = event.target.closest('button[data-replay]'); if (!button) return;
+      button.disabled = true;
+      try { await replayCommand(button.dataset.replay, button.dataset.seconds === undefined ? undefined : Number(button.dataset.seconds)); }
+      catch (error) { button.title = error.message; }
+      finally { button.disabled = false; }
+    });
+    bar.querySelector('.replay-scrubber').addEventListener('change', event =>
+      replayCommand('seek', Number(event.target.value)).catch(() => {}));
+  }
+  bar.hidden = false;
+  const rate = processor.sampleRate || 1, total = processor.totalSamples || 0;
+  const position = Math.min(total, processor.positionSamples || 0);
+  const scrubber = bar.querySelector('.replay-scrubber');
+  if (document.activeElement !== scrubber) scrubber.value = String(position / rate);
+  scrubber.max = String(total / rate || 1);
+  bar.querySelector('.replay-current').textContent = replayTime(position, rate);
+  bar.querySelector('.replay-total').textContent = replayTime(total, rate);
+  const play = bar.querySelector('.replay-play'), paused = processor.state === 'paused';
+  play.textContent = paused ? 'Play' : 'Pause'; play.dataset.replay = paused ? 'play' : 'pause';
+  if (!window.blah2ReplayStatusTimer) window.blah2ReplayStatusTimer = window.setInterval(async () => {
+    if (document.hidden || window.blah2ReplayStatusPending) return;
+    window.blah2ReplayStatusPending = true;
+    try {
+      const response = await fetchStatusResource(liveApiUrl('/api/replay/status'), {cache: 'no-store'});
+      const value = response.ok ? await response.json() : null;
+      if (!value?.active) return renderReplayTransport(null);
+      renderReplayTransport({input: 'replay', state: value.state,
+        positionSamples: value.position_samples, totalSamples: value.total_samples,
+        sampleRate: value.sample_rate_hz});
+    } catch (_) { /* The normal health poll retains the last known position. */ }
+    finally { window.blah2ReplayStatusPending = false; }
+  }, 500);
+}
+
 async function refreshLiveStatus() {
   const radarLabel = document.getElementById('live-status');
   const adsbLabel = document.getElementById('adsb-status');
   const processorAlert = document.getElementById('processor-alert');
-  if (!radarLabel || window.blah2LiveStatusPending) return;
+  if (!radarLabel || document.hidden || window.blah2LiveStatusPending) return;
   window.blah2LiveStatusPending = true;
   try {
-    const response = await fetchStatusResource(liveApiUrl('/api/system/status'), {cache: 'no-store'});
+    const response = await fetchStatusResource(liveApiUrl('/api/system/status?summary=1'), {cache: 'no-store'});
     if (!response.ok) throw new Error('Radar status unavailable');
     const status = await response.json();
     renderReceiverHealth(status);
     const processor = status.processorFresh ? status.processor : null;
+    renderReplayTransport(processor);
     const replay = processor?.input === 'replay' ? processor : null;
     const restarting = ['scheduled', 'running'].includes(status.restart?.state);
     let label;
@@ -497,39 +779,80 @@ async function refreshLiveStatus() {
         replay.state === 'stopped' ? 'REPLAY STOPPED' : `REPLAY ${replay.state.toUpperCase()}${progress}`;
     } else label = restarting ? 'RESTARTING' : status.errors?.length ? 'ERROR' :
       status.radar === 'receiving' ? 'ONLINE' : status.radar === 'stale' ? 'STALE' : 'OFFLINE';
-    radarLabel.innerHTML = `<span class="live-dot${label === 'ONLINE' ? '' : ' offline'}"></span>RADAR ${label}`;
+    updateLiveStatusLabel(radarLabel, 'RADAR', label, label === 'ONLINE');
     radarLabel.title = processor?.error || status.errors?.[0] || status.message || '';
+    rememberLiveStatus('RADAR', label, label === 'ONLINE', radarLabel.title);
     if (processorAlert) {
       processorAlert.textContent = processor?.error || '';
       processorAlert.hidden = !processor?.error;
     }
-    window.blah2AdsbEnabled = status.adsbEnabled === true && !replay;
+    window.blah2AdsbEnabled = replay ? status.recordedAdsb === true : status.adsbEnabled === true;
     if (adsbLabel) {
       adsbLabel.hidden = !window.blah2AdsbEnabled;
-      if (window.blah2AdsbEnabled) {
+      const adsbDue = !window.blah2AdsbStatusAt || Date.now() - window.blah2AdsbStatusAt >= 10000;
+      if (window.blah2AdsbEnabled && adsbDue) {
         try {
           const adsbResponse = await fetchStatusResource(liveApiUrl('/api/adsb/status'), {cache: 'no-store'});
           if (!adsbResponse.ok) throw new Error('ADS-B status unavailable');
           const feeds = await adsbResponse.json();
+          window.blah2AdsbStatusAt = Date.now();
           const label = feeds.online ? 'ONLINE' : feeds.aircraft?.available || feeds.delayDoppler?.available ? 'PARTIAL' : 'OFFLINE';
-          adsbLabel.innerHTML = `<span class="live-dot${feeds.online ? '' : ' offline'}"></span>ADS-B ${label}`;
+          updateLiveStatusLabel(adsbLabel, 'ADS-B', label, feeds.online);
           adsbLabel.title = [feeds.aircraft?.message, feeds.delayDoppler?.message].filter(Boolean).join(' · ');
+          rememberLiveStatus('ADS-B', label, feeds.online, adsbLabel.title);
         } catch (_) {
-          adsbLabel.innerHTML = '<span class="live-dot offline"></span>ADS-B OFFLINE';
+          if (!restoreLiveStatusLabel(adsbLabel, 'ADS-B'))
+            updateLiveStatusLabel(adsbLabel, 'ADS-B', 'STATUS DELAYED', false);
         }
       }
     }
   } catch (_) {
+    renderReplayTransport(null);
     renderReceiverHealth(null);
-    radarLabel.innerHTML = '<span class="live-dot offline"></span>RADAR OFFLINE';
+    if (!restoreLiveStatusLabel(radarLabel, 'RADAR'))
+      updateLiveStatusLabel(radarLabel, 'RADAR', 'STATUS DELAYED', false);
     if (adsbLabel && window.blah2AdsbEnabled) {
       adsbLabel.hidden = false;
-      adsbLabel.innerHTML = '<span class="live-dot offline"></span>ADS-B OFFLINE';
+      if (!restoreLiveStatusLabel(adsbLabel, 'ADS-B'))
+        updateLiveStatusLabel(adsbLabel, 'ADS-B', 'STATUS DELAYED', false);
     }
     if (processorAlert) processorAlert.hidden = true;
   } finally {
     window.blah2LiveStatusPending = false;
   }
+}
+
+// Do not rebuild status DOM on every poll. Keeping the same nodes avoids
+// unnecessary layout/paint work in the shared header and prevents a status
+// tick from disturbing an open mobile menu or the browser's scroll anchor.
+function updateLiveStatusLabel(target, prefix, label, healthy) {
+  if (!target) return;
+  const signature = `${prefix}:${label}:${healthy ? 'healthy' : 'degraded'}`;
+  if (target._vectorwarpStatusSignature === signature) return;
+  target._vectorwarpStatusSignature = signature;
+  target.innerHTML = `<span class="live-dot${healthy ? '' : ' offline'}"></span>${prefix} ${label}`;
+}
+
+const LIVE_STATUS_CACHE_KEY = 'vectorwarp:service-status:v1';
+const LIVE_STATUS_CACHE_AGE_MS = 30000;
+function readLiveStatusCache() {
+  try { return JSON.parse(window.sessionStorage?.getItem(LIVE_STATUS_CACHE_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+function rememberLiveStatus(prefix, label, healthy, title = '') {
+  try {
+    const cache = readLiveStatusCache();
+    cache[prefix] = {label, healthy: healthy === true, title, at: Date.now()};
+    window.sessionStorage?.setItem(LIVE_STATUS_CACHE_KEY, JSON.stringify(cache));
+  } catch (_) { /* Status continuity must not depend on browser storage. */ }
+}
+function restoreLiveStatusLabel(target, prefix, now = Date.now()) {
+  const cached = readLiveStatusCache()[prefix];
+  if (!target || !cached || !Number.isFinite(cached.at) ||
+      now - cached.at < 0 || now - cached.at > LIVE_STATUS_CACHE_AGE_MS) return false;
+  updateLiveStatusLabel(target, prefix, cached.label, cached.healthy);
+  target.title = cached.title || 'Last confirmed status; checking for an update.';
+  return true;
 }
 
 // Only the API's loaded configuration controls display cadence. An editor draft
@@ -539,10 +862,18 @@ let radarRuntimeReadAt = -Infinity;
 let radarRuntimePending = null;
 
 async function fetchRadarJson(url) {
-  const response = await fetchStatusResource(url, {cache: 'no-store'});
-  if (!response.ok) throw new Error(`Data request failed (${response.status})`);
-  const body = await response.text();
-  return body.trim() ? JSON.parse(body) : null;
+  // The scheduler already bounds this read to once every two seconds. Do not
+  // layer stale-while-revalidate on top or a restarted CPI can remain hidden
+  // for another complete cache window.
+  return fetchCachedJsonResource(url, {}, {freshMs: 0, awaitFresh: true});
+}
+
+function radarPresentationUrl(path) {
+  const url = new URL(path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  url.searchParams.set('presentation', 'aligned');
+  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
+    `${url.pathname}${url.search}`;
 }
 
 async function getRadarRuntimeConfig() {
@@ -565,18 +896,27 @@ function radarFrameIntervalMs(config) {
     Math.min(2147483647, Math.max(16, seconds * 1000)) : 1000;
 }
 
-function startRadarUpdates(update) {
+function startRadarUpdates(update, minimumIntervalMs = 16) {
   let stopped = false;
+  let running = false;
   let timer;
   let due = 0;
   let interval = null;
   let loadedConfig = null;
   async function tick() {
-    if (stopped) return;
+    if (stopped || running) return;
+    // Background tabs cannot paint a useful radar frame.  Pausing here avoids
+    // redundant heatmap compression, transfer and Plotly work while another
+    // visible tab continues normally. Resume immediately when shown again.
+    if (typeof document !== 'undefined' && document.hidden) {
+      timer = window.setTimeout(tick, 1000);
+      return;
+    }
+    running = true;
     try {
       try { loadedConfig = await getRadarRuntimeConfig(); } catch (_) { /* Retry after an API restart. */ }
       if (stopped) return;
-      const nextInterval = radarFrameIntervalMs(loadedConfig);
+      const nextInterval = Math.max(minimumIntervalMs, radarFrameIntervalMs(loadedConfig));
       if (interval !== nextInterval) { interval = nextInterval; due = 0; }
       if (Date.now() >= due) {
         due = Date.now() + interval;
@@ -586,29 +926,89 @@ function startRadarUpdates(update) {
     } catch (error) {
       window.blah2FrameError = error?.message || String(error);
     } finally {
+      running = false;
       // Account for request/render time; never run overlapping updates or queue
-      // missed frames. Check for restarted config even during very long CPIs.
+      // missed frames. If a slow network/render ran past the deadline, start a
+      // fresh interval now instead of issuing catch-up requests back-to-back.
+      // Check for restarted config even during very long CPIs.
+      if (interval !== null && due <= Date.now()) due = Date.now() + interval;
       if (!stopped) timer = window.setTimeout(tick,
         Math.max(16, Math.min(2000, due - Date.now())));
     }
   }
+  const visibilityChanged = () => {
+    if (stopped || document.hidden) return;
+    due = 0;
+    window.clearTimeout(timer);
+    void tick();
+  };
+  if (typeof document !== 'undefined')
+    document.addEventListener?.('visibilitychange', visibilityChanged);
   tick();
-  return {stop() { stopped = true; window.clearTimeout(timer); }};
+  return {stop() {
+    stopped = true;
+    window.clearTimeout(timer);
+    if (typeof document !== 'undefined')
+      document.removeEventListener?.('visibilitychange', visibilityChanged);
+  }};
 }
 
 function startRadarPlot(url, render) {
   let renderedTimestamp;
+  let consecutiveFailures = 0;
+  const target = typeof document === 'undefined' ? null : document.getElementById('data');
+  const panel = target?.closest?.('.panel') || target?.parentElement;
+  let status = panel?.querySelector?.('.plot-state');
+  if (panel && !status) {
+    status = document.createElement('div');
+    status.className = 'plot-state loading';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.textContent = 'Loading live data…';
+    panel.appendChild(status);
+  }
+  target?.setAttribute?.('aria-busy', 'true');
+  // A full heatmap is materially heavier than a status card.  Tablets and
+  // phones should display fresh radar data without continuously parsing and
+  // repainting faster than their browser can keep up.
+  // The compact map keeps mobile rendering bounded; cadence should still
+  // follow the running CPI instead of imposing a separate one-second clock.
+  const minimumIntervalMs = 100;
   return startRadarUpdates(async () => {
-    const data = await fetchRadarJson(url);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-    const stamp = data.frameTimestamp ?? data.timestamp;
-    if (stamp === undefined || stamp === null) return;
-    const key = JSON.stringify(stamp);
-    if (key === renderedTimestamp) return;
-    const complete = await render(data);
-    // Failed fetches/renders can be retried on the next tick.
-    if (complete !== false) renderedTimestamp = key;
-  });
+    try {
+      const data = await fetchRadarJson(url);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        if (status && renderedTimestamp === undefined) {
+          status.className = 'plot-state waiting';
+          status.textContent = 'Waiting for the first radar frame…';
+        }
+        target?.setAttribute?.('aria-busy', 'false');
+        return;
+      }
+      const stamp = data.frameTimestamp ?? data.timestamp;
+      if (stamp === undefined || stamp === null) return;
+      const key = JSON.stringify(stamp);
+      if (key === renderedTimestamp) return;
+      const complete = await render(data);
+      // Failed fetches/renders can be retried on the next tick.
+      if (complete !== false) {
+        renderedTimestamp = key;
+        consecutiveFailures = 0;
+        target?.setAttribute?.('aria-busy', 'false');
+        if (status) status.hidden = true;
+      }
+    } catch (error) {
+      consecutiveFailures++;
+      if (status && consecutiveFailures >= 3) {
+        status.hidden = false;
+        status.className = 'plot-state error';
+        status.textContent = renderedTimestamp === undefined ?
+          'Live radar data is unavailable. Retrying automatically…' :
+          'Refresh delayed. Showing the last valid radar frame while retrying…';
+      }
+      throw error;
+    }
+  }, minimumIntervalMs);
 }
 
 async function renderRuntimeSummary() {
@@ -668,8 +1068,288 @@ async function renderRuntimeSummary() {
   }
 }
 
+// Original, license-neutral aircraft classification shared by every ADS-B view.
+// ICAO emitter categories are preferred; type-code/description fallbacks keep
+// mixed tar1090 and public-exchange feeds useful without a separate database.
+function aircraftKind(aircraft = {}) {
+  const category = String(aircraft.category || '').toUpperCase();
+  const type = String(aircraft.t || aircraft.aircraft_type || '').toUpperCase();
+  const description = String(aircraft.desc || '').toLowerCase();
+  if (category === 'A7' || /^H\d/.test(type) || /helicopter|rotorcraft/.test(description)) return 'rotorcraft';
+  if (category === 'B6' || /(?:^|\W)(?:uav|drone)(?:\W|$)/.test(description)) return 'drone';
+  if (/^(?:GLID|GLIM)$/.test(type) || /glider|sailplane/.test(description)) return 'glider';
+  if (/^C[12]$/.test(category) || /ground|surface|vehicle/.test(description)) return 'ground';
+  if (category === 'A5' || /heavy/.test(description)) return 'heavy';
+  if (/^A[34]$/.test(category) || /large|wide.?body/.test(description)) return 'airliner';
+  if (/^(?:A[12]|B[134])$/.test(category) || /light|small|ultralight/.test(description)) return 'light';
+  return 'aircraft';
+}
+
+function aircraftPlotSymbol(aircraft) {
+  return ({rotorcraft: 'star', drone: 'diamond', glider: 'triangle-up-open', ground: 'square',
+    heavy: 'triangle-up', airliner: 'triangle-up', light: 'triangle-up-open', aircraft: 'circle-open'})[aircraftKind(aircraft)];
+}
+
+function aircraftLabel(aircraft = {}) {
+  return String(aircraft.flight || aircraft.callsign || aircraft.r || aircraft.hex || 'Aircraft').trim();
+}
+
+function aircraftInfo(aircraft = {}) {
+  const finiteValue = value => value === null || value === undefined || value === '' ? null :
+    Number.isFinite(Number(value)) ? Number(value) : null;
+  const position = aircraft.position && typeof aircraft.position === 'object' ? aircraft.position : {};
+  const altitude = finiteValue(aircraft.alt_geom) ?? finiteValue(aircraft.alt_baro) ??
+    finiteValue(position.altitude_geom_ft) ?? finiteValue(position.altitude_baro_ft);
+  const verticalRate = finiteValue(aircraft.geom_rate) ?? finiteValue(aircraft.baro_rate) ??
+    finiteValue(position.geom_rate_fpm) ?? finiteValue(position.baro_rate_fpm);
+  const rawPositionSource = String(aircraft.position_source ||
+    aircraft.vectorwarp?.position_source || aircraft.provenance?.position_source || '').toUpperCase();
+  const positionSource = rawPositionSource === 'MLAT' || String(aircraft.type || '').toLowerCase() === 'mlat' ?
+    'MLAT' : rawPositionSource === 'ADSB_DIRECT' ? 'ADS-B' : rawPositionSource === 'REMOTE_ID' ?
+      'Remote ID' : rawPositionSource || 'ADS-B';
+  const provider = String(aircraft.vectorwarp?.provider || aircraft.provenance?.provider ||
+    aircraft.vectorwarp?.source_id || aircraft.provenance?.source_id || '').replace(/^exchange:/, '');
+  const selectedSource = String(aircraft.vectorwarp?.source_id ||
+    aircraft.provenance?.source_id || '');
+  const sourceLabel = value => {
+    const raw = String(value || '').replace(/^exchange:/, '');
+    try { return new URL(raw).hostname || raw; } catch (_) { return raw; }
+  };
+  const corroboratedProviders = [...new Set((aircraft.vectorwarp?.agreeing_sources ||
+    aircraft.provenance?.agreeing_sources || []).filter(source => String(source) !== selectedSource)
+    .map(sourceLabel).filter(Boolean))];
+  return {
+    label: aircraftLabel(aircraft), registration: String(aircraft.r || '').trim(),
+    type: String(aircraft.t || aircraft.aircraft_type || '').trim(),
+    description: String(aircraft.desc || '').trim(), category: String(aircraft.category || position.category || '').trim(),
+    hex: String(aircraft.hex || aircraft.id || '').trim().toUpperCase(), altitude,
+    speed: finiteValue(aircraft.gs) ?? finiteValue(position.ground_speed_kt),
+    // Ground track is the direction of travel and is therefore the correct
+    // orientation for a moving map marker. Fall back to true/magnetic heading
+    // only when the feed does not provide a track.
+    heading: finiteValue(aircraft.track) ?? finiteValue(position.track_deg_true) ??
+      finiteValue(aircraft.true_heading) ?? finiteValue(position.true_heading_deg) ??
+      finiteValue(aircraft.mag_heading) ?? finiteValue(position.mag_heading_deg), verticalRate,
+    squawk: String(aircraft.squawk || position.squawk || '').trim(),
+    signal: finiteValue(aircraft.rssi) ?? finiteValue(position.rssi_dbfs),
+    age: finiteValue(aircraft.seen_pos) ?? finiteValue(position.seen_pos_s), delay: finiteValue(aircraft.delay),
+    doppler: finiteValue(aircraft.doppler), positionSource, provider,
+    corroboratedProviders
+  };
+}
+
+function aircraftScreenRotation(trackDegTrue, mapBearingDeg = 0) {
+  if (trackDegTrue === null || trackDegTrue === undefined || trackDegTrue === '') return null;
+  const track = Number(trackDegTrue);
+  const bearing = Number(mapBearingDeg);
+  if (!Number.isFinite(track)) return null;
+  const relative = track - (Number.isFinite(bearing) ? bearing : 0);
+  return ((relative % 360) + 360) % 360;
+}
+
+// ADS-B supplies direction of travel rather than pitch attitude. Derive a
+// bounded flight-path angle so the map can show climbs and descents in 3D.
+function aircraftFlightPathAngle(verticalRateFpm, groundSpeedKnots) {
+  const vertical = Number(verticalRateFpm);
+  const speed = Number(groundSpeedKnots);
+  if (!Number.isFinite(vertical)) return 0;
+  const horizontalFpm = Number.isFinite(speed) && speed > 0 ? speed * 6076.11549 / 60 : 0;
+  const angle = horizontalFpm > 1 ? Math.atan2(vertical, horizontalFpm) * 180 / Math.PI :
+    Math.sign(vertical) * Math.min(20, Math.abs(vertical) / 100);
+  return Math.max(-20, Math.min(20, angle));
+}
+
+function aircraftIdentity(aircraft = {}) {
+  const info = aircraftInfo(aircraft);
+  return info.hex || info.label || null;
+}
+
+// Keep a compact browser-side trail without asking the live API for historical
+// positions. Repeated CPIs at the same position do not grow the history.
+function updateAircraftTrackHistories(histories, rows = [], options = {}) {
+  const target = histories && typeof histories.get === 'function' &&
+    typeof histories.set === 'function' ? histories : new Map();
+  const now = Number.isFinite(options.now) ? options.now : Date.now();
+  const maxAgeMs = Number.isFinite(options.maxAgeMs) ? Math.max(1000, options.maxAgeMs) : 15 * 60 * 1000;
+  const maxPoints = Number.isFinite(options.maxPoints) ? Math.max(2, options.maxPoints) : 180;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = aircraftIdentity(row);
+    const lat = Number(row?.lat), lon = Number(row?.lon);
+    if (!id || !Number.isFinite(lat) || !Number.isFinite(lon) || row?._snapshot_stale) continue;
+    const altitude = aircraftInfo(row).altitude;
+    const history = target.get(id) || [];
+    const previous = history[history.length - 1];
+    if (!previous || previous.lat !== lat || previous.lon !== lon || previous.altitude !== altitude)
+      history.push({lat, lon, altitude, at: now});
+    target.set(id, history.filter(point => now - point.at <= maxAgeMs).slice(-maxPoints));
+  }
+  for (const [id, history] of target) {
+    const recent = history.filter(point => now - point.at <= maxAgeMs).slice(-maxPoints);
+    if (recent.length) target.set(id, recent); else target.delete(id);
+  }
+  return target;
+}
+
+function selectRadarAssociatedAircraft(currentId, rows = [], enabled = false) {
+  if (!enabled) return currentId || null;
+  const associated = (Array.isArray(rows) ? rows : []).filter(row => row?.radar_track_id);
+  if (associated.some(row => aircraftIdentity(row) === currentId)) return currentId;
+  associated.sort((left, right) => {
+    const priority = row => ['ACTIVE', 'CONFIRMED'].includes(String(row?.radar_track_state).toUpperCase()) ? 0 : 1;
+    return priority(left) - priority(right) ||
+      Number(Boolean(left?._snapshot_stale)) - Number(Boolean(right?._snapshot_stale)) ||
+      (aircraftInfo(left).age ?? Infinity) - (aircraftInfo(right).age ?? Infinity);
+  });
+  return associated.length ? aircraftIdentity(associated[0]) : (currentId || null);
+}
+
+// Warm near the surface, then pink/purple/indigo with increasing altitude.
+// Ground and unknown-altitude targets remain neutral instead of implying data.
+function aircraftAltitudeColor(aircraft = {}) {
+  const info = aircraftInfo(aircraft);
+  // Track-history points use the normalized `altitude` field while live feed
+  // rows use alt_baro/alt_geom. Accept both so markers, legends, and trails
+  // always share one continuous altitude palette.
+  const normalizedAltitude = aircraft.altitude !== null && aircraft.altitude !== undefined &&
+    aircraft.altitude !== '' && Number.isFinite(Number(aircraft.altitude)) ? Number(aircraft.altitude) : null;
+  const rawAltitude = aircraft.alt_baro ?? aircraft.alt_geom ?? aircraft.altitude ??
+    aircraft.position?.altitude_baro_ft;
+  if (aircraftKind(aircraft) === 'ground' || String(rawAltitude).toLowerCase() === 'ground')
+    return '#8f9994';
+  const colorAltitude = info.altitude ?? normalizedAltitude;
+  if (!Number.isFinite(colorAltitude)) return '#a7b0ac';
+  const stops = [[0,[243,154,74]],[5000,[242,184,75]],[10000,[227,106,114]],
+    [20000,[196,95,202]],[30000,[143,102,229]],[40000,[102,88,211]],
+    [50000,[224,90,122]]];
+  const altitude = Math.max(0, Math.min(50000, colorAltitude));
+  let upper = stops.findIndex(stop => altitude <= stop[0]);
+  if (upper <= 0) upper = 1;
+  const [lowAltitude, low] = stops[upper - 1];
+  const [highAltitude, high] = stops[upper];
+  const ratio = (altitude - lowAltitude) / (highAltitude - lowAltitude);
+  const channel = index => Math.round(low[index] + (high[index] - low[index]) * ratio)
+    .toString(16).padStart(2, '0');
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
+const aircraftSnapshotCaches = new Map();
+function stabilizeAircraftSnapshots(rows = [], options = {}) {
+  const scope = String(options.scope || 'default');
+  const now = Number.isFinite(options.now) ? options.now : Date.now();
+  const graceMs = Number.isFinite(options.graceMs) ? Math.max(0, options.graceMs) : 10000;
+  let cache = aircraftSnapshotCaches.get(scope);
+  if (!cache) {
+    cache = new Map();
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(`vectorwarp-aircraft-${scope}`) || '[]');
+      for (const entry of stored) if (entry?.id && entry?.seenAt && entry?.row)
+        cache.set(entry.id, {seenAt: entry.seenAt, row: entry.row});
+    } catch (_) { /* Session storage is optional. */ }
+    aircraftSnapshotCaches.set(scope, cache);
+  }
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== 'object') continue;
+    const info = aircraftInfo(row);
+    const id = info.hex || String(row.id || info.label || '').trim();
+    if (!id) continue;
+    const previous = cache.get(id)?.row || {};
+    cache.set(id, {seenAt: now, row: {...previous, ...row, _snapshot_stale: false}});
+  }
+  for (const [id, entry] of cache)
+    if (now - entry.seenAt > Math.max(graceMs, 30 * 60 * 1000)) cache.delete(id);
+  const visible = [...cache.values()].filter(entry => now - entry.seenAt <= graceMs)
+    .map(entry => ({...entry.row, _snapshot_stale: now > entry.seenAt,
+      _snapshot_age_ms: now - entry.seenAt}));
+  try {
+    sessionStorage.setItem(`vectorwarp-aircraft-${scope}`, JSON.stringify([...cache.entries()]
+      .map(([id, entry]) => ({id, ...entry}))));
+  } catch (_) { /* Browsers may disable or fill session storage. */ }
+  return visible;
+}
+
+function aircraftPlotData(aircraft = {}) {
+  const info = aircraftInfo(aircraft);
+  return [info.label, info.registration, info.type, info.description, info.hex,
+    info.altitude, info.speed, info.heading, info.verticalRate, info.squawk,
+    info.signal, info.age, info.category, info.positionSource, info.provider];
+}
+
+function aircraftHoverText(aircraft = {}, geometry = {}) {
+  const info = aircraftInfo(aircraft);
+  const safe = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+  const value = (input, digits = 0, suffix = '') => Number.isFinite(input) ?
+    `${Number(input).toLocaleString(undefined, {minimumFractionDigits: digits,
+      maximumFractionDigits: digits})}${suffix}` : '—';
+  const lines = [`<b>${safe(info.label)}</b>`,
+    `Registration ${safe(info.registration || '—')} · Type ${safe(info.type || '—')}`,
+    info.description ? safe(info.description) : null,
+    `ICAO ${safe(info.hex || '—')} · Category ${safe(info.category || '—')}`,
+    `Altitude ${value(info.altitude, 0, ' ft')} · Speed ${value(info.speed, 0, ' kt')}`,
+    `Heading ${value(info.heading, 0, '°')} · Vertical rate ${value(info.verticalRate, 0, ' ft/min')}`,
+    `Squawk ${safe(info.squawk || '—')} · Signal ${value(info.signal, 1, ' dBFS')}`,
+    `Position ${safe(info.positionSource)}${info.provider ? ` · ${safe(info.provider)}` : ''}`,
+    info.corroboratedProviders.length ?
+      `Corroborated by ${safe(info.corroboratedProviders.join(', '))}` : null,
+    `Position age ${value(info.age, 1, ' s')}`];
+  if (Number.isFinite(geometry.delay) || Number.isFinite(geometry.doppler))
+    lines.push(`Bistatic range ${value(geometry.delay, 2, ' km')} · Doppler ${value(geometry.doppler, 1, ' Hz')}`);
+  return lines.filter(Boolean).join('<br>');
+}
+
+const aircraftHoverTemplate = '<b>%{customdata[0]}</b><br>' +
+  'Registration %{customdata[1]} · Type %{customdata[2]}<br>' +
+  '%{customdata[3]}<br>ICAO %{customdata[4]} · Category %{customdata[12]}<br>' +
+  'Altitude %{customdata[5]:,.0f} ft · Speed %{customdata[6]:.0f} kt<br>' +
+  'Heading %{customdata[7]:.0f}° · Vertical rate %{customdata[8]:+.0f} ft/min<br>' +
+  'Squawk %{customdata[9]} · Signal %{customdata[10]:.1f} dBFS<br>' +
+  'Position age %{customdata[11]:.1f} s<extra></extra>';
+
+function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
+  const kind = aircraftKind(aircraft);
+  const layered = (shape, options = {}) => {
+    const attributes = options.attributes || '';
+    return `<svg class="aircraft-3d-svg" viewBox="0 0 ${options.viewBox || '100 100'}" width="38" height="38" aria-hidden="true"><g class="aircraft-3d-depth" color="${color}" fill="${options.fill || color}" stroke="${options.stroke || color}" ${attributes} transform="translate(4 6)">${shape}</g><g class="aircraft-3d-top" color="${color}" fill="${options.fill || color}" stroke="${options.stroke || color}" ${attributes}>${shape}</g><path class="aircraft-3d-highlight" d="M50 5 53 24 50 20 47 24Z"/></svg>`;
+  };
+  if (kind === 'rotorcraft') {
+    // Original VectorWarp planform: a compact, single-color rotor silhouette
+    // that remains recognizable at map scale. The straight boom deliberately
+    // avoids the split-tail "chicken bone" shape of generic helicopter glyphs.
+    return layered('<path d="M10 8 90 70M90 8 10 70" fill="none" stroke-width="5"/><path d="M50 17c10 0 15 8 14 21-1 10-5 17-11 21v35h-6V59c-7-4-10-11-11-21-1-13 4-21 14-21Z"/><path d="M39 90h22v6H39z"/><circle cx="50" cy="39" r="5"/>',
+      {attributes: 'stroke-linecap="round" stroke-linejoin="round"'});
+  }
+  // Original VectorWarp top-down planforms. These stay license-neutral while
+  // preserving recognisable proportions at the map's normal 38 px scale.
+  const planforms = {
+    airliner: '<path d="M47 4Q50 0 53 4L56 33 91 54 90 61 56 49 55 77 69 89 68 94 51 88 32 94 31 89 45 77 44 49 10 61 9 54 44 33Z"/><path d="M31 48q-6 0-7 6t8 7l5-2-1-9zm38 0q6 0 7 6t-8 7l-5-2 1-9z" opacity=".55"/>',
+    aircraft: '<path d="M47 4Q50 0 53 4L56 33 91 54 90 61 56 49 55 77 69 89 68 94 51 88 32 94 31 89 45 77 44 49 10 61 9 54 44 33Z"/>',
+    heavy: '<path d="M46 3Q50-1 54 3L58 31 97 53 96 61 57 49 56 77 72 89 71 95 50 88 29 95 28 89 44 77 43 49 4 61 3 53 42 31Z"/><path d="M18 51q-5 0-6 5t7 6l4-2v-8zm18-6q-5 0-6 6t7 6l4-2-1-9zm46 6q5 0 6 5t-7 6l-4-2v-8zm-18-6q5 0 6 6t-7 6l-4-2 1-9z" opacity=".55"/>',
+    light: '<path d="M46 17Q50 10 54 17L56 37 88 44 89 53 57 51 56 75 67 86 66 91 50 86 34 91 33 86 44 75 43 51 11 53 12 44 44 37Z"/><path d="M48 5h4v10h-4zM31 8h38v4H31z"/>',
+    glider: '<path d="M47 7Q50 2 53 7L54 40c13 1 29 3 45 7v6c-16-1-31-2-45-1l1 26 13 10-2 5-16-6-16 6-2-5 13-10 1-26c-14-1-29 0-45 1v-6c16-4 32-6 45-7Z"/><path d="M47 17q3-7 6 0v18h-6Z" opacity=".55"/>',
+    drone: '<path d="M47 8Q50 3 53 8L55 37 94 48v7l-39-5 1 27 16 11-4 6-18-9-18 9-4-6 16-11 1-27-39 5v-7l39-11Z"/><path d="M46 25h8l3 17-7 8-7-8Z" opacity=".55"/><path d="M29 83h42M50 74v24m-6-23-15 13m27-13 15 13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>'
+  };
+  if (planforms[kind])
+    return layered(planforms[kind], {attributes: 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'});
+  // Ground vehicles retain the compact MIT-licensed Tabler glyph.
+  const paths = {
+    ground: '<path d="M5 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M5 17H3V6a1 1 0 0 1 1-1h9v12M9 17h6M19 17h2v-6h-8M13 6h5l3 5"/>',
+  };
+  return `<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><g fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[kind] || paths.ground}</g></svg>`;
+}
+
+function siteSvgMarkup(kind = 'receiver') {
+  if (kind === 'transmitter') return '<svg class="site-3d-svg" viewBox="0 0 64 72" width="42" height="48" aria-hidden="true"><path class="site-3d-shadow" d="m17 64 18-9 18 9-18 7Z"/><path class="site-3d-side" d="M32 8 49 62 35 69 35 18Z"/><path class="site-3d-front" d="M32 8 15 62 29 69 32 18ZM21 46h22M18 58h28M25 34h14"/><path class="site-3d-accent" d="M32 8v-5M19 12a18 18 0 0 0 0 25M45 12a18 18 0 0 1 0 25M13 7a26 26 0 0 0 0 35M51 7a26 26 0 0 1 0 35"/></svg>';
+  return '<svg class="site-3d-svg" viewBox="0 0 64 72" width="42" height="48" aria-hidden="true"><path class="site-3d-shadow" d="m10 61 23-11 23 11-23 10Z"/><path class="site-3d-side" d="m33 50 23 11-23 10Z"/><path class="site-3d-front" d="m10 61 23-11v21Z"/><path class="site-3d-mast" d="M30 54V22h6v32M18 34l15-8 15 8-15 8ZM24 46l9-5 9 5-9 5Z"/><circle class="site-3d-accent-fill" cx="33" cy="17" r="5"/><path class="site-3d-accent" d="M22 17a11 11 0 0 1 22 0M16 17a17 17 0 0 1 34 0"/></svg>';
+}
+
 if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
-    startRadarPlot, getRadarRuntimeConfig, discoverApiEndpoint, fetchStatusResource,
-    refreshLiveStatus, refreshReceiverDevices};
+    startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
+    fetchCachedJsonResource, clientJsonCachePolicy,
+    refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
+    aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftFlightPathAngle,
+    aircraftPlotData, aircraftHoverText, aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
+    siteSvgMarkup,
+    stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft};

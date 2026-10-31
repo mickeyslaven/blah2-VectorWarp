@@ -16,6 +16,10 @@ function setupDefaults() {
     '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl';
   return {
     capture: {fs: 2000000, fc: 204640000,
+      aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
+        minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
+        minimum_elevation_deg: 0, maximum_elevation_deg: 90,
+        minimum_interval_seconds: 5},
       // Never infer hardware on a fresh install. An invalid marker keeps the
       // processor fail-closed while still allowing the API and Settings UI to
       // load the canonical configuration and receiver profiles.
@@ -25,7 +29,7 @@ function setupDefaults() {
         provenance: 'legacy-unqualified'}},
     process: {
       performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
-      data: {cpi: 0.5, buffer: 2, overlap: 0},
+      data: {cpi: 0.5, buffer: 2},
       ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},
       // The numeric interval remains available for legacy/manual tuning, but
       // fresh configurations track the full ambiguity interval by default.
@@ -34,8 +38,9 @@ function setupDefaults() {
         minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
         integration_motion_bins: 0,
         track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
-      tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
-        acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none',
+      tracker: {enable: true, profile: 'balanced', initiate: {M: 3, N: 6,
+        maxAcc: 10, min_snr_db: 5, acceleration_model: 'hypothesis_bank'},
+        delete: 3,
         track_guided_shadow: {enable: false, max_tracks: 64}},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
         frequency_resolved_shadow: {enabled: false, fft_size: 2048, subbands: 24,
@@ -54,10 +59,15 @@ function setupDefaults() {
     truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1,
       smoothing_window: 10, max_position_age: 30,
       provisional_event_time_uncertainty_s: 1},
-      ais: {enabled: false, ip: '0.0.0.0', port: 30001}},
+      remote_id: {enabled: false, source: '127.0.0.1:8754', poll_interval: .5,
+        source_timeout: 1.2, smoothing_window: 4, max_position_age: 10,
+        wifi_enabled: false}},
     location: {rx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set receiver site'},
       tx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set transmitter site'}},
-    save: {iq: false, map: false, detection: false, timing: false, path: '/var/lib/vectorwarp/recordings/'}
+    save: {iq: false, map: false, detection: false, timing: false,
+      path: '/var/lib/vectorwarp/recordings/',
+      retention: {automatic_cleanup: false, low_space_policy: 'stop_recording', maximum_age_days: 30,
+        maximum_total_gb: 100, minimum_free_gb: 5}}
   };
 }
 
@@ -67,12 +77,53 @@ function configurationForReceiver(type, base = setupDefaults()) {
   const config = JSON.parse(JSON.stringify(base));
   config.capture.device = JSON.parse(JSON.stringify(profile.device));
   config.capture.fs = profile.sampleRate;
+  const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
+    result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
+      merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
+      JSON.parse(JSON.stringify(value));
+    return result;
+  }, target);
   config.process.performance = {...config.process.performance,
     ...(profile.process?.performance || {})};
-  if (profile.process?.reference_synthesis)
-    config.process.reference_synthesis = JSON.parse(JSON.stringify(profile.process.reference_synthesis));
-  else
-    delete config.process.reference_synthesis;
+  for (const [key, value] of Object.entries(profile.process || {})) {
+    if (key === 'performance') continue;
+    config.process[key] = merge(config.process[key] || {}, value);
+  }
+  if (!profile.process?.reference_synthesis) delete config.process.reference_synthesis;
+  if (!profile.features?.coherentArray) {
+    delete config.process.surveillance_fusion;
+    if (config.process.bearing) {
+      config.process.bearing.enable = false;
+      if (config.process.bearing.frequency_resolved_shadow)
+        config.process.bearing.frequency_resolved_shadow.enabled = false;
+      if (config.process.bearing.manifold_recorder)
+        config.process.bearing.manifold_recorder.enabled = false;
+    }
+    if (config.process.detection) {
+      config.process.detection.integration_cpis = 1;
+      config.process.detection.integration_motion_bins = 0;
+      if (config.process.detection.track_before_detect)
+        config.process.detection.track_before_detect.enable = false;
+    }
+    if (config.process.tracker) {
+      delete config.process.tracker.gpu_capacity;
+      delete config.process.tracker.beam_tolerance;
+      if (config.process.tracker.track_guided_shadow) {
+        config.process.tracker.track_guided_shadow.enable = false;
+        config.process.tracker.track_guided_shadow.promote = false;
+      }
+      if (config.process.tracker.initiate?.stationary_clutter)
+        config.process.tracker.initiate.stationary_clutter.enable = false;
+    }
+  }
+  return config;
+}
+
+function stripLegacyNoOps(config) {
+  if (!config || typeof config !== 'object') return config;
+  if (config.process?.data) delete config.process.data.overlap;
+  if (config.process?.tracker) delete config.process.tracker.smooth;
+  if (config.truth) delete config.truth.ais;
   return config;
 }
 
@@ -90,6 +141,7 @@ function readConfig(filename) {
       throw new Error('The YAML root must contain configuration sections.');
     if (parsed.truth?.adsb && Object.prototype.hasOwnProperty.call(parsed.truth.adsb, 'adsb2dd'))
       delete parsed.truth.adsb.adsb2dd;
+    stripLegacyNoOps(parsed);
     // Detect cycles/aliases before recursive form rendering and validation.
     let nodes = 0;
     const visit = (value, parents = new Set(), depth = 0) => {
@@ -106,6 +158,13 @@ function readConfig(filename) {
     parsed = null;
   }
   const defaults = setupDefaults();
+  // A released configuration without a profile is the legacy permissive
+  // tracker. Do not silently migrate it merely by reading and saving another
+  // setting; fresh configurations still start conservative.
+  if (parsed?.process?.tracker && parsed.process.tracker.profile === undefined) {
+    delete defaults.process.tracker.profile;
+    delete defaults.process.tracker.initiate.min_snr_db;
+  }
   const profile = getDeviceProfiles().find(item => item.type === parsed?.capture?.device?.type);
   if (profile) {
     defaults.capture.device = profile.device;
@@ -144,7 +203,10 @@ function readConfig(filename) {
   };
   const merge = (base, current, prefix = '') => {
     if (current === undefined) {
-      if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.'))
+      if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.') &&
+          prefix !== 'capture.aircraft_clips' && !prefix.startsWith('capture.aircraft_clips.') &&
+          prefix !== 'truth.remote_id' && !prefix.startsWith('truth.remote_id.') &&
+          prefix !== 'save.retention' && !prefix.startsWith('save.retention.'))
         suppliedDefaults.push(prefix);
       return base;
     }
@@ -205,10 +267,13 @@ function migrateKnownDefaults(filename) {
   let parsed;
   try { parsed = yaml.load(fs.readFileSync(filename, 'utf8'), {schema: yaml.JSON_SCHEMA}); }
   catch (_) { return false; }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
-      parsed.capture?.device?.type !== 'Usrp' ||
-      parsed.capture.device.address !== 'localhost') return false;
-  parsed.capture.device.address = 'type=b200';
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  let changed = false;
+  if (parsed.capture?.device?.type === 'Usrp' && parsed.capture.device.address === 'localhost') {
+    parsed.capture.device.address = 'type=b200';
+    changed = true;
+  }
+  if (!changed) return false;
   writeConfigAtomically(filename, parsed);
   return true;
 }
@@ -226,7 +291,7 @@ function saveConfig(filename, candidate, expectedRevision) {
     error.status = 422;
     throw error;
   }
-  const prepared = reconcile(JSON.parse(JSON.stringify(candidate)), before.config);
+  const prepared = stripLegacyNoOps(reconcile(JSON.parse(JSON.stringify(candidate)), before.config));
   const previousGain = before.config.capture?.device?.heimdall?.gain ?? 'keep';
   const selectedGain = prepared.capture?.device?.heimdall?.gain ?? 'keep';
   const bearing = prepared.process?.bearing;
@@ -246,4 +311,4 @@ function saveConfig(filename, candidate, expectedRevision) {
 }
 
 module.exports = {readConfig, writable, saveConfig, setupDefaults, configurationForReceiver,
-  migrateKnownDefaults};
+  migrateKnownDefaults, stripLegacyNoOps};

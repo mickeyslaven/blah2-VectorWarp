@@ -9,27 +9,42 @@ const {EvidenceStatistics} = require('./evidence-statistics');
 
 const epoch = 'a'.repeat(64);
 const event = (number, observedAt) => ({id: `eligibility:event-${number}`,
-  pass_id: `pass-${number}`, state: 'pending', observed_at: observedAt,
-  predicted: {delay_km: 10, doppler_hz: 100},
+  pass_id: `pass-${number}`, hex: `abc${number}`, flight: `TEST${number}`,
+  state: 'pending', observed_at: observedAt,
+  predicted: {delay_km: 10, doppler_hz: 100, slant_range_km: 20,
+    elevation_deg: 10},
   receiver_epoch: epoch, config_epoch: epoch, site_epoch: epoch});
 
 assert.throws(() => new CaptureTriggerQueue({preSeconds: 6, postSeconds: 5}),
   /maximum clip duration/);
 assert.deepEqual(optionsFromEnvironment({}),
-  {enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
-    periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
+  {enabled: false, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+    periodicIntervalSeconds: 0, periodicMaxSnapshots: 0,
+    minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
+    minimumElevationDeg: 0, maximumElevationDeg: 90,
+    minimumExposureIntervalMs: 5000});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
-  BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8'}),
+  BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8', BLAH2_CAPTURE_TRIGGER_ENABLED: '1'}),
 {enabled: true, preSeconds: 2, postSeconds: 8, maxClipSeconds: 10,
-  periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
+  periodicIntervalSeconds: 0, periodicMaxSnapshots: 0,
+  minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
+  minimumElevationDeg: 0, maximumElevationDeg: 90,
+  minimumExposureIntervalMs: 5000});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '3'}),
-{enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
-  periodicIntervalSeconds: 10, periodicMaxSnapshots: 3});
+{enabled: false, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+  periodicIntervalSeconds: 10, periodicMaxSnapshots: 3,
+  minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
+  minimumElevationDeg: 0, maximumElevationDeg: 90,
+  minimumExposureIntervalMs: 5000});
 assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
-  {interval_seconds: 15, max_snapshots: 2}}}),
-{enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
-  periodicIntervalSeconds: 15, periodicMaxSnapshots: 2});
+  {interval_seconds: 15, max_snapshots: 2}, aircraft_clips:
+  {enabled: true, pre_seconds: 1, post_seconds: 4}}}),
+{enabled: true, preSeconds: 1, postSeconds: 4, maxClipSeconds: 10,
+  periodicIntervalSeconds: 15, periodicMaxSnapshots: 2,
+  minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
+  minimumElevationDeg: 0, maximumElevationDeg: 90,
+  minimumExposureIntervalMs: 5000});
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '9',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '1'}), /at least 10/);
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
@@ -46,6 +61,17 @@ assert.equal(disabled.acceptEligibilityEvent(event(99, 100000)).reason, 'disable
 assert.equal(disabled.acceptPeriodicSnapshot(event(99, 100000), 110000).reason, 'disabled');
 assert.equal(disabled.status().enabled, false);
 assert.equal(disabled.status().queuedClips, 0);
+const filtered = new CaptureTriggerQueue({minimumSlantRangeKm: 10,
+  maximumSlantRangeKm: 30, minimumElevationDeg: 2, maximumElevationDeg: 20});
+assert.equal(filtered.acceptEligibilityEvent({...event(98, 100000), predicted:
+  {delay_km: 10, doppler_hz: 100, slant_range_km: 31, elevation_deg: 10}}).reason,
+  'outside-slant-range');
+assert.equal(filtered.acceptEligibilityEvent({...event(97, 100000), predicted:
+  {delay_km: 10, doppler_hz: 100, slant_range_km: 20, elevation_deg: 1}}).reason,
+  'outside-elevation');
+assert.equal(filtered.acceptEligibilityEvent({...event(96, 100000), predicted:
+  {delay_km: 10, doppler_hz: 100, slant_range_km: 20, elevation_deg: 10}}).accepted,
+  true);
 const queue = new CaptureTriggerQueue({now: () => 5000});
 assert.equal(queue.acceptEligibilityEvent({...event(0, 90000), id: 'detection:0'}).accepted, false,
   'Detector-shaped input is not capture admission');
@@ -115,6 +141,8 @@ assert.deepEqual(queue.eventsForRevision(2).map(item => item.eventId),
   ['eligibility:event-1', 'eligibility:event-2']);
 assert.equal(queue.eventsForRevision(2)[0].file, '/clips/clip-2.mchq');
 assert.equal(queue.eventsForRevision(2)[0].samples, 12000000);
+assert.equal(queue.eventsForRevision(2)[0].hex, 'ABC1');
+assert.equal(queue.eventsForRevision(2)[0].flight, 'TEST1');
 assert.equal(queue.request().clipRevision, 3, 'Acknowledgement advances to the next clip');
 assert.equal(queue.acknowledge(3, 'Disk full\nclip stopped'), true);
 assert.equal(queue.request().pending, false);
@@ -186,6 +214,7 @@ assert.equal(bounded.status().droppedEvents, 1);
 assert.deepEqual(bounded.clips.map(clip => clip.revision), [1, 2]);
 assert.deepEqual({...bounded.status().recentEvents.at(-1), captureWindows: undefined},
   {eventId: 'eligibility:event-12', passId: 'pass-12', requestedEventTime: 20000,
+    hex: 'ABC12', flight: 'TEST12',
     state: 'dropped', clipRevisions: [], windowStart: null, windowEnd: null,
     failure: 'queue-capacity', captureWindows: undefined});
 
@@ -314,7 +343,7 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
     maximum_pairwise_projected_disagreement_km: .1};
   let aircraft = {abc123: {delay: 10, doppler: 100,
     timestamp: clock / 1000, flight: 'SILENT', provenance: exactProvenance,
-    geometry: {bearing_deg_true: 42}}};
+    geometry: {bearing_deg_true: 42, slant_range_km: 20, elevation_deg: 10}}};
   const source = {async get() { return aircraft; }};
   const statistics = new EvidenceStatistics(config, source, {
     filename: path.join(directory, 'statistics.json'), now: () => clock,
@@ -342,7 +371,8 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
   clock += 16000;
   aircraft = {def456: {delay: 11, doppler: 110, timestamp: clock / 1000,
-    flight: 'DROPPED', provenance: exactProvenance, geometry: {bearing_deg_true: 84}}};
+    flight: 'DROPPED', provenance: exactProvenance,
+    geometry: {bearing_deg_true: 84, slant_range_km: 20, elevation_deg: 10}}};
   sampler();
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
   const droppedEvent = statistics.status().eligibility_events.at(-1);
@@ -376,7 +406,7 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
     periodicMaxSnapshots: 2, now: () => periodicClock});
   let periodicAircraft = {abc123: {delay: 10, doppler: 100,
     timestamp: periodicClock / 1000, flight: 'PERIODIC', provenance: exactProvenance,
-    geometry: {bearing_deg_true: 42}}};
+    geometry: {bearing_deg_true: 42, slant_range_km: 20, elevation_deg: 10}}};
   const periodicStats = new EvidenceStatistics(config, {async get() { return periodicAircraft; }}, {
     filename: path.join(periodicDirectory, 'statistics.json'), now: () => periodicClock,
     setIntervalFn(callback) { periodicSampler = callback; return {unref() {}}; }, clearIntervalFn() {},

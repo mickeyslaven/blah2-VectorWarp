@@ -98,6 +98,9 @@ function profile(name, type) {
   if (type === 'Kraken') {
     config.capture.device.heimdall.host = '127.0.0.1';
     config.capture.device.heimdall.control_port = suitePort;
+    // No-restart profile transactions do not have the installed Linux
+    // automatic-gain restart receipt; that path has dedicated tests.
+    config.capture.device.heimdall.gain_control = 'fixed';
   }
   if (type === 'HackRF') config.capture.device.serial = ['0001', '0002'];
   return config;

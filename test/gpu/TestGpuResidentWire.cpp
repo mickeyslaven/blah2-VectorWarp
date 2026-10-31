@@ -53,7 +53,7 @@ void configCases(){
  for(size_t i=0;i<c.dopplerAxis.size();++i)wire::Writer{{f.data(),f.size()}}.f64(i*8,c.dopplerAxis[i]);
  const auto decoded=decodeConfig(bytes(canonical),bytes(d),bytes(f));
  check(encodeConfig(decoded)==canonical&&decoded.delayAxis==c.delayAxis&&decoded.dopplerAxis==c.dopplerAxis,"Config/axes did not preserve canonical values");
- auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.193548,0,-1.2566370614359172,-.75,6};
+ auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
  coherent.detector.integrationMotionBins=1;coherent.detector.integrationBeamTolerance=1;
  const auto coherentBytes=encodeConfig(coherent);
  const auto coherentDecoded=decodeConfig(bytes(coherentBytes),bytes(d),bytes(f));
@@ -124,6 +124,13 @@ void configCases(){
   encodeConfig(adaptiveDecoded)==adaptiveBytes,"Adaptive tracker initiation did not round trip");
  check(wire::configHash(adaptive)!=wire::configHash(c),
   "Adaptive tracker initiation is not bound to config identity");
+ auto conservative=adaptive;conservative.tracker.minInitiationSnrDb=7;
+ const auto conservativeBytes=encodeConfig(conservative);
+ const auto conservativeDecoded=decodeConfig(bytes(conservativeBytes),bytes(d),bytes(f));
+ check(conservativeDecoded.tracker.minInitiationSnrDb==7&&
+  encodeConfig(conservativeDecoded)==conservativeBytes&&
+  wire::configHash(conservative)!=wire::configHash(adaptive),
+  "Tracker initiation SNR did not round trip or bind config identity");
  auto clutterAware=adaptive;clutterAware.tracker.stationaryClutter=true;
  clutterAware.tracker.stationaryPersistenceCpis=8;clutterAware.tracker.stationaryMaxDopplerHz=15;
  const auto clutterBytes=encodeConfig(clutterAware);

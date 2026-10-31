@@ -19,12 +19,18 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
       throw new Error(`${name} must be a non-negative number.`);
     return value;
   };
-  const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', DEFAULT_PRE_SECONDS);
-  const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', DEFAULT_POST_SECONDS);
+  const clips = config.capture?.aircraft_clips || {};
+  const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', clips.pre_seconds ?? DEFAULT_PRE_SECONDS);
+  const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', clips.post_seconds ?? DEFAULT_POST_SECONDS);
   const enabledValue = environment.BLAH2_CAPTURE_TRIGGER_ENABLED;
   if (enabledValue !== undefined && !['0', '1'].includes(enabledValue))
     throw new Error('BLAH2_CAPTURE_TRIGGER_ENABLED must be 0 or 1.');
-  const enabled = enabledValue !== '0';
+  const enabled = enabledValue === undefined ? clips.enabled === true : enabledValue === '1';
+  const minimumSlantRangeKm = clips.minimum_slant_range_km ?? 0;
+  const maximumSlantRangeKm = clips.maximum_slant_range_km ?? 1000;
+  const minimumElevationDeg = clips.minimum_elevation_deg ?? 0;
+  const maximumElevationDeg = clips.maximum_elevation_deg ?? 90;
+  const minimumIntervalSeconds = clips.minimum_interval_seconds ?? 5;
   const periodic = config.capture?.periodic_snapshots || {};
   const periodicIntervalSeconds = read('BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS',
     periodic.interval_seconds ?? 0);
@@ -38,8 +44,21 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
     throw new Error(`BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS must be an integer no greater than ${MAX_PERIODIC_SNAPSHOTS}.`);
   if ((periodicIntervalSeconds === 0) !== (periodicMaxSnapshots === 0))
     throw new Error('Periodic capture interval and maximum snapshots must be enabled together.');
+  for (const [name, value] of Object.entries({minimumSlantRangeKm, maximumSlantRangeKm,
+    minimumElevationDeg, maximumElevationDeg, minimumIntervalSeconds}))
+    if (!finite(value)) throw new Error(`${name} must be a finite number.`);
+  if (minimumSlantRangeKm < 0 || maximumSlantRangeKm > 1000 ||
+      minimumSlantRangeKm > maximumSlantRangeKm)
+    throw new Error('Automatic clip slant-range limits are invalid.');
+  if (minimumElevationDeg < -10 || maximumElevationDeg > 90 ||
+      minimumElevationDeg > maximumElevationDeg)
+    throw new Error('Automatic clip elevation limits are invalid.');
+  if (minimumIntervalSeconds < 0 || minimumIntervalSeconds > 3600)
+    throw new Error('Automatic clip minimum interval is invalid.');
   return {enabled, preSeconds, postSeconds, maxClipSeconds: MAX_CLIP_SECONDS,
-    periodicIntervalSeconds, periodicMaxSnapshots};
+    periodicIntervalSeconds, periodicMaxSnapshots,
+    minimumSlantRangeKm, maximumSlantRangeKm, minimumElevationDeg,
+    maximumElevationDeg, minimumExposureIntervalMs: minimumIntervalSeconds * 1000};
 }
 
 function validId(value) {
@@ -61,7 +80,9 @@ class CaptureTriggerQueue {
   constructor({enabled = true, preSeconds = DEFAULT_PRE_SECONDS, postSeconds = DEFAULT_POST_SECONDS,
     maxClipSeconds = MAX_CLIP_SECONDS, maxClips = MAX_CLIPS,
     maxEventIds = MAX_EVENT_IDS, periodicIntervalSeconds = 0,
-    periodicMaxSnapshots = 0, minimumExposureIntervalMs = 0, now = Date.now} = {}) {
+    periodicMaxSnapshots = 0, minimumExposureIntervalMs = 0,
+    minimumSlantRangeKm = 0, maximumSlantRangeKm = 1000,
+    minimumElevationDeg = 0, maximumElevationDeg = 90, now = Date.now} = {}) {
     if (!finite(preSeconds) || preSeconds < 0 || !finite(postSeconds) || postSeconds < 0)
       throw new Error('Capture trigger pre/post seconds must be non-negative.');
     if (!finite(maxClipSeconds) || maxClipSeconds <= 0 ||
@@ -72,6 +93,14 @@ class CaptureTriggerQueue {
       throw new Error('Capture trigger bounds must be positive integers.');
     if (!finite(minimumExposureIntervalMs) || minimumExposureIntervalMs < 0)
       throw new Error('Capture trigger exposure interval must be non-negative.');
+    if (!finite(minimumSlantRangeKm) || !finite(maximumSlantRangeKm) ||
+        minimumSlantRangeKm < 0 || maximumSlantRangeKm > 1000 ||
+        minimumSlantRangeKm > maximumSlantRangeKm)
+      throw new Error('Capture trigger slant-range limits are invalid.');
+    if (!finite(minimumElevationDeg) || !finite(maximumElevationDeg) ||
+        minimumElevationDeg < -10 || maximumElevationDeg > 90 ||
+        minimumElevationDeg > maximumElevationDeg)
+      throw new Error('Capture trigger elevation limits are invalid.');
     if (!finite(periodicIntervalSeconds) || periodicIntervalSeconds < 0 ||
         (periodicIntervalSeconds && periodicIntervalSeconds < MIN_PERIODIC_INTERVAL_SECONDS) ||
         !Number.isInteger(periodicMaxSnapshots) || periodicMaxSnapshots < 0 ||
@@ -83,6 +112,10 @@ class CaptureTriggerQueue {
     this.maxClipSeconds = maxClipSeconds;
     this.maxClips = maxClips; this.maxEventIds = maxEventIds; this.now = now;
     this.minimumExposureIntervalMs = minimumExposureIntervalMs;
+    this.minimumSlantRangeKm = minimumSlantRangeKm;
+    this.maximumSlantRangeKm = maximumSlantRangeKm;
+    this.minimumElevationDeg = minimumElevationDeg;
+    this.maximumElevationDeg = maximumElevationDeg;
     this.nextExposureAt = 0;
     this.periodicIntervalMs = periodicIntervalSeconds * 1000;
     this.periodicMaxSnapshots = periodicMaxSnapshots;
@@ -92,6 +125,8 @@ class CaptureTriggerQueue {
 
   remember(event) {
     const record = {eventId: event.id, passId: event.pass_id,
+      hex: typeof event.hex === 'string' ? event.hex.trim().toUpperCase() : '',
+      flight: typeof event.flight === 'string' ? event.flight.trim().toUpperCase() : '',
       requestedEventTime: event.observed_at, state: 'pending',
       clipRevisions: [], captureWindows: [], windowStart: null, windowEnd: null, failure: null};
     this.events.set(event.id, record);
@@ -157,6 +192,14 @@ class CaptureTriggerQueue {
         !finite(event.predicted?.delay_km) || !finite(event.predicted?.doppler_hz) ||
         !validId(event.receiver_epoch) || !validId(event.config_epoch) ||
         !validId(event.site_epoch)) return {accepted: false, reason: 'invalid-event'};
+    const slantRange = event.predicted?.slant_range_km;
+    const elevation = event.predicted?.elevation_deg;
+    if (!finite(slantRange) || slantRange < this.minimumSlantRangeKm ||
+        slantRange > this.maximumSlantRangeKm)
+      return {accepted: false, reason: 'outside-slant-range'};
+    if (!finite(elevation) || elevation < this.minimumElevationDeg ||
+        elevation > this.maximumElevationDeg)
+      return {accepted: false, reason: 'outside-elevation'};
     if (this.events.has(event.id)) return {accepted: false, reason: 'duplicate-event'};
     const eventRecord = this.remember(event);
 

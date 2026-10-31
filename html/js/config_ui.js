@@ -1,29 +1,46 @@
 const geometryEditor = typeof module !== 'undefined' && module.exports ?
   require('./kraken_geometry') : window.KrakenGeometry;
+const configProfiles = typeof module !== 'undefined' && module.exports ?
+  require('./config_profiles') : window.VectorWarpConfigProfiles;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
 const CONFIG_META = {
-  'capture': ['Receiver', 'Radio hardware, tuning and replay'],
-  'process': ['Radar', 'Timing, search area, filtering and tracking'],
-  'network': ['Connectivity', 'Service addresses and ports'],
-  'truth': ['ADS-B', 'Aircraft overlay'],
-  'location': ['Sites', 'Receiver and illuminator positions'],
-  'save': ['Recording', 'Files and recording folder'],
+  'capture': ['Receiver', 'Tuning and sites'],
+  'process': ['Radar', 'Detection and tracking'],
+  'network': ['Connectivity', 'Ports'],
+  'truth': ['ADS-B', 'Aircraft data'],
+  'location': ['Sites', 'Receiver and illuminator'],
+  'save': ['Recording', 'Files and clips'],
+  'save.retention': ['Storage retention', 'Keep recordings bounded by age, total storage, and free disk space.'],
+  'save.retention.automatic_cleanup': ['Delete old recordings automatically', 'Off until you enable it. Only completed, inactive recordings are removed.'],
+  'save.retention.low_space_policy': ['When the disk reserve is reached', 'Stop recording or delete oldest aircraft clips. Manual recordings stay.'],
+  'save.retention.maximum_age_days': ['Keep recordings for (days)', 'Oldest completed recordings become eligible for cleanup. Set 0 to disable the age limit.'],
+  'save.retention.maximum_total_gb': ['Maximum recording storage (GB)', 'Cleanup removes the oldest completed recordings above this total. Set 0 for no size limit.'],
+  'save.retention.minimum_free_gb': ['Always leave disk free (GB)', 'New recordings stop or are refused below this safety floor.'],
   'capture.fs': ['Sample rate', 'Radio samples per second. Kraken is fixed at 2.4 MS/s.'],
   'capture.fc': ['Center frequency', 'Tune in MHz, kHz and Hz.'],
-  'capture.device': ['Receiver hardware', 'Settings for the selected radio.'],
-  'capture.device.type': ['Receiver type', 'Choose your SDR.'],
-  'capture.device.array_geometry': ['Antenna layout', 'Record your layout; this does not configure the receiver.'],
-  'capture.device.channel_count': ['Input channels', 'Coherent Kraken channels sent by HeIMDALL. Allowed: 2–8.'],
-  'capture.device.reference_channel': ['Reference channel', 'Input carrying the direct transmitter signal in dedicated mode.'],
-  'capture.device.surveillance_channels': ['Radar inputs', 'Inputs searched for reflected signals. Select at least one.'],
-  'capture.device.heimdall': ['HeIMDALL connection', 'KrakenSDR Suite V2 data source.'],
-  'capture.device.heimdall.host': ['HeIMDALL host', 'Computer running HeIMDALL.'],
-  'capture.device.heimdall.port': ['HeIMDALL port', 'HeIMDALL TCP data port.'],
-  'capture.device.heimdall.control_port': ['HeIMDALL control port', 'Suite V2 status and command port. Usually 8092; separate from the IQ data port.'],
-  'capture.device.heimdall.gain': ['Receiver gain', 'Shared gain in dB. Automatic adjustment updates this after checking all channels.'],
-  'capture.device.heimdall.channel_gains': ['Coherent channel gains', 'Optional fixed dB vector, one physical tuner-table gain per channel.'],
-  'capture.device.heimdall.gain_control': ['Gain adjustment', 'Automatic checks each Apply and monitors overload. Fixed holds gain for comparisons.'],
+  'capture.aircraft_clips': ['Automatic aircraft IQ clips', 'Receiver-independent bounded recordings triggered by eligible ADS-B aircraft passes.'],
+  'capture.aircraft_clips.enabled': ['Record eligible aircraft automatically', 'Off by default. Requires ADS-B and a live receiver; manual recording is unaffected.'],
+  'capture.aircraft_clips.pre_seconds': ['Seconds before aircraft event', 'Raw-IQ pre-roll retained before the eligible pass event.'],
+  'capture.aircraft_clips.post_seconds': ['Seconds after aircraft event', 'Raw-IQ post-roll. Pre-roll plus post-roll cannot exceed 10 seconds.'],
+  'capture.aircraft_clips.minimum_slant_range_km': ['Nearest aircraft range (km)', 'Ignore aircraft closer than this receiver slant range, in kilometres.'],
+  'capture.aircraft_clips.maximum_slant_range_km': ['Farthest aircraft range (km)', 'Ignore aircraft beyond this receiver slant range, in kilometres.'],
+  'capture.aircraft_clips.minimum_elevation_deg': ['Lowest aircraft elevation (°)', 'Ignore aircraft below this geometric elevation angle.'],
+  'capture.aircraft_clips.maximum_elevation_deg': ['Highest aircraft elevation (°)', 'Ignore aircraft above this geometric elevation angle.'],
+  'capture.aircraft_clips.minimum_interval_seconds': ['Minimum time between clips (s)', 'Limits recorder and disk load when several aircraft become eligible together.'],
+  'capture.device': ['Receiver hardware', 'Radio, channels, and array'],
+  'capture.device.type': ['Receiver type', 'Connected SDR'],
+  'capture.device.array_geometry': ['Array setup', 'Layout, channel map, and measurements'],
+  'capture.device.channel_count': ['Input channels', 'Active coherent inputs (2–8)'],
+  'capture.device.reference_channel': ['Dedicated reference input', 'Channel aimed at the transmitter when Reference mode is Dedicated input.'],
+  'capture.device.surveillance_channels': ['Surveillance inputs', 'Inputs searched for aircraft reflections.'],
+  'capture.device.heimdall': ['Radio connection & gain', 'Suite connection and tuner gain'],
+  'capture.device.heimdall.host': ['Suite computer', 'Suite V2 host or IP. Use 127.0.0.1 when it runs here.'],
+  'capture.device.heimdall.port': ['IQ stream port', 'Suite V2 TCP port carrying coherent samples. Usually 8091.'],
+  'capture.device.heimdall.control_port': ['Control port', 'Suite V2 status and command port. Usually 8092.'],
+  'capture.device.heimdall.gain': ['Starting gain', 'Initial gain before automatic measurement'],
+  'capture.device.heimdall.channel_gains': ['Per-channel gains', 'Measured or manual tuner gains'],
+  'capture.device.heimdall.gain_control': ['Gain', 'Automatic per channel or manual'],
   'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
@@ -51,7 +68,7 @@ const CONFIG_META = {
   'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU accuracy and speed. Falls back to CPU if needed.'],
   'process.data': ['Frame timing', ''],
   'process.data.cpi': ['Frame interval (CPI)', 'Seconds per radar frame and display update. Applies after restart.'],
-  'process.data.buffer': ['Buffered intervals', 'Number of processing intervals held in memory. Minimum 1; start with 2.'],
+  'process.data.buffer': ['Live capture queue (CPI frames)', 'Queue capacity in CPI frames; unrelated to IQ pre-roll.'],
   'process.data.overlap': ['Frame overlap', 'Not used by this processor. Frames do not overlap.'],
   'process.ambiguity': ['Delay & Doppler', 'Limits of the radar map'],
   'process.ambiguity.delayMin': ['Minimum delay bin', 'First extra-path sample shown in the radar map.'],
@@ -63,9 +80,9 @@ const CONFIG_META = {
   'process.clutter.followAmbiguity': ['Follow radar delay range', 'Cancel across the complete delay map; disable only for a manual filter range.'],
   'process.clutter.delayMin': ['Minimum filter delay bin', 'Manual first filter sample; ignored while following the radar delay range.'],
   'process.clutter.delayMax': ['Maximum filter delay bin', 'Manual exclusive filter endpoint; ignored while following the radar delay range.'],
-  'process.reference_synthesis': ['Reference signal', 'Use one receiver input or combine inputs into the broadcast reference.'],
-  'process.reference_synthesis.mode': ['Reference mode', 'Use one input or combine several inputs automatically.'],
-  'process.reference_synthesis.channels': ['Combined inputs', 'Inputs used to create the synthesized reference signal.'],
+  'process.reference_synthesis': ['Reference input', 'Choose a dedicated transmitter antenna or let VectorWarp combine array inputs.'],
+  'process.reference_synthesis.mode': ['Reference mode', 'Dedicated uses one input; combined estimates the broadcast from selected inputs.'],
+  'process.reference_synthesis.channels': ['Reference source inputs', 'Inputs VectorWarp may combine when using the array-derived reference.'],
   'process.reference_synthesis.analysis_samples': ['Analysis samples', 'Samples per reference estimate. Minimum: 64.'],
   'process.reference_synthesis.analysis_interval': ['Analysis interval', 'Frames between reference-weight updates'],
   'process.reference_synthesis.power_iterations': ['Solver iterations', 'More iterations improve the reference estimate but use more CPU.'],
@@ -85,7 +102,7 @@ const CONFIG_META = {
   'process.bearing.guard_radius': ['Covariance guard radius', 'Target-neighborhood cells excluded from the local covariance estimate.'],
   'process.bearing.training_radius': ['Covariance training radius', 'Delay and Doppler neighborhood used to estimate local interference.'],
   'process.bearing.diagonal_loading': ['Covariance stability', 'Diagonal loading applied before adaptive bearing inversion.'],
-  'process.bearing.max_rate_deg_s': ['Bearing motion limit', 'Maximum plausible azimuth rate used to retain and score multiple bearing lobes across a track. Zero preserves the legacy temporal histogram.'],
+  'process.bearing.max_rate_deg_s': ['Bearing motion limit', 'Maximum azimuth rate for bearing lobes. 0 uses the legacy histogram.'],
   'process.bearing.manifold_file': ['Measured array manifold', 'Optional v1 JSON calibration measured across the configured bearing scan. Empty uses ideal regular-polygon steering.'],
   'process.bearing.manifold_automation': ['Automatic manifold qualification', 'Fit and shadow-test installed-site calibration in a background worker.'],
   'process.bearing.manifold_automation.auto_promote': ['Promote qualified manifold', 'Activate only after withheld flight passes beat default steering.'],
@@ -122,28 +139,21 @@ const CONFIG_META = {
   'process.detection.minDoppler': ['Minimum absolute Doppler', 'Ignore detections closer to zero Doppler than this many Hz'],
   'process.detection.nCentroid': ['Position window', 'Cells used to refine each detection position.'],
   'process.detection.integration_cpis': ['Integrated intervals', 'Consecutive radar intervals combined before detection.'],
-  'process.detection.integration_shadow': ['Integration sensitivity shadow', 'Queue admitted same-IQ clips for asynchronous dwell and fusion comparisons without changing live detections.'],
-  'process.detection.integration_shadow.enabled': ['Enable integration shadow queue', 'Queue strict admitted recordings for an external replay worker; no additional DSP runs in the live processor.'],
-  'process.detection.integration_shadow.queue_path': ['Shadow queue path', 'Absolute directory containing immutable replay job descriptions.'],
-  'process.detection.integration_shadow.results_path': ['Shadow results path', 'Absolute directory where the external worker publishes atomic comparison results.'],
-  'process.detection.integration_shadow.receipt_key_path': ['Shadow receipt key', 'Owner-only HMAC key used to authenticate external worker result receipts.'],
-  'process.detection.integration_shadow.dwell_seconds': ['Shadow dwell lengths', 'Replay dwell lengths to compare on identical IQ; normally 0.05, 0.1, 0.2 and 0.5 seconds.'],
-  'process.detection.integration_shadow.fusion_modes': ['Shadow fusion arms', 'Replay-only production, coherent, whitened, noncoherent and leave-one-out physical-channel comparisons.'],
-  'process.detection.integration_shadow.max_pending': ['Maximum queued clips', 'Hard queue bound preventing unbounded disk and compute backlog.'],
-  'process.detection.integration_shadow.max_wall_seconds_per_clip': ['Per-clip time budget', 'External worker wall-clock deadline for every complete same-IQ comparison.'],
   'process.detection.integration_motion_bins': ['Motion search radius', 'Delay and Doppler bins searched between two integrated intervals.'],
   'process.detection.track_before_detect': ['Track before detect', 'Accumulate subthreshold motion-consistent energy before normal tracking.'],
   'process.detection.track_before_detect.enable': ['Enable track before detect', 'Run GPU 2/4/8-CPI motion banks and candidate-only coherent refinement.'],
   'process.detection.track_before_detect.max_cpis': ['Longest weak-target bank', 'Use 2/4 banks or 2/4/8 banks; longer banks add sensitivity and latency.'],
   'process.detection.track_before_detect.motion_bins': ['Trajectory search radius', 'Delay and Doppler cells allowed to move per CPI along a constant path.'],
   'process.tracker': ['Tracking', 'Joins repeated detections into persistent tracks.'],
-  'process.tracker.enable': ['Track targets', 'Run the multi-frame tracker'],
+  'process.tracker.enable': ['Multi-CPI data-association tracker', 'M-of-N association and state estimation across CPIs. This does not integrate power.'],
+  'process.tracker.profile': ['Detection and tracking profile', 'Balanced matches the OWL-style detector and M-of-N confirmation.'],
   'process.tracker.initiate': ['Track confirmation', 'Detections needed to start a track'],
   'process.tracker.initiate.M': ['Required detections', 'Detections required inside the confirmation window'],
   'process.tracker.initiate.N': ['Confirmation window', 'Frames examined when starting a track'],
   'process.tracker.initiate.maxAcc': ['Maximum Doppler acceleration', 'Largest Doppler change allowed when starting a track, in Hz/s.'],
+  'process.tracker.initiate.min_snr_db': ['Minimum initiation SNR', 'Minimum SNR for a new conservative track. Existing tracks may update below it.'],
   'process.tracker.initiate.acceleration_model': ['Acceleration initiation', 'Choose duplicate acceleration hypotheses or one adaptive tentative track.'],
-  'process.tracker.initiate.stationary_clutter': ['Persistent clutter initiation filter', 'Learn recurring low-Doppler cells and prevent only new tracks from starting there. Existing moving tracks may cross zero Doppler.'],
+  'process.tracker.initiate.stationary_clutter': ['Persistent clutter initiation filter', 'Blocks new tracks in recurring low-Doppler cells. Existing tracks are unaffected.'],
   'process.tracker.initiate.stationary_clutter.enable': ['Enable persistent clutter filter', 'Apply the learned clutter map only when starting a new GPU-resident track.'],
   'process.tracker.initiate.stationary_clutter.persistence_cpis': ['Clutter persistence', 'Repeated low-Doppler frames required before a cell blocks new track initiation.'],
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': ['Stationary Doppler band', 'Absolute Doppler range learned as persistent clutter, in Hz.'],
@@ -177,7 +187,17 @@ const CONFIG_META = {
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
+  'truth.adsb.association_lag_cpis': ['Frame alignment hold', 'Hold aircraft truth this many frames for exact CPI alignment.'],
+  'truth.adsb.aircraft_photo_provider': ['Aircraft photos', 'Optional aircraft photos cached in the background and shown in Map details.'],
   'truth.adsb.provisional_event_time_uncertainty_s': ['Provisional UTC uncertainty', 'Seconds of SDR event-time uncertainty included in validation gates.'],
+  'truth.remote_id': ['Drone Remote ID', 'Experimental cooperative-drone receiver.'],
+  'truth.remote_id.enabled': ['Enable Drone Remote ID', 'Show nearby cooperative drones on the map and live radar.'],
+  'truth.remote_id.source': ['Remote ID receiver', 'Built-in Bluetooth or dedicated Wi-Fi monitor adapter.'],
+  'truth.remote_id.poll_interval': ['Remote ID update interval', 'Seconds between cached receiver snapshots.'],
+  'truth.remote_id.source_timeout': ['Remote ID timeout', 'Maximum wait for the local receiver service.'],
+  'truth.remote_id.smoothing_window': ['Drone motion smoothing', 'Recent Remote ID positions used to estimate bistatic Doppler.'],
+  'truth.remote_id.max_position_age': ['Maximum drone position age', 'Hide Remote ID positions older than this many seconds.'],
+  'truth.remote_id.wifi_enabled': ['Wi-Fi Remote ID receiver', 'Requires a dedicated monitor-mode adapter.'],
   'truth.ais': ['AIS (not implemented)', 'Reserved maritime-feed settings; preserved but not editable.'],
   'truth.ais.enabled': ['AIS evaluation', 'Not implemented in this processor.'],
   'truth.ais.ip': ['Reserved AIS address', 'Not used by this processor.'],
@@ -192,15 +212,207 @@ const CONFIG_META = {
   'location.tx.altitude': ['Altitude', 'Meters above mean sea level'],
   'location.rx.name': ['Site name', 'Receiver location name'],
   'location.tx.name': ['Site name', 'Transmitter location name'],
-  'save.iq': ['Legacy IQ flag', 'Spacebar recording controls raw IQ; this legacy value is preserved.'],
-  'save.map': ['Record radar maps', 'Write processed radar maps to disk'],
-  'save.detection': ['Record detections', 'Write detected targets to disk'],
-  'save.timing': ['Timing file flag', 'Reserved value; live timing is streamed but not file-saved here.'],
+  'save.iq': ['Legacy manual-IQ flag', 'Compatibility value only. Manual IQ recording is controlled from Live radar.'],
+  'save.map': ['Export processed radar maps', 'Processed delay–Doppler export. Does not control IQ or aircraft clips.'],
+  'save.detection': ['Export detection metadata', 'Detector metadata export. Does not control IQ or aircraft clips.'],
+  'save.timing': ['Export timing metadata', 'Compatibility diagnostic flag. This is not IQ and does not control aircraft clips.'],
   'save.path': ['Recording folder', 'Directory used for saved data']
 };
 
+function applyComposite(action) {
+  const before = geometryEditor?.context(activeConfig);
+  action(activeConfig);
+  if (before !== geometryEditor?.context(activeConfig))
+    geometryEditor?.invalidate(activeConfig.capture?.device?.array_geometry);
+  refreshSettingsFilter();
+  scheduleValidation();
+}
+
+function compositeField(title, description, control, path) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'config-field';
+  if (path) wrapper.dataset.path = path;
+  const copy = document.createElement('div'); copy.className = 'config-field-copy';
+  const label = document.createElement('label'); label.textContent = title;
+  const help = document.createElement('small'); help.textContent = description;
+  copy.append(label, help);
+  const controls = control.matches?.('input, select') ? [control] : control.querySelectorAll('input, select');
+  Array.from(controls).forEach((input, index) => {
+    input.disabled ||= !capabilities.editable;
+    input.dataset.originalDisabled = String(input.disabled);
+    if (!input.id) input.id = `composite-${(path || title).replace(/[^a-z0-9]+/gi, '-')}-${index}`;
+    if (!index) label.htmlFor = input.id;
+  });
+  const error = document.createElement('small'); error.className = 'config-field-error';
+  wrapper.append(copy, control, error); return wrapper;
+}
+
+function compositeGroup(title, description) {
+  const details = document.createElement('details'); details.className = 'config-group composite-settings';
+  const summary = document.createElement('summary');
+  const copy = document.createElement('span');
+  const strong = document.createElement('strong'); strong.textContent = title;
+  const small = document.createElement('small'); small.textContent = description;
+  copy.append(strong, small); summary.appendChild(copy);
+  const body = document.createElement('div'); body.className = 'config-fields';
+  details.append(summary, body); return {details, body};
+}
+
+function renderClutterSettings() {
+  const {details, body} = compositeGroup('Clutter removal',
+    'Remove the stationary direct path and fixed multipath before detection.');
+  details.open = true;
+  const custom = document.createElement('div'); custom.className = 'config-fields composite-custom';
+  const select = selectInput([
+    {value: 'off', label: 'Off'},
+    {value: 'automatic', label: 'Automatic (match the radar range)'},
+    {value: 'full_window', label: 'Full current search window'},
+    {value: 'custom', label: 'Custom filter range'}
+  ], configProfiles.clutterMode(activeConfig), value => {
+    applyComposite(config => configProfiles.applyClutterMode(config, value));
+    custom.hidden = value !== 'custom';
+  });
+  body.appendChild(compositeField('Clutter removal',
+    'Automatic follows the complete delay map. Custom is only for installations that must limit cancellation.',
+    select, 'process.clutter.enable'));
+  custom.append(field(activeConfig.process.clutter.delayMin, ['process', 'clutter', 'delayMin']),
+    field(activeConfig.process.clutter.delayMax, ['process', 'clutter', 'delayMax']));
+  custom.hidden = configProfiles.clutterMode(activeConfig) !== 'custom';
+  body.appendChild(custom); return details;
+}
+
+function renderDetectionSettings() {
+  const detection = activeConfig.process.detection;
+  const {details, body} = compositeGroup('Detection',
+    'Choose the false-alarm tradeoff, then optionally customize the CFAR estimator.');
+  details.open = true;
+  body.appendChild(field(detection.enable, ['process', 'detection', 'enable']));
+  const sensitivity = selectInput([
+    {value: 'conservative', label: 'Fewer false alarms'},
+    {value: 'balanced', label: 'Balanced (recommended)'},
+    {value: 'sensitive', label: 'Weak targets (more false alarms)'},
+    {value: 'research', label: 'Maximum sensitivity — research (many false alarms)'},
+    {value: 'custom', label: 'Custom'}
+  ], configProfiles.detectionSensitivity(activeConfig), value => {
+    if (value !== 'custom') applyComposite(config => configProfiles.applyDetectionSensitivity(config, value));
+    tuning.hidden = value !== 'custom' && settingsMode !== 'advanced';
+  });
+  body.appendChild(compositeField('Detection sensitivity',
+    'Changes the whole-bank false-alarm probability. Weak targets admits more noise; it does not create signal that is absent.',
+    sensitivity));
+  const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
+  tuning.hidden = configProfiles.detectionSensitivity(activeConfig) !== 'custom' && settingsMode !== 'advanced';
+  const summary = document.createElement('summary'); summary.textContent = 'CFAR tuning';
+  const fields = document.createElement('div'); fields.className = 'config-fields';
+  for (const key of ['pfa', 'nGuard', 'nTrain', 'nCentroid']) fields.appendChild(field(detection[key], ['process', 'detection', key]));
+  tuning.append(summary, fields); body.appendChild(tuning); return details;
+}
+
+function renderInterferenceRejectionSettings() {
+  const detection = activeConfig.process.detection;
+  const {details, body} = compositeGroup('Nearby and stationary rejection',
+    'Exclude the direct-path neighborhood and near-zero Doppler from target detection.');
+  const sampleKm = 299792458 / Number(activeConfig.capture.fs || 1) / 1000;
+  body.appendChild(compositeField('Minimum excess path',
+    `Detections closer than this are ignored. One delay sample is ${sampleKm.toFixed(3)} km of transmitter→target→receiver excess path; this is not receiver slant range.`,
+    typedInput(detection.minDelay, ['process', 'detection', 'minDelay']), 'process.detection.minDelay'));
+  body.appendChild(compositeField('Near-zero Doppler exclusion',
+    'Ignore detections inside ± this frequency. Higher values suppress stationary clutter but can remove slow radial motion.',
+    typedInput(detection.minDoppler, ['process', 'detection', 'minDoppler']), 'process.detection.minDoppler'));
+  return details;
+}
+
+function renderWeakTargetSettings() {
+  const detection = activeConfig.process.detection;
+  const coherent = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
+    capabilities.deviceProfiles || []).coherentArray;
+  const residentCoherent = coherent &&
+    activeConfig.capture?.device?.array_geometry?.shape === 'regular_polygon';
+  const {details, body} = compositeGroup('Multi-CPI integration and track-before-detect',
+    'Accumulate target energy across coherent processing intervals before conventional tracking. Longer banks add latency, trajectory hypotheses, and GPU work.');
+  const choices = [{value: 'off', label: 'Off (single frame)'},
+    {value: 'two', label: 'Two-frame integration'},
+    {value: 'two_motion', label: 'Two-frame integration + motion search'},
+    {value: 'four', label: 'Four-frame track-before-detect'},
+    {value: 'eight', label: 'Eight-frame track-before-detect'},
+    {value: 'custom', label: 'Custom'}];
+  const select = selectInput(choices, configProfiles.weakTargetMode(activeConfig), value => {
+    if (value !== 'custom') applyComposite(config => configProfiles.applyWeakTargetMode(config, value));
+    custom.hidden = value !== 'custom' && settingsMode !== 'advanced';
+  });
+  if (!coherent) [...select.options].forEach(option => { if (!['off', 'custom'].includes(option.value)) option.disabled = true; });
+  else if (!residentCoherent) [...select.options].forEach(option => {
+    if (['four', 'eight'].includes(option.value)) option.disabled = true;
+  });
+  body.appendChild(compositeField('Integration / accumulation mode', coherent ?
+    'Two-frame modes integrate adjacent CPIs. Four- and eight-frame modes use track-before-detect to accumulate motion-consistent subthreshold energy.' :
+    'Multi-frame coherent recovery requires a supported coherent array receiver.', select));
+  const custom = document.createElement('details'); custom.className = 'config-group composite-tuning';
+  custom.hidden = configProfiles.weakTargetMode(activeConfig) !== 'custom' && settingsMode !== 'advanced';
+  const summary = document.createElement('summary'); summary.textContent = 'Recovery tuning';
+  const fields = document.createElement('div'); fields.className = 'config-fields';
+  fields.append(field(detection.integration_cpis, ['process', 'detection', 'integration_cpis']),
+    field(detection.integration_motion_bins, ['process', 'detection', 'integration_motion_bins']));
+  if (detection.track_before_detect)
+    fields.appendChild(group('track_before_detect', detection.track_before_detect, ['process', 'detection']));
+  custom.append(summary, fields); body.appendChild(custom); return details;
+}
+
+function renderTrackerSettings() {
+  const tracker = activeConfig.process.tracker;
+  const {details, body} = compositeGroup('Tracking',
+    'Turn repeated detections into persistent tracks without changing detector sensitivity.');
+  details.open = true;
+  body.appendChild(field(tracker.enable, ['process', 'tracker', 'enable']));
+  body.appendChild(field(tracker.profile ?? 'balanced', ['process', 'tracker', 'profile']));
+  const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
+  const summary = document.createElement('summary'); summary.textContent = 'Track confirmation and lifetime';
+  const fields = document.createElement('div'); fields.className = 'config-fields';
+  for (const key of ['M', 'N', 'min_snr_db', 'maxAcc', 'acceleration_model'])
+    if (tracker.initiate?.[key] !== undefined) fields.appendChild(field(tracker.initiate[key], ['process', 'tracker', 'initiate', key]));
+  fields.appendChild(field(tracker.delete, ['process', 'tracker', 'delete']));
+  tuning.append(summary, fields); body.appendChild(tuning); return details;
+}
+
+function renderPerformanceSettings() {
+  const performance = activeConfig.process.performance || {};
+  const {details, body} = compositeGroup('Processing',
+    'Automatic prefers an available qualified GPU and safely falls back to CPU.');
+  const select = selectInput([{value: 'automatic', label: `Automatic (${performance.acceleration === 'gpu-resident' ? 'GPU resident' : performance.acceleration === 'gpu' ? 'GPU with fallback' : 'best available'})`},
+    {value: 'cpu', label: 'CPU only (free the GPU)'}], configProfiles.processingMode(activeConfig), value => {
+    const gpuFeatures = configProfiles.weakTargetMode(activeConfig) !== 'off' ||
+      activeConfig.process.bearing?.enable === true ||
+      activeConfig.process.tracker?.initiate?.stationary_clutter?.enable === true;
+    if (value === 'cpu' && gpuFeatures && !window.confirm('CPU only will disable weak-target recovery, bearing, GPU stationary-clutter initiation, and guided GPU recovery. Continue?')) {
+      select.value = 'automatic'; return;
+    }
+    applyComposite(config => configProfiles.applyProcessingMode(config, value));
+  });
+  body.appendChild(compositeField('Processing hardware',
+    'CPU only explicitly disables every GPU-resident feature so no radar work remains on the GPU.',
+    select, 'process.performance.acceleration'));
+  if (settingsMode === 'advanced') {
+    const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
+    const summary = document.createElement('summary'); summary.textContent = 'CPU scheduling and queue';
+    const fields = document.createElement('div'); fields.className = 'config-fields';
+    for (const key of ['surveillance_workers', 'fft_threads'])
+      if (performance[key] !== undefined) fields.appendChild(field(performance[key], ['process', 'performance', key]));
+    if (activeConfig.process.data?.buffer !== undefined)
+      fields.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
+    tuning.append(summary, fields); body.appendChild(tuning);
+  }
+  return details;
+}
+
+function appendCompositeRadarSettings(content) {
+  content.append(renderClutterSettings(), renderDetectionSettings(),
+    renderInterferenceRejectionSettings(), renderWeakTargetSettings(),
+    renderTrackerSettings(), renderPerformanceSettings());
+}
+
 let activeConfig = null;
 let originalConfig = '';
+let originalConfigObject = null;
 let capabilities = {};
 let restartInProgress = false;
 let pendingLiveConfig = null;
@@ -217,9 +429,78 @@ let saveInProgress = false;
 let upstreamPending = false;
 let restartRetry = false;
 let receiverApplyPending = false;
+let replayLaunchPending = false;
 let recentSites = [];
 let receiverInvalidatedGeometry = false;
 let lastDetectedReceiverTypes = new Set();
+// Settings now use one task-based surface. Expert values stay available in a
+// single Technical controls disclosure on each page instead of a second mode.
+let settingsMode = 'advanced';
+let settingsSearch = '';
+let settingsEditedOnly = false;
+let refreshSettingsFilter = () => {};
+let activateSettingsTab = () => {};
+const PRIMARY_SETTING_PATHS = new Set([
+  'capture.fc', 'capture.fs', 'capture.device.type', 'capture.device.channel_count',
+  'capture.device.heimdall.gain_control', 'capture.device.bandwidthNumber',
+  'capture.device.agcSetPoint', 'capture.device.gain', 'capture.device.gain_lna',
+  'capture.device.gain_vga', 'process.data.cpi',
+  'process.clutter.enable', 'process.detection.enable', 'process.detection.pfa',
+  'process.detection.minDelay', 'process.detection.minDoppler',
+  'process.detection.integration_cpis', 'process.tracker.enable',
+  'process.tracker.profile', 'process.performance.acceleration',
+  'truth.adsb.enabled', 'truth.adsb.tar1090', 'save.path', 'network.ip'
+]);
+const EXPERIMENTAL_SETTING_PREFIXES = [
+  'truth.remote_id',
+  'process.surveillance_fusion.detection_manifold_automation',
+  'process.tracker.track_guided_shadow',
+  'process.tracker.publication',
+  'process.bearing.frequency_resolved_shadow'
+];
+function experimentalSettingPath(path) {
+  return EXPERIMENTAL_SETTING_PREFIXES.some(prefix => path === prefix || path.startsWith(`${prefix}.`));
+}
+function simpleSettingHidden(path) {
+  return false;
+}
+
+function exposeLegacyTrackerProfile(config) {
+  const tracker = config?.process?.tracker;
+  if (!tracker || tracker.profile !== undefined) return config;
+  // Released configurations predate profiles and are behaviorally permissive.
+  // Make that safe legacy choice visible without changing it merely by opening
+  // Settings. A later explicit save persists the selected profile.
+  tracker.profile = 'permissive';
+  if (tracker.initiate && tracker.initiate.min_snr_db === undefined)
+    tracker.initiate.min_snr_db = 7;
+  return config;
+}
+function refreshSetupAssistant() {
+  const target = document.getElementById('setup-assistant-root');
+  if (!target || !window.VectorWarpSetupAssistant || !activeConfig) return;
+  window.VectorWarpSetupAssistant.render(target, {
+    getConfig: () => activeConfig, mode: () => settingsMode,
+    setMode() {},
+    openTab(tab) { activateSettingsTab(tab); document.getElementById('config-fields')?.scrollIntoView({behavior: 'smooth'}); },
+    set: setValue, refresh: renderEditor, refreshEditor: renderEditor,
+    receiverProfiles: () => capabilities.deviceProfiles || [],
+    switchReceiver: switchDevice,
+    discoverReceivers: async () => {
+      const response = await configFetch(liveApiUrl('/api/receivers/discover'), {
+        method: 'POST', headers: {'Content-Type': 'application/json',
+          'X-VectorWarp-Intent': 'receiver-discovery-v2'}, body: '{}'
+      }, 30000);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Receiver discovery failed.');
+      return (result.receivers || []).filter(receiver =>
+        receiver.capabilities?.detected === true &&
+        (capabilities.deviceProfiles || []).some(profile => profile.type === receiver.type));
+    },
+    saveStep: () => saveConfiguration('pending'),
+    save: () => saveConfiguration()
+  });
+}
 
 function siteValue(site) {
   if (!site || typeof site.name !== 'string' || !site.name.trim() ||
@@ -430,7 +711,7 @@ const NUMERIC_PRESENTATION = {
   'capture.fs': [1000000, 'MS/s'],
   'capture.fc': [1000000, 'MHz'],
   'process.data.cpi': [1, 's'],
-  'process.data.buffer': [1, 'intervals'],
+  'process.data.buffer': [1, 'CPI frames'],
   'process.data.overlap': [1, 's'],
   'process.ambiguity.delayMin': [1, 'bin'],
   'process.ambiguity.delayMax': [1, 'bin'],
@@ -456,6 +737,13 @@ function words(value) {
 
 function metadata(path, receiverType = activeConfig?.capture?.device?.type) {
   const key = path.join('.');
+  if (key === 'capture.fs') {
+    if (receiverType === 'Kraken')
+      return ['Sample rate', 'Kraken Suite currently streams at a fixed 2.4 MS/s.'];
+    if (receiverType === 'RspDuo')
+      return ['Sample rate', 'RSPduo dual-tuner output rate, from 62.5 kS/s to 2 MS/s.'];
+    return ['Sample rate', 'Radio samples per second for the selected receiver.'];
+  }
   if (key === 'capture.device.serial' && receiverType === 'RspDuo')
     return ['RSPduo serial', 'Optional exact selection; blank only with one matching receiver.'];
   if (CONFIG_META[key]) return CONFIG_META[key];
@@ -490,11 +778,16 @@ function metadata(path, receiverType = activeConfig?.capture?.device?.type) {
 function setValue(path, value) {
   const gainPolicy = path.join('.') === 'capture.device.heimdall.gain_control'
     ? value : activeConfig.capture?.device?.heimdall?.gain_control;
-  const geometryOptions = {ignoreGain: gainPolicy === 'measured'};
+  const automaticGain = ['measured', 'measured_per_channel'].includes(gainPolicy);
+  const geometryOptions = {ignoreGain: automaticGain};
   const geometryContext = geometryEditor?.context(activeConfig, geometryOptions);
   let target = activeConfig;
   path.slice(0, -1).forEach(key => { target = target[key]; });
   target[path[path.length - 1]] = value;
+  if (path.join('.') === 'capture.device.heimdall.gain_control' && value === 'measured') {
+    delete activeConfig.capture.device.heimdall.channel_gains;
+    document.querySelector('[data-path="capture.device.heimdall.channel_gains"]')?.remove();
+  }
   if (path.join('.') === 'capture.fc' && activeConfig.capture?.device?.type === 'RspDuo') {
     const control = document.getElementById('config-capture-device-lnaState-0');
     if (control) {
@@ -506,6 +799,7 @@ function setValue(path, value) {
     geometryEditor.invalidate(activeConfig.capture?.device?.array_geometry);
     refreshGeometryEditor();
   }
+  refreshSettingsFilter();
   scheduleValidation();
 }
 
@@ -546,14 +840,64 @@ function applyDeviceProfile(config, profile) {
   if (geometry !== undefined) config.capture.device.array_geometry = geometryEditor ?
     geometryEditor.invalidate(geometry) : geometry;
   config.capture.fs = profile.sampleRate;
-  for (const key of ['performance', 'reference_synthesis']) {
-    if (profile.process?.[key] !== undefined)
-      config.process[key] = JSON.parse(JSON.stringify(profile.process[key]));
-    else
-      delete config.process[key];
+  const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
+    result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
+      merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
+      JSON.parse(JSON.stringify(value));
+    return result;
+  }, target);
+  for (const [key, value] of Object.entries(profile.process || {})) {
+    if (key === 'performance') config.process.performance = merge(config.process.performance || {}, value);
+    else config.process[key] = merge(config.process[key] || {}, value);
+  }
+  if (!profile.process?.reference_synthesis) delete config.process.reference_synthesis;
+  if (!profile.features?.coherentArray) {
+    delete config.process.surveillance_fusion;
+    if (config.process.bearing) {
+      config.process.bearing.enable = false;
+      if (config.process.bearing.frequency_resolved_shadow)
+        config.process.bearing.frequency_resolved_shadow.enabled = false;
+      if (config.process.bearing.manifold_recorder)
+        config.process.bearing.manifold_recorder.enabled = false;
+    }
+    if (config.process.detection) {
+      config.process.detection.integration_cpis = 1;
+      config.process.detection.integration_motion_bins = 0;
+      if (config.process.detection.track_before_detect)
+        config.process.detection.track_before_detect.enable = false;
+    }
+    if (config.process.tracker) {
+      delete config.process.tracker.gpu_capacity;
+      delete config.process.tracker.beam_tolerance;
+      if (config.process.tracker.track_guided_shadow) {
+        config.process.tracker.track_guided_shadow.enable = false;
+        config.process.tracker.track_guided_shadow.promote = false;
+      }
+      if (config.process.tracker.initiate?.stationary_clutter)
+        config.process.tracker.initiate.stationary_clutter.enable = false;
+    }
   }
   config.process.performance = {...config.process.performance, acceleration};
   return config;
+}
+
+function receiverFeatureCapabilities(type, profiles = []) {
+  return profiles.find(profile => profile.type === type)?.features || {};
+}
+
+function receiverSpecificProcessPath(path) {
+  return path === 'process.reference_synthesis' || path.startsWith('process.reference_synthesis.') ||
+    path === 'process.surveillance_fusion' || path.startsWith('process.surveillance_fusion.') ||
+    path === 'process.bearing' || path.startsWith('process.bearing.') ||
+    path === 'process.detection.integration_cpis' ||
+    path === 'process.detection.integration_motion_bins' ||
+    path === 'process.detection.track_before_detect' ||
+    path.startsWith('process.detection.track_before_detect.') ||
+    path === 'process.tracker.gpu_capacity' || path === 'process.tracker.beam_tolerance' ||
+    path === 'process.tracker.track_guided_shadow' ||
+    path.startsWith('process.tracker.track_guided_shadow.') ||
+    path === 'process.tracker.initiate.stationary_clutter' ||
+    path.startsWith('process.tracker.initiate.stationary_clutter.');
 }
 
 function switchDevice(type) {
@@ -566,7 +910,9 @@ function switchDevice(type) {
   applyDeviceProfile(activeConfig, profile);
   validationErrors = [];
   showMessage(profile.liveAvailable === false ?
-    `${profile.label} is replay only on this installation. Enable replay before saving.` :
+    (profile.type === 'RspDuo' ?
+      `${profile.label} selected. Install the SDRplay API, then use Receiver setup to build its live adapter before saving.` :
+      `${profile.label} selected. Install its receiver software in Receiver setup before saving.`) :
     `${profile.label} defaults loaded. Review its hardware settings before saving.`, 'warning');
   renderEditor();
   scheduleValidation();
@@ -668,7 +1014,7 @@ function arrayInput(value, path) {
   value.forEach((item, index) => {
     const slot = document.createElement('label');
     const caption = document.createElement('span');
-    caption.textContent = value.length === 2 ?
+    caption.textContent = key === 'capture.device.heimdall.channel_gains' ? `Channel ${index}` : value.length === 2 ?
       (index === 0 ? 'Reference' : 'Surveillance') : `Item ${index + 1}`;
     let input;
     const update = next => {
@@ -802,12 +1148,26 @@ function adsbSourcesInput(legacyValue, path) {
     wrapper.replaceChildren();
     const intro = document.createElement('p');
     intro.className = 'adsb-source-note';
-    intro.textContent = 'One aircraft is shown once. The newest healthy observation wins; positions are not averaged.';
+    intro.textContent = 'Newest healthy position wins.';
     wrapper.appendChild(intro);
+
+    const lagCpis = Number(activeConfig.truth?.adsb?.association_lag_cpis || 0);
+    const cpiSeconds = Number(activeConfig.process?.data?.cpi);
+    const alignment = document.createElement('p');
+    alignment.className = 'adsb-source-note';
+    alignment.textContent = Number.isFinite(cpiSeconds) ?
+      `Presentation hold: ${lagCpis} CPIs (${(lagCpis * cpiSeconds).toFixed(3)} s).` :
+      `Presentation hold: ${lagCpis} CPIs.`;
+    wrapper.appendChild(alignment);
 
     const localHeading = document.createElement('strong');
     localHeading.textContent = 'Local receivers';
     wrapper.appendChild(localHeading);
+    const diagnostics = document.createElement('div');
+    diagnostics.className = 'adsb-source-diagnostics';
+    diagnostics.setAttribute('role', 'status');
+    diagnostics.textContent = 'Measuring source publication cadence…';
+    wrapper.appendChild(diagnostics);
     sources.forEach((source, index) => {
       if (source.startsWith('exchange:')) return;
       const {row, input} = sourceRow(source, 'local');
@@ -831,6 +1191,10 @@ function adsbSourcesInput(legacyValue, path) {
     const exchangeHeading = document.createElement('strong');
     exchangeHeading.textContent = 'Online sources';
     wrapper.appendChild(exchangeHeading);
+    const exchangeTimingNote = document.createElement('p');
+    exchangeTimingNote.className = 'adsb-source-note warning';
+    exchangeTimingNote.textContent = 'Stock readsb 1 s JSON is too slow for CPI pass scoring. Use --write-json-every 0.25.';
+    wrapper.appendChild(exchangeTimingNote);
     const hasSite = ADSB_PUBLIC_EXCHANGES.every(exchange => adsbPublicSource(exchange.id));
     for (const exchange of ADSB_PUBLIC_EXCHANGES) {
       const row = document.createElement('div');
@@ -854,6 +1218,58 @@ function adsbSourcesInput(legacyValue, path) {
       row.append(copy, label);
       wrapper.appendChild(row);
     }
+    Promise.resolve().then(async () => {
+      try {
+        const response = await fetchStatusResource(liveApiUrl('/api/adsb/status'),
+          {cache: 'no-store'}, 5000);
+        if (!response.ok || !diagnostics.isConnected) return;
+        const status = await response.json();
+        const local = (status.sources || []).filter(source =>
+          !String(source.id || '').startsWith('exchange:'));
+        diagnostics.replaceChildren();
+        for (const source of local) {
+          const row = document.createElement('p');
+          const cadence = source.publication_cadence;
+          const interval = Number(cadence?.median_interval_s);
+          row.className = `adsb-cadence ${cadence?.statistics_suitable ? 'good' : 'warning'}`;
+          row.textContent = `${source.label || source.id}: ${Number.isFinite(interval) ?
+            `${interval.toFixed(2)} s updates (${(1 / interval).toFixed(1)} Hz)` : 'measuring cadence'}${
+            cadence?.statistics_suitable === false ? ' — too slow for reliable CPI-level pass statistics' : ''}`;
+          diagnostics.appendChild(row);
+        }
+        if (!local.length) diagnostics.textContent = 'No local ADS-B receiver is configured.';
+      } catch (_) { if (diagnostics.isConnected) diagnostics.textContent = 'Source cadence is temporarily unavailable.'; }
+    });
+
+    const photoHeading = document.createElement('strong');
+    photoHeading.textContent = 'Aircraft photos';
+    wrapper.appendChild(photoHeading);
+    const photoRow = document.createElement('div');
+    photoRow.className = 'adsb-exchange-row';
+    const photoCopy = document.createElement('span');
+    const photoTitle = document.createElement('b');
+    photoTitle.textContent = 'Selected-aircraft photo';
+    const photoDetail = document.createElement('small');
+    photoDetail.textContent = 'Loaded only after a map selection; never blocks or enlarges the live ADS-B feed.';
+    photoCopy.append(photoTitle, photoDetail);
+    const photoSelect = document.createElement('select');
+    photoSelect.dataset.adsbPhotoProvider = 'true';
+    photoSelect.setAttribute('aria-label', 'Aircraft photo provider');
+    for (const [value, label] of [['disabled', 'Off (private and fastest)'],
+      ['planespotters', 'Planespotters.net thumbnails']]) {
+      const option = document.createElement('option');
+      option.value = value; option.textContent = label;
+      photoSelect.appendChild(option);
+    }
+    photoSelect.value = activeConfig.truth?.adsb?.aircraft_photo_provider || 'disabled';
+    photoSelect.addEventListener('change', () =>
+      setValue(['truth', 'adsb', 'aircraft_photo_provider'], photoSelect.value));
+    photoRow.append(photoCopy, photoSelect);
+    wrapper.appendChild(photoRow);
+    const photoNote = document.createElement('p');
+    photoNote.className = 'adsb-source-note';
+    photoNote.textContent = 'Aircraft photos are cached.';
+    wrapper.appendChild(photoNote);
 
     const custom = sources.map((source, index) => ({source, index}))
       .filter(({source}) => source.startsWith('exchange:') && !adsbExchangeId(source));
@@ -936,14 +1352,41 @@ function typedInput(value, path) {
     return label;
   }
   if (key === 'capture.fc') return frequencyInput(value, path);
-  if (key === 'capture.device.heimdall.gain_control')
-    return selectInput([{value: 'measured', label: 'Automatic headroom check'},
-      {value: 'fixed', label: 'Fixed gain'}], value, selected => setValue(path, selected));
+  if (key === 'capture.device.heimdall.gain_control') {
+    const wrapper = document.createElement('div'); wrapper.className = 'config-gain-policy';
+    const manual = document.createElement('div'); manual.className = 'config-gain-manual';
+    const gains = Array.isArray(activeConfig.capture.device.heimdall.channel_gains) ?
+      activeConfig.capture.device.heimdall.channel_gains :
+      Array.from({length: activeConfig.capture.device.channel_count || 1}, () =>
+        typeof activeConfig.capture.device.heimdall.gain === 'number' ? activeConfig.capture.device.heimdall.gain : 0);
+    manual.appendChild(arrayInput(gains, ['capture', 'device', 'heimdall', 'channel_gains']));
+    const modeValue = value === 'fixed' ? 'fixed' : 'measured_per_channel';
+    const mode = selectInput([{value: 'fixed', label: `Manual${
+        Array.isArray(activeConfig.capture.device.heimdall.channel_gains) ?
+          ` (${activeConfig.capture.device.heimdall.channel_gains.map(gain =>
+            Number(gain).toFixed(1)).join(', ')} dB)` : ''}`},
+      {value: 'measured_per_channel', label: `Automatic${
+        Array.isArray(activeConfig.capture.device.heimdall.channel_gains) ?
+          ` (${activeConfig.capture.device.heimdall.channel_gains.map(gain =>
+            Number(gain).toFixed(1)).join(', ')} dB selected)` : ''}`}], modeValue,
+    selected => {
+      applyComposite(config => configProfiles.applyGainMode(config,
+        selected === 'fixed' ? 'manual' : 'automatic'));
+      manual.hidden = selected !== 'fixed';
+    });
+    manual.hidden = modeValue !== 'fixed';
+    wrapper.append(mode, manual); return wrapper;
+  }
   if (key === 'capture.device.lnaState') return rspDuoLnaInput(value);
   if (key === 'process.performance.acceleration')
-    return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU'},
-      {value: 'gpu', label: 'GPU (with CPU fallback)'}], value,
-      selected => setValue(path, selected));
+    return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU only'}],
+      value === 'cpu' ? 'cpu' : 'auto', selected => applyComposite(config =>
+        configProfiles.applyProcessingMode(config, selected === 'cpu' ? 'cpu' : 'automatic')));
+  if (key === 'process.tracker.profile')
+    return selectInput([{value: 'balanced', label: 'Balanced (recommended)'},
+      {value: 'conservative', label: 'Conservative'},
+      {value: 'permissive', label: 'Permissive'}], value,
+      selected => applyComposite(config => configProfiles.applyTrackingProfile(config, selected)));
   if (Array.isArray(value)) return arrayInput(value, path);
   if (rule.choices && !['capture.device.type',
     'process.reference_synthesis.mode', 'capture.device.channel_count',
@@ -991,7 +1434,7 @@ function typedInput(value, path) {
             optionValue === 'dedicated' ? 'Use one dedicated input' : String(optionValue)) :
         ['process.performance.surveillance_workers', 'process.performance.fft_threads'].includes(key) && optionValue === 0 ?
           'Auto' :
-        (profile ? `${profile.label}${profile.liveAvailable === false ? ' (replay only)' : ''}` :
+        (profile ? profile.label :
           key === 'capture.device.type' && optionValue === 'Unconfigured' ?
             'Choose a receiver…' : words(String(optionValue)));
       option.selected = String(optionValue) === String(value);
@@ -1075,7 +1518,9 @@ function field(value, path) {
   const help = document.createElement('small');
   help.textContent = description;
   copy.append(label, help);
-  const control = typedInput(value, path);
+  const control = path.join('.') === 'save.path' ? recordingFolderControl(value, path) : typedInput(value, path);
+  if (control.classList?.contains('adsb-source-editor'))
+    wrapper.classList.add('config-field-wide', 'config-field-adsb-sources');
   const rule = capabilities.fieldRules?.[path.join('.')];
   const unusedDedicatedInput = path.join('.') === 'capture.device.reference_channel' &&
     activeConfig.process?.reference_synthesis?.mode === 'array_eigenbeam';
@@ -1099,15 +1544,122 @@ function field(value, path) {
   return wrapper;
 }
 
-function group(key, value, path, topLevel = false) {
+function recordingFolderControl(value, path) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'recording-folder-control';
+  const select = document.createElement('select');
+  select.required = true;
+  const current = document.createElement('option');
+  current.value = value; current.textContent = value; current.selected = true;
+  select.appendChild(current);
+  select.addEventListener('change', () => setValue(path, select.value));
+  const create = document.createElement('button');
+  create.type = 'button'; create.className = 'button-secondary'; create.textContent = 'New folder';
+  const load = async selected => {
+    try {
+      const response = await configFetch(liveApiUrl('/api/recordings/directories'), {cache: 'no-store'});
+      if (!response.ok) throw new Error('Folder list unavailable');
+      const result = await response.json();
+      select.replaceChildren();
+      for (const item of result.directories || []) {
+        const option = document.createElement('option');
+        option.value = item.path; option.textContent = item.path;
+        option.selected = item.path === selected; select.appendChild(option);
+      }
+      if (![...select.options].some(option => option.value === selected)) {
+        const unavailable = document.createElement('option');
+        unavailable.value = selected; unavailable.textContent = `${selected} (not writable)`;
+        unavailable.selected = true; unavailable.disabled = true; select.prepend(unavailable);
+      }
+      select.disabled = !capabilities.editable;
+      select.dataset.originalDisabled = String(select.disabled);
+    } catch (_) { select.disabled = true; select.dataset.originalDisabled = 'true'; }
+  };
+  create.addEventListener('click', async () => {
+    const name = window.prompt('New folder name inside VectorWarp recording storage');
+    if (!name) return;
+    create.disabled = true;
+    try {
+      const response = await configFetch(liveApiUrl('/api/recordings/directories'), {method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-VectorWarp-Intent': 'recording-directory-v1'},
+        body: JSON.stringify({name})});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not create folder');
+      setValue(path, result.path); await load(result.path);
+    } catch (error) { window.alert(error.message); }
+    finally { create.disabled = false; }
+  });
+  wrapper.append(select, create); void load(value);
+  return wrapper;
+}
+
+function finishSettingsGroup(details, summary, content, topLevel) {
+  const fieldCount = content.querySelectorAll('.config-field').length;
+  if (topLevel || fieldCount >= 3) {
+    details.append(summary, content);
+    return details;
+  }
+  const section = document.createElement('section');
+  section.dataset.configGroup = details.dataset.configGroup;
+  section.className = `${details.className} config-group-inline${fieldCount === 1 ? ' config-group-single' : ''}`;
+  if (fieldCount > 1) {
+    const heading = document.createElement('div');
+    heading.className = 'config-group-heading';
+    while (summary.firstChild) heading.appendChild(summary.firstChild);
+    section.appendChild(heading);
+  }
+  section.appendChild(content);
+  return section;
+}
+
+function revealSmallSettingsGroups(root) {
+  const groups = [...root.querySelectorAll('details.config-group')].reverse();
+  for (const details of groups) {
+    if (details.classList.contains('config-group-root')) continue;
+    const fieldCount = details.querySelectorAll('.config-field').length;
+    if (fieldCount < 1 || fieldCount >= 3) continue;
+    const summary = details.querySelector(':scope > summary');
+    if (!summary) continue;
+    const section = document.createElement('section');
+    section.className = `${details.className} config-group-inline${fieldCount === 1 ? ' config-group-single' : ''}`;
+    for (const [key, value] of Object.entries(details.dataset)) section.dataset[key] = value;
+    if (fieldCount > 1) {
+      const heading = document.createElement('div');
+      heading.className = 'config-group-heading';
+      while (summary.firstChild) heading.appendChild(summary.firstChild);
+      section.appendChild(heading);
+    }
+    while (details.children.length > 1) section.appendChild(details.children[1]);
+    details.replaceWith(section);
+  }
+}
+
+function moveArrayEditorToArrayTab(panels, enabled) {
+  if (!enabled) return false;
+  const geometry = panels.querySelector('#settings-panel-capture .kraken-geometry');
+  const arrayPanel = panels.querySelector('#settings-panel-array');
+  if (!geometry || !arrayPanel) return false;
+  geometry.open = true;
+  geometry.classList.add('kraken-geometry-standalone');
+  arrayPanel.appendChild(geometry);
+  return true;
+}
+
+function group(key, value, path, topLevel = false, options = {}) {
   const currentPath = [...path, key];
   const dotted = currentPath.join('.');
   const kraken = activeConfig.capture?.device?.type === 'Kraken';
   let [title, description] = metadata(currentPath);
+  if (options.groupMeta?.[dotted]) [title, description] = options.groupMeta[dotted];
   if (dotted === 'capture.device') {
     const profile = capabilities.deviceProfiles?.find(item => item.type === value.type);
-    title = profile ? `${profile.label}${profile.liveAvailable === false ? ' (replay only)' : ''}` : value.type || title;
-    description = 'Connection and receiver-specific settings';
+    title = profile ? profile.label : value.type || title;
+    description = kraken ? 'Tuning and receiver controls' : 'Connection and controls';
+  }
+  if (kraken && dotted === 'capture.device.heimdall') {
+    title = settingsMode === 'advanced' ? 'Radio connection & gain' : 'Gain';
+    description = settingsMode === 'advanced' ? 'Suite connection and gain' :
+      'Automatic per channel or Manual';
   }
   const details = document.createElement('details');
   details.dataset.configGroup = dotted;
@@ -1126,8 +1678,9 @@ function group(key, value, path, topLevel = false) {
   if (dotted === 'capture' && value.device?.type !== undefined)
     content.appendChild(field(value.device.type, ['capture', 'device', 'type']));
   const order = {
-    capture: ['fc', 'fs', 'device', 'replay'],
-    'capture.device': ['channel_count', 'heimdall', 'surveillance_channels'],
+    capture: ['fc', 'fs', 'device', 'aircraft_clips', 'replay'],
+    'capture.device': ['heimdall', 'channel_count', 'surveillance_channels'],
+    'capture.device.heimdall': ['gain_control', 'gain', 'channel_gains', 'host', 'port', 'control_port'],
     process: ['data', 'ambiguity', 'clutter', 'detection', 'tracker', 'performance'],
     'process.reference_synthesis': ['mode', 'channels']
   }[dotted] || [];
@@ -1144,15 +1697,19 @@ function group(key, value, path, topLevel = false) {
   advancedReference.append(advancedTitle, advancedFields);
   entries.forEach(([childKey, childValue]) => {
     const childPath = [...currentPath, childKey];
+    if (options.skipPath?.(childPath.join('.'))) return;
     // Keep compatibility keys in the draft/YAML, not as nonfunctional controls.
     if (capabilities.fieldRules?.[childPath.join('.')]?.readOnly) return;
     // Structured controls own their backing values; do not render a second
     // generic editor for the same setting.
     if (capabilities.fieldRules?.[childPath.join('.')]?.structuredControl) return;
     if (dotted === 'process.data' && childKey === 'buffer') return;
+    if (dotted === 'process' && ['clutter', 'detection', 'tracker', 'performance'].includes(childKey)) return;
     if (dotted === 'capture.device' && childKey === 'type') return;
     if (dotted === 'capture.device' && childKey === 'array_geometry') return;
-    if (kraken && dotted === 'capture.device' && childKey === 'reference_channel') return;
+    if (kraken && dotted === 'capture.device' && ['channel_count', 'reference_channel',
+      'surveillance_channels'].includes(childKey)) return;
+    if (kraken && dotted === 'capture.device.heimdall' && ['gain', 'channel_gains'].includes(childKey)) return;
     if (kraken && dotted === 'process' && childKey === 'reference_synthesis') return;
     if (kraken && dotted === 'process.reference_synthesis' && !['mode', 'channels'].includes(childKey)) {
       advancedFields.appendChild(field(childValue, [...currentPath, childKey]));
@@ -1161,7 +1718,7 @@ function group(key, value, path, topLevel = false) {
     if (childValue !== null && typeof childValue === 'object' &&
         !Array.isArray(childValue))
       {
-        const childGroup = group(childKey, childValue, currentPath);
+        const childGroup = group(childKey, childValue, currentPath, false, options);
         if (childGroup.querySelector('.config-field')) content.appendChild(childGroup);
       }
     else
@@ -1176,25 +1733,138 @@ function group(key, value, path, topLevel = false) {
     content.appendChild(field('keep', [...currentPath, 'gain']));
   if (dotted === 'capture.device.heimdall' && value.gain_control === undefined)
     content.appendChild(field('fixed', [...currentPath, 'gain_control']));
-  if (advancedFields.children.length) content.appendChild(advancedReference);
-  if (dotted === 'process.performance' && activeConfig.process?.data?.buffer !== undefined)
-    content.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
-  if (kraken && dotted === 'capture.device' && activeConfig.process?.reference_synthesis)
-    content.appendChild(group('reference_synthesis', activeConfig.process.reference_synthesis, ['process']));
+  if (settingsMode === 'advanced' && advancedFields.children.length)
+    content.appendChild(advancedReference);
+  const savedGeometry = activeConfig.capture?.device?.array_geometry;
   if (dotted === 'capture.device' && geometryEditor &&
-      (kraken || activeConfig.capture?.device?.array_geometry !== undefined))
+      (kraken || savedGeometry !== undefined))
     content.appendChild(makeGeometryEditor());
-  details.append(summary, content);
-  return details;
+  if (dotted === 'process') appendCompositeRadarSettings(content);
+  return finishSettingsGroup(details, summary, content, topLevel);
+}
+
+function renderReceiverFeatures() {
+  const section = document.createElement('section');
+  section.className = 'receiver-feature-section';
+  const type = activeConfig.capture?.device?.type;
+  const features = receiverFeatureCapabilities(type, capabilities.deviceProfiles || []);
+  if (!features.coherentArray) return section;
+  const featureOptions = {groupMeta: {
+    'process.detection': ['Coherent integration', 'Combine consecutive radar intervals and search short motion paths.'],
+    'process.tracker': ['Array recovery experiments', 'Bounded array-only recovery tests; normal tracking remains in Radar.']
+  }};
+  const process = activeConfig.process || {};
+  const tracker = process.tracker || {};
+  const residentTracker = {};
+  for (const key of ['gpu_capacity', 'beam_tolerance', 'track_guided_shadow'])
+    if (tracker[key] !== undefined && !experimentalSettingPath(`process.tracker.${key}`))
+      residentTracker[key] = tracker[key];
+  if (tracker.initiate?.stationary_clutter !== undefined)
+    residentTracker.initiate = {stationary_clutter: tracker.initiate.stationary_clutter};
+  if (Object.keys(residentTracker).length)
+    section.appendChild(group('tracker', residentTracker, ['process'], false, featureOptions));
+  return section;
+}
+
+function renderExperimentalSettings() {
+  const section = document.createElement('section');
+  section.className = 'experimental-settings';
+  const process = activeConfig.process || {};
+  const coherentArray = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
+    capabilities.deviceProfiles || []).coherentArray;
+  const add = (key, value, path) => {
+    if (value !== undefined) section.appendChild(group(key, value, path, false));
+  };
+  add('remote_id', activeConfig.truth?.remote_id, ['truth']);
+  if (coherentArray) add('detection_manifold_automation',
+    process.surveillance_fusion?.detection_manifold_automation,
+    ['process', 'surveillance_fusion']);
+  if (coherentArray) add('track_guided_shadow', process.tracker?.track_guided_shadow,
+    ['process', 'tracker']);
+  add('publication', process.tracker?.publication, ['process', 'tracker']);
+  if (coherentArray) add('frequency_resolved_shadow', process.bearing?.frequency_resolved_shadow,
+    ['process', 'bearing']);
+  const diagnosticKeys = ['map', 'detection']
+    .filter(key => activeConfig.save?.[key] !== undefined);
+  if (diagnosticKeys.length) {
+    const diagnostics = document.createElement('details');
+    diagnostics.className = 'config-group';
+    diagnostics.dataset.configGroup = 'save.diagnostic_exports';
+    const summary = document.createElement('summary');
+    const heading = document.createElement('span');
+    const strong = document.createElement('strong');
+    const small = document.createElement('small');
+    strong.textContent = 'Diagnostic exports (not IQ recording)';
+    small.textContent = 'Legacy processed products for offline debugging. These do not record receiver samples or aircraft clips.';
+    heading.append(strong, small);
+    summary.append(heading);
+    const fields = document.createElement('div');
+    fields.className = 'config-fields';
+    diagnosticKeys.forEach(key => fields.appendChild(field(activeConfig.save[key], ['save', key])));
+    section.appendChild(finishSettingsGroup(diagnostics, summary, fields, false));
+  }
+  if (!section.querySelector('.config-field')) {
+    const empty = document.createElement('p');
+    empty.className = 'config-capability-note';
+    empty.textContent = 'This build does not advertise any experimental controls.';
+    section.appendChild(empty);
+  }
+  return section;
+}
+
+function renderRecordingSettings() {
+  const section = document.createElement('section');
+  section.className = 'recording-settings';
+  if (activeConfig.capture?.aircraft_clips &&
+      typeof activeConfig.capture.aircraft_clips === 'object') {
+    section.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
+      ['capture'], true));
+  } else {
+    const unavailable = document.createElement('p');
+    unavailable.className = 'config-capability-note';
+    unavailable.textContent = 'Automatic aircraft clips require a backend version that advertises those settings.';
+    section.appendChild(unavailable);
+  }
+  if (activeConfig.save?.path !== undefined)
+    section.appendChild(field(activeConfig.save.path, ['save', 'path']));
+  if (activeConfig.save?.retention && typeof activeConfig.save.retention === 'object')
+    section.appendChild(group('retention', activeConfig.save.retention, ['save']));
+  return section;
 }
 
 function makeGeometryEditor() {
   if (receiverInvalidatedGeometry)
     geometryEditor?.invalidate(activeConfig.capture?.device?.array_geometry);
-  return geometryEditor.render(document, activeConfig, rebuild => {
+  const editor = geometryEditor.render(document, activeConfig, rebuild => {
     if (rebuild) refreshGeometryEditor();
     scheduleValidation();
-  }, () => Boolean(capabilities.editable && !saveInProgress && !restartInProgress));
+  }, () => Boolean(capabilities.editable && !saveInProgress && !restartInProgress),
+  (_count, previousCount) => normalizeKrakenChannels(activeConfig, previousCount));
+  const content = editor.querySelector(':scope > .config-fields');
+  if (!content || activeConfig.capture?.device?.type !== 'Kraken') return editor;
+  const process = activeConfig.process || {};
+  if (settingsMode === 'advanced' && process.reference_synthesis) {
+    const tuning = Object.fromEntries(['analysis_samples', 'analysis_interval', 'power_iterations',
+      'covariance_smoothing', 'diagonal_loading'].filter(key =>
+      process.reference_synthesis[key] !== undefined).map(key => [key, process.reference_synthesis[key]]));
+    if (Object.keys(tuning).length)
+      content.appendChild(group('reference_synthesis', tuning, ['process'], false,
+        {groupMeta: {'process.reference_synthesis': ['Reference estimation tuning',
+          'Update cadence and numerical stability for the array-derived reference.']}}));
+  }
+  if (process.surveillance_fusion)
+    content.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process'], false,
+      {groupMeta: {'process.surveillance_fusion': ['Array combining',
+        'Combine surveillance antennas with power or calibrated coherent beams.']},
+      skipPath: path => experimentalSettingPath(path) ||
+        (settingsMode === 'simple' && !['process.surveillance_fusion.mode'].includes(path))}));
+  if (process.bearing)
+    content.appendChild(group('bearing', process.bearing, ['process'], false,
+      {groupMeta: {'process.bearing': ['Bearing',
+        'Estimate target direction from the configured and surveyed array.']},
+      skipPath: path => experimentalSettingPath(path) ||
+        (settingsMode === 'simple' && !['process.bearing.enable', 'process.bearing.method'].includes(path))}));
+  return editor;
 }
 
 function refreshGeometryEditor() {
@@ -1208,13 +1878,19 @@ function refreshGeometryEditor() {
 
 function updateDirtyState() {
   const dirty = serializeConfig(activeConfig) !== originalConfig;
+  const editedPaths = new Set([...document.querySelectorAll('.config-field[data-path]')]
+    .map(item => item.dataset.path).filter(path => path && settingEdited(path)));
+  const editedCount = dirty ? Math.max(1, editedPaths.size) : 0;
+  document.querySelector('.config-toolbar')?.classList.toggle('has-changes',
+    dirty || receiverApplyPending || restartRetry || capabilities.setupRequired);
   const action = document.getElementById('config-save');
   const later = document.getElementById('config-save-later');
   const reset = document.getElementById('config-reset');
   if (action) {
     action.disabled = saveInProgress || restartInProgress || (!dirty && !restartRetry && !receiverApplyPending && !capabilities.setupRequired) ||
       pendingLiveConfig !== null || !capabilities.editable || validationPending || validationErrors.length > 0;
-    if (!saveInProgress && !restartInProgress) action.textContent = restartRetry ? 'Retry restart' :
+    if (!saveInProgress && !restartInProgress) action.textContent = replayLaunchPending ? 'Start replay' :
+      restartRetry ? 'Retry restart' :
       receiverApplyPending ? (capabilities.restartAvailable ? 'Apply & Restart' : 'Apply (manual restart)') :
       capabilities.restartAvailable ? 'Save & Restart' : 'Save (manual restart)';
   }
@@ -1226,7 +1902,8 @@ function updateDirtyState() {
   }
   const state = document.getElementById('config-state');
   if (state) state.textContent = pendingLiveConfig !== null ?
-    'Saved settings changed' : dirty ? 'Unsaved changes' : receiverApplyPending ? 'Apply settings to confirm' : 'Matches saved file';
+    'Saved settings changed' : dirty ? `${editedCount} unsaved change${editedCount === 1 ? '' : 's'}` :
+      receiverApplyPending ? 'Apply settings to confirm' : '';
   window.onbeforeunload = dirty ? () => true : null;
 }
 
@@ -1393,9 +2070,14 @@ async function refreshUpstreamStatus() {
     }
     const grid = document.createElement('div');
     grid.className = 'upstream-grid';
-    const note = document.createElement('p');
-    note.textContent = 'Receiver-reported settings compared with the saved file, not unsaved edits.';
-    target.appendChild(note);
+    const measuredGains = Array.isArray(status.actual.adcHeadroom?.channels) ?
+      status.actual.adcHeadroom.channels.map(channel => channel.actualGainDb).
+        filter(Number.isFinite) : [];
+    const gainText = measuredGains.length ?
+      `Automatic (${measuredGains.map(gain => gain.toFixed(1)).join(', ')} dB)` :
+      Number.isFinite(status.actual.gain) ?
+        status.actual.gain < 0 ? 'Automatic' : `${status.actual.gain.toFixed(1)} dB` :
+        'Unavailable';
     const rows = [
       ['Frequency', formatHertz(status.expected.centerFrequency),
         formatHertz(status.actual.centerFrequency)],
@@ -1404,9 +2086,7 @@ async function refreshUpstreamStatus() {
       ['Channels', String(status.expected.channels),
         status.actual.channels === null ? 'Unavailable' : String(status.actual.channels)],
       ['Mode', status.expected.mode, status.actual.mode || 'Unavailable'],
-      ['Gain', 'Set in Heimdall', Number.isFinite(status.actual.gain) ?
-        status.actual.gain < 0 ? 'Automatic' : `${status.actual.gain.toFixed(1)} dB` :
-        'Unavailable']
+      ['Gain', 'Set in Heimdall', gainText]
     ];
     rows.forEach(([labelText, expected, actual]) => {
       const row = document.createElement('div');
@@ -1568,10 +2248,183 @@ function receiverFailureMessage(result) {
   return message;
 }
 
+function valueAtPath(value, dotted) {
+  return dotted.split('.').reduce((item, key) => item?.[key], value);
+}
+
+function rememberOriginalConfig(config) {
+  originalConfig = serializeConfig(config);
+  originalConfigObject = JSON.parse(JSON.stringify(config));
+}
+
+function settingEdited(dotted) {
+  if (!originalConfigObject) return false;
+  return serializeConfig(valueAtPath(activeConfig, dotted)) !==
+    serializeConfig(valueAtPath(originalConfigObject, dotted));
+}
+
+function makeSettingsFilter(tabs, panels, activate) {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'settings-filter';
+  const search = document.createElement('label');
+  search.className = 'settings-search';
+  const searchLabel = document.createElement('span');
+  searchLabel.textContent = 'Find a setting';
+  const input = document.createElement('input');
+  input.type = 'search';
+  input.placeholder = 'Gain, tracking, port…';
+  input.value = settingsSearch;
+  input.autocomplete = 'off';
+  const edited = document.createElement('label');
+  edited.className = 'settings-edited';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = settingsEditedOnly;
+  edited.append(checkbox, document.createTextNode('Edited only'));
+  const status = document.createElement('span');
+  status.className = 'settings-filter-status';
+  status.setAttribute('role', 'status');
+  search.append(searchLabel, input);
+  toolbar.append(search, edited, status);
+  let restoreState = null;
+  let lastRevealedField = null;
+
+  const apply = () => {
+    const query = settingsSearch.trim().toLowerCase();
+    const filtering = Boolean(query || settingsEditedOnly);
+    const fields = [...panels.querySelectorAll('.config-field')];
+    if (filtering && !restoreState) {
+      restoreState = {
+        tab: tabs.querySelector('[role="tab"][aria-selected="true"]')?.dataset.tab,
+        disclosures: new Map([...panels.querySelectorAll('details')]
+          .map(details => [details, details.open]))
+      };
+    }
+    let visible = 0;
+    for (const field of fields) {
+      const path = field.dataset.path || '';
+      const matchesText = !query || `${path} ${field.textContent}`.toLowerCase().includes(query);
+      const matchesEdit = !settingsEditedOnly || settingEdited(path);
+      field.hidden = !(matchesText && matchesEdit);
+      field.classList.toggle('config-field-edited', settingEdited(path));
+      field.classList.toggle('settings-search-match', Boolean(query && matchesText && matchesEdit));
+      if (!field.hidden) visible += 1;
+    }
+    const groups = [...panels.querySelectorAll('[data-config-group]')].reverse();
+    for (const group of groups) {
+      const descendants = [...group.querySelectorAll('.config-field')];
+      if (descendants.length) group.hidden = filtering && !descendants.some(field => !field.hidden);
+    }
+    const availableTabs = [];
+    for (const button of tabs.querySelectorAll('[role="tab"]')) {
+      const panel = panels.querySelector(`[data-tab="${button.dataset.tab}"]`);
+      const descendants = [...panel.querySelectorAll('.config-field')];
+      const customTextMatch = query && panel.textContent.toLowerCase().includes(query);
+      const matches = !filtering || descendants.some(field => !field.hidden) ||
+        (!settingsEditedOnly && customTextMatch);
+      button.hidden = !matches;
+      if (matches) availableTabs.push(button.dataset.tab);
+    }
+    const selected = tabs.querySelector('[role="tab"][aria-selected="true"]');
+    const selectedPanel = selected ? panels.querySelector(`[data-tab="${selected.dataset.tab}"]`) : null;
+    const firstVisibleField = fields.find(field => !field.hidden);
+    const matchedPanel = firstVisibleField?.closest('[role="tabpanel"]');
+    if (selected?.hidden && availableTabs.length) activate(availableTabs[0], false);
+    else if (query && matchedPanel && !selectedPanel?.contains(firstVisibleField))
+      activate(matchedPanel.dataset.tab, false);
+    if (filtering) {
+      for (const field of fields.filter(item => !item.hidden)) {
+        let ancestor = field.parentElement;
+        while (ancestor && ancestor !== panels) {
+          if (ancestor.tagName === 'DETAILS') ancestor.open = true;
+          ancestor = ancestor.parentElement;
+        }
+      }
+    } else if (restoreState) {
+      for (const [details, open] of restoreState.disclosures)
+        if (details.isConnected) details.open = open;
+      if (restoreState.tab && tabs.querySelector(`[data-tab="${restoreState.tab}"]`))
+        activate(restoreState.tab, false);
+      restoreState = null;
+      lastRevealedField = null;
+    }
+    if (query) {
+      if (firstVisibleField && firstVisibleField !== lastRevealedField) {
+        firstVisibleField.scrollIntoView?.({block: 'center', inline: 'nearest'});
+        lastRevealedField = firstVisibleField;
+      }
+    }
+    status.textContent = filtering ? `${visible} matching setting${visible === 1 ? '' : 's'}` : '';
+  };
+  input.addEventListener('input', () => { settingsSearch = input.value; apply(); });
+  checkbox.addEventListener('change', () => {
+    settingsEditedOnly = checkbox.checked;
+    apply();
+  });
+  refreshSettingsFilter = apply;
+  window.setTimeout(apply, 0);
+  return toolbar;
+}
+
 function invalidateGeometryAfterReceiverChange() {
   receiverInvalidatedGeometry = true;
   geometryEditor?.invalidate(activeConfig.capture?.device?.array_geometry);
   refreshGeometryEditor();
+}
+
+function primarySettingPath(tab, path) {
+  if (!path) return true;
+  if (tab === 'array') return path.startsWith('capture.device.array_geometry') ||
+    ['capture.device.channel_count', 'capture.device.reference_channel',
+      'capture.device.surveillance_channels', 'process.reference_synthesis.mode',
+      'process.reference_synthesis.channels', 'process.surveillance_fusion.mode',
+      'process.bearing.enable', 'process.bearing.method'].includes(path);
+  if (tab === 'capture') return path.startsWith('location.') ||
+    PRIMARY_SETTING_PATHS.has(path);
+  if (tab === 'process') return PRIMARY_SETTING_PATHS.has(path);
+  if (tab === 'truth') return ['truth.adsb.enabled', 'truth.adsb.tar1090',
+    'truth.adsb.aircraft_photo_provider'].includes(path);
+  if (tab === 'save') return path === 'save.path' ||
+    path.startsWith('capture.aircraft_clips.') || path.startsWith('save.retention.');
+  if (tab === 'network') return path === 'network.ip' ||
+    path.startsWith('network.tracker_forward.');
+  return tab === 'experimental';
+}
+
+function removeEmptySettingsGroups(panel, technical) {
+  [...panel.querySelectorAll('.config-group')].reverse().forEach(group => {
+    if (group === technical || group.classList.contains('kraken-geometry')) return;
+    if (group.querySelector('.config-field,input,select,button')) return;
+    group.remove();
+  });
+}
+
+function organizeTechnicalControls(panel, tab) {
+  const fields = [...panel.querySelectorAll('.config-field')];
+  const technicalFields = fields.filter(item => item.closest('.composite-tuning') ||
+    !primarySettingPath(tab, item.dataset.path || ''));
+  if (!technicalFields.length) return;
+  const details = document.createElement('details');
+  details.className = 'config-group settings-technical';
+  details.dataset.configGroup = `${tab}.technical`;
+  const summary = document.createElement('summary');
+  const heading = document.createElement('span');
+  const title = document.createElement('strong');
+  const description = document.createElement('small');
+  title.textContent = 'Technical controls';
+  description.textContent = 'Ports and expert tuning';
+  heading.append(title, description);
+  summary.append(heading);
+  const body = document.createElement('div');
+  body.className = 'config-fields';
+  technicalFields.forEach(field => body.appendChild(field));
+  details.append(summary, body);
+  removeEmptySettingsGroups(panel, details);
+  panel.appendChild(details);
+  revealSmallSettingsGroups(panel);
+  panel.querySelectorAll('.receiver-feature-section').forEach(section => {
+    if (!section.querySelector('.config-field,input,select,button')) section.remove();
+  });
 }
 
 function renderEditor() {
@@ -1585,16 +2438,29 @@ function renderEditor() {
   tabs.setAttribute('aria-label', 'Settings categories');
   const panels = document.createElement('div');
   panels.className = 'config-tab-panels';
-  const tabOrder = ['capture', 'location', 'process', 'truth', 'save', 'network'];
-  const entries = Object.entries(activeConfig).sort(([left], [right]) =>
+  const receiverType = activeConfig.capture?.device?.type;
+  const hasArrayTab = receiverType === 'Kraken' ||
+    receiverFeatureCapabilities(receiverType, capabilities.deviceProfiles || []).coherentArray === true;
+  const tabOrder = ['capture', 'array', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
+  const entries = Object.entries(activeConfig).filter(([key]) => key !== 'location');
+  if (hasArrayTab) entries.push(['array', {}]);
+  entries.sort(([left], [right]) =>
+    (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
+    (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
+  entries.push(['experimental', {}]);
+  entries.sort(([left], [right]) =>
     (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
     (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
   let savedTab = null;
   try { savedTab = sessionStorage.getItem('blah2-settings-tab'); }
   catch (_) { /* Remembering a tab is optional. */ }
-  const initialTab = capabilities.setupRequired ? 'capture' : entries.some(([key]) => key === savedTab) ?
-    savedTab : entries[0]?.[0];
-  const activate = selectedKey => {
+  const requestedTabRaw = new URLSearchParams(window.location.search).get('tab');
+  const requestedTab = requestedTabRaw === 'location' ? 'capture' : requestedTabRaw;
+  if (savedTab === 'location') savedTab = 'capture';
+  const initialTab = capabilities.setupRequired ? 'capture' :
+    entries.some(([key]) => key === requestedTab) ? requestedTab :
+      entries.some(([key]) => key === savedTab) ? savedTab : entries[0]?.[0];
+  const activate = (selectedKey, remember = true) => {
     tabs.querySelectorAll('[role="tab"]').forEach(button => {
       const selected = button.dataset.tab === selectedKey;
       button.classList.toggle('active', selected);
@@ -1604,11 +2470,25 @@ function renderEditor() {
     panels.querySelectorAll('[role="tabpanel"]').forEach(panel => {
       panel.hidden = panel.dataset.tab !== selectedKey;
     });
-    try { sessionStorage.setItem('blah2-settings-tab', selectedKey); }
-    catch (_) { /* Remembering a tab is optional. */ }
+    if (remember) {
+      try { sessionStorage.setItem('blah2-settings-tab', selectedKey); }
+      catch (_) { /* Remembering a tab is optional. */ }
+    }
+  };
+  activateSettingsTab = selectedKey => {
+    const resolvedKey = selectedKey === 'location' ? 'capture' : selectedKey;
+    if (!tabs.querySelector(`[data-tab="${resolvedKey}"]`)) return;
+    activate(resolvedKey);
   };
   entries.forEach(([key, value]) => {
-    const [title, description] = metadata([key]);
+    const [title, description] = key === 'experimental' ?
+      ['Experimental', 'Optional features'] :
+      key === 'array' ? ['Array', 'Antennas and layout'] :
+      key === 'truth' ? ['Aircraft', 'ADS-B sources'] :
+      key === 'capture' ? ['Receiver', 'Radio and sites'] :
+      key === 'process' ? ['Radar', 'Detection and tracking'] :
+      key === 'save' ? ['Recording', 'Automatic clips and storage'] :
+      key === 'network' ? ['Connectivity', 'Network and integrations'] : metadata([key]);
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.tab = key;
@@ -1636,12 +2516,23 @@ function renderEditor() {
     panel.setAttribute('role', 'tabpanel');
     panel.setAttribute('aria-label', title);
     panel.className = 'config-tab-panel';
-    if (key === 'location') panel.appendChild(renderSiteSettings());
+    const receiverType = activeConfig.capture?.device?.type;
+    if (key === 'array') { /* The visual editor is moved here after capture renders. */ }
+    else if (key === 'location') panel.appendChild(renderSiteSettings());
+    else if (key === 'save') panel.appendChild(renderRecordingSettings());
+    else if (key === 'experimental') panel.appendChild(renderExperimentalSettings());
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
-      panel.appendChild(group(key, value, [], true));
+      panel.appendChild(group(key, value, [], true, {skipPath: path =>
+        (key === 'process' && receiverSpecificProcessPath(path)) ||
+        experimentalSettingPath(path) ||
+        (key === 'capture' && path.startsWith('capture.aircraft_clips')) ||
+        (key === 'capture' && path.startsWith('capture.replay')) ||
+        simpleSettingHidden(path)}));
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
+      panel.appendChild(renderSiteSettings());
+      panel.appendChild(renderReceiverFeatures());
       if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
@@ -1662,14 +2553,20 @@ function renderEditor() {
     }
     panels.appendChild(panel);
   });
+  moveArrayEditorToArrayTab(panels, hasArrayTab);
+  revealSmallSettingsGroups(panels);
+  panels.querySelectorAll('[role="tabpanel"]').forEach(panel =>
+    organizeTechnicalControls(panel, panel.dataset.tab));
+  target.append(makeSettingsFilter(tabs, panels, activate));
   target.append(tabs, panels);
   activate(initialTab);
   displayFieldErrors(validationErrors);
   displayValidationNotices();
   updateDirtyState();
+  refreshSetupAssistant();
 }
 
-function renderReceiverOverload(status, target = document.getElementById('receiver-health')) {
+function renderReceiverOverload(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-health')) {
   if (typeof renderReceiverHealth === 'function')
     renderReceiverHealth(status, target, true);
 }
@@ -1747,7 +2644,7 @@ function clearReceiverStartupDetails(target) {
   target.querySelector('[data-receiver-startup-details]')?.remove();
 }
 
-function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
+function renderReceiverStartup(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-startup')) {
   if (!target) return;
   if (activeConfig.capture?.device?.type === 'HackRF') {
     renderHackrfStartup(status, target);
@@ -1796,7 +2693,7 @@ function renderReceiverStartup(status, target = document.getElementById('receive
     noteText: 'These checks do not measure RF performance, filtering or phase coherence.'});
 }
 
-function renderHackrfStartup(status, target = document.getElementById('receiver-startup')) {
+function renderHackrfStartup(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-startup')) {
   if (!target) return;
   const processor = status?.processorFresh && status.processor?.receiver === 'HackRF' &&
     status.processor?.input === 'live' ? status.processor : null;
@@ -1838,7 +2735,7 @@ function renderHackrfStartup(status, target = document.getElementById('receiver-
     noteText: 'The API does not read back RF settings, shared-clock/trigger wiring, or hardware time. Pairing and event time remain provisional.'});
 }
 
-function renderUsrpStartup(status, target = document.getElementById('receiver-startup')) {
+function renderUsrpStartup(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-startup')) {
   if (!target) return;
   const processor = status?.processorFresh && status.processor?.receiver === 'Usrp' &&
     status.processor?.input === 'live' ? status.processor : null;
@@ -1892,23 +2789,14 @@ function renderReceiverSetup() {
   const heading = document.createElement('h3');
   heading.textContent = 'Receiver software';
   const description = document.createElement('p');
-  description.textContent = 'Find receivers and check their software without changing settings.';
+  description.textContent = 'Scan connected SDRs.';
   const check = document.createElement('button');
   check.type = 'button'; check.className = 'button-secondary';
-  check.textContent = 'Check receiver software';
+  check.textContent = 'Scan for receivers';
   const output = document.createElement('div');
   output.setAttribute('role', 'status'); output.setAttribute('aria-live', 'polite');
   let buildPolls = 0;
   let buildPollTimer = null;
-  const scheduleDiscovery = () => {
-    if (window.blah2ReceiverDiscoveryTimer)
-      window.clearTimeout(window.blah2ReceiverDiscoveryTimer);
-    if (!section.isConnected) return;
-    window.blah2ReceiverDiscoveryTimer = window.setTimeout(() => {
-      window.blah2ReceiverDiscoveryTimer = null;
-      if (!saveInProgress && !restartInProgress && section.isConnected) discover();
-    }, 30000);
-  };
   const paragraph = text => { const p = document.createElement('p'); p.textContent = text; output.appendChild(p); return p; };
   const post = async (route, body, timeout = 30000, intent = 'receiver-management-v1') => {
     const response = await configFetch(liveApiUrl(route), {method: 'POST', headers: {
@@ -1929,10 +2817,11 @@ function renderReceiverSetup() {
     output.appendChild(element);
     return element;
   };
-  const sdrplayLink = () => {
+  const sdrplayLink = (label = 'Install SDRplay support') => {
     const link = document.createElement('a');
     link.href = 'https://sdrplay.com/hardware-api/';
-    link.textContent = 'Download SDRplay API';
+    link.className = 'button-secondary';
+    link.textContent = label;
     link.target = '_blank'; link.rel = 'noopener noreferrer';
     output.appendChild(link);
   };
@@ -1945,57 +2834,46 @@ function renderReceiverSetup() {
       discover();
     }, 5000);
   };
-  const settingApplication = (receiver, item) => {
-    const label = metadata(item.configField.split('.'), receiver.type)[0];
-    if (item.direction === 'browser-to-upstream-after-ack-and-readback')
-      return `${label}: sent to Suite V2, then checked against its reply and updated status.`;
-    if (item.direction === 'upstream-authoritative-mismatch-block')
-      return `${label}: must match Suite V2 before applying. VectorWarp does not change it in Suite V2.`;
-    if (item.direction === 'config-only')
-      return `${label}: used by VectorWarp only; not sent to Suite V2.`;
-    if (receiver.type === 'Usrp')
-      return `${label}: applied through UHD after Save & Restart. Both channels are checked before streaming.`;
-    if (receiver.type === 'RspDuo')
-      return `${label}: applied through SDRplay API v3 at startup. SDK errors are reported; tuner values are not read back.`;
-    if (receiver.type === 'HackRF')
-      return `${label}: applied to both HackRFs at startup. Driver errors are checked; tuner values are not read back.`;
-    return `${label}: saved for this receiver.`;
-  };
   async function reviewAction(receiverType, actionId) {
     if (serializeConfig(activeConfig) !== originalConfig)
       throw new Error('Save or discard your edits first. Receiver actions use saved settings.');
     const plan = await post('/api/receivers/plan', {receiverType, actionId});
     if (plan.status === 'not-required') { paragraph(plan.message); return; }
-    if (plan.requiresAuthorization !== false) {
-      paragraph('Run this command on the VectorWarp computer to authorize this action, then return here.');
-      const command = document.createElement('pre'); command.textContent = plan.authorizationCommand;
-      output.appendChild(command);
-    }
-    paragraph(`Review: ${plan.review}. The plan expires in ${plan.lifetimeSeconds} seconds.`);
-    for (const item of plan.transaction?.changes || [])
-      paragraph(`Install ${item.name} ${item.version} (${item.architecture}; ${item.origin} ${item.archive}; ${item.site}).`);
-    button(plan.requiresAuthorization === false ? 'Run reviewed action' : 'Run authorized action', async element => {
-      if (serializeConfig(activeConfig) !== originalConfig || configRevision !== plan.configRevision)
-        throw new Error('Settings changed. Check receiver software and review the action again.');
-      element.textContent = 'Running…';
-      let result;
-      try { result = await post('/api/receivers/execute', {nonce: plan.nonce, configRevision: plan.configRevision}, 210000); }
-      catch (error) {
-        element.remove();
-        throw new Error(`${error.message} Check receiver software again before retrying.`);
-      }
-      element.remove();
-      paragraph(result.message);
-      await discover();
-    });
+    if (plan.requiresAuthorization !== false)
+      throw new Error('This installation cannot complete the action from the web app. Reinstall the complete VectorWarp package.');
+    if (serializeConfig(activeConfig) !== originalConfig || configRevision !== plan.configRevision)
+      throw new Error('Settings changed. Scan for receivers again.');
+    const result = await post('/api/receivers/execute',
+      {nonce: plan.nonce, configRevision: plan.configRevision}, 210000);
+    paragraph(result.message);
+    await discover();
   }
+  async function runBuild() {
+    const result = await post('/api/sdrplay-build', {}, 210000, 'sdrplay-local-build-v1');
+    paragraph(result.message || 'SDRplay support is being prepared.');
+    buildPolls = 0;
+    refreshBuildStatus();
+  }
+  async function runAction(receiverType, actionId, element) {
+    element.textContent = 'Working…';
+    try {
+      await reviewAction(receiverType, actionId);
+    } catch (error) {
+      throw new Error(`${error.message} Scan again before retrying.`);
+    }
+  }
+  /*
+   * Receiver installation is intentionally action-oriented. Do not add setup
+   * guides or expose package paths here: a supported package is ready, a
+   * button performs the bounded action, or the installation is incomplete.
+   */
   async function discover() {
     if (buildPollTimer) { window.clearTimeout(buildPollTimer); buildPollTimer = null; }
     check.disabled = true;
     output.replaceChildren();
     paragraph('Checking receiver software…');
     try {
-      const result = await post('/api/receivers/discover', {});
+      const result = await post('/api/receivers/discover', {}, 30000, 'receiver-discovery-v2');
       output.replaceChildren();
       const detected = (result.receivers || []).filter(receiver =>
         receiver.capabilities?.detected === true);
@@ -2023,27 +2901,37 @@ function renderReceiverSetup() {
       }
       lastDetectedReceiverTypes = detectedTypes;
       if (result.configRevision !== configRevision) paragraph('Saved settings changed. Reload them before continuing.');
-      if (!result.buildCapabilitiesKnown) paragraph('This build does not list its supported receivers. Live capture support is unknown.');
+      if (!result.buildCapabilitiesKnown) paragraph('This VectorWarp installation is incomplete. Reinstall the current package.');
       for (const receiver of result.receivers || []) {
-        const compiled = receiver.capabilities.liveCompiled ? 'adapter built' : 'adapter not built';
-        const runtime = receiver.capabilities.runtimeLoadable === true ? 'software loads' :
-          receiver.capabilities.runtimeLoadable === false ? 'software cannot load' : 'software not checked';
-        const detection = receiver.detection.configuredIdentityMatched === false ? 'selected device not found' : receiver.detection.state;
-        const service = receiver.managedService.required ? `; service ${receiver.managedService.state}` : '';
-        paragraph(`${receiver.label}: ${compiled}; ${runtime}; device ${detection}; dependencies ${receiver.dependencies.state}${service}.`);
-        if (receiver.upstream.availability === 'available') paragraph(`${receiver.label}: saved connection is available and will be reused. Settings are checked when saving.`);
-        if (receiver.type === 'RspDuo' && receiver.managedService.state === 'running')
-          paragraph('SDRplay API is running; no service restart needed.');
+        const selected = receiver.type === activeConfig.capture?.device?.type;
+        const ready = receiver.capabilities.liveCompiled && receiver.capabilities.runtimeLoadable !== false &&
+          receiver.dependencies.state !== 'missing';
+        const needsSdrplay = receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed';
+        const incomplete = !receiver.capabilities.liveCompiled &&
+          !(receiver.type === 'RspDuo' && receiver.capabilities.localBuildable);
+        const card = document.createElement('article');
+        card.className = `receiver-software-card${selected ? ' selected' : ''}`;
+        card.dataset.receiverType = receiver.type;
+        const cardHeader = document.createElement('header');
+        const cardTitle = document.createElement('strong');
+        cardTitle.textContent = receiver.label;
+        const cardState = document.createElement('span');
+        cardState.className = ready ? 'upstream-badge good' : 'upstream-badge warning';
+        cardState.textContent = selected ? 'Selected' : receiver.capabilities.detected ? 'Detected' :
+          needsSdrplay ? 'Install required' : ready ? 'Ready' : 'Unavailable';
+        cardHeader.append(cardTitle, cardState);
+        const state = document.createElement('p');
+        state.textContent = needsSdrplay ? 'Install the SDRplay API once.' :
+          incomplete ? 'This receiver is missing from the installed VectorWarp package.' :
+          receiver.capabilities.detected ? 'Connected.' :
+          ready ? 'Support installed.' :
+          'Connect the receiver and scan again.';
+        card.append(cardHeader, state);
+        output.appendChild(card);
         if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
-          paragraph(receiver.dependencies.state === 'missing' ?
-            'SDRplay API was not found. Download it from SDRplay and accept its license locally.' :
-            'Could not check SDRplay API. Use the link below if you need to install it.');
+          paragraph('Vendor license acceptance is required.');
           sdrplayLink();
         }
-        else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'stopped')
-          paragraph('SDRplay API is stopped. Save & Restart starts the standard local service. Custom services need administrator setup.');
-        else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'unknown')
-          paragraph('SDRplay API service status could not be checked.');
         if (receiver.type === 'RspDuo') {
           try {
             const response = await configFetch(liveApiUrl('/api/sdrplay-build'), {}, 5000);
@@ -2051,73 +2939,42 @@ function renderReceiverSetup() {
             const relevantProgress = build.progress && (!build.progress.kit_id ||
               build.progress.kit_id === build.kit_id) ? build.progress : null;
             if (build.buildable && ['missing', 'stale'].includes(build.state)) {
-              paragraph(`SDRplay adapter: ${relevantProgress?.state || build.state}. ${relevantProgress?.reason || build.reason || 'Building does not start radar.'}`);
-              sdrplayLink();
-              button('Build SDRplay support', async element => {
-                element.textContent = 'Starting build…';
-                const result = await post('/api/sdrplay-build', {}, 210000, 'sdrplay-local-build-v1');
-                paragraph(result.message || 'Build requested. Checking progress…');
-                buildPolls = 0;
-                refreshBuildStatus();
-              });
-            } else if (build.buildable && build.state === 'current') paragraph('SDRplay adapter is up to date. See device and service status above.');
-            else if (build.buildable) { paragraph(build.reason || 'Cannot check the SDRplay adapter. No build started.'); sdrplayLink(); }
-            else if (build.reason) paragraph(build.reason);
+              if (receiver.dependencies.state === 'installed') button('Install SDRplay support', runBuild);
+            } else if (build.buildable && build.state === 'current') paragraph('SDRplay support is ready.');
+            else if (!needsSdrplay && !build.buildable) paragraph('This VectorWarp installation is missing its SDRplay adapter kit. Reinstall the current package.');
+            if (relevantProgress?.state === 'failed')
+              paragraph(relevantProgress.reason || 'SDRplay support installation failed.');
             if (relevantProgress && ['queued', 'running'].includes(relevantProgress.state)) refreshBuildStatus();
-          } catch (_) { paragraph('Cannot check the SDRplay adapter. No build started.'); }
+          } catch (_) { if (!needsSdrplay) paragraph('SDRplay support could not be checked. Scan again.'); }
         }
-        if (receiver.setupGuide?.length) button(`Setup guide: ${receiver.label}`, () => {
-          for (const step of receiver.setupGuide) {
-            paragraph(step.text);
-            if (step.command) {
-              const command = document.createElement('pre'); command.textContent = step.command;
-              output.appendChild(command);
-            }
-            if (step.link) {
-              const url = new URL(step.link);
-              if (url.protocol !== 'https:') continue;
-              const link = document.createElement('a'); link.href = url.href;
-              link.textContent = step.label; link.target = '_blank'; link.rel = 'noopener noreferrer';
-              output.appendChild(link);
-            }
-          }
-        });
-        if (receiver.settings?.length) button(`How settings apply: ${receiver.label}`, () => {
-          paragraph(`${receiver.label}: software checks do not test antenna wiring, calibration or RF performance.`);
-          for (const item of receiver.settings) paragraph(settingApplication(receiver, item));
-        });
         if (receiver.capabilities.liveCompiled ||
-            (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable)) button(`Choose ${receiver.label} for settings`, () => {
+            (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable)) button(`Use ${receiver.label}`, () => {
           switchDevice(receiver.type);
-          paragraph(receiver.capabilities.liveCompiled ?
-            `${receiver.label} selected. Save to apply.` :
-            `${receiver.label} selected but not saved. Build its adapter before live capture.`);
+          paragraph(`${receiver.label} selected. Save to apply.`);
         });
         for (const action of result.management?.actions?.filter(item => item.receiverType === receiver.type) || []) {
           if (action.available && !action.ready) button(action.kind === 'start-service' ?
-            (receiver.type === 'RspDuo' ? 'Review Start SDRplay' : 'Review receiver service start') : 'Review missing dependency install',
-            () => reviewAction(receiver.type, action.id));
-          else if (!action.available) paragraph(action.message || 'The installed action needs local review.');
+            (receiver.type === 'RspDuo' ? 'Start SDRplay' : 'Start receiver') : 'Install receiver software',
+            (_element) => runAction(receiver.type, action.id, _element));
         }
       }
-      if (!result.managementAvailable) paragraph(result.management?.message || 'Local receiver management is unavailable.');
-      else if (!result.management.actions?.length) paragraph('Automatic software setup is unavailable in this build. Installed software and remote receivers can still be used.');
       if (result.processor?.state === 'error') paragraph(`Processor input error: ${result.processor.error}`);
-      else paragraph('Use Save & Restart to test reception. Software checks do not test antenna wiring or calibration.');
-      for (const error of result.errors || []) paragraph(error.message);
+      if (result.errors?.length) paragraph('One or more receiver checks failed. Scan again or send a diagnostic report.');
     } catch (error) { output.replaceChildren(); paragraph(error.message); }
-    finally { check.disabled = false; scheduleDiscovery(); }
+    finally { check.disabled = false; }
   }
   check.addEventListener('click', discover);
   section.append(heading, description, check, output);
-  window.setTimeout(discover, 0);
+  window.setTimeout(() => { if (section.isConnected) discover(); }, 0);
   return section;
 }
 
 async function saveConfiguration(mode) {
   const saveLater = mode === 'pending';
-  const button = document.getElementById(saveLater ? 'config-save-later' : 'config-save');
-  if (saveInProgress || restartInProgress || pendingLiveConfig || document.getElementById('site-dialog')) return;
+  const button = document.getElementById(saveLater ? 'config-save-later' : 'config-save') ||
+    document.getElementById('config-save');
+  if (saveInProgress || restartInProgress || pendingLiveConfig || document.getElementById('site-dialog'))
+    return false;
   saveInProgress = true;
   updateDirtyState();
   button.textContent = 'Saving…';
@@ -2127,21 +2984,25 @@ async function saveConfiguration(mode) {
   let responseReceived = false;
   let fileOutcomeUnknown = false;
   try {
-    if (!(await validateActiveConfiguration())) return;
+    if (!(await validateActiveConfiguration())) return false;
     const snapshot = serializeConfig(activeConfig);
     const body = JSON.stringify(activeConfig);
     let previousState = {};
     try { previousState = await readRadarState(); } catch (_) { /* Already offline. */ }
     if (snapshot !== serializeConfig(activeConfig) || snapshot !== validatedSnapshot) {
       showMessage('A setting changed during validation. Review it and save again.', 'warning');
-      return;
+      return false;
     }
     restartInProgress = true;
     const measuredGain = !saveLater && activeConfig.capture?.replay?.state !== true &&
       activeConfig.capture?.device?.type === 'Kraken' &&
-      activeConfig.capture?.device?.heimdall?.gain_control === 'measured';
+      ['measured', 'measured_per_channel'].includes(
+        activeConfig.capture?.device?.heimdall?.gain_control);
+    const perChannelGain = measuredGain &&
+      activeConfig.capture.device.heimdall.gain_control === 'measured_per_channel';
     setRestartProgress(30, saveLater ? 'Saving without applying…' : measuredGain ?
-      'Measuring receiver headroom and calibrating shared gain…' : 'Checking receiver settings…');
+      perChannelGain ? 'Measuring receiver headroom and calibrating each channel…' :
+        'Measuring receiver headroom and calibrating shared gain…' : 'Checking receiver settings…');
     document.querySelectorAll('#config-fields input, #config-fields select').forEach(input => { input.disabled = true; });
     writeAttempted = true;
     const response = await configFetch(liveApiUrl(saveLater ? '/api/config?mode=pending&restart=false' :
@@ -2168,7 +3029,7 @@ async function saveConfiguration(mode) {
     configRevision = result.revision;
     if (result.config) activeConfig = result.config;
     receiverInvalidatedGeometry = false;
-    originalConfig = serializeConfig(activeConfig);
+    rememberOriginalConfig(activeConfig);
     capabilities.setupRequired = false;
     pendingLiveConfig = null;
     restartRetry = false;
@@ -2221,6 +3082,7 @@ async function saveConfiguration(mode) {
     updateDirtyState();
     if (saveLater) button.textContent = 'Save for later';
   }
+  return saved;
 }
 
 async function syncConfigurationFromServer() {
@@ -2257,16 +3119,53 @@ async function renderConfiguration() {
       configFetch(liveApiUrl('/api/config/capabilities'), {cache: 'no-store'})
     ]);
     if (!configResponse.ok) throw new Error('The saved configuration is unavailable.');
-    activeConfig = await configResponse.json();
+    activeConfig = exposeLegacyTrackerProfile(await configResponse.json());
     configRevision = configResponse.headers.get('ETag')?.replace(/^"|"$/g, '');
     capabilities = capabilitiesResponse.ok ? await capabilitiesResponse.json() :
       {editable: false, restartAvailable: false, changesRequireRestart: true};
     receiverApplyPending = ['unknown', 'saved-pending', 'partial', 'indeterminate', 'failed',
       'receiver-confirmed-config-not-saved'].includes(capabilities.receiverSynchronization?.applicationState);
-    originalConfig = serializeConfig(activeConfig);
+    rememberOriginalConfig(activeConfig);
+    const replayParameters = new URLSearchParams(window.location.search);
+    const replayFile = replayParameters.get('replayFile');
+    replayLaunchPending = Boolean(replayFile);
+    let replayConfigurationComplete = false;
+    let replayLimitations = [];
+    if (replayFile) {
+      let recorded = {};
+      const replayId = replayParameters.get('replayId');
+      if (replayId) try {
+        const response = await configFetch(liveApiUrl(`/api/recordings/${encodeURIComponent(replayId)}/replay-profile`),
+          {cache: 'no-store'});
+        if (response.ok) recorded = await response.json();
+      } catch (_) { /* Header validation will still protect a legacy recording. */ }
+      replayConfigurationComplete = recorded.configuration_complete === true;
+      replayLimitations = Array.isArray(recorded.limitations) ? recorded.limitations : [];
+      if (replayConfigurationComplete && recorded.profile) {
+        const recordedProcess = recorded.profile.process || {};
+        // Performance is intentionally local: Automatic can use this machine's
+        // GPU/CPU without inheriting worker counts from the recording host.
+        activeConfig.process = {...recordedProcess,
+          performance: activeConfig.process?.performance || {}};
+        if (recorded.profile.location) activeConfig.location = recorded.profile.location;
+        if (recorded.profile.capture?.array_geometry)
+          activeConfig.capture.device.array_geometry = recorded.profile.capture.array_geometry;
+      }
+      activeConfig.capture.replay = {...activeConfig.capture.replay,
+        state: true, file: replayFile, format: 'auto',
+        ...Object.fromEntries(Object.entries({sample_rate_hz: recorded.sample_rate_hz,
+          frequency_hz: recorded.frequency_hz, channel_count: recorded.channel_count,
+          reference_channel: recorded.reference_channel, reference_mode: recorded.reference_mode,
+          surveillance_channels: recorded.surveillance_channels,
+          reference_channels: recorded.reference_channels})
+          .filter(([, value]) => value !== null && value !== undefined))};
+      try { sessionStorage.setItem('blah2-settings-tab', 'capture'); } catch (_) {}
+      if (window.history?.replaceState)
+        window.history.replaceState(null, '', window.location.pathname);
+    }
     validationErrors = [];
     validationPending = false;
-    target.innerHTML = `<div class="config-toolbar"><div><strong>System settings</strong><span id="config-state">Up to date</span></div><div class="config-actions"><button id="config-reset" class="button-secondary" type="button" disabled>Discard changes</button><button id="config-save" class="button-primary" type="button" disabled>Save & Restart</button></div></div><div id="config-message" class="config-message"></div><section id="upstream-status" class="upstream-status"><div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div></section><div id="config-restart-progress" class="config-restart-progress" role="status" aria-live="polite" hidden><div class="config-restart-copy"><span id="config-restart-label">Preparing restart…</span><b id="config-restart-value">0%</b></div><div class="config-restart-track"><span id="config-restart-bar"></span></div></div><div id="config-fields" class="config-editor"></div>`;
+    target.innerHTML = `<div class="config-toolbar"><div><strong>Unsaved settings</strong><span id="config-state"></span></div><div class="config-actions"><button id="config-reset" class="button-secondary" type="button" disabled>Discard changes</button><button id="config-save" class="button-primary" type="button" disabled>Save & Restart</button></div></div><div id="config-message" class="config-message"></div><section id="upstream-status" class="upstream-status"><div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div></section><div id="config-restart-progress" class="config-restart-progress" role="status" aria-live="polite" hidden><div class="config-restart-copy"><span id="config-restart-label">Preparing restart…</span><b id="config-restart-value">0%</b></div><div class="config-restart-track"><span id="config-restart-bar"></span></div></div><div id="config-fields" class="config-editor"></div>`;
     if (capabilities.receiverSynchronization?.pendingIntentValue === 'save-pending-v1') {
       const later = document.createElement('button');
       later.id = 'config-save-later';
@@ -2280,23 +3179,33 @@ async function renderConfiguration() {
     }
     const setup = document.createElement('div');
     setup.className = 'config-setup-note';
-    if (capabilities.setupRequired) {
+    if (replayFile) {
       const title = document.createElement('strong');
       const copy = document.createElement('span');
-      title.textContent = ' First-run setup required.';
-      copy.textContent = ' Choose your receiver, verify the tuning frequency and sample rate, then review the receiver and transmitter sites before Save & Restart.';
+      title.textContent = replayConfigurationComplete ? ' Recording configuration loaded.' :
+        ' Legacy recording configuration is incomplete.';
+      copy.textContent = replayConfigurationComplete ?
+        ' Start replay to use the recorded channel roles, array geometry, timing, clutter, detection, tracking, bearing, frequency, sample rate, and sites. This machine keeps its own Automatic GPU/CPU settings.' :
+        ` Only recording-header settings could be loaded. ${replayLimitations.join(' ')}`;
+      setup.append(title, copy);
+      const save = document.getElementById('config-save');
+      save.textContent = 'Start replay';
+      if (!replayConfigurationComplete) save.title = 'Review legacy replay settings before starting.';
+    } else if (capabilities.setupRequired) {
+      const title = document.createElement('strong');
+      const copy = document.createElement('span');
+      title.textContent = ' Setup required.';
+      copy.textContent = ' Complete the setup assistant before starting.';
       setup.append(title, copy);
     }
     target.querySelector('.config-toolbar').after(setup);
+    const assistant = document.createElement('div');
+    assistant.id = 'setup-assistant-root';
+    setup.after(assistant);
     const diagnostics = document.createElement('div');
     diagnostics.id = 'config-diagnostics';
     diagnostics.setAttribute('role', 'status');
-    setup.after(diagnostics);
-    const acceleration = document.createElement('div');
-    acceleration.id = 'acceleration-status';
-    acceleration.className = 'config-setup-note';
-    acceleration.setAttribute('role', 'status');
-    diagnostics.after(acceleration);
+    assistant.after(diagnostics);
     document.getElementById('config-save').addEventListener('click', saveConfiguration);
     document.getElementById('config-reset').addEventListener('click', () => {
       if (validationTimer) window.clearTimeout(validationTimer);
@@ -2305,7 +3214,7 @@ async function renderConfiguration() {
       validatedSnapshot = null;
       if (pendingLiveConfig !== null) {
         activeConfig = pendingLiveConfig;
-        originalConfig = serializeConfig(pendingLiveConfig);
+        rememberOriginalConfig(pendingLiveConfig);
         configRevision = pendingRevision;
         pendingLiveConfig = null;
         showMessage('Reloaded the saved configuration.', 'success');
@@ -2321,6 +3230,8 @@ async function renderConfiguration() {
     else
       showMessage('');
     renderEditor();
+    if (replayFile)
+      showMessage('Recording selected. Start replay to use its saved configuration; the live SDR stays closed.', 'warning');
     if (window.VectorWarpReports) window.VectorWarpReports.addSettingsEntry(target, () =>
       reportContext(window.VectorWarpReports.classify(lastReportingStatus) ||
         {code: 'MANUAL_REPORT', component: 'support', stage: 'manual', severity: 'degraded',
@@ -2357,12 +3268,14 @@ async function renderConfiguration() {
 }
 
 async function refreshConfigDiagnostics() {
+  if (typeof document === 'undefined') return;
   if (document.hidden) return;
   if (restartInProgress) { renderReceiverOverload(null); return; }
   const target = document.getElementById('config-diagnostics');
   if (!target) return;
   try {
     const status = await readRadarState();
+    if (typeof document === 'undefined' || !target.isConnected) return;
     lastReportingStatus = status;
     renderReceiverStartup(status);
     renderReceiverOverload(status);
@@ -2393,6 +3306,7 @@ async function refreshConfigDiagnostics() {
         status.radar !== 'receiving' ? status.message || 'Radar data is stale. Check the processing service.' : '';
     showReportAction(target, window.VectorWarpReports?.classify(status));
   } catch (_) {
+    if (typeof document === 'undefined' || !target.isConnected) return;
     renderReceiverStartup(null);
     renderReceiverOverload(null);
     target.textContent = 'Cannot read service status. Check the connection to VectorWarp.';
@@ -2405,11 +3319,13 @@ function accelerationSummary(value, radar) {
   if (radar !== 'receiving') return 'Waiting for radar';
   if (!value) return 'Not reported';
   if (value.state === 'checking') return `Checking GPU: ${value.device || 'detected device'}`;
-  if (value.active === 'vulkan') return `GPU: ${value.device}`;
+  if (typeof value.active === 'string' && value.active.startsWith('vulkan'))
+    return `GPU: ${value.device}`;
   return `CPU${value.reason ? ` — ${value.reason}` : ''}`;
 }
 
 if (typeof module !== 'undefined')
-  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, adsbExchangeId, adsbPublicSource,
+  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
+    receiverSpecificProcessPath, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

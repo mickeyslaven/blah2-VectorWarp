@@ -19,6 +19,8 @@ function invalidFor(rule) { return rule.type === 'boolean' ? 'false' : rule.type
 function validDifferent(key, current, rule) {
   const explicit = {
     'capture.fs': 2000001, 'capture.fc': 204640001, 'capture.device.heimdall.host': '127.0.0.2',
+    'capture.aircraft_clips.maximum_slant_range_km': 999,
+    'capture.aircraft_clips.maximum_elevation_deg': 89,
     'capture.device.heimdall.port': 8093, 'capture.device.heimdall.control_port': 8094,
     'capture.device.heimdall.gain': -1, 'capture.device.heimdall.gain_control': 'fixed',
     'capture.device.address': 'type=b200,serial=0000000000000001',
@@ -71,7 +73,9 @@ try {
   let rejected = 0;
   let changed = 0;
   const edited = new Set();
-  const sources = [rspSource, ...['config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml'].map(shipped)];
+  // Prefer Kraken first while still validating portable fields across every
+  // shipped receiver profile.
+  const sources = [...['config-kraken.yml', 'config-hackrf.yml', 'config-usrp.yml'].map(shipped), rspSource];
   for (const [key, rule] of Object.entries(FIELD_RULES)) {
     if (rule.readOnly) continue;
     const source = sources.find(value => get(value, key) !== undefined);
@@ -113,6 +117,18 @@ try {
     assert.deepEqual(readConfig(filename).config, candidate, `${name} save/load changed unrelated settings`);
     for (const key of keys) { assert.notDeepEqual(get(baseline, key), get(candidate, key), `${name} did not change ${key}`); assert.deepEqual(get(saved.config, key), get(candidate, key), `${name} did not persist ${key}`); edited.add(key); }
   };
+  const replayBase = shipped('config-usrp.yml');
+  replayBase.process.performance = {surveillance_workers: 1, fft_threads: 4, acceleration: 'auto'};
+  const portableReplay = clone(replayBase);
+  Object.assign(portableReplay.capture.replay, {state: true,
+    sample_rate_hz: 2400000, frequency_hz: 509000000, channel_count: 5,
+    reference_channel: 0, reference_mode: 'array_eigenbeam',
+    surveillance_channels: [0,1,2,3,4], reference_channels: [0,1,2,3,4]});
+  persistGroup('portable-replay-profile', replayBase, portableReplay, [
+    'capture.replay.sample_rate_hz', 'capture.replay.frequency_hz',
+    'capture.replay.channel_count', 'capture.replay.reference_channel',
+    'capture.replay.reference_mode', 'capture.replay.surveillance_channels',
+    'capture.replay.reference_channels']);
   const krakenBase = shipped('config-kraken.yml'); const kraken = clone(krakenBase);
   kraken.capture.device.channel_count = 6; kraken.capture.device.reference_channel = 1;
   kraken.capture.device.surveillance_channels = [0,2,3,4,5];
@@ -132,10 +148,15 @@ try {
   badChannelGains.capture.device.heimdall.gain_control = 'measured';
   assert.equal(validateConfig(badChannelGains).valid, false,
     'measured common gain must not silently overwrite coherent channel gains');
+  const automaticChannelGains = clone(channelGains);
+  automaticChannelGains.capture.device.heimdall.gain_control = 'measured_per_channel';
+  assert.equal(validateConfig(automaticChannelGains).valid, true,
+    'automatic per-channel gain accepts a verified starting vector');
   const fusion = clone(krakenBase);
   fusion.process.performance.acceleration = 'gpu-resident';
   fusion.process.tracker.gpu_capacity = 128;
   fusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+  fusion.process.surveillance_fusion.beams = 6;
   fusion.process.surveillance_fusion.effective_beam_trials = 6;
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
@@ -149,13 +170,14 @@ try {
     bearing_channels: [...fusion.capture.device.surveillance_channels],
     elements: fusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
       id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
-      position: [Math.cos(2 * Math.PI * index / 5) * .193548,
-        Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+      position: [Math.cos(2 * Math.PI * index / 5) * .2,
+        Math.sin(2 * Math.PI * index / 5) * .2, 0]
     }))
   };
   persistGroup('kraken-coherent-fusion', krakenBase, fusion,
     ['process.performance.acceleration', 'process.tracker.gpu_capacity',
       'process.surveillance_fusion.mode',
+      'process.surveillance_fusion.beams',
       'process.surveillance_fusion.effective_beam_trials',
       'process.detection.integration_cpis',
       'process.detection.integration_motion_bins',
@@ -193,31 +215,6 @@ try {
       'process.surveillance_fusion.detection_manifold_automation.corpus_path',
       'process.surveillance_fusion.detection_manifold_automation.validation_path',
       'process.surveillance_fusion.detection_manifold_automation.candidate_path']);
-  const integrationShadow = clone(measuredBaseline);
-  integrationShadow.process.detection.integration_shadow = {
-    enabled: true,
-    queue_path: '/var/lib/vectorwarp-api/integration-shadow/queue',
-    results_path: '/var/lib/vectorwarp-api/integration-shadow/results',
-    receipt_key_path: '/etc/vectorwarp/integration-shadow-receipt.key',
-    dwell_seconds: [.05, .1, .2, .5],
-    fusion_modes: ['production', 'coherent_beam_bank',
-      'noise_whitened_beam_bank', 'noncoherent', 'physical_channels'],
-    max_pending: 64,
-    max_wall_seconds_per_clip: 1800
-  };
-  persistGroup('kraken-integration-shadow', measuredBaseline, integrationShadow,
-    ['process.detection.integration_shadow.enabled',
-      'process.detection.integration_shadow.queue_path',
-      'process.detection.integration_shadow.results_path',
-      'process.detection.integration_shadow.receipt_key_path',
-      'process.detection.integration_shadow.dwell_seconds',
-      'process.detection.integration_shadow.fusion_modes',
-      'process.detection.integration_shadow.max_pending',
-      'process.detection.integration_shadow.max_wall_seconds_per_clip']);
-  const missingProductionShadow = clone(integrationShadow);
-  missingProductionShadow.process.detection.integration_shadow.fusion_modes = ['noncoherent'];
-  assert.equal(validateConfig(missingProductionShadow, measuredBaseline).valid, false,
-    'enabled shadow matrix without a production baseline was accepted');
   const bearingBaseline = clone(fusion);
   Object.assign(bearingBaseline.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true
@@ -307,6 +304,11 @@ try {
   // Explicit resident capacity is optional in legacy files but must persist
   // as a coherent resident-mode edit without changing unrelated settings.
   const residentBase = clone(fusion); const resident = clone(residentBase);
+  const conservativeTracker = clone(residentBase);
+  conservativeTracker.process.tracker.profile = 'conservative';
+  conservativeTracker.process.tracker.initiate.min_snr_db = 7;
+  persistGroup('conservative-tracker-profile', residentBase, conservativeTracker, [
+    'process.tracker.profile', 'process.tracker.initiate.min_snr_db']);
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.tracker.initiate.stationary_clutter = {enable: true,
     persistence_cpis: 8, max_doppler_hz: 15};
@@ -330,6 +332,9 @@ try {
   const adsbSources = clone(adsbBaseline);
   adsbSources.truth.adsb.sources = ['local:readsb', 'https://backup.example/tar1090'];
   persistGroup('structured-adsb-sources', adsbBaseline, adsbSources, ['truth.adsb.sources']);
+  const remoteIdSource = clone(adsbBaseline);
+  remoteIdSource.truth.remote_id.source = 'http://remote-id.local:8754';
+  persistGroup('remote-id-source', adsbBaseline, remoteIdSource, ['truth.remote_id.source']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);

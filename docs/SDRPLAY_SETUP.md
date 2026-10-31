@@ -1,7 +1,7 @@
 # SDRplay RSPduo setup
 
 For the macOS Homebrew package, follow the [Mac SDK and adapter instructions](MACOS.md#prerequisites)
-and [Homebrew guide](MACOS_HOMEBREW.md). Obtain the proprietary SDK separately
+and [installation guide](INSTALL.md#macos). Obtain the proprietary SDK separately
 from SDRplay; VectorWarp never bundles or downloads it. The system services and
 package administration described below apply to Linux.
 
@@ -75,7 +75,7 @@ Open **Check receiver software**:
 - **Custom, ambiguous or overridden service:** automatic startup stops with an
   error. Have an administrator review and start it locally, then recheck in
   Settings. If **Check receiver software** offers a reviewed service action,
-  follow the [local enrollment steps](SETUP.md#check-receiver-software).
+  follow the [RSPduo setup steps](SETUP.md#sdrplay-rspduo).
 - **Not found or not verified:** the page shows the official download link.
   If already installed, check its installation and service, then run the check again.
 

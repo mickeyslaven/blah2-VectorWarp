@@ -17,7 +17,7 @@ using Complex = std::complex<double>;
 constexpr unsigned Channels = 5, Samples = 4096, Delay = 7, Beams = 60;
 constexpr double Pi = 3.1415926535897932384626433832795;
 constexpr double WaveNumber = 2 * Pi * 527000000.0 / 299792458.0;
-constexpr double Radius = .193548;
+constexpr double Radius = .2;
 constexpr double Direct = 51 * Pi / 180;
 using Vector = std::array<Complex, Channels>;
 

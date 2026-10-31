@@ -83,6 +83,22 @@ function sameSettings(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+// A saved configuration that the running API has not loaded is an application
+// lifecycle fault, not a receiver/frame fault. Restarting only the processor in
+// this state can never publish frames because the API deliberately rejects the
+// new revision. Leave the receiver alone and surface the failed/pending restart.
+function applicationInterlock(document, status) {
+  if (!status || typeof document?.revision !== 'string') return null;
+  const revisionMismatch = status.configRevision !== document.revision ||
+    status.loadedRevision !== document.revision;
+  const restartState = status.restart?.state;
+  if (revisionMismatch || status.gainCheckPending === true)
+    return restartState === 'failed' ? 'configuration-restart-failed' :
+      'configuration-restart-pending';
+  if (['scheduled', 'running'].includes(restartState)) return 'configuration-restart-pending';
+  return null;
+}
+
 function receiverSettlement(configRevision, wanted, receipt, now = Date.now()) {
   if (typeof configRevision !== 'string' || !configRevision ||
       !sameSettings(receipt?.requested, wanted) ||
@@ -90,6 +106,28 @@ function receiverSettlement(configRevision, wanted, receipt, now = Date.now()) {
     throw new Error('receiver receipt does not settle the current exact configuration');
   return {state: receipt.status, completedAt: now, receipt, configRevision,
     applicationVerified: true, reconciliationRequired: false};
+}
+
+async function synchronizeAfterRestart(config, options = {}) {
+  const factory = options.factory || createReceiverSynchronizer;
+  const now = options.now || Date.now;
+  const sleep = options.sleep || wait;
+  const timeoutMs = options.timeoutMs ?? 60000;
+  let receipt = null, lastConnectionError = null;
+  const receiverDeadline = now() + timeoutMs;
+  while (!receipt && now() < receiverDeadline) {
+    try {
+      receipt = await factory().synchronize(config, config, {force: true});
+    } catch (error) {
+      if (!['KRAKEN_CONNECTION_FAILED', 'KRAKEN_CONNECTION_CLOSED'].includes(error?.code))
+        throw error;
+      lastConnectionError = error;
+      await sleep(250);
+    }
+  }
+  if (!receipt)
+    throw new Error(`receiver control did not become ready after restart: ${lastConnectionError?.message || 'timeout'}`);
+  return receipt;
 }
 
 async function recover(configFile, baselineFrame) {
@@ -102,8 +140,10 @@ async function recover(configFile, baselineFrame) {
   const wanted = requested(before.config);
   systemctl('stop', PROCESSOR);
   systemctl('restart', HEIMDALL);
-  const receipt = await createReceiverSynchronizer().synchronize(
-    before.config, before.config, {force: true});
+  // systemctl reports the native process as started before its control socket
+  // is listening. Retry only transport readiness; receiver/protocol failures
+  // still fail closed immediately.
+  const receipt = await synchronizeAfterRestart(before.config);
   const afterSync = readConfig(configFile);
   if (afterSync.revision !== before.revision)
     throw new Error('configuration revision changed during recovery; processor remains stopped');
@@ -138,6 +178,41 @@ async function recover(configFile, baselineFrame) {
   throw new Error(`processor started but frames did not advance: ${lastError || 'timeout'}`);
 }
 
+async function startProcessor(configFile, baselineFrame) {
+  const document = readConfig(configFile);
+  if (!document.exists || document.readError || !document.validation.valid)
+    throw new Error('active configuration is not valid');
+  if (document.config.capture?.replay?.state === true)
+    throw new Error('automatic processor start is limited to live input');
+  const revision = document.revision;
+  const deadline = Date.now() + 150000;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const current = readConfig(configFile);
+    if (current.revision !== revision)
+      throw new Error('configuration revision changed while waiting to start processor');
+    try { systemctl('start', PROCESSOR); } catch (error) { lastError = error; }
+    if (active(PROCESSOR)) break;
+    await wait(5000);
+  }
+  if (!active(PROCESSOR))
+    throw new Error(`processor did not start after calibration: ${lastError || 'blocked'}`);
+  while (Date.now() < deadline) {
+    try {
+      const current = readConfig(configFile);
+      if (current.revision !== revision)
+        throw new Error('configuration revision changed before processor frames resumed');
+      const status = await apiStatus(current.config);
+      if (Number.isFinite(status.lastFrameAt) && status.lastFrameAt > (baselineFrame || 0) &&
+          Math.abs(Date.now() - status.lastFrameAt) < 30000)
+        return {ok: true, configRevision: revision, processorPid: pid(PROCESSOR),
+          firstRecoveredFrameAt: status.lastFrameAt};
+    } catch (error) { lastError = error; }
+    await wait(2000);
+  }
+  throw new Error(`processor started but frames did not advance: ${lastError || 'timeout'}`);
+}
+
 async function main(argv = process.argv.slice(2)) {
   if (argv.length !== 2) throw new Error('usage: vectorwarp-health-watchdog CONFIG STATE');
   const [configFile, stateFile] = argv;
@@ -148,11 +223,21 @@ async function main(argv = process.argv.slice(2)) {
   let status = null;
   try { status = await apiStatus(document.config); delete previous.lastProbeError; }
   catch (error) { previous.lastProbeError = String(error.message).slice(0, 240); }
+  const interlock = applicationInterlock(document, status);
+  if (interlock) {
+    writeState(stateFile, {...previous, status: 'application-pending',
+      configRevision: document.revision, lastProbeAt: Date.now(), lastProbeReason: interlock});
+    if (interlock === 'configuration-restart-failed') {
+      console.error('VECTORWARP_LIVENESS_ALERT configuration-restart-failed; processor recovery is blocked until the API loads the saved revision');
+      process.exitCode = 1;
+    }
+    return;
+  }
   const decision = evaluateFrameLiveness({now: Date.now(), processorActive, processorPid,
     lastFrameAt: status?.lastFrameAt ?? null}, previous);
   const next = {...previous, ...decision.state, configRevision: document.revision,
     lastProbeAt: Date.now(), lastProbeReason: decision.reason};
-  if (decision.action !== 'recover') {
+  if (!['recover', 'start-processor'].includes(decision.action)) {
     writeState(stateFile, next);
     if (decision.reason === 'restart-loop-blocked') {
       console.error('VECTORWARP_LIVENESS_ALERT restart-loop-blocked; manual repair required');
@@ -167,7 +252,9 @@ async function main(argv = process.argv.slice(2)) {
   writeState(stateFile, next);
   console.error(`VECTORWARP_LIVENESS_ALERT ${decision.reason}; starting bounded exact-config recovery`);
   try {
-    incident.recovery = await recover(configFile, status?.lastFrameAt ?? null);
+    incident.recovery = decision.action === 'start-processor' ?
+      await startProcessor(configFile, status?.lastFrameAt ?? null) :
+      await recover(configFile, status?.lastFrameAt ?? null);
     incident.completedAt = Date.now();
     next.status = 'recovered'; next.processorPid = incident.recovery.processorPid;
     next.processorSeenAt = Date.now(); next.lastFrameAt = incident.recovery.firstRecoveredFrameAt;
@@ -184,4 +271,5 @@ async function main(argv = process.argv.slice(2)) {
 if (require.main === module)
   main().catch(error => { console.error(`VECTORWARP_LIVENESS_ALERT ${error.stack}`); process.exitCode = 1; });
 
-module.exports = {main, receiverSettlement, requested, sameSettings};
+module.exports = {main, receiverSettlement, requested, sameSettings, startProcessor,
+  synchronizeAfterRestart, applicationInterlock};

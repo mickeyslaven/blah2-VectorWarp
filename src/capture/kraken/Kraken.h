@@ -44,7 +44,8 @@ private:
   void connect_heimdall();
   void receive_exact(void *data, std::size_t length);
   std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE> receive_header();
-  static void clear_buffers(const std::vector<IqData *>& buffers);
+  void clear_buffers(const std::vector<IqData *>& buffers,
+    bool advanceProcessingEpoch=false);
 
 public:
   struct SamplePosition
@@ -65,8 +66,8 @@ public:
   void process(const std::vector<IqData *>& buffers) override;
   void start() override;
   void stop() override;
-  void request_clip(const blah2::IqClipRequest& request);
-  blah2::IqClipStatus clip_status() const;
+  void request_clip(const blah2::IqClipRequest& request) override;
+  blah2::IqClipStatus clip_status() const override;
   SamplePosition sample_position() const;
   Source::SampleTimePosition sample_time_position() const override;
   std::vector<double> actual_gain_db() const;

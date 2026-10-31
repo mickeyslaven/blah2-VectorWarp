@@ -62,7 +62,8 @@ function externalTrack(event, sampleRate) {
     confidence: 'primary',
     is_anomalous: event.is_anomalous === true,
     max_velocity_ms: finite(event.max_velocity_ms) ? event.max_velocity_ms : 0,
-    anomaly_types: Array.isArray(event.anomaly_types) ? event.anomaly_types : []
+    anomaly_types: Array.isArray(event.anomaly_types) ? event.anomaly_types : [],
+    sourceTimestamp: event.timestamp
   };
 }
 
@@ -78,6 +79,9 @@ class TrackerPublication {
     this.lastInputAt = null;
     this.inputTimestamp = null;
     this.inputEventTime = null;
+    this.inputTiming = new Map();
+    this.externalEventTime = null;
+    this.externalTimingKnown = false;
     this.counters = {events: 0, invalid: 0, frames: 0};
     this.lastFusion = {nativeSupplements: 0, nativeDeduplicated: 0,
       fallbackActive: false};
@@ -92,6 +96,13 @@ class TrackerPublication {
     this.inputTimestamp = value.timestamp;
     this.inputEventTime = value.eventTime && typeof value.eventTime === 'object' ?
       {...value.eventTime} : null;
+    this.inputTiming.set(value.timestamp, this.inputEventTime);
+    while (this.inputTiming.size > 256)
+      this.inputTiming.delete(this.inputTiming.keys().next().value);
+    if (value.timestamp === this.externalTimestamp) {
+      this.externalEventTime = this.inputEventTime;
+      this.externalTimingKnown = true;
+    }
     this.lastInputAt = this.now();
   }
 
@@ -102,6 +113,9 @@ class TrackerPublication {
     if (event.timestamp !== this.externalTimestamp) {
       this.externalTimestamp = event.timestamp;
       this.external.clear();
+      this.externalTimingKnown = this.inputTiming.has(event.timestamp);
+      this.externalEventTime = this.externalTimingKnown ?
+        this.inputTiming.get(event.timestamp) : null;
       this.counters.frames += 1;
     }
     this.external.set(track.id, track);
@@ -123,19 +137,39 @@ class TrackerPublication {
 
   nativeOnly() { return this.native; }
 
+  timestampsCompatible(left, right) {
+    return finite(left) && finite(right) &&
+      Math.abs(left - right) <= this.settings.staleAfterMs;
+  }
+
+  eventTimesCompatible(left, right) {
+    if (!left && !right) return true;
+    if (!left || !right) return false;
+    for (const key of ['source', 'epoch', 'deviceTimeEpochTick', 'clockSource',
+      'timeSource', 'motherboard', 'subdevices']) {
+      if ((key in left || key in right) && String(left[key]) !== String(right[key]))
+        return false;
+    }
+    return true;
+  }
+
   frame() {
     const native = this.nativeFrame();
     if (this.settings.mode === 'native') return this.native;
-    if (samplesPerKilometre(this.sampleRate) === null || !this.inputFresh()) {
+    if (samplesPerKilometre(this.sampleRate) === null || !this.inputFresh() ||
+        !this.externalFresh() || !this.externalTimingKnown ||
+        !this.timestampsCompatible(this.externalTimestamp, this.inputTimestamp)) {
       this.lastFusion = {nativeSupplements: 0, nativeDeduplicated: 0,
         fallbackActive: true};
       return this.native;
     }
-    const primary = this.externalFresh() ? [...this.external.values()] : [];
+    const primary = [...this.external.values()];
     if (this.settings.mode === 'external') return JSON.stringify(this.buildFrame(primary, [], native));
     const supplements = [];
     let deduplicated = 0;
-    for (const candidate of Array.isArray(native?.data) ? native.data : []) {
+    const nativeCompatible = this.timestampsCompatible(native?.timestamp, this.externalTimestamp) &&
+      this.eventTimesCompatible(native?.eventTime || null, this.externalEventTime);
+    for (const candidate of nativeCompatible && Array.isArray(native?.data) ? native.data : []) {
       if (!candidate || !finite(candidate.delay) || !finite(candidate.doppler) ||
           !Number.isInteger(candidate.n) || candidate.n < this.settings.nativeMinAssociations) continue;
       const duplicate = primary.some(track =>
@@ -143,7 +177,7 @@ class TrackerPublication {
         Math.abs(track.doppler - candidate.doppler) <= this.settings.dopplerTolerance);
       if (duplicate) { deduplicated += 1; continue; }
       supplements.push({...candidate, id: `native-${candidate.id}`, source: 'native',
-        confidence: 'supplement'});
+        confidence: 'supplement', sourceTimestamp: native.timestamp});
     }
     this.lastFusion = {nativeSupplements: supplements.length,
       nativeDeduplicated: deduplicated, fallbackActive: false};
@@ -153,7 +187,7 @@ class TrackerPublication {
   buildFrame(primary, supplements, native) {
     const data = [...primary, ...supplements];
     const count = state => data.filter(track => track.state === state).length;
-    const eventTime = native?.eventTime || this.inputEventTime;
+    const eventTime = this.externalEventTime;
     return {timestamp: this.externalTimestamp, n: data.length,
       nTentative: count('TENTATIVE'), nAssociated: count('ASSOCIATED'),
       nActive: count('ACTIVE'), nCoasting: count('COASTING'), data,
@@ -168,6 +202,8 @@ class TrackerPublication {
       inputFresh: this.inputFresh(), externalFresh: this.externalFresh(),
       lastInputAt: this.lastInputAt, inputTimestamp: this.inputTimestamp,
       inputEventTime: this.inputEventTime,
+      externalEventTime: this.externalEventTime,
+      externalTimingKnown: this.externalTimingKnown,
       lastExternalAt: this.lastExternalAt,
       externalTimestamp: this.externalTimestamp, externalTracks: this.external.size,
       nativeAvailable: this.nativeFrame() !== null, settings: {...this.settings},

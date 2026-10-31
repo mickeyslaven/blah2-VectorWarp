@@ -583,7 +583,6 @@ class ResidentFramePipeline {
    }
    if(!(norm>0)||!std::isfinite(norm))
     throw std::runtime_error("Coherent fusion received zero-norm reference weights");
-   const double scale=1.0/std::sqrt(norm);
    const double waveNumber=6.283185307179586476925286766559*config.fusion.frequencyHz/299792458.0;
    const uint32_t channels=config.geometry.channels;
    std::array<double,8> channelScale{};
@@ -686,28 +685,8 @@ class ResidentFramePipeline {
       target[uint64_t(beam)*channels+channel]={};
      continue;
     }
-    if(nullFraction>0){
-     std::complex<double> projection{};
-     for(uint32_t channel=0;channel<channels;++channel)
-      projection+=std::conj(referenceAnchor[channel])*steering[channel];
-     projection*=nullFraction/referenceAnchorNorm;
-     for(uint32_t channel=0;channel<channels;++channel)
-      steering[channel]-=projection*referenceAnchor[channel];
-    }
-    if(whiten){
-     double combinedNorm=0;
-     for(uint32_t channel=0;channel<channels;++channel){
-      combined[channel]=channelScale[channel]*steering[channel];
-      combinedNorm+=std::norm(combined[channel]);
-     }
-     if(!(combinedNorm>0)||!std::isfinite(combinedNorm))
-      throw std::runtime_error("Noise-whitened fusion produced invalid weights");
-     const double combinedScale=1.0/std::sqrt(combinedNorm);
-     for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
-    }else if(measuredBearing||projected){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
-     if(!(steeringNorm>0)||!std::isfinite(steeringNorm))throw std::runtime_error("Measured bearing manifold produced invalid weights");
-     const double steeringScale=1.0/std::sqrt(steeringNorm);for(uint32_t channel=0;channel<channels;++channel)combined[channel]=steeringScale*steering[channel];
-    }else for(uint32_t channel=0;channel<channels;++channel)combined[channel]=scale*steering[channel];
+    combined=blah2::resident_fusion::calibratedWeights(steering,channels,
+     referenceAnchor.data(),channelScale.data(),nullFraction,whiten);
     for(uint32_t channel=0;channel<channels;++channel){
      target[uint64_t(beam)*config.geometry.channels+channel]=
       std::complex<float>(std::conj(combined[channel]));

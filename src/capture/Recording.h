@@ -70,5 +70,6 @@ public:
   const RecordingProvenance& provenance() const;
   bool read(IqBlock& samples);
   void rewind();
+  void seek(uint64_t sample);
 };
 }

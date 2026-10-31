@@ -39,7 +39,14 @@ result = evaluateFrameLiveness({now: 6200, processorActive: true, processorPid: 
 assert.equal(result.reason, 'advancing');
 assert.equal(result.state.unhealthySince, null);
 
+state = {processorPid: 12, processorSeenAt: 6200, lastFrameAt: 6200, attempts: []};
 result = evaluateFrameLiveness({now: 7000, processorActive: false, processorPid: 0,
+  lastFrameAt: null}, state, limits);
+assert.equal(result.reason, 'processor-inactive-confirmation', 'brief service transitions need confirmation');
+result = evaluateFrameLiveness({now: 8101, processorActive: false, processorPid: 0,
   lastFrameAt: null}, result.state, limits);
-assert.equal(result.reason, 'processor-inactive', 'manual stop must not be undone');
+assert.equal(result.action, 'start-processor', 'an inactive live processor must recover after calibration');
+result = evaluateFrameLiveness({now: 8200, processorActive: false, processorPid: 0,
+  lastFrameAt: null}, result.state, limits);
+assert.equal(result.reason, 'cooldown', 'an inactive processor cannot be restarted in a tight loop');
 console.log('PASS advancing-frame liveness, receiver reset recovery and loop protection');

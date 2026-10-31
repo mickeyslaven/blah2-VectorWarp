@@ -80,6 +80,11 @@ int main() try {
         require(reader.read(block) && block==original,"Second recording block differs");
         require(!reader.read(block),"Reader did not reach EOF"); reader.rewind();
       }
+      reader.seek(5);
+      require(reader.read(block) && block.front().size()==6 &&
+        block.front().front()==original.front()[5],"Indexed replay seek changed the selected sample");
+      require(reader.read(block) && block==original,"Indexed replay seek lost the following block");
+      reader.seek(22); require(!reader.read(block),"Replay seek to EOF returned samples");
       options.channels=channels==2 ? 3 : 2;
       rejects([&] { RecordingReader invalid(path,options); },"Accepted wrong channel count");
       options.channels=channels; options.frequency++;
@@ -160,8 +165,10 @@ int main() try {
       if(fixture.first=="Kraken") {
         qualified.provenanceMode="legacy-unqualified";
         qualified.receiver="Usrp";
-        rejects([&] { RecordingReader invalid(recorded,qualified); },
-          "Replay accepted a receiver/provenance identity mismatch");
+        RecordingReader crossReceiver(recorded,qualified);
+        require(crossReceiver.provenance().receiver=="Kraken" &&
+          crossReceiver.provenance().contractValid,
+          "Cross-receiver replay lost the recording receiver provenance");
         qualified.receiver="Kraken";
         const auto sidecar=recorded+".provenance.json";
         std::ifstream input(sidecar);
@@ -191,9 +198,12 @@ int main() try {
     require(!gap.recording_status().error.empty(),"Source accepted a callback sample gap");
 
     MockSource discontinuity(directory.string(),&save);
+    require(discontinuity.processing_epoch()==0,"New source did not start in processing epoch zero");
     const auto discontinuityPath=discontinuity.open_file();
     discontinuity.record_block({{{1,2}},{{3,4}}});
     discontinuity.recording_discontinuity("mock capture gap");
+    require(discontinuity.processing_epoch()==1,
+      "Capture gap did not advance the adaptive-processing epoch");
     const auto discontinuityStatus=discontinuity.recording_status();
     require(!discontinuityStatus.active && discontinuityStatus.samples==1 &&
       discontinuityStatus.error=="mock capture gap","Discontinuity status was not retained");
@@ -204,6 +214,8 @@ int main() try {
     const auto ambiguousEpoch=segmented.open_file();
     segmented.record_block({{{1,2}},{{3,4}}});
     segmented.recording_epoch_discontinuity("mock setting epoch changed");
+    require(segmented.processing_epoch()==1,
+      "RF setting change did not advance the adaptive-processing epoch");
     const auto transition=segmented.recording_status();
     require(!transition.active && transition.resumePending && transition.samples==1,
       "Qualified epoch rollover did not retain a bounded resume request");
@@ -226,6 +238,20 @@ int main() try {
     std::filesystem::remove(ambiguousEpoch+".provenance.json");
     std::filesystem::remove(resumed.file);
     std::filesystem::remove(resumed.file+".provenance.json");
+
+    MockSource unrecordedEpoch(directory.string(),&save);
+    unrecordedEpoch.recording_epoch_discontinuity("unrecorded setting epoch changed");
+    require(unrecordedEpoch.processing_epoch()==1,
+      "An unrecorded live discontinuity did not reset adaptive processing");
+
+    MockSource coordinatedEpoch(directory.string(),&save);
+    coordinatedEpoch.recording_epoch_discontinuity(
+      "buffer clearing owns this boundary", false);
+    require(coordinatedEpoch.processing_epoch()==0,
+      "Deferred discontinuity published before coordinated buffer clearing");
+    coordinatedEpoch.advance_processing_epoch();
+    require(coordinatedEpoch.processing_epoch()==1,
+      "Coordinated buffer boundary did not publish its processing epoch");
 
     {
       RecordingWriter writer(path,{2,1000000,100000000,0,"blah2"});
@@ -274,6 +300,29 @@ int main() try {
         [](const ReplayProgress&) {}, [] { return false; });
       cancel.join();
       require(stopped.load(),"Replay did not cancel while backpressured");
+
+      // A seek is an indexed processor-generation boundary, and pause must not
+      // consume samples while the user is scrubbing.
+      first.clear(); second.clear(); stopped=false; consume=true;
+      std::atomic<bool> paused{true}; std::atomic<uint64_t> seek{0},revision{0};
+      bool sawPaused=false; ReplayProgress controlled;
+      std::thread seekConsumer([&] {
+        while(consume.load()) {
+          first.lock(); second.lock();
+          if(first.get_length()>=4&&second.get_length()>=4){first.drain_front(4);second.drain_front(4);}
+          second.unlock();first.unlock();std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+      });
+      std::thread controller([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        seek=2;paused=false;revision=1;
+      });
+      player.run(path,{"auto","Mock",2,1000000,100000000,0},queues,4,false,stopped,
+        [&](const ReplayProgress& progress){controlled=progress;sawPaused=sawPaused||progress.state=="paused";},
+        []{return false;},[&]{return ReplayCommand{paused.load(),seek.load(),revision.load()};});
+      controller.join();consume=false;seekConsumer.join();
+      require(sawPaused&&controlled.state=="complete"&&controlled.samples==6&&controlled.generation==1,
+        "Replay pause/seek did not publish a clean processor generation");
       std::filesystem::remove(path);
     }
 

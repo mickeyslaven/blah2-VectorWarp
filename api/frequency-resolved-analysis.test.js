@@ -4,7 +4,7 @@ const assert = require('assert');
 const {analysisDescriptor, analysisFingerprint, summarizeCovariances, idealVector,
   transmitterBearing} = require('./frequency-resolved-analysis');
 
-const channels = 5, subbands = 24, radius = .193548;
+const channels = 5, subbands = 24, radius = .2;
 const config = {capture: {fc: 527000000, fs: 2400000, device: {type: 'Kraken',
   channel_count: channels, surveillance_channels: [0, 1, 2, 3, 4],
   array_geometry: {x_axis_bearing_deg_true: 80,

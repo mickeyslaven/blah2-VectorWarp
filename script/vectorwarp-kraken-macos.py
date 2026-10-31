@@ -88,8 +88,9 @@ def matching_status(live, profile):
         raise ValueError('Heimdall gain readback does not match the saved Kraken profile')
     if live.get('reconfiguring') is True or live.get('recovering') is True:
         return None
-    if profile.get('channel_gains') is not None and live.get('channel_gains') != profile['channel_gains']:
-        return None
+    if (profile['channel_gains'] is not None and
+            live.get('channel_gains') != profile['channel_gains']):
+        return 'CHANNEL_GAINS_PENDING'
     calibration = live.get('calibration_state', 'PENDING')
     if not isinstance(calibration, str) or len(calibration) > 64:
         raise ValueError('Heimdall reported an invalid calibration state')
@@ -98,7 +99,47 @@ def matching_status(live, profile):
     return calibration
 
 
-def telemetry(port, channel_gains=None, instance_token=None):
+def apply_channel_gains(port, profile, instance_token):
+    """Restore the complete saved vector before publishing controller readiness."""
+    expected = profile['channel_gains']
+    if expected is None:
+        return
+    with socket.create_connection(('127.0.0.1', port), timeout=1) as connection:
+        connection.settimeout(.5)
+        connection.sendall((json.dumps({'command': 'set_channel_gains', 'gains': expected},
+                                        separators=(',', ':')) + '\n').encode())
+        data = bytearray()
+        acknowledged = False
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                chunk = connection.recv(4096)
+            except TimeoutError:
+                continue
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > 262144:
+                raise ValueError('Heimdall channel-gain response exceeded the bounded limit')
+            while b'\n' in data:
+                line, _, remaining = data.partition(b'\n')
+                data = bytearray(remaining)
+                document = json.loads(line)
+                if document.get('status') in ('error', 'failed'):
+                    raise ValueError('Heimdall rejected the saved per-channel gains')
+                if document.get('status') == 'success':
+                    if document.get('channel_gains') != expected:
+                        raise ValueError('Heimdall acknowledged a different per-channel gain vector')
+                    acknowledged = True
+                if 'settings' in document:
+                    if document.get('instance_token') != instance_token:
+                        raise ValueError('Heimdall telemetry belongs to a different controller instance')
+                    if acknowledged and document.get('channel_gains') == expected:
+                        return
+    raise OSError('Heimdall did not confirm the saved per-channel gains before readiness')
+
+
+def telemetry(port):
     with socket.create_connection(('127.0.0.1', port), timeout=1) as connection:
         data = bytearray()
         deadline = time.monotonic() + 2
@@ -112,11 +153,6 @@ def telemetry(port, channel_gains=None, instance_token=None):
                 data = bytearray(remaining)
                 document = json.loads(line)
                 if isinstance(document, dict) and 'settings' in document:
-                    if channel_gains is not None:
-                        if document.get('instance_token') != instance_token:
-                            raise ValueError('Refusing gain command to an unrelated Heimdall instance')
-                        command = {'command': 'set_channel_gains', 'gains': channel_gains}
-                        connection.sendall((json.dumps(command, separators=(',', ':')) + '\n').encode())
                     return document
     raise OSError('No bounded Heimdall status message received')
 
@@ -196,7 +232,6 @@ def main(argv=None):
             env['HEIMDALL_GAIN_TENTHS'] = str(-1 if profile['gain'] == -1 else round(profile['gain'] * 10))
         child = subprocess.Popen([str(executable), '-n', str(profile['channels'])], cwd=state, env=env)
         deadline = time.monotonic() + 60
-        channel_gains_applied = profile['channel_gains'] is None
         while not stopping:
             if child.poll() is not None:
                 raise RuntimeError(f'Heimdall exited during initialization (status {child.returncode}); see logs/kraken.log')
@@ -204,11 +239,10 @@ def main(argv=None):
                 live = telemetry(args.control_port)
                 if live.get('instance_token') != args.instance_token:
                     raise ValueError('Heimdall telemetry belongs to a different controller instance')
-                if not channel_gains_applied:
-                    telemetry(args.control_port, profile['channel_gains'], args.instance_token)
-                    channel_gains_applied = True
-                    continue
                 calibration = matching_status(live, profile)
+                if calibration == 'CHANNEL_GAINS_PENDING':
+                    apply_channel_gains(args.control_port, profile, args.instance_token)
+                    calibration = None
             except (OSError, json.JSONDecodeError):
                 calibration = None
             if calibration is not None:

@@ -167,6 +167,18 @@ TEST_CASE("Multiple stale tracks are removed without skipping or corrupting indi
   CHECK(tracker.process(&first, 3000)->get_n() == 3);
 }
 
+TEST_CASE("Weak detections cannot initiate conservative tracks", "[tracker]")
+{
+  Tracker tracker(1, 1, 3, 1, 0, 100, 2, 7);
+  Detection weak(10, 20, 6.99);
+  auto tracks = tracker.process(&weak, 1000);
+  CHECK(tracks->get_n() == 0);
+  Detection strong(10, 20, 7.0);
+  tracks = tracker.process(&strong, 2000);
+  CHECK(tracks->get_n() == 1);
+  CHECK(tracks->get_state(0) == "TENTATIVE");
+}
+
 TEST_CASE("One detection cannot update two tracks", "[tracker]")
 {
   Tracker tracker(1, 2, 5, 1, 0, 100, 2);

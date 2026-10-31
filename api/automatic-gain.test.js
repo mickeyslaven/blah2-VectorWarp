@@ -9,11 +9,15 @@ const config = (gain = 20) => ({capture: {fc: 527000000, fs: 2400000,
 function status(config, gain = config.capture.device.heimdall.gain) {
   return {centerFrequency: config.capture.fc, sampleRate: config.capture.fs,
     channelCount: config.capture.device.channel_count, gain, operatingMode: 'coherent',
-    reconfiguring: false, recovering: false, cooldownActive: false};
+    reconfiguring: false, recovering: false, cooldownActive: false,
+    ...(Array.isArray(config.capture.device.heimdall.channel_gains) ?
+      {channelGains: [...config.capture.device.heimdall.channel_gains]} : {})};
 }
 function measurement(config, p999 = .6, overrides = {}) {
   return {frequencyHz: config.capture.fc, sampleRateHz: config.capture.fs,
     channelCount: config.capture.device.channel_count, gainDb: config.capture.device.heimdall.gain,
+    ...(Array.isArray(config.capture.device.heimdall.channel_gains) ?
+      {channelGains: [...config.capture.device.heimdall.channel_gains]} : {}),
     source: 'calibrated_mchq_uint8_wire', packets: 1,
     calibration: {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: 1},
     channels: Array.from({length: config.capture.device.channel_count}, (_, channel) => ({
@@ -112,6 +116,9 @@ async function rejected(run, code) {
 
 (async () => {
   assert.equal(enabled(config()), true);
+  const perChannelPolicy = config();
+  perChannelPolicy.capture.device.heimdall.gain_control = 'measured_per_channel';
+  assert.equal(enabled(perChannelPolicy), true);
   const replay = config(); replay.capture.replay.state = true; assert.equal(enabled(replay), false);
   const manual = config(); manual.capture.device.heimdall.gain_control = 'manual';
   assert.equal(enabled(manual), false);
@@ -134,6 +141,29 @@ async function rejected(run, code) {
   assert.equal(result.receiverSync.automaticGain.settling.length, 1);
   assert.equal(result.receiverSync.automaticGain.settling[0].safe, false,
     'Clipped but coherent readiness evidence cannot substitute for safe final probes');
+
+  // Independent mode may raise a weak channel while lowering a clipped one,
+  // then persists the verified tuner vector rather than collapsing it to the
+  // worst channel's common gain.
+  const perChannelPrevious = config(19.7);
+  perChannelPrevious.capture.device.heimdall.channel_gains =
+    [19.7, 19.7, 19.7, 19.7, 19.7];
+  const perChannel = fixture({previous: perChannelPrevious, actualGain: 19.7, probes: [next => {
+    const probe = measurement(next, .65);
+    Object.assign(probe.channels[0], {peakFraction: .7, p999Fraction: .2});
+    Object.assign(probe.channels[1], {peakFraction: .97, p999Fraction: .8});
+    return probe;
+  }, .65, .65]});
+  perChannel.candidate.capture.device.heimdall.gain_control = 'measured_per_channel';
+  result = await perChannel.controller.apply(perChannel.previous, perChannel.candidate);
+  assert.deepEqual(result.config.capture.device.heimdall.channel_gains,
+    [20.7, 16.6, 19.7, 19.7, 19.7]);
+  assert.deepEqual(result.receiverSync.automaticGain.selectedChannelGainsDb,
+    [20.7, 16.6, 19.7, 19.7, 19.7]);
+  assert.equal(result.receiverSync.automaticGain.finalPassingProbes, 2);
+  assert.deepEqual(perChannel.calls.filter(call => call.stage === 'synchronize')
+    .map(call => call.config.capture.device.heimdall.channel_gains),
+  [[19.7, 19.7, 19.7, 19.7, 19.7], [20.7, 16.6, 19.7, 19.7, 19.7]]);
 
   run = fixture({rawProbes: [.6, .6]});
   result = await run.controller.apply(run.previous, run.candidate);

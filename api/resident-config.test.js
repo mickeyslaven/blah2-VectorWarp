@@ -38,12 +38,30 @@ tbd.capture.device.array_geometry = {
   bearing_channels: [...tbd.capture.device.surveillance_channels],
   elements: tbd.capture.device.surveillance_channels.map((daq_channel, index) => ({
     id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
-    position: [Math.cos(2 * Math.PI * index / 5) * .193548,
-      Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+    position: [Math.cos(2 * Math.PI * index / 5) * .2,
+      Math.sin(2 * Math.PI * index / 5) * .2, 0]
   }))
 };
 tbd.process.detection.track_before_detect = {enable: true, max_cpis: 8, motion_bins: 1};
 valid(tbd);
+for (const mutate of [
+  candidate => { candidate.capture.device.array_geometry.elements[0].position[0] += .001; },
+  candidate => { candidate.capture.device.array_geometry.elements[0].position[2] += .001; },
+  candidate => { [candidate.capture.device.array_geometry.elements[1].position,
+    candidate.capture.device.array_geometry.elements[2].position] =
+    [candidate.capture.device.array_geometry.elements[2].position,
+      candidate.capture.device.array_geometry.elements[1].position]; }
+]) {
+  const candidate = structuredClone(tbd); mutate(candidate);
+  invalid(candidate, 'exact planar uniformly stepped regular polygon');
+}
+const starOrdered = structuredClone(tbd);
+const starOrder = [0, 2, 4, 1, 3];
+starOrdered.capture.device.surveillance_channels = starOrder.map(index =>
+  tbd.capture.device.surveillance_channels[index]);
+starOrdered.process.reference_synthesis.channels =
+  [...starOrdered.capture.device.surveillance_channels];
+valid(starOrdered);
 for (const value of [3, 5, 6, 7, 9]) {
   const candidate = structuredClone(tbd);
   candidate.process.detection.track_before_detect.max_cpis = value;

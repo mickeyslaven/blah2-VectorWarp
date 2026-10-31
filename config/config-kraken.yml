@@ -3,6 +3,10 @@ capture:
   # KrakenSDR Suite V2 currently streams at 2.4 MS/s.
   fs: 2400000
   fc: 204640000
+  aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
+    minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
+    minimum_elevation_deg: 0, maximum_elevation_deg: 90,
+    minimum_interval_seconds: 5}
   device:
     type: "Kraken"
     # Standard KrakenSDR Suite V2 Heimdall data interface.
@@ -13,14 +17,19 @@ capture:
       # Preserve the Suite's existing gain unless an operator explicitly selects
       # automatic (-1) or a manual 0–50 dB Suite gain in Settings.
       gain: "keep"
-      # Optional fixed coherent per-channel tuner-table gains. One manual dB
-      # value per active channel; requires gain_control: fixed. VectorWarp
+      # Automatic per-channel headroom selection is the default. It keeps this
+      # policy after applying and stores its latest verified selections in
+      # channel_gains so the chosen values remain visible and reproducible.
+      gain_control: "measured_per_channel"
+      # Optional fixed coherent per-channel tuner-table gains. One dB value per
+      # active channel. Fixed mode preserves them; automatic-per-channel mode
+      # uses them as starting values and replaces them after verification.
+      # VectorWarp
       # applies the vector atomically and requires physical readback plus a
       # fresh calibration before accepting radar data.
       # channel_gains: [19.7, 19.7, 19.7, 19.7, 19.7]
-      # Optional measured shared-gain selection on EVERY Apply and restart:
-      # gain_control: "measured"
-      # Omit or use "fixed" to preserve gain during controlled comparisons.
+      # Use gain_control: "measured" for one shared automatic value, or
+      # gain_control: "fixed" to preserve gains during controlled comparisons.
     # Must match the number of channels streamed by the Suite.
     channel_count: 5
     reference_channel: 0
@@ -44,7 +53,6 @@ process:
   data:
     cpi: 0.5
     buffer: 2.0
-    overlap: 0
   ambiguity:
     delayMin: -10
     delayMax: 400
@@ -79,6 +87,10 @@ process:
     # Optional soft spatial null toward the configured transmitter bearing.
     # Zero preserves the calibrated coherent beam bank.
     direct_path_null_db: 0
+    # Learn and validate a site-specific detection manifold from eligible
+    # ADS-B-labelled passes. Collection is opt-in and never auto-promotes.
+    detection_manifold_automation:
+      enabled: false
   detection:
     enable: true
     pfa: 0.00001
@@ -98,6 +110,7 @@ process:
       motion_bins: 1
   tracker:
     enable: true
+    profile: balanced
     # GPU-resident counterfactual only. It never changes authoritative tracks.
     # Work is bounded to one CUT plus its small CFAR training window per track.
     track_guided_shadow:
@@ -106,11 +119,11 @@ process:
       max_tracks: 64
     initiate:
       M: 3
-      N: 5
+      N: 6
       maxAcc: 10
+      min_snr_db: 5
       acceleration_model: hypothesis_bank
-    delete: 10
-    smooth: "none"
+    delete: 3
     # Optional maximum circular winning-beam change for track association.
     # Omit to preserve delay/Doppler-only association.
     # beam_tolerance: 1
@@ -164,6 +177,10 @@ process:
 
 network:
   ip: 0.0.0.0
+  # No external tracker is part of this generic Kraken profile. The optional
+  # API bridge remains available only through an explicit endpoint configuration.
+  tracker_forward:
+    enabled: false
   ports:
     api: 3000
     map: 3001
@@ -180,14 +197,19 @@ truth:
   adsb:
     enabled: false
     tar1090: 'localhost:8080'
+    aircraft_photo_provider: disabled
     poll_interval: 1
     smoothing_window: 10
     max_position_age: 30
     provisional_event_time_uncertainty_s: 1
-  ais:
+  remote_id:
     enabled: false
-    ip: 0.0.0.0
-    port: 30001
+    source: '127.0.0.1:8754'
+    poll_interval: 0.5
+    source_timeout: 1.2
+    smoothing_window: 4
+    max_position_age: 10
+    wifi_enabled: false
 
 location:
   rx:
@@ -208,3 +230,9 @@ save:
   detection: false
   timing: false
   path: "/var/lib/vectorwarp/recordings/"
+  retention:
+    automatic_cleanup: false
+    low_space_policy: stop_recording
+    maximum_age_days: 30
+    maximum_total_gb: 100
+    minimum_free_gb: 5

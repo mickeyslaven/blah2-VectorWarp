@@ -3,7 +3,7 @@ const assert = require('assert');
 const http = require('http');
 const {sourceAddress, aircraftUrl, configuredSources, configuredAircraftSource,
   normalizeAircraftSnapshot, readJson,
-  createAdsbSource} = require('./adsb-source');
+  publicationCadence, createAdsbSource} = require('./adsb-source');
 const {DelayDopplerHistory} = require('./adsb-geometry');
 
 (async () => {
@@ -28,6 +28,12 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.deepEqual(normalizeAircraftSnapshot({now: 2000000000123,
     ac: [{hex: 'abc123', seen_pos: .5}]}, 'adsbx-v2'),
   {now: 2000000000.123, aircraft: [{hex: 'abc123', seen_pos: .5}]});
+  const cadenceSlot = {state: {}};
+  assert.equal(publicationCadence(cadenceSlot, 10).state, 'measuring');
+  assert.equal(publicationCadence(cadenceSlot, 10.25).statistics_suitable, true);
+  publicationCadence(cadenceSlot, 11.25);
+  assert.equal(publicationCadence(cadenceSlot, 12.25).statistics_suitable, false,
+    'Observed one-second publication is reported as unsuitable for CPI-level pass statistics');
   for (const address of ['file:///etc/passwd', 'ftp://receiver', 'http://name:password@receiver', 'receiver?url=other', 'receiver#bad', 'bad host'])
     assert.throws(() => sourceAddress(address), undefined, address);
 
@@ -68,6 +74,19 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
     'Four 500 ms CPIs must create exactly a two-second scoring wait');
   assert.deepEqual(associationOrder, ['wait', 'fetch'],
     'The catch-up wait must precede acquisition of the newest ADS-B snapshot');
+
+  let displayClock = 102000;
+  const displaySource = createAdsbSource(delayedStatusConfig, {now: () => displayClock,
+    fetchJson: async () => {
+      displayClock += 250;
+      return {now: 100.5, aircraft: [{hex: 'fed123', flight: 'DISPLAY',
+        lat: 1, lon: 2, alt_geom: 1000, gs: 0, track: 0, seen_pos: 0}]};
+    }});
+  const latestDisplay = await displaySource.getPresentation('aircraft');
+  assert.equal(latestDisplay.aircraft.length, 1,
+    'Latest display positions accept and project feeder snapshots within max_position_age');
+  assert.equal(latestDisplay.aircraft[0].vectorwarp.projected_seconds, 1.75,
+    'Display freshness is measured after source I/O instead of before it');
 
   let exactReads = 0;
   const exactProjection = createAdsbSource(config, {now: () => 100000,
@@ -198,6 +217,65 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.equal(multiStatus.sources[1].freshness.fresh_positions, 1);
   assert.deepEqual(multiStatus.fusion, {...multiAircraft.vectorwarp_fusion,
     fused_at: clock, healthy_sources: 1, failed_sources: 1});
+
+  let localPacedReads = 0;
+  let exchangePacedReads = 0;
+  const pacedConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    poll_interval: 1, sources: ['local.example',
+      'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/75']}}};
+  const paced = createAdsbSource(pacedConfig, {now: () => clock,
+    fetchJson: async url => {
+      if (url.hostname === 'api.adsb.lol') exchangePacedReads += 1;
+      else localPacedReads += 1;
+      return url.hostname === 'api.adsb.lol' ? {now: clock / 1000, ac: []} :
+        {now: clock / 1000, aircraft: []};
+    }});
+  await paced.get('aircraft');
+  clock += 1001;
+  await paced.get('aircraft');
+  assert.equal(localPacedReads, 2, 'LAN ADS-B sources retain the configured one-second cadence');
+  assert.equal(exchangePacedReads, 1, 'Public exchange snapshots are reused for at least two seconds');
+  clock += 1000;
+  await paced.get('aircraft');
+  assert.equal(exchangePacedReads, 2, 'Public exchange sources refresh after their independent interval');
+
+  let presentationRelease;
+  let presentationReads = 0;
+  const presentationConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    poll_interval: .1}}};
+  const nonblockingPresentation = createAdsbSource(presentationConfig, {now: () => clock,
+    fetchJson: async () => {
+      presentationReads += 1;
+      if (presentationReads > 1) await new Promise(resolve => { presentationRelease = resolve; });
+      return {now: clock / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2,
+        alt_geom: 1000, gs: 0, track: 0, seen_pos: 0}]};
+    }});
+  await nonblockingPresentation.getPresentation('aircraft');
+  clock += 101;
+  const cachedPresentation = await Promise.race([
+    nonblockingPresentation.getPresentation('aircraft'),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(
+      'Presentation waited for an upstream refresh')), 50))]);
+  assert.equal(cachedPresentation.aircraft.length, 1,
+    'Presentation reuses the last validated snapshot while upstream refreshes');
+  presentationRelease();
+
+  let throttledReads = 0;
+  const throttled = createAdsbSource(presentationConfig, {now: () => clock,
+    fetchJson: async () => {
+      throttledReads += 1;
+      if (throttledReads > 1) throw new Error('HTTP 429');
+      return {now: clock / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2,
+        alt_geom: 1000, gs: 0, track: 0, seen_pos: 0}]};
+    }});
+  await throttled.getPresentation('aircraft');
+  clock += 101;
+  assert.equal((await throttled.getPresentation('aircraft')).aircraft.length, 1,
+    'A failed refresh retains the last validated presentation snapshot');
+  clock += 101;
+  await throttled.getPresentation('aircraft');
+  assert.equal(throttledReads, 2,
+    'A failed refresh enters backoff instead of retrying on every CPI');
 
   const server = http.createServer((req, res) => {
     if (req.url === '/stall') { res.writeHead(200); res.write('{'); return; }

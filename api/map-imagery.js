@@ -1,0 +1,51 @@
+const fs = require('fs');
+const path = require('path');
+
+const DEFAULT_ROOT = '/var/lib/vectorwarp-api/map-imagery';
+
+function readManifest(root) {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+    const validBounds = bounds => Array.isArray(bounds) && bounds.length === 4 &&
+      bounds.map(Number).every(Number.isFinite) ? bounds.slice(0, 4).map(Number) : null;
+    const zoomTiers = Array.isArray(value.zoom_tiers) ? value.zoom_tiers.map((tier, index) => ({
+      id: String(tier?.id || `tier-${index + 1}`).replace(/[^a-z0-9-]/gi, '-').toLowerCase(),
+      bounds: validBounds(tier?.bounds),
+      minzoom: Number(tier?.minzoom), maxzoom: Number(tier?.maxzoom)
+    })).filter(tier => tier.bounds && Number.isInteger(tier.minzoom) &&
+      Number.isInteger(tier.maxzoom) && tier.minzoom >= 0 && tier.maxzoom <= 22 &&
+      tier.minzoom <= tier.maxzoom) : [];
+    return {
+      available: true,
+      source: value.source || 'NAIP',
+      label: value.label || 'Local aerial imagery',
+      bounds: validBounds(value.bounds),
+      minzoom: Number.isInteger(value.minzoom) ? value.minzoom : 0,
+      maxzoom: Number.isInteger(value.maxzoom) ? value.maxzoom : 16,
+      attribution: value.attribution || 'USGS, USDA, The National Map',
+      ...(zoomTiers.length ? {zoom_tiers: zoomTiers} : {})
+    };
+  } catch (_) {
+    return {available: false};
+  }
+}
+
+function installMapImageryRoutes(app, {root = process.env.BLAH2_MAP_IMAGERY_ROOT || DEFAULT_ROOT} = {}) {
+  app.get('/api/map/imagery', (_req, res) => res.json(readManifest(root)));
+  app.get('/api/map/imagery/local/:z/:x/:y', (req, res) => {
+    const values = ['z', 'x', 'y'].map(name => Number(req.params[name]));
+    if (!values.every(Number.isInteger) || values.some(value => value < 0))
+      return res.status(400).json({error: 'Invalid map tile coordinates.'});
+    const [z, x, y] = values;
+    if (z > 22 || x >= 2 ** z || y >= 2 ** z)
+      return res.status(404).end();
+    const directory = path.join(root, 'tiles', String(z), String(x));
+    const filename = ['jpg', 'png'].map(extension => path.join(directory, `${y}.${extension}`))
+      .find(candidate => fs.existsSync(candidate));
+    if (!filename) return res.status(404).end();
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type(path.extname(filename)).sendFile(filename);
+  });
+}
+
+module.exports = {installMapImageryRoutes, readManifest};

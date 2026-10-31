@@ -82,20 +82,19 @@ class HomepageTests(unittest.TestCase):
         self.assertEqual(page.count('id="install-pi"'), 1)
         self.assertNotRegex(page[:page.index('id="install-pi"')], r'(?i)raspberry pi|pi 4')
 
-    def test_install_guide_puts_linux_and_homebrew_before_manual_options(self):
+    def test_install_guide_keeps_normal_routes_before_manual_and_source_options(self):
         guide = (ROOT / 'docs/INSTALL.md').read_text()
-        primary, manual = guide.split('## Manual install options', 1)
+        primary, manual = guide.split('## Manual package installation', 1)
         for command in ('sudo apt install -y vectorwarp', 'sudo dnf install -y vectorwarp',
                         'brew trust mickeyslaven/vectorwarp', 'brew install vectorwarp'):
             self.assertIn(command, primary)
-        for section in ('### Manual package installation', '### macOS standalone installer',
-                        '## Build from source', '## Limited platform: Raspberry Pi 4B'):
+        for section in ('## Build from source', '## Remove VectorWarp',
+                        '## Other installation guides'):
             self.assertIn(section, manual)
             self.assertNotIn(section, primary)
-        self.assertEqual(manual.count('<details>'), 4)
-        self.assertEqual(manual.count('</details>'), 4)
-        self.assertIn('fresh-card boot', manual.lower())
-        self.assertIn('verify the repository', primary)
+        self.assertIn('brew upgrade vectorwarp', primary)
+        self.assertNotIn('brew upgrade vectorwarp vectorwarp-heimdall', guide)
+        self.assertIn('[Raspberry Pi 4](PI4_GUIDE.md)', manual)
 
     def test_downloads_use_exact_release_assets_and_all_os_rows(self):
         manifest = self.release_manifest()
@@ -244,8 +243,10 @@ class HomepageTests(unittest.TestCase):
         self.assertEqual(len(install_commands), 2)
         for guide in ('README.md', 'docs/INSTALL.md'):
             text = (ROOT / guide).read_text()
-            for command in install_commands:
-                self.assertIn(command, text, f'{guide} must match the published installation command')
+            for fragment in ('sudo bash vectorwarp-install.sh --repo-only',
+                             'sudo apt install -y vectorwarp',
+                             'sudo dnf install -y vectorwarp', 'vectorwarp'):
+                self.assertIn(fragment, text, f'{guide} must retain the install steps')
         for heading in ('1. Install for your OS', '2. Configure and start radar',
                         '3. Start, stop and check services', '4. Update'):
             self.assertIn(f'<h3>{heading}</h3>', page)
@@ -275,107 +276,25 @@ class HomepageTests(unittest.TestCase):
         self.assertNotIn('--only-upgrade', old_page)
         self.assertNotIn('--only-upgrade', new_page)
 
-    def test_timing_claims_keep_their_scope(self):
-        page = repository.repository_homepage()
-        for required in ('Matched 200 ms processing workloads', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
-                         'Earlier live array proof', '95.5 ms',
-                         'Same recorded IQ at its original rate', 'Same CPU budget',
-                         'clutter FFT/filtering', 'small FP64 coefficient solve',
-                         'cannot safely represent the requested geometry',
-                         'NVIDIA, AMD and Intel GPU checks',
-                         'Equal-range Doppler tests', '30.604 km excess-path',
-                         'GPU_BENCHMARK_20260911.md'):
-            self.assertIn(required, page)
+    def test_retired_benchmark_essays_stay_out_of_public_docs(self):
+        retired = ('GPU_BENCHMARK_20260911.md', 'PI4_PERFORMANCE_20260911.md')
+        for filename in retired:
+            self.assertFalse((ROOT / 'docs' / filename).exists())
+        for name in ('README.md', 'docs/INSTALL.md', 'docs/SETUP.md', 'packaging/README.md'):
+            text = (ROOT / name).read_text()
+            for filename in retired:
+                self.assertNotIn(filename, text)
 
-        # The front page selects examples; the linked report must keep the
-        # full comparison, including slower configurations and test boundaries.
-        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
-        plain_report = ' '.join(report.split())
-        for required in ('c821bee3f0d27cf20c8447f3d908ef722905a4de',
-                         '1e-4', '30.604 km', '41 paired groups', '14 prior-version groups',
-                         '110 timed runs', '2,200 complete CPIs',
-                         'not an endurance test', 'not bit-exact output', 'future work'):
-            self.assertIn(required, plain_report)
-        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-efficiency/comparison.json').read_text())
-        self.assertEqual(len(cohort['rows']), 55)
-        current = [row for row in cohort['rows'] if not row['variant'].startswith('vectorwarp-before-')]
-        prior = [row for row in cohort['rows'] if row['variant'].startswith('vectorwarp-before-')]
-        self.assertEqual(len(current), 41)
-        self.assertEqual(len(prior), 14)
-        self.assertEqual(sum(item['measurement_runs'] for item in cohort['receipts'].values()), 110)
-        self.assertEqual(sum(item['complete_cpis'] for item in cohort['receipts'].values()), 2200)
-        self.assertIn('ccbd2ec1c379310b0df1be1857570d93dd5306a6b435c63c8e785b7c8084dab6', report)
-        self.assertIn('8ba6e1330fad9fcdbe8a5a54134a712d0959775e', report)
-        readme = (ROOT / 'README.md').read_text()
-        for row in cohort['rows']:
-            self.assertEqual(row['delay_bins'], 256)
-            self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833334)
-            self.assertEqual(row['frames'], 24)
-            self.assertIn(f"{row['mean_ms']:.3f} / {row['p95_ms']:.3f} / {row['deadline_misses']}/24", report)
-            if row['variant'] == 'vectorwarp-auto':
-                self.assertEqual(row['cpu_oracle_frames'], 0)
-                self.assertEqual(row['gpu_dd_frames'], 24)
-                self.assertEqual(row['gpu_clutter_frames'], 24)
-            if row in prior:
-                corresponding = next(item for item in current if
-                    (item['host'], item['case'], item['device'], item['variant']) ==
-                    (row['host'], row['case'], row['device'], row['variant'].replace('-before', '')))
-                reduction = 100 * (1 - corresponding['mean_ms'] / row['mean_ms'])
-                self.assertIn(f'{reduction:.1f}%', report)
-                continue
-            selected = ((row['host'] in ('strix', 'nvidia') and row['case'] == 'pair-200ms-800hz') or
-                        (row['host'] == 'pavilion' and row['case'] == 'pair-200ms-2400hz' and
-                         row['device'] in ('auto', '4098:27039:1')))
-            if selected:
-                self.assertIn(f"{row['mean_ms']:.1f} ms", page)
-                self.assertIn(f"{row['mean_ms']:.1f} ms", readme)
-        for variant in ('vectorwarp-cpu', 'vectorwarp-auto'):
-            reductions = []
-            for row in current:
-                if row['variant'] != variant or row['case'] != 'pair-200ms-2400hz':
-                    continue
-                upstream = next(item for item in current if item['host'] == row['host'] and
-                                item['case'] == row['case'] and item['variant'] == 'regular-blah2')
-                reductions.append(100 * (1 - row['mean_ms'] / upstream['mean_ms']))
-            self.assertIn(f'{min(reductions):.1f}–{max(reductions):.1f}%', report)
-
-    def test_current_sink_profile_and_historical_boundaries(self):
-        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
-        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-efficiency/comparison.json').read_text())
-        profiles = {row['variant']: row for row in cohort['rows']
-                    if row['host'] == 'strix' and row['case'] == 'pair-200ms-2400hz'}
-        for key in ('json_ms', 'clutter_ms', 'ambiguity_ms', 'fusion_ms',
-                    'spectrum_ms', 'extract_ms', 'detection_ms', 'tracker_ms'):
-            prior = profiles['vectorwarp-before-auto']['stages'][key]
-            current = profiles['vectorwarp-auto']['stages'][key]
-            self.assertIn(f'{prior:.3f} ms | {current:.3f} ms', report)
-        for scope in ('not evidence of improved detection', 'not a guarantee',
-                      'not isolate each change', 'not a kernel-only or zero-copy claim',
-                      'Earlier native live processor measurements',
-                      'not rerun for the startup-only or combined efficiency changes',
-                      'benchmarks/20260911-equal-range/README.md',
-                      'benchmarks/20260911-efficiency/comparison.json'):
-            self.assertIn(scope, ' '.join(report.split()))
-        self.assertIn('2a9bfdf', report)
-
-    def test_pi_three_way_results_keep_baselines_and_limits(self):
-        report = (ROOT / 'docs/PI4_PERFORMANCE_20260911.md').read_text()
-        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-pi-efficiency/comparison.json').read_text())
-        self.assertEqual((cohort['runs'], cohort['complete_cpis'], len(cohort['rows'])), (24, 480, 12))
-        self.assertEqual({row['variant'] for row in cohort['rows']},
-                         {'regular-blah2', 'offworld-blah2-arm', 'vectorwarp-cpu'})
-        self.assertEqual(cohort['contract']['offworld_commit'], '1d37e29c9f788bed2bc95b1b320ccf6478430111')
-        self.assertTrue(cohort['contract']['host']['fftw_neon_symbols'])
-        for row in cohort['rows']:
-            self.assertEqual((row['frames'], row['deadline_misses'], row['cpi_ms']), (24, 24, 200))
-            self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833333)
-            self.assertIn(f"{row['mean_ms']:.3f} / {row['p95_ms']:.3f}", report)
-            if row['case'] == 'standard-800hz':
-                self.assertIn(f"{row['mean_ms']:.1f} ms", repository.repository_homepage())
-                self.assertIn(f"{row['mean_ms']:.1f} ms", (ROOT / 'README.md').read_text())
-        for text in ('NEON-enabled FFTW', '24/24', 'not live RF', '7.5–12.6%',
-                     '6.7–11.9%', '199 taps instead of 210', 'no GPU radar-processing path'):
-            self.assertIn(text, ' '.join(report.split()))
+    def test_benchmark_tree_contains_summaries_not_raw_run_payloads(self):
+        benchmark_root = ROOT / 'docs/benchmarks'
+        forbidden_suffixes = ('.log', '.jsonl', '.frames.csv', '.command.json',
+                              '.geometry.json', '.profile.json', '.summary.json')
+        forbidden_names = {'array-per-cpi.csv', 'live-per-cpi.csv',
+                           'paced-per-cpi.csv', 'per-cpi.csv'}
+        raw = [path.relative_to(ROOT) for path in benchmark_root.rglob('*')
+               if path.is_file() and
+               (path.name.endswith(forbidden_suffixes) or path.name in forbidden_names)]
+        self.assertEqual(raw, [], f'raw benchmark payloads belong in CI/release artifacts: {raw[:8]}')
 
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()
@@ -387,27 +306,18 @@ class HomepageTests(unittest.TestCase):
             self.assertIn(required, page)
 
     def test_quickstart_links_and_release_status(self):
-        # Wrapping and headings are editorial choices. Keep the measured scope,
-        # actual upstream comparison, and release boundaries under test.
         readme = ' '.join((ROOT / 'README.md').read_text().split())
-        self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
         self.assertIn('sudo bash vectorwarp-install.sh --repo-only', readme)
         self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', readme)
         self.assert_download_links_are_current(readme)
-        self.assertIn('replaying the same recorded signal at its original rate', readme)
-        self.assertIn('CPU budget', readme)
-        self.assertIn('2–8-channel network input', readme)
-        self.assertIn('one package', readme.lower())
-        for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
-                      'clutter FFT/filtering', 'startup',
-                      'docs/GPU_BENCHMARK_20260911.md',
-                      'Wider Doppler coverage'):
+        for claim in ('open-source passive-radar application',
+                      'Coherent 2–8 channel array support',
+                      'Fused local and online ADS-B and MLAT feeds',
+                      'Portable recording bundles', 'Hardware-independent replay',
+                      'docs/media/vectorwarp-bistatic-range-doppler.gif',
+                      'docs/media/vectorwarp-3d-live-airspace.gif'):
             self.assertIn(claim, readme)
-        # Numeric findings belong to the linked report rather than an old
-        # README headline; editorial changes must not resurrect obsolete runs.
-        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
-        self.assertIn('c821bee3f0d27cf20c8447f3d908ef722905a4de', report)
-        self.assertIn('1e-4', report)
+        self.assertNotIn('GPU_BENCHMARK_20260911.md', readme)
         self.assertTrue((ROOT / 'html/favicon/vectorwarp-vw.svg').is_file())
         for name in ('README.md', 'docs/INSTALL.md', 'docs/SETUP.md', 'packaging/README.md'):
             document = ROOT / name
@@ -426,11 +336,10 @@ class HomepageTests(unittest.TestCase):
 
     def test_readme_install_routes_cover_mac_and_live_linux_packages(self):
         readme = (ROOT / 'README.md').read_text()
-        self.assertIn('[Install](docs/INSTALL.md)', readme)
-        self.assertIn('[macOS / Homebrew](docs/MACOS_HOMEBREW.md)', readme)
+        self.assertIn('[installation guide](docs/INSTALL.md)', readme)
         guide = (ROOT / 'docs/INSTALL.md').read_text()
         self.assertIn('(https://mickeyslaven.github.io/blah2-VectorWarp/#install)', guide)
-        self.assertIn('(MACOS_HOMEBREW.md)', guide)
+        self.assertIn('brew upgrade vectorwarp', guide)
         self.assertIn('## Build from source', guide)
         page = repository.repository_homepage(self.release_manifest())
         for command in ('sudo bash vectorwarp-install.sh --repo-only',

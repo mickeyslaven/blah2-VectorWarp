@@ -12,6 +12,7 @@ function load(name) {
   if (value.capture.device.type === 'HackRF') value.capture.device.serial = ['0001', '0002'];
   return value;
 }
+const clone = value => JSON.parse(JSON.stringify(value));
 
 const firstRun = validateConfig(load('config.yml'));
 assert.equal(firstRun.valid, false);
@@ -23,6 +24,17 @@ for (const name of ['config-hackrf.yml', 'config-usrp.yml',
   assert.equal(result.valid, true, `${name}: ${result.errors.join('; ')}`);
 }
 
+const krakenProfile = load('config-kraken.yml');
+assert.equal(krakenProfile.network.tracker_forward.enabled, false,
+  'the generic Kraken profile must not start a disconnected external tracker feed');
+assert.equal(validateConfig({...krakenProfile, network: {
+  ...krakenProfile.network, tracker_forward: {enabled: false}}}).valid, true,
+  'a disabled tracker feed must not require an unused external endpoint');
+const incompleteEnabledTracker = clone(krakenProfile);
+incompleteEnabledTracker.network.tracker_forward.enabled = true;
+assert.equal(validateConfig(incompleteEnabledTracker).valid, false,
+  'enabling the tracker feed requires an explicit endpoint');
+
 const sixChannel = load('config-kraken.yml');
 sixChannel.capture.device.channel_count = 6;
 sixChannel.capture.device.surveillance_channels = [0, 1, 2, 3, 4, 5];
@@ -33,7 +45,6 @@ sixChannel.location.rx = {name: 'Test receiver', latitude: 40, longitude: -75, a
 sixChannel.location.tx = {name: 'Test transmitter', latitude: 41, longitude: -74, altitude: 120};
 assert.equal(validateConfig(sixChannel).valid, true);
 
-const clone = value => JSON.parse(JSON.stringify(value));
 const automaticClutter = clone(sixChannel);
 automaticClutter.process.ambiguity.delayMin = -8;
 automaticClutter.process.ambiguity.delayMax = 47;
@@ -60,11 +71,32 @@ coherentFusion.capture.device.array_geometry = {
   bearing_channels: [...coherentFusion.capture.device.surveillance_channels], elements:
   coherentFusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
     id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
-    position: [Math.cos(2 * Math.PI * index / 5) * .193548,
-      Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+    position: [Math.cos(2 * Math.PI * index / 5) * .2,
+      Math.sin(2 * Math.PI * index / 5) * .2, 0]
   }))};
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
+const correlatedBeamTrials = clone(coherentFusion);
+correlatedBeamTrials.process.surveillance_fusion.effective_beam_trials = 5;
+assert.equal(validateConfig(correlatedBeamTrials).valid, true,
+  'effective trials may be lower than the correlated beam-bank size');
+const excessiveBeamTrials = clone(coherentFusion);
+excessiveBeamTrials.process.surveillance_fusion.effective_beam_trials = 13;
+assert.equal(validateConfig(excessiveBeamTrials).valid, false,
+  'effective trials cannot exceed the beam-bank size');
+const defaultBeamTrials = clone(coherentFusion);
+delete defaultBeamTrials.process.surveillance_fusion.beams;
+defaultBeamTrials.process.surveillance_fusion.effective_beam_trials = 5;
+assert.equal(validateConfig(defaultBeamTrials).valid, true,
+  'reduced effective trials also work with the default twelve-beam bank');
+defaultBeamTrials.process.surveillance_fusion.effective_beam_trials = 13;
+assert.equal(validateConfig(defaultBeamTrials).valid, false,
+  'effective trials cannot exceed the implicit twelve-beam bank');
+const noncoherentBeamTrials = clone(coherentFusion);
+noncoherentBeamTrials.process.surveillance_fusion.mode = 'noncoherent';
+noncoherentBeamTrials.process.surveillance_fusion.effective_beam_trials = 5;
+assert.equal(validateConfig(noncoherentBeamTrials).valid, false,
+  'noncoherent fusion cannot accept a coherent-bank trial correction');
 const measuredFusion = clone(coherentFusion);
 Object.assign(measuredFusion.capture.device.array_geometry,
   {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
@@ -354,6 +386,18 @@ for (const profile of profiles) {
     assert.equal(validateConfig(switched).valid, false, `${profile.type}: reject ${threads} FFT threads`);
   }
 }
+const rspDuoKrakenReplay = configurationForReceiver('RspDuo', load('config.yml'));
+const rspDuoPerformance = clone(rspDuoKrakenReplay.process.performance);
+rspDuoKrakenReplay.process = clone(coherentFusion.process);
+rspDuoKrakenReplay.process.performance = rspDuoPerformance;
+rspDuoKrakenReplay.capture.device.array_geometry = clone(coherentFusion.capture.device.array_geometry);
+rspDuoKrakenReplay.capture.replay = {...rspDuoKrakenReplay.capture.replay, state: true,
+  file: '/tmp/kraken-recording.blah2iq', format: 'auto', sample_rate_hz: 2400000,
+  frequency_hz: 509000000, channel_count: 5, reference_channel: 0,
+  surveillance_channels: [0, 1, 2, 3, 4], reference_channels: [0, 1, 2, 3, 4],
+  reference_mode: 'array_eigenbeam'};
+assert.equal(validateConfig(rspDuoKrakenReplay).valid, true,
+  `Kraken replay on an RSPduo host: ${validateConfig(rspDuoKrakenReplay).errors.join('; ')}`);
 
 const tooManyChannels = clone(sixChannel);
 tooManyChannels.capture.device.channel_count = 9;
@@ -576,4 +620,15 @@ const invalidProvenance = clone(sixChannel);
 invalidProvenance.capture.replay.provenance = 'best-effort';
 assert.equal(validateConfig(invalidProvenance).valid, false,
   'Replay must not silently invent an unqualified provenance mode');
+const excessiveAircraftClip = clone(sixChannel);
+excessiveAircraftClip.capture.aircraft_clips = {enabled: true, pre_seconds: 6, post_seconds: 5};
+assert.equal(validateConfig(excessiveAircraftClip).valid, false,
+  'Automatic aircraft IQ clips must fit the bounded ten-second recorder');
+const portableAircraftClip = configurationForReceiver('Usrp', load('config.yml'));
+portableAircraftClip.capture.aircraft_clips = {enabled: true, pre_seconds: 2,
+  post_seconds: 3, minimum_slant_range_km: 5, maximum_slant_range_km: 80,
+  minimum_elevation_deg: 1, maximum_elevation_deg: 45,
+  minimum_interval_seconds: 10};
+assert.equal(validateConfig(portableAircraftClip).valid, true,
+  'Automatic aircraft IQ clips are valid for a non-Kraken receiver');
 console.log(`Exhaustive type checks passed for ${checked} device-setting leaves; boundary and cross-field tests passed.`);

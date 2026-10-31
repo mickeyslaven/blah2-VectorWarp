@@ -12,7 +12,8 @@ namespace blah2::production_replay {
 // The CPU stages used by the live processor and its resident startup oracle.
 // Callers retain capture ownership, acceleration selection, and publication.
 // This object retains the reference learner and FFT workspaces across CPIs;
-// resetting only the learner has exactly the live replay-loop semantics.
+// Resetting rebuilds every adaptive/reference-dependent CPU stage so an input
+// epoch boundary cannot reuse a previous covariance or Wiener workspace.
 class RawIqStages {
 public:
   struct Config {

@@ -17,7 +17,18 @@ function sample(overrides = {}) {
       health: {streamEstablished: false, callbackFault: false}},
     runtime: {processorState: 'error', restartState: 'failed', backend: 'cpu',
       configRevision: 'sha256:abc', uptimeSeconds: 12, details: {exitStatus: 1}},
-    recentEvents: [], comment: 'Failed after reconnecting USB.', ...overrides};
+    recentEvents: [], features: {recording: {requested: true, paused: false, active: true,
+      errorPresent: false, recordedSamples: 4000000, clipRevision: 3, clipErrorPresent: false,
+      clipSamples: 9600000, timelineCaptureAvailable: true, automaticCleanup: false,
+      lowSpacePolicy: 'stop_recording', maximumAgeDays: 30, maximumTotalGb: 100, minimumFreeGb: 5},
+    replay: {active: false, paused: false, seekable: false, positionSamples: 0, totalSamples: 0,
+      sampleRateHz: 2000000, timelineAvailable: false},
+    adsb: {enabled: true, online: true, degraded: false, sourceCount: 4, healthySourceCount: 3,
+      aircraftCount: 42, directAircraftCount: 40, mlatAircraftCount: 2,
+      associationLagCpis: 4, associationLagMs: 2000},
+    processing: {acceleration: 'vulkan-resident', clutterAcceleration: 'vulkan-resident', configuredCpiMs: 500},
+    presentation: {timestampConnections: 2, associationLagCpis: 4, associationLagMs: 2000}},
+    comment: 'Failed after reconnecting USB.', ...overrides};
 }
 function request(body = sample(), options = {}) {
   return new Request('https://reports.example/v1/reports', {method: 'POST',
@@ -50,7 +61,7 @@ test('valid report becomes a bounded GitHub issue with separate grouping and rec
   assert.deepEqual(issue.labels, ['bug', 'anonymous-report']);
 });
 
-test('adversarial free text and structured secrets are discarded before GitHub', async () => {
+test('user comments are retained but adversarial secrets are redacted before GitHub', async () => {
   const dirty = sample();
   const probes = [
     'Authorization: Basic dXNlcjpwYXNz', 'Authorization: "Bearer ghp_quoted"',
@@ -66,7 +77,7 @@ test('adversarial free text and structured secrets are discarded before GitHub',
   const issue = githubIssue(report, await reportFingerprint(report), await submissionReceiptId(report));
   assert.equal(report.incident.message,
     'VectorWarp detected SDR_OPEN_FAILED during receiver open.');
-  assert.equal(report.comment, null); assert.equal(report.system.browser, null);
+  assert.ok(report.comment); assert.equal(report.system.browser, null);
   assert.equal(report.receiver.model, null);
   assert.doesNotMatch(issue.body,
     /dXNlcjpwYXNz|ghp_quoted|correct horse|battery staple|a1b2c3|PRIVATE12|abc123|VW123|SECRET7|SECOND_SECRET/);
@@ -85,6 +96,8 @@ test('schema rejects consent gaps, unsafe Markdown release values and sensitive 
   }
   const array = sample(); array.runtime.details.routeName = ['status', 'SECOND_SECRET'];
   assert.throws(() => normalizeReport(array), /unsupported diagnostic/);
+  const unsafeFeature = sample(); unsafeFeature.features.recording.file = '/private/recording.blah2iq';
+  assert.throws(() => normalizeReport(unsafeFeature), /unsupported field/);
 });
 
 test('chunked body is cancelled immediately after the streaming limit', async () => {

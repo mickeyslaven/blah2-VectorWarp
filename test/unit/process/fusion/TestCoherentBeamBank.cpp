@@ -16,7 +16,7 @@ TEST_CASE("coherent beam bank recovers array gain in a steered direction")
   CoherentBeamBank::Config config;
   config.frequencyHz = 539000000;
   config.beams = 12;
-  const double radius = .193548;
+  const double radius = .2;
   for (int channel = 0; channel < 5; ++channel)
   {
     const double angle = -2 * PI * channel / 5;
@@ -62,13 +62,21 @@ TEST_CASE("coherent beam bank rejects mismatched map geometry")
   REQUIRE_THROWS_AS(fusion.process({&only}), std::invalid_argument);
 }
 
+TEST_CASE("coherent beam bank rejects geometry beyond the resident channel bound")
+{
+  CoherentBeamBank::Config config;
+  config.frequencyHz=539000000;config.beams=12;
+  config.positionsM.resize(9,{0,0,0});
+  REQUIRE_THROWS_AS(CoherentBeamBank(config),std::invalid_argument);
+}
+
 TEST_CASE("coherent beam bank removes receiver chain phase")
 {
   CoherentBeamBank::Config config;
   config.frequencyHz = 539000000;
   config.beams = 8;
   config.directPathAzimuthRad = 0;
-  const double radius = .193548;
+  const double radius = .2;
   for (int channel = 0; channel < 5; ++channel)
   {
     const double angle = -2 * PI * channel / 5;
@@ -104,7 +112,7 @@ TEST_CASE("coherent beam bank applies a calibrated soft direct-path null")
   baseline.frequencyHz = 539000000;
   baseline.beams = 12;
   baseline.directPathAzimuthRad = 0;
-  const double radius = .193548;
+  const double radius = .2;
   const double waveNumber = 2 * PI * baseline.frequencyHz / C;
   std::vector<std::complex<double>> direct;
   std::vector<Map<std::complex<double>>> storage;
@@ -134,7 +142,7 @@ TEST_CASE("coherent beam bank uses measured target to direct ratios")
   config.frequencyHz = 563000000;
   config.beams = 12;
   config.directPathAzimuthRad = 0;
-  const double radius = .193548;
+  const double radius = .2;
   for (int channel = 0; channel < 5; ++channel)
   {
     const double angle = -2 * PI * channel / 5;

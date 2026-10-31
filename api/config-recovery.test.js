@@ -71,9 +71,23 @@ function availablePort(usedPorts) {
     assert.equal(migrateKnownDefaults(file), false,
       'the migration must be one-shot and leave current selectors untouched');
     legacyUsrp.capture.device.address = 'addr=192.168.10.2';
+    legacyUsrp.truth.remote_id = {enabled: true, source: '127.0.0.1:8754',
+      poll_interval: .5, source_timeout: 1.2, smoothing_window: 4,
+      max_position_age: 10, wifi_enabled: false};
     fs.writeFileSync(file, yaml.dump(legacyUsrp));
     assert.equal(migrateKnownDefaults(file), false,
       'an operator-selected network USRP address must never be rewritten');
+    delete legacyUsrp.truth.remote_id;
+    const withoutRemoteId = yaml.dump(legacyUsrp);
+    fs.writeFileSync(file, withoutRemoteId);
+    const optionalRemoteId = readConfig(file);
+    assert.equal(optionalRemoteId.config.truth.remote_id.enabled, false);
+    assert.equal(optionalRemoteId.suppliedDefaults.some(item => item.startsWith('truth.remote_id')), false,
+      'disabled Remote ID defaults must remain optional for older configurations');
+    assert.equal(optionalRemoteId.setupRequired, false);
+    assert.equal(migrateKnownDefaults(file), false,
+      'optional Remote ID defaults must not rewrite an operator configuration');
+    assert.equal(fs.readFileSync(file, 'utf8'), withoutRemoteId);
     fs.unlinkSync(file);
     const missing = readConfig(file);
     assert.equal(missing.setupRequired, true);
@@ -122,7 +136,9 @@ function availablePort(usedPorts) {
     // Kraken gain is a declared string/number union: a "keep" profile default
     // must not replace a persisted Suite gain while recovering a document.
     const kraken = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
-    for (const gain of [-1, 0, 28.7, 49.6, 50]) {
+    // Suite AGC (-1) is intentionally invalid with measured-per-channel gain:
+    // the latter needs stable fixed starting gains for reproducible probes.
+    for (const gain of [0, 28.7, 49.6, 50]) {
       kraken.capture.device.heimdall.gain = gain;
       fs.writeFileSync(file, yaml.dump(kraken));
       const persisted = readConfig(file);

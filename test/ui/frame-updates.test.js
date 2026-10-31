@@ -62,6 +62,38 @@ function clockedPage(cpi = .5) {
   await page.advance(5000);
   assert.equal(times.at(-1), 2200);
 
+  const bounded = clockedPage(.05);
+  const boundedTimes = [];
+  const boundedLoop = bounded.context.startRadarUpdates(() =>
+    boundedTimes.push(bounded.now()), 1000);
+  await bounded.advance(2500);
+  assert.deepEqual(boundedTimes, [0, 1000, 2000],
+    'Heavy mobile views can impose a display cadence without changing radar CPI');
+  boundedLoop.stop();
+
+  const background = clockedPage(.2);
+  const visibilityListeners = new Set();
+  background.context.document = {
+    hidden: true,
+    addEventListener(name, listener) {
+      if (name === 'visibilitychange') visibilityListeners.add(listener);
+    },
+    removeEventListener(name, listener) {
+      if (name === 'visibilitychange') visibilityListeners.delete(listener);
+    }
+  };
+  const backgroundTimes = [];
+  const backgroundLoop = background.context.startRadarUpdates(() =>
+    backgroundTimes.push(background.now()));
+  await background.advance(3000);
+  assert.deepEqual(backgroundTimes, [], 'Hidden tabs must not poll live radar frames');
+  background.context.document.hidden = false;
+  for (const listener of visibilityListeners) listener();
+  await background.settle();
+  assert.deepEqual(backgroundTimes, [3000], 'A visible tab resumes immediately without catch-up');
+  backgroundLoop.stop();
+  assert.equal(visibilityListeners.size, 0, 'Stopping a view releases its visibility listener');
+
   for (const cpi of [null, undefined, 0, -1, Infinity, NaN, '0.5'])
     assert.equal(page.context.radarFrameIntervalMs({process: {data: {cpi}}}), 1000);
   assert.equal(page.context.radarFrameIntervalMs({process: {data: {cpi: .001}}}), 16);
@@ -79,7 +111,9 @@ function clockedPage(cpi = .5) {
   release();
   await slow.settle();
   await slow.advance(16);
-  assert.equal(calls, 2, 'Resume with newest data, without replaying missed ticks');
+  assert.equal(calls, 1, 'A slow request must not trigger an immediate catch-up burst');
+  await slow.advance(84);
+  assert.equal(calls, 2, 'Resume with newest data on the next regular interval');
   slowLoop.stop();
   release();
   await slow.advance(5000);

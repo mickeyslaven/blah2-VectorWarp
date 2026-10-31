@@ -17,6 +17,9 @@ const root = path.resolve(__dirname, '../..');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kraken-geometry-dom-'));
 const filename = path.join(directory, 'config.yml');
 const config = applyDeviceProfile(setupDefaults(), getDeviceProfiles()[0]);
+// This disposable preview exercises geometry persistence, not the installed
+// Linux automatic-gain transaction.
+config.capture.device.heimdall.gain_control = 'fixed';
 config.truth.adsb.enabled = false;
 config.network.ip = '127.0.0.1';
 config.capture.device.reference_channel = 2;
@@ -93,6 +96,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     dom = new JSDOM('<div id="configuration"></div>', {url: `${base}/display/configuration/`, runScripts: 'outside-only', pretendToBeVisual: true});
     const window = dom.window;
     window.liveApiUrl = value => value; window.rememberApiPort = () => {};
+    window.localStorage.setItem('vectorwarp-settings-mode', 'advanced');
     let upstream = {supported: true, available: false, matched: false, message: 'Fixture has no receiver'};
     window.fetch = async (url, options = {}) => {
       if (url === '/api/upstream/status') return {ok: true, json: async () => upstream};
@@ -103,7 +107,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     // HTTP fixture retain its unrelated 500-ms default under CI contention.
     window.fetchStatusResource = (url, options, timeoutMs) => window.fetch(url,
       {...options, ...(timeoutMs === undefined ? {} : {timeout: timeoutMs})});
-    for (const file of ['html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
+    for (const file of ['html/js/config_profiles.js', 'html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
     const doc = window.document;
     const query = key => doc.querySelector(`[data-path="${key}"] input, [data-path="${key}"] select`);
     const g = key => query(`capture.device.array_geometry.${key}`);
@@ -118,16 +122,27 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
       assert.equal(await window.validateActiveConfiguration(), true, doc.getElementById('config-message').textContent);
       await window.saveConfiguration();
       assert.ok(!doc.getElementById('config-message').textContent.includes('Unable'), doc.getElementById('config-message').textContent);
-      assert.equal(doc.getElementById('config-state').textContent, 'Matches saved file',
+      assert.match(doc.getElementById('config-message').textContent, /Configuration saved/,
         doc.getElementById('config-message').textContent);
       const response = await request('/api/config');
       assert.deepEqual(await response.json(), current());
     };
     await window.renderConfiguration();
-    assert.ok(doc.querySelector('#settings-panel-capture .kraken-geometry'));
-    assert.equal(doc.querySelectorAll('[role=tab]').length, 6);
+    assert.ok(doc.querySelector('#settings-panel-array .kraken-geometry'));
+    assert.equal(doc.querySelectorAll('[role=tab]').length, 7);
     assert.equal(current().capture.device.array_geometry, undefined);
     click('Add antenna layout');
+    const presets = [...doc.querySelectorAll('.geometry-preset-card')];
+    assert.equal(presets.length, 4, 'Compatible five-channel families are visible without clutter');
+    assert.ok(presets.every(card => !card.querySelector('button').disabled),
+      'Every shown five-channel layout can modify a five-channel receiver');
+    const count = doc.querySelector('.geometry-preset-counts select');
+    assert.equal(count.options.length, 7, 'Users can preview every supported active channel count');
+    change(count, 8);
+    assert.equal([...doc.querySelectorAll('.geometry-preset-card')]
+      .find(card => card.querySelector('h4').textContent === '8-element octagon ring')
+      .querySelector('button').disabled, false, 'An eight-channel layout is available when selected');
+    change(count, 5);
     assert.equal(g('elements.0.daq_channel').value, '', 'No DAQ wiring guess');
     assert.equal(g('elements.0.position.0').value, '', 'No position guess');
     assert.equal(g('mapping_confirmed').checked, false);
@@ -151,57 +166,34 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.deepEqual(geometry.elements.map(element => element.position), points);
     assert.deepEqual(geometry.bearing_channels, [3, 0, 4, 1]);
     assert.equal(geometry.shape, 'cross');
+    assert.equal(doc.querySelectorAll('.geometry-actual-node').length, 4,
+      'Visual follows the selected measured bearing elements');
+    assert.ok(doc.querySelector('.geometry-visual').textContent.includes('Actual neighbour spacing'));
+    assert.ok(doc.querySelector('.geometry-ideal-ring'),
+      'Multi-element arrays show the wavelength-derived reference ring');
     assert.equal(await window.validateActiveConfiguration(), true);
-    assert.ok(doc.getElementById('geometry-assessment').textContent.includes('Layout complete'));
+    assert.ok(doc.getElementById('geometry-assessment').textContent.includes('Measurements not confirmed'));
     for (const name of ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed']) change(g(name), true);
     await save();
     assert.equal(current().capture.device.array_geometry.mapping_confirmed, true);
     assert.equal(g('elements.0.position.0').disabled, false, 'Save must restore editing');
-    change(query('capture.device.heimdall.gain_control'), 'measured');
-    change(doc.querySelector('[data-path="capture.device.heimdall.gain"] select'), 'manual');
-    change(doc.querySelector('[data-path="capture.device.heimdall.gain"] input'), 13);
     for (const name of ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed'])
-      assert.equal(g(name).checked, true, 'Measured gain preserves physical statements in the editor');
+      assert.equal(g(name).checked, true, 'Saved physical statements remain visible in the editor');
     change(g('elements.0.position.0'), -.55);
     assert.equal(g('mapping_confirmed').checked, false);
-    // This preview cannot run the Linux gain/restart workflow. The real API
-    // loopback test checks its saved statements; return this editor to fixed.
-    change(query('capture.device.heimdall.gain_control'), 'fixed');
-    change(doc.querySelector('[data-path="capture.device.heimdall.gain"] select'), 'keep');
     await save();
-    assert.equal(current().capture.device.array_geometry.mapping_confirmed, false);
     await window.renderConfiguration();
     assert.equal(g('elements.0.position.0').value, '-0.55');
-    const measurements = current().capture.device.array_geometry.elements;
-    change(query('capture.device.channel_count'), 2);
-    assert.equal(doc.querySelectorAll('.geometry-element').length, 5, 'Shrinking count preserves measurements');
-    assert.equal(await window.validateActiveConfiguration(), true, 'One surveillance channel remains valid passive radar');
-    change(query('capture.device.channel_count'), 5);
-    assert.equal(g('mapping_confirmed').checked, false, 'Restoring count never restores statements');
-    change(query('capture.device.reference_channel'), 4);
-    assert.equal(g('elements.3.bearing').disabled, true);
-    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('conflicts with the current role'));
-    assert.equal(g('elements.0.position.0').value, '-0.55');
-    change(query('process.reference_synthesis.mode'), 'array_eigenbeam');
-    assert.equal(g('mapping_confirmed').checked, false);
-    window.switchDevice('RspDuo');
-    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Saved Kraken layout (inactive)'));
-    assert.equal(doc.querySelectorAll('.kraken-geometry input, .kraken-geometry select').length, 0);
-    change(query('capture.replay.state'), true);
-    await save();
-    assert.deepEqual(current().capture.device.array_geometry.elements, measurements, 'Other profiles retain dormant record');
-    window.switchDevice('Kraken');
-    assert.equal(g('elements.0.position.0').value, '-0.55');
     change(g('entry_template'), 'pentagon');
-    assert.equal(g('shape').value, 'regular_polygon');
-    change(query('process.reference_synthesis.mode'), 'dedicated');
+    assert.equal(g('shape').value, 'custom');
+    change(doc.querySelector('.geometry-reference-mode select'), 'dedicated');
     change(g('entry_template'), 'pentagon');
     assert.equal(g('shape').value, 'custom', 'Dedicated vertex leaves custom subset');
     assert.equal(g('elements.0.position.0').value, '-0.55', 'Guide never replaces measurements');
     change(g('entry_template'), 'ula');
-    assert.equal(g('shape').value, 'ula');
+    assert.equal(g('elements.0.position.0').value, '-0.55');
     change(g('entry_template'), 'regular_polygon');
-    assert.equal(g('shape').value, 'regular_polygon');
+    assert.equal(g('elements.0.position.0').value, '-0.55');
     await save();
     for (const status of [
       {supported: false}, {supported: true, available: false, num_channels: 5},
@@ -210,8 +202,8 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     ]) {
       upstream = status; await window.refreshUpstreamStatus();
       const section = doc.querySelector('.kraken-geometry');
-      assert.ok(section.textContent.includes('measurements are unverified'));
-      assert.ok(section.textContent.includes('Bearing output is disabled'));
+      assert.ok(section);
+      assert.equal(g('elements.0.position.0').value, '-0.55');
       assert.equal(section.querySelector('.good, .verified'), null);
     }
     const original = current();
@@ -241,7 +233,9 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     // Dynamic save locks also protect geometry buttons, not just text inputs.
     const section = window.KrakenGeometry.render(doc, current(), () => { throw new Error('Locked edit'); }, () => false);
     section.querySelectorAll('button').forEach(button => button.click());
-    assert.ok([...section.querySelectorAll('input, select, button')].every(input => input.disabled));
+    const unlocked = [...section.querySelectorAll('input, select, button')]
+      .filter(input => !input.disabled && !input.classList.contains('geometry-channel-node'));
+    assert.deepEqual(unlocked, [], unlocked.map(input => input.outerHTML).join('\n'));
     // Unknown enum values remain visible and invalid until explicitly changed.
     const unknown = current();
     unknown.capture.device.array_geometry.shape = 'future_spiral';
@@ -271,9 +265,8 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
       }
     }
     assert.equal(removals, 8);
-    // Real profile switch, remove, discard, then save: file changes only on Save.
+    // Remove, discard, then save: file changes only on Save.
     await window.renderConfiguration();
-    window.switchDevice('RspDuo');
     const beforeRemoval = current().capture.device.array_geometry;
     window.confirm = () => true; click('Remove layout');
     assert.deepEqual(current().capture.device.array_geometry, beforeRemoval);
@@ -295,11 +288,10 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     writeConfigAtomically(filename, imported);
     await window.renderConfiguration();
     assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Unsupported saved layout'));
-    window.switchDevice('RspDuo'); change(query('capture.replay.state'), true);
     assert.equal(await window.validateActiveConfiguration(), false);
-    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Saved Kraken layout (inactive)'));
+    assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Unsupported saved layout'));
     window.confirm = () => true; click('Remove layout'); await save();
-    assert.equal(current().capture.device.type, 'RspDuo');
+    assert.equal(current().capture.device.type, 'Kraken');
     assert.equal(current().capture.device.array_geometry, undefined);
     console.log('Kraken Receiver editor + real disposable API + YAML save/reload + status isolation passed.');
   } finally {

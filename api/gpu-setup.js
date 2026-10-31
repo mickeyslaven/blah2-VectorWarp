@@ -20,7 +20,8 @@ function fromRuntime(setup, {acceleration, clutterAcceleration, fresh} = {}) {
   // Runtime telemetry may demonstrate a distro backport works. Never reject a
   // qualified device solely by version or turn package/enumeration into proof.
   if ((!setup.pi && setup.platform !== 'darwin') || !fresh) return setup;
-  const ready = value => value?.active === 'vulkan' && value?.state === 'ready';
+  const ready = value => typeof value?.active === 'string' &&
+    value.active.startsWith('vulkan') && value.state === 'ready';
   const stages = {ambiguity: ready(acceleration), clutter: ready(clutterAcceleration)};
   if (!stages.ambiguity && !stages.clutter) return {...setup, runtimeStages: stages};
   return {...setup, state: stages.ambiguity && stages.clutter ? 'qualified' : 'partially-qualified',
