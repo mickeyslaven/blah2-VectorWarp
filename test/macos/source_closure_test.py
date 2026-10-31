@@ -59,6 +59,12 @@ class SourceClosureTest(unittest.TestCase):
             inputs.verify_source_closure(self.closure(tamper=True),self.inventory,self.runtime,self.source,self.arch,self.run)
 
 class SourceClosureExporterTest(unittest.TestCase):
+    def test_workflow_fetches_recipe_test_resources(self):
+        workflow=(ROOT/".github/workflows/macos-standalone.yml").read_text()
+        fetches=[line for line in workflow.splitlines() if "brew fetch --build-from-source" in line]
+        self.assertGreaterEqual(len(fetches),2)
+        self.assertTrue(all("--test" in line for line in fetches))
+
     def test_exports_exact_payloads_and_rejects_omission(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); cache=root/"cache"; recipes=root/"recipes"; notices=root/"notices"
