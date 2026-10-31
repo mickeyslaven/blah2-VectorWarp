@@ -30,7 +30,9 @@ class SourceClosureTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/macos-standalone.yml").read_text()
         self.assertIn("https://formulae.brew.sh/api/formula/", workflow)
         self.assertIn('urllib.parse.quote(formula, safe="")', workflow)
-        self.assertIn('if formula == "vectorwarp-uhd":', workflow)
+        self.assertIn('not info.get("local_patch_checksums")', workflow)
+        self.assertIn("installed_identity == official_identity", workflow)
+        self.assertIn('identifier = "vectorwarp/release-build/vectorwarp-uhd"', workflow)
 
     def closure(self, *, arch=None, omit=False, tamper=False):
         path = self.root / ("closure-" + str(len(list(self.root.glob('closure-*')))) + ".tar.gz")
