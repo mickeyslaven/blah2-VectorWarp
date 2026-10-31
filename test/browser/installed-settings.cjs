@@ -17,10 +17,10 @@ function assertReplayIdentity(status, before, accepted) {
 }
 
 function assertReceivingReplay(status, appliedAt) {
-  // Replay.cpp publishes draining at EOF before a looping rewind. It is a
-  // transient state only; the final observation below still requires playing.
-  assert.ok(['playing', 'draining'].includes(status.processor?.state), status.processor?.state);
-  assert.equal(status.radar, 'receiving');
+  // A short non-looping package fixture may reach complete before the first
+  // status poll. It is valid only when a fresh frame proves replay ran.
+  assert.ok(['playing', 'draining', 'complete'].includes(status.processor?.state), status.processor?.state);
+  if (status.processor?.state !== 'complete') assert.equal(status.radar, 'receiving');
   assert.ok(status.lastFrameAt > appliedAt, 'A new frame must follow the browser Apply');
 }
 
@@ -32,8 +32,9 @@ async function waitForLoopingReplay(initial, before, accepted, appliedAt, readSt
   const deadline = now() + 30000;
   for (;;) {
     assertReplayIdentity(status, before, accepted);
-    if (['playing', 'draining'].includes(status.processor?.state) &&
-        status.radar === 'receiving' && status.lastFrameAt > appliedAt) {
+    if (['playing', 'draining', 'complete'].includes(status.processor?.state) &&
+        (status.processor?.state === 'complete' || status.radar === 'receiving') &&
+        status.lastFrameAt > appliedAt) {
       assertReceivingReplay(status, appliedAt);
       if (firstFrameAt === null) firstFrameAt = status.lastFrameAt;
       if (status.processor?.state === 'playing' && status.lastFrameAt > firstFrameAt) return status;
@@ -82,6 +83,9 @@ async function runStatusFixtures() {
   const ready = await waitForLoopingReplay(status('loading', 1000), before, accepted, appliedAt,
     async () => sequence.shift(), async milliseconds => { clock += milliseconds; }, () => clock);
   assert.equal(ready.processor.state, 'playing');
+  const completed = await waitForReplayFrame(status('complete', 1001), before, accepted, appliedAt,
+    async () => status('complete', 1001));
+  assert.equal(completed.processor.state, 'complete');
   const rejects = async (initial, message) => {
     let time = appliedAt;
     await assert.rejects(waitForLoopingReplay(initial, before, accepted, appliedAt,
