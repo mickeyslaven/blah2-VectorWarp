@@ -22,6 +22,7 @@ int main()try{
  using gpu_tracker::DopplerCombBirth;
  using gpu_tracker::dopplerCombBirthEligible;
  using gpu_tracker::rangeCombBirthEligible;
+ using gpu_tracker::validQuarantineCoverage;
  using gpu_tracker::dopplerRidgeHasBirthCapacity;
  using gpu_tracker::advancePersistentStreak;
  using gpu_tracker::persistentCell;
@@ -93,6 +94,8 @@ int main()try{
  require(retirement.samples==12&&retirement.minimumAssociated==9&&
   retirement.maxDelaySpan==1&&retirement.maxDopplerSpanHz==3,
   "stationary quarantine policy does not follow persistence");
+ require(validQuarantineCoverage(1,1)&&validQuarantineCoverage(3,2)&&
+  !validQuarantineCoverage(0,1),"stationary quarantine coverage is not association-bounded");
  require(persistentCell(7,3,10)==37,"persistent map did not retain Doppler identity");
  require(persistentRidgeContains(37,27,10,8)&&persistentRidgeContains(37,47,10,8)&&
   persistentRidgeContains(37,33,10,8)&&persistentRidgeContains(37,48,10,8),

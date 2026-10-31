@@ -577,7 +577,7 @@ class Stage {
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
- else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]<guidedPromoted||s[27]-guidedPromoted>s[19]||s[65]>s[19]-(s[27]-guidedPromoted)||s[21]>s[19]-(s[27]-guidedPromoted)-s[65]||s[29]>s[18]||s[64]>s[29]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
+ else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]<guidedPromoted||s[27]-guidedPromoted>s[19]||s[65]>s[19]-(s[27]-guidedPromoted)||s[21]>s[19]-(s[27]-guidedPromoted)-s[65]||s[29]>s[18]||!validQuarantineCoverage(s[27],s[64])||s[20]!=s[18]-s[29]||s[55]!=s[18]||
     s[57]!=s[19]||s[56]!=(s[19]+127)/128||s[30]!=s[22]||s[31]!=s[23]||s[23]!=s[20]+s[22]||s[54]!=s[23])
    throw std::runtime_error("GPU tracker executed-work coverage mismatch");
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);

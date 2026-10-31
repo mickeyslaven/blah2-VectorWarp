@@ -94,6 +94,12 @@ struct StationaryRetirementPolicy {
  double maxDopplerSpanHz=0;
 };
 
+inline bool validQuarantineCoverage(uint32_t associated,uint32_t quarantined){
+ // Quarantine resets publication state after a successful association; it no
+ // longer removes the retained tracker record.
+ return quarantined<=associated;
+}
+
 inline StationaryRetirementPolicy stationaryRetirementPolicy(bool enabled,
  double cpiSeconds,uint32_t persistenceCpis){
  if(!enabled)return {};
