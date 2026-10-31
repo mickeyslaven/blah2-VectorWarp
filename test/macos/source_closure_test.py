@@ -91,7 +91,7 @@ class SourceClosureExporterTest(unittest.TestCase):
             finally: sys.argv=old
             self.assertTrue(output.is_file())
             (cache/"source-link.tar.gz").unlink(); (cache/"source.tar.gz").unlink(); output.unlink()
-            with self.assertRaisesRegex(ValueError,"omits"):
+            with self.assertRaisesRegex(ValueError,"omits formula inputs"):
                 try: sys.argv=argv; exporter.main()
                 finally: sys.argv=old
 

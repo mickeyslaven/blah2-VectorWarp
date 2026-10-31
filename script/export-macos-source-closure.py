@@ -98,8 +98,12 @@ def main():
     trees = {name: regular_files(path) for name, path in
              (("source-cache", args.source_cache), ("recipes", args.recipes), ("notices", args.notices))}
     closure_hashes = {record["sha256"] for records in trees.values() for record in records.values()}
-    if not expected_recipes <= closure_hashes or not expected_sources <= closure_hashes:
-        raise ValueError("closure omits a formula recipe or fetched source payload")
+    missing_recipes = sorted(expected_recipes - closure_hashes)
+    missing_sources = sorted(expected_sources - closure_hashes)
+    if missing_recipes or missing_sources:
+        raise ValueError("closure omits formula inputs: recipes=" +
+                         ",".join(missing_recipes[:4]) + " sources=" +
+                         ",".join(missing_sources[:4]))
     allowed = {("boost", "missing license/notice file"), ("sqlite", "missing license/notice file")}
     unresolved = [item for item in inventory.get("gaps", []) if "index" not in item and
                   (item.get("formula"), item.get("reason")) not in allowed]
