@@ -19,6 +19,10 @@ trap finish 0
 trap 'exit 143' TERM
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C \
   /usr/bin/node @PREFIX@/libexec/vectorwarp-prepare-sdrplay.js --begin @SYSCONFDIR@/config.yml
+processor_was_active=false
+if /usr/bin/systemctl is-active --quiet vectorwarp-processor.service; then
+  processor_was_active=true
+fi
 /usr/bin/systemctl stop vectorwarp-processor.service
 /usr/bin/systemctl restart vectorwarp-api.service
 /usr/bin/node @PREFIX@/libexec/vectorwarp-wait-api.js \
@@ -26,4 +30,20 @@ trap 'exit 143' TERM
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C \
   /usr/bin/node @PREFIX@/libexec/vectorwarp-prepare-sdrplay.js \
   @SYSCONFDIR@/config.yml @PREFIX@/current/api @PREFIX@/libexec/vectorwarp-sdrplay-service
-/usr/bin/systemctl start vectorwarp-processor.service
+processor_attempt=1
+while [ "$processor_attempt" -le 5 ]; do
+  /usr/bin/systemctl start vectorwarp-processor.service
+  if /usr/bin/systemctl is-active --quiet vectorwarp-processor.service; then
+    break
+  fi
+  if [ "$processor_attempt" -eq 5 ]; then
+    # A neutral first-run setup deliberately has no live processor to restore.
+    # When processing was active before this transaction, however, an
+    # ExecCondition skip must not be recorded as a successful restart.
+    [ "$processor_was_active" = false ] && break
+    echo 'Processor remained inactive after receiver preparation; restart is incomplete.' >&2
+    exit 78
+  fi
+  processor_attempt=$((processor_attempt + 1))
+  /usr/bin/sleep 1
+done

@@ -30,6 +30,8 @@ class SdrplayRestartTest(unittest.TestCase):
         log = root / 'command.log'
         marker = root / 'mode'
         marker.write_text(mode)
+        starts = root / 'starts'
+        starts.write_text('0')
         fake = root / 'fake'
         fake.mkdir()
         prefix = root / 'prefix'
@@ -64,6 +66,16 @@ exec "$@"
         systemctl = executable('systemctl', f'''
 printf '%s\\n' "systemctl:$*" >> {log!s}
 [ "$(cat {marker!s})" = processor-start-fail ] && [ "$1" = start ] && exit 17
+[ "$1" = start ] && count=$(cat {starts!s}) && printf '%s\\n' "$((count + 1))" > {starts!s}
+if [ "$1" = is-active ]; then
+  mode=$(cat {marker!s})
+  [ "$mode" = neutral-start-skipped ] && exit 3
+  [ "$mode" = processor-start-skipped ] && [ "$(cat {starts!s})" -gt 0 ] && exit 3
+  [ "$mode" = processor-start-delayed ] && [ "$(cat {starts!s})" -eq 1 ] && exit 3
+fi
+exit 0
+''')
+        sleep = executable('sleep', f'''printf '%s\\n' "sleep:$*" >> {log!s}
 exit 0
 ''')
         node = executable('node', f'''
@@ -90,6 +102,7 @@ exit 98
             '/usr/bin/env': env,
             '/usr/bin/node': node,
             '/usr/bin/systemctl': systemctl,
+            '/usr/bin/sleep': sleep,
         }))
         script.chmod(0o755)
         return temporary, script, log
@@ -115,6 +128,7 @@ exit 98
                 str(script.parent / 'fake/node') + ' ' + str(script.parent / 'prefix/libexec/vectorwarp-prepare-sdrplay.js') +
                 ' --begin ' + str(script.parent / 'etc/config.yml'),
                 'node:prepare-begin',
+                'systemctl:is-active --quiet vectorwarp-processor.service',
                 'systemctl:stop vectorwarp-processor.service',
                 'systemctl:restart vectorwarp-api.service',
                 'node:wait-api',
@@ -124,6 +138,7 @@ exit 98
                 ' ' + str(script.parent / 'prefix/libexec/vectorwarp-sdrplay-service'),
                 'node:prepare-sdr',
                 'systemctl:start vectorwarp-processor.service',
+                'systemctl:is-active --quiet vectorwarp-processor.service',
                 'env:-i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C ' +
                 str(script.parent / 'fake/node') + ' ' + str(script.parent / 'prefix/libexec/vectorwarp-prepare-sdrplay.js') +
                 ' --finish 0',
@@ -168,6 +183,36 @@ exit 98
             self.assertIn('systemctl:start vectorwarp-processor.service', entries)
             self.assertIn('node:prepare-finish:17', entries)
             self.assertNotIn('node:prepare-finish:0', entries)
+
+    def test_exec_condition_skip_is_retried_and_never_recorded_as_complete(self):
+        temporary, script, log = self.fixture('processor-start-skipped')
+        with temporary:
+            result = self.run_script(script)
+            self.assertEqual(result.returncode, 78, result.stderr)
+            entries = self.entries(log)
+            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 5)
+            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 6)
+            self.assertIn('node:prepare-finish:78', entries)
+            self.assertNotIn('node:prepare-finish:0', entries)
+
+    def test_exec_condition_race_recovers_once_active(self):
+        temporary, script, log = self.fixture('processor-start-delayed')
+        with temporary:
+            result = self.run_script(script)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            entries = self.entries(log)
+            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 2)
+            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 3)
+            self.assertIn('node:prepare-finish:0', entries)
+
+    def test_neutral_first_run_may_remain_inactive(self):
+        temporary, script, log = self.fixture('neutral-start-skipped')
+        with temporary:
+            result = self.run_script(script)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            entries = self.entries(log)
+            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 5)
+            self.assertIn('node:prepare-finish:0', entries)
 
 
 if __name__ == '__main__':
