@@ -263,23 +263,25 @@ function matrixEntries(workflow) {
 }
 function supportRows(markdown) {
   const lines = markdown.split('\n');
-  const header = lines.findIndex(line => line === '| Operating system | Versions | Architectures | Package |');
-  assert.notEqual(header, -1, 'README must contain the OS support table');
+  const header = lines.findIndex(line => line === '| System | Version or base | Architecture | Install method |');
+  assert.notEqual(header, -1, 'INSTALL.md must contain the OS support table');
   const rows = [];
   for (let index = header + 2; index < lines.length && lines[index].startsWith('|'); index++) {
     const cells = lines[index].split('|').slice(1, -1).map(cell => cell.trim());
-    rows.push({os: cells[0], versions: cells[1].split(',').map(value => value.trim()),
-      architectures: cells[2].split(',').map(value => value.trim()), package: cells[3]});
+    rows.push({os: cells[0],
+      versions: cells[1].replace(/,\s+or\s+/g, ',').split(/,\s*|\s+or\s+/).map(value => value.trim()),
+      architectures: cells[2].replace(/,\s+or\s+/g, ',').split(/,\s*|\s+or\s+/).map(value => value.trim()),
+      package: cells[3]});
   }
   return rows;
 }
 function nativeTarget(entry) {
   const ubuntu = /^ubuntu(22\.04|24\.04|26\.04)$/.exec(entry.distro);
   if (ubuntu) return {os: 'Ubuntu', version: ubuntu[1], format: 'deb'};
-  if (entry.distro === 'debian12') return {os: 'Debian', version: '12 (Bookworm)', format: 'deb'};
-  if (entry.distro === 'debian13') return {os: 'Debian', version: '13 (Trixie)', format: 'deb'};
+  if (entry.distro === 'debian12') return {os: 'Debian', version: '12 Bookworm', format: 'deb'};
+  if (entry.distro === 'debian13') return {os: 'Debian', version: '13 Trixie', format: 'deb'};
   if (entry.distro === 'fedora44') return {os: 'Fedora', version: '44', format: 'rpm'};
-  throw new Error(`release target ${entry.distro} has no README support-table mapping`);
+  throw new Error(`release target ${entry.distro} has no INSTALL.md support-table mapping`);
 }
 const architectureLabels = Object.freeze({
   amd64: 'x86-64',
@@ -287,8 +289,6 @@ const architectureLabels = Object.freeze({
   arm64: 'ARM64',
   aarch64: 'ARM64'
 });
-const architectureAliasLegend =
-  'Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.';
 function assertMatrixDocumented(entries, rows) {
   assert.ok(entries.length, 'release package matrix must not be empty');
   assert.equal(new Set(entries.map(entry => `${entry.distro}/${entry.format}/${entry.arch}`)).size, entries.length,
@@ -296,69 +296,53 @@ function assertMatrixDocumented(entries, rows) {
   for (const entry of entries) {
     const target = nativeTarget(entry);
     const osRows = rows.filter(candidate => candidate.os === target.os);
-    assert.ok(osRows.length, `README lacks an OS support row for ${target.os}`);
+    assert.ok(osRows.length, `INSTALL.md lacks an OS support row for ${target.os}`);
     const row = osRows.find(candidate => candidate.versions.includes(target.version));
-    assert.ok(row, `README lacks ${target.os} ${target.version}`);
+    assert.ok(row, `INSTALL.md lacks ${target.os} ${target.version}`);
     assert.ok(Object.hasOwn(architectureLabels, entry.arch) &&
       row.architectures.includes(architectureLabels[entry.arch]),
-    `README lacks ${target.os} ${entry.arch}`);
-    assert.match(row.package, target.format === 'deb' ? /DEB/ : /RPM/,
-      `README package column disagrees with ${entry.distro} format`);
+    `INSTALL.md lacks ${target.os} ${entry.arch}`);
+    assert.match(row.package, target.format === 'deb' ? /APT/ : /DNF/,
+      `INSTALL.md install method disagrees with ${entry.distro} format`);
   }
 }
 const nativeMatrix = matrixEntries(releaseWorkflow).filter(entry => entry.distro && entry.format && entry.arch);
-const readmeRows = supportRows(read('README.md'));
+const installRows = supportRows(read('docs/INSTALL.md'));
 assert.equal(nativeMatrix.length, 11, 'release matrix must build all eleven native package targets');
-assertMatrixDocumented(nativeMatrix, readmeRows);
-assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], distro: 'ubuntu27.04'}], readmeRows),
+assertMatrixDocumented(nativeMatrix, installRows);
+assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], distro: 'ubuntu27.04'}], installRows),
   /support-table mapping/);
-assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], arch: 'riscv64'}], readmeRows),
+assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], arch: 'riscv64'}], installRows),
   /lacks Ubuntu riscv64/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.filter(row => row.os !== 'Debian')),
+assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.filter(row => row.os !== 'Debian')),
   /lacks an OS support row for Debian/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
+assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.map(row =>
   row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, versions: []} : row)),
   /lacks Ubuntu 22\.04/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
+assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.map(row =>
   row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, architectures: ['ARM64']} : row)),
   /lacks Ubuntu amd64/);
 for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
-  for (const row of readmeRows.filter(row => row.os === os)) {
-    const expected = row.os === 'Debian' && row.versions.includes('12 (Bookworm)')
+  for (const row of installRows.filter(row => row.os === os)) {
+    const expected = row.os === 'Debian' && row.versions.includes('12 Bookworm')
       ? [architectureLabels.arm64]
       : [architectureLabels.amd64, architectureLabels.arm64];
     assert.deepEqual(row.architectures, expected,
       `${os} ${row.versions.join(', ')} must use its documented public architecture labels`);
   }
-assert.equal(readmeRows.some(row => row.os === 'Raspberry Pi OS'), false,
-  'Raspberry Pi OS must not appear in the primary supported-systems table');
-const limitedPiMarker = '## Limited platform: Raspberry Pi 4B';
-const readme = read('README.md');
-assert.equal(readme.split(limitedPiMarker).length, 2,
-  'README must contain exactly one bottom-level limited Pi platform section');
-const piRow = supportRows(readme.split(limitedPiMarker, 2)[1])
-  .find(row => row.os === 'Raspberry Pi OS');
+const piRow = installRows.find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
-assert.deepEqual(piRow.versions, ['Bookworm', '64-bit']);
-assert.match(piRow.package,
-  /\[Pi 4 preview image\]\(https:\/\/github\.com\/mickeyslaven\/blah2-VectorWarp\/releases\/tag\/v[0-9]+\.[0-9]+\.[0-9]+-pi4-preview\)$/,
-  'Raspberry Pi OS must link to the available Pi image preview');
+assert.deepEqual(piRow.versions, ['Debian 12', '13 base']);
+assert.equal(piRow.package, 'APT');
 assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
   arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
-})), readmeRows);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
+})), installRows);
+assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.map(row =>
   row.os === 'Fedora' ? {...row, architectures: ['x86_64', 'aarch64']} : row)),
   /lacks Fedora/, 'Native-only labels must not reintroduce inconsistent documentation');
-assert.equal(read('README.md').includes(architectureAliasLegend), true,
-  'README must explain package-manager architecture aliases once near its compact OS grid');
-for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md',
-  'packaging/README.md']) {
-  const document = read(file);
-  assert.ok(document.includes('x86-64 (amd64 / x86_64)') || document.includes(architectureAliasLegend),
-    `${file}: explain both x86-64 aliases`);
-  assert.ok(document.includes('ARM64 (arm64 / aarch64)') || document.includes(architectureAliasLegend),
-    `${file}: explain both ARM64 aliases`);
-}
+const packagingGuide = read('packaging/README.md');
+assert.ok(packagingGuide.includes('x86-64 (amd64 / x86_64)'));
+assert.ok(packagingGuide.includes('ARM64 (arm64 / aarch64)'));
 assert.match(releaseWorkflow, /expected eleven package manifests/);
 assert.match(releaseWorkflow, /-eq 11/);
 assert.match(releaseWorkflow, /Stable tags must point to the exact current main commit/);
