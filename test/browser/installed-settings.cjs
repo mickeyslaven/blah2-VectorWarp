@@ -141,7 +141,7 @@ if (process.argv[2] === '--status-fixtures') {
     await page.locator('#config-save-later').click();
     assert.equal((await restored).status(), 200);
     await page.getByRole('tab').first().click();
-    await page.getByRole('button', {name: 'Check receiver software', exact: true}).click();
+    await page.getByRole('button', {name: 'Scan for receivers', exact: true}).click();
     // Both SDK detection and adapter guidance can show this official link.
     await page.locator('#receiver-setup a[href="https://sdrplay.com/hardware-api/"]').first().waitFor();
     // Real browser Apply -> installed API -> Unix broker -> systemd restart ->

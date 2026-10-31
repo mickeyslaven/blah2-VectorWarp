@@ -26,7 +26,7 @@ function renderAppHeader(active) {
   // Hardware/software discovery can launch several bounded host probes. Never
   // run it from the shared header: every radar/display tab used to repeat those
   // probes every five minutes and starve the real-time processor. Receiver
-  // setup exposes an explicit "Check receiver software" action instead.
+  // setup exposes an explicit "Scan for receivers" action instead.
   if (window.blah2ReceiverDeviceTimer)
     window.clearInterval(window.blah2ReceiverDeviceTimer);
   window.blah2ReceiverDeviceTimer = null;
