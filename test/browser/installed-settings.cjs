@@ -32,9 +32,8 @@ async function waitForLoopingReplay(initial, before, accepted, appliedAt, readSt
   const deadline = now() + 30000;
   for (;;) {
     assertReplayIdentity(status, before, accepted);
-    if (['playing', 'draining', 'complete'].includes(status.processor?.state) &&
-        (status.processor?.state === 'complete' || status.radar === 'receiving') &&
-        status.lastFrameAt > appliedAt) {
+    if (['playing', 'draining'].includes(status.processor?.state) &&
+        status.radar === 'receiving' && status.lastFrameAt > appliedAt) {
       assertReceivingReplay(status, appliedAt);
       if (firstFrameAt === null) firstFrameAt = status.lastFrameAt;
       if (status.processor?.state === 'playing' && status.lastFrameAt > firstFrameAt) return status;
@@ -57,8 +56,9 @@ async function waitForReplayFrame(initial, before, accepted, appliedAt, readStat
   const deadline = now() + 30000;
   for (;;) {
     assertReplayIdentity(status, before, accepted);
-    if (['playing', 'draining'].includes(status.processor?.state) &&
-        status.radar === 'receiving' && status.lastFrameAt > appliedAt) {
+    if (['playing', 'draining', 'complete'].includes(status.processor?.state) &&
+        (status.processor?.state === 'complete' || status.radar === 'receiving') &&
+        status.lastFrameAt > appliedAt) {
       assertReceivingReplay(status, appliedAt);
       return status;
     }
@@ -184,7 +184,7 @@ if (process.argv[2] === '--status-fixtures') {
     await cpi.fill('0.02');
     const applyResponse = page.waitForResponse(r => r.url().includes('/api/config?restart=true') &&
       r.request().method() === 'PUT');
-    const appliedAt = Date.now();
+    const appliedAt = Number(before.lastFrameAt) || 0;
     await page.locator('#config-save').click();
     const applied = await applyResponse;
     assert.equal(applied.status(), 200, `Browser Apply failed: ${await applied.text()}`);
