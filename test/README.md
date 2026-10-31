@@ -95,7 +95,4 @@ for all four profiles. SDRplay install/start tests use simulated local services;
 they cover missing/running/stopped/ambiguous services, local policy refusals,
 upgrade exclusion and restart failures without touching the host.
 
-Automated replay and fixture tests are not physical receiver, driver, live
-capture, sustained GPU-performance or browser-rendering certification. See
-[UPSTREAM_COMPARISON.md](../docs/UPSTREAM_COMPARISON.md) for the maintained
-separation of implementation, automated tests and hardware evidence.
+Automated replay and fixture tests do not replace physical receiver and RF tests.

@@ -8,7 +8,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '../..');
 const packager = fs.readFileSync(path.join(root, 'script/package-native.sh'), 'utf8');
-const dragonDocs = fs.readFileSync(path.join(root, 'docs/DRAGONOS.md'), 'utf8');
+const installDocs = fs.readFileSync(path.join(root, 'docs/INSTALL.md'), 'utf8');
 const controlLiteral = packager.match(
   /printf '(Package: vectorwarp\\nVersion:.*?Description:.*?\\n)' \\\n/s)?.[1];
 assert.ok(controlLiteral, 'Debian control template must remain discoverable');
@@ -38,12 +38,8 @@ assert.notEqual(customDragonUhd.Version,
 assert.ok(!field('Depends').includes('uhd-host') && field('Recommends') === 'uhd-host',
   'the incompatible stock host pair must be optional while the ELF ABI dependency remains hard');
 
-for (const mapping of [
-  ['FocalX R37.1', 'Jammy', '22.04'],
-  ['Noble R9', 'Noble', '24.04'],
-  ['Resolute R1', 'Resolute', '26.04']
-]) {
-  for (const value of mapping) assert.match(dragonDocs, new RegExp(value.replace('.', '\\.')));
-}
+assert.match(installDocs, /DragonOS \| Matching supported Ubuntu base/);
+for (const version of ['22.04', '24.04', '26.04'])
+  assert.match(installDocs, new RegExp(version.replace('.', '\\.')));
 
 console.log('Debian/DragonOS UHD package relationship checks passed.');

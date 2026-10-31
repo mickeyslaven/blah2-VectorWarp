@@ -281,9 +281,6 @@ workloads have missed real-time deadlines.</p>
 905.1 ms, and the Off World Labs ARM fork took 905.9 ms. All three missed the
 200 ms deadline, so these are comparative workload results—not a recommended
 real-time configuration.</p>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PUBLICATION_VALIDATION_20260919.md">Pi 4B validation details</a> ·
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PERFORMANCE_20260911.md">workload limits</a> ·
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic">GPU diagnostics</a></p>
 </details>
 </section>'''
 
@@ -369,7 +366,6 @@ Array processing does not guarantee more antenna gain than a directional antenna
 and every live configuration must still meet its CPI deadline.</p>
 <p class="scope">Physical NVIDIA, AMD and Intel GPU checks compare complex maps to a
 CPU reference. Results are tolerance-validated, not bit-exact or a guarantee for every host.</p>
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/GPU_BENCHMARK_20260911.md">Full configurations, timing distributions and methodology →</a>
 <h2>Equal-range Doppler tests</h2>
 <p>All comparisons retain the standard 256-bin, 30.604 km excess-path
 window at 527 MHz and 2.4 MS/s. At this full range and ±4800 Hz, Strix GPU

@@ -352,7 +352,7 @@ assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
 assert.equal(read('README.md').includes(architectureAliasLegend), true,
   'README must explain package-manager architecture aliases once near its compact OS grid');
 for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md',
-  'packaging/README.md', 'docs/UPSTREAM_COMPARISON.md']) {
+  'packaging/README.md']) {
   const document = read(file);
   assert.ok(document.includes('x86-64 (amd64 / x86_64)') || document.includes(architectureAliasLegend),
     `${file}: explain both x86-64 aliases`);

@@ -281,9 +281,6 @@ run find "$ARTIFACT_TMP/docs/benchmarks" -type f \( \
   -name '*.command.json' -o -name '*.geometry.json' -o \
   -name '*.profile.json' -o -name '*.summary.json' -o \
   -name '*-per-cpi.csv' -o -name 'per-cpi.csv' \) -delete
-run rm -f "$ARTIFACT_TMP/docs/GPU_ACCELERATION_WORK.md" \
-  "$ARTIFACT_TMP/docs/UI_CONFIG_REVIEW.md" \
-  "$ARTIFACT_TMP/docs/REAL_IQ_BENCHMARK_PLAN.md"
 run cp -a "$SOURCE_DIR/contrib/systemd" "$ARTIFACT_TMP/systemd"
 run mkdir -p "$ARTIFACT_TMP/licenses"
 if $DRY_RUN; then

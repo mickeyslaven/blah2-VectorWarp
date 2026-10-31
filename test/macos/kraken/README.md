@@ -124,5 +124,4 @@ cleanup and independent acceptance. This used one surveillance worker and one
 FFT thread; dropped packets and CPI overruns were observed. It establishes bounded
 functional behavior, not lossless or real-time throughput, full multi-worker/GPU
 performance, external RF coherence, long-term drift or physical Intel Mac behavior. No native calibration timing patch was
-adopted. The exact current hosted and physical scope is recorded in
-[the October update note](../../../docs/KRAKEN_SUITE_UPDATE_2026_10.md).
+adopted.
