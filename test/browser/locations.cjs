@@ -127,8 +127,10 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('.location-3d-model-layer').evaluate(node => getComputedStyle(node).pointerEvents), 'none',
       'mobile 3D models cannot steal map gestures');
     await page.setViewportSize({width: 1000, height: 700});
-    assert.equal(await page.locator('#radar-map-display-mode').inputValue(), 'confirmed',
-      'the map defaults to radar-confirmed ADS-B aircraft without uncertainty ellipses');
+    assert.equal(await page.locator('#radar-map-overlay-mode').inputValue(), 'all',
+      'the map defaults to showing confirmed radar-track ellipses');
+    assert.equal(await page.locator('#adsb-map-filter-mode').inputValue(), 'all',
+      'the map defaults to showing all ADS-B aircraft');
     assert.equal(await page.locator('#show-radar-coverage-on-map').isChecked(), true,
       'radar-confirmed rolling coverage is visible by default');
     await page.waitForFunction(() => document.getElementById('data')._vectorwarpMap
@@ -162,13 +164,11 @@ const server = http.createServer((request, response) => {
     'zooming preserves the geographic coverage geometry without rebuilding screen paths');
     assert.ok((await page.evaluate(() => document.getElementById('data')._vectorwarpMap.getZoom())) > 5,
       'online ADS-B acquisition radius must not define the radar map distance');
-    assert.equal(await page.locator('.location-radar-track-path').count(), 0);
+    assert.equal(await page.locator('.location-radar-track-path').count(), 1);
     assert.equal(await page.locator('.location-aircraft-tooltip').count(), 0,
       'map markers must remain label-only; aircraft data belongs in the sidebar');
     assert.equal(await page.locator('.location-aircraft-label').textContent(), 'TEST123');
     await page.waitForFunction(() => window.photoRequestsForTest === undefined || true);
-    await page.locator('.map-controls-panel > summary').click();
-    await page.locator('#radar-map-display-mode').selectOption('all');
     await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
     assert.equal(await page.locator('.location-radar-track-cage').count(), 1,
       'each confirmed track gets one consistent 3D uncertainty cage');
