@@ -20,12 +20,16 @@ def regular_files(root):
         mode = path.lstat().st_mode
         if stat.S_ISDIR(mode):
             continue
-        if not stat.S_ISREG(mode) or path.stat().st_size > MAX_FILE:
-            raise ValueError("source closure contains a link, special, or oversized file")
+        try:
+            source = path.resolve(strict=True) if stat.S_ISLNK(mode) else path
+        except OSError as error:
+            raise ValueError(f"source closure contains a broken link: {path}") from error
+        if not source.is_file() or source.stat().st_size > MAX_FILE:
+            raise ValueError(f"source closure contains a special or oversized file: {path}")
         relative = path.relative_to(root).as_posix()
         if not relative or relative.startswith("/") or ".." in Path(relative).parts or relative in result:
             raise ValueError("unsafe or duplicate source-closure path")
-        result[relative] = {"sha256": digest(path), "size": path.stat().st_size}
+        result[relative] = {"sha256": digest(source), "size": source.stat().st_size}
     return result
 
 def add_file(archive, name, path):

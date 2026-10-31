@@ -64,6 +64,7 @@ class SourceClosureExporterTest(unittest.TestCase):
             root=Path(temporary); cache=root/"cache"; recipes=root/"recipes"; notices=root/"notices"
             for path in (cache,recipes,notices): path.mkdir()
             source=b"source"; recipe=b"recipe"; (cache/"source.tar.gz").write_bytes(source); (recipes/"demo.rb").write_bytes(recipe)
+            (cache/"source-link.tar.gz").symlink_to(cache/"source.tar.gz")
             boost=cache/"boost-source.tar.gz"
             with boost.open("wb") as raw,gzip.GzipFile(fileobj=raw,mode="wb",filename="",mtime=0) as gz:
                 with tarfile.open(fileobj=gz,mode="w|") as archive:
@@ -89,7 +90,7 @@ class SourceClosureExporterTest(unittest.TestCase):
             try: sys.argv=argv; exporter.main()
             finally: sys.argv=old
             self.assertTrue(output.is_file())
-            (cache/"source.tar.gz").unlink(); output.unlink()
+            (cache/"source-link.tar.gz").unlink(); (cache/"source.tar.gz").unlink(); output.unlink()
             with self.assertRaisesRegex(ValueError,"omits"):
                 try: sys.argv=argv; exporter.main()
                 finally: sys.argv=old
