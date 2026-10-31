@@ -33,7 +33,7 @@ class VectorwarpUhd < Formula
   def install
     python = Formula["python@3.12"].opt_bin/"python3.12"
     python_vendor = buildpath/"python-vendor"
-    resource("mako").stage { python_vendor.install "src/mako" }
+    resource("mako").stage { python_vendor.install "mako" }
     resource("markupsafe").stage { python_vendor.install "src/markupsafe" }
     ENV.prepend_path "PYTHONPATH", python_vendor
 
