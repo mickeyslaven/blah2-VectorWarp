@@ -19,6 +19,9 @@ static double adaptiveElapsed(double frameElapsed,unsigned inactiveFrames){
 
 int main()try{
  using gpu_tracker::boundInitiations;
+ using gpu_tracker::DopplerCombBirth;
+ using gpu_tracker::dopplerCombBirthEligible;
+ using gpu_tracker::dopplerRidgeHasBirthCapacity;
  using gpu_tracker::advancePersistentStreak;
  using gpu_tracker::persistentCell;
  using gpu_tracker::persistentEvidence;
@@ -55,6 +58,20 @@ int main()try{
  const double delayedDoppler=weakAcceleration*gap;
  require(!adaptiveCompatible(delayedDelay,delayedDoppler,span,elapsed,delayScale,dopplerMargin),
   "single-CPI gate unexpectedly retained the delayed weak target");
+ const DopplerCombBirth comb[]={{8,100,8,true},{20,102,12,true},{34,99,10,true}};
+ require(!dopplerCombBirthEligible(comb,3,0)&&dopplerCombBirthEligible(comb,3,1)&&
+  !dopplerCombBirthEligible(comb,3,2),"Doppler comb did not retain only its strongest birth");
+ const DopplerCombBirth isolated[]={{8,100,8,true},{9,101,12,true},{34,120,10,true}};
+ require(dopplerCombBirthEligible(isolated,3,0)&&dopplerCombBirthEligible(isolated,3,1)&&
+  dopplerCombBirthEligible(isolated,3,2),"isolated or same-range births were suppressed");
+ const DopplerCombBirth existing[]={{8,100,20,false},{20,101,12,true},{34,99,10,true}};
+ require(dopplerCombBirthEligible(existing,3,1)&&dopplerCombBirthEligible(existing,3,2),
+  "an established track participated in new-birth comb suppression");
+ const DopplerCombBirth ridge[]={{8,100,20,true},{20,102,12,true}};
+ require(!dopplerRidgeHasBirthCapacity(ridge,2,{34,99,10,true})&&
+  dopplerRidgeHasBirthCapacity(ridge,2,{34,120,10,true})&&
+  dopplerRidgeHasBirthCapacity(ridge,2,{10,99,10,true}),
+  "Doppler-ridge birth capacity did not isolate distant same-Doppler siblings");
  require(adaptiveCompatible(delayedDelay,delayedDoppler,span,gap,delayScale,dopplerMargin),
   "adaptive gate did not retain a weak target across missed CPIs");
  a=boundInitiations(4,4,9,1);
@@ -65,10 +82,10 @@ int main()try{
  require(rejected,"invalid retained count was accepted");
  rejected=false;try{boundInitiations(3,0,1,0);}catch(const std::invalid_argument&){rejected=true;}
  require(rejected,"zero hypotheses were accepted");
- const auto retirement=stationaryRetirementPolicy(true,.5);
- require(retirement.samples==100&&retirement.minimumAssociated==90&&
+ const auto retirement=stationaryRetirementPolicy(true,.5,12);
+ require(retirement.samples==12&&retirement.minimumAssociated==9&&
   retirement.maxDelaySpan==1&&retirement.maxDopplerSpanHz==3,
-  "stationary retirement policy is not conservative");
+  "stationary quarantine policy does not follow persistence");
  require(persistentCell(7,3,10)==37,"persistent map did not retain Doppler identity");
  require(persistentRidgeContains(37,27,10,8)&&persistentRidgeContains(37,47,10,8)&&
   persistentRidgeContains(37,33,10,8)&&persistentRidgeContains(37,48,10,8),
@@ -92,11 +109,13 @@ int main()try{
   "bounded absence did not leak evidence deterministically");
  require(persistentEvidence(streak,uint16_t(last+241))==0,
   "stale persistent evidence did not expire");
- const auto disabled=stationaryRetirementPolicy(false,0);
+ const auto disabled=stationaryRetirementPolicy(false,0,0);
  require(disabled.samples==0&&disabled.minimumAssociated==0&&disabled.maxDopplerSpanHz==0,
   "disabled stationary retirement retained a policy");
- rejected=false;try{stationaryRetirementPolicy(true,0);}catch(const std::invalid_argument&){rejected=true;}
+ rejected=false;try{stationaryRetirementPolicy(true,0,12);}catch(const std::invalid_argument&){rejected=true;}
  require(rejected,"invalid stationary retirement CPI was accepted");
- std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 committed_preserved=1 unsaturated_unchanged=1 stationary_retirement_conservative=1 persistent_cell_locality=1 intermittent_recurrence=1 stale_expiry=1\n";
+ rejected=false;try{stationaryRetirementPolicy(true,.5,1);}catch(const std::invalid_argument&){rejected=true;}
+ require(rejected,"invalid stationary quarantine persistence was accepted");
+ std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 doppler_comb_strongest_retained=1 doppler_ridge_capacity_bounded=1 established_track_exempt=1 committed_preserved=1 unsaturated_unchanged=1 stationary_quarantine_bounded=1 persistent_cell_locality=1 intermittent_recurrence=1 stale_expiry=1\n";
  return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL gpu-tracker-admission: "<<e.what()<<'\n';return 1;}

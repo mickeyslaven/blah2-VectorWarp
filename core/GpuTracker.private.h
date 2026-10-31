@@ -146,14 +146,27 @@ uint nearestDopplerRow(double value){uint count=post[32],low=0u,high=count;
  double right=packDouble2x32(uvec2(post[post[44]+2u*low],post[post[44]+2u*low+1u]));
  double left=packDouble2x32(uvec2(post[post[44]+2u*(low-1u)],post[post[44]+2u*(low-1u)+1u]));
  return abs(value-left)<=abs(right-value)?low-1u:low;}
+bool dopplerCombBirthEligible(uint i){
+ uint at=m[5]+8u*i,row=nearestDopplerRow(sd(at+2u)),cluster=1u,winner=i;
+ double delay=sd(at),snr=sd(at+4u);
+ uint siblings=0u;for(uint track=0u;track<m[18];++track){uint w=work(track);if(m[w+7u]==0u)continue;
+  uint trackRow=nearestDopplerRow(md(w+2u)),rowDelta=row>trackRow?row-trackRow:trackRow-row;
+  if(rowDelta<=3u&&abs(md(w)-delay)>=4.0LF&&++siblings>=2u)return false;}
+ for(uint j=0u;j<m[19];++j){if(j==i||s[m[6]+j]!=0u)continue;uint other=m[5]+8u*j;
+  uint otherRow=nearestDopplerRow(sd(other+2u)),rowDelta=row>otherRow?row-otherRow:otherRow-row;
+  if(rowDelta>3u||abs(sd(other)-delay)<4.0LF)continue;cluster++;
+  double otherSnr=sd(other+4u);if(otherSnr>snr||(otherSnr==snr&&j<winner)){winner=j;snr=otherSnr;}}
+ return cluster<3u||winner==i;
+}
 bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  uint at=m[5]+8u*i;if(sd(at+4u)<md(50u))return false;
+ if(!dopplerCombBirthEligible(i))return false;
  if(!clutterAware())return true;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
  if(maximum>0.0LF&&abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
  if(cell>=m[4]||post[33]==0u)return false;
  return clutterStreak(cell)<clutterPersistence[1];}
-bool retireStationaryTrack(uint r,uint match){
+bool quarantinePersistentTrack(uint r,uint match){
  if(!clutterAware()||match==0xffffffffu)return false;
  uint samples=clutterPersistence[4],minimumAssociated=clutterPersistence[5];
  uint ringBits=src(r+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,h=historyCapacity();
@@ -260,7 +273,10 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
      sourceD(r+6u)+(sd(m[5]+8u*match+2u)-md(w+2u))/gateTime:
      (sd(m[5]+8u*match+2u)-sourceD(r+2u))/md(50u);
     if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;
-    if(retireStationaryTrack(r,match)){alive=false;m[29]++;m[64]++;}}
+    // Retain the filter and its history, but keep a stable learned cell out of
+    // operational publication. If it starts moving, fresh associations leave
+    // the nuisance cell and the ordinary M-of-N confirmation path restores it.
+    if(quarantinePersistentTrack(r,match)){state=0u;m[64]++;}}
    else if(guidedAssociation){state=(state==2u||state==3u)?2u:1u;m[27]++;}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=0u;m[55]++;
@@ -572,7 +588,7 @@ class Stage {
  }
  void logPrepared(const std::array<uint32_t,statusWords>& s){context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_TRACKER_PREPARED transaction="<<pendingToken_.transaction<<" generation="<<pendingToken_.generation<<" consumed_sequence="<<pendingToken_.consumedSequence<<" epoch="<<config_.epoch
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
-  <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_stationary_retired="<<s[64]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
+  <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_stationary_quarantined="<<s[64]<<" device_stationary_retired=0 device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
    uint32_t guidedPromoted=0;if(config_.trackGuidedPromote){const auto*g=static_cast<const uint32_t*>(metadata_->mapped)+statusWords+workWords*config_.capacity;guidedPromoted=g[13];}
    context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched
@@ -625,7 +641,7 @@ public:
   persistence[1]=config.stationaryPersistenceCpis;
   std::memcpy(persistence+2,&config.stationaryMaxDopplerHz,8);
   const auto retirement=stationaryRetirementPolicy(config.stationaryClutter,
-    config.cpi);
+    config.cpi,config.stationaryPersistenceCpis);
   persistence[4]=retirement.samples;
   persistence[5]=retirement.minimumAssociated;
   std::memcpy(persistence+6,&retirement.maxDelaySpan,8);

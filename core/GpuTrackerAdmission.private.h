@@ -17,6 +17,54 @@ struct InitiationAdmission {
  uint32_t unmatched=0,admittedDetections=0,droppedDetections=0,initiatedTracks=0,totalTracks=0;
 };
 
+struct DopplerCombBirth {
+ double delay=0;
+ uint32_t dopplerRow=0;
+ double snr=0;
+ bool unmatched=true;
+};
+
+inline bool dopplerCombBirthEligible(const DopplerCombBirth* detections,
+ uint32_t count,uint32_t candidate,uint32_t rowRadius=3,
+ double minimumDelaySeparation=4.0,uint32_t minimumCluster=3){
+ if(!detections||candidate>=count||minimumCluster<2||
+    !std::isfinite(minimumDelaySeparation)||minimumDelaySeparation<0)
+  throw std::invalid_argument("GPU tracker Doppler-comb admission invalid");
+ if(!detections[candidate].unmatched)return false;
+ uint32_t cluster=1,winner=candidate;
+ for(uint32_t i=0;i<count;++i){
+  if(i==candidate||!detections[i].unmatched)continue;
+  const uint32_t rowDelta=detections[i].dopplerRow>detections[candidate].dopplerRow?
+   detections[i].dopplerRow-detections[candidate].dopplerRow:
+   detections[candidate].dopplerRow-detections[i].dopplerRow;
+  if(rowDelta>rowRadius||
+     std::abs(detections[i].delay-detections[candidate].delay)<minimumDelaySeparation)continue;
+  cluster++;
+  if(detections[i].snr>detections[winner].snr||
+     (detections[i].snr==detections[winner].snr&&i<winner))winner=i;
+ }
+ return cluster<minimumCluster||winner==candidate;
+}
+
+inline bool dopplerRidgeHasBirthCapacity(const DopplerCombBirth* tracks,
+ uint32_t count,const DopplerCombBirth& candidate,uint32_t rowRadius=3,
+ double minimumDelaySeparation=4.0,uint32_t maximumExisting=2){
+ if((count&&!tracks)||!maximumExisting||
+    !std::isfinite(minimumDelaySeparation)||minimumDelaySeparation<0)
+  throw std::invalid_argument("GPU tracker Doppler-ridge capacity invalid");
+ uint32_t siblings=0;
+ for(uint32_t i=0;i<count;++i){
+  if(!tracks[i].unmatched)continue;
+  const uint32_t rowDelta=tracks[i].dopplerRow>candidate.dopplerRow?
+   tracks[i].dopplerRow-candidate.dopplerRow:
+   candidate.dopplerRow-tracks[i].dopplerRow;
+  if(rowDelta<=rowRadius&&
+     std::abs(tracks[i].delay-candidate.delay)>=minimumDelaySeparation&&
+     ++siblings>=maximumExisting)return false;
+ }
+ return true;
+}
+
 struct StationaryRetirementPolicy {
  uint32_t samples=0;
  uint32_t minimumAssociated=0;
@@ -25,15 +73,17 @@ struct StationaryRetirementPolicy {
 };
 
 inline StationaryRetirementPolicy stationaryRetirementPolicy(bool enabled,
- double cpiSeconds){
+ double cpiSeconds,uint32_t persistenceCpis){
  if(!enabled)return {};
- if(!std::isfinite(cpiSeconds)||cpiSeconds<=0)
+ if(!std::isfinite(cpiSeconds)||cpiSeconds<=0||persistenceCpis<2)
   throw std::invalid_argument("GPU tracker stationary-retirement policy invalid");
- // The public trail always retains 100 samples. Requiring 90 associated
- // samples across that entire window, one delay unit of spread and at most
- // one-and-a-half Doppler cells rejects stable site clutter without treating
- // an aircraft that merely crosses a learned cell as stationary.
- return {100,90,1.0,1.5/cpiSeconds};
+ // A learned hot cell must not delete tracker state: a weak moving target may
+ // temporarily overlap site clutter. Quarantine publication after the same
+ // bounded evidence interval used by the birth map, while retaining the track
+ // so it can recover after leaving the cell. Require at least 75% associated
+ // samples, one delay unit of spread and at most one-and-a-half Doppler cells.
+ return {persistenceCpis,std::max(2u,(3u*persistenceCpis+3u)/4u),
+  1.0,1.5/cpiSeconds};
 }
 
 // Persistence is spatial: delay is the fast axis and Doppler the slow axis.
