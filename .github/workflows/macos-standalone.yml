@@ -39,7 +39,8 @@ jobs:
           persist-credentials: false
       - name: Install build-host dependencies
         run: |
-          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb vulkan-loader vulkan-headers glslang molten-vk
+          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 hackrf eigen libusb vulkan-loader vulkan-headers glslang molten-vk
+          brew install --formula "$GITHUB_WORKSPACE/packaging/homebrew/vectorwarp-uhd.rb"
           # Intel runners already link python.org's 3.12 into /usr/local/bin.
           # Staging uses the explicit Homebrew path and needs no global links.
           brew install --skip-link python@3.12
@@ -69,7 +70,7 @@ jobs:
           git init build/VkFFT
           git -C build/VkFFT fetch --depth 1 https://github.com/DTolm/VkFFT.git 066a17c17068c0f11c9298d848c2976c71fad1c1
           git -C build/VkFFT checkout --detach 066a17c17068c0f11c9298d848c2976c71fad1c1
-          VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
+          BLAH2_UHD_FORMULA=vectorwarp-uhd VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
       - name: Stage and audit standalone runtime
         run: |
           node="$VECTORWARP_STANDALONE_NODE"

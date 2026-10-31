@@ -62,14 +62,40 @@ CPP_HEADER = {
     "x86_64": ("0.53.1", "185af9587e270de9a3bfee234c6740f02e82265da33c7a41f97e02ee42f979d2"),
 }
 CPP_LICENSE_SHA256 = "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b"
+VECTORWARP_UHD_REVIEW = {
+    "formula": "vectorwarp-uhd",
+    "version": "4.11.0.0",
+    "input": "lib/libuhd.4.11.0.dylib",
+    "formula_sha256": "804f87d26678ad00aed4857003c7c4eab844d6b8d8e0761bc84e5c470ba6fe9f",
+    "sources": (
+        ("uhd-4.11.0.0.tar.gz",
+         "https://github.com/EttusResearch/uhd/archive/refs/tags/v4.11.0.0.tar.gz",
+         "1e53faec13ea2be9dd8f765956157d1434f41fa0a124fac8f7b2340f8445b026"),
+        ("mako-1.4.3.tar.gz",
+         "https://files.pythonhosted.org/packages/5a/09/e07c4b5579a79f4b16f8d4f29f6c54514ac787c4ad506b8c4f28a0e6b0bf/mako-1.4.3.tar.gz",
+         "cd6537fe88d5fec315c55c2f8529bc4ce7a9a352ad7db3eeaa6a66e2dd4ec37a"),
+        ("markupsafe-3.0.4.tar.gz",
+         "https://files.pythonhosted.org/packages/38/9b/e422a865e1d5d57d0e509b4e0bf1c1a70a7f6382c29a5aa428df994c8bc8/markupsafe-3.0.4.tar.gz",
+         "2e9ad7dd851bf45fab9f75cbff4cb493fee9979e8d8c7c9c3ee119022518edd6"),
+        ("uhd-macos-namespace-2dc0ecf.patch",
+         "https://github.com/EttusResearch/uhd/commit/2dc0ecf9288a2556da762fd6693600f1572ecd2d.patch?full_index=1",
+         "4e6bf9735767e245c87b57221c54e623cb76de3f9fa957787435b1ba20a2065c"),
+    ),
+    "notices": (
+        ("LICENSE.md", "94cc36ada2641d037980bf6c2418a750ac10a115ae11de5a5cda6177769dbd4c"),
+        ("share/doc/uhd/LICENSE", "70bf7e79c8cd73a81f97ce81745ea0719a617eebe299a61868165daeae71fff2"),
+    ),
+}
 BUILD_PIN = "066a17c17068c0f11c9298d848c2976c71fad1c1"
 SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
+                   "packaging/homebrew/", ".github/workflows/macos-standalone.yml",
                    "third_party/", "third-party/", "vendor/")
 REVIEW_PURPOSE = "first-party-build-only"
 REVIEW_ARCHIVE_MEMBER = "VectorWarp-corresponding-source/build-source-review.json"
 REVIEW_MAX_BYTES = 64 * 1024
 REVIEW_PATH = re.compile(
-    r"(?:CMakeLists\.txt|script/build-macos\.sh|cmake/ReceiverCohort\.h\.in|"
+    r"(?:CMakeLists\.txt|script/build-macos\.sh|packaging/homebrew/vectorwarp-uhd\.rb|"
+    r"\.github/workflows/macos-standalone\.yml|cmake/ReceiverCohort\.h\.in|"
     r"cmake/[A-Za-z0-9][A-Za-z0-9._-]*\.cmake)")
 
 
@@ -111,8 +137,31 @@ def verify_source_claim_transition(candidate, prior, arch):
     """Accept removed runtime inputs, but never new or changed source claims."""
     candidate_claims = source_claims(candidate)
     prior_claims = source_claims(prior)
-    if any(prior_claims.get(key) != claim
-           for key, claim in candidate_claims.items()):
+    forbidden = {"grpc", "protobuf"}
+    if any(key[0] in forbidden for key in candidate_claims):
+        raise ValueError(f"{arch} standalone runtime unexpectedly contains the UHD MPMD dependency stack")
+    expected_notices = tuple(VECTORWARP_UHD_REVIEW["notices"])
+    expected_copies = tuple(sorted((
+        (f".brew/{VECTORWARP_UHD_REVIEW['formula']}.rb", VECTORWARP_UHD_REVIEW["formula_sha256"]),
+        *expected_notices,
+    )))
+    expected_uhd_claim = (
+        VECTORWARP_UHD_REVIEW["formula_sha256"],
+        tuple(sorted(item[2] for item in VECTORWARP_UHD_REVIEW["sources"])),
+        expected_notices,
+        expected_copies,
+    )
+    legacy_uhd_present = any(key[0] == "uhd" for key in prior_claims)
+    changed = []
+    for key, claim in candidate_claims.items():
+        if prior_claims.get(key) == claim:
+            continue
+        reviewed_key = (VECTORWARP_UHD_REVIEW["formula"], VECTORWARP_UHD_REVIEW["version"],
+                        VECTORWARP_UHD_REVIEW["input"])
+        if key == reviewed_key and legacy_uhd_present and claim == expected_uhd_claim:
+            continue
+        changed.append(key)
+    if changed:
         raise ValueError(
             f"{arch} formula source/recipe/notice inputs changed; new source review required")
 
@@ -218,6 +267,30 @@ def fetch_intel_cpp_source(output, url, baseline_notices):
             sha256(baseline_notices / "embedded/cpp-httplib/LICENSE") != license_sha):
         raise ValueError("Intel cpp-httplib license differs from reviewed notice")
     return archive
+
+
+def fetch_vectorwarp_uhd_sources(output):
+    sources = {}
+    for name, url, expected in VECTORWARP_UHD_REVIEW["sources"]:
+        target = output / name
+        with urllib.request.urlopen(url, timeout=120) as response, target.open("xb") as stream:
+            shutil.copyfileobj(response, stream)
+        if sha256(target) != expected:
+            raise ValueError(f"reviewed VectorWarp UHD input differs: {name}")
+        sources[name] = target
+    notices = {}
+    with tarfile.open(sources["uhd-4.11.0.0.tar.gz"], "r:gz") as archive:
+        for relative, expected in VECTORWARP_UHD_REVIEW["notices"]:
+            member = archive.extractfile("uhd-4.11.0.0/" + relative)
+            if member is None:
+                raise ValueError(f"reviewed VectorWarp UHD source has no {relative}")
+            content = member.read()
+            if hashlib.sha256(content).hexdigest() != expected:
+                raise ValueError(f"reviewed VectorWarp UHD notice differs: {relative}")
+            target = output / ("vectorwarp-uhd-" + relative.replace("/", "-"))
+            target.write_bytes(content)
+            notices[relative] = target
+    return sources, notices
 
 
 def reviewed_npm_lock_delta(baseline_raw, candidate_raw):
@@ -446,7 +519,7 @@ def verify_checkout(checkout, source_id, review_receipt=None):
     return changed
 
 
-def rebind_notices(baseline, output, source_id, runtimes, node_license):
+def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_notices):
     if output.exists() or output.is_symlink():
         raise ValueError("refusing to replace notices output")
     validated_baseline_notices(baseline)
@@ -481,6 +554,16 @@ def rebind_notices(baseline, output, source_id, runtimes, node_license):
         "origin": f"node-v{NODE_REVIEW['version']}.tar.gz::node-v{NODE_REVIEW['version']}/LICENSE",
         "sha256": NODE_REVIEW["license_sha256"],
     })
+    for relative, expected in VECTORWARP_UHD_REVIEW["notices"]:
+        source = uhd_notices[relative]
+        target = output / "embedded" / "vectorwarp-uhd-4.11.0.0" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        index.setdefault("input_notices", []).append({
+            "file": target.relative_to(output).as_posix(),
+            "origin": f"uhd-4.11.0.0.tar.gz::uhd-4.11.0.0/{relative}",
+            "sha256": expected,
+        })
     index["source_id"] = source_id
     (output / "INDEX.json").write_text(json.dumps(index, sort_keys=True, indent=2) + "\n")
     notice = {"schema": 1, "source_id": source_id,
@@ -530,7 +613,7 @@ def add_file(archive, name, source):
 
 
 def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, node_source,
-                   review=None):
+                   uhd_sources, review=None):
     baseline = Path(args.baseline_source_archive)
     if sha256(baseline) != BASELINE_SOURCE_SHA256:
         raise ValueError("accepted baseline source archive changed")
@@ -550,7 +633,9 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
              "header-input-versions-arm64.txt": Path(args.arm64_header_versions),
              "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions),
              "cpp-httplib-formula-arm64.rb": Path(args.arm64_cpp_formula),
-             "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula)}
+             "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula),
+             "vectorwarp-uhd.rb": Path(args.checkout) / "packaging/homebrew/vectorwarp-uhd.rb",
+             **uhd_sources}
     if review is not None:
         items["build-source-review.json"] = output / "public-build-source/build-source-review.json"
     manifest = {"schema": 1, "source_id": source_id, "version": args.version,
@@ -566,6 +651,9 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
               "transition changes only proxy-addr 2.0.7 to 2.0.8; its exact registry source archive "
               "and unchanged MIT license are included. The official Node runtime is pinned to "
               f"{NODE_REVIEW['version']}; its exact upstream source archive and license are included. "
+              "Both architectures use the reviewed VectorWarp UHD 4.11.0.0 formula with MPMD disabled "
+              "and B200/B210 enabled. Its upstream archive, build-only Python resources, macOS patch, "
+              "formula and notices are included; gRPC and protobuf are not part of the runtime. "
               "Extract the baseline kit, "
               "then use the current first-party checkout for the build; do not use its historical "
               "f813 first-party archive. Current runtime manifests and CI inventories are included "
@@ -607,6 +695,8 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
     intel_cpp.unlink()
     proxy_addr.unlink()
     node_source.unlink()
+    for path in uhd_sources.values():
+        path.unlink()
     return archive_path
 
 
@@ -665,13 +755,16 @@ def prepare(args):
             output, verify_cpp_formula(args.x86_64_cpp_formula, "x86_64"), Path(args.baseline_notices))
         proxy_addr = fetch_proxy_addr_source(output)
         node_source, node_license = fetch_node_source(output)
+        uhd_sources, uhd_notices = fetch_vectorwarp_uhd_sources(output)
         rebind_notices(Path(args.baseline_notices), output / "notices", source_id, runtimes,
-                       node_license)
+                       node_license, uhd_notices)
         node_license.unlink()
+        for path in uhd_notices.values():
+            path.unlink()
         if review is not None:
             persist_review(output, review)
         archive = source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr,
-                                 node_source, review)
+                                 node_source, uhd_sources, review)
         receipt = {"schema": 1, "source_id": source_id,
             "version": args.version, "source_archive": archive.name,
             "source_archive_sha256": sha256(archive), "source_archive_size": archive.stat().st_size,

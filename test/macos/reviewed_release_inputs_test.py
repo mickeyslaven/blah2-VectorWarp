@@ -289,6 +289,47 @@ class FormulaSourceClaimTransitionTest(unittest.TestCase):
                     self.inventory(self.component(**{field: value})),
                     self.inventory(prior), "arm64")
 
+    def reviewed_uhd(self):
+        review = inputs.VECTORWARP_UHD_REVIEW
+        notices = [{"path": path, "sha256": digest} for path, digest in review["notices"]]
+        copies = [{"path": f".brew/{review['formula']}.rb",
+                   "sha256": review["formula_sha256"]}, *notices]
+        return {
+            "formula": review["formula"], "version": review["version"],
+            "input": review["input"],
+            "formula_recipe": {"sha256": review["formula_sha256"],
+                               "source_sha256": [item[2] for item in review["sources"]]},
+            "notice_files": notices, "copied_files": copies,
+        }
+
+    def test_accepts_exact_reviewed_uhd_replacement(self):
+        legacy = self.component(name="uhd", version="4.10.0.0")
+        self.assertIsNone(inputs.verify_source_claim_transition(
+            self.inventory(self.reviewed_uhd()), self.inventory(legacy), "arm64"))
+
+    def test_rejects_tampered_uhd_or_mpmd_runtime_dependencies(self):
+        legacy = self.component(name="uhd", version="4.10.0.0")
+        changed = self.reviewed_uhd()
+        changed["formula_recipe"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "new source review"):
+            inputs.verify_source_claim_transition(
+                self.inventory(changed), self.inventory(legacy), "arm64")
+        with self.assertRaisesRegex(ValueError, "MPMD dependency stack"):
+            inputs.verify_source_claim_transition(
+                self.inventory(self.reviewed_uhd(), self.component(name="grpc")),
+                self.inventory(legacy), "arm64")
+
+
+class VectorWarpUhdFormulaTest(unittest.TestCase):
+    def test_formula_is_exact_reviewed_b200_build_without_mpmd(self):
+        formula = ROOT / "packaging/homebrew/vectorwarp-uhd.rb"
+        text = formula.read_text()
+        self.assertEqual(inputs.sha256(formula),
+                         inputs.VECTORWARP_UHD_REVIEW["formula_sha256"])
+        self.assertIn("-DENABLE_B200=ON", text)
+        self.assertIn("-DENABLE_MPMD=OFF", text)
+        self.assertNotRegex(text, r'depends_on "(?:grpc|protobuf|abseil|c-ares|re2)"')
+
 
 class ReviewedNodeRuntimeTest(unittest.TestCase):
     def setUp(self):
@@ -382,6 +423,15 @@ class ReboundNpmNoticeTest(unittest.TestCase):
         self.output = self.root / "output"
         self.node_license = self.root / "node-LICENSE"
         self.node_license.write_bytes(b"reviewed node license\n")
+        self.uhd_notice_review = inputs.VECTORWARP_UHD_REVIEW["notices"]
+        self.uhd_notices = {}
+        reviewed_notices = []
+        for index, (relative, _) in enumerate(self.uhd_notice_review):
+            path = self.root / f"uhd-notice-{index}"
+            path.write_bytes((relative + "\n").encode())
+            self.uhd_notices[relative] = path
+            reviewed_notices.append((relative, inputs.sha256(path)))
+        inputs.VECTORWARP_UHD_REVIEW["notices"] = tuple(reviewed_notices)
         self.baseline.mkdir()
         index = {
             "source_id": inputs.BASELINE_SOURCE_ID,
@@ -418,13 +468,15 @@ class ReboundNpmNoticeTest(unittest.TestCase):
     def tearDown(self):
         inputs.PROXY_ADDR_REVIEW["license_sha256"] = self.license_sha
         inputs.NODE_REVIEW["license_sha256"] = self.node_license_sha
+        inputs.VECTORWARP_UHD_REVIEW["notices"] = self.uhd_notice_review
         self.temporary.cleanup()
 
     def test_rebinds_exact_runtime_notice_version(self):
         with mock.patch.object(inputs, "validated_baseline_notices"), \
                 mock.patch.object(inputs.package, "validated_notices"):
             inputs.rebind_notices(
-                self.baseline, self.output, "a" * 40, self.runtimes, self.node_license)
+                self.baseline, self.output, "a" * 40, self.runtimes, self.node_license,
+                self.uhd_notices)
         index = json.loads((self.output / "INDEX.json").read_text())
         record = next(item for item in index["api_packages"]
                       if item["name"] == "proxy-addr")
@@ -440,7 +492,8 @@ class ReboundNpmNoticeTest(unittest.TestCase):
                 mock.patch.object(inputs.package, "validated_notices"):
             with self.assertRaisesRegex(ValueError, "runtime identity or notice"):
                 inputs.rebind_notices(
-                    self.baseline, self.output, "a" * 40, self.runtimes, self.node_license)
+                    self.baseline, self.output, "a" * 40, self.runtimes, self.node_license,
+                    self.uhd_notices)
 
 
 if __name__ == "__main__":
