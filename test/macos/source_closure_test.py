@@ -26,6 +26,12 @@ class SourceClosureTest(unittest.TestCase):
 
     def tearDown(self): self.tmp.cleanup()
 
+    def test_workflow_uses_official_core_metadata_for_local_patches(self):
+        workflow = (ROOT / ".github/workflows/macos-standalone.yml").read_text()
+        self.assertIn("https://formulae.brew.sh/api/formula/", workflow)
+        self.assertIn('urllib.parse.quote(formula, safe="")', workflow)
+        self.assertIn('if formula == "vectorwarp-uhd":', workflow)
+
     def closure(self, *, arch=None, omit=False, tamper=False):
         path = self.root / ("closure-" + str(len(list(self.root.glob('closure-*')))) + ".tar.gz")
         payload = b"payload"; recipe = b"recipe"
