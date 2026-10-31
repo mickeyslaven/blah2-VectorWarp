@@ -1,6 +1,4 @@
 class VectorwarpUhd < Formula
-  include Language::Python::Virtualenv
-
   desc "Pinned UHD runtime for VectorWarp B200/B210 support"
   homepage "https://files.ettus.com/manual/"
   url "https://github.com/EttusResearch/uhd/archive/refs/tags/v4.11.0.0.tar.gz"
@@ -15,9 +13,6 @@ class VectorwarpUhd < Formula
   # Keep both CI architectures on the Python version staged by the release
   # workflow; Intel Homebrew does not publish python@3.15 yet.
   depends_on "python@3.12" => :build
-
-  pypi_packages package_name:   "",
-                extra_packages: "mako"
 
   resource "mako" do
     url "https://files.pythonhosted.org/packages/5a/09/e07c4b5579a79f4b16f8d4f29f6c54514ac787c4ad506b8c4f28a0e6b0bf/mako-1.4.3.tar.gz"
@@ -37,13 +32,14 @@ class VectorwarpUhd < Formula
 
   def install
     python = Formula["python@3.12"].opt_bin/"python3.12"
-    venv = virtualenv_create(buildpath/"venv", python)
-    venv.pip_install resources
-    ENV.prepend_path "PYTHONPATH", venv.site_packages
+    python_vendor = buildpath/"python-vendor"
+    resource("mako").stage { python_vendor.install "src/mako" }
+    resource("markupsafe").stage { python_vendor.install "src/markupsafe" }
+    ENV.prepend_path "PYTHONPATH", python_vendor
 
     args = %W[
       -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
-      -DPYTHON_EXECUTABLE=#{venv.root}/bin/python
+      -DPYTHON_EXECUTABLE=#{python}
       -DENABLE_B200=ON
       -DENABLE_MPMD=OFF
       -DENABLE_DPDK=OFF

@@ -40,13 +40,13 @@ jobs:
       - name: Install build-host dependencies
         run: |
           brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 hackrf eigen libusb vulkan-loader vulkan-headers glslang molten-vk
+          # Intel runners already link python.org's 3.12 into /usr/local/bin.
+          # The formula uses the explicit Homebrew opt path and needs no links.
+          brew install --skip-link python@3.12
           brew tap-new vectorwarp/release-build
           tap_root="$(brew --repository vectorwarp/release-build)"
           cp "$GITHUB_WORKSPACE/packaging/homebrew/vectorwarp-uhd.rb" "$tap_root/Formula/vectorwarp-uhd.rb"
           brew install --formula vectorwarp/release-build/vectorwarp-uhd
-          # Intel runners already link python.org's 3.12 into /usr/local/bin.
-          # Staging uses the explicit Homebrew path and needs no global links.
-          brew install --skip-link python@3.12
           mkdir -p build/standalone-provenance
           brew list --versions asio cpp-httplib eigen rapidjson vulkan-headers > build/standalone-provenance/header-input-versions.txt
           cp "$(brew --prefix cpp-httplib)/.brew/cpp-httplib.rb" build/standalone-provenance/cpp-httplib-formula.rb
