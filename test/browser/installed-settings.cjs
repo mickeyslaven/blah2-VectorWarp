@@ -191,6 +191,7 @@ if (process.argv[2] === '--status-fixtures') {
     await page.goto(`${base}/display/configuration/?replayFile=${encodeURIComponent(replayFile)}`,
       {waitUntil: 'domcontentloaded'});
     await page.waitForSelector('#config-save', {state: 'attached'});
+    await page.locator('#config-save').filter({hasText: 'Start replay'}).waitFor();
     assert.equal(await page.locator('#config-save').textContent(), 'Start replay');
     await revealCpi();
     await cpi.fill('0.02');
