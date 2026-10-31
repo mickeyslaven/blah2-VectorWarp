@@ -69,8 +69,9 @@ printf '%s\\n' "systemctl:$*" >> {log!s}
 [ "$1" = start ] && count=$(cat {starts!s}) && printf '%s\\n' "$((count + 1))" > {starts!s}
 if [ "$1" = is-active ]; then
   mode=$(cat {marker!s})
-  [ "$mode" = processor-start-skipped ] && exit 3
-  [ "$mode" = processor-start-delayed ] && [ "$(cat {starts!s})" -lt 2 ] && exit 3
+  [ "$mode" = neutral-start-skipped ] && exit 3
+  [ "$mode" = processor-start-skipped ] && [ "$(cat {starts!s})" -gt 0 ] && exit 3
+  [ "$mode" = processor-start-delayed ] && [ "$(cat {starts!s})" -eq 1 ] && exit 3
 fi
 exit 0
 ''')
@@ -127,6 +128,7 @@ exit 98
                 str(script.parent / 'fake/node') + ' ' + str(script.parent / 'prefix/libexec/vectorwarp-prepare-sdrplay.js') +
                 ' --begin ' + str(script.parent / 'etc/config.yml'),
                 'node:prepare-begin',
+                'systemctl:is-active --quiet vectorwarp-processor.service',
                 'systemctl:stop vectorwarp-processor.service',
                 'systemctl:restart vectorwarp-api.service',
                 'node:wait-api',
@@ -189,7 +191,7 @@ exit 98
             self.assertEqual(result.returncode, 78, result.stderr)
             entries = self.entries(log)
             self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 5)
-            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 5)
+            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 6)
             self.assertIn('node:prepare-finish:78', entries)
             self.assertNotIn('node:prepare-finish:0', entries)
 
@@ -200,7 +202,16 @@ exit 98
             self.assertEqual(result.returncode, 0, result.stderr)
             entries = self.entries(log)
             self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 2)
-            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 2)
+            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 3)
+            self.assertIn('node:prepare-finish:0', entries)
+
+    def test_neutral_first_run_may_remain_inactive(self):
+        temporary, script, log = self.fixture('neutral-start-skipped')
+        with temporary:
+            result = self.run_script(script)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            entries = self.entries(log)
+            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 5)
             self.assertIn('node:prepare-finish:0', entries)
 
 
