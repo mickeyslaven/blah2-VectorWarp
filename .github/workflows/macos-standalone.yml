@@ -111,10 +111,16 @@ jobs:
           # Homebrew may otherwise satisfy dependencies with bottles even under
           # --build-from-source.
           # Formula names are Homebrew identifiers and cannot contain whitespace.
+          fetch_flags=(--build-from-source --retry)
+          # Current Homebrew requires --test to fetch formula resources; the
+          # Intel runner's older Homebrew fetches them without that newer flag.
+          if brew fetch --help 2>&1 | grep -q -- '--test'; then
+            fetch_flags+=(--test)
+          fi
           for formula in $formulas asio cpp-httplib eigen rapidjson vulkan-headers; do
-            HOMEBREW_CACHE="$source_cache" brew fetch --build-from-source --test --retry "$formula"
+            HOMEBREW_CACHE="$source_cache" brew fetch "${fetch_flags[@]}" "$formula"
           done
-          HOMEBREW_CACHE="$source_cache" brew fetch --build-from-source --test --retry vectorwarp/release-build/vectorwarp-uhd
+          HOMEBREW_CACHE="$source_cache" brew fetch "${fetch_flags[@]}" vectorwarp/release-build/vectorwarp-uhd
           while IFS=$'\t' read -r formula version; do
             recipe="$(brew --cellar)/$formula/$version/.brew/$formula.rb"
             test -f "$recipe"
