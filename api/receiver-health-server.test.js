@@ -42,7 +42,6 @@ async function reservePorts(count) {
     const ports = await reservePorts(Object.keys(config.network.ports).length);
     Object.keys(config.network.ports).forEach((name, index) => { config.network.ports[name] = ports[index]; });
     fs.writeFileSync(filename, yaml.dump(config));
-    const original = fs.readFileSync(filename);
     const origin = `http://127.0.0.1:${config.network.ports.api}`;
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {
       env: {...process.env, BLAH2_PREVIEW: 'true', BLAH2_RECEIVER_TYPES: 'RspDuo',
@@ -63,6 +62,9 @@ async function reservePorts(count) {
       try { await systemStatus(); ready = true; break; } catch (_) { await delay(30); }
     }
     assert.equal(ready, true, `API failed to start: ${errors}`);
+    // Startup may perform a one-time schema migration. Telemetry must leave
+    // the resulting persisted configuration unchanged.
+    const persistedAfterStartup = fs.readFileSync(filename);
     let current = await systemStatus();
     assert.deepEqual(current.build, {version: '9.8.7', commit: 'a'.repeat(40), package: 'test'});
     assert.deepEqual(current.system, {os: os.platform(), architecture: os.arch(), kernel: os.release()});
@@ -131,7 +133,8 @@ async function reservePorts(count) {
     assert.equal((await post({...live, receiverHealth: active})).status, 204);
     assert.deepEqual((await systemStatus()).processor.receiverHealth, active,
       'Fresh telemetry recovers overload state after an outage');
-    assert.deepEqual(fs.readFileSync(filename), original, 'Receiver telemetry must not mutate RF configuration');
+    assert.deepEqual(fs.readFileSync(filename), persistedAfterStartup,
+      'Receiver telemetry must not mutate RF configuration');
     assert.equal((await (await fetch(`${origin}/capture/request`)).json()).recording, false);
     console.log(`Receiver health API ingestion, rejection, freshness and recovery tests passed (${process.platform}).`);
   } finally {

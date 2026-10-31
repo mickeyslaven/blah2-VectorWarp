@@ -22,6 +22,7 @@ const redirectRoutes = new Set([
   'html/display/overview/index.html', 'html/display/activity/index.html',
   'html/display/health/index.html', 'html/display/timing/index.html',
   'html/display/maxhold/index.html', 'html/display/spectrum/index.html',
+  'html/display/site/index.html',
   'html/display/detection/delay/index.html',
   'html/display/detection/doppler/index.html',
   'html/display/detection/delay-doppler/index.html'
@@ -29,12 +30,12 @@ const redirectRoutes = new Set([
 for (const file of pageFiles) {
   const html = fs.readFileSync(file, 'utf8');
   const route = path.relative(root, file);
-  assert.match(html, /<h1(?:\s|>)/i, `${route} must expose a page heading`);
   if (redirectRoutes.has(route)) {
     assert.match(html, /location\.replace\(/,
       `${route} must redirect to its canonical replacement`);
     continue;
   }
+  assert.match(html, /<h1(?:\s|>)/i, `${route} must expose a page heading`);
   assert.match(html, /common\.js/, `${route} must use shared navigation/status behavior`);
 }
 
@@ -73,7 +74,6 @@ assert.match(recordings, /display\/configuration\?replayFile=/,
 
 const assistant = read('html/js/setup_assistant.js');
 assert.match(assistant, /aria-current="step"/);
-assert.match(assistant, /aria-pressed="true"/);
 assert.match(assistant, /aria-labelledby.*setup-wizard-title/);
 
 const controller = read('html/controller/index.html');

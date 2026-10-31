@@ -25,6 +25,7 @@ let writes = 0;
 let holdValidation = false;
 let releaseValidation;
 window.liveApiUrl = value => value;
+window.confirm = () => true;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);
 window.rememberApiPort = () => {};
 window.VectorWarpSetupAssistant = {render(_target, api) { window.__settingsModeApi = api; }};
@@ -59,6 +60,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: status === 200, status, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/kraken_geometry.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
 const query = key => window.document.querySelector(`[data-path="${key}"]`);
@@ -80,8 +82,8 @@ function change(input, value, event = 'input') {
     saved.capture.aircraft_clips = aircraftClipSettings;
     await window.renderConfiguration();
     await window.validateActiveConfiguration();
-    assert.equal(window.document.querySelectorAll('[role=tab]').length, 7,
-      'The unified settings surface exposes every task category');
+    assert.equal(window.document.querySelectorAll('[role=tab]').length, 6,
+      'The SDRplay settings surface exposes each applicable task category');
     assert.ok(window.document.querySelector('[data-tab="experimental"]'),
       'Experimental controls have one dedicated category');
     assert.ok(query('capture.device.serial'),
@@ -113,8 +115,8 @@ function change(input, value, event = 'input') {
     window.setValue(['capture', 'fc'], saved.capture.fc);
     await window.validateActiveConfiguration();
     const recordingPanel = window.document.querySelector('#settings-panel-save');
-    assert.match(recordingPanel.textContent, /IQ recordings/,
-      'Recording starts with the raw-IQ workflow');
+    assert.match(recordingPanel.textContent, /Automatic aircraft IQ clips/,
+      'Recording exposes the automatic raw-IQ workflow');
     assert.ok(query('capture.aircraft_clips.enabled'),
       'Automatic aircraft IQ recording remains visible in Recording');
     assert.equal(recordingPanel.querySelector('[data-path="save.map"]'), null,
@@ -127,9 +129,9 @@ function change(input, value, event = 'input') {
     assert.match(diagnosticExports.textContent, /not IQ recording/i);
     assert.ok(diagnosticExports.querySelector('[data-path="save.map"]'));
     assert.ok(diagnosticExports.querySelector('[data-path="save.detection"]'));
-    assert.ok([...query('process.performance.acceleration').querySelector('select').options]
-      .some(option => option.value === 'gpu-resident'),
-    'Every backend-supported GPU acceleration mode is selectable');
+    assert.deepEqual([...query('process.performance.acceleration').querySelector('select').options]
+      .map(option => option.value), ['automatic', 'cpu'],
+    'Processing exposes the safe Automatic mode and an explicit CPU-only mode');
     const receiverStartup = window.document.getElementById('receiver-startup');
     const device = saved.capture.device;
     const receiverStatus = {radar: 'receiving', processorFresh: true, processor: {
@@ -154,7 +156,7 @@ function change(input, value, event = 'input') {
     assert.equal(startupDetails.open, true);
     assert.strictEqual(window.document.activeElement, startupSummary,
       'Diagnostic refresh does not reset summary focus');
-    assert.equal(window.document.querySelector('[role=tab][data-tab=truth] strong').textContent, 'ADS-B');
+    assert.equal(window.document.querySelector('[role=tab][data-tab=truth] strong').textContent, 'Aircraft');
     assert.equal(query('truth.adsb.enabled').querySelector('label').textContent, 'Show ADS-B');
     window.showMessage('Settings saved. Radar restarted; new frames received.', 'success', '<img src=x> RF not measured.');
     const savedMessage = window.document.getElementById('config-message');
@@ -168,10 +170,10 @@ function change(input, value, event = 'input') {
     assert.equal(window.document.getElementById('config-warnings'), null);
     const siteAdvice = window.document.querySelector('.config-advice');
     assert.ok(siteAdvice);
-    assert.equal(siteAdvice.closest('[role=tabpanel]').id, 'settings-panel-location');
-    assert.equal(window.document.querySelector('#settings-panel-capture .config-advice'), null);
+    assert.equal(siteAdvice.closest('[role=tabpanel]').id, 'settings-panel-capture');
+    assert.equal(window.document.querySelector('#settings-panel-location'), null);
     assert.ok(!/estimated radar memory|Hardware tuning limits|Saving valid settings/.test(window.document.body.textContent));
-    assert.equal(window.document.querySelectorAll('#settings-panel-location select').length, 2);
+    assert.equal(window.document.querySelectorAll('#settings-panel-capture .site-settings select').length, 2);
     assert.equal(window.document.querySelectorAll('.config-group summary b').length, 0);
     window.document.querySelector('[data-site-role=tx][data-site-action=add]').click();
     const siteDialog = window.document.getElementById('site-dialog');
@@ -197,7 +199,7 @@ function change(input, value, event = 'input') {
     assert.equal(window.document.querySelector('.config-advice'), null, 'Resolved site advice must disappear');
     assert.equal(query('process.data.overlap'), null);
     assert.equal(window.document.querySelector('[data-config-group="process.data"]').querySelectorAll('.config-field').length, 1);
-    assert.ok(query('process.data.buffer').closest('[data-config-group="process.performance"]'));
+    assert.ok(query('process.data.buffer').closest('.settings-technical'));
     const lna = query('capture.device.lnaState').querySelector('select');
     assert.equal(lna.options.length, 10);
     const mhz = query('capture.fc').querySelector('input');
@@ -314,47 +316,36 @@ function change(input, value, event = 'input') {
     await window.saveConfiguration();
     assert.deepEqual(saved.capture.device.serial, ['0001', '0002']);
     assert.deepEqual(saved.capture.device.amp_enable, [true, true]);
-    assert.equal(query('capture.replay.state').querySelector('input').disabled, false);
-    assert.equal(query('capture.replay.format').querySelector('select').value, 'auto');
-
     window.switchDevice('Kraken');
-    change(query('capture.device.heimdall.gain_control').querySelector('select'), 'fixed', 'change');
-    const gainControl = query('capture.device.heimdall.gain');
+    const gainControl = query('capture.device.heimdall.gain_control');
     const gainMode = gainControl.querySelector('select');
-    const manualGain = gainControl.querySelector('input');
-    assert.equal(gainMode.value, 'keep');
-    change(gainMode, 'manual', 'change');
-    change(manualGain, '49.6');
+    const manualGains = gainControl.querySelector('.config-gain-manual');
+    assert.equal(gainMode.value, 'measured_per_channel');
+    assert.equal(manualGains.hidden, true);
+    change(gainMode, 'fixed', 'change');
+    assert.equal(manualGains.hidden, false);
     assert.equal(await window.validateActiveConfiguration(), true);
-    change(manualGain, '51');
-    assert.equal(await window.validateActiveConfiguration(), false);
-    change(gainMode, '-1', 'change');
-    assert.equal(manualGain.hidden, true);
-    assert.equal(manualGain.disabled, true, 'Inactive invalid manual gain must not block automatic gain');
+    change(gainMode, 'measured_per_channel', 'change');
+    assert.equal(manualGains.hidden, true);
     assert.equal(await window.validateActiveConfiguration(), true);
-    const restoredAutomatic = window.typedInput(-1, ['capture', 'device', 'heimdall', 'gain']);
-    assert.equal(restoredAutomatic.querySelector('select').value, '-1');
-    assert.equal(restoredAutomatic.querySelector('input').hidden, true,
-      'Saved automatic gain must not reopen as manual -1 dB');
-    change(gainMode, 'keep', 'change');
-    const reference = query('process.reference_synthesis.mode');
-    assert.equal(reference.closest('[role=tabpanel]').id, 'settings-panel-capture');
-    assert.equal(reference.closest('[data-config-group="capture.device"]').querySelector('summary strong').textContent, 'KrakenSDR Suite V2');
-    assert.equal(query('capture.device.reference_channel').closest('[data-config-group]').dataset.configGroup,
-      'process.reference_synthesis');
-    assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 1);
+    [...window.document.querySelectorAll('#settings-panel-array button')]
+      .find(button => button.textContent === 'Add antenna layout').click();
+    const reference = window.document.querySelector('#settings-panel-array .geometry-reference-mode select');
+    assert.ok(reference, 'Reference estimation is part of the visual array editor');
+    assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 0);
     assert.equal(window.document.getElementById('upstream-status').closest('[role=tabpanel]').id,
       'settings-panel-capture');
     change(query('process.reference_synthesis.analysis_samples').querySelector('input'), '0');
     assert.equal(await window.validateActiveConfiguration(), false);
-    assert.equal(window.document.querySelector('[role=tab][data-tab=capture]').classList.contains('has-errors'), true);
+    assert.equal(window.document.querySelector('[role=tab][data-tab=array]').classList.contains('has-errors'), true);
     assert.equal(window.document.querySelector('[role=tab][data-tab=process]').classList.contains('has-errors'), false);
     change(query('process.reference_synthesis.analysis_samples').querySelector('input'), '32768');
     const compatibilityValues = Object.entries(FIELD_RULES).filter(([, rule]) => rule.readOnly)
       .map(([key]) => [key, key.split('.').reduce((value, part) => value?.[part], saved)]);
     change(query('process.data.cpi').querySelector('input'), '0.25');
-    change(query('capture.device.channel_count').querySelector('select'), '8', 'change');
-    assert.equal(query('capture.device.surveillance_channels').querySelectorAll('input').length, 8);
+    change(window.document.querySelector('.geometry-preset-counts select'), '8', 'change');
+    window.document.querySelector('.geometry-preset-grid button').click();
+    assert.equal(window.document.querySelectorAll('.geometry-channel-map button').length, 8);
     assert.equal(await window.validateActiveConfiguration(), true);
     await window.saveConfiguration();
     assert.equal(saved.capture.device.channel_count, 8);
@@ -406,7 +397,7 @@ function change(input, value, event = 'input') {
       assert.equal(window.document.querySelectorAll('.config-group summary b').length, 0,
         `${profile.type}: field-count badges must not return`);
       const fields = [...window.document.querySelectorAll('.config-field')];
-      const paths = fields.map(field => field.dataset.path);
+      const paths = fields.map(field => field.dataset.path).filter(Boolean);
       for (const key of ['surveillance_workers', 'fft_threads']) {
         const select = query(`process.performance.${key}`).querySelector('select');
         assert.equal([...select.options].find(option => option.value === '0').textContent, 'Auto',
@@ -416,7 +407,8 @@ function change(input, value, event = 'input') {
         if (rule.readOnly) assert.equal(query(key), null, `${profile.type}: unused ${key} must not appear`);
       }
       assert.equal(window.document.querySelector('[data-config-group="truth.ais"]'), null);
-      assert.equal(new Set(paths).size, paths.length, `${profile.type}: settings must appear only once`);
+      const duplicates = [...new Set(paths.filter((path, index) => paths.indexOf(path) !== index))];
+      assert.deepEqual(duplicates, [], `${profile.type}: duplicate settings ${JSON.stringify(duplicates)}`);
       const ids = [...window.document.querySelectorAll('[id]')].map(element => element.id);
       assert.equal(new Set(ids).size, ids.length, `${profile.type}: controls must have unique labels/IDs`);
       for (const field of fields) {
@@ -439,8 +431,8 @@ function change(input, value, event = 'input') {
         assert.deepEqual([...field.querySelectorAll('.array-inputs label > span')].map(label => label.textContent),
           ['Reference', 'Surveillance'], `${profile.type}: ${key} must identify the two receiver roles`);
       }
-      assert.equal(window.document.querySelectorAll('#settings-panel-location select').length, 2);
-      assert.equal(window.document.querySelectorAll('#settings-panel-location [data-site-action=add]').length, 2);
+      assert.equal(window.document.querySelectorAll('#settings-panel-capture .site-settings select').length, 2);
+      assert.equal(window.document.querySelectorAll('#settings-panel-capture [data-site-action=add]').length, 2);
       if (profile.type !== 'Kraken') assert.equal(query('process.reference_synthesis.mode'), null);
     }
       // A background revision check must not recreate a clean editor while an
@@ -484,9 +476,9 @@ function change(input, value, event = 'input') {
     window.setValue(['capture', 'device', 'heimdall', 'gain_control'], 'measured_per_channel');
     window.renderEditor();
     assert.equal(query('capture.device.heimdall.gain_control').querySelector('option:checked').textContent,
-      'Automatic per channel (7.7, 7.7, 12.5, 3.7, 2.7 dB selected)',
+      'Automatic (7.7, 7.7, 12.5, 3.7, 2.7 dB selected)',
       'Automatic mode keeps its retained policy visible alongside the verified selected gains');
-    assert.ok(query('process.reference_synthesis.mode'),
+    assert.ok(window.document.querySelector('#settings-panel-array .geometry-reference-mode select'),
       'Array setup exposes the reference choice');
     assert.ok(window.document.querySelector('#settings-panel-array .kraken-geometry'),
       'Array setup has its own page');
@@ -497,12 +489,13 @@ function change(input, value, event = 'input') {
     assert.ok(query('capture.device.subdev').closest('.settings-technical'));
     window.switchDevice('HackRF');
     for (const path of ['capture.device.gain_lna', 'capture.device.gain_vga', 'capture.device.amp_enable'])
-      assert.ok(query(path).closest('.settings-technical'), `Technical controls contain ${path}`);
+      assert.equal(query(path).closest('[role=tabpanel]').id, 'settings-panel-capture',
+        `Receiver settings contain ${path}`);
     window.switchDevice('Kraken');
     assert.ok(query('capture.device.heimdall.host'));
     assert.ok(query('capture.device.heimdall.control_port'));
-    assert.ok(query('process.reference_synthesis.mode'));
-    assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 1,
+    assert.ok(window.document.querySelector('#settings-panel-array .geometry-reference-mode select'));
+    assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 0,
       'The unified editor must not duplicate reference controls');
     assert.ok(query('process.data.buffer'));
     console.log('Browser DOM tests passed: all-device layout audit, site add/edit/cancel/select, grouped frequency, errors, stale validation, discard and save payloads.');

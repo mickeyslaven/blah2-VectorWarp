@@ -125,7 +125,9 @@ function availablePort(usedPorts) {
     // Kraken gain is a declared string/number union: a "keep" profile default
     // must not replace a persisted Suite gain while recovering a document.
     const kraken = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
-    for (const gain of [-1, 0, 28.7, 49.6, 50]) {
+    // Suite AGC (-1) is intentionally invalid with measured-per-channel gain:
+    // the latter needs stable fixed starting gains for reproducible probes.
+    for (const gain of [0, 28.7, 49.6, 50]) {
       kraken.capture.device.heimdall.gain = gain;
       fs.writeFileSync(file, yaml.dump(kraken));
       const persisted = readConfig(file);

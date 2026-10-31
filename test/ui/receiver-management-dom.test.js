@@ -49,7 +49,7 @@ window.fetch = async (url, options = {}) => {
   } else throw new Error(`Unexpected ${url}`);
   return {ok: status === 200, status, headers: {get: () => `"${revision}"`}, json: async () => JSON.parse(JSON.stringify(body))};
 };
-for (const file of ['kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
+for (const file of ['config_profiles.js', 'kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const findButton = label => [...window.document.querySelectorAll('#receiver-setup button')].find(item => item.textContent === label);
 async function click(label) { const button = findButton(label); assert.ok(button, label); button.click(); await flush(); await flush(); }

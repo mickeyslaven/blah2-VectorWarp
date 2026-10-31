@@ -48,6 +48,9 @@ async function ready(port) { for(let i=0;i<120;i++){try { const result=await req
   const port=21000+(process.pid%1000); Object.keys(current.network.ports).forEach((key,index)=>{current.network.ports[key]=port+index;});
   fs.writeFileSync(filename,yaml.dump(current));
   const candidate=yaml.load(fs.readFileSync(path.join(__dirname,'..','config','config-kraken.yml'),'utf8'));
+  // Automatic gain uses the installed Linux restart receipt. This Darwin
+  // lifecycle test exercises the supported manual/fixed Kraken path.
+  candidate.capture.device.heimdall.gain_control='fixed';
   candidate.network=current.network; candidate.capture.device.heimdall.control_port=suite.address().port;
   const platform=path.join(directory,'darwin.js');fs.writeFileSync(platform,'Object.defineProperty(process,"platform",{value:"darwin"});');
   api=spawn(process.execPath,['--require',platform,path.join(__dirname,'server.js'),filename],{env:{...process.env,VECTORWARP_MACOS_LIFECYCLE:'1',VECTORWARP_MACOS_LAUNCHER:launcher,VECTORWARP_MACOS_STATE:state,BLAH2_RECEIVER_TYPES:'Kraken',BLAH2_CONFIG_RESTART_COMMAND:JSON.stringify([process.execPath,'-e',`require("fs").writeFileSync(${JSON.stringify(restart)},"ok")`])},stdio:['ignore','ignore','pipe']});api.stderr.on('data',x=>{stderr+=x;});

@@ -38,6 +38,10 @@
     if (mode === 'automatic') {
       heimdall.gain_control = 'measured_per_channel';
       if (heimdall.gain === -1) heimdall.gain = 'keep';
+      if (Array.isArray(heimdall.channel_gains) && heimdall.channel_gains.some(value =>
+        !(typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 50 &&
+          Math.round(value * 10) === value * 10)))
+        delete heimdall.channel_gains;
     } else if (mode === 'manual') {
       heimdall.gain_control = 'fixed';
       if (Array.isArray(heimdall.channel_gains) && heimdall.channel_gains.length)

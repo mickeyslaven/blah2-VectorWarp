@@ -80,7 +80,7 @@ async function browser() {
     return request(url, options);
   };
   window.fetchStatusResource = (url, options) => window.fetch(url, options);
-  for (const file of ['html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
+  for (const file of ['html/js/config_profiles.js', 'html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
   await window.renderConfiguration();
   return window;
 }

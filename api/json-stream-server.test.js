@@ -118,8 +118,20 @@ async function send(port, chunks) {
       const liveSocket = name === 'timing' ? await connect(config.network.ports[name]) : null;
       if (liveSocket) chunks.forEach(chunk => liveSocket.write(chunk));
       else await send(config.network.ports[name], chunks);
-      const response = await waitFor(apiPort, route, value => value.body === second);
-      assert.equal(response.body, second, `${name} must retain the final coalesced frame`);
+      const response = await waitFor(apiPort, route, value => {
+        if (name !== 'timing') return value.body === second;
+        try {
+          const parsed = JSON.parse(value.body);
+          return parsed.stream === name && parsed.sequence === 2;
+        } catch (_) { return false; }
+      });
+      if (name === 'timing') {
+        const parsed = JSON.parse(response.body);
+        assert.equal(parsed.stream, name);
+        assert.equal(parsed.sequence, 2);
+        assert.ok(Object.hasOwn(parsed, 'capture_backlog_ms'),
+          'Timing responses include derived capture health fields');
+      } else assert.equal(response.body, second, `${name} must retain the final coalesced frame`);
       if (liveSocket) await close(liveSocket);
     }
     const bearingFrame = {timestamp: 9, method: 'coherent_beam_bank', data: [{id: '0001',

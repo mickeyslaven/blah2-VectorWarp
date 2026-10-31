@@ -18,6 +18,9 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-receiver-syn
 const filename = path.join(directory, 'config.yml');
 const original = yaml.load(fs.readFileSync(path.join(
   __dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
+// Receiver synchronization is independent of the Linux-only automatic-gain
+// restart receipt, so use the fixed/manual path in this isolated API fixture.
+original.capture.device.heimdall.gain_control = 'fixed';
 const commands = [];
 const diskAtCommand = [];
 const sockets = new Set();

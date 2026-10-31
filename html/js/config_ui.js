@@ -299,7 +299,7 @@ function renderDetectionSettings() {
   });
   body.appendChild(compositeField('Detection sensitivity',
     'Changes the whole-bank false-alarm probability. Weak targets admits more noise; it does not create signal that is absent.',
-    sensitivity, 'process.detection.pfa'));
+    sensitivity));
   const tuning = document.createElement('details'); tuning.className = 'config-group composite-tuning';
   tuning.hidden = configProfiles.detectionSensitivity(activeConfig) !== 'custom' && settingsMode !== 'advanced';
   const summary = document.createElement('summary'); summary.textContent = 'CFAR tuning';
@@ -346,8 +346,7 @@ function renderWeakTargetSettings() {
   });
   body.appendChild(compositeField('Integration / accumulation mode', coherent ?
     'Two-frame modes integrate adjacent CPIs. Four- and eight-frame modes use track-before-detect to accumulate motion-consistent subthreshold energy.' :
-    'Multi-frame coherent recovery requires a supported coherent array receiver.', select,
-  'process.detection.integration_cpis'));
+    'Multi-frame coherent recovery requires a supported coherent array receiver.', select));
   const custom = document.createElement('details'); custom.className = 'config-group composite-tuning';
   custom.hidden = configProfiles.weakTargetMode(activeConfig) !== 'custom' && settingsMode !== 'advanced';
   const summary = document.createElement('summary'); summary.textContent = 'Recovery tuning';
@@ -2413,9 +2412,7 @@ function organizeTechnicalControls(panel, tab) {
   title.textContent = 'Technical controls';
   description.textContent = 'Ports and expert tuning';
   heading.append(title, description);
-  const count = document.createElement('b');
-  count.textContent = String(technicalFields.length);
-  summary.append(heading, count);
+  summary.append(heading);
   const body = document.createElement('div');
   body.className = 'config-fields';
   technicalFields.forEach(field => body.appendChild(field));
@@ -2943,6 +2940,8 @@ function renderReceiverSetup() {
               if (receiver.dependencies.state === 'installed') button('Install SDRplay support', runBuild);
             } else if (build.buildable && build.state === 'current') paragraph('SDRplay support is ready.');
             else if (!needsSdrplay && !build.buildable) paragraph('This VectorWarp installation is missing its SDRplay adapter kit. Reinstall the current package.');
+            if (relevantProgress?.state === 'failed')
+              paragraph(relevantProgress.reason || 'SDRplay support installation failed.');
             if (relevantProgress && ['queued', 'running'].includes(relevantProgress.state)) refreshBuildStatus();
           } catch (_) { if (!needsSdrplay) paragraph('SDRplay support could not be checked. Scan again.'); }
         }

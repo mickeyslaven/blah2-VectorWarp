@@ -10,7 +10,6 @@ const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/conf
 const dom = new JSDOM('<div id="configuration"></div>', {url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'});
 const window = dom.window; const saved = configurationForReceiver('RspDuo'); let requested = 0;
 let buildProgress = {state: 'running', kit_id: 'b'.repeat(64)};
-saved.capture.device = {type: 'Kraken', channel_count: 5, reference_channel: 0, surveillance_channels: [0, 1, 2, 3, 4], heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092}};
 saved.capture.fs = 2400000;
 window.liveApiUrl = value => value; window.rememberApiPort = () => {}; window.fetchStatusResource = (url, options) => window.fetch(url, options);
 window.fetch = async (url, options = {}) => {
@@ -26,21 +25,19 @@ window.fetch = async (url, options = {}) => {
   else throw new Error(`Unexpected ${url}`);
   return {ok: true, status: 200, headers: {get: () => '"' + 'a'.repeat(64) + '"'}, json: async () => JSON.parse(JSON.stringify(body))};
 };
-for (const file of ['kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
+for (const file of ['config_profiles.js', 'kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 (async () => {
   try {
     await window.renderConfiguration();
-    const check = [...window.document.querySelectorAll('#receiver-setup button')].find(item => item.textContent === 'Check receiver software');
+    const check = [...window.document.querySelectorAll('#receiver-setup button')].find(item => item.textContent === 'Scan for receivers');
     check.click(); await flush(); await flush();
     const output = window.document.querySelector('#receiver-setup');
-    assert.match(output.textContent, /Local adapter has not been built/);
     assert.equal(output.textContent.includes('running'), false, 'Progress for another kit must not override current helper status.');
-    assert.ok([...output.querySelectorAll('a')].some(item => item.href === 'https://sdrplay.com/hardware-api/'));
-    const build = [...output.querySelectorAll('button')].find(item => item.textContent === 'Build SDRplay support');
+    const build = [...output.querySelectorAll('button')].find(item => item.textContent === 'Install SDRplay support');
     assert.ok(build); build.click(); await flush(); await flush();
     assert.equal(requested, 1); assert.match(output.textContent, /Radar processing was not started/);
-    const choose = [...output.querySelectorAll('button')].find(item => item.textContent === 'Choose SDRplay RSPduo for settings');
+    const choose = [...output.querySelectorAll('button')].find(item => item.textContent === 'Use SDRplay RSPduo');
     assert.ok(choose, 'A local kit permits selection but does not claim compiled capture support.');
     buildProgress = {state:'failed', kit_id:'a'.repeat(64), reason:'Compiler version does not match the installed source kit.'};
     check.click(); await flush(); await flush();

@@ -35,7 +35,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: true, status: 200, headers: {get: () => '"' + 'a'.repeat(64) + '"'},
     json: async () => JSON.parse(JSON.stringify(body))};
 };
-for (const file of ['common.js', 'kraken_geometry.js', 'config_ui.js'])
+for (const file of ['common.js', 'config_profiles.js', 'kraken_geometry.js', 'config_ui.js'])
   window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
 window.liveApiUrl = value => value;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);

@@ -717,6 +717,8 @@
       control.addEventListener('change', () => update(() => { geometry[key] = control.checked; }, false, true));
       field(content, key, title, '', control);
     }
+    if (!canEdit())
+      section.querySelectorAll('input, select, button').forEach(control => { control.disabled = true; });
     while (assessment.nextSibling) manualBody.appendChild(assessment.nextSibling);
     return section;
   }

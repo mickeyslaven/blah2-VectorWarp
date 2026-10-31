@@ -66,7 +66,9 @@ async function eventually(check) {
     const capabilities = async () => (await request('GET','/api/config/capabilities')).body;
     const initial = await eventually(async()=>{const c=await capabilities();return c.configRevision&&c;});
     revision = initial.configRevision; assert.deepEqual(initial.localBuildLiveTypes,[]);
-    assert.equal((await request('PUT','/api/config?restart=false',config)).body.code,'SDRPLAY_LOCAL_BUILD_REQUIRED');
+    const rejected = await request('PUT','/api/config?restart=true',config);
+    assert.equal(rejected.status, 422, JSON.stringify(rejected.body));
+    assert.equal(rejected.body.code,'SDRPLAY_LOCAL_BUILD_REQUIRED', JSON.stringify(rejected.body));
     assert.equal((await request('POST','/api/sdrplay-build',{})).status,403);
     assert.equal((await request('POST','/api/sdrplay-build',{command:'anything'},'sdrplay-local-build-v1')).status,422);
     const building = request('POST','/api/sdrplay-build',{},'sdrplay-local-build-v1');

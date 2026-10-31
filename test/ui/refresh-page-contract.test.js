@@ -69,8 +69,8 @@ for (const page of insightPages)
     `${page} must remain registered with the shared refresh controller`);
 assert.match(insights, /root\.dataset\.ready\s*=\s*['"]true['"]/,
   'successful insight renders must become durable snapshots');
-assert.match(insights, /minimumRefreshIntervalMs\s*=\s*2000/,
-  'multi-endpoint insight refreshes must not run at sub-second CPI cadence');
+assert.match(insights, /minimumRefreshIntervalMs\s*=\s*view\s*===\s*['"]statistics['"]\s*\?\s*5000\s*:\s*2000/,
+  'multi-endpoint insight refreshes must use the bounded 2 s cadence and slower statistics cadence');
 
 const common = fs.readFileSync(path.join(root, 'html/js/common.js'), 'utf8');
 assert.match(common, /capture\/status\?summary=1/,

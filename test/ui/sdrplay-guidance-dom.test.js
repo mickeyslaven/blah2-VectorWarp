@@ -12,8 +12,6 @@ const dom = new JSDOM('<div id="configuration"></div>', {
 });
 const window = dom.window;
 const saved = configurationForReceiver('RspDuo');
-saved.capture.device = {type: 'Kraken', channel_count: 5, reference_channel: 0,
-  surveillance_channels: [0, 1, 2, 3, 4], heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092}};
 saved.capture.fs = 2400000;
 let dependencyState = 'unknown', serviceState = 'unknown';
 window.liveApiUrl = value => value;
@@ -41,13 +39,14 @@ window.fetch = async (url, options = {}) => {
   return {ok: true, status: 200, headers: {get: () => '"' + 'a'.repeat(64) + '"'},
     json: async () => JSON.parse(JSON.stringify(body))};
 };
-for (const file of ['kraken_geometry.js', 'config_ui.js'])
+for (const file of ['config_profiles.js', 'kraken_geometry.js', 'config_ui.js'])
   window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const check = async () => {
   const button = [...window.document.querySelectorAll('#receiver-setup button')]
     .find(item => item.textContent === 'Scan for receivers');
-  assert.ok(button); button.click(); await flush(); await flush();
+  assert.ok(button, window.document.getElementById('configuration')?.textContent);
+  button.click(); await flush(); await flush();
 };
 
 (async () => {
@@ -58,14 +57,14 @@ const check = async () => {
     const link = [...output.querySelectorAll('a')].find(item =>
       item.href === 'https://sdrplay.com/hardware-api/');
     assert.ok(link, 'Unknown SDRplay inventory must expose the official link immediately.');
-    assert.match(output.textContent, /Install SDRplay’s API once/);
+    assert.match(output.textContent, /Install the SDRplay API once/);
     assert.equal([...output.querySelectorAll('button')].some(item =>
       item.textContent.startsWith('Setup guide:')), false,
     'The official link must not require opening the optional setup guide.');
 
     dependencyState = 'missing';
     await check();
-    assert.match(output.textContent, /requires accepting its vendor license/);
+    assert.match(output.textContent, /Vendor license acceptance is required/);
     assert.ok([...output.querySelectorAll('a')].some(item => item.href === 'https://sdrplay.com/hardware-api/'));
 
     dependencyState = 'installed'; serviceState = 'stopped';

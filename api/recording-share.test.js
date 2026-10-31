@@ -4,11 +4,11 @@ const assert = require('assert/strict');
 const {isLocalDeviceRequest, reveal} = require('./recording-share');
 
 const interfaces = {lo: [{address: '127.0.0.1'}, {address: '::1'}],
-  tailscale0: [{address: '100.126.186.65'}]};
+  tailscale0: [{address: '100.64.0.10'}]};
 assert.equal(isLocalDeviceRequest({socket: {remoteAddress: '::ffff:127.0.0.1'}}, interfaces), true);
-assert.equal(isLocalDeviceRequest({socket: {remoteAddress: '100.126.186.65'}}, interfaces), true,
+assert.equal(isLocalDeviceRequest({socket: {remoteAddress: '100.64.0.10'}}, interfaces), true,
   'a browser using this machine\'s own network address is local');
-assert.equal(isLocalDeviceRequest({socket: {remoteAddress: '100.90.37.77'}}, interfaces), false,
+assert.equal(isLocalDeviceRequest({socket: {remoteAddress: '100.64.0.11'}}, interfaces), false,
   'another tailnet device receives a download instead of opening the server file manager');
 
 const calls = [];

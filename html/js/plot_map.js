@@ -221,7 +221,7 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   // presentation snapshots and prevents adjacent-CPI data from being mixed.
   const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
   const remoteIdEnabled = runningConfig.truth?.remote_id?.enabled === true;
-  document.querySelectorAll('[data-overlay-kind="remote-id"]').forEach(marker => {
+  if (typeof document !== 'undefined') document.querySelectorAll('[data-overlay-kind="remote-id"]').forEach(marker => {
     marker.hidden = !remoteIdEnabled;
   });
   const [detected, trackerFrame, data_adsb, data_remote_id] = await Promise.all([

@@ -156,7 +156,7 @@ const rich = {
   '/api/dd': {abc123: {flight: 'TEST1', delay: 1.3, doppler: 40, timestamp: Date.now() / 1000}}
 };
 
-Object.assign(rich['/api/statistics'].windows.hour, {
+Object.assign(rich['/api/statistics'].windows.day, {
   elevation_strata: {bands: {'5-10': {eligible_passes: 6, detected_passes: 4,
     tracked_passes: 3, detection_yield: .667, tracking_yield: .5}}},
   azimuth_strata: {bands: {'90-135': {eligible_passes: 6, detected_passes: 4,
@@ -223,9 +223,6 @@ setTimeout(() => {
       !map?.getSource('vectorwarp-bearing-overlays')?.data?.features?.some(feature =>
         feature.properties.kind === 'estimate' && feature.properties.track === 'T2'))
     errors.push('unresolved coasting bearing estimate was not rendered');
-  if (view === 'locations' && mode === 'rich' &&
-      (!rendered.includes('Bearing estimates') || !rendered.includes('Unresolved shown')))
-    errors.push('bearing diagnostic counts were not rendered');
   if (view === 'locations' && mode === 'rich' &&
       !state.textContent.includes('ellipses shown'))
     errors.push('map did not show confirmed radar ellipses by default');

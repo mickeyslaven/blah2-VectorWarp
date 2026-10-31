@@ -36,7 +36,7 @@ function renderAppHeader(active) {
 }
 
 function addRadarViewControl(panel, target) {
-  const active = document.body?.dataset.radarView;
+  const active = document.body?.dataset?.radarView;
   if (!active || !panel || !target || panel.querySelector('.radar-view-control')) return;
   const views = [
     ['live', '/', 'Live delay–Doppler'],
@@ -862,7 +862,10 @@ let radarRuntimeReadAt = -Infinity;
 let radarRuntimePending = null;
 
 async function fetchRadarJson(url) {
-  return fetchCachedJsonResource(url);
+  // The scheduler already bounds this read to once every two seconds. Do not
+  // layer stale-while-revalidate on top or a restarted CPI can remain hidden
+  // for another complete cache window.
+  return fetchCachedJsonResource(url, {}, {freshMs: 0, awaitFresh: true});
 }
 
 function radarPresentationUrl(path) {

@@ -76,7 +76,8 @@ const {createGpuSetupStatus} = require('./gpu-setup');
   await routes['/api/receivers']({method: 'GET', get: name => ({Host: '127.0.0.1:3000',
     Origin: 'http://127.0.0.1:3000'})[name]}, response);
   assert.equal(response.value.managementAvailable, false);
-  assert.equal(response.value.management.code, 'HOMEBREW_REQUIRED');
+  assert.equal(response.value.management.code, 'EXPLICIT_CHECK_REQUIRED');
+  assert.deepEqual(response.value.receivers, []);
   const standaloneRoutes = {};
   require('./receiver-routes').installReceiverRoutes({get: (key, handler) => standaloneRoutes[key] = handler,
     post: (key, handler) => standaloneRoutes[key] = handler}, {platform: 'darwin',
@@ -87,7 +88,7 @@ const {createGpuSetupStatus} = require('./gpu-setup');
   const standaloneResponse = {set() {}, removeHeader() {}, vary() {}, json(value) { this.value = value; }};
   await standaloneRoutes['/api/receivers']({method: 'GET', get: name => ({Host: '127.0.0.1:3000',
     Origin: 'http://127.0.0.1:3000'})[name]}, standaloneResponse);
-  assert.equal(standaloneResponse.value.management.code, 'STANDALONE_COMPANION_REQUIRED');
+  assert.equal(standaloneResponse.value.management.code, 'EXPLICIT_CHECK_REQUIRED');
   assert.deepEqual(standaloneResponse.value.management.actions, []);
   const managedRoutes = {};
   let helperCalls = 0; let executed = 0;
