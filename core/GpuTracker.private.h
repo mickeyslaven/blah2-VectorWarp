@@ -139,6 +139,16 @@ uint clutterStreak(uint cell){
  uint leaked=missed/4u;
  return packed==0u||leaked>=streak?0u:streak-leaked;
 }
+uint clutterRidgeStreak(uint cell){
+ uint rows=post[33],cells=m[4];if(rows==0u||cells==0u||cell>=cells)return 0u;
+ uint delayBins=cells/rows;if(delayBins==0u)return 0u;
+ uint row=cell/delayBins,delay=cell%delayBins,best=0u;
+ uint rowFirst=row>0u?row-1u:0u,rowLast=min(rows-1u,row+1u);
+ uint delayFirst=delay>4u?delay-4u:0u,delayLast=min(delayBins-1u,delay+4u);
+ for(uint r=rowFirst;r<=rowLast;++r)for(uint d=delayFirst;d<=delayLast;++d)
+  best=max(best,clutterStreak(r*delayBins+d));
+ return best;
+}
 uint nearestDopplerRow(double value){uint count=post[32],low=0u,high=count;
  while(low<high){uint middle=low+(high-low)/2u;
   if(packDouble2x32(uvec2(post[post[44]+2u*middle],post[post[44]+2u*middle+1u]))<value)low=middle+1u;else high=middle;}
@@ -158,14 +168,24 @@ bool dopplerCombBirthEligible(uint i){
   double otherSnr=sd(other+4u);if(otherSnr>snr||(otherSnr==snr&&j<winner)){winner=j;snr=otherSnr;}}
  return cluster<3u||winner==i;
 }
+bool rangeCombBirthEligible(uint i){
+ uint at=m[5]+8u*i,row=nearestDopplerRow(sd(at+2u)),cluster=1u,winner=i;
+ double delay=sd(at),snr=sd(at+4u);
+ for(uint j=0u;j<m[19];++j){if(j==i||s[m[6]+j]!=0u)continue;uint other=m[5]+8u*j;
+  if(abs(sd(other)-delay)>.5LF)continue;
+  uint otherRow=nearestDopplerRow(sd(other+2u)),rowDelta=row>otherRow?row-otherRow:otherRow-row;
+  if(rowDelta<4u)continue;cluster++;
+  double otherSnr=sd(other+4u);if(otherSnr>snr||(otherSnr==snr&&j<winner)){winner=j;snr=otherSnr;}}
+ return cluster<3u||winner==i;
+}
 bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  uint at=m[5]+8u*i;if(sd(at+4u)<md(50u))return false;
- if(!dopplerCombBirthEligible(i))return false;
+ if(!dopplerCombBirthEligible(i)||!rangeCombBirthEligible(i))return false;
  if(!clutterAware())return true;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
  if(maximum>0.0LF&&abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
  if(cell>=m[4]||post[33]==0u)return false;
- return clutterStreak(cell)<clutterPersistence[1];}
+ return clutterRidgeStreak(cell)<clutterPersistence[1];}
 bool quarantinePersistentTrack(uint r,uint match){
  if(!clutterAware()||match==0xffffffffu)return false;
  uint samples=clutterPersistence[4],minimumAssociated=clutterPersistence[5];
@@ -173,7 +193,7 @@ bool quarantinePersistentTrack(uint r,uint match){
  if(samples<2u||samples>h||length+1u<samples||minimumAssociated>samples)return false;
  uint detectionAt=m[5]+8u*match,cell=s[post[41]+match];
  if(cell>=m[4]||post[33]==0u)return false;
- if(clutterStreak(cell)<clutterPersistence[1])return false;
+ if(clutterRidgeStreak(cell)<clutterPersistence[1])return false;
  double maximumDelaySpan=packDouble2x32(uvec2(clutterPersistence[6],clutterPersistence[7]));
  double maximumDopplerSpan=packDouble2x32(uvec2(clutterPersistence[8],clutterPersistence[9]));
  double newestDelay=sd(detectionAt),newestDoppler=sd(detectionAt+2u);

@@ -21,6 +21,7 @@ int main()try{
  using gpu_tracker::boundInitiations;
  using gpu_tracker::DopplerCombBirth;
  using gpu_tracker::dopplerCombBirthEligible;
+ using gpu_tracker::rangeCombBirthEligible;
  using gpu_tracker::dopplerRidgeHasBirthCapacity;
  using gpu_tracker::advancePersistentStreak;
  using gpu_tracker::persistentCell;
@@ -64,6 +65,12 @@ int main()try{
  const DopplerCombBirth isolated[]={{8,100,8,true},{9,101,12,true},{34,120,10,true}};
  require(dopplerCombBirthEligible(isolated,3,0)&&dopplerCombBirthEligible(isolated,3,1)&&
   dopplerCombBirthEligible(isolated,3,2),"isolated or same-range births were suppressed");
+ const DopplerCombBirth rangeComb[]={{14.0,80,8,true},{14.2,88,12,true},{13.9,96,10,true}};
+ require(!rangeCombBirthEligible(rangeComb,3,0)&&rangeCombBirthEligible(rangeComb,3,1)&&
+  !rangeCombBirthEligible(rangeComb,3,2),"same-range Doppler comb did not retain only its strongest birth");
+ const DopplerCombBirth rangeIsolated[]={{14.0,80,8,true},{14.7,88,12,true},{13.9,82,10,true}};
+ require(rangeCombBirthEligible(rangeIsolated,3,0)&&rangeCombBirthEligible(rangeIsolated,3,1)&&
+  rangeCombBirthEligible(rangeIsolated,3,2),"isolated range/Doppler births were suppressed");
  const DopplerCombBirth existing[]={{8,100,20,false},{20,101,12,true},{34,99,10,true}};
  require(dopplerCombBirthEligible(existing,3,1)&&dopplerCombBirthEligible(existing,3,2),
   "an established track participated in new-birth comb suppression");
