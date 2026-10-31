@@ -73,6 +73,8 @@ class SourceClosureExporterTest(unittest.TestCase):
         workflow=(ROOT/".github/workflows/macos-standalone.yml").read_text()
         self.assertIn("export-homebrew-formula-inputs.rb",workflow)
         self.assertIn("shutil.copyfile(source, target)",workflow)
+        self.assertIn("brew commands | grep -x trust >/dev/null",workflow)
+        self.assertNotIn("grep -qx trust",workflow)
         self.assertNotIn('brew fetch "${fetch_flags[@]}"',workflow)
 
     def test_exports_exact_payloads_and_rejects_omission(self):

@@ -128,7 +128,9 @@ jobs:
               lines.append("\t".join((formula, version, ",".join(sorted(usages)), str(target))))
           output.write_text("\n".join(lines) + "\n")
           PY
-          if brew commands | grep -qx trust; then brew trust vectorwarp/release-build; fi
+          # Do not use grep -q here: with pipefail it closes stdout early and
+          # makes newer Homebrew report a broken pipe before trust is applied.
+          if brew commands | grep -x trust >/dev/null; then brew trust vectorwarp/release-build; fi
           HOMEBREW_CACHE="$source_cache" brew ruby script/export-homebrew-formula-inputs.rb -- \
             --specs "$specs" --output "$closure_inputs" --manifest "$closure_inputs/formula-inputs.json" \
             --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --run-id "${{ github.run_id }}"
