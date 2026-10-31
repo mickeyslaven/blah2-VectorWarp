@@ -113,6 +113,14 @@ truth:
     smoothing_window: 10
     max_position_age: 30
     provisional_event_time_uncertainty_s: 1
+  remote_id:
+    enabled: false
+    source: '127.0.0.1:8754'
+    poll_interval: 0.5
+    source_timeout: 1.2
+    smoothing_window: 4
+    max_position_age: 10
+    wifi_enabled: false
 
 location:
   rx:
