@@ -49,6 +49,27 @@ async function waitForLoopingReplay(initial, before, accepted, appliedAt, readSt
   }
 }
 
+async function waitForReplayFrame(initial, before, accepted, appliedAt, readStatus,
+                                  wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+                                  now = Date.now) {
+  let status = initial;
+  const deadline = now() + 30000;
+  for (;;) {
+    assertReplayIdentity(status, before, accepted);
+    if (['playing', 'draining'].includes(status.processor?.state) &&
+        status.radar === 'receiving' && status.lastFrameAt > appliedAt) {
+      assertReceivingReplay(status, appliedAt);
+      return status;
+    }
+    if (now() >= deadline) {
+      assertReceivingReplay(status, appliedAt);
+      throw new Error('Replay produced no fresh frame within 30 seconds');
+    }
+    await wait(200);
+    status = await readStatus();
+  }
+}
+
 async function runStatusFixtures() {
   const before = {serverId: 'old'};
   const accepted = {revision: 7};
@@ -167,11 +188,10 @@ if (process.argv[2] === '--status-fixtures') {
       }
       assert.equal(await input.isChecked(), checked, `${key} did not change through its visible switch`);
     };
-    const replay = page.locator('[data-path="capture.replay.state"] input');
-    await reveal(replay);
-    await setSwitch('capture.replay.state', true);
-    await setSwitch('capture.replay.loop', true);
-    await page.locator('[data-path="capture.replay.file"] input').fill(replayFile);
+    await page.goto(`${base}/display/configuration/?replayFile=${encodeURIComponent(replayFile)}`,
+      {waitUntil: 'domcontentloaded'});
+    await page.waitForSelector('#config-save', {state: 'attached'});
+    assert.equal(await page.locator('#config-save').textContent(), 'Start replay');
     await revealCpi();
     await cpi.fill('0.02');
     const clutter = page.locator('[data-path="process.clutter.enable"] input');
@@ -188,13 +208,13 @@ if (process.argv[2] === '--status-fixtures') {
     assert.equal(accepted.receiverSync?.acceptance?.mode, 'replay');
     assert.equal(accepted.receiverSync?.acceptance?.physicalReceiverVerified, false);
     // Use the reviewed copy from this source revision, then independently
-    // verify the installed services restarted and produced new replay frames.
+    // verify the installed services restarted and produced a new replay frame.
     await page.locator('#config-message.success').filter({hasText: receiverSaveMessage(accepted, true)})
       .waitFor({timeout: 145000});
     const afterResponse = await page.request.get(`${base}/api/system/status`);
     assert.equal(afterResponse.status(), 200);
     let after = await afterResponse.json();
-    after = await waitForLoopingReplay(after, before, accepted, appliedAt, async () => {
+    after = await waitForReplayFrame(after, before, accepted, appliedAt, async () => {
       const progressResponse = await page.request.get(`${base}/api/system/status`);
       assert.equal(progressResponse.status(), 200);
       return progressResponse.json();
