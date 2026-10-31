@@ -188,7 +188,7 @@ if (process.argv[2] === '--status-fixtures') {
       }
       assert.equal(await input.isChecked(), checked, `${key} did not change through its visible switch`);
     };
-    await page.goto(`${base}/display/configuration/?replayFile=${encodeURIComponent(replayFile)}`,
+    await page.goto(`${base}/display/configuration?replayFile=${encodeURIComponent(replayFile)}`,
       {waitUntil: 'domcontentloaded'});
     await page.waitForSelector('#config-save', {state: 'attached'});
     await page.locator('#config-save').filter({hasText: 'Start replay'}).waitFor();
