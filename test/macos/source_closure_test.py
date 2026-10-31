@@ -72,9 +72,8 @@ class SourceClosureExporterTest(unittest.TestCase):
     def test_workflow_uses_evaluated_frozen_recipes(self):
         workflow=(ROOT/".github/workflows/macos-standalone.yml").read_text()
         self.assertIn("export-homebrew-formula-inputs.rb",workflow)
-        self.assertIn("shutil.copyfile(source, target)",workflow)
-        self.assertIn("brew commands | grep -x trust >/dev/null",workflow)
-        self.assertNotIn("grep -qx trust",workflow)
+        self.assertIn('source = cellar / formula / version / ".brew"',workflow)
+        self.assertNotIn("brew trust vectorwarp/release-build",workflow)
         self.assertNotIn('brew fetch "${fetch_flags[@]}"',workflow)
 
     def test_exports_exact_payloads_and_rejects_omission(self):

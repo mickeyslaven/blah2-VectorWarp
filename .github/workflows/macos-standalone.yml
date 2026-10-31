@@ -106,16 +106,15 @@ jobs:
           specs="$RUNNER_TEMP/vectorwarp-formulas.tsv"
           raw_specs="$RUNNER_TEMP/vectorwarp-formulas.raw.tsv"
           api_metadata="$RUNNER_TEMP/vectorwarp-formula-api.json"
-          tap_root="$(brew --repository vectorwarp/release-build)"
           mkdir -p "$closure_inputs" "$source_cache"
           jq -r '.components[] | [.formula,.version,"runtime"] | @tsv' "$provenance/inventory.json" > "$raw_specs"
           for formula in asio cpp-httplib eigen rapidjson vulkan-headers; do
             version="$(brew list --versions "$formula" | awk '{print $2}')"
             printf '%s\t%s\tcompile-header\n' "$formula" "$version" >> "$raw_specs"
           done
-          python3 - "$raw_specs" "$specs" "$(brew --cellar)" "$tap_root" "$api_metadata" <<'PY'
-          import json, pathlib, shutil, subprocess, sys
-          raw, output, cellar, tap, api_output = map(pathlib.Path, sys.argv[1:])
+          python3 - "$raw_specs" "$specs" "$(brew --cellar)" "$api_metadata" <<'PY'
+          import json, pathlib, subprocess, sys
+          raw, output, cellar, api_output = map(pathlib.Path, sys.argv[1:])
           values = {}
           for line in raw.read_text().splitlines():
               formula, version, usage = line.split("\t")
@@ -126,16 +125,11 @@ jobs:
               info = json.loads(subprocess.check_output(["brew", "info", "--json=v2", identifier], text=True))["formulae"][0]
               metadata[formula] = info
               source = cellar / formula / version / ".brew" / (formula + ".rb")
-              target = tap / "Formula" / (formula + ".rb")
               if not source.is_file(): raise SystemExit("missing installed recipe: " + str(source))
-              shutil.copyfile(source, target)
-              lines.append("\t".join((formula, version, ",".join(sorted(usages)), str(target))))
+              lines.append("\t".join((formula, version, ",".join(sorted(usages)), str(source))))
           output.write_text("\n".join(lines) + "\n")
           api_output.write_text(json.dumps(metadata, sort_keys=True) + "\n")
           PY
-          # Do not use grep -q here: with pipefail it closes stdout early and
-          # makes newer Homebrew report a broken pipe before trust is applied.
-          if brew commands | grep -x trust >/dev/null; then brew trust vectorwarp/release-build; fi
           HOMEBREW_CACHE="$source_cache" brew ruby script/export-homebrew-formula-inputs.rb -- \
             --specs "$specs" --api-metadata "$api_metadata" \
             --output "$closure_inputs" --manifest "$closure_inputs/formula-inputs.json" \
