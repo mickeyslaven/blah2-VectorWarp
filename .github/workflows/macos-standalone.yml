@@ -121,14 +121,20 @@ jobs:
               values.setdefault((formula, version), set()).add(usage)
           lines = []; metadata = {}
           for (formula, version), usages in sorted(values.items()):
-              if formula == "vectorwarp-uhd":
-                  info = json.loads(subprocess.check_output(
-                      ["brew", "info", "--json=v2", "vectorwarp/release-build/vectorwarp-uhd"], text=True
-                  ))["formulae"][0]
-              else:
+              identifier = "vectorwarp/release-build/vectorwarp-uhd" if formula == "vectorwarp-uhd" else formula
+              info = json.loads(subprocess.check_output(
+                  ["brew", "info", "--json=v2", identifier], text=True
+              ))["formulae"][0]
+              if formula != "vectorwarp-uhd" and not info.get("local_patch_checksums"):
                   api_url = "https://formulae.brew.sh/api/formula/" + urllib.parse.quote(formula, safe="") + ".json"
                   with urllib.request.urlopen(api_url, timeout=30) as response:
-                      info = json.load(response)
+                      official = json.load(response)
+                  installed_identity = (info.get("versions", {}).get("stable"), info.get("urls", {}).get("stable", {}).get("checksum"))
+                  official_identity = (official.get("versions", {}).get("stable"), official.get("urls", {}).get("stable", {}).get("checksum"))
+                  if installed_identity == official_identity:
+                      for key in ("tap", "tap_git_head", "local_patch_checksums"):
+                          if official.get(key) is not None:
+                              info[key] = official[key]
               metadata[formula] = info
               source = cellar / formula / version / ".brew" / (formula + ".rb")
               if not source.is_file(): raise SystemExit("missing installed recipe: " + str(source))
