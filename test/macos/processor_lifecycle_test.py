@@ -142,7 +142,10 @@ def main():
             assert passive['management']['code'] == 'EXPLICIT_CHECK_REQUIRED'
             receivers = request('/api/receivers/discover', 'POST', {},
                                 intent='receiver-discovery-v2')
-            assert {item['type'] for item in receivers['receivers']} == expected
+            discovered = {item['type']: item for item in receivers['receivers']}
+            assert set(discovered) == {'RspDuo', 'Usrp', 'HackRF', 'Kraken'}
+            assert {name for name, item in discovered.items()
+                    if item['capabilities']['liveCompiled']} == expected
             if args.standalone:
                 assert receivers['managementAvailable'] is False
                 assert receivers['management']['code'] == 'STANDALONE_COMPANION_REQUIRED'
