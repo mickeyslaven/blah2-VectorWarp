@@ -92,7 +92,8 @@ formulas = rows.sort_by { |row| row[0, 2] }.map do |formula, version, usages, re
   seen[identity] = true
   before = file_sha(recipe)
   loaded = Formulary.factory(recipe)
-  abort "frozen recipe identity differs" unless loaded.name == formula && loaded.version.to_s == version
+  abort "frozen recipe identity differs: expected #{formula}|#{version}, got #{loaded.name}|#{loaded.pkg_version}" \
+    unless loaded.name == formula && loaded.pkg_version.to_s == version
   recipe_copy = root / "recipes" / formula / version / "formula.rb"
   recipe_copy.dirname.mkpath
   FileUtils.copy_file(recipe, recipe_copy)
