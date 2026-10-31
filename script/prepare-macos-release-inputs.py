@@ -134,18 +134,56 @@ def source_claims(inventory):
     return result
 
 
+def validate_formula_input_ownership(value, trees, source_id, arch, run_id):
+    if (value.get("schema") != 2 or value.get("source_id") != source_id or value.get("arch") != arch or
+            str(value.get("run_id")) != str(run_id)):
+        raise ValueError("formula inputs do not bind the candidate")
+    owned = {"recipes": set(), "source-cache": set()}; identities = set()
+    for formula in value.get("formulas", []):
+        identity = formula.get("id")
+        if identity != "|".join((formula.get("formula", ""), formula.get("version", ""))) or identity in identities:
+            raise ValueError("invalid structured formula identity")
+        identities.add(identity); input_ids = set()
+        recipe = formula.get("recipe") or {}; path = recipe.get("path", "")
+        if path != f"recipes/{formula['formula']}/{formula['version']}/formula.rb":
+            raise ValueError("noncanonical structured recipe path")
+        relative = path.removeprefix("recipes/")
+        if trees.get("recipes", {}).get(relative) != {"sha256": recipe.get("sha256"), "size": recipe.get("size")}:
+            raise ValueError("structured recipe member differs")
+        owned["recipes"].add(relative)
+        for item in formula.get("inputs", []):
+            input_id = item.get("id")
+            if not input_id or input_id in input_ids: raise ValueError("duplicate structured input")
+            input_ids.add(input_id)
+            if item.get("kind") == "embedded-patch":
+                if not re.fullmatch(r"[0-9a-f]{64}", item.get("embedded_sha256", "")) or item.get("payload"):
+                    raise ValueError("invalid embedded patch")
+                continue
+            payload = item.get("payload") or {}; payload_path = payload.get("path", "")
+            prefix = f"source-cache/{formula['formula']}/{formula['version']}/"
+            if not payload_path.startswith(prefix) or ".." in Path(payload_path).parts:
+                raise ValueError("noncanonical structured payload path")
+            relative = payload_path.removeprefix("source-cache/")
+            if trees.get("source-cache", {}).get(relative) != {"sha256": payload.get("sha256"), "size": payload.get("size")}:
+                raise ValueError("structured payload member differs")
+            owned["source-cache"].add(relative)
+    if set(trees.get("recipes", {})) != owned["recipes"] or set(trees.get("source-cache", {})) != owned["source-cache"]:
+        raise ValueError("structured formula closure has missing or unowned members")
+    return {item["id"]: item for item in value["formulas"]}
+
+
 def verify_source_closure(path, inventory_path, runtime_path, source_id, arch, run_id):
     """Stream-verify a CI-exported exact source closure and its candidate bindings."""
     inventory = read_json(inventory_path)
     expected_formulas = {}
     for key, value in source_claims(inventory).items():
         expected_formulas["|".join(key)] = {
-            "recipe_sha256": value[0], "source_sha256": list(value[1]),
+            "recipe_sha256": value[0],
             "notices": [list(item) for item in value[2]],
             "input_sha256": next(item["input_sha256"] for item in inventory["components"]
                                  if (item["formula"], item["version"], item["input"]) == key),
         }
-    manifest = None
+    manifest = None; formula_inputs_file = None
     seen = set()
     with tarfile.open(path, "r|gz") as archive:
         for member in archive:
@@ -172,25 +210,30 @@ def verify_source_closure(path, inventory_path, runtime_path, source_id, arch, r
                 expected = manifest.get("files", {}).get(relative)
             if not isinstance(expected, dict) or expected.get("size") != member.size:
                 raise ValueError("unexpected source-closure member")
-            value = hashlib.sha256()
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                value.update(block)
-            if value.hexdigest() != expected.get("sha256"):
+            digest_value = hashlib.sha256()
+            if relative == "formula-inputs.json":
+                content = stream.read()
+                if len(content) != member.size: raise ValueError("truncated formula-input manifest")
+                digest_value.update(content); formula_inputs_file = json.loads(content)
+            else:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest_value.update(block)
+            if digest_value.hexdigest() != expected.get("sha256"):
                 raise ValueError("source-closure member hash differs")
     if (manifest is None or manifest.get("schema") != 1 or manifest.get("arch") != arch or
             manifest.get("source_id") != source_id or str(manifest.get("run_id")) != str(run_id) or
             manifest.get("runtime_manifest_sha256") != sha256(runtime_path) or
-            manifest.get("formulas") != expected_formulas or
+            manifest.get("runtime_formulas") != expected_formulas or
+            manifest.get("formula_inputs") != formula_inputs_file or
             set(manifest.get("gaps_resolved", [])) !=
             {"node-pseudo-input", "boost-source-license", "sqlite-public-domain"}):
         raise ValueError("source closure does not bind the candidate")
-    closure_hashes = {record.get("sha256") for records in manifest.get("trees", {}).values()
-                      for record in records.values() if isinstance(record, dict)}
-    required_hashes = {record["recipe_sha256"] for record in expected_formulas.values()}
-    required_hashes.update(value for record in expected_formulas.values()
-                           for value in record["source_sha256"])
-    if not required_hashes <= closure_hashes:
-        raise ValueError("source closure omits a recipe or source payload")
+    structured = validate_formula_input_ownership(formula_inputs_file, manifest.get("trees", {}), source_id, arch, run_id)
+    for key, claim in expected_formulas.items():
+        formula, version, unused = key.split("|", 2)
+        value = structured.get(f"{formula}|{version}")
+        if not value or "runtime" not in value.get("usage", []) or value["recipe"]["sha256"] != claim["recipe_sha256"]:
+            raise ValueError("runtime formula differs from structured closure")
     expected_paths = {"MANIFEST.json", *manifest.get("files", {})}
     for group, records in manifest.get("trees", {}).items():
         expected_paths.update(f"{group}/{name}" for name in records)

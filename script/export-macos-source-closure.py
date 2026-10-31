@@ -67,7 +67,7 @@ def contains_boost_license(root):
 
 def main():
     parser = argparse.ArgumentParser()
-    for name in ("inventory", "runtime-manifest", "source-cache", "recipes", "notices",
+    for name in ("inventory", "runtime-manifest", "formula-inputs", "source-cache", "recipes", "notices",
                  "header-versions", "node-source", "vkfft-source", "sqlite-notice", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--arch", choices=("arm64", "x86_64"), required=True)
@@ -82,28 +82,67 @@ def main():
             inventory.get("source_id") != args.source_id or runtime.get("arch") != args.arch or
             runtime.get("source_id") != args.source_id):
         raise ValueError("closure inputs do not bind the candidate")
-    formulas = {}; expected_recipes = set(); expected_sources = set()
+    runtime_formulas = {}
     for component in inventory.get("components", []):
         if component.get("formula") in {"grpc", "protobuf"}:
             raise ValueError("forbidden MPMD dependency")
         recipe = component.get("formula_recipe") or {}
         key = "|".join((component.get("formula", ""), component.get("version", ""), component.get("input", "")))
-        if not all(key.split("|")) or key in formulas:
+        if not all(key.split("|")) or key in runtime_formulas:
             raise ValueError("invalid or duplicate formula identity")
-        expected_recipes.add(recipe.get("sha256")); expected_sources.update(recipe.get("source_sha256") or [])
-        formulas[key] = {"recipe_sha256": recipe.get("sha256"),
-            "source_sha256": sorted(recipe.get("source_sha256") or []),
+        runtime_formulas[key] = {"recipe_sha256": recipe.get("sha256"),
             "notices": sorted((item["path"], item["sha256"]) for item in component.get("notice_files", [])),
             "input_sha256": component.get("input_sha256")}
     trees = {name: regular_files(path) for name, path in
              (("source-cache", args.source_cache), ("recipes", args.recipes), ("notices", args.notices))}
-    closure_hashes = {record["sha256"] for records in trees.values() for record in records.values()}
-    missing_recipes = sorted(expected_recipes - closure_hashes)
-    missing_sources = sorted(expected_sources - closure_hashes)
-    if missing_recipes or missing_sources:
-        raise ValueError("closure omits formula inputs: recipes=" +
-                         ",".join(missing_recipes[:4]) + " sources=" +
-                         ",".join(missing_sources[:4]))
+    formula_inputs = json.loads(args.formula_inputs.read_text())
+    if (formula_inputs.get("schema") != 2 or formula_inputs.get("arch") != args.arch or
+            formula_inputs.get("source_id") != args.source_id or str(formula_inputs.get("run_id")) != args.run_id):
+        raise ValueError("formula inputs do not bind the candidate")
+    owned = {"recipes": set(), "source-cache": set()}; identities = set(); structured = {}
+    for formula in formula_inputs.get("formulas", []):
+        identity = formula.get("id")
+        if identity != "|".join((formula.get("formula", ""), formula.get("version", ""))) or identity in identities:
+            raise ValueError("invalid or duplicate structured formula identity")
+        identities.add(identity); input_ids = set()
+        recipe = formula.get("recipe") or {}; path = recipe.get("path", "")
+        expected_path = f"recipes/{formula['formula']}/{formula['version']}/formula.rb"
+        if path != expected_path:
+            raise ValueError("formula recipe path is not canonical")
+        relative = path.removeprefix("recipes/")
+        if trees["recipes"].get(relative) != {"sha256": recipe.get("sha256"), "size": recipe.get("size")}:
+            raise ValueError("formula recipe ownership differs")
+        owned["recipes"].add(relative)
+        for item in formula.get("inputs", []):
+            input_id = item.get("id")
+            if not input_id or input_id in input_ids:
+                raise ValueError("invalid or duplicate formula input identity")
+            input_ids.add(input_id)
+            if item.get("kind") == "embedded-patch":
+                if not re.fullmatch(r"[0-9a-f]{64}", item.get("embedded_sha256", "")) or item.get("payload"):
+                    raise ValueError("invalid embedded patch claim")
+                continue
+            payload = item.get("payload") or {}; payload_path = payload.get("path", "")
+            prefix = f"source-cache/{formula['formula']}/{formula['version']}/"
+            if not payload_path.startswith(prefix) or ".." in Path(payload_path).parts:
+                raise ValueError("formula payload path is not canonical")
+            relative = payload_path.removeprefix("source-cache/")
+            if trees["source-cache"].get(relative) != {"sha256": payload.get("sha256"), "size": payload.get("size")}:
+                raise ValueError("formula payload ownership differs")
+            owned["source-cache"].add(relative)
+        structured[identity] = formula
+    if set(trees["recipes"]) != owned["recipes"] or set(trees["source-cache"]) != owned["source-cache"]:
+        raise ValueError("formula input tree contains missing or unowned members")
+    by_identity = {(value["formula"], value["version"]): value for value in structured.values()}
+    for key, claim in runtime_formulas.items():
+        formula, version, unused = key.split("|", 2)
+        value = by_identity.get((formula, version))
+        if not value or "runtime" not in value.get("usage", []) or value["recipe"]["sha256"] != claim["recipe_sha256"]:
+            raise ValueError("runtime formula is not owned by structured inputs")
+    expected_headers = {"asio", "cpp-httplib", "eigen", "rapidjson", "vulkan-headers"}
+    actual_headers = {value["formula"] for value in structured.values() if "compile-header" in value.get("usage", [])}
+    if actual_headers != expected_headers:
+        raise ValueError("compile-header formula closure differs")
     allowed = {("boost", "missing license/notice file"), ("sqlite", "missing license/notice file")}
     unresolved = [item for item in inventory.get("gaps", []) if "index" not in item and
                   (item.get("formula"), item.get("reason")) not in allowed]
@@ -114,10 +153,12 @@ def main():
     if not contains_boost_license(args.source_cache):
         raise ValueError("Boost source license was not exported")
     fixed = {"inventory.json": args.inventory, "runtime-manifest.json": args.runtime_manifest,
+        "formula-inputs.json": args.formula_inputs,
         "header-input-versions.txt": args.header_versions, "node-source.tar.gz": args.node_source,
         "vkfft-source.tar.gz": args.vkfft_source, "sqlite-public-domain.html": args.sqlite_notice}
     manifest = {"schema": 1, "source_id": args.source_id, "run_id": args.run_id, "arch": args.arch,
-        "runtime_manifest_sha256": digest(args.runtime_manifest), "formulas": formulas,
+        "runtime_manifest_sha256": digest(args.runtime_manifest), "runtime_formulas": runtime_formulas,
+        "formula_inputs": formula_inputs,
         "gaps_resolved": ["node-pseudo-input", "boost-source-license", "sqlite-public-domain"],
         "trees": trees, "files": {name: {"sha256": digest(path), "size": path.stat().st_size}
                                     for name, path in fixed.items()}}
@@ -130,6 +171,6 @@ def main():
                 for relative in sorted(trees[tree_name]):
                     add_file(archive, f"VectorWarp-source-closure/{tree_name}/{relative}", root / relative)
     print(json.dumps({"archive": str(args.output), "sha256": digest(args.output),
-        "formula_count": len(formulas), "source_file_count": len(trees["source-cache"])}, sort_keys=True))
+        "formula_count": len(structured), "source_file_count": len(trees["source-cache"])}, sort_keys=True))
 
 if __name__ == "__main__": main()

@@ -101,35 +101,37 @@ jobs:
         run: |
           set -euo pipefail
           provenance="$GITHUB_WORKSPACE/build/standalone-provenance"
-          source_cache="$RUNNER_TEMP/vectorwarp-source-cache"
-          recipes="$RUNNER_TEMP/vectorwarp-formula-recipes"
-          mkdir -p "$source_cache" "$recipes"
-          formulas="$(jq -r '.components[] | .formula' "$provenance/inventory.json" | sort -u | grep -v '^vectorwarp-uhd$' | tr '\n' ' ')"
-          # Fetch each contributing formula directly, including test resources.
-          # The installed recipes record those resource hashes, so the closure
-          # must contain them even when Homebrew did not need them for install.
-          # Homebrew may otherwise satisfy dependencies with bottles even under
-          # --build-from-source.
-          # Formula names are Homebrew identifiers and cannot contain whitespace.
-          fetch_flags=(--build-from-source --retry)
-          # Current Homebrew requires --test to fetch formula resources; the
-          # Intel runner's older Homebrew fetches them without that newer flag.
-          if brew fetch --help 2>&1 | grep -q -- '--test'; then
-            fetch_flags+=(--test)
-          fi
-          for formula in $formulas asio cpp-httplib eigen rapidjson vulkan-headers; do
-            HOMEBREW_CACHE="$source_cache" brew fetch "${fetch_flags[@]}" "$formula"
-          done
-          HOMEBREW_CACHE="$source_cache" brew fetch "${fetch_flags[@]}" vectorwarp/release-build/vectorwarp-uhd
-          while IFS=$'\t' read -r formula version; do
-            recipe="$(brew --cellar)/$formula/$version/.brew/$formula.rb"
-            test -f "$recipe"
-            cp "$recipe" "$recipes/${formula}-${version}.rb"
-          done < <(jq -r '.components[] | [.formula,.version] | @tsv' "$provenance/inventory.json" | sort -u)
+          closure_inputs="$RUNNER_TEMP/vectorwarp-formula-inputs"
+          source_cache="$RUNNER_TEMP/vectorwarp-homebrew-downloads"
+          specs="$RUNNER_TEMP/vectorwarp-formulas.tsv"
+          raw_specs="$RUNNER_TEMP/vectorwarp-formulas.raw.tsv"
+          tap_root="$(brew --repository vectorwarp/release-build)"
+          mkdir -p "$closure_inputs" "$source_cache"
+          jq -r '.components[] | [.formula,.version,"runtime"] | @tsv' "$provenance/inventory.json" > "$raw_specs"
           for formula in asio cpp-httplib eigen rapidjson vulkan-headers; do
             version="$(brew list --versions "$formula" | awk '{print $2}')"
-            cp "$(brew --cellar)/$formula/$version/.brew/$formula.rb" "$recipes/${formula}-${version}.rb"
+            printf '%s\t%s\tcompile-header\n' "$formula" "$version" >> "$raw_specs"
           done
+          python3 - "$raw_specs" "$specs" "$(brew --cellar)" "$tap_root" <<'PY'
+          import pathlib, shutil, sys
+          raw, output, cellar, tap = map(pathlib.Path, sys.argv[1:])
+          values = {}
+          for line in raw.read_text().splitlines():
+              formula, version, usage = line.split("\t")
+              values.setdefault((formula, version), set()).add(usage)
+          lines = []
+          for (formula, version), usages in sorted(values.items()):
+              source = cellar / formula / version / ".brew" / (formula + ".rb")
+              target = tap / "Formula" / (formula + ".rb")
+              if not source.is_file(): raise SystemExit("missing installed recipe: " + str(source))
+              shutil.copyfile(source, target)
+              lines.append("\t".join((formula, version, ",".join(sorted(usages)), str(target))))
+          output.write_text("\n".join(lines) + "\n")
+          PY
+          if brew commands | grep -qx trust; then brew trust vectorwarp/release-build; fi
+          HOMEBREW_CACHE="$source_cache" brew ruby script/export-homebrew-formula-inputs.rb -- \
+            --specs "$specs" --output "$closure_inputs" --manifest "$closure_inputs/formula-inputs.json" \
+            --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --run-id "${{ github.run_id }}"
           source packaging/node-runtime.env
           curl --fail --location --proto '=https' --tlsv1.2 "$NODE_BASE_URL/node-v${NODE_VERSION}.tar.gz" --output "$RUNNER_TEMP/node-source.tar.gz"
           printf '%s  %s\n' "$NODE_SOURCE_SHA256" "$RUNNER_TEMP/node-source.tar.gz" | shasum -a 256 --check
@@ -139,7 +141,8 @@ jobs:
           python3 script/export-macos-source-closure.py \
             --inventory "$provenance/inventory.json" \
             --runtime-manifest "$GITHUB_WORKSPACE/build/standalone runtime/standalone.json" \
-            --source-cache "$source_cache" --recipes "$recipes" --notices "$provenance/notices" \
+            --formula-inputs "$closure_inputs/formula-inputs.json" \
+            --source-cache "$closure_inputs/source-cache" --recipes "$closure_inputs/recipes" --notices "$provenance/notices" \
             --header-versions "$provenance/header-input-versions.txt" \
             --node-source "$RUNNER_TEMP/node-source.tar.gz" --vkfft-source "$RUNNER_TEMP/vkfft-source.tar.gz" \
             --sqlite-notice "$RUNNER_TEMP/sqlite-public-domain.html" \
