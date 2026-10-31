@@ -196,7 +196,7 @@ const server = http.createServer((request, response) => {
     await page.evaluate(() => document.getElementById('data')._vectorwarpMap.fire('moveend'));
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.location-aircraft-trails')).visibility !== 'hidden');
     const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();
-    const sidebarBounds = await page.locator('.location-map-sidebar').boundingBox();
+    const sidebarBounds = await page.locator('.location-map-controls').boundingBox();
     assert.ok(fullscreenBounds && sidebarBounds &&
       fullscreenBounds.x + fullscreenBounds.width < sidebarBounds.x,
     'fullscreen control must remain outside the map information overlay');
