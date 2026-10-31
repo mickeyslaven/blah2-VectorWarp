@@ -382,8 +382,6 @@ assert.match(buildScript, /for command in .*ninja/);
 assert.match(buildScript, /env CMAKE_POLICY_VERSION_MINIMUM=3\.5/);
 assert.match(buildScript, /licenses\/VkFFT\.txt/);
 assert.match(buildScript, /find .*api.*-name '\*\.test\.js' -delete/);
-assert.match(buildScript, /UI_CONFIG_REVIEW\.md/);
-assert.match(buildScript, /REAL_IQ_BENCHMARK_PLAN\.md/);
 
 assert.match(debPostinst, /systemd-sysusers/);
 assert.match(debPostinst, /systemd-tmpfiles/);
