@@ -14,7 +14,10 @@ with tempfile.TemporaryDirectory(prefix="private host path ") as temporary:
     lib = root / "lib/libexample.dylib"; lib.parent.mkdir(parents=True); lib.write_bytes(b"macho-fixture")
     brew = root / ".brew"; brew.mkdir()
     recipe = brew / "example.rb"
-    recipe.write_text('url "https://example.invalid/source.tar.gz"\nsha256 "' + "a" * 64 + '"\ndepends_on "zlib"\n')
+    recipe.write_text('url "https://example.invalid/source.tar.gz"\nsha256 "' + "a" * 64 + '"\ndepends_on "zlib"\n'
+        'on_linux do\n  resource "linux-only" do\n    url "https://example.invalid/linux.tar.gz"\n    sha256 "' + "b" * 64 + '"\n  end\nend\n'
+        'on_arm do\n  resource "arm-only" do\n    url "https://example.invalid/arm.tar.gz"\n    sha256 "' + "c" * 64 + '"\n  end\nend\n'
+        'on_intel do\n  resource "intel-only" do\n    url "https://example.invalid/intel.tar.gz"\n    sha256 "' + "d" * 64 + '"\n  end\nend\n')
     # Keg-root records may contain private build paths; report summaries must not copy them.
     (root / "INSTALL_RECEIPT.json").write_text(json.dumps({"version": "1.2.3", "built_as_bottle": False,
         "private_path": str(temporary / "secret") }))
@@ -31,12 +34,13 @@ with tempfile.TemporaryDirectory(prefix="private host path ") as temporary:
     ignored = root / "src/third_party"; ignored.mkdir(parents=True)
     (ignored / "LICENSE").write_text("must not scan source tree")
     notices = temporary / "notices"
-    result = tool.inventory([str(lib)], str(notices))
+    result = tool.inventory([str(lib)], str(notices), arch="arm64")
     component = result["components"][0]
     assert component["formula"] == "example" and component["version"] == "1.2.3"
     assert component["input"] == "lib/libexample.dylib"
     assert component["formula_recipe"]["path"] == ".brew/example.rb"
-    assert component["formula_recipe"]["urls"] == ["https://example.invalid/source.tar.gz"]
+    assert component["formula_recipe"]["urls"] == ["https://example.invalid/source.tar.gz", "https://example.invalid/arm.tar.gz"]
+    assert component["formula_recipe"]["source_sha256"] == ["a" * 64, "c" * 64]
     assert component["formula_recipe"]["dependencies"] == ["zlib"]
     assert component["install_receipt"]["path"] == "INSTALL_RECEIPT.json"
     assert component["install_receipt"]["json"]["top_level_keys"] == ["built_as_bottle", "private_path", "version"]
