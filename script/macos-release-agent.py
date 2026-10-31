@@ -306,7 +306,8 @@ def download_and_decrypt(settings, candidate, work):
                     f"standalone-encrypted-{arch}-{candidate['commit']}", "--dir", encrypted)
         if not (diagnostic / "standalone-provenance/inventory.json").is_file() or not (
                 diagnostic / "standalone-provenance/header-input-versions.txt").is_file() or not (
-                diagnostic / "standalone-provenance/cpp-httplib-formula.rb").is_file():
+                diagnostic / "standalone-provenance/cpp-httplib-formula.rb").is_file() or not (
+                diagnostic / f"macos-source-closure-{arch}.tar.gz").is_file():
             command("gh", "run", "download", str(candidate["mac_run"]), "--name",
                     f"standalone-runtime-diagnostics-{arch}", "--dir", diagnostic)
         runtime = root / "runtime"
@@ -343,12 +344,14 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
     values = {"checkout": source, "version": candidate["tag"][1:], "output": output,
               "baseline_notices": settings["baseline_notices"],
               "baseline_source_archive": settings["baseline_source_archive"],
-              "review_receipt": settings.get("review_receipt")}
+              "review_receipt": settings.get("review_receipt"),
+              "run_id": str(candidate.get("mac_run", "0"))}
     for arch in ARCHES:
         values[arch] = runtimes[arch]
         values[arch + "_inventory"] = diagnostics[arch] / "inventory.json"
         values[arch + "_header_versions"] = diagnostics[arch] / "header-input-versions.txt"
         values[arch + "_cpp_formula"] = diagnostics[arch] / "cpp-httplib-formula.rb"
+        values[arch + "_closure"] = diagnostics[arch].parent / f"macos-source-closure-{arch}.tar.gz"
         values["baseline_" + arch + "_inventory"] = settings["baseline_" + arch + "_inventory"]
     args = argparse.Namespace(**values)
     # A cached directory must never turn into an alternate path around review

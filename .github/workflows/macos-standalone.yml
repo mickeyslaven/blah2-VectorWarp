@@ -96,6 +96,42 @@ jobs:
           python3 test/macos/reviewed_release_inputs_test.py
           python3 test/macos/standalone_isolation_test.py
           python3 test/macos/standalone_driver_probe_test.py
+      - name: Export exact corresponding-source closure
+        run: |
+          set -euo pipefail
+          provenance="$GITHUB_WORKSPACE/build/standalone-provenance"
+          source_cache="$RUNNER_TEMP/vectorwarp-source-cache"
+          recipes="$RUNNER_TEMP/vectorwarp-formula-recipes"
+          mkdir -p "$source_cache" "$recipes"
+          formulas="$(jq -r '.components[] | .formula' "$provenance/inventory.json" | sort -u | grep -v '^vectorwarp-uhd$' | tr '\n' ' ')"
+          # Formula names are Homebrew identifiers and cannot contain shell whitespace.
+          # shellcheck disable=SC2086
+          HOMEBREW_CACHE="$source_cache" brew fetch --build-from-source --deps --retry $formulas asio cpp-httplib eigen rapidjson vulkan-headers
+          HOMEBREW_CACHE="$source_cache" brew fetch --build-from-source --deps --retry vectorwarp/release-build/vectorwarp-uhd
+          while IFS=$'\t' read -r formula version; do
+            recipe="$(brew --cellar)/$formula/$version/.brew/$formula.rb"
+            test -f "$recipe"
+            cp "$recipe" "$recipes/${formula}-${version}.rb"
+          done < <(jq -r '.components[] | [.formula,.version] | @tsv' "$provenance/inventory.json" | sort -u)
+          for formula in asio cpp-httplib eigen rapidjson vulkan-headers; do
+            version="$(brew list --versions "$formula" | awk '{print $2}')"
+            cp "$(brew --cellar)/$formula/$version/.brew/$formula.rb" "$recipes/${formula}-${version}.rb"
+          done
+          source packaging/node-runtime.env
+          curl --fail --location --proto '=https' --tlsv1.2 "$NODE_BASE_URL/node-v${NODE_VERSION}.tar.gz" --output "$RUNNER_TEMP/node-source.tar.gz"
+          printf '%s  %s\n' "$NODE_SOURCE_SHA256" "$RUNNER_TEMP/node-source.tar.gz" | shasum -a 256 --check
+          git -C build/VkFFT archive --format=tar.gz --output "$RUNNER_TEMP/vkfft-source.tar.gz" 066a17c17068c0f11c9298d848c2976c71fad1c1
+          curl --fail --location --proto '=https' --tlsv1.2 https://www.sqlite.org/copyright.html --output "$RUNNER_TEMP/sqlite-public-domain.html"
+          printf '%s  %s\n' '44ca9f793055c8e32fc65f65a4f5bcf813a33f5bdaaa084067dd617a4ed3cc70' "$RUNNER_TEMP/sqlite-public-domain.html" | shasum -a 256 --check
+          python3 script/export-macos-source-closure.py \
+            --inventory "$provenance/inventory.json" \
+            --runtime-manifest "$GITHUB_WORKSPACE/build/standalone runtime/standalone.json" \
+            --source-cache "$source_cache" --recipes "$recipes" --notices "$provenance/notices" \
+            --header-versions "$provenance/header-input-versions.txt" \
+            --node-source "$RUNNER_TEMP/node-source.tar.gz" --vkfft-source "$RUNNER_TEMP/vkfft-source.tar.gz" \
+            --sqlite-notice "$RUNNER_TEMP/sqlite-public-domain.html" \
+            --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --run-id "${{ github.run_id }}" \
+            --output "build/macos-source-closure-${{ matrix.arch }}.tar.gz"
       - name: Record original-build GPU driver control
         run: |
           python3 test/macos/standalone_driver_probe.py --observe-only --worker build/macos/artifact/bin/blah2-gpu-worker --icd-library "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --evidence build/source-driver-probe
@@ -202,6 +238,7 @@ jobs:
             build/standalone-provenance/header-input-versions.txt
             build/standalone-provenance/cpp-httplib-formula.rb
             build/standalone-provenance/notices
+            build/macos-source-closure-${{ matrix.arch }}.tar.gz
             build/standalone-replay.log
             build/standalone-config.log
             build/standalone-sdk-closure.log
