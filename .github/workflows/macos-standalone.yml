@@ -39,10 +39,14 @@ jobs:
           persist-credentials: false
       - name: Install build-host dependencies
         run: |
-          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb vulkan-loader vulkan-headers glslang molten-vk
+          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 hackrf eigen libusb vulkan-loader vulkan-headers glslang molten-vk
           # Intel runners already link python.org's 3.12 into /usr/local/bin.
-          # Staging uses the explicit Homebrew path and needs no global links.
+          # The formula uses the explicit Homebrew opt path and needs no links.
           brew install --skip-link python@3.12
+          brew tap-new vectorwarp/release-build
+          tap_root="$(brew --repository vectorwarp/release-build)"
+          cp "$GITHUB_WORKSPACE/packaging/homebrew/vectorwarp-uhd.rb" "$tap_root/Formula/vectorwarp-uhd.rb"
+          brew install --formula vectorwarp/release-build/vectorwarp-uhd
           mkdir -p build/standalone-provenance
           brew list --versions asio cpp-httplib eigen rapidjson vulkan-headers > build/standalone-provenance/header-input-versions.txt
           cp "$(brew --prefix cpp-httplib)/.brew/cpp-httplib.rb" build/standalone-provenance/cpp-httplib-formula.rb
@@ -69,7 +73,7 @@ jobs:
           git init build/VkFFT
           git -C build/VkFFT fetch --depth 1 https://github.com/DTolm/VkFFT.git 066a17c17068c0f11c9298d848c2976c71fad1c1
           git -C build/VkFFT checkout --detach 066a17c17068c0f11c9298d848c2976c71fad1c1
-          VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
+          BLAH2_UHD_FORMULA=vectorwarp/release-build/vectorwarp-uhd VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
       - name: Stage and audit standalone runtime
         run: |
           node="$VECTORWARP_STANDALONE_NODE"

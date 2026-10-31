@@ -106,7 +106,8 @@ case "$BACKEND" in
   all) ENABLE_USRP=ON; ENABLE_HACKRF=ON; LOCAL_RSPDUO=ON ;;
 esac
 if $WITH_RSPDUO; then ENABLE_RSPDUO=ON; LOCAL_RSPDUO=OFF; fi
-for formula in $([[ $ENABLE_USRP == ON ]] && printf 'uhd') $([[ $ENABLE_HACKRF == ON ]] && printf 'hackrf'); do
+UHD_FORMULA=${BLAH2_UHD_FORMULA:-uhd}
+for formula in $([[ $ENABLE_USRP == ON ]] && printf '%s' "$UHD_FORMULA") $([[ $ENABLE_HACKRF == ON ]] && printf 'hackrf'); do
   have_formula "$formula" ||
     die "missing $formula SDK; run: brew install $formula"
 done
@@ -135,7 +136,7 @@ cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR" \
   -DBLAH2_SDRPLAY_INCLUDE_DIR="${BLAH2_SDRPLAY_INCLUDE_DIR:-/usr/local/include}" \
   -DBLAH2_SDRPLAY_LIBRARY="${BLAH2_SDRPLAY_LIBRARY:-/usr/local/lib/libsdrplay_api.so.3.15}" \
   -DBLAH2_GPU="$GPU_CMAKE" -DVKFFT_ROOT="${VKFFT_ROOT:-}" -DBLAH2_OUTPUT_DIR="$OUTPUT_DIR/bin" \
-  -DCMAKE_PREFIX_PATH="$BREW_PREFIX"
+  -DCMAKE_PREFIX_PATH="$BREW_PREFIX;$([[ $ENABLE_USRP == ON ]] && brew --prefix "$UHD_FORMULA")"
 cmake --build "$CMAKE_DIR" --parallel "$JOBS"
 if $RUN_TESTS; then ctest --test-dir "$CMAKE_DIR" --output-on-failure; fi
 find "$OUTPUT_DIR/bin" -maxdepth 1 -type f -name 'test*' -delete
