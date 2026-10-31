@@ -429,6 +429,7 @@ let saveInProgress = false;
 let upstreamPending = false;
 let restartRetry = false;
 let receiverApplyPending = false;
+let replayLaunchPending = false;
 let recentSites = [];
 let receiverInvalidatedGeometry = false;
 let lastDetectedReceiverTypes = new Set();
@@ -1888,7 +1889,8 @@ function updateDirtyState() {
   if (action) {
     action.disabled = saveInProgress || restartInProgress || (!dirty && !restartRetry && !receiverApplyPending && !capabilities.setupRequired) ||
       pendingLiveConfig !== null || !capabilities.editable || validationPending || validationErrors.length > 0;
-    if (!saveInProgress && !restartInProgress) action.textContent = restartRetry ? 'Retry restart' :
+    if (!saveInProgress && !restartInProgress) action.textContent = replayLaunchPending ? 'Start replay' :
+      restartRetry ? 'Retry restart' :
       receiverApplyPending ? (capabilities.restartAvailable ? 'Apply & Restart' : 'Apply (manual restart)') :
       capabilities.restartAvailable ? 'Save & Restart' : 'Save (manual restart)';
   }
@@ -3126,6 +3128,7 @@ async function renderConfiguration() {
     rememberOriginalConfig(activeConfig);
     const replayParameters = new URLSearchParams(window.location.search);
     const replayFile = replayParameters.get('replayFile');
+    replayLaunchPending = Boolean(replayFile);
     let replayConfigurationComplete = false;
     let replayLimitations = [];
     if (replayFile) {
@@ -3228,7 +3231,7 @@ async function renderConfiguration() {
       showMessage('');
     renderEditor();
     if (replayFile)
-      showMessage('Recording selected. Its own sample rate, frequency and channel roles will be used; the installed live SDR will not be opened. Choose Save & Restart to play it.', 'warning');
+      showMessage('Recording selected. Start replay to use its saved configuration; the live SDR stays closed.', 'warning');
     if (window.VectorWarpReports) window.VectorWarpReports.addSettingsEntry(target, () =>
       reportContext(window.VectorWarpReports.classify(lastReportingStatus) ||
         {code: 'MANUAL_REPORT', component: 'support', stage: 'manual', severity: 'degraded',
