@@ -12,7 +12,9 @@ class VectorwarpUhd < Formula
   depends_on "pkgconf" => :build
   depends_on "boost"
   depends_on "libusb"
-  depends_on "python@3.15" => :build
+  # Keep both CI architectures on the Python version staged by the release
+  # workflow; Intel Homebrew does not publish python@3.15 yet.
+  depends_on "python@3.12" => :build
 
   pypi_packages package_name:   "",
                 extra_packages: "mako"
