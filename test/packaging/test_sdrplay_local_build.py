@@ -14,6 +14,8 @@ class LocalBuild(unittest.TestCase):
     self.assertTrue(headers <= stage.SOURCES)
     cmake=(ROOT/'cmake/RspduoLocalKit.cmake').read_text()
     for header in headers: self.assertIn(header,cmake)
+  def test_builder_and_stager_require_the_same_source_kit(self):
+    self.assertEqual(builder.REQUIRED, stage.SOURCES)
   def setUp(self):
     self.t=tempfile.TemporaryDirectory(); base=pathlib.Path(self.t.name); self.k=base/'kit'; self.k.mkdir(); self.o=base/'out'; self.o.mkdir(); self.core=base/'core'; self.core.write_bytes(b'core'); self.inc=base/'inc'; self.inc.mkdir(); (self.inc/'sdrplay_api.h').write_bytes(b'#define SDRPLAY_API_VERSION (float)(3.15)\n'); self.lib=base/'lib'; self.lib.write_bytes(b'\x7fELF\x02\x01\x01'+bytes(9)+(3).to_bytes(2,'little')+({'x86_64':62,'aarch64':183,'arm64':183}.get(os.uname().machine,62)).to_bytes(2,'little'))
     for n in builder.REQUIRED:
