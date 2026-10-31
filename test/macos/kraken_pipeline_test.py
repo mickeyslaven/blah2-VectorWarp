@@ -60,7 +60,8 @@ def main():
     config['capture']['fc'] = 123500000
     receiver_ports = ports[api_port_count:]
     config['capture']['device']['heimdall'].update(host='127.0.0.1',
-        port=receiver_ports[0], control_port=receiver_ports[1], gain=40)
+        port=receiver_ports[0], control_port=receiver_ports[1], gain=40,
+        gain_control='fixed')
     config['capture']['device']['surveillance_channels'] = [1, 2, 3, 4]
     config['process']['reference_synthesis'].update(mode='dedicated', channels=[0])
     config['process']['performance'].update(acceleration='cpu', surveillance_workers=1, fft_threads=1)

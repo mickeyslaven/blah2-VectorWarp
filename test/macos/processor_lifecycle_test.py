@@ -151,8 +151,7 @@ def main():
                 assert receivers['management']['code'] == 'STANDALONE_COMPANION_REQUIRED'
                 assert receivers['management']['actions'] == []
                 kraken = next(item for item in receivers['receivers'] if item['type'] == 'Kraken')
-                assert any('separately installed local Heimdall companion' in step['text']
-                           for step in kraken['setupGuide'])
+                assert 'setupGuide' not in kraken
             elif any(Path(path).is_file() for path in ('/opt/homebrew/bin/brew', '/usr/local/bin/brew')):
                 assert receivers['managementAvailable'] is True
                 assert {action['id'] for action in receivers['management']['actions']} == {
