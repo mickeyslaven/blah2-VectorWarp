@@ -97,6 +97,9 @@ if (process.argv[2] === '--status-fixtures') {
     // before a vendor SDK is installed. No receiver is opened or started here.
     const lna = page.locator('[data-path="capture.device.lnaState"] select');
     await page.locator('[aria-controls="settings-panel-capture"]').click();
+    for (const group of await lna.locator('xpath=ancestor::details').all()) {
+      if (await group.getAttribute('open') === null) await group.locator(':scope > summary').click();
+    }
     await page.getByRole('spinbutton', {name: 'Center frequency MHz', exact: true}).fill('30');
     await lna.selectOption('0');
     assert.deepEqual(await lna.locator('option').evaluateAll(options => options.map(option => option.value)),
