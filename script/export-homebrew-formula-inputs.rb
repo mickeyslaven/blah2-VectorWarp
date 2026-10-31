@@ -3,21 +3,23 @@
 require "digest"
 require "fileutils"
 require "json"
+require "open-uri"
 require "optparse"
 require "pathname"
 
 options = {}
 OptionParser.new do |parser|
-  %i[specs output manifest arch source_id run_id].each do |name|
+  %i[specs api_metadata output manifest arch source_id run_id].each do |name|
     parser.on("--#{name.to_s.tr('_', '-')} VALUE") { |value| options[name] = value }
   end
 end.parse!
-abort "missing arguments" unless options.values_at(:specs, :output, :manifest, :arch, :source_id, :run_id).all?
+abort "missing arguments" unless options.values_at(:specs, :api_metadata, :output, :manifest, :arch, :source_id, :run_id).all?
 abort "invalid architecture" unless %w[arm64 x86_64].include?(options[:arch])
 abort "invalid source identity" unless options[:source_id].match?(/\A[0-9a-f]{40}\z/) && options[:run_id].match?(/\A\d+\z/)
 
 root = Pathname(options[:output]).expand_path
 root.mkpath
+api_metadata = JSON.parse(Pathname(options[:api_metadata]).read)
 
 def file_sha(path)
   Digest::SHA256.file(path).hexdigest
@@ -76,6 +78,24 @@ def materialize(downloadable, destination, formula, version, input_id)
                  "sha256" => file_sha(target), "size" => target.size}}
 end
 
+def materialize_local_patch(patch, metadata, destination, formula, version, input_id)
+  path = patch.file.to_s
+  checksum = metadata.fetch("local_patch_checksums", {}).fetch(path, nil)
+  revision = metadata["tap_git_head"]
+  tap = metadata["tap"]
+  abort "unbound local patch: #{formula} #{path}" unless checksum&.match?(/\A[0-9a-f]{64}\z/) && revision&.match?(/\A[0-9a-f]{40}\z/) && tap == "homebrew/core"
+  abort "unsafe local patch path" if path.start_with?("/") || Pathname(path).each_filename.any? { |part| part == ".." }
+  url = "https://raw.githubusercontent.com/Homebrew/homebrew-core/#{revision}/#{path}"
+  directory = destination / "source-cache" / safe(formula) / safe(version) / safe(input_id.gsub(":", "-"))
+  directory.mkpath; target = directory / Pathname(path).basename
+  URI.open(url, "rb", open_timeout: 30, read_timeout: 120) { |source| target.open("wb") { |sink| IO.copy_stream(source, sink) } }
+  abort "local patch checksum differs" unless file_sha(target) == checksum
+  {"id" => input_id, "kind" => "local-patch", "urls" => [url],
+   "checksum" => {"algorithm" => "sha256", "value" => checksum}, "revision" => revision,
+   "payload" => {"path" => target.relative_path_from(destination).to_s,
+                 "sha256" => checksum, "size" => target.size}}
+end
+
 require "shellwords"
 rows = Pathname(options[:specs]).read.lines.filter_map do |line|
   next if line.strip.empty?
@@ -91,6 +111,9 @@ formulas = rows.sort_by { |row| row[0, 2] }.map do |formula, version, usages, re
   abort "duplicate frozen formula identity" if seen[identity]
   seen[identity] = true
   before = file_sha(recipe)
+  metadata = api_metadata.fetch(formula, {})
+  api_recipe = metadata.dig("ruby_source_checksum", "sha256")
+  abort "Homebrew API recipe differs from installed recipe: #{formula}" if api_recipe && api_recipe != before
   loaded = Formulary.factory(recipe)
   abort "frozen recipe identity differs: expected #{formula}|#{version}, got #{loaded.name}|#{loaded.pkg_version}" \
     unless loaded.name == formula && loaded.pkg_version.to_s == version
@@ -102,10 +125,12 @@ formulas = rows.sort_by { |row| row[0, 2] }.map do |formula, version, usages, re
     inputs << materialize(resource, root, formula, version, "resource:#{safe(resource.name)}")
   end
   loaded.patchlist.each_with_index do |patch, index|
-    if patch.respond_to?(:contents)
+    if patch.class.name == "DATAPatch"
       value = patch.contents.to_s
       inputs << {"id" => "patch:#{index}", "kind" => "embedded-patch",
                  "strip" => patch.strip.to_s, "embedded_sha256" => Digest::SHA256.hexdigest(value)}
+    elsif patch.class.name == "LocalPatch"
+      inputs << materialize_local_patch(patch, metadata, root, formula, version, "patch:#{index}")
     elsif patch.respond_to?(:fetch)
       inputs << materialize(patch, root, formula, version, "patch:#{index}")
     else
