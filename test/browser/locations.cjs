@@ -223,7 +223,10 @@ const server = http.createServer((request, response) => {
     'live refresh must update map sources without recreating the map');
     await page.mouse.move(2, 2);
     const requestsAfterLeave = trackerRequests;
-    const resumedDeadline = Date.now() + 4000;
+    // This can overlap the fixture's intentional five-second detection timeout.
+    // Allow that bounded failure plus the normal two-second refresh cadence to
+    // finish before requiring the next tracker poll.
+    const resumedDeadline = Date.now() + 8000;
     while (trackerRequests <= requestsAfterLeave && Date.now() < resumedDeadline)
       await page.waitForTimeout(100);
     assert.ok(trackerRequests > requestsAfterLeave,
