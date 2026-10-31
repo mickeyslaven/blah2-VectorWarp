@@ -66,7 +66,7 @@ VECTORWARP_UHD_REVIEW = {
     "formula": "vectorwarp-uhd",
     "version": "4.11.0.0",
     "input": "lib/libuhd.4.11.0.dylib",
-    "formula_sha256": "793f99f840bb95e9f98e26879131e3fe3debc5f1241563611b507564b7158675",
+    "formula_sha256": "9abefd475183cd5446e4bb6f03a930cea5dbb9d5a764329e9c902bd1aac5f10c",
     "sources": (
         ("uhd-4.11.0.0.tar.gz",
          "https://github.com/EttusResearch/uhd/archive/refs/tags/v4.11.0.0.tar.gz",

@@ -36,7 +36,8 @@ class VectorwarpUhd < Formula
   end
 
   def install
-    venv = virtualenv_create(buildpath/"venv", python3)
+    python = Formula["python@3.12"].opt_bin/"python3.12"
+    venv = virtualenv_create(buildpath/"venv", python)
     venv.pip_install resources
     ENV.prepend_path "PYTHONPATH", venv.site_packages
 
