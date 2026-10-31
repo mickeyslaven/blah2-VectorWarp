@@ -87,15 +87,34 @@ function sameSettings(left, right) {
 // lifecycle fault, not a receiver/frame fault. Restarting only the processor in
 // this state can never publish frames because the API deliberately rejects the
 // new revision. Leave the receiver alone and surface the failed/pending restart.
-function applicationInterlock(document, status) {
+function receiverApplicationVerified(document, status) {
+  const receiver = status?.receiverSynchronization;
+  return receiver?.applicationVerified === true &&
+    receiver.reconciliationRequired === false &&
+    receiver.configRevision === document?.revision;
+}
+
+function applicationInterlock(document, status, {processorActive = true} = {}) {
   if (!status || typeof document?.revision !== 'string') return null;
   const revisionMismatch = status.configRevision !== document.revision ||
     status.loadedRevision !== document.revision;
   const restartState = status.restart?.state;
-  if (revisionMismatch || status.gainCheckPending === true)
+  if (revisionMismatch)
     return restartState === 'failed' ? 'configuration-restart-failed' :
       'configuration-restart-pending';
   if (['scheduled', 'running'].includes(restartState)) return 'configuration-restart-pending';
+  if (status.gainCheckPending === true) {
+    if (restartState === 'failed') return 'configuration-restart-failed';
+    // Automatic gain publication needs fresh processor telemetry to complete.
+    // If the processor's ExecCondition skipped its first start while receiver
+    // reconciliation was still running, treating this publication gate as an
+    // absolute liveness interlock deadlocks recovery.  Permit only a bounded
+    // processor start after the exact loaded revision has an application-
+    // verified receiver receipt.  The processor ExecCondition independently
+    // rechecks the receiver and still fails closed if anything changed.
+    if (processorActive || !receiverApplicationVerified(document, status))
+      return 'configuration-restart-pending';
+  }
   return null;
 }
 
@@ -223,7 +242,7 @@ async function main(argv = process.argv.slice(2)) {
   let status = null;
   try { status = await apiStatus(document.config); delete previous.lastProbeError; }
   catch (error) { previous.lastProbeError = String(error.message).slice(0, 240); }
-  const interlock = applicationInterlock(document, status);
+  const interlock = applicationInterlock(document, status, {processorActive});
   if (interlock) {
     writeState(stateFile, {...previous, status: 'application-pending',
       configRevision: document.revision, lastProbeAt: Date.now(), lastProbeReason: interlock});
@@ -272,4 +291,4 @@ if (require.main === module)
   main().catch(error => { console.error(`VECTORWARP_LIVENESS_ALERT ${error.stack}`); process.exitCode = 1; });
 
 module.exports = {main, receiverSettlement, requested, sameSettings, startProcessor,
-  synchronizeAfterRestart, applicationInterlock};
+  synchronizeAfterRestart, applicationInterlock, receiverApplicationVerified};

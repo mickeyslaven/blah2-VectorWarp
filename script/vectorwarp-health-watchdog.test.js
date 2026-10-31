@@ -2,6 +2,7 @@
 const assert = require('assert');
 const {receiverSettlement, requested, sameSettings, synchronizeAfterRestart, applicationInterlock} =
   require('./vectorwarp-health-watchdog');
+const {evaluateFrameLiveness} = require('../api/frame-liveness');
 
 const config = {capture: {fc: 563000000, fs: 2400000, device: {type: 'Kraken',
   channel_count: 5, heimdall: {gain: 2, channel_gains: [19.7, 25.4, 20.7, 25.4, 22.9]}}}};
@@ -32,6 +33,37 @@ assert.equal(applicationInterlock(document, {configRevision: 'revision-a',
 assert.equal(applicationInterlock(document, {configRevision: 'revision-a',
   loadedRevision: 'revision-a', gainCheckPending: false, restart: {state: 'scheduled'}}),
   'configuration-restart-pending');
+
+const verifiedReceiver = {applicationVerified: true, reconciliationRequired: false,
+  configRevision: 'revision-a'};
+const skippedAfterGain = {configRevision: 'revision-a', loadedRevision: 'revision-a',
+  gainCheckPending: true, restart: {state: 'idle'}, receiverSynchronization: verifiedReceiver};
+assert.equal(applicationInterlock(document, skippedAfterGain, {processorActive: false}), null,
+  'an inactive processor must be allowed to finish an exact verified gain restart');
+assert.equal(applicationInterlock(document, skippedAfterGain, {processorActive: true}),
+  'configuration-restart-pending', 'an active processor must finish gain verification normally');
+assert.equal(applicationInterlock(document, {...skippedAfterGain,
+  receiverSynchronization: {...verifiedReceiver, applicationVerified: false}},
+{processorActive: false}), 'configuration-restart-pending',
+'an unverified receiver must not bypass the gain restart interlock');
+assert.equal(applicationInterlock(document, {...skippedAfterGain,
+  receiverSynchronization: {...verifiedReceiver, configRevision: 'revision-old'}},
+{processorActive: false}), 'configuration-restart-pending',
+'a stale receiver receipt must not start the processor');
+assert.equal(applicationInterlock(document, {...skippedAfterGain, restart: {state: 'running'}},
+{processorActive: false}), 'configuration-restart-pending',
+'an active configuration restart must retain the interlock');
+assert.equal(applicationInterlock(document, {...skippedAfterGain, restart: {state: 'failed'}},
+{processorActive: false}), 'configuration-restart-failed',
+'a failed configuration restart must require repair');
+
+let skippedState = evaluateFrameLiveness({now: 0, processorActive: false,
+  processorPid: 0, lastFrameAt: null}, {}, {staleAfterMs: 1000}).state;
+const skippedDecision = evaluateFrameLiveness({now: 1001, processorActive: false,
+  processorPid: 0, lastFrameAt: null}, skippedState, {staleAfterMs: 1000});
+assert.equal(applicationInterlock(document, skippedAfterGain, {processorActive: false}), null);
+assert.equal(skippedDecision.action, 'start-processor',
+  'a processor skipped during gain verification must be retriggered after exact receipt verification');
 
 (async () => {
   let attempts = 0, clock = 0;
