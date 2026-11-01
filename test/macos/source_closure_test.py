@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-import gzip, hashlib, importlib.util, io, json, sys, tarfile, tempfile, unittest
+import gzip, hashlib, importlib.util, io, json, sys, tarfile, tempfile, textwrap, unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("inputs", ROOT / "script/prepare-macos-release-inputs.py")
@@ -31,11 +32,90 @@ class SourceClosureTest(unittest.TestCase):
         self.assertIn("https://formulae.brew.sh/api/formula/", workflow)
         self.assertIn("without_bottle_block", workflow)
         self.assertIn("cannot bind frozen Homebrew formula revision", workflow)
+        self.assertIn("ambiguous frozen Homebrew patch history", workflow)
+        self.assertIn('"local_patch_revisions"', workflow)
         self.assertIn('local_patch_checksums": checksums', workflow)
         self.assertIn('identifier = "vectorwarp/release-build/vectorwarp-uhd"', workflow)
         exporter_source = (ROOT / "script/export-homebrew-formula-inputs.rb").read_text()
         self.assertIn('if has_local_patch &&', exporter_source)
         self.assertIn('Homebrew API local-patch identity differs', exporter_source)
+
+    def workflow_patch_binder(self):
+        workflow = (ROOT / ".github/workflows/macos-standalone.yml").read_text()
+        block = workflow.split(
+            'python3 - "$raw_specs" "$specs" "$(brew --cellar)" "$api_metadata" <<\'PY\'\n',
+            1,
+        )[1].split("\n          PY", 1)[0]
+        source = textwrap.dedent(block)
+        prefix = source.split("values = {}", 1)[0]
+        namespace = {}
+        with mock.patch.object(sys, "argv", ["binder", "/tmp/a", "/tmp/b", "/tmp/c", "/tmp/d"]):
+            exec(prefix, namespace)
+        return namespace
+
+    def test_local_patch_history_rejects_ambiguous_patch_bytes(self):
+        namespace = self.workflow_patch_binder()
+        installed = 'class Demo < Formula\n  url "https://example.invalid/demo.tar.gz"\n  sha256 "' + "a" * 64 + '"\n  patch do\n    file "Patches/demo/fix.patch"\n  end\nend\n'
+        formula_path = "Formula/d/demo.rb"
+        revisions = ("1" * 40, "2" * 40)
+        def fetch(url):
+            if "formulae.brew.sh" in url:
+                return json.dumps({"ruby_source_path": formula_path, "tap_git_head": revisions[0]}).encode()
+            if "api.github.com" in url:
+                return json.dumps([{"sha": revisions[1]}]).encode()
+            if url.endswith(formula_path):
+                return installed.encode()
+            if revisions[0] in url:
+                return b"original patch"
+            if revisions[1] in url:
+                return b"different patch"
+            raise AssertionError(url)
+        with tempfile.TemporaryDirectory() as temporary:
+            recipe = Path(temporary) / "demo.rb"; recipe.write_text(installed)
+            namespace["fetch"] = fetch
+            with self.assertRaisesRegex(SystemExit, "ambiguous frozen Homebrew patch history"):
+                namespace["bind_local_patches"]("demo", "1.0", recipe, {})
+
+    def test_local_patch_history_accepts_only_one_patch_identity(self):
+        namespace = self.workflow_patch_binder()
+        installed = 'class Demo < Formula\n  url "https://example.invalid/demo.tar.gz"\n  sha256 "' + "a" * 64 + '"\n  patch do\n    file "Patches/demo/fix.patch"\n  end\nend\n'
+        formula_path = "Formula/d/demo.rb"
+        revisions = ("1" * 40, "2" * 40)
+        def fetch(url):
+            if "formulae.brew.sh" in url:
+                return json.dumps({"ruby_source_path": formula_path, "tap_git_head": revisions[0]}).encode()
+            if "api.github.com" in url:
+                return json.dumps([{"sha": revisions[1]}]).encode()
+            if url.endswith(formula_path):
+                return installed.encode()
+            if "Patches/demo/fix.patch" in url:
+                return b"same reviewed patch"
+            raise AssertionError(url)
+        with tempfile.TemporaryDirectory() as temporary:
+            recipe = Path(temporary) / "demo.rb"; recipe.write_text(installed)
+            namespace["fetch"] = fetch
+            result = namespace["bind_local_patches"]("demo", "1.0", recipe, {})
+        self.assertEqual(result["local_patch_revisions"], list(revisions))
+        self.assertEqual(
+            result["local_patch_checksums"]["Patches/demo/fix.patch"],
+            hashlib.sha256(b"same reviewed patch").hexdigest(),
+        )
+
+    def test_closure_does_not_bypass_source_claim_transition(self):
+        candidate = {"source_id": self.source, "arch": self.arch,
+            "runtime_manifest_sha256": inputs.sha256(self.runtime), "components": [],
+            "gaps": [inputs.NODE_GAP]}
+        baseline = {"source_id": inputs.BASELINE_SOURCE_ID, "arch": self.arch, "components": []}
+        candidate_path = self.root / "candidate.json"; candidate_path.write_text(json.dumps(candidate))
+        baseline_path = self.root / "baseline.json"; baseline_path.write_text(json.dumps(baseline))
+        with mock.patch.object(inputs, "verify_source_claim_transition",
+                side_effect=ValueError("transition rejected")) as transition:
+            with self.assertRaisesRegex(ValueError, "transition rejected"):
+                inputs.verify_inventory(
+                    candidate_path, baseline_path, self.root, self.source, self.arch,
+                    closure={"schema": 1},
+                )
+        transition.assert_called_once()
 
     def closure(self, *, arch=None, omit=False, tamper=False):
         path = self.root / ("closure-" + str(len(list(self.root.glob('closure-*')))) + ".tar.gz")
