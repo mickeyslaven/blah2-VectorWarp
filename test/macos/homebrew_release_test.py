@@ -56,6 +56,8 @@ class HomebrewReleaseTest(unittest.TestCase):
         app = (output / "Formula/vectorwarp.rb").read_text()
         companion = (output / "Formula/vectorwarp-heimdall.rb").read_text()
         self.assertIn(URL, app)
+        self.assertIn(f'sourceCommit: "{COMMIT}"', app)
+        self.assertNotIn("@SOURCE_COMMIT@", app)
         self.assertIn(f'version "{VERSION}"', app)
         self.assertIn(f'revision {REVISION}', app)
         self.assertIn(f'version "{VERSION}"', companion)
