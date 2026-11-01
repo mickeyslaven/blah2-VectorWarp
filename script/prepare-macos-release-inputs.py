@@ -87,6 +87,12 @@ VECTORWARP_UHD_REVIEW = {
         ("share/doc/uhd/LICENSE", "70bf7e79c8cd73a81f97ce81745ea0719a617eebe299a61868165daeae71fff2"),
     ),
 }
+VECTORWARP_UHD_SOURCE_NOTICE_PATHS = {
+    # Homebrew installs host/LICENSE at share/doc/uhd/LICENSE.  The source
+    # archive contains the former path, while the runtime inventory and
+    # corresponding-source notice contract intentionally use the latter.
+    "share/doc/uhd/LICENSE": "host/LICENSE",
+}
 BUILD_PIN = "066a17c17068c0f11c9298d848c2976c71fad1c1"
 SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
                    "packaging/homebrew/", ".github/workflows/macos-standalone.yml",
@@ -408,9 +414,10 @@ def fetch_vectorwarp_uhd_sources(output):
     notices = {}
     with tarfile.open(sources["uhd-4.11.0.0.tar.gz"], "r:gz") as archive:
         for relative, expected in VECTORWARP_UHD_REVIEW["notices"]:
-            member = archive.extractfile("uhd-4.11.0.0/" + relative)
+            source_relative = VECTORWARP_UHD_SOURCE_NOTICE_PATHS.get(relative, relative)
+            member = archive.extractfile("uhd-4.11.0.0/" + source_relative)
             if member is None:
-                raise ValueError(f"reviewed VectorWarp UHD source has no {relative}")
+                raise ValueError(f"reviewed VectorWarp UHD source has no {source_relative}")
             content = member.read()
             if hashlib.sha256(content).hexdigest() != expected:
                 raise ValueError(f"reviewed VectorWarp UHD notice differs: {relative}")
@@ -774,7 +781,8 @@ def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_noti
         shutil.copyfile(source, target)
         index.setdefault("input_notices", []).append({
             "file": target.relative_to(output).as_posix(),
-            "origin": f"uhd-4.11.0.0.tar.gz::uhd-4.11.0.0/{relative}",
+            "origin": "uhd-4.11.0.0.tar.gz::uhd-4.11.0.0/" +
+                      VECTORWARP_UHD_SOURCE_NOTICE_PATHS.get(relative, relative),
             "sha256": expected,
         })
     for arch, closure in (closures or {}).items():

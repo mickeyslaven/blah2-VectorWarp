@@ -577,6 +577,11 @@ class ReboundNpmNoticeTest(unittest.TestCase):
                     if item["file"].startswith("embedded/node-"))
         self.assertEqual(node["sha256"], inputs.NODE_REVIEW["license_sha256"])
 
+    def test_uhd_installed_notice_maps_to_its_source_archive_member(self):
+        self.assertEqual(
+            inputs.VECTORWARP_UHD_SOURCE_NOTICE_PATHS["share/doc/uhd/LICENSE"],
+            "host/LICENSE")
+
     def test_rejects_runtime_notice_mismatch(self):
         (self.runtimes["arm64"] / "api/node_modules/proxy-addr/LICENSE").write_text(
             "different\n")
