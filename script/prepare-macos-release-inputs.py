@@ -93,6 +93,7 @@ SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
 REVIEW_PURPOSE = "first-party-build-only"
 REVIEW_ARCHIVE_MEMBER = "VectorWarp-corresponding-source/build-source-review.json"
 REVIEW_MAX_BYTES = 64 * 1024
+SOURCE_CLOSURE_MAX_MEMBER = 1024 * 1024 * 1024
 REVIEW_PATH = re.compile(
     r"(?:CMakeLists\.txt|script/build-macos\.sh|packaging/homebrew/vectorwarp-uhd\.rb|"
     r"\.github/workflows/macos-standalone\.yml|cmake/ReceiverCohort\.h\.in|"
@@ -131,6 +132,114 @@ def source_claims(inventory):
     if not result:
         raise ValueError("empty CI dependency inventory")
     return result
+
+
+def validate_formula_input_ownership(value, trees, source_id, arch, run_id):
+    if (value.get("schema") != 2 or value.get("source_id") != source_id or value.get("arch") != arch or
+            str(value.get("run_id")) != str(run_id)):
+        raise ValueError("formula inputs do not bind the candidate")
+    owned = {"recipes": set(), "source-cache": set()}; identities = set()
+    for formula in value.get("formulas", []):
+        identity = formula.get("id")
+        if identity != "|".join((formula.get("formula", ""), formula.get("version", ""))) or identity in identities:
+            raise ValueError("invalid structured formula identity")
+        identities.add(identity); input_ids = set()
+        recipe = formula.get("recipe") or {}; path = recipe.get("path", "")
+        if path != f"recipes/{formula['formula']}/{formula['version']}/formula.rb":
+            raise ValueError("noncanonical structured recipe path")
+        relative = path.removeprefix("recipes/")
+        if trees.get("recipes", {}).get(relative) != {"sha256": recipe.get("sha256"), "size": recipe.get("size")}:
+            raise ValueError("structured recipe member differs")
+        owned["recipes"].add(relative)
+        for item in formula.get("inputs", []):
+            input_id = item.get("id")
+            if not input_id or input_id in input_ids: raise ValueError("duplicate structured input")
+            input_ids.add(input_id)
+            if item.get("kind") == "embedded-patch":
+                if not re.fullmatch(r"[0-9a-f]{64}", item.get("embedded_sha256", "")) or item.get("payload"):
+                    raise ValueError("invalid embedded patch")
+                continue
+            payload = item.get("payload") or {}; payload_path = payload.get("path", "")
+            prefix = f"source-cache/{formula['formula']}/{formula['version']}/"
+            if not payload_path.startswith(prefix) or ".." in Path(payload_path).parts:
+                raise ValueError("noncanonical structured payload path")
+            relative = payload_path.removeprefix("source-cache/")
+            if trees.get("source-cache", {}).get(relative) != {"sha256": payload.get("sha256"), "size": payload.get("size")}:
+                raise ValueError("structured payload member differs")
+            owned["source-cache"].add(relative)
+    if set(trees.get("recipes", {})) != owned["recipes"] or set(trees.get("source-cache", {})) != owned["source-cache"]:
+        raise ValueError("structured formula closure has missing or unowned members")
+    return {item["id"]: item for item in value["formulas"]}
+
+
+def verify_source_closure(path, inventory_path, runtime_path, source_id, arch, run_id):
+    """Stream-verify a CI-exported exact source closure and its candidate bindings."""
+    inventory = read_json(inventory_path)
+    expected_formulas = {}
+    for key, value in source_claims(inventory).items():
+        expected_formulas["|".join(key)] = {
+            "recipe_sha256": value[0],
+            "notices": [list(item) for item in value[2]],
+            "input_sha256": next(item["input_sha256"] for item in inventory["components"]
+                                 if (item["formula"], item["version"], item["input"]) == key),
+        }
+    manifest = None; formula_inputs_file = None
+    seen = set()
+    with tarfile.open(path, "r|gz") as archive:
+        for member in archive:
+            prefix = "VectorWarp-source-closure/"
+            if (not member.isfile() or not member.name.startswith(prefix) or
+                    member.size > SOURCE_CLOSURE_MAX_MEMBER):
+                raise ValueError("unsafe source-closure member")
+            relative = member.name.removeprefix(prefix)
+            if not relative or relative in seen or ".." in Path(relative).parts:
+                raise ValueError("duplicate or unsafe source-closure path")
+            seen.add(relative)
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise ValueError("unreadable source-closure member")
+            if relative == "MANIFEST.json":
+                manifest = json.load(stream)
+                continue
+            if manifest is None:
+                raise ValueError("source-closure manifest must be first")
+            if "/" in relative:
+                group, name = relative.split("/", 1)
+                expected = (manifest.get("trees", {}).get(group, {}).get(name))
+            else:
+                expected = manifest.get("files", {}).get(relative)
+            if not isinstance(expected, dict) or expected.get("size") != member.size:
+                raise ValueError("unexpected source-closure member")
+            digest_value = hashlib.sha256()
+            if relative == "formula-inputs.json":
+                content = stream.read()
+                if len(content) != member.size: raise ValueError("truncated formula-input manifest")
+                digest_value.update(content); formula_inputs_file = json.loads(content)
+            else:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest_value.update(block)
+            if digest_value.hexdigest() != expected.get("sha256"):
+                raise ValueError("source-closure member hash differs")
+    if (manifest is None or manifest.get("schema") != 1 or manifest.get("arch") != arch or
+            manifest.get("source_id") != source_id or str(manifest.get("run_id")) != str(run_id) or
+            manifest.get("runtime_manifest_sha256") != sha256(runtime_path) or
+            manifest.get("runtime_formulas") != expected_formulas or
+            manifest.get("formula_inputs") != formula_inputs_file or
+            set(manifest.get("gaps_resolved", [])) !=
+            {"node-pseudo-input", "boost-source-license", "sqlite-public-domain"}):
+        raise ValueError("source closure does not bind the candidate")
+    structured = validate_formula_input_ownership(formula_inputs_file, manifest.get("trees", {}), source_id, arch, run_id)
+    for key, claim in expected_formulas.items():
+        formula, version, unused = key.split("|", 2)
+        value = structured.get(f"{formula}|{version}")
+        if not value or "runtime" not in value.get("usage", []) or value["recipe"]["sha256"] != claim["recipe_sha256"]:
+            raise ValueError("runtime formula differs from structured closure")
+    expected_paths = {"MANIFEST.json", *manifest.get("files", {})}
+    for group, records in manifest.get("trees", {}).items():
+        expected_paths.update(f"{group}/{name}" for name in records)
+    if seen != expected_paths:
+        raise ValueError("source closure is incomplete")
+    return manifest
 
 
 def verify_source_claim_transition(candidate, prior, arch):
@@ -374,7 +483,7 @@ def fetch_proxy_addr_source(output):
     return archive
 
 
-def verify_inventory(path, baseline, runtime, source_id, arch, allow_node_gap=False):
+def verify_inventory(path, baseline, runtime, source_id, arch, allow_node_gap=False, closure=None):
     candidate = read_json(path)
     prior = read_json(baseline)
     if (candidate.get("source_id") != source_id or candidate.get("arch") != arch or
@@ -382,12 +491,22 @@ def verify_inventory(path, baseline, runtime, source_id, arch, allow_node_gap=Fa
         raise ValueError(f"{arch} CI inventory does not bind the candidate runtime")
     if prior.get("source_id") != BASELINE_SOURCE_ID or prior.get("arch") != arch:
         raise ValueError(f"{arch} baseline inventory identity changed")
-    verify_source_claim_transition(candidate, prior, arch)
-    expected_gaps = list(prior.get("gaps") or [])
-    if allow_node_gap:
-        expected_gaps.insert(0, NODE_GAP)
-    if candidate.get("gaps") != expected_gaps or candidate.get("status") != prior.get("status"):
-        raise ValueError(f"{arch} CI provenance has new gaps or review status")
+    if closure is None:
+        verify_source_claim_transition(candidate, prior, arch)
+    if closure is not None:
+        allowed = {("boost", "missing license/notice file"),
+                   ("sqlite", "missing license/notice file")}
+        gaps = candidate.get("gaps") or []
+        if (not gaps or gaps[0] != NODE_GAP or
+                any((item.get("formula"), item.get("reason")) not in allowed
+                    for item in gaps[1:])):
+            raise ValueError(f"{arch} CI closure has unresolved provenance gaps")
+    else:
+        expected_gaps = list(prior.get("gaps") or [])
+        if allow_node_gap:
+            expected_gaps.insert(0, NODE_GAP)
+        if candidate.get("gaps") != expected_gaps or candidate.get("status") != prior.get("status"):
+            raise ValueError(f"{arch} CI provenance has new gaps or review status")
 
 
 def review_json(raw):
@@ -519,7 +638,7 @@ def verify_checkout(checkout, source_id, review_receipt=None):
     return changed
 
 
-def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_notices):
+def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_notices, closures=None):
     if output.exists() or output.is_symlink():
         raise ValueError("refusing to replace notices output")
     validated_baseline_notices(baseline)
@@ -564,6 +683,31 @@ def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_noti
             "origin": f"uhd-4.11.0.0.tar.gz::uhd-4.11.0.0/{relative}",
             "sha256": expected,
         })
+    for arch, closure in (closures or {}).items():
+        prefix = "VectorWarp-source-closure/notices/"
+        with tarfile.open(closure, "r|gz") as archive:
+            for member in archive:
+                if not member.name.startswith(prefix):
+                    continue
+                if not member.isfile() or member.size > REVIEW_MAX_BYTES:
+                    raise ValueError("unsafe notice in source closure")
+                relative = member.name.removeprefix(prefix)
+                if not relative or ".." in Path(relative).parts:
+                    raise ValueError("unsafe notice path in source closure")
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise ValueError("unreadable notice in source closure")
+                value = stream.read(REVIEW_MAX_BYTES + 1)
+                if len(value) != member.size:
+                    raise ValueError("notice size differs in source closure")
+                target = output / "embedded" / "homebrew-ci" / arch / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(value)
+                index.setdefault("input_notices", []).append({
+                    "file": target.relative_to(output).as_posix(),
+                    "origin": f"{arch} exact CI source closure",
+                    "sha256": hashlib.sha256(value).hexdigest(),
+                })
     index["source_id"] = source_id
     (output / "INDEX.json").write_text(json.dumps(index, sort_keys=True, indent=2) + "\n")
     notice = {"schema": 1, "source_id": source_id,
@@ -613,7 +757,7 @@ def add_file(archive, name, source):
 
 
 def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, node_source,
-                   uhd_sources, review=None):
+                   uhd_sources, closures, review=None):
     baseline = Path(args.baseline_source_archive)
     if sha256(baseline) != BASELINE_SOURCE_SHA256:
         raise ValueError("accepted baseline source archive changed")
@@ -634,6 +778,8 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
              "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions),
              "cpp-httplib-formula-arm64.rb": Path(args.arm64_cpp_formula),
              "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula),
+             "source-closure-arm64.tar.gz": closures["arm64"],
+             "source-closure-x86_64.tar.gz": closures["x86_64"],
              "vectorwarp-uhd.rb": Path(args.checkout) / "packaging/homebrew/vectorwarp-uhd.rb",
              **uhd_sources}
     if review is not None:
@@ -718,10 +864,15 @@ def verify_inputs(args):
                                                for prefix in SENSITIVE_PATHS)]
     review = (reviewed_build_changes(Path(args.checkout), source_id, guarded, review_receipt)
               if review_receipt is not None else None)
+    closures = {}
     for arch in package.ARCHES:
+        closure = Path(getattr(args, f"{arch}_closure"))
+        closures[arch] = verify_source_closure(
+            closure, getattr(args, f"{arch}_inventory"), runtimes[arch] / "standalone.json",
+            source_id, arch, args.run_id)
         verify_inventory(getattr(args, f"{arch}_inventory"),
                          getattr(args, f"baseline_{arch}_inventory"), runtimes[arch], source_id,
-                         arch, allow_node_gap=True)
+                         arch, allow_node_gap=True, closure=closures[arch])
         parse_header_versions(getattr(args, f"{arch}_header_versions"), arch)
         verify_cpp_formula(getattr(args, f"{arch}_cpp_formula"), arch)
     return runtimes, source_id, review
@@ -756,15 +907,16 @@ def prepare(args):
         proxy_addr = fetch_proxy_addr_source(output)
         node_source, node_license = fetch_node_source(output)
         uhd_sources, uhd_notices = fetch_vectorwarp_uhd_sources(output)
+        closures = {arch: Path(getattr(args, f"{arch}_closure")) for arch in package.ARCHES}
         rebind_notices(Path(args.baseline_notices), output / "notices", source_id, runtimes,
-                       node_license, uhd_notices)
+                       node_license, uhd_notices, closures)
         node_license.unlink()
         for path in uhd_notices.values():
             path.unlink()
         if review is not None:
             persist_review(output, review)
         archive = source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr,
-                                 node_source, uhd_sources, review)
+                                 node_source, uhd_sources, closures, review)
         receipt = {"schema": 1, "source_id": source_id,
             "version": args.version, "source_archive": archive.name,
             "source_archive_sha256": sha256(archive), "source_archive_size": archive.stat().st_size,
@@ -780,6 +932,7 @@ def prepare(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("arm64", "x86_64", "arm64-inventory", "x86_64-inventory",
+                 "arm64-closure", "x86_64-closure", "run-id",
                  "arm64-header-versions", "x86_64-header-versions",
                  "arm64-cpp-formula", "x86_64-cpp-formula",
                  "baseline-arm64-inventory", "baseline-x86_64-inventory",

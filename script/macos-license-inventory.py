@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 from pathlib import Path
@@ -71,9 +72,32 @@ def read_json_summary(path, root):
     return summary
 
 
-def recipe_metadata(recipe, root):
+def active_macos_recipe_text(text, arch=None):
+    """Exclude Homebrew DSL blocks that cannot contribute to this Mac build."""
+    machine=(arch or platform.machine()).lower()
+    active={"macos": True, "linux": False,
+            "arm": machine in {"arm64", "aarch64"},
+            "intel": machine in {"x86_64", "amd64"}}
+    rendered=[]; skipped_indent=None
+    for line in text.splitlines(keepends=True):
+        indent=len(line)-len(line.lstrip(" \t"))
+        if skipped_indent is not None:
+            if indent == skipped_indent and re.match(r'^\s*end\b', line):
+                skipped_indent=None
+            continue
+        condition=re.match(r'^(\s*)on_(linux|macos|arm|intel)\s+do\b', line)
+        if condition and not active[condition.group(2)]:
+            skipped_indent=len(condition.group(1))
+            continue
+        rendered.append(line)
+    if skipped_indent is not None:
+        fail("unterminated inactive Homebrew platform block")
+    return "".join(rendered)
+
+
+def recipe_metadata(recipe, root, arch=None):
     if not safe_regular(recipe, root): return {"present": False, "sha256": None, "urls": [], "source_sha256": [], "dependencies": []}
-    text = recipe.read_text(encoding="utf-8", errors="replace")
+    text = active_macos_recipe_text(recipe.read_text(encoding="utf-8", errors="replace"), arch)
     return {"present": True, "sha256": sha256(recipe),
             "urls": re.findall(r'^\s*url\s+["\']([^"\']+)', text, re.M),
             "source_sha256": re.findall(r'^\s*sha256\s+["\']([0-9a-fA-F]{64})', text, re.M),
@@ -127,7 +151,7 @@ def copy_record(source, root, destination, copied):
     copied.append({"path": relative.as_posix(), "sha256": sha256(target)})
 
 
-def inventory(files, notices_dir=None):
+def inventory(files, notices_dir=None, arch=None):
     records = []
     for raw in files:
         root, formula, version = cellar_identity(raw)
@@ -152,7 +176,7 @@ def inventory(files, notices_dir=None):
         records.append({
           "input": raw_path.relative_to(root).as_posix(), "input_sha256": sha256(raw_path),
           "formula": formula, "version": version,
-          "formula_recipe": {"path": f".brew/{formula}.rb", **recipe_metadata(recipe, root)},
+          "formula_recipe": {"path": f".brew/{formula}.rb", **recipe_metadata(recipe, root, arch)},
           "install_receipt": {"path": "INSTALL_RECEIPT.json", **read_json_summary(receipt, root)},
           "sbom": {"path": "sbom.spdx.json", **read_json_summary(sbom, root)},
           "notice_files": [{"path": item.relative_to(root).as_posix(), "sha256": sha256(item)} for item in notices],
