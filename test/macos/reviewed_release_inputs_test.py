@@ -2,11 +2,13 @@
 """Policy checks for tag-specific reviewed macOS source-input receipts."""
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -576,6 +578,36 @@ class ReboundNpmNoticeTest(unittest.TestCase):
         node = next(item for item in index["input_notices"]
                     if item["file"].startswith("embedded/node-"))
         self.assertEqual(node["sha256"], inputs.NODE_REVIEW["license_sha256"])
+
+    def test_uhd_installed_notice_maps_to_its_source_archive_member(self):
+        archive_path = self.root / "uhd-4.11.0.0.tar.gz"
+        root_license = b"root license\n"
+        installed_license = b"installed host license\n"
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for name, content in (("uhd-4.11.0.0/LICENSE.md", root_license),
+                                  ("uhd-4.11.0.0/host/LICENSE", installed_license)):
+                member = tarfile.TarInfo(name)
+                member.size = len(content)
+                archive.addfile(member, io.BytesIO(content))
+        original = inputs.VECTORWARP_UHD_REVIEW
+        reviewed = dict(original)
+        reviewed["sources"] = ((archive_path.name, "https://example.invalid/uhd.tar.gz",
+                                inputs.sha256(archive_path)),)
+        reviewed["notices"] = (
+            ("LICENSE.md", hashlib.sha256(root_license).hexdigest()),
+            ("share/doc/uhd/LICENSE", hashlib.sha256(installed_license).hexdigest()),
+        )
+        inputs.VECTORWARP_UHD_REVIEW = reviewed
+        output = self.root / "fetched"
+        output.mkdir()
+        try:
+            with mock.patch.object(inputs.urllib.request, "urlopen",
+                                   side_effect=lambda *_args, **_kwargs: archive_path.open("rb")):
+                _, notices = inputs.fetch_vectorwarp_uhd_sources(output)
+        finally:
+            inputs.VECTORWARP_UHD_REVIEW = original
+        self.assertEqual(notices["share/doc/uhd/LICENSE"].read_bytes(), installed_license)
+        self.assertNotIn("host/LICENSE", notices)
 
     def test_rejects_runtime_notice_mismatch(self):
         (self.runtimes["arm64"] / "api/node_modules/proxy-addr/LICENSE").write_text(
