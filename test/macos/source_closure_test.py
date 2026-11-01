@@ -29,9 +29,9 @@ class SourceClosureTest(unittest.TestCase):
     def test_workflow_uses_official_core_metadata_for_local_patches(self):
         workflow = (ROOT / ".github/workflows/macos-standalone.yml").read_text()
         self.assertIn("https://formulae.brew.sh/api/formula/", workflow)
-        self.assertIn('urllib.parse.quote(formula, safe="")', workflow)
-        self.assertIn('not info.get("local_patch_checksums")', workflow)
-        self.assertIn("installed_identity == official_identity", workflow)
+        self.assertIn("without_bottle_block", workflow)
+        self.assertIn("cannot bind frozen Homebrew formula revision", workflow)
+        self.assertIn('local_patch_checksums": checksums', workflow)
         self.assertIn('identifier = "vectorwarp/release-build/vectorwarp-uhd"', workflow)
         exporter_source = (ROOT / "script/export-homebrew-formula-inputs.rb").read_text()
         self.assertIn('if has_local_patch &&', exporter_source)
