@@ -178,6 +178,14 @@ bool rangeCombBirthEligible(uint i){
   double otherSnr=sd(other+4u);if(otherSnr>snr||(otherSnr==snr&&j<winner)){winner=j;snr=otherSnr;}}
  return cluster<3u||winner==i;
 }
+bool rangeCombAmbiguous(uint i){
+ uint at=m[5]+8u*i,row=nearestDopplerRow(sd(at+2u));double delay=sd(at);
+ for(uint j=0u;j<m[19];++j){if(j==i)continue;uint other=m[5]+8u*j;
+  if(abs(sd(other)-delay)>.5LF)continue;
+  uint otherRow=nearestDopplerRow(sd(other+2u)),rowDelta=row>otherRow?row-otherRow:otherRow-row;
+  if(rowDelta>=4u)return true;}
+ return false;
+}
 bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  uint at=m[5]+8u*i;if(sd(at+4u)<md(50u))return false;
  if(!dopplerCombBirthEligible(i)||!rangeCombBirthEligible(i))return false;
@@ -370,8 +378,12 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  uvec2 age=plusOne(pairS(source+8u)),inactive=associated?uvec2(0u):plusOne(pairS(source+10u));
  put(target+8u,age.x);put(target+9u,age.y);put(target+10u,inactive.x);put(target+11u,inactive.y);
  uint display=min(length,100u),start=(head+length-display)%h;put(target+13u,head|(length<<8u)|(start<<16u)|(display<<24u));
- if(associated&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%h)+6u);if(value==1u||value==2u)count++;}
-  if(count>=m[39]){state=2u;put(at+6u,state);}}
+ // Association can deliberately quarantine a learned nuisance cell by
+ // resetting its publication state to tentative. Do not let the M-of-N pass
+ // immediately undo that decision from the same retained history.
+ if(associated&&state!=0u&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%h)+6u);if(value==1u||value==2u)count++;}
+  bool ambiguous=match!=0xffffffffu&&rangeCombAmbiguous(match);
+  if(count>=m[39]&&!ambiguous){state=2u;put(at+6u,state);}}
  put(target+14u,state);put(target+15u,0xffffffffu);atomicAdd(m[31],1u);
 }
 )glsl";

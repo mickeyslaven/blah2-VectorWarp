@@ -68,6 +68,23 @@ inline bool rangeCombBirthEligible(const DopplerCombBirth* detections,
  return cluster<minimumCluster||winner==candidate;
 }
 
+inline bool rangeCombAmbiguous(const DopplerCombBirth* detections,
+ uint32_t count,uint32_t candidate,double delayRadius=.5,
+ uint32_t minimumRowSeparation=4){
+ if(!detections||candidate>=count||!std::isfinite(delayRadius)||delayRadius<0||
+    !minimumRowSeparation)
+  throw std::invalid_argument("GPU tracker range-comb ambiguity invalid");
+ for(uint32_t i=0;i<count;++i){
+  if(i==candidate||std::abs(detections[i].delay-detections[candidate].delay)>delayRadius)
+   continue;
+  const uint32_t rowDelta=detections[i].dopplerRow>detections[candidate].dopplerRow?
+   detections[i].dopplerRow-detections[candidate].dopplerRow:
+   detections[candidate].dopplerRow-detections[i].dopplerRow;
+  if(rowDelta>=minimumRowSeparation)return true;
+ }
+ return false;
+}
+
 inline bool dopplerRidgeHasBirthCapacity(const DopplerCombBirth* tracks,
  uint32_t count,const DopplerCombBirth& candidate,uint32_t rowRadius=3,
  double minimumDelaySeparation=4.0,uint32_t maximumExisting=2){

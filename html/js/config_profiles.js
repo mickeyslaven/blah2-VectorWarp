@@ -16,12 +16,13 @@
 
   // A tracking profile is a detector-to-track policy. Weak-target recovery
   // remains an independent explicit choice. Balanced is
-  // anchored to the OWL/Retina defaults (Pfa 1e-5, 15 Hz zero-Doppler blank,
-  // M=3 of N=6) while retaining VectorWarp's shorter false-track lifetime.
+  // keeps the OWL/Retina detector defaults (Pfa 1e-5 and a 15 Hz
+  // zero-Doppler blank), with 4-of-6 confirmation and VectorWarp's shorter
+  // false-track lifetime.
   const trackingProfiles = Object.freeze({
     permissive: Object.freeze({pfa: 0.0001, minDoppler: 5, M: 2, N: 5,
       minSnrDb: 4, deleteAfter: 5, accelerationModel: 'hypothesis_bank'}),
-    balanced: Object.freeze({pfa: 0.00001, minDoppler: 15, M: 3, N: 6,
+    balanced: Object.freeze({pfa: 0.00001, minDoppler: 15, M: 4, N: 6,
       minSnrDb: 5, deleteAfter: 3, accelerationModel: 'automatic'}),
     conservative: Object.freeze({pfa: 0.000001, minDoppler: 20, M: 4, N: 8,
       minSnrDb: 7, deleteAfter: 3, accelerationModel: 'automatic'})

@@ -22,6 +22,7 @@ int main()try{
  using gpu_tracker::DopplerCombBirth;
  using gpu_tracker::dopplerCombBirthEligible;
  using gpu_tracker::rangeCombBirthEligible;
+ using gpu_tracker::rangeCombAmbiguous;
  using gpu_tracker::validQuarantineCoverage;
  using gpu_tracker::dopplerRidgeHasBirthCapacity;
  using gpu_tracker::advancePersistentStreak;
@@ -69,9 +70,16 @@ int main()try{
  const DopplerCombBirth rangeComb[]={{14.0,80,8,true},{14.2,88,12,true},{13.9,96,10,true}};
  require(!rangeCombBirthEligible(rangeComb,3,0)&&rangeCombBirthEligible(rangeComb,3,1)&&
   !rangeCombBirthEligible(rangeComb,3,2),"same-range Doppler comb did not retain only its strongest birth");
+ require(rangeCombAmbiguous(rangeComb,3,0)&&rangeCombAmbiguous(rangeComb,3,1)&&
+  rangeCombAmbiguous(rangeComb,3,2),"same-range Doppler ambiguity was not retained");
+ const DopplerCombBirth rangePair[]={{14.0,80,8,false},{14.2,88,12,false}};
+ require(rangeCombAmbiguous(rangePair,2,0)&&rangeCombAmbiguous(rangePair,2,1),
+  "two-member same-range ambiguity was published as resolved");
  const DopplerCombBirth rangeIsolated[]={{14.0,80,8,true},{14.7,88,12,true},{13.9,82,10,true}};
  require(rangeCombBirthEligible(rangeIsolated,3,0)&&rangeCombBirthEligible(rangeIsolated,3,1)&&
   rangeCombBirthEligible(rangeIsolated,3,2),"isolated range/Doppler births were suppressed");
+ require(!rangeCombAmbiguous(rangeIsolated,3,0)&&!rangeCombAmbiguous(rangeIsolated,3,1)&&
+  !rangeCombAmbiguous(rangeIsolated,3,2),"isolated detections were marked ambiguous");
  const DopplerCombBirth existing[]={{8,100,20,false},{20,101,12,true},{34,99,10,true}};
  require(dopplerCombBirthEligible(existing,3,1)&&dopplerCombBirthEligible(existing,3,2),
   "an established track participated in new-birth comb suppression");
@@ -126,6 +134,6 @@ int main()try{
  require(rejected,"invalid stationary retirement CPI was accepted");
  rejected=false;try{stationaryRetirementPolicy(true,.5,1);}catch(const std::invalid_argument&){rejected=true;}
  require(rejected,"invalid stationary quarantine persistence was accepted");
- std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 doppler_comb_strongest_retained=1 doppler_ridge_capacity_bounded=1 established_track_exempt=1 committed_preserved=1 unsaturated_unchanged=1 stationary_quarantine_bounded=1 persistent_cell_locality=1 intermittent_recurrence=1 stale_expiry=1\n";
+ std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 doppler_comb_strongest_retained=1 range_comb_ambiguity_held=1 doppler_ridge_capacity_bounded=1 established_track_exempt=1 committed_preserved=1 unsaturated_unchanged=1 stationary_quarantine_bounded=1 persistent_cell_locality=1 intermittent_recurrence=1 stale_expiry=1\n";
  return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL gpu-tracker-admission: "<<e.what()<<'\n';return 1;}
