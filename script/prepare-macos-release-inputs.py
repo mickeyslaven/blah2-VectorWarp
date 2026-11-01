@@ -491,8 +491,7 @@ def verify_inventory(path, baseline, runtime, source_id, arch, allow_node_gap=Fa
         raise ValueError(f"{arch} CI inventory does not bind the candidate runtime")
     if prior.get("source_id") != BASELINE_SOURCE_ID or prior.get("arch") != arch:
         raise ValueError(f"{arch} baseline inventory identity changed")
-    if closure is None:
-        verify_source_claim_transition(candidate, prior, arch)
+    verify_source_claim_transition(candidate, prior, arch)
     if closure is not None:
         allowed = {("boost", "missing license/notice file"),
                    ("sqlite", "missing license/notice file")}
