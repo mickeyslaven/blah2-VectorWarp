@@ -573,7 +573,7 @@ def reviewed_dependency_transition(receipt_path, source_id, run_id, inventories,
     record = review_json(raw)
     required = {"schema", "purpose", "baseline_source_id", "source_id", "run_id",
                 "artifacts", "changes", "headers"}
-    if (set(record) != required or record.get("schema") != 1 or
+    if (set(record) != required or type(record.get("schema")) is not int or record["schema"] != 1 or
             record.get("purpose") != DEPENDENCY_REVIEW_PURPOSE or
             record.get("baseline_source_id") != BASELINE_SOURCE_ID or
             not isinstance(record.get("source_id"), str) or
@@ -610,8 +610,11 @@ def verify_reviewed_headers_in_closure(headers, cpp_formula, closure, arch):
     formulas = {item.get("id"): item for item in closure.get("formula_inputs", {}).get("formulas", [])}
     if len(formulas) != len(closure.get("formula_inputs", {}).get("formulas", [])):
         raise ValueError(f"{arch} source closure has duplicate formula identities")
-    closure_headers = {item.get("formula"): item.get("version") for item in formulas.values()
-                       if "compile-header" in item.get("usage", [])}
+    compile_headers = [(item.get("formula"), item.get("version")) for item in formulas.values()
+                       if "compile-header" in item.get("usage", [])]
+    if len({name for name, unused in compile_headers}) != len(compile_headers):
+        raise ValueError(f"{arch} source closure has duplicate compile-header formulas")
+    closure_headers = dict(compile_headers)
     if set(headers) != HEADER_INPUT_NAMES or closure_headers != headers:
         raise ValueError(f"{arch} reviewed header inputs differ from source closure")
     cpp = formulas.get(f"cpp-httplib|{headers.get('cpp-httplib', '')}")
