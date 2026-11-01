@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -18,6 +19,38 @@ SPEC = importlib.util.spec_from_file_location(
     "reviewed_release_inputs", ROOT / "script/prepare-macos-release-inputs.py")
 inputs = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(inputs)
+
+
+class CurrentSourceArchiveTest(unittest.TestCase):
+    def test_current_archive_omits_historical_baseline_payload(self):
+        root = Path("/fixture")
+        args = types.SimpleNamespace(
+            arm64_inventory=root / "arm64-inventory.json",
+            x86_64_inventory=root / "x86_64-inventory.json",
+            arm64_header_versions=root / "arm64-headers.txt",
+            x86_64_header_versions=root / "x86_64-headers.txt",
+            arm64_cpp_formula=root / "arm64-formula.rb",
+            x86_64_cpp_formula=root / "x86_64-formula.rb",
+            checkout=root / "checkout",
+        )
+        items = inputs.current_source_items(
+            root, {"arm64": root / "runtime-a", "x86_64": root / "runtime-x"},
+            root / "cpp.tar.gz", root / "proxy.tgz", root / "node.tar.gz",
+            {"uhd.tar.gz": root / "uhd.tar.gz"},
+            {"arm64": root / "closure-a.tar.gz", "x86_64": root / "closure-x.tar.gz"},
+            args)
+        self.assertNotIn("dependency-source-baseline-v0.1.9.tar.gz", items)
+        self.assertIn("source-closure-arm64.tar.gz", items)
+        self.assertIn("source-closure-x86_64.tar.gz", items)
+        self.assertIn("VectorWarp-current-source.tar.gz", items)
+
+    def test_rejects_an_asset_at_github_size_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "source.tar.gz"
+            with path.open("wb") as stream:
+                stream.truncate(inputs.GITHUB_RELEASE_ASSET_LIMIT)
+            with self.assertRaisesRegex(ValueError, "GitHub requires release assets"):
+                inputs.validate_release_asset_size(path)
 
 
 class ReviewedBuildChangesTest(unittest.TestCase):
