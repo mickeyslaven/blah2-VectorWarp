@@ -53,7 +53,10 @@ class Vectorwarp < Formula
            "VKFFT_ROOT=#{buildpath/"vkfft"}", "script/build-macos.sh", "--backend", "all", "--gpu", "on",
            "--jobs", ENV.make_jobs.to_s,
            "--output-dir", "#{libexec}"
-    (libexec/"runtime").install node_runtime => "node"\n    (libexec/"BUILD-RECEIPT.json").write JSON.generate({\n      schema: 1, version: version.to_s, sourceCommit: "@SOURCE_COMMIT@", package: "homebrew"\n    }) + "\\n"
+    (libexec/"runtime").install node_runtime => "node"
+    (libexec/"BUILD-RECEIPT.json").write JSON.generate({
+      schema: 1, version: version.to_s, sourceCommit: "@SOURCE_COMMIT@", package: "homebrew"
+    }) + "\n"
     bin.install_symlink libexec/"script/vectorwarp-macos" => "vectorwarp"
     # Keep the Kraken-specific driver private to its companion formula.
     kraken = Formula["vectorwarp/local/vectorwarp-heimdall"].opt_libexec
