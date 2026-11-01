@@ -135,7 +135,8 @@ def templates_from_archive(source_archive: Path, commit: str) -> dict[str, str]:
 
 
 def render(template: str, source_url: str, checksum: str, version: str, revision: int) -> str:
-    content = template.replace("@SOURCE_URL@", source_url).replace("@SOURCE_SHA256@", checksum)\n    content = content.replace("@SOURCE_COMMIT@", source_commit(source_url))
+    content = template.replace("@SOURCE_URL@", source_url).replace("@SOURCE_SHA256@", checksum)
+    content = content.replace("@SOURCE_COMMIT@", source_commit(source_url))
     content = content.replace("@FORMULA_REVISION@", str(revision))
     content, count = re.subn(r'(?m)^  version ".*"$', f'  version "{version}"', content, count=1)
     content = content.replace("vectorwarp/local/vectorwarp-heimdall", f"{TAP}/vectorwarp-heimdall")
