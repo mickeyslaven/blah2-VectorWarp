@@ -135,19 +135,20 @@ jobs:
                       continue
                   result.append(line)
               return "".join(result)
-          def core_formula_history(formula_path, official_head):
+          def core_path_history(input_path, official_head):
               revisions = [official_head] if official_head else []
               for page in range(1, 101):
                   commits_url = (
-                      "https://api.github.com/repos/Homebrew/homebrew-core/commits?path="
-                      + urllib.parse.quote(formula_path, safe="")
+                      "https://api.github.com/repos/Homebrew/homebrew-core/commits?sha="
+                      + urllib.parse.quote(official_head, safe="")
+                      + "&path=" + urllib.parse.quote(input_path, safe="")
                       + "&per_page=100&page=" + str(page)
                   )
                   commits = json.loads(fetch(commits_url))
                   revisions.extend(item["sha"] for item in commits)
                   if len(commits) < 100:
                       return list(dict.fromkeys(value for value in revisions if value))
-              raise SystemExit("Homebrew core formula history exceeds review bound: " + formula_path)
+              raise SystemExit("Homebrew core input history exceeds review bound: " + input_path)
           def bind_local_patches(formula, version, source, info):
               installed = source.read_text()
               patch_paths = sorted(set(re.findall(r'^\s*file\s+"(Patches/[^"]+)"', installed, re.MULTILINE)))
@@ -156,11 +157,15 @@ jobs:
               official = json.loads(fetch(api_url))
               formula_path = official.get("ruby_source_path")
               if not formula_path: raise SystemExit("missing Homebrew core formula path: " + formula)
+              official_head = official.get("tap_git_head")
+              if not official_head: raise SystemExit("missing Homebrew core revision: " + formula)
+              candidates = []
+              for input_path in (formula_path, *patch_paths):
+                  candidates.extend(core_path_history(input_path, official_head))
               matches = []
-              for candidate in core_formula_history(formula_path, official.get("tap_git_head")):
+              for candidate in dict.fromkeys(candidates):
                   raw_url = "https://raw.githubusercontent.com/Homebrew/homebrew-core/" + candidate + "/" + formula_path
-                  try: candidate_text = fetch(raw_url).decode()
-                  except Exception: continue
+                  candidate_text = fetch(raw_url).decode()
                   if without_bottle_block(candidate_text) == installed:
                       checksums = {}
                       for patch_path in patch_paths:

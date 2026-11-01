@@ -101,6 +101,74 @@ class SourceClosureTest(unittest.TestCase):
             hashlib.sha256(b"same reviewed patch").hexdigest(),
         )
 
+    def test_local_patch_history_rejects_patch_only_conflict(self):
+        namespace = self.workflow_patch_binder()
+        installed = 'class Demo < Formula\n  url "https://example.invalid/demo.tar.gz"\n  sha256 "' + "a" * 64 + '"\n  patch do\n    file "Patches/demo/fix.patch"\n  end\nend\n'
+        formula_path = "Formula/d/demo.rb"
+        revisions = ("1" * 40, "2" * 40, "3" * 40)
+        def fetch(url):
+            if "formulae.brew.sh" in url:
+                return json.dumps({"ruby_source_path": formula_path, "tap_git_head": revisions[0]}).encode()
+            if "api.github.com" in url:
+                if "Patches%2Fdemo%2Ffix.patch" in url:
+                    return json.dumps([{"sha": revisions[1]}]).encode()
+                return json.dumps([{"sha": revisions[2]}]).encode()
+            if url.endswith(formula_path):
+                return installed.encode()
+            if revisions[1] in url:
+                return b"patch-only conflicting bytes"
+            if "Patches/demo/fix.patch" in url:
+                return b"same endpoint bytes"
+            raise AssertionError(url)
+        with tempfile.TemporaryDirectory() as temporary:
+            recipe = Path(temporary) / "demo.rb"; recipe.write_text(installed)
+            namespace["fetch"] = fetch
+            with self.assertRaisesRegex(SystemExit, "ambiguous frozen Homebrew patch history"):
+                namespace["bind_local_patches"]("demo", "1.0", recipe, {})
+
+    def test_local_patch_history_rejects_unavailable_revision(self):
+        namespace = self.workflow_patch_binder()
+        installed = 'class Demo < Formula\n  url "https://example.invalid/demo.tar.gz"\n  sha256 "' + "a" * 64 + '"\n  patch do\n    file "Patches/demo/fix.patch"\n  end\nend\n'
+        formula_path = "Formula/d/demo.rb"; unavailable = "2" * 40
+        def fetch(url):
+            if "formulae.brew.sh" in url:
+                return json.dumps({"ruby_source_path": formula_path, "tap_git_head": "1" * 40}).encode()
+            if "api.github.com" in url:
+                return json.dumps([{"sha": unavailable}]).encode()
+            if unavailable in url and url.endswith(formula_path):
+                raise TimeoutError("historical formula unavailable")
+            if url.endswith(formula_path):
+                return installed.encode()
+            if "Patches/demo/fix.patch" in url:
+                return b"patch"
+            raise AssertionError(url)
+        with tempfile.TemporaryDirectory() as temporary:
+            recipe = Path(temporary) / "demo.rb"; recipe.write_text(installed)
+            namespace["fetch"] = fetch
+            with self.assertRaisesRegex(TimeoutError, "historical formula unavailable"):
+                namespace["bind_local_patches"]("demo", "1.0", recipe, {})
+
+    def test_core_path_history_reads_page_two_and_rejects_exhaustion(self):
+        namespace = self.workflow_patch_binder()
+        calls = []
+        def paged(url):
+            calls.append(url)
+            page = int(url.rsplit("page=", 1)[1])
+            return json.dumps(
+                [{"sha": str(index).zfill(40)} for index in range(100)] if page == 1
+                else [{"sha": "f" * 40}]
+            ).encode()
+        namespace["fetch"] = paged
+        result = namespace["core_path_history"]("Patches/demo/fix.patch", "a" * 40)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("sha=" + "a" * 40, calls[0])
+        self.assertEqual(result[-1], "f" * 40)
+        namespace["fetch"] = lambda url: json.dumps(
+            [{"sha": str(index).zfill(40)} for index in range(100)]
+        ).encode()
+        with self.assertRaisesRegex(SystemExit, "history exceeds review bound"):
+            namespace["core_path_history"]("Patches/demo/fix.patch", "a" * 40)
+
     def test_closure_does_not_bypass_source_claim_transition(self):
         candidate = {"source_id": self.source, "arch": self.arch,
             "runtime_manifest_sha256": inputs.sha256(self.runtime), "components": [],
