@@ -33,6 +33,9 @@ class SourceClosureTest(unittest.TestCase):
         self.assertIn('not info.get("local_patch_checksums")', workflow)
         self.assertIn("installed_identity == official_identity", workflow)
         self.assertIn('identifier = "vectorwarp/release-build/vectorwarp-uhd"', workflow)
+        exporter_source = (ROOT / "script/export-homebrew-formula-inputs.rb").read_text()
+        self.assertIn('if has_local_patch &&', exporter_source)
+        self.assertIn('Homebrew API local-patch identity differs', exporter_source)
 
     def closure(self, *, arch=None, omit=False, tamper=False):
         path = self.root / ("closure-" + str(len(list(self.root.glob('closure-*')))) + ".tar.gz")
