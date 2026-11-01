@@ -101,7 +101,7 @@ helper.KIT = kit
 helper.INCLUDE = work / 'include'
 helper.CORE = work / 'fake-core'
 helper.LIBRARY = work / 'fake-sdk'
-helper.COMPILER = str(work / 'fixture-cxx')
+helper.COMPILER = sys.argv[3]
 helper.BUILD_USER = sys.argv[2]
 manifest = {'compiler': {'cxx_flags': []}}
 try:
@@ -135,7 +135,7 @@ os.execv('/usr/bin/c++', ['/usr/bin/c++', '-shared', '-fPIC', str(work / 'tiny.c
 '''
 
 
-def write_fixtures(work: Path, helper: Path, build_user: str) -> None:
+def write_fixtures(work: Path, helper: Path, build_user: str, compiler: Path) -> None:
     copied = work / 'vectorwarp-build-sdrplay.py'
     shutil.copyfile(helper, copied)
     copied.chmod(0o755)
@@ -145,14 +145,14 @@ def write_fixtures(work: Path, helper: Path, build_user: str) -> None:
     (work / 'runner.py').write_text(textwrap.dedent(RUNNER), encoding='utf-8')
     (work / 'tiny.cpp').write_text('extern "C" int vectorwarp_fixture() { return 7; }', encoding='utf-8')
     (work / 'build').mkdir()
-    shim = work / 'fixture-cxx'
+    shim = compiler
     shim.write_text(SHIM % {'work': str(work), 'user': build_user}, encoding='utf-8')
     for path in (work / 'runner.py', work / 'tiny.cpp', shim):
         os.chown(path, 0, 0)
         path.chmod(0o755 if path == shim else 0o644)
 
 
-def invoke(unit: str, properties: list[str], work: Path, user: str,
+def invoke(unit: str, properties: list[str], work: Path, user: str, compiler: Path,
            *, ambient: bool, cpu_limit: str | None) -> subprocess.CompletedProcess:
     args = ['systemd-run', '--wait', '--collect', f'--unit={unit}']
     for value in properties:
@@ -164,7 +164,8 @@ def invoke(unit: str, properties: list[str], work: Path, user: str,
         args.extend(('--property', 'CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_SETGID CAP_KILL'))
     if cpu_limit:
         args.extend(('--property', f'LimitCPU={cpu_limit}'))
-    args.extend(('/usr/bin/python3', '-B', '-I', str(work / 'runner.py'), str(work), user))
+    args.extend(('/usr/bin/python3', '-B', '-I', str(work / 'runner.py'), str(work), user,
+                 str(compiler)))
     return run(args, check=False)
 
 
@@ -244,6 +245,7 @@ def main() -> None:
         fail(f'SDRplay build unit was not found: {unit_file}')
     work = Path(tempfile.mkdtemp(prefix='vectorwarp-sdrplay-test-', dir='/run'))
     base = 'vectorwarp-sdrplay-test-' + uuid.uuid4().hex
+    compiler = Path('/usr/local/bin') / (base + '-cxx')
     logs: list[str] = []
     units: list[str] = []
     problem: BaseException | None = None
@@ -252,11 +254,11 @@ def main() -> None:
         platform.machine(), args.helper, hashlib.sha256(args.helper.read_bytes()).hexdigest(),
         unit_file, hashlib.sha256(unit_file.read_bytes()).hexdigest(), args.build_user, before_threads)
     try:
-        write_fixtures(work, args.helper, args.build_user)
+        write_fixtures(work, args.helper, args.build_user, compiler)
         properties = service_properties(unit_file, work)
         normal = base + '-normal.service'
         units.append(normal)
-        result = invoke(normal, properties, work, args.build_user, ambient=True, cpu_limit=None)
+        result = invoke(normal, properties, work, args.build_user, compiler, ambient=True, cpu_limit=None)
         logs.append(f'{normal} rc={result.returncode} state-after-collect={unit_state(normal)}')
         if result.returncode:
             fail(f'ambient-capability compiler run failed:\n{logs[-1]}')
@@ -265,7 +267,7 @@ def main() -> None:
         (work / 'build').mkdir()
         cpu = base + '-cpu.service'
         units.append(cpu)
-        result = invoke(cpu, properties, work, args.build_user, ambient=True, cpu_limit='10:30')
+        result = invoke(cpu, properties, work, args.build_user, compiler, ambient=True, cpu_limit='10:30')
         logs.append(f'{cpu} rc={result.returncode} state-after-collect={unit_state(cpu)}')
         if result.returncode:
             fail(f'stricter inherited CPU compiler run failed:\n{logs[-1]}')
@@ -274,7 +276,7 @@ def main() -> None:
         (work / 'build').mkdir()
         negative = base + '-without-setuid.service'
         units.append(negative)
-        result = invoke(negative, properties, work, args.build_user, ambient=False, cpu_limit=None)
+        result = invoke(negative, properties, work, args.build_user, compiler, ambient=False, cpu_limit=None)
         negative_log = journal(negative)
         logs.append(f'{negative} rc={result.returncode} state-after-collect={unit_state(negative)}')
         if result.returncode == 0 or not re.search(r'compiler child setup failed at setuid', negative_log):
@@ -309,6 +311,10 @@ def main() -> None:
                     cleaned = True
             except BaseException as error:
                 cleanup_errors.append(f'workdir cleanup failed: {work}: {error}')
+        try:
+            compiler.unlink(missing_ok=True)
+        except BaseException as error:
+            cleanup_errors.append(f'compiler fixture cleanup failed: {compiler}: {error}')
         if cleanup_errors:
             logs.extend('cleanup error: ' + error for error in cleanup_errors)
             if problem is None:
@@ -316,7 +322,7 @@ def main() -> None:
         for log in logs:
             print(log)
         print(identity)
-        print(f'cleanup workdir={work} removed={cleaned}')
+        print(f'cleanup workdir={work} removed={cleaned} compiler_removed={not compiler.exists()}')
     if problem is not None:
         raise problem
 
