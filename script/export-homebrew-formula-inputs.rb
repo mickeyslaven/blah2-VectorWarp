@@ -118,8 +118,9 @@ formulas = rows.sort_by { |row| row[0, 2] }.map do |formula, version, usages, re
   api_version = metadata.dig("versions", "stable")
   api_checksum = metadata.dig("urls", "stable", "checksum")
   loaded_checksum = loaded.stable.checksum&.hexdigest
-  abort "Homebrew API source identity differs: #{formula}" \
-    unless api_version == loaded.version.to_s && api_checksum == loaded_checksum
+  has_local_patch = loaded.patchlist.any? { |patch| patch.class.name == "LocalPatch" }
+  abort "Homebrew API local-patch identity differs: #{formula}" \
+    if has_local_patch && (api_version != loaded.version.to_s || api_checksum != loaded_checksum)
   recipe_copy = root / "recipes" / formula / version / "formula.rb"
   recipe_copy.dirname.mkpath
   FileUtils.copy_file(recipe, recipe_copy)
