@@ -57,6 +57,7 @@ NODE_REVIEW = {
 NODE_GAP = {"index": 0, "reason": "dependency lacks formula, version, file, or sha256"}
 HEADER_VERSIONS = {"asio": "1.38.2", "rapidjson": "1.1.0",
                    "vulkan-headers": "1.4.357.0"}
+HEADER_INPUT_NAMES = {"asio", "cpp-httplib", "eigen", "rapidjson", "vulkan-headers"}
 CPP_HEADER = {
     "arm64": ("0.54.1", "7310f5312e1423830d649b38ed028e9db86303a979ccbfdbd1c4b1574f422dfb"),
     "x86_64": ("0.53.1", "185af9587e270de9a3bfee234c6740f02e82265da33c7a41f97e02ee42f979d2"),
@@ -604,6 +605,39 @@ def reviewed_dependency_transition(receipt_path, source_id, run_id, inventories,
     return {"record": record, "raw": raw, "metadata": metadata}
 
 
+def verify_reviewed_headers_in_closure(headers, cpp_formula, closure, arch):
+    """Bind externally reported compile headers to the verified source closure."""
+    formulas = {item.get("id"): item for item in closure.get("formula_inputs", {}).get("formulas", [])}
+    if len(formulas) != len(closure.get("formula_inputs", {}).get("formulas", [])):
+        raise ValueError(f"{arch} source closure has duplicate formula identities")
+    closure_headers = {item.get("formula"): item.get("version") for item in formulas.values()
+                       if "compile-header" in item.get("usage", [])}
+    if set(headers) != HEADER_INPUT_NAMES or closure_headers != headers:
+        raise ValueError(f"{arch} reviewed header inputs differ from source closure")
+    cpp = formulas.get(f"cpp-httplib|{headers.get('cpp-httplib', '')}")
+    if cpp is None or cpp.get("recipe", {}).get("sha256") != sha256(cpp_formula):
+        raise ValueError(f"{arch} cpp-httplib formula differs from source closure")
+
+
+def verify_dependency_review_artifacts(args, closures, dependency_review):
+    """Repeat exact artifact/receipt binding immediately before archive creation."""
+    if dependency_review is None:
+        return
+    current = {}
+    for arch in package.ARCHES:
+        current[arch] = {
+            "inventory_sha256": sha256(Path(getattr(args, f"{arch}_inventory"))),
+            "closure_sha256": sha256(closures[arch]),
+            "header_versions_sha256": sha256(Path(getattr(args, f"{arch}_header_versions"))),
+            "cpp_formula_sha256": sha256(Path(getattr(args, f"{arch}_cpp_formula"))),
+        }
+    if current != dependency_review["record"]["artifacts"]:
+        raise ValueError("approved dependency artifacts changed before archival")
+    persisted = Path(args.output) / "public-dependency-source/dependency-source-review.json"
+    if owner_only_bytes(persisted) != dependency_review["raw"]:
+        raise ValueError("persisted dependency review receipt changed before archival")
+
+
 def reviewed_build_changes(checkout, source_id, guarded, receipt_path):
     """Validate reviewed native-build post-images and return immutable bytes."""
     if not isinstance(source_id, str) or not re.fullmatch(r"[0-9a-f]{40}", source_id):
@@ -694,7 +728,8 @@ def verify_checkout(checkout, source_id, review_receipt=None):
     return changed
 
 
-def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_notices, closures=None):
+def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_notices, closures=None,
+                   dependency_review=None):
     if output.exists() or output.is_symlink():
         raise ValueError("refusing to replace notices output")
     validated_baseline_notices(baseline)
@@ -767,7 +802,9 @@ def rebind_notices(baseline, output, source_id, runtimes, node_license, uhd_noti
     index["source_id"] = source_id
     (output / "INDEX.json").write_text(json.dumps(index, sort_keys=True, indent=2) + "\n")
     notice = {"schema": 1, "source_id": source_id,
-              "review_status": "automated-unchanged-dependency-inputs",
+              "review_status": ("operator-reviewed-exact-dependency-inputs"
+                                if dependency_review is not None
+                                else "automated-unchanged-dependency-inputs"),
               "runtime_manifest_sha256": {arch: sha256(path / "standalone.json")
                                           for arch, path in runtimes.items()},
               "files": {p.relative_to(output).as_posix(): sha256(p)
@@ -817,6 +854,7 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
     baseline = Path(args.baseline_source_archive)
     if sha256(baseline) != BASELINE_SOURCE_SHA256:
         raise ValueError("accepted baseline source archive changed")
+    verify_dependency_review_artifacts(args, closures, dependency_review)
     first_party = output / "VectorWarp-current-source.tar.gz"
     with first_party.open("xb") as stream:
         subprocess.run(["git", "-C", str(args.checkout), "archive", "--format=tar.gz",
@@ -847,6 +885,22 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
                 "baseline_source_id": BASELINE_SOURCE_ID,
                 "files": {name: {"sha256": sha256(path), "size": path.stat().st_size}
                           for name, path in items.items()}}
+    if dependency_review is not None:
+        approved = dependency_review["record"]["artifacts"]
+        bound = {
+            "inventory-arm64.json": approved["arm64"]["inventory_sha256"],
+            "inventory-x86_64.json": approved["x86_64"]["inventory_sha256"],
+            "header-input-versions-arm64.txt": approved["arm64"]["header_versions_sha256"],
+            "header-input-versions-x86_64.txt": approved["x86_64"]["header_versions_sha256"],
+            "cpp-httplib-formula-arm64.rb": approved["arm64"]["cpp_formula_sha256"],
+            "cpp-httplib-formula-x86_64.rb": approved["x86_64"]["cpp_formula_sha256"],
+            "source-closure-arm64.tar.gz": approved["arm64"]["closure_sha256"],
+            "source-closure-x86_64.tar.gz": approved["x86_64"]["closure_sha256"],
+            "dependency-source-review.json": dependency_review["metadata"]["sha256"],
+        }
+        if any(manifest["files"].get(name, {}).get("sha256") != digest
+               for name, digest in bound.items()):
+            raise ValueError("corresponding-source manifest differs from dependency approval")
     readme = ("Current first-party source is VectorWarp-current-source.tar.gz at commit " + source_id +
               ". The nested v0.1.9 source kit supplies unchanged dependency sources, recipes, patches, "
               "licenses and build instructions. It is reused only after both architecture inventories, "
@@ -952,6 +1006,9 @@ def verify_inputs(args):
             getattr(args, f"{arch}_header_versions"), arch, reviewed_headers)
         verify_cpp_formula(getattr(args, f"{arch}_cpp_formula"), arch,
                            parsed_headers.get("cpp-httplib") if dependency_review is not None else None)
+        if dependency_review is not None:
+            verify_reviewed_headers_in_closure(
+                parsed_headers, Path(getattr(args, f"{arch}_cpp_formula")), closures[arch], arch)
     return runtimes, source_id, review, dependency_review
 
 
@@ -987,7 +1044,7 @@ def prepare(args):
         uhd_sources, uhd_notices = fetch_vectorwarp_uhd_sources(output)
         closures = {arch: Path(getattr(args, f"{arch}_closure")) for arch in package.ARCHES}
         rebind_notices(Path(args.baseline_notices), output / "notices", source_id, runtimes,
-                       node_license, uhd_notices, closures)
+                       node_license, uhd_notices, closures, dependency_review)
         node_license.unlink()
         for path in uhd_notices.values():
             path.unlink()
