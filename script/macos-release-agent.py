@@ -71,7 +71,8 @@ def config(path):
                 "baseline_arm64_inventory", "baseline_x86_64_inventory",
                 "baseline_notices", "baseline_source_archive", "application_identity",
                 "installer_identity", "team_id", "notary_profile"}
-    if (not required <= set(value) or set(value) - required - {"review_receipt"} or
+    optional = {"review_receipt", "dependency_review_receipt"}
+    if (not required <= set(value) or set(value) - required - optional or
             value["team_id"] != "DJGHPX8T7R"):
         raise ValueError("invalid local agent configuration")
     for name in required - {"application_identity", "installer_identity", "team_id", "notary_profile"}:
@@ -79,6 +80,9 @@ def config(path):
     if "review_receipt" in value:
         # Preserve the final path component so the helper can reject symlinks.
         value["review_receipt"] = Path(value["review_receipt"]).expanduser().absolute()
+    if "dependency_review_receipt" in value:
+        value["dependency_review_receipt"] = \
+            Path(value["dependency_review_receipt"]).expanduser().absolute()
     if not value["recipient_key"].is_file() or value["recipient_key"].stat().st_mode & 0o077:
         raise ValueError("recipient private key is missing or not owner-only")
     return value
@@ -345,6 +349,7 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
               "baseline_notices": settings["baseline_notices"],
               "baseline_source_archive": settings["baseline_source_archive"],
               "review_receipt": settings.get("review_receipt"),
+              "dependency_review_receipt": settings.get("dependency_review_receipt"),
               "run_id": str(candidate.get("mac_run", "0"))}
     for arch in ARCHES:
         values[arch] = runtimes[arch]
@@ -356,10 +361,11 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
     args = argparse.Namespace(**values)
     # A cached directory must never turn into an alternate path around review
     # or dependency checks, including when the configured receipt changes.
-    verified_runtimes, source_id, review = helper.verify_inputs(args)
+    verified_runtimes, source_id, review, dependency_review = helper.verify_inputs(args)
     if source_id != candidate["commit"]:
         raise ValueError("release input source differs from candidate")
     expected_review = review["metadata"] if review is not None else None
+    expected_dependency_review = dependency_review["metadata"] if dependency_review is not None else None
     if not output.exists():
         helper.prepare(args)
     receipt = json.loads((output / "receipt.json").read_text())
@@ -369,6 +375,7 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
             receipt.get("source_archive") != archive.name or
             receipt.get("source_archive_size") != archive.stat().st_size or
             receipt.get("build_source_review") != expected_review or
+            receipt.get("dependency_source_review") != expected_dependency_review or
             receipt["source_id"] != candidate["commit"] or
             receipt["source_archive_sha256"] != digest(archive) or
             receipt["notices_sha256"] != digest(output / "notices/notices.json")):
@@ -376,7 +383,9 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
     helper.package.validated_notices(output / "notices",
             {arch: json.loads((runtime / "standalone.json").read_text())
              for arch, runtime in verified_runtimes.items()}, verified_runtimes)
-    return output, archive, expected_review
+    reviews = {"build_source_review": expected_review,
+               "dependency_source_review": expected_dependency_review}
+    return output, archive, reviews
 
 
 def sign_package(settings, candidate, work, source, runtimes, inputs):
@@ -441,7 +450,7 @@ def notarize(settings, package, state, state_path):
     return submission
 
 
-def release_files(settings, candidate, work, package, archive, submission, build_source_review=None):
+def release_files(settings, candidate, work, package, archive, submission, reviews=None):
     staging = work / "upload"
     staging.mkdir(exist_ok=True)
     version_text = candidate["tag"][1:]
@@ -459,8 +468,9 @@ def release_files(settings, candidate, work, package, archive, submission, build
                                   "size": source_target.stat().st_size},
                "apple_team_id": settings["team_id"], "notary_status": "Accepted",
                "notary_submission_id": submission, "gatekeeper": "Notarized Developer ID"}
-    if build_source_review is not None:
-        receipt["build_source_review"] = build_source_review
+    for name, review in (reviews or {}).items():
+        if review is not None:
+            receipt[name] = review
     receipt_path = staging / "macos-release.json"
     encoded = json.dumps(receipt, sort_keys=True, indent=2) + "\n"
     if receipt_path.exists() and receipt_path.read_text() != encoded:

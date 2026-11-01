@@ -320,6 +320,53 @@ class FormulaSourceClaimTransitionTest(unittest.TestCase):
                 self.inventory(legacy), "arm64")
 
 
+class DependencyTransitionReceiptTest(unittest.TestCase):
+    def test_binds_exact_inventories_closures_and_claim_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inventories, priors, closures, headers, formulas = {}, {}, {}, {}, {}
+            changes = {}
+            for arch in inputs.package.ARCHES:
+                prior = FormulaSourceClaimTransitionTest.inventory(
+                    FormulaSourceClaimTransitionTest.component())
+                candidate = FormulaSourceClaimTransitionTest.inventory(
+                    FormulaSourceClaimTransitionTest.component(),
+                    FormulaSourceClaimTransitionTest.component(name="added-" + arch))
+                priors[arch] = root / f"prior-{arch}.json"
+                inventories[arch] = root / f"inventory-{arch}.json"
+                closures[arch] = root / f"closure-{arch}.tar.gz"
+                headers[arch] = root / f"headers-{arch}.txt"
+                formulas[arch] = root / f"cpp-{arch}.rb"
+                priors[arch].write_text(json.dumps(prior))
+                inventories[arch].write_text(json.dumps(candidate))
+                closures[arch].write_bytes(("closure-" + arch).encode())
+                headers[arch].write_text("asio 1.38.2\ncpp-httplib 0.63.0\nrapidjson 1.1.0\n")
+                formulas[arch].write_text("formula fixture")
+                changes[arch] = inputs.source_claim_changes(candidate, prior, arch)
+            source_id, run_id = "d" * 40, "123"
+            record = {"schema": 1, "purpose": inputs.DEPENDENCY_REVIEW_PURPOSE,
+                "baseline_source_id": inputs.BASELINE_SOURCE_ID, "source_id": source_id,
+                "run_id": run_id,
+                "artifacts": {a: {"inventory_sha256": inputs.sha256(inventories[a]),
+                                   "closure_sha256": inputs.sha256(closures[a]),
+                                   "header_versions_sha256": inputs.sha256(headers[a]),
+                                   "cpp_formula_sha256": inputs.sha256(formulas[a])}
+                              for a in inputs.package.ARCHES},
+                "changes": changes,
+                "headers": {a: inputs.read_header_versions(headers[a])
+                            for a in inputs.package.ARCHES}}
+            receipt = root / "review.json"
+            receipt.write_text(json.dumps(record, sort_keys=True))
+            receipt.chmod(0o600)
+            reviewed = inputs.reviewed_dependency_transition(
+                receipt, source_id, run_id, inventories, closures, priors, headers, formulas)
+            self.assertEqual(reviewed["record"], record)
+            closures["arm64"].write_bytes(b"tampered")
+            with self.assertRaisesRegex(ValueError, "exact candidate inputs"):
+                inputs.reviewed_dependency_transition(
+                    receipt, source_id, run_id, inventories, closures, priors, headers, formulas)
+
+
 class VectorWarpUhdFormulaTest(unittest.TestCase):
     def test_formula_is_exact_reviewed_b200_build_without_mpmd(self):
         formula = ROOT / "packaging/homebrew/vectorwarp-uhd.rb"

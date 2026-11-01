@@ -92,6 +92,8 @@ SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
                    "third_party/", "third-party/", "vendor/")
 REVIEW_PURPOSE = "first-party-build-only"
 REVIEW_ARCHIVE_MEMBER = "VectorWarp-corresponding-source/build-source-review.json"
+DEPENDENCY_REVIEW_PURPOSE = "exact-dependency-source-review"
+DEPENDENCY_REVIEW_ARCHIVE_MEMBER = "VectorWarp-corresponding-source/dependency-source-review.json"
 REVIEW_MAX_BYTES = 64 * 1024
 SOURCE_CLOSURE_MAX_MEMBER = 1024 * 1024 * 1024
 REVIEW_PATH = re.compile(
@@ -242,8 +244,8 @@ def verify_source_closure(path, inventory_path, runtime_path, source_id, arch, r
     return manifest
 
 
-def verify_source_claim_transition(candidate, prior, arch):
-    """Accept removed runtime inputs, but never new or changed source claims."""
+def source_claim_changes(candidate, prior, arch):
+    """Return new/changed candidate claims after built-in reviewed transitions."""
     candidate_claims = source_claims(candidate)
     prior_claims = source_claims(prior)
     forbidden = {"grpc", "protobuf"}
@@ -270,7 +272,13 @@ def verify_source_claim_transition(candidate, prior, arch):
         if key == reviewed_key and legacy_uhd_present and claim == expected_uhd_claim:
             continue
         changed.append(key)
-    if changed:
+    return ["|".join(key) for key in sorted(changed)]
+
+
+def verify_source_claim_transition(candidate, prior, arch, reviewed_changes=None):
+    """Accept removals and exact reviewed transitions, but reject unreviewed drift."""
+    changed = source_claim_changes(candidate, prior, arch)
+    if changed and changed != (reviewed_changes or []):
         raise ValueError(
             f"{arch} formula source/recipe/notice inputs changed; new source review required")
 
@@ -335,28 +343,37 @@ def fetch_node_source(output):
     return archive, license_path
 
 
-def parse_header_versions(path, arch):
+def read_header_versions(path):
     result = {}
     for line in Path(path).read_text().splitlines():
         parts = line.split()
         if len(parts) != 2 or parts[0] in result:
             raise ValueError("invalid or duplicate Homebrew header version")
         result[parts[0]] = parts[1]
+    return result
+
+
+def parse_header_versions(path, arch, reviewed=None):
+    result = read_header_versions(path)
+    if reviewed is not None and result == reviewed:
+        return result
     if (any(result.get(name) != version for name, version in HEADER_VERSIONS.items()) or
             result.get("cpp-httplib") != CPP_HEADER[arch][0]):
         raise ValueError("embedded-header input version changed; new source review required")
     return result
 
 
-def verify_cpp_formula(path, arch):
+def verify_cpp_formula(path, arch, reviewed_version=None):
     recipe = Path(path).read_text()
-    version, expected_sha = CPP_HEADER[arch]
+    version, expected_sha = ((reviewed_version, None) if reviewed_version is not None
+                             else CPP_HEADER[arch])
     expected_url = f"https://github.com/yhirose/cpp-httplib/archive/refs/tags/v{version}.tar.gz"
     url = re.findall(r'^\s*url "([^"]+)"\s*$', recipe, re.MULTILINE)
     sha = re.findall(r'^\s*sha256 "([0-9a-f]{64})"\s*$', recipe, re.MULTILINE)
     license_name = re.findall(r'^\s*license "([^"]+)"\s*$', recipe, re.MULTILINE)
     if ("class CppHttplib < Formula" not in recipe or
-            url != [expected_url] or sha != [expected_sha] or license_name != ["MIT"]):
+            url != [expected_url] or len(sha) != 1 or
+            (expected_sha is not None and sha != [expected_sha]) or license_name != ["MIT"]):
         raise ValueError(f"{arch} cpp-httplib formula source, version, or license changed")
     return expected_url
 
@@ -483,7 +500,8 @@ def fetch_proxy_addr_source(output):
     return archive
 
 
-def verify_inventory(path, baseline, runtime, source_id, arch, allow_node_gap=False, closure=None):
+def verify_inventory(path, baseline, runtime, source_id, arch, allow_node_gap=False, closure=None,
+                     reviewed_changes=None):
     candidate = read_json(path)
     prior = read_json(baseline)
     if (candidate.get("source_id") != source_id or candidate.get("arch") != arch or
@@ -491,7 +509,7 @@ def verify_inventory(path, baseline, runtime, source_id, arch, allow_node_gap=Fa
         raise ValueError(f"{arch} CI inventory does not bind the candidate runtime")
     if prior.get("source_id") != BASELINE_SOURCE_ID or prior.get("arch") != arch:
         raise ValueError(f"{arch} baseline inventory identity changed")
-    verify_source_claim_transition(candidate, prior, arch)
+    verify_source_claim_transition(candidate, prior, arch, reviewed_changes)
     if closure is not None:
         allowed = {("boost", "missing license/notice file"),
                    ("sqlite", "missing license/notice file")}
@@ -545,6 +563,45 @@ def owner_only_bytes(path):
     if len(raw) != before.st_size or len(raw) > REVIEW_MAX_BYTES:
         raise ValueError("review receipt exceeds its bounded size")
     return raw
+
+
+def reviewed_dependency_transition(receipt_path, source_id, run_id, inventories, closures, priors,
+                                   header_versions, cpp_formulas):
+    """Validate an operator review bound to exact inventories and source closures."""
+    raw = owner_only_bytes(receipt_path)
+    record = review_json(raw)
+    required = {"schema", "purpose", "baseline_source_id", "source_id", "run_id",
+                "artifacts", "changes", "headers"}
+    if (set(record) != required or record.get("schema") != 1 or
+            record.get("purpose") != DEPENDENCY_REVIEW_PURPOSE or
+            record.get("baseline_source_id") != BASELINE_SOURCE_ID or
+            not isinstance(record.get("source_id"), str) or
+            not re.fullmatch(r"[0-9a-f]{40}", record["source_id"]) or
+            record["source_id"] != source_id or not isinstance(record.get("run_id"), str) or
+            not re.fullmatch(r"[1-9][0-9]*", record["run_id"]) or record["run_id"] != str(run_id)):
+        raise ValueError("dependency review receipt does not bind this source transition")
+    expected_artifacts = {}
+    expected_changes = {}
+    for arch in package.ARCHES:
+        expected_artifacts[arch] = {
+            "inventory_sha256": sha256(inventories[arch]),
+            "closure_sha256": sha256(closures[arch]),
+            "header_versions_sha256": sha256(header_versions[arch]),
+            "cpp_formula_sha256": sha256(cpp_formulas[arch]),
+        }
+        expected_changes[arch] = source_claim_changes(
+            read_json(inventories[arch]), read_json(priors[arch]), arch)
+    if (record.get("artifacts") != expected_artifacts or
+            record.get("changes") != expected_changes or
+            record.get("headers") != {arch: read_header_versions(header_versions[arch])
+                                      for arch in package.ARCHES} or
+            not any(expected_changes.values())):
+        raise ValueError("dependency review receipt differs from exact candidate inputs")
+    metadata = {"sha256": hashlib.sha256(raw).hexdigest(),
+                "archive_member": DEPENDENCY_REVIEW_ARCHIVE_MEMBER,
+                "source_id": source_id, "baseline_source_id": BASELINE_SOURCE_ID,
+                "run_id": str(run_id)}
+    return {"record": record, "raw": raw, "metadata": metadata}
 
 
 def reviewed_build_changes(checkout, source_id, guarded, receipt_path):
@@ -756,7 +813,7 @@ def add_file(archive, name, source):
 
 
 def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, node_source,
-                   uhd_sources, closures, review=None):
+                   uhd_sources, closures, review=None, dependency_review=None):
     baseline = Path(args.baseline_source_archive)
     if sha256(baseline) != BASELINE_SOURCE_SHA256:
         raise ValueError("accepted baseline source archive changed")
@@ -783,6 +840,9 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
              **uhd_sources}
     if review is not None:
         items["build-source-review.json"] = output / "public-build-source/build-source-review.json"
+    if dependency_review is not None:
+        items["dependency-source-review.json"] = \
+            output / "public-dependency-source/dependency-source-review.json"
     manifest = {"schema": 1, "source_id": source_id, "version": args.version,
                 "baseline_source_id": BASELINE_SOURCE_ID,
                 "files": {name: {"sha256": sha256(path), "size": path.stat().st_size}
@@ -791,8 +851,8 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
               ". The nested v0.1.9 source kit supplies unchanged dependency sources, recipes, patches, "
               "licenses and build instructions. It is reused only after both architecture inventories, "
               "embedded-header versions and npm lock passed exact-input checks. Intel uses "
-              "cpp-httplib 0.53.1; its separately verified source archive is alongside this README, "
-              "with the same MIT license text as the 0.54.1 arm64 notice. The reviewed npm lock "
+              "cpp-httplib 0.53.1; its separately verified source archive is alongside this README. "
+              "The arm64 compile-header source is included in its verified source closure. The reviewed npm lock "
               "transition changes only proxy-addr 2.0.7 to 2.0.8; its exact registry source archive "
               "and unchanged MIT license are included. The official Node runtime is pinned to "
               f"{NODE_REVIEW['version']}; its exact upstream source archive and license are included. "
@@ -803,8 +863,11 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
               "then use the current first-party checkout for the build; do not use its historical "
               "f813 first-party archive. Current runtime manifests and CI inventories are included "
               "for provenance. No signing key, SDK, runtime binary or notarization credential is here." +
-              (" build-source-review.json records the reviewed first-party CMake delta for this tag.\n"
-               if review is not None else "\n"))
+              (" build-source-review.json records the reviewed first-party CMake delta for this tag."
+               if review is not None else "") +
+              (" dependency-source-review.json binds the reviewed dependency transition to the "
+               "exact architecture inventories and source closures.\n"
+               if dependency_review is not None else "\n"))
     archive_path = output / f"vectorwarp-{args.version}-macos-corresponding-source.tar.gz"
     manifest_bytes = (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()
     with archive_path.open("xb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", filename="",
@@ -864,24 +927,40 @@ def verify_inputs(args):
     review = (reviewed_build_changes(Path(args.checkout), source_id, guarded, review_receipt)
               if review_receipt is not None else None)
     closures = {}
+    inventories = {arch: Path(getattr(args, f"{arch}_inventory")) for arch in package.ARCHES}
+    priors = {arch: Path(getattr(args, f"baseline_{arch}_inventory")) for arch in package.ARCHES}
     for arch in package.ARCHES:
         closure = Path(getattr(args, f"{arch}_closure"))
         closures[arch] = verify_source_closure(
             closure, getattr(args, f"{arch}_inventory"), runtimes[arch] / "standalone.json",
             source_id, arch, args.run_id)
+    dependency_receipt = getattr(args, "dependency_review_receipt", None)
+    dependency_review = (reviewed_dependency_transition(
+        dependency_receipt, source_id, args.run_id, inventories,
+        {arch: Path(getattr(args, f"{arch}_closure")) for arch in package.ARCHES}, priors,
+        {arch: Path(getattr(args, f"{arch}_header_versions")) for arch in package.ARCHES},
+        {arch: Path(getattr(args, f"{arch}_cpp_formula")) for arch in package.ARCHES})
+        if dependency_receipt is not None else None)
+    for arch in package.ARCHES:
         verify_inventory(getattr(args, f"{arch}_inventory"),
                          getattr(args, f"baseline_{arch}_inventory"), runtimes[arch], source_id,
-                         arch, allow_node_gap=True, closure=closures[arch])
-        parse_header_versions(getattr(args, f"{arch}_header_versions"), arch)
-        verify_cpp_formula(getattr(args, f"{arch}_cpp_formula"), arch)
-    return runtimes, source_id, review
+                         arch, allow_node_gap=True, closure=closures[arch],
+                         reviewed_changes=(dependency_review or {}).get("record", {})
+                         .get("changes", {}).get(arch))
+        reviewed_headers = (dependency_review or {}).get("record", {}).get("headers", {}).get(arch)
+        parsed_headers = parse_header_versions(
+            getattr(args, f"{arch}_header_versions"), arch, reviewed_headers)
+        verify_cpp_formula(getattr(args, f"{arch}_cpp_formula"), arch,
+                           parsed_headers.get("cpp-httplib") if dependency_review is not None else None)
+    return runtimes, source_id, review, dependency_review
 
 
-def persist_review(output, review):
-    directory = output / "public-build-source"
+def persist_review(output, review, directory_name="public-build-source",
+                   file_name="build-source-review.json"):
+    directory = output / directory_name
     directory.mkdir(mode=0o700)
     directory.chmod(0o700)
-    path = directory / "build-source-review.json"
+    path = directory / file_name
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         offset = 0
@@ -898,7 +977,7 @@ def prepare(args):
     output = Path(args.output)
     if output.exists() or output.is_symlink():
         raise ValueError("refusing to replace existing release input directory")
-    runtimes, source_id, review = verify_inputs(args)
+    runtimes, source_id, review, dependency_review = verify_inputs(args)
     output.mkdir(parents=True)
     try:
         intel_cpp = fetch_intel_cpp_source(
@@ -914,14 +993,19 @@ def prepare(args):
             path.unlink()
         if review is not None:
             persist_review(output, review)
+        if dependency_review is not None:
+            persist_review(output, dependency_review, "public-dependency-source",
+                           "dependency-source-review.json")
         archive = source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr,
-                                 node_source, uhd_sources, closures, review)
+                                 node_source, uhd_sources, closures, review, dependency_review)
         receipt = {"schema": 1, "source_id": source_id,
             "version": args.version, "source_archive": archive.name,
             "source_archive_sha256": sha256(archive), "source_archive_size": archive.stat().st_size,
             "notices_sha256": sha256(output / "notices/notices.json")}
         if review is not None:
             receipt["build_source_review"] = review["metadata"]
+        if dependency_review is not None:
+            receipt["dependency_source_review"] = dependency_review["metadata"]
         (output / "receipt.json").write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
     except Exception:
         shutil.rmtree(output)
@@ -938,6 +1022,7 @@ def main():
                  "baseline-notices", "baseline-source-archive", "checkout", "version", "output"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--review-receipt", type=Path)
+    parser.add_argument("--dependency-review-receipt", type=Path)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
         parser.error("version must be semver")
