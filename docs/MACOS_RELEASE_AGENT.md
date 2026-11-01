@@ -26,13 +26,22 @@ it to the new corresponding-source archive. Other header-version changes,
 including a build using `0.56.0`, still stop. Merge builds are unattended, but
 tag publication is not guaranteed unattended across future dependency drift.
 
+An exact dependency transition may be approved without rebuilding the tagged
+runtime. Review both architecture inventories and their verified source-closure
+archives, then create an owner-only dependency review receipt. The receipt is
+bound to the candidate commit and hosted run, the old baseline commit, every
+new or changed formula claim, and the SHA-256 of both inventories and both
+closures. Configure its absolute path as `dependency_review_receipt`. Any
+different runtime, run, inventory, closure, formula claim, source, recipe, or
+notice remains blocked. The receipt is archived with the corresponding source.
+
 First-party CMake changes can be reviewed without replacing the dependency
 baseline or moving an existing release tag. Review the complete diff from
 the baseline commit reported by `prepare-macos-release-inputs.py` to the
 candidate tag. Confirm that every guarded change only changes first-party
 build wiring and introduces no new dependency source, version, recipe, or
-license requirement. If dependency inputs changed, collect and review a new
-corresponding-source baseline instead; this mechanism cannot approve them.
+license requirement. If dependency inputs changed, use the exact dependency
+transition review above; a first-party build receipt cannot approve them.
 
 Record that review in an owner-only regular JSON file (`chmod 600`) outside
 the checkout. Its exact fields are `schema: 1`,

@@ -225,7 +225,8 @@ class AgentPolicyTest(unittest.TestCase):
             review = {"sha256": "a" * 64, "source_id": "b" * 40}
             assets = agent.release_files({"team_id": "DJGHPX8T7R"},
                 {"tag": "v0.1.11", "commit": "b" * 40}, work, package, archive,
-                "00000000-0000-0000-0000-000000000000", review)
+                "00000000-0000-0000-0000-000000000000",
+                {"build_source_review": review})
             self.assertEqual(json.loads(assets[-1].read_text())["build_source_review"], review)
 
     def test_cached_inputs_repeat_gates_using_trusted_tooling(self):
@@ -244,20 +245,27 @@ class AgentPolicyTest(unittest.TestCase):
             candidate = {"tag": "v0.1.11", "commit": "b" * 40}
             review = {"metadata": {"sha256": "a" * 64, "source_id": candidate["commit"],
                                    "reviewed_source_id": "c" * 40}}
+            dependency_review = {"metadata": {"sha256": "d" * 64,
+                                              "source_id": candidate["commit"],
+                                              "run_id": "123"}}
             receipt = {"schema": 1, "version": "0.1.11", "source_id": candidate["commit"],
                        "source_archive": archive.name, "source_archive_size": archive.stat().st_size,
                        "source_archive_sha256": agent.digest(archive),
                        "notices_sha256": agent.digest(output / "notices/notices.json"),
-                       "build_source_review": review["metadata"]}
+                       "build_source_review": review["metadata"],
+                       "dependency_source_review": dependency_review["metadata"]}
             (output / "receipt.json").write_text(json.dumps(receipt))
             settings = {key: work / key for key in ("checkout", "baseline_notices",
                 "baseline_source_archive", "baseline_arm64_inventory", "baseline_x86_64_inventory")}
             helper = mock.Mock()
-            helper.verify_inputs.return_value = (runtimes, candidate["commit"], review)
+            helper.verify_inputs.return_value = (runtimes, candidate["commit"], review,
+                                                 dependency_review)
             with mock.patch.object(agent.importlib.util, "spec_from_file_location") as spec, \
                     mock.patch.object(agent.importlib.util, "module_from_spec", return_value=helper):
                 result = agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
-                self.assertEqual(result[2], review["metadata"])
+                self.assertEqual(result[2]["build_source_review"], review["metadata"])
+                self.assertEqual(result[2]["dependency_source_review"],
+                                 dependency_review["metadata"])
                 self.assertEqual(spec.call_args.args[1], settings["checkout"] / "script/prepare-macos-release-inputs.py")
                 helper.prepare.assert_not_called()
                 helper.package.validated_notices.assert_called_once()
@@ -272,6 +280,11 @@ class AgentPolicyTest(unittest.TestCase):
                     (output / "receipt.json").write_text(json.dumps(receipt))
                     with self.assertRaisesRegex(ValueError, "release input receipt differs"):
                         agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
+                receipt["build_source_review"] = review["metadata"]
+                receipt["dependency_source_review"] = None
+                (output / "receipt.json").write_text(json.dumps(receipt))
+                with self.assertRaisesRegex(ValueError, "release input receipt differs"):
+                    agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
 
 
 class SourceReuseTest(unittest.TestCase):
