@@ -860,6 +860,47 @@ def add_file(archive, name, source):
         archive.addfile(info, stream)
 
 
+GITHUB_RELEASE_ASSET_LIMIT = 2 * 1024 * 1024 * 1024
+
+
+def current_source_items(output, runtimes, intel_cpp, proxy_addr, node_source,
+                         uhd_sources, closures, args):
+    """Return only the complete current source inputs shipped for this release.
+
+    The reviewed baseline archive remains a mandatory verification input to
+    source_archive(), but it is historical evidence rather than a current build
+    input.  The architecture closures contain the complete current dependency
+    sources, recipes, patches, and notices, so embedding the baseline would
+    duplicate hundreds of megabytes and can exceed GitHub's per-asset limit.
+    """
+    return {
+        "VectorWarp-current-source.tar.gz": output / "VectorWarp-current-source.tar.gz",
+        "cpp-httplib-0.53.1.tar.gz": intel_cpp,
+        "proxy-addr-2.0.8.tgz": proxy_addr,
+        f"node-v{NODE_REVIEW['version']}.tar.gz": node_source,
+        "runtime-arm64-standalone.json": runtimes["arm64"] / "standalone.json",
+        "runtime-x86_64-standalone.json": runtimes["x86_64"] / "standalone.json",
+        "inventory-arm64.json": Path(args.arm64_inventory),
+        "inventory-x86_64.json": Path(args.x86_64_inventory),
+        "header-input-versions-arm64.txt": Path(args.arm64_header_versions),
+        "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions),
+        "cpp-httplib-formula-arm64.rb": Path(args.arm64_cpp_formula),
+        "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula),
+        "source-closure-arm64.tar.gz": closures["arm64"],
+        "source-closure-x86_64.tar.gz": closures["x86_64"],
+        "vectorwarp-uhd.rb": Path(args.checkout) / "packaging/homebrew/vectorwarp-uhd.rb",
+        **uhd_sources,
+    }
+
+
+def validate_release_asset_size(path):
+    size = Path(path).stat().st_size
+    if size >= GITHUB_RELEASE_ASSET_LIMIT:
+        raise ValueError(
+            f"corresponding-source archive is {size} bytes; GitHub requires release assets "
+            f"smaller than {GITHUB_RELEASE_ASSET_LIMIT} bytes")
+
+
 def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, node_source,
                    uhd_sources, closures, review=None, dependency_review=None):
     baseline = Path(args.baseline_source_archive)
@@ -870,23 +911,8 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
     with first_party.open("xb") as stream:
         subprocess.run(["git", "-C", str(args.checkout), "archive", "--format=tar.gz",
                         "--prefix=VectorWarp-current-source/", source_id], check=True, stdout=stream)
-    items = {"dependency-source-baseline-v0.1.9.tar.gz": baseline,
-             "VectorWarp-current-source.tar.gz": first_party,
-             "cpp-httplib-0.53.1.tar.gz": intel_cpp,
-             "proxy-addr-2.0.8.tgz": proxy_addr,
-             f"node-v{NODE_REVIEW['version']}.tar.gz": node_source,
-             "runtime-arm64-standalone.json": runtimes["arm64"] / "standalone.json",
-             "runtime-x86_64-standalone.json": runtimes["x86_64"] / "standalone.json",
-             "inventory-arm64.json": Path(args.arm64_inventory),
-             "inventory-x86_64.json": Path(args.x86_64_inventory),
-             "header-input-versions-arm64.txt": Path(args.arm64_header_versions),
-             "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions),
-             "cpp-httplib-formula-arm64.rb": Path(args.arm64_cpp_formula),
-             "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula),
-             "source-closure-arm64.tar.gz": closures["arm64"],
-             "source-closure-x86_64.tar.gz": closures["x86_64"],
-             "vectorwarp-uhd.rb": Path(args.checkout) / "packaging/homebrew/vectorwarp-uhd.rb",
-             **uhd_sources}
+    items = current_source_items(output, runtimes, intel_cpp, proxy_addr, node_source,
+                                 uhd_sources, closures, args)
     if review is not None:
         items["build-source-review.json"] = output / "public-build-source/build-source-review.json"
     if dependency_review is not None:
@@ -913,9 +939,9 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
                for name, digest in bound.items()):
             raise ValueError("corresponding-source manifest differs from dependency approval")
     readme = ("Current first-party source is VectorWarp-current-source.tar.gz at commit " + source_id +
-              ". The nested v0.1.9 source kit supplies unchanged dependency sources, recipes, patches, "
-              "licenses and build instructions. It is reused only after both architecture inventories, "
-              "embedded-header versions and npm lock passed exact-input checks. Intel uses "
+              ". The two architecture source closures supply the complete current dependency sources, "
+              "recipes, patches, notices and build inputs after both inventories, embedded-header "
+              "versions and npm lock passed exact-input checks. Intel uses "
               "cpp-httplib 0.53.1; its separately verified source archive is alongside this README. "
               "The arm64 compile-header source is included in its verified source closure. The reviewed npm lock "
               "transition changes only proxy-addr 2.0.7 to 2.0.8; its exact registry source archive "
@@ -924,9 +950,8 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
               "Both architectures use the reviewed VectorWarp UHD 4.11.0.0 formula with MPMD disabled "
               "and B200/B210 enabled. Its upstream archive, build-only Python resources, macOS patch, "
               "formula and notices are included; gRPC and protobuf are not part of the runtime. "
-              "Extract the baseline kit, "
-              "then use the current first-party checkout for the build; do not use its historical "
-              "f813 first-party archive. Current runtime manifests and CI inventories are included "
+              "Use the current first-party source and matching architecture closure for the build. "
+              "Current runtime manifests and CI inventories are included "
               "for provenance. No signing key, SDK, runtime binary or notarization credential is here." +
               (" build-source-review.json records the reviewed first-party CMake delta for this tag."
                if review is not None else "") +
@@ -942,6 +967,7 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, nod
             add_bytes(archive, "VectorWarp-corresponding-source/MANIFEST.json", manifest_bytes)
             for name, path in sorted(items.items()):
                 add_file(archive, "VectorWarp-corresponding-source/" + name, path)
+    validate_release_asset_size(archive_path)
     expected = {name: record["sha256"] for name, record in manifest["files"].items()}
     expected["README.txt"] = hashlib.sha256(readme.encode()).hexdigest()
     expected["MANIFEST.json"] = hashlib.sha256(manifest_bytes).hexdigest()
