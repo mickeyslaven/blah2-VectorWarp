@@ -370,7 +370,10 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  uvec2 age=plusOne(pairS(source+8u)),inactive=associated?uvec2(0u):plusOne(pairS(source+10u));
  put(target+8u,age.x);put(target+9u,age.y);put(target+10u,inactive.x);put(target+11u,inactive.y);
  uint display=min(length,100u),start=(head+length-display)%h;put(target+13u,head|(length<<8u)|(start<<16u)|(display<<24u));
- if(associated&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%h)+6u);if(value==1u||value==2u)count++;}
+ // Association can deliberately quarantine a learned nuisance cell by
+ // resetting its publication state to tentative. Do not let the M-of-N pass
+ // immediately undo that decision from the same retained history.
+ if(associated&&state!=0u&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%h)+6u);if(value==1u||value==2u)count++;}
   if(count>=m[39]){state=2u;put(at+6u,state);}}
  put(target+14u,state);put(target+15u,0xffffffffu);atomicAdd(m[31],1u);
 }

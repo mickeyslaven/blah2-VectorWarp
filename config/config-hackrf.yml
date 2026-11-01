@@ -57,7 +57,7 @@ process:
       promote: false
       max_tracks: 64
     initiate:
-      M: 3
+      M: 4
       N: 6
       maxAcc: 10
       min_snr_db: 5

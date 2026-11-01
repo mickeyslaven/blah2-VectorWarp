@@ -20,6 +20,14 @@ const configured = () => {
   return config;
 };
 
+for (const filename of ['config.yml', 'config-hackrf.yml', 'config-kraken.yml',
+  'config-pi4-rspduo.yml', 'config-usrp.yml']) {
+  const shipped = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', filename), 'utf8'));
+  assert.equal(shipped.process.tracker.profile, 'balanced', `${filename} tracker profile`);
+  assert.deepEqual([shipped.process.tracker.initiate.M, shipped.process.tracker.initiate.N],
+    [4, 6], `${filename} balanced confirmation`);
+}
+
 {
   const config = configured();
   profiles.applyGainMode(config, 'automatic');
@@ -51,7 +59,7 @@ const configured = () => {
     deleteAfter: config.process.tracker.delete,
     acceleration: config.process.tracker.initiate.acceleration_model,
     tbd: config.process.detection.track_before_detect.enable},
-  {profile: 'balanced', pfa: .00001, minDoppler: 15, M: 3, N: 6,
+  {profile: 'balanced', pfa: .00001, minDoppler: 15, M: 4, N: 6,
     minSnrDb: 5, deleteAfter: 3, acceleration: 'adaptive_gate', tbd: true});
   assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
   profiles.applyTrackingProfile(config, 'permissive');
