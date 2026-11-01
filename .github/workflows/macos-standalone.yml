@@ -157,7 +157,7 @@ jobs:
               for patch_path in patch_paths:
                   patch_url = "https://raw.githubusercontent.com/Homebrew/homebrew-core/" + revision + "/" + patch_path
                   checksums[patch_path] = hashlib.sha256(fetch(patch_url)).hexdigest()
-              primary = re.search(r'^  sha256 "([0-9a-f]{64})"\s*$', installed, re.MULTILINE)
+              primary = re.search(r'^\s+sha256 "([0-9a-f]{64})"\s*$', installed, re.MULTILINE)
               if not primary: raise SystemExit("cannot bind frozen Homebrew source checksum: " + formula)
               info.setdefault("versions", {})["stable"] = version.split("_", 1)[0]
               info.setdefault("urls", {}).setdefault("stable", {})["checksum"] = primary.group(1)
