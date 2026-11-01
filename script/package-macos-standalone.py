@@ -398,7 +398,8 @@ def assemble(args):
     app = output / 'VectorWarp.app'
     contents = app / 'Contents'
     (contents / 'MacOS').mkdir(parents=True)
-    source_id = manifests['arm64']['source_id']\n    for arch, path in sources.items():\n        runtime = contents / 'Resources/runtime' / arch\n        shutil.copytree(path, runtime, symlinks=True)\n        receipt = {'schema': 1, 'version': args.version, 'sourceCommit': source_id,\n                   'package': 'macos-standalone'}\n        (runtime / 'BUILD-RECEIPT.json').write_text(json.dumps(receipt, sort_keys=True) + '\\n')\n        metadata_path = runtime / 'standalone.json'\n        metadata = json.loads(metadata_path.read_text())\n        metadata['files'] = files_manifest(runtime)\n        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + '\\n')
+    for arch, path in sources.items():
+        shutil.copytree(path, contents / 'Resources/runtime' / arch, symlinks=True)
     if notices:
         destination = contents / 'Resources/ThirdPartyNotices'
         shutil.copytree(notices, destination, symlinks=True)
