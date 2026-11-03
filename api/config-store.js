@@ -30,6 +30,7 @@ function setupDefaults() {
     process: {
       performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
       data: {cpi: 0.5, buffer: 2},
+      multi_illuminator: {enabled: false, illuminators: []},
       ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},
       // The numeric interval remains available for legacy/manual tuning, but
       // fresh configurations track the full ambiguity interval by default.
@@ -54,7 +55,7 @@ function setupDefaults() {
           max_truth_age_s: 3, max_file_mb: 64, max_files: 4}}
     },
     network: {ip: '0.0.0.0', ports: {api: 3000, map: 3001, detection: 3002,
-      track: 3003, bearing: 3004, manifold: 3005,
+      track: 3003, bearing: 3004, manifold: 3005, illuminator: 3007,
       timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
     truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1,
       smoothing_window: 10, max_position_age: 30,

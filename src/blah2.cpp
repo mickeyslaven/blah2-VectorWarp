@@ -29,6 +29,8 @@
 #include "process/analysis/ComplexCutoutRecorder.h"
 #include "process/analysis/ReplayEchoInjector.h"
 #include "process/analysis/ProductionRawIq.h"
+#include "process/analysis/MultiIlluminatorRadar.h"
+#include "process/conditioning/IlluminatorChannelizerBank.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -62,11 +64,17 @@
 #include <cmath>
 #include <numeric>
 #include <optional>
+#include <regex>
+#include <set>
+
+#include "rapidjson/stringbuffer.h"
+#include "rapidjson/writer.h"
 
 volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
 std::unique_ptr<Socket> socket_detection;
 std::unique_ptr<Socket> socket_track;
+std::unique_ptr<Socket> socket_illuminator;
 std::unique_ptr<Socket> socket_bearing;
 std::unique_ptr<Socket> socket_manifold;
 std::unique_ptr<Socket> socket_timestamp;
@@ -157,6 +165,28 @@ std::optional<std::complex<double>> direct_path_pilot(
   return pilot;
 }
 
+std::string multi_illuminator_frame_json(
+  const blah2::multi_illuminator::RadarFrame& frame, uint64_t timestamp,
+  const std::string& map, const std::string& detections,
+  const std::string& tracks)
+{
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.StartObject();
+  writer.Key("schema"); writer.String("vectorwarp-multi-illuminator-frame-v1");
+  writer.Key("id"); writer.String(frame.illuminatorId.c_str());
+  writer.Key("frequency_hz"); writer.Uint64(frame.frequencyHz);
+  writer.Key("sample_rate_hz"); writer.Uint(frame.sampleRateHz);
+  writer.Key("first_input_sample"); writer.Uint64(frame.firstInputSample);
+  writer.Key("end_input_sample"); writer.Uint64(frame.endInputSample);
+  writer.Key("timestamp"); writer.Uint64(timestamp);
+  writer.Key("map"); writer.RawValue(map.c_str(), map.size(), rapidjson::kObjectType);
+  writer.Key("detections"); writer.RawValue(detections.c_str(), detections.size(), rapidjson::kObjectType);
+  writer.Key("tracks"); writer.RawValue(tracks.c_str(), tracks.size(), rapidjson::kObjectType);
+  writer.EndObject();
+  return buffer.GetString();
+}
+
 int main(int argc, char **argv)
 try
 {
@@ -214,6 +244,47 @@ try
   {
     std::cerr << "Invalid configuration: sample rate, centre frequency and API port must be positive.\n";
     return 1;
+  }
+
+  bool multiIlluminatorEnabled = false;
+  std::vector<blah2::channelizer::IlluminatorDefinition> illuminatorDefinitions;
+  if (tree["process"].has_child("multi_illuminator"))
+  {
+    auto multi = tree["process"]["multi_illuminator"];
+    if (multi.has_child("enabled")) multi["enabled"] >> multiIlluminatorEnabled;
+    if (multi.has_child("illuminators"))
+    {
+      std::set<std::string> ids;
+      std::set<uint64_t> frequencies;
+      for (auto item : multi["illuminators"].children())
+      {
+        bool enabled = false;
+        if (item.has_child("enabled")) item["enabled"] >> enabled;
+        if (!enabled) continue;
+        blah2::channelizer::IlluminatorDefinition definition;
+        item["id"] >> definition.id;
+        item["frequency_hz"] >> definition.frequencyHz;
+        item["occupied_bandwidth_hz"] >> definition.occupiedBandwidthHz;
+        item["output_sample_rate_hz"] >> definition.outputRateHz;
+        if (item.has_child("filter_taps_per_phase"))
+          item["filter_taps_per_phase"] >> definition.tapsPerPhase;
+        if (!std::regex_match(definition.id,
+              std::regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) ||
+            !ids.insert(definition.id).second ||
+            !frequencies.insert(definition.frequencyHz).second ||
+            !definition.frequencyHz || !definition.outputRateHz ||
+            !definition.occupiedBandwidthHz || definition.tapsPerPhase < 4 ||
+            definition.tapsPerPhase > 128 || fs % definition.outputRateHz ||
+            definition.occupiedBandwidthHz >= definition.outputRateHz ||
+            std::abs(int64_t(definition.frequencyHz) - int64_t(fc)) +
+              int64_t(definition.occupiedBandwidthHz) / 2 >= int64_t(fs) / 2)
+          throw std::invalid_argument("Invalid enabled multi-illuminator definition");
+        illuminatorDefinitions.push_back(std::move(definition));
+      }
+    }
+    if (multiIlluminatorEnabled &&
+        (illuminatorDefinitions.empty() || illuminatorDefinitions.size() > 16))
+      throw std::invalid_argument("Multi-illuminator mode requires 1 to 16 enabled illuminators");
   }
 
   // set up socket
@@ -301,6 +372,7 @@ try
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
   uint16_t port_bearing=0,port_manifold=0;
+  uint16_t port_illuminator=0;
   std::string ip;
   tree["network"]["ports"]["map"] >> port_map;
   tree["network"]["ports"]["detection"] >> port_detection;
@@ -315,6 +387,11 @@ try
       throw std::invalid_argument("Manifold recorder requires network.ports.manifold");
     tree["network"]["ports"]["manifold"]>>port_manifold;
   }
+  if(multiIlluminatorEnabled){
+    if(!tree["network"]["ports"].has_child("illuminator"))
+      throw std::invalid_argument("Multi-illuminator output requires network.ports.illuminator");
+    tree["network"]["ports"]["illuminator"]>>port_illuminator;
+  }
   tree["network"]["ports"]["timestamp"] >> port_timestamp;
   tree["network"]["ports"]["timing"] >> port_timing;
   tree["network"]["ports"]["iqdata"] >> port_iqdata;
@@ -324,6 +401,8 @@ try
     socket_map = std::make_unique<Socket>(ip, port_map);
     socket_detection = std::make_unique<Socket>(ip, port_detection);
     socket_track = std::make_unique<Socket>(ip, port_track);
+    if(multiIlluminatorEnabled)
+      socket_illuminator = std::make_unique<Socket>(ip, port_illuminator);
     if(bearingEnabled)socket_bearing = std::make_unique<Socket>(ip, port_bearing);
     if(manifoldRecorderEnabled)socket_manifold = std::make_unique<Socket>(ip, port_manifold);
     socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
@@ -1167,6 +1246,46 @@ try
     resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
   }
 
+  std::unique_ptr<blah2::channelizer::IlluminatorChannelizerBank>
+    multiChannelizer;
+  std::unique_ptr<blah2::multi_illuminator::MultiIlluminatorRadar> multiRadar;
+  uint64_t multiFallbackInputSample = 0;
+  if (multiIlluminatorEnabled)
+  {
+    if (!isClutter || !isDetection || !isTracker)
+      throw std::invalid_argument(
+        "Multi-illuminator mode requires clutter, detection, and tracking");
+    blah2::multi_illuminator::RadarConfig multiConfig;
+    multiConfig.cpiSeconds = tCpi;
+    multiConfig.delayMin = delayMin;
+    multiConfig.delayMax = delayMax;
+    multiConfig.dopplerMin = dopplerMin;
+    multiConfig.dopplerMax = dopplerMax;
+    multiConfig.clutterDelayMin = delayMinClutter;
+    multiConfig.clutterDelayMax = delayMaxClutter;
+    multiConfig.pfa = pfa;
+    multiConfig.guardCells = nGuard;
+    multiConfig.trainingCells = nTrain;
+    multiConfig.minimumDelay = minDelay;
+    multiConfig.minimumDopplerHz = minDoppler;
+    multiConfig.centroidRadius = nCentroid;
+    multiConfig.trackerM = m;
+    multiConfig.trackerN = n;
+    multiConfig.trackerDelete = nDelete;
+    multiConfig.trackerMaximumAcceleration = maxAcc;
+    multiConfig.trackerMinimumSnrDb = trackerMinInitiationSnrDb;
+    multiConfig.workers = surveillanceWorkers;
+    multiConfig.reference = referenceConfig;
+    multiChannelizer = std::make_unique<
+      blah2::channelizer::IlluminatorChannelizerBank>(fc, fs,
+        captureChannelCount, illuminatorDefinitions);
+    multiRadar = std::make_unique<
+      blah2::multi_illuminator::MultiIlluminatorRadar>(fs,
+        captureChannelCount, illuminatorDefinitions, multiConfig);
+    std::cout << "[MultiIlluminator] enabled=1 inputs="
+      << illuminatorDefinitions.size() << " capture_rate_hz=" << fs << "\n";
+  }
+
   // set up output data
   bool saveMap, saveDetection;
   tree["save"]["map"] >> saveMap;
@@ -1434,6 +1553,9 @@ try
             delete tracker;
             tracker = new Tracker(m, n, nDelete, ambiguity.front()->get_cpi(),
               maxAcc, rangeRes, lambda, trackerMinInitiationSnrDb);
+            if (multiChannelizer) multiChannelizer->reset();
+            if (multiRadar) multiRadar->reset();
+            multiFallbackInputSample = 0;
           }
           // Advance signal time for every accepted input CPI, even if clutter
           // later rejects it. UI publication timestamps remain wall-clock.
@@ -1443,6 +1565,67 @@ try
           physicalChannels.reserve(captureData.size());
           for (auto& channel : captureData) physicalChannels.push_back(channel.get());
           echoInjector.apply(trackerFrame * uint64_t(nSamples), physicalChannels);
+          if (multiIlluminatorEnabled)
+          {
+            std::vector<std::vector<std::complex<float>>> channelizerInput;
+            channelizerInput.reserve(captureData.size());
+            for (const auto& channel : captureData)
+            {
+              const auto& source = channel->view_data();
+              auto& destination = channelizerInput.emplace_back();
+              destination.reserve(source.size());
+              for (const auto sample : source)
+                destination.emplace_back(float(sample.real()), float(sample.imag()));
+            }
+            const uint64_t firstInputSample = captureSamplePositionAvailable ?
+              captureFirstEpochSample : multiFallbackInputSample;
+            multiFallbackInputSample = firstInputSample + nSamples;
+            auto frames = multiRadar->process(multiChannelizer->process(
+              channelizerInput, firstInputSample));
+            timing_helper(timing_name, timing_time, time,
+              "multi_illuminator_radar");
+            for (const auto& frame : frames)
+            {
+              auto frameMap = attachEventTime(
+                frame.map->to_json_km(frameTimestampMs, frame.sampleRateHz));
+              auto frameDetections = attachEventTime(
+                frame.detections->to_json_km(frameTimestampMs,
+                  frame.sampleRateHz));
+              auto frameTracks = attachEventTime(
+                frame.tracks->to_json(frameTimestampMs));
+              socket_illuminator->sendData(multi_illuminator_frame_json(
+                frame, frameTimestampMs, frameMap, frameDetections,
+                frameTracks));
+              if (frame.illuminatorId == illuminatorDefinitions.front().id)
+              {
+                socket_map->sendData(frameMap);
+                socket_detection->sendData(frameDetections);
+                socket_track->sendData(frameTracks);
+              }
+            }
+            time.push_back(current_time_us());
+            const double deltaMs = double(time.back() - time[0]) / 1000;
+            timing_name.push_back("cpi");
+            timing_time.push_back(deltaMs);
+            timing->update(frameTimestampMs, timing_time, timing_name);
+            timing->set_capture_queues(captureBacklogSamples,
+              captureDroppedSamples);
+            timing->set_capture_sample_position(captureSamplePositionAvailable,
+              captureEpoch, captureFirstEpochSample, captureEndEpochSample);
+            blah2::AccelerationStatus multiStatus;
+            multiStatus.requested = "cpu";
+            multiStatus.state = "active";
+            multiStatus.reason = "Independent channelized illuminator contexts";
+            timing->set_acceleration(multiStatus);
+            timing->set_clutter_acceleration(multiStatus, false, true);
+            socket_timing->sendData(attachEventTime(timing->to_json()));
+            socket_timestamp->sendData("{\"timestamp\":" +
+              std::to_string(frameTimestampMs) + "}");
+            timing_time.clear();
+            timing_name.clear();
+            time.clear();
+            continue;
+          }
           const bool residentOracle=resident&&resident->qualifying();
           if(resident){
             if(residentLogical==UINT64_MAX||residentConsumed==UINT64_MAX)throw std::overflow_error("Resident frame sequence exhausted");

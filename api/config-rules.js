@@ -179,10 +179,10 @@ for (const group of ['ambiguity', 'clutter']) {
       ...(group === 'clutter' ? {optional: true} : {})
     };
 }
-for (const name of ['api','map','detection','track','bearing','manifold','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','manifold','illuminator','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
     {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
-    ['bearing','manifold'].includes(name) ? {optional: true} : {})};
+    ['bearing','manifold','illuminator'].includes(name) ? {optional: true} : {})};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

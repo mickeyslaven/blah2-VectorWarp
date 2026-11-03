@@ -121,7 +121,10 @@ SubbandChannelizer::Output SubbandChannelizer::process(
     writeIndex_ = (writeIndex_ + 1) % taps_.size();
     historyFill_ = std::min(historyFill_ + 1, taps_.size());
 
-    if (historyFill_ == taps_.size() && absolute % decimation_ == 0)
+    // The zero-filled initial state is a valid causal FIR state. Emitting its
+    // short startup transient keeps the first channelized CPI aligned with the
+    // first capture CPI instead of adding a permanent one-CPI publication lag.
+    if (absolute % decimation_ == 0)
     {
       if (!output.hasFirstInputSample)
       {

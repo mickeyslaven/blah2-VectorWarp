@@ -89,6 +89,13 @@ async function send(port, chunks) {
       longitude: -80, altitude: 0};
     config.location.tx = {name: 'Illuminator', latitude: 40.05,
       longitude: -80, altitude: 0};
+    config.capture.fc = 90900000;
+    config.process.multi_illuminator = {enabled: true, illuminators: [
+      {id: 'fm-90.5', enabled: true, standard: 'FM', frequency_hz: 90500000,
+        occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+        filter_taps_per_phase: 24,
+        transmitter: {name: 'FM 90.5', latitude: 40.04, longitude: -80, altitude: 300}}
+    ]};
     const ports = await reservePorts(Object.keys(config.network.ports).length);
     Object.keys(config.network.ports).forEach((name, index) => { config.network.ports[name] = ports[index]; });
     config.network.ip = '127.0.0.1';
@@ -142,6 +149,27 @@ async function send(port, chunks) {
       try { return JSON.parse(value.body).data?.[0]?.location; } catch (_) { return false; }
     });
     assert.equal(JSON.parse(locations.body).data[0].id, '0001');
+
+    const illuminatorFrame = {schema: 'vectorwarp-multi-illuminator-frame-v1',
+      id: 'fm-90.5', frequency_hz: 90500000, sample_rate_hz: 300000,
+      first_input_sample: 0, end_input_sample: 1199999, timestamp: 10,
+      map: {stream: 'fm-map', timestamp: 10},
+      detections: {stream: 'fm-detection', timestamp: 10},
+      tracks: {stream: 'fm-track', timestamp: 10}};
+    await send(config.network.ports.illuminator,
+      [Buffer.from(JSON.stringify(illuminatorFrame))]);
+    const illuminators = JSON.parse((await waitFor(apiPort, '/api/illuminators/live', value => {
+      try { return JSON.parse(value.body).illuminators?.[0]?.available === true; }
+      catch (_) { return false; }
+    })).body);
+    assert.equal(illuminators.primary, 'fm-90.5');
+    assert.equal(illuminators.illuminators[0].frequency_hz, 90500000);
+    assert.equal(JSON.parse((await request(apiPort,
+      '/api/detection?illuminator=fm-90.5')).body).stream, 'fm-detection');
+    assert.equal(JSON.parse((await request(apiPort,
+      '/api/tracker?illuminator=fm-90.5')).body).stream, 'fm-track');
+    assert.equal((await request(apiPort,
+      '/api/tracker?illuminator=unknown')).status, 404);
 
     // A partial frame belongs only to its original socket and cannot contaminate
     // the next processor connection.

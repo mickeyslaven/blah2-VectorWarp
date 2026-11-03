@@ -453,6 +453,7 @@ const PRIMARY_SETTING_PATHS = new Set([
 ]);
 const EXPERIMENTAL_SETTING_PREFIXES = [
   'truth.remote_id',
+  'process.multi_illuminator',
   'process.surveillance_fusion.detection_manifold_automation',
   'process.tracker.track_guided_shadow',
   'process.tracker.publication',
@@ -1776,6 +1777,7 @@ function renderExperimentalSettings() {
     if (value !== undefined) section.appendChild(group(key, value, path, false));
   };
   add('remote_id', activeConfig.truth?.remote_id, ['truth']);
+  add('multi_illuminator', process.multi_illuminator, ['process']);
   if (coherentArray) add('detection_manifold_automation',
     process.surveillance_fusion?.detection_manifold_automation,
     ['process', 'surveillance_fusion']);

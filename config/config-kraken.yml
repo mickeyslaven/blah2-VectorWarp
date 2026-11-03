@@ -44,6 +44,9 @@ capture:
     provenance: 'legacy-unqualified'
 
 process:
+  multi_illuminator:
+    enabled: false
+    illuminators: []
   performance:
     # 0 chooses a CPU-aware automatic value. Set to 1 to minimize peak CPU,
     # or up to the surveillance-channel count on a workstation.
@@ -188,6 +191,7 @@ network:
     track: 3003
     bearing: 3004
     manifold: 3005
+    illuminator: 3007
     timestamp: 4000
     timing: 4001
     iqdata: 4002

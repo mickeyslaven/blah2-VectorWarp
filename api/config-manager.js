@@ -603,6 +603,9 @@ function validateConfig(config, baseline = null, options = {}) {
       if (multiIlluminator.enabled === true && enabled < 1)
         errors.push('process.multi_illuminator requires at least one enabled illuminator');
     }
+    if (multiIlluminator.enabled === true)
+      number(ports.illuminator, 'network.ports.illuminator',
+        {integer: true, min: 1, max: 65535});
   }
   // Processing limits follow the recording while replay is active. The live
   // receiver's saved rate remains untouched so cross-SDR replay does not make

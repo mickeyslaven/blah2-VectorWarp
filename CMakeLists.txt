@@ -132,6 +132,12 @@ target_link_libraries(blah2ProductionRawIq PUBLIC Threads::Threads blah2RapidJso
 add_library(blah2Channelizer STATIC
   src/process/conditioning/IlluminatorChannelizerBank.cpp
   src/process/conditioning/SubbandChannelizer.cpp)
+add_library(blah2MultiIlluminatorRadar STATIC
+  src/process/analysis/MultiIlluminatorRadar.cpp)
+target_include_directories(blah2MultiIlluminatorRadar SYSTEM PRIVATE
+  ${ARMADILLO_INCLUDE_DIRS})
+target_link_libraries(blah2MultiIlluminatorRadar PUBLIC
+  blah2Channelizer blah2ProductionRawIq)
 
 # TODO: Move to separate src/CMakeLists.txt
 add_executable(blah2
@@ -179,6 +185,7 @@ endif()
 target_link_libraries(blah2 PRIVATE 
   blah2ProductionRawIq
   blah2Channelizer
+  blah2MultiIlluminatorRadar
   Threads::Threads
   blah2RapidJson
   asio::asio
@@ -229,6 +236,29 @@ if(BUILD_TESTING)
   set_target_properties(testSubbandChannelizer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
   add_test(NAME subbandChannelizer COMMAND testSubbandChannelizer)
+  add_executable(testMultiIlluminatorRadar
+    test/unit/process/analysis/TestMultiIlluminatorRadar.cpp
+    src/process/ambiguity/Ambiguity.cpp
+    src/process/clutter/WienerHopf.cpp
+    src/process/conditioning/ArrayReferenceSynthesizer.cpp
+    src/process/fusion/Noncoherent.cpp
+    src/process/detection/CfarDetector1D.cpp
+    src/process/detection/Centroid.cpp
+    src/process/detection/Interpolate.cpp
+    src/process/tracker/Tracker.cpp
+    src/process/meta/HammingNumber.cpp
+    src/data/IqData.cpp src/data/Map.cpp src/data/Detection.cpp src/data/Track.cpp)
+  target_include_directories(testMultiIlluminatorRadar SYSTEM PRIVATE
+    ${ARMADILLO_INCLUDE_DIRS})
+  target_link_libraries(testMultiIlluminatorRadar PRIVATE
+    blah2MultiIlluminatorRadar Catch2::Catch2WithMain blah2RapidJson
+    ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
+    ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+  set_target_properties(testMultiIlluminatorRadar PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  add_test(NAME multiIlluminatorRadar COMMAND testMultiIlluminatorRadar)
+  set_tests_properties(multiIlluminatorRadar PROPERTIES TIMEOUT 60
+    ENVIRONMENT "VECTORWARP_FFTW_PLAN=estimate;VECTORWARP_CLUTTER_WORKERS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME detectionManifoldNativeGrid
     COMMAND ${Python3_EXECUTABLE}
       ${PROJECT_ROOT}/test/script/test_detection_manifold_native_grid.py

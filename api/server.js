@@ -26,6 +26,7 @@ const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
+const {DelayDopplerHistory} = require('./adsb-geometry.js');
 const {createRemoteIdSource} = require('./remote-id-source.js');
 const {createAircraftPhotoLookup} = require('./aircraft-photo.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
@@ -72,6 +73,11 @@ try {
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const illuminatorAdsbGeometry = new Map((config.process?.multi_illuminator?.illuminators || [])
+  .filter(item => item?.enabled === true).map(item => [item.id,
+    new DelayDopplerHistory({...config,
+      capture: {...config.capture, fc: item.frequency_hz},
+      location: {...config.location, tx: item.transmitter}})]));
 const remoteIdSource = createRemoteIdSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const aircraftPhotoLookup = createAircraftPhotoLookup(config, {cacheFile:
   process.env.BLAH2_AIRCRAFT_PHOTO_CACHE || '/var/lib/vectorwarp-api/aircraft-photo-metadata.json'});
@@ -358,6 +364,7 @@ function receiverIndependentChange(before, after) {
 var map = '';
 var detection = '';
 var track = '';
+const illuminatorFrames = new Map();
 var bearing = '';
 const bearingHypotheses = new BistaticHypothesisTracker();
 var timestamp = '';
@@ -561,6 +568,7 @@ app.options('*', (req, res) => {
 });
 app.use((req, res, next) => {
   if (gainPublicationBlocked && ['/api/map', '/api/detection', '/api/tracker',
+    '/api/illuminators/live',
     '/api/tracker/native', '/api/bearing', '/api/locations', '/api/iqdata'].includes(req.path))
     return res.status(503).json({available: false, data: [],
       reason: 'Receiver gain is being checked or a verified restart is pending.'});
@@ -639,15 +647,50 @@ app.get('/', (req, res, next) => {
   if (fs.existsSync(path.join(__dirname, '..', 'html', 'index.html'))) return next();
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });
+function selectedIlluminator(req) {
+  if (req.query.illuminator === undefined) return null;
+  const id = String(req.query.illuminator);
+  return illuminatorFrames.get(id) || undefined;
+}
+app.get('/api/illuminators/live', (req, res) => {
+  const configured = (config.process?.multi_illuminator?.illuminators || [])
+    .filter(item => item?.enabled === true);
+  res.json({enabled: config.process?.multi_illuminator?.enabled === true,
+    primary: configured[0]?.id || null,
+    illuminators: configured.map(item => {
+      const live = illuminatorFrames.get(item.id);
+      return {id: item.id, standard: item.standard,
+        frequency_hz: item.frequency_hz,
+        occupied_bandwidth_hz: item.occupied_bandwidth_hz,
+        output_sample_rate_hz: item.output_sample_rate_hz,
+        available: Boolean(live), first_input_sample: live?.first_input_sample ?? null,
+        end_input_sample: live?.end_input_sample ?? null,
+        timestamp: live?.timestamp ?? null};
+    })});
+});
 app.get('/api/map', async (req, res, next) => {
-  try { await sendMapResponse(req, res, presentationFrame(req, 'map', map)); }
+  try {
+    const selected = selectedIlluminator(req);
+    if (selected === undefined) return res.status(404).json({available: false,
+      reason: 'Unknown or not-yet-live illuminator.'});
+    await sendMapResponse(req, res, selected ? JSON.stringify(selected.map) :
+      presentationFrame(req, 'map', map));
+  }
   catch (error) { next(error); }
 });
 app.get('/api/detection', (req, res) => {
-  res.send(presentationFrame(req, 'detection', detection));
+  const selected = selectedIlluminator(req);
+  if (selected === undefined) return res.status(404).json({available: false,
+    reason: 'Unknown or not-yet-live illuminator.'});
+  res.send(selected ? JSON.stringify(selected.detections) :
+    presentationFrame(req, 'detection', detection));
 });
 app.get('/api/tracker', (req, res) => {
-  res.send(presentationFrame(req, 'tracker', trackerPublication.frame()));
+  const selected = selectedIlluminator(req);
+  if (selected === undefined) return res.status(404).json({available: false,
+    reason: 'Unknown or not-yet-live illuminator.'});
+  res.send(selected ? JSON.stringify(selected.tracks) :
+    presentationFrame(req, 'tracker', trackerPublication.frame()));
 });
 app.get('/api/tracker/native', (req, res) => {
   res.send(trackerPublication.nativeOnly());
@@ -1565,16 +1608,26 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
     if (recorded.replay && recorded.value === null) return res.json(replayTruthStatus());
     if (!recorded.replay && replayTruthDisabled()) return res.json(replayTruthStatus());
     try {
+      const selectedGeometry = kind === 'delayDoppler' && req.query.illuminator !== undefined ?
+        illuminatorAdsbGeometry.get(String(req.query.illuminator)) : null;
+      if (kind === 'delayDoppler' && req.query.illuminator !== undefined && !selectedGeometry)
+        return res.status(404).json({available: false,
+          reason: 'Unknown illuminator.'});
+      if (selectedGeometry && recorded.replay)
+        return res.status(409).json({available: false,
+          reason: 'This recording has no per-illuminator truth timeline.'});
       const presentation = req.query.presentation;
       const requestedTimestamp = presentation === 'aligned' ?
         requestedPresentationTimestamp(req) : null;
       if (Number.isNaN(requestedTimestamp))
         return res.status(400).json({error: 'frame_timestamp must be a non-negative integer'});
-      const value = recorded.replay ? recorded.value : presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
-        await adsbSource.getPresentationAt(kind,
+      const sourceKind = selectedGeometry ? 'aircraft' : kind;
+      let value = recorded.replay ? recorded.value : presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
+        await adsbSource.getPresentationAt(sourceKind,
           requestedTimestamp ?? Date.now() - presentationDelayMs) :
         presentation && typeof adsbSource.getPresentation === 'function' ?
-          await adsbSource.getPresentation(kind) : await adsbSource.get(kind);
+          await adsbSource.getPresentation(sourceKind) : await adsbSource.get(sourceKind);
+      if (selectedGeometry) value = selectedGeometry.update(value).data;
       if (requestedTimestamp !== null)
         res.set('X-VectorWarp-Presentation-Timestamp', String(requestedTimestamp));
       if (kind === 'delayDoppler' &&
@@ -2001,6 +2054,34 @@ const server_tracker = jsonStreamServer('track', frame => {
   oprsEventRecorder.acceptTracker(published);
 });
 listenData(server_tracker, 'track');
+
+function acceptIlluminatorFrame(frame) {
+  const value = JSON.parse(frame);
+  if (value?.schema !== 'vectorwarp-multi-illuminator-frame-v1' ||
+      typeof value.id !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.id) ||
+      !Number.isSafeInteger(value.frequency_hz) || value.frequency_hz < 1 ||
+      !Number.isSafeInteger(value.sample_rate_hz) || value.sample_rate_hz < 1 ||
+      !Number.isSafeInteger(value.first_input_sample) || value.first_input_sample < 0 ||
+      !Number.isSafeInteger(value.end_input_sample) ||
+      value.end_input_sample < value.first_input_sample ||
+      !Number.isSafeInteger(value.timestamp) || value.timestamp < 0 ||
+      !value.map || typeof value.map !== 'object' ||
+      !value.detections || typeof value.detections !== 'object' ||
+      !value.tracks || typeof value.tracks !== 'object')
+    throw new Error('Invalid multi-illuminator frame');
+  const configured = (config.process?.multi_illuminator?.illuminators || [])
+    .find(item => item?.enabled === true && item.id === value.id);
+  if (!configured || configured.frequency_hz !== value.frequency_hz ||
+      configured.output_sample_rate_hz !== value.sample_rate_hz)
+    throw new Error('Multi-illuminator frame does not match the active configuration');
+  illuminatorFrames.set(value.id, value);
+}
+if (config.process?.multi_illuminator?.enabled === true &&
+    Number.isInteger(config.network?.ports?.illuminator)) {
+  const server_illuminator = jsonStreamServer('illuminator', acceptIlluminatorFrame);
+  listenData(server_illuminator, 'illuminator');
+}
 
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
   const server_bearing = jsonStreamServer('bearing', frame => {
