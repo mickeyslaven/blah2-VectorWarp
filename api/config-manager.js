@@ -261,6 +261,8 @@ function validateConfig(config, baseline = null, options = {}) {
   const replay = requireObject(capture.replay, 'capture.replay');
   const processConfig = requireObject(root.process, 'process');
   const data = requireObject(processConfig.data, 'process.data');
+  const multiIlluminator = processConfig.multi_illuminator === undefined ? null :
+    requireObject(processConfig.multi_illuminator, 'process.multi_illuminator');
   const ambiguity = requireObject(processConfig.ambiguity, 'process.ambiguity');
   const clutter = requireObject(processConfig.clutter, 'process.clutter');
   const detection = requireObject(processConfig.detection, 'process.detection');
@@ -532,6 +534,76 @@ function validateConfig(config, baseline = null, options = {}) {
 
   const cpi = number(data.cpi, 'process.data.cpi', {exclusiveMin: 0});
   const buffer = number(data.buffer, 'process.data.buffer', {min: 1});
+  if (multiIlluminator) {
+    boolean(multiIlluminator.enabled, 'process.multi_illuminator.enabled');
+    const illuminators = multiIlluminator.illuminators;
+    if (!Array.isArray(illuminators) || illuminators.length > 16 ||
+        (multiIlluminator.enabled === true && illuminators.length < 1))
+      errors.push('process.multi_illuminator.illuminators must contain 1 to 16 entries when enabled');
+    else {
+      const ids = new Set(), frequencies = new Set();
+      let enabled = 0;
+      illuminators.forEach((illuminator, index) => {
+        const field = `process.multi_illuminator.illuminators[${index}]`;
+        if (!isObject(illuminator)) {
+          errors.push(`${field} must be an object`);
+          return;
+        }
+        const allowed = new Set(['id', 'enabled', 'standard', 'frequency_hz',
+          'occupied_bandwidth_hz', 'output_sample_rate_hz',
+          'filter_taps_per_phase', 'transmitter']);
+        Object.keys(illuminator).forEach(key => {
+          if (!allowed.has(key)) errors.push(`${field}.${key} is not supported`);
+        });
+        string(illuminator.id, `${field}.id`);
+        if (typeof illuminator.id === 'string' &&
+            !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(illuminator.id))
+          errors.push(`${field}.id must use 1 to 64 letters, numbers, dots, underscores, or dashes`);
+        if (ids.has(illuminator.id))
+          errors.push('process.multi_illuminator illuminator IDs must be unique');
+        ids.add(illuminator.id);
+        boolean(illuminator.enabled, `${field}.enabled`);
+        if (illuminator.enabled === true) enabled += 1;
+        oneOf(illuminator.standard, `${field}.standard`,
+          ['FM', 'DAB', 'ATSC', 'DVB-T/T2']);
+        const frequency = number(illuminator.frequency_hz,
+          `${field}.frequency_hz`, {integer: true, min: 1, max: UINT32_MAX});
+        const bandwidth = number(illuminator.occupied_bandwidth_hz,
+          `${field}.occupied_bandwidth_hz`, {integer: true, min: 1, max: UINT32_MAX});
+        const outputRate = number(illuminator.output_sample_rate_hz,
+          `${field}.output_sample_rate_hz`, {integer: true, min: 1, max: UINT32_MAX});
+        if (frequencies.has(frequency))
+          errors.push('process.multi_illuminator illuminator frequencies must be unique');
+        frequencies.add(frequency);
+        if (Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
+            capture.fs % outputRate !== 0)
+          errors.push(`${field}.output_sample_rate_hz must divide capture.fs exactly`);
+        if (Number.isFinite(bandwidth) && Number.isFinite(outputRate) &&
+            bandwidth >= outputRate)
+          errors.push(`${field}.occupied_bandwidth_hz must be smaller than output_sample_rate_hz`);
+        if (Number.isFinite(frequency) && Number.isFinite(bandwidth) &&
+            Number.isFinite(capture.fc) && Number.isFinite(capture.fs) &&
+            Math.abs(frequency - capture.fc) + bandwidth / 2 >= capture.fs / 2)
+          errors.push(`${field}.frequency_hz and occupied bandwidth must fit inside the captured passband`);
+        if (illuminator.filter_taps_per_phase !== undefined)
+          number(illuminator.filter_taps_per_phase,
+            `${field}.filter_taps_per_phase`, {integer: true, min: 4, max: 128});
+        const transmitter = requireObject(illuminator.transmitter,
+          `${field}.transmitter`);
+        string(transmitter.name, `${field}.transmitter.name`);
+        number(transmitter.latitude, `${field}.transmitter.latitude`, {min: -90, max: 90});
+        number(transmitter.longitude, `${field}.transmitter.longitude`, {min: -180, max: 180});
+        number(transmitter.altitude, `${field}.transmitter.altitude`,
+          {min: -500, max: 100000});
+        Object.keys(transmitter).forEach(key => {
+          if (!['name', 'latitude', 'longitude', 'altitude'].includes(key))
+            errors.push(`${field}.transmitter.${key} is not supported`);
+        });
+      });
+      if (multiIlluminator.enabled === true && enabled < 1)
+        errors.push('process.multi_illuminator requires at least one enabled illuminator');
+    }
+  }
   // Processing limits follow the recording while replay is active. The live
   // receiver's saved rate remains untouched so cross-SDR replay does not make
   // its device profile invalid.

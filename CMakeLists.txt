@@ -127,6 +127,12 @@ add_library(blah2ProductionRawIq STATIC src/process/analysis/ProductionRawIq.cpp
 target_include_directories(blah2ProductionRawIq SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
 target_link_libraries(blah2ProductionRawIq PUBLIC Threads::Threads blah2RapidJson)
 
+# Receiver-independent coherent subband extraction. The live multi-illuminator
+# orchestration is gated separately; this library has no receiver side effects.
+add_library(blah2Channelizer STATIC
+  src/process/conditioning/IlluminatorChannelizerBank.cpp
+  src/process/conditioning/SubbandChannelizer.cpp)
+
 # TODO: Move to separate src/CMakeLists.txt
 add_executable(blah2
   src/blah2.cpp
@@ -172,6 +178,7 @@ endif()
 
 target_link_libraries(blah2 PRIVATE 
   blah2ProductionRawIq
+  blah2Channelizer
   Threads::Threads
   blah2RapidJson
   asio::asio
@@ -214,6 +221,14 @@ if(BUILD_TESTING)
   add_test(NAME productionRawIqParity COMMAND testProductionRawIq)
   set_tests_properties(productionRawIqParity PROPERTIES TIMEOUT 60
     ENVIRONMENT "VECTORWARP_FFTW_PLAN=estimate;VECTORWARP_CLUTTER_WORKERS=1;OPENBLAS_NUM_THREADS=1")
+  add_executable(testSubbandChannelizer
+    test/unit/process/conditioning/TestSubbandChannelizer.cpp
+    test/unit/process/conditioning/TestIlluminatorChannelizerBank.cpp)
+  target_link_libraries(testSubbandChannelizer PRIVATE
+    blah2Channelizer Catch2::Catch2WithMain)
+  set_target_properties(testSubbandChannelizer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  add_test(NAME subbandChannelizer COMMAND testSubbandChannelizer)
   add_test(NAME detectionManifoldNativeGrid
     COMMAND ${Python3_EXECUTABLE}
       ${PROJECT_ROOT}/test/script/test_detection_manifold_native_grid.py

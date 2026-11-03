@@ -41,6 +41,8 @@ const rules = {
   'capture.replay.reference_channels': {type: 'array', optional: true},
   'process.data.cpi': {...numeric(), exclusiveMin: 0},
   'process.data.buffer': numeric(1),
+  'process.multi_illuminator.enabled': {type: 'boolean', optional: true},
+  'process.multi_illuminator.illuminators': {type: 'array', optional: true},
   'process.detection.pfa': {...numeric(), exclusiveMin: 0, exclusiveMax: 1},
   'process.detection.nGuard': integer(0, 127),
   'process.detection.nTrain': integer(1, 127),
