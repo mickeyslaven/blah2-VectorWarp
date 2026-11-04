@@ -8,11 +8,12 @@
 #include "process/detection/Interpolate.h"
 #include "process/fusion/Noncoherent.h"
 #include "process/tracker/Tracker.h"
+#include "process/utility/FixedExecutor.h"
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,16 @@ struct RadarConfig
   double trackerMaximumAcceleration = 10;
   double trackerMinimumSnrDb = 5;
   std::size_t workers = 1;
+  // Zero uses the bounded automatic lane executor. Benchmarks and constrained
+  // deployments may lower this to trade latency for cache/RSS pressure.
+  std::size_t laneWorkers = 0;
+  // Empty selects the production topology policy. Tests may force either
+  // mathematically equivalent full-quality Wiener-Hopf workspace.
+  std::optional<bool> borrowedClutter;
+  bool arrayReference = false;
+  uint32_t referenceChannel = 0;
+  std::vector<uint32_t> referenceChannels;
+  std::vector<uint32_t> surveillanceChannels{1};
   ArrayReferenceSynthesizer::Config reference;
 };
 
@@ -42,7 +53,7 @@ struct RadarFrame
   uint64_t frequencyHz = 0;
   uint64_t firstInputSample = 0, endInputSample = 0;
   uint32_t sampleRateHz = 0;
-  std::unique_ptr<Map<std::complex<double>>> map;
+  std::shared_ptr<Map<std::complex<double>>> map;
   std::unique_ptr<Detection> detections;
   std::unique_ptr<Track> tracks;
 };
@@ -68,6 +79,7 @@ private:
   std::size_t channelCount_ = 0;
   RadarConfig config_;
   std::vector<std::unique_ptr<Context>> contexts_;
+  std::unique_ptr<utility::FixedExecutor> executor_;
 };
 
 } // namespace blah2::multi_illuminator

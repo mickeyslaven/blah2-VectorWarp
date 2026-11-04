@@ -57,6 +57,7 @@ std::string Timing::to_json()
   document.AddMember("captureDroppedSamples", dropped, allocator);
   document.AddMember("captureSamplePositionAvailable",
     captureSamplePositionAvailable, allocator);
+  document.AddMember("inputDiscontinuity", inputDiscontinuity, allocator);
   if (captureSamplePositionAvailable) {
     document.AddMember("captureEpoch", captureEpoch, allocator);
     document.AddMember("captureFirstEpochSample", captureFirstEpochSample,

@@ -588,6 +588,11 @@ function validateConfig(config, baseline = null, options = {}) {
         if (illuminator.filter_taps_per_phase !== undefined)
           number(illuminator.filter_taps_per_phase,
             `${field}.filter_taps_per_phase`, {integer: true, min: 4, max: 128});
+        const tapsPerPhase = illuminator.filter_taps_per_phase ?? 24;
+        if (Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
+            outputRate > 0 && capture.fs % outputRate === 0 &&
+            tapsPerPhase * (capture.fs / outputRate) + 1 > 131071)
+          errors.push(`${field} full-quality channel filter exceeds 131,071 taps`);
         const transmitter = requireObject(illuminator.transmitter,
           `${field}.transmitter`);
         string(transmitter.name, `${field}.transmitter.name`);

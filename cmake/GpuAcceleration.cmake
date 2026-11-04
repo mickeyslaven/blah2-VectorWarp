@@ -8,6 +8,16 @@ set_property(CACHE BLAH2_GPU PROPERTY STRINGS AUTO ON OFF)
 set(VKFFT_ROOT "" CACHE PATH "VkFFT 1.3.4 source directory")
 add_library(blah2GpuProcess STATIC ${PROJECT_ROOT}/src/process/ambiguity/GpuProcess.cpp)
 target_compile_features(blah2GpuProcess PUBLIC cxx_std_17)
+add_library(blah2GpuWidebandProcess STATIC
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandChannelizer.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandProcess.cpp)
+target_compile_features(blah2GpuWidebandProcess PUBLIC cxx_std_17)
+target_include_directories(blah2GpuWidebandProcess PRIVATE ${PROJECT_ROOT}/src)
+target_link_libraries(blah2GpuWidebandProcess PUBLIC blah2GpuProcess
+  blah2FixedExecutor Threads::Threads)
+if(TARGET blah2)
+  target_link_libraries(blah2 PRIVATE blah2GpuWidebandProcess)
+endif()
 # The resident protocol is adjacent to ABI4 and uses canonical FP64 input.
 add_library(blah2GpuResidentProcess STATIC
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp
@@ -85,7 +95,8 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
       endif()
     endif()
     add_executable(blah2GpuWorker ${BLAH2_GPU_WORKER_SOURCES})
-    target_link_libraries(blah2GpuWorker PRIVATE blah2GpuProcess blah2GpuResidentProcess ${CMAKE_DL_LIBS})
+    target_link_libraries(blah2GpuWorker PRIVATE blah2GpuProcess
+      blah2GpuWidebandProcess blah2GpuResidentProcess ${CMAKE_DL_LIBS})
     if(APPLE)
       # Metal enumeration is isolated to the worker; never link it to blah2.
       target_link_libraries(blah2GpuWorker PRIVATE ${BLAH2_METAL_FRAMEWORK} ${BLAH2_FOUNDATION_FRAMEWORK})
@@ -96,6 +107,64 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
       add_dependencies(blah2 blah2GpuWorker)
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_library(blah2GpuWidebandVulkan MODULE
+        ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandModule.cpp
+        ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandChannelizer.cpp)
+      target_compile_features(blah2GpuWidebandVulkan PRIVATE cxx_std_17)
+      target_compile_definitions(blah2GpuWidebandVulkan PRIVATE VKFFT_BACKEND=0)
+      target_include_directories(blah2GpuWidebandVulkan PRIVATE
+        ${PROJECT_ROOT}/src/process/ambiguity ${PROJECT_ROOT}/src)
+      target_include_directories(blah2GpuWidebandVulkan SYSTEM PRIVATE
+        ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
+      target_link_libraries(blah2GpuWidebandVulkan PRIVATE Vulkan::Vulkan
+        glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
+        ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+      target_compile_options(blah2GpuWidebandVulkan PRIVATE
+        -Wno-missing-field-initializers)
+      set_property(TARGET blah2GpuWidebandVulkan APPEND_STRING PROPERTY
+        LINK_FLAGS " -Wl,-z,defs")
+      set_target_properties(blah2GpuWidebandVulkan PROPERTIES PREFIX ""
+        OUTPUT_NAME "blah2-gpu-wideband-vulkan"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+      add_dependencies(blah2GpuWorker blah2GpuWidebandVulkan)
+      if(BUILD_TESTING OR BLAH2_BUILD_OFFLINE_TOOLS)
+        add_executable(testGpuWidebandPhysical
+          ${PROJECT_ROOT}/test/gpu/TestGpuWidebandPhysical.cpp)
+        target_link_libraries(testGpuWidebandPhysical PRIVATE
+          blah2GpuWidebandProcess blah2Channelizer
+          ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY})
+        target_compile_definitions(testGpuWidebandPhysical PRIVATE
+          GPU_WIDEBAND_WORKER="$<TARGET_FILE:blah2GpuWorker>")
+        add_dependencies(testGpuWidebandPhysical blah2GpuWorker
+          blah2GpuWidebandVulkan)
+        set_target_properties(testGpuWidebandPhysical PROPERTIES
+          RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_DIR}")
+        add_executable(testGpuWidebandEndToEnd
+          ${PROJECT_ROOT}/test/gpu/TestGpuWidebandEndToEnd.cpp
+          ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
+          ${PROJECT_ROOT}/src/process/clutter/WienerHopf.cpp
+          ${PROJECT_ROOT}/src/process/conditioning/ArrayReferenceSynthesizer.cpp
+          ${PROJECT_ROOT}/src/process/fusion/Noncoherent.cpp
+          ${PROJECT_ROOT}/src/process/detection/CfarDetector1D.cpp
+          ${PROJECT_ROOT}/src/process/detection/Centroid.cpp
+          ${PROJECT_ROOT}/src/process/detection/Interpolate.cpp
+          ${PROJECT_ROOT}/src/process/tracker/Tracker.cpp
+          ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
+          ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
+          ${PROJECT_ROOT}/src/data/Detection.cpp ${PROJECT_ROOT}/src/data/Track.cpp)
+        target_include_directories(testGpuWidebandEndToEnd SYSTEM PRIVATE
+          ${ARMADILLO_INCLUDE_DIRS})
+        target_link_libraries(testGpuWidebandEndToEnd PRIVATE
+          blah2GpuWidebandProcess blah2MultiIlluminatorRadar blah2RapidJson
+          ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
+          ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+        target_compile_definitions(testGpuWidebandEndToEnd PRIVATE
+          GPU_WIDEBAND_WORKER="$<TARGET_FILE:blah2GpuWorker>")
+        add_dependencies(testGpuWidebandEndToEnd blah2GpuWorker
+          blah2GpuWidebandVulkan)
+        set_target_properties(testGpuWidebandEndToEnd PROPERTIES
+          RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_DIR}")
+      endif()
       add_library(blah2GpuResidentVulkan MODULE
         ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentModule.cpp
         ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp

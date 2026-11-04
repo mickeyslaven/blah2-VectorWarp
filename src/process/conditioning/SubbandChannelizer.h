@@ -4,6 +4,8 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <memory>
 #include <vector>
 
 namespace blah2::channelizer
@@ -21,7 +23,7 @@ public:
     uint32_t outputRateHz = 0;
     double centerOffsetHz = 0;
     double occupiedBandwidthHz = 0;
-    uint32_t tapsPerPhase = 16;
+    uint32_t tapsPerPhase = 24;
   };
 
   struct Output
@@ -36,8 +38,11 @@ public:
   };
 
   SubbandChannelizer(Config config, std::size_t channelCount);
+  ~SubbandChannelizer();
 
   Output process(const std::vector<std::vector<std::complex<float>>>& input,
+    uint64_t firstInputSample);
+  Output process(const std::vector<const std::deque<std::complex<double>>*>& input,
     uint64_t firstInputSample);
   void reset();
 
@@ -46,21 +51,28 @@ public:
   double group_delay_input_samples() const { return groupDelayInputSamples_; }
 
 private:
+  struct FftState;
   Config config_;
   std::size_t channelCount_ = 0;
   uint32_t decimation_ = 0;
   double groupDelayInputSamples_ = 0;
   std::vector<double> taps_;
   std::vector<std::vector<std::complex<double>>> history_;
-  std::size_t writeIndex_ = 0;
-  std::size_t historyFill_ = 0;
+  std::unique_ptr<FftState> fft_;
   bool started_ = false;
   uint64_t nextInputSample_ = 0;
   std::complex<double> oscillator_{1, 0};
   std::complex<double> oscillatorStep_{1, 0};
+  std::vector<std::complex<double>> oscillatorTable_;
+  // One channelizer instance is consumed serially. Reuse its block-sized
+  // mixer workspace instead of allocating it for every CPI.
+  std::vector<std::complex<double>> oscillatorScratch_;
 
   static std::vector<double> design_filter(const Config& config,
     uint32_t decimation);
+  template <typename SampleAt>
+  Output process_impl(std::size_t samples, uint64_t firstInputSample,
+    SampleAt&& sampleAt);
 };
 
 } // namespace blah2::channelizer

@@ -31,8 +31,9 @@ Map<T>::Map(uint32_t _nRows, uint32_t _nCols)
   if (!nRows || !nCols) throw std::invalid_argument("Radar map dimensions must be positive");
   noisePower = 0;
   maxPower = 0;
-  std::vector<std::vector<T>> tmp(nRows, std::vector<T>(nCols, {1}));
-  data = tmp;
+  // Fused maps are created for every lane on every CPI. Move the complete row
+  // allocation into place instead of copy-allocating every row and cell twice.
+  data = std::vector<std::vector<T>>(nRows, std::vector<T>(nCols, {1}));
 }
 
 template <class T>

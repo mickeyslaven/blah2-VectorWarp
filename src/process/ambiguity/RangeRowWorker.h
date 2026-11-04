@@ -47,7 +47,7 @@ private:
         job.first >= job.last || job.corr > job.fft || !job.fs ||
         job.delayMin <= -int64_t(job.fft) ||
         int64_t(job.delayMin)+job.delays-1 >= job.fft ||
-        job.last * uint64_t(job.corr) > job.x->size() ||
+        (!job.rotatedX && job.last * uint64_t(job.corr) > job.x->size()) ||
         (!job.filteredY && job.last * uint64_t(job.corr) > job.y->size()) ||
         ((job.rotatedX || job.filteredY) &&
           (!job.fullSamples || job.last * uint64_t(job.corr) > job.fullSamples)) ||

@@ -306,15 +306,13 @@ struct WienerHopf::Impl {
     return true;
   }
 
-  bool process(IqData* reference, IqData* surveillance, bool borrowOutput) {
+  template <typename Load>
+  bool process_loaded(IqData* surveillance, bool borrowOutput, Load load) {
     if (sharedReferenceWorkspace)
       throw std::logic_error("Shared-reference clutter workspace requires a prepared reference");
     viewReady = false;
-    if (!reference || !surveillance || reference->get_length() < samples || surveillance->get_length() < samples)
-      throw std::invalid_argument("Clutter input length differs from CPI");
     const auto inputStarted = std::chrono::steady_clock::now();
-    vectorwarp_clutter::copy_rotation(reference->view_data(), samples, delayMin, x.get());
-    std::copy_n(surveillance->view_data().begin(), samples, y.get());
+    load(x.get(), y.get());
     const auto inputFinished = std::chrono::steady_clock::now();
 #ifdef VECTORWARP_MIXED_FIR_BENCH
 #ifdef VECTORWARP_GPU_BLOCKED_FULL_BENCH
@@ -510,6 +508,38 @@ struct WienerHopf::Impl {
     }
     return true;
   }
+  bool process(IqData* reference, IqData* surveillance, bool borrowOutput) {
+    if (!reference || !surveillance || reference->get_length() < samples ||
+        surveillance->get_length() < samples)
+      throw std::invalid_argument("Clutter input length differs from CPI");
+    return process_loaded(surveillance, borrowOutput,
+      [&](Complex* loadedReference, Complex* loadedSurveillance) {
+        vectorwarp_clutter::copy_rotation(reference->view_data(), samples,
+          delayMin, loadedReference);
+        std::copy_n(surveillance->view_data().begin(), samples,
+          loadedSurveillance);
+      });
+  }
+  bool process_float(const std::complex<float>* reference,
+      const std::complex<float>* surveillance, uint32_t count) {
+    if (!reference || !surveillance || count < samples)
+      throw std::invalid_argument("Float clutter input length differs from CPI");
+    return process_loaded(nullptr, true,
+      [&](Complex* loadedReference, Complex* loadedSurveillance) {
+        int64_t source = (-int64_t(delayMin)) % int64_t(samples);
+        if (source < 0) source += samples;
+        const uint32_t first = samples - uint32_t(source);
+        const auto widen = [](const std::complex<float> value) {
+          return Complex(value);
+        };
+        std::transform(reference + source, reference + samples,
+          loadedReference, widen);
+        std::transform(reference, reference + source,
+          loadedReference + first, widen);
+        std::transform(surveillance, surveillance + samples,
+          loadedSurveillance, widen);
+      });
+  }
   WienerHopf::FilteredView filtered_view() const {
     if (!viewReady) throw std::logic_error("No completed borrowed clutter CPI");
     return {x.get(), y.get(), samples, delayMin, generation};
@@ -583,6 +613,9 @@ WienerHopf::WienerHopf(int32_t first, int32_t last, uint32_t samples, Workspace 
 WienerHopf::~WienerHopf() = default;
 uint32_t WienerHopf::filter_fft_length() const { return impl_->filterLength; }
 bool WienerHopf::process(IqData* x, IqData* y, bool borrowOutput) { return impl_->process(x,y,borrowOutput); }
+bool WienerHopf::process_float(const std::complex<float>* reference,
+  const std::complex<float>* surveillance, uint32_t samples)
+{ return impl_->process_float(reference, surveillance, samples); }
 bool WienerHopf::process(const PreparedReference& reference, IqData* surveillance) {
   if (reference.delayMin_ != impl_->delayMin || reference.taps_ != impl_->taps ||
       reference.samples_ != impl_->samples)

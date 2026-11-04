@@ -32,6 +32,24 @@ int main() {
     check(manual.workers == 1 && manual.fftThreads == 4, "Legacy explicit defaults must not change");
     const auto missing = blah2::choose_processing_threads(1, 0, 0, 0);
     check(missing.workers == 1 && missing.fftThreads == 1, "Unknown CPU count must be safe");
+    check(blah2::cap_fft_threads_for_lanes(4, 2, 8) == 3,
+      "Two B210 lanes share the reserved CPU budget");
+    check(blah2::cap_fft_threads_for_lanes(4, 4, 8) == 1,
+      "Four B210 lanes cannot each start four FFT threads");
+    check(blah2::cap_fft_threads_for_lanes(1, 16, 32) == 1,
+      "Kraken one-thread plans remain unchanged");
+    check(blah2::cap_fft_threads_for_lanes(8, 2, 2) == 1,
+      "Small hosts retain one runnable FFT thread per lane");
+    check(blah2::choose_illuminator_lane_workers(16, 0, 16) == 3,
+      "Sixteen lanes use the measured narrower cache-bound batch");
+    check(blah2::choose_illuminator_lane_workers(12, 0, 16) == 4,
+      "Twelve lanes retain the measured four-context batch");
+    check(blah2::choose_illuminator_lane_workers(8, 0, 8) == 4,
+      "Eight-CPU hosts retain enough lane concurrency for the deadline");
+    check(blah2::choose_illuminator_lane_workers(8, 6, 16) == 6,
+      "Explicit lane workers are preserved within capacity");
+    check(blah2::choose_illuminator_lane_workers(2, 8, 16) == 2,
+      "Lane workers cannot exceed active illuminators");
     bool rejected = false;
     try { blah2::choose_processing_threads(2, 0, 257, 32); }
     catch (const std::invalid_argument&) { rejected = true; }

@@ -168,6 +168,20 @@ async function send(port, chunks) {
       '/api/detection?illuminator=fm-90.5')).body).stream, 'fm-detection');
     assert.equal(JSON.parse((await request(apiPort,
       '/api/tracker?illuminator=fm-90.5')).body).stream, 'fm-track');
+    const nextIlluminatorFrame = {...illuminatorFrame, timestamp: 11,
+      first_input_sample: 1200000, end_input_sample: 2399999,
+      map: {stream: 'fm-map-next', timestamp: 11},
+      detections: {stream: 'fm-detection-next', timestamp: 11},
+      tracks: {stream: 'fm-track-next', timestamp: 11}};
+    await send(config.network.ports.illuminator,
+      [Buffer.from(JSON.stringify(nextIlluminatorFrame))]);
+    assert.equal(JSON.parse((await request(apiPort,
+      '/api/map?illuminator=fm-90.5')).body).stream, 'fm-map-next');
+    assert.equal(JSON.parse((await request(apiPort,
+      '/api/map?illuminator=fm-90.5&frame_timestamp=10')).body).stream,
+      'fm-map', 'an exact lane timestamp must not mix adjacent products');
+    assert.equal((await request(apiPort,
+      '/api/map?illuminator=fm-90.5&frame_timestamp=9')).status, 404);
     assert.equal((await request(apiPort,
       '/api/tracker?illuminator=unknown')).status, 404);
 

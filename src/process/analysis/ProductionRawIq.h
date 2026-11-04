@@ -3,6 +3,7 @@
 #include "process/ambiguity/Ambiguity.h"
 #include "process/clutter/WienerHopf.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
+#include "process/utility/FixedExecutor.h"
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -22,6 +23,7 @@ public:
     size_t paths = 0, workers = 1;
     bool borrowed = false;
     ArrayReferenceSynthesizer::Config reference;
+    bool eagerPlanning = false;
   };
 
   explicit RawIqStages(Config config);
@@ -29,16 +31,22 @@ public:
   const ArrayReferenceSynthesizer& reference() const { return reference_; }
   void resetReference();
   bool clutter(IqData& reference, const std::vector<IqData*>& surveillance);
+  bool clutter_float(const std::complex<float>* reference,
+    const std::vector<const std::complex<float>*>& surveillance,
+    uint32_t samples);
   // The Pi mixed backend's failed map commit retries its one raw CPI here.
   bool fallbackClutter(IqData& reference, IqData& surveillance);
   void ambiguity(const IqData& reference,
     const std::vector<IqData*>& surveillance,
     const std::vector<Ambiguity*>& processors, bool preserveSurveillance);
+  void ambiguity_borrowed(const std::vector<Ambiguity*>& processors);
 
 private:
   Config config_;
   ArrayReferenceSynthesizer reference_;
   std::vector<std::unique_ptr<WienerHopf>> filters_;
   std::unique_ptr<WienerHopf::PreparedReference> prepared_;
+  std::unique_ptr<blah2::utility::FixedExecutor> executor_;
+  void initializeShared();
 };
 }

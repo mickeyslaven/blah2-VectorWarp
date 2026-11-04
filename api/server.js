@@ -59,6 +59,7 @@ const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
 const {PresentationHistory, frameTimestamp} = require('./presentation-history.js');
+const {IlluminatorFrameHistory} = require('./illuminator-frame-history.js');
 const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
@@ -364,7 +365,7 @@ function receiverIndependentChange(before, after) {
 var map = '';
 var detection = '';
 var track = '';
-const illuminatorFrames = new Map();
+const illuminatorFrames = new IlluminatorFrameHistory();
 var bearing = '';
 const bearingHypotheses = new BistaticHypothesisTracker();
 var timestamp = '';
@@ -650,7 +651,17 @@ app.get('/', (req, res, next) => {
 function selectedIlluminator(req) {
   if (req.query.illuminator === undefined) return null;
   const id = String(req.query.illuminator);
-  return illuminatorFrames.get(id) || undefined;
+  const exact = {};
+  for (const [query, field] of [['frame_timestamp', 'timestamp'],
+    ['first_input_sample', 'firstInputSample'],
+    ['end_input_sample', 'endInputSample']]) if (req.query[query] !== undefined) {
+      const value = Number(req.query[query]);
+      if (!Number.isSafeInteger(value) || value < 0) return undefined;
+      exact[field] = value;
+    }
+  return Object.keys(exact).length ?
+    illuminatorFrames.exact(id, exact) || undefined :
+    illuminatorFrames.latest(id) || undefined;
 }
 app.get('/api/illuminators/live', (req, res) => {
   const configured = (config.process?.multi_illuminator?.illuminators || [])
@@ -658,7 +669,7 @@ app.get('/api/illuminators/live', (req, res) => {
   res.json({enabled: config.process?.multi_illuminator?.enabled === true,
     primary: configured[0]?.id || null,
     illuminators: configured.map(item => {
-      const live = illuminatorFrames.get(item.id);
+      const live = illuminatorFrames.latest(item.id);
       return {id: item.id, standard: item.standard,
         frequency_hz: item.frequency_hz,
         occupied_bandwidth_hz: item.occupied_bandwidth_hz,
@@ -2075,7 +2086,7 @@ function acceptIlluminatorFrame(frame) {
   if (!configured || configured.frequency_hz !== value.frequency_hz ||
       configured.output_sample_rate_hz !== value.sample_rate_hz)
     throw new Error('Multi-illuminator frame does not match the active configuration');
-  illuminatorFrames.set(value.id, value);
+  illuminatorFrames.add(value, Buffer.byteLength(frame));
 }
 if (config.process?.multi_illuminator?.enabled === true &&
     Number.isInteger(config.network?.ports?.illuminator)) {
