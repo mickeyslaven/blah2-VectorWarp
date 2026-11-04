@@ -20,7 +20,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       {id: 10, state: 'COASTING', delay: 10, doppler: -3}
     ]};
     const context = vm.createContext({
-      URL,
+      URL, URLSearchParams,
       liveApiUrl: url => url,
       radarPresentationUrl: url => `${url}${url.includes('?') ? '&' : '?'}presentation=aligned`,
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
