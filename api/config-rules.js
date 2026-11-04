@@ -41,6 +41,8 @@ const rules = {
   'capture.replay.reference_channels': {type: 'array', optional: true},
   'process.data.cpi': {...numeric(), exclusiveMin: 0},
   'process.data.buffer': numeric(1),
+  'process.multi_illuminator.enabled': {type: 'boolean', optional: true},
+  'process.multi_illuminator.illuminators': {type: 'array', optional: true},
   'process.detection.pfa': {...numeric(), exclusiveMin: 0, exclusiveMax: 1},
   'process.detection.nGuard': integer(0, 127),
   'process.detection.nTrain': integer(1, 127),
@@ -177,10 +179,10 @@ for (const group of ['ambiguity', 'clutter']) {
       ...(group === 'clutter' ? {optional: true} : {})
     };
 }
-for (const name of ['api','map','detection','track','bearing','manifold','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','manifold','illuminator','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
     {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
-    ['bearing','manifold'].includes(name) ? {optional: true} : {})};
+    ['bearing','manifold','illuminator'].includes(name) ? {optional: true} : {})};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

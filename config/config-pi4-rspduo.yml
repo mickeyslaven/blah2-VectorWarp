@@ -27,6 +27,9 @@ capture:
     provenance: 'legacy-unqualified'
 
 process:
+  multi_illuminator:
+    enabled: false
+    illuminators: []
   performance:
     acceleration: auto
     surveillance_workers: 1
@@ -96,6 +99,7 @@ network:
     map: 3001
     detection: 3002
     track: 3003
+    illuminator: 3007
     bearing: 3004
     timestamp: 4000
     timing: 4001

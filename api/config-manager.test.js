@@ -35,6 +35,35 @@ incompleteEnabledTracker.network.tracker_forward.enabled = true;
 assert.equal(validateConfig(incompleteEnabledTracker).valid, false,
   'enabling the tracker feed requires an explicit endpoint');
 
+const twoFmIlluminators = clone(krakenProfile);
+twoFmIlluminators.capture.fc = 90900000;
+twoFmIlluminators.process.multi_illuminator = {enabled: true, illuminators: [
+  {id: 'fm-90.5', enabled: true, standard: 'FM', frequency_hz: 90500000,
+    occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+    filter_taps_per_phase: 24,
+    transmitter: {name: 'FM 90.5', latitude: 40.44, longitude: -80.0, altitude: 300}},
+  {id: 'fm-91.3', enabled: true, standard: 'FM', frequency_hz: 91300000,
+    occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+    filter_taps_per_phase: 24,
+    transmitter: {name: 'FM 91.3', latitude: 40.45, longitude: -80.01, altitude: 310}}
+]};
+assert.equal(validateConfig(twoFmIlluminators).valid, true,
+  'one Kraken passband accepts two isolated FM illuminators');
+for (const mutate of [
+  value => { value.process.multi_illuminator.illuminators[1].id = 'fm-90.5'; },
+  value => { value.process.multi_illuminator.illuminators[1].frequency_hz = 90500000; },
+  value => { value.process.multi_illuminator.illuminators[1].frequency_hz = 93000000; },
+  value => { value.process.multi_illuminator.illuminators[1].output_sample_rate_hz = 280000; },
+  value => { value.process.multi_illuminator.illuminators[1].occupied_bandwidth_hz = 300000; },
+  value => { value.process.multi_illuminator.illuminators.forEach(item => { item.enabled = false; }); },
+  value => { value.process.multi_illuminator.illuminators[1].transmitter.latitude = 91; }
+]) {
+  const invalid = clone(twoFmIlluminators);
+  mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    'multi-illuminator configuration must fail closed');
+}
+
 const sixChannel = load('config-kraken.yml');
 sixChannel.capture.device.channel_count = 6;
 sixChannel.capture.device.surveillance_channels = [0, 1, 2, 3, 4, 5];

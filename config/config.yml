@@ -19,6 +19,9 @@ capture:
     provenance: 'legacy-unqualified'
 
 process:
+  multi_illuminator:
+    enabled: false
+    illuminators: []
   data:
     cpi: 0.75
     buffer: 2
@@ -102,6 +105,7 @@ network:
     track: 3003
     bearing: 3004
     manifold: 3005
+    illuminator: 3007
     timestamp: 4000
     timing: 4001
     iqdata: 4002

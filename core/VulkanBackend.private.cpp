@@ -14,6 +14,7 @@
 #include <cmath>
 #include <iomanip>
 #include <sstream>
+#include <type_traits>
 #include <vulkan/vulkan.h>
 #include <glslang/Include/glslang_c_interface.h>
 #if __has_include(<glslang/Public/resource_limits_c.h>)
@@ -334,6 +335,7 @@ struct Context {
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);
       VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+      poolInfo.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
       poolInfo.queueFamilyIndex = candidate.queue;
       check(vkCreateCommandPool(device, &poolInfo, nullptr, &pool), "command allocation");
       VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -500,7 +502,10 @@ struct Kernel {
   VkPipelineLayout layout = VK_NULL_HANDLE;
   VkShaderModule shader = VK_NULL_HANDLE;
   VkPipeline pipeline = VK_NULL_HANDLE;
-  Kernel(Context& ctx, const char* source, const std::vector<Buffer*>& buffers) : context(ctx) {
+  uint32_t pushBytes=sizeof(Push);
+  Kernel(Context& ctx, const char* source, const std::vector<Buffer*>& buffers,
+      uint32_t requestedPushBytes=sizeof(Push)) : context(ctx),pushBytes(requestedPushBytes) {
+    if(!pushBytes||pushBytes>128||pushBytes%4)throw std::invalid_argument("GPU push constant shape invalid");
     try {
       glslang_input_t input{};
       input.language = GLSLANG_SOURCE_GLSL;
@@ -551,7 +556,7 @@ struct Kernel {
       setInfo.bindingCount = bindings.size();
       setInfo.pBindings = bindings.data();
       check(vkCreateDescriptorSetLayout(ctx.device, &setInfo, nullptr, &setLayout), "descriptor layout");
-      VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push)};
+      VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, pushBytes};
       VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
       layoutInfo.setLayoutCount = 1;
       layoutInfo.pSetLayouts = &setLayout;
@@ -604,6 +609,15 @@ struct Kernel {
     const uint32_t groups = (push.count + 127) / 128;
     const uint32_t x = std::min(groups, 65535u);
     vkCmdDispatch(command, x, (groups + x - 1) / x, 1);
+  }
+  template<class T>void appendWide(VkCommandBuffer command,const T& push,uint32_t count){
+    static_assert(std::is_trivially_copyable<T>::value,"GPU push constants must be trivial");
+    if(sizeof(T)!=pushBytes)throw std::logic_error("GPU push constant ABI differs");
+    vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
+    vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,nullptr);
+    vkCmdPushConstants(command,layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(T),&push);
+    const uint32_t groups=(count+127)/128,x=std::min(groups,65535u);
+    if(groups)vkCmdDispatch(command,x,(groups+x-1)/x,1);
   }
 };
 constexpr const char* multiplySource = R"glsl(#version 450

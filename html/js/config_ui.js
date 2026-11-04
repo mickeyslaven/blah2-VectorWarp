@@ -453,6 +453,7 @@ const PRIMARY_SETTING_PATHS = new Set([
 ]);
 const EXPERIMENTAL_SETTING_PREFIXES = [
   'truth.remote_id',
+  'process.multi_illuminator',
   'process.surveillance_fusion.detection_manifold_automation',
   'process.tracker.track_guided_shadow',
   'process.tracker.publication',
@@ -986,6 +987,8 @@ function frequencyInput(value, path) {
 
 function arrayInput(value, path) {
   const key = path.join('.');
+  if (key === 'process.multi_illuminator.illuminators')
+    return illuminatorListInput(value, path);
   const wrapper = document.createElement('div');
   const channelList = key === 'capture.device.surveillance_channels' ||
     key === 'process.reference_synthesis.channels';
@@ -1047,6 +1050,85 @@ function arrayInput(value, path) {
     slot.append(caption, input);
     wrapper.appendChild(slot);
   });
+  return wrapper;
+}
+
+function illuminatorListInput(value, path) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'illuminator-list';
+  let items = JSON.parse(JSON.stringify(value));
+  const anchor = document.createElement('input');
+  anchor.type = 'hidden';
+  const commit = () => setValue(path, JSON.parse(JSON.stringify(items)));
+  const render = () => {
+    anchor.value = String(items.length);
+    wrapper.replaceChildren(anchor);
+    items.forEach((item, index) => {
+      const card = document.createElement('fieldset');
+      card.className = 'config-group';
+      const legend = document.createElement('legend');
+      legend.textContent = item.id || `Illuminator ${index + 1}`;
+      card.appendChild(legend);
+      const addText = (label, key, transform = value => value) => {
+        const control = document.createElement('label');
+        control.textContent = label;
+        const input = document.createElement('input');
+        input.value = key.split('.').reduce((target, part) => target?.[part], item) ?? '';
+        input.addEventListener('input', () => {
+          const parts = key.split('.'); let target = item;
+          parts.slice(0, -1).forEach(part => { target[part] ||= {}; target = target[part]; });
+          target[parts.at(-1)] = transform(input.value);
+          if (key === 'id') legend.textContent = input.value || `Illuminator ${index + 1}`;
+          commit();
+        });
+        control.appendChild(input); card.appendChild(control);
+      };
+      const addNumber = (label, key, scale = 1) => addText(label, key,
+        input => input === '' ? null : Number(input) * scale);
+      const enabled = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox'; checkbox.checked = item.enabled === true;
+      checkbox.addEventListener('change', () => { item.enabled = checkbox.checked; commit(); });
+      enabled.append(checkbox, document.createTextNode('Enabled')); card.appendChild(enabled);
+      addText('ID', 'id');
+      const standardLabel = document.createElement('label');
+      standardLabel.textContent = 'Standard';
+      const standard = selectInput(['FM', 'DAB', 'ATSC', 'DVB-T/T2'], item.standard,
+        selected => { item.standard = selected; commit(); });
+      standardLabel.appendChild(standard); card.appendChild(standardLabel);
+      const originalFrequency = item.frequency_hz; item.frequency_hz = originalFrequency / 1e6;
+      addNumber('Frequency (MHz)', 'frequency_hz', 1e6); item.frequency_hz = originalFrequency;
+      const originalBandwidth = item.occupied_bandwidth_hz;
+      item.occupied_bandwidth_hz = originalBandwidth / 1000;
+      addNumber('Bandwidth (kHz)', 'occupied_bandwidth_hz', 1000);
+      item.occupied_bandwidth_hz = originalBandwidth;
+      const originalRate = item.output_sample_rate_hz;
+      item.output_sample_rate_hz = originalRate / 1000;
+      addNumber('Output rate (kS/s)', 'output_sample_rate_hz', 1000);
+      item.output_sample_rate_hz = originalRate;
+      addNumber('Filter taps', 'filter_taps_per_phase');
+      addText('Transmitter', 'transmitter.name');
+      addNumber('Latitude', 'transmitter.latitude');
+      addNumber('Longitude', 'transmitter.longitude');
+      addNumber('Altitude (m)', 'transmitter.altitude');
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.className = 'button-secondary'; remove.textContent = 'Remove';
+      remove.addEventListener('click', () => { items.splice(index, 1); commit(); render(); });
+      card.appendChild(remove); wrapper.appendChild(card);
+    });
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'button-secondary'; add.textContent = 'Add illuminator';
+    add.addEventListener('click', () => {
+      items.push({id: `illuminator-${items.length + 1}`, enabled: true, standard: 'FM',
+        frequency_hz: activeConfig.capture?.fc || 100000000,
+        occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+        filter_taps_per_phase: 24,
+        transmitter: {name: '', latitude: 0, longitude: 0, altitude: 0}});
+      commit(); render();
+    });
+    wrapper.appendChild(add);
+  };
+  render();
   return wrapper;
 }
 
@@ -1776,6 +1858,7 @@ function renderExperimentalSettings() {
     if (value !== undefined) section.appendChild(group(key, value, path, false));
   };
   add('remote_id', activeConfig.truth?.remote_id, ['truth']);
+  add('multi_illuminator', process.multi_illuminator, ['process']);
   if (coherentArray) add('detection_manifold_automation',
     process.surveillance_fusion?.detection_manifold_automation,
     ['process', 'surveillance_fusion']);

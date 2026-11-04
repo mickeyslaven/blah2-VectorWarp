@@ -13,6 +13,8 @@
 #include "process/ambiguity/Ambiguity.h"
 #include "process/ambiguity/Acceleration.h"
 #include "process/ambiguity/GpuResidentCoordinator.h"
+#include "process/ambiguity/GpuWidebandProcess.h"
+#include "process/ambiguity/GpuWidebandFallback.h"
 #include "process/ambiguity/BearingManifold.h"
 #include "process/ambiguity/ManifoldEvidence.h"
 #ifdef VECTORWARP_MIXED_AUTO
@@ -29,6 +31,9 @@
 #include "process/analysis/ComplexCutoutRecorder.h"
 #include "process/analysis/ReplayEchoInjector.h"
 #include "process/analysis/ProductionRawIq.h"
+#include "process/analysis/MultiIlluminatorRadar.h"
+#include "process/analysis/MultiIlluminatorPipelineState.h"
+#include "process/conditioning/IlluminatorChannelizerBank.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -62,11 +67,17 @@
 #include <cmath>
 #include <numeric>
 #include <optional>
+#include <regex>
+#include <set>
+
+#include "rapidjson/stringbuffer.h"
+#include "rapidjson/writer.h"
 
 volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
 std::unique_ptr<Socket> socket_detection;
 std::unique_ptr<Socket> socket_track;
+std::unique_ptr<Socket> socket_illuminator;
 std::unique_ptr<Socket> socket_bearing;
 std::unique_ptr<Socket> socket_manifold;
 std::unique_ptr<Socket> socket_timestamp;
@@ -157,6 +168,28 @@ std::optional<std::complex<double>> direct_path_pilot(
   return pilot;
 }
 
+std::string multi_illuminator_frame_json(
+  const blah2::multi_illuminator::RadarFrame& frame, uint64_t timestamp,
+  const std::string& map, const std::string& detections,
+  const std::string& tracks)
+{
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.StartObject();
+  writer.Key("schema"); writer.String("vectorwarp-multi-illuminator-frame-v1");
+  writer.Key("id"); writer.String(frame.illuminatorId.c_str());
+  writer.Key("frequency_hz"); writer.Uint64(frame.frequencyHz);
+  writer.Key("sample_rate_hz"); writer.Uint(frame.sampleRateHz);
+  writer.Key("first_input_sample"); writer.Uint64(frame.firstInputSample);
+  writer.Key("end_input_sample"); writer.Uint64(frame.endInputSample);
+  writer.Key("timestamp"); writer.Uint64(timestamp);
+  writer.Key("map"); writer.RawValue(map.c_str(), map.size(), rapidjson::kObjectType);
+  writer.Key("detections"); writer.RawValue(detections.c_str(), detections.size(), rapidjson::kObjectType);
+  writer.Key("tracks"); writer.RawValue(tracks.c_str(), tracks.size(), rapidjson::kObjectType);
+  writer.EndObject();
+  return buffer.GetString();
+}
+
 int main(int argc, char **argv)
 try
 {
@@ -214,6 +247,47 @@ try
   {
     std::cerr << "Invalid configuration: sample rate, centre frequency and API port must be positive.\n";
     return 1;
+  }
+
+  bool multiIlluminatorEnabled = false;
+  std::vector<blah2::channelizer::IlluminatorDefinition> illuminatorDefinitions;
+  if (tree["process"].has_child("multi_illuminator"))
+  {
+    auto multi = tree["process"]["multi_illuminator"];
+    if (multi.has_child("enabled")) multi["enabled"] >> multiIlluminatorEnabled;
+    if (multi.has_child("illuminators"))
+    {
+      std::set<std::string> ids;
+      std::set<uint64_t> frequencies;
+      for (auto item : multi["illuminators"].children())
+      {
+        bool enabled = false;
+        if (item.has_child("enabled")) item["enabled"] >> enabled;
+        if (!enabled) continue;
+        blah2::channelizer::IlluminatorDefinition definition;
+        item["id"] >> definition.id;
+        item["frequency_hz"] >> definition.frequencyHz;
+        item["occupied_bandwidth_hz"] >> definition.occupiedBandwidthHz;
+        item["output_sample_rate_hz"] >> definition.outputRateHz;
+        if (item.has_child("filter_taps_per_phase"))
+          item["filter_taps_per_phase"] >> definition.tapsPerPhase;
+        if (!std::regex_match(definition.id,
+              std::regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) ||
+            !ids.insert(definition.id).second ||
+            !frequencies.insert(definition.frequencyHz).second ||
+            !definition.frequencyHz || !definition.outputRateHz ||
+            !definition.occupiedBandwidthHz || definition.tapsPerPhase < 4 ||
+            definition.tapsPerPhase > 128 || fs % definition.outputRateHz ||
+            definition.occupiedBandwidthHz >= definition.outputRateHz ||
+            std::abs(int64_t(definition.frequencyHz) - int64_t(fc)) +
+              int64_t(definition.occupiedBandwidthHz) / 2 >= int64_t(fs) / 2)
+          throw std::invalid_argument("Invalid enabled multi-illuminator definition");
+        illuminatorDefinitions.push_back(std::move(definition));
+      }
+    }
+    if (multiIlluminatorEnabled &&
+        (illuminatorDefinitions.empty() || illuminatorDefinitions.size() > 16))
+      throw std::invalid_argument("Multi-illuminator mode requires 1 to 16 enabled illuminators");
   }
 
   // set up socket
@@ -301,6 +375,7 @@ try
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
   uint16_t port_bearing=0,port_manifold=0;
+  uint16_t port_illuminator=0;
   std::string ip;
   tree["network"]["ports"]["map"] >> port_map;
   tree["network"]["ports"]["detection"] >> port_detection;
@@ -315,6 +390,11 @@ try
       throw std::invalid_argument("Manifold recorder requires network.ports.manifold");
     tree["network"]["ports"]["manifold"]>>port_manifold;
   }
+  if(multiIlluminatorEnabled){
+    if(!tree["network"]["ports"].has_child("illuminator"))
+      throw std::invalid_argument("Multi-illuminator output requires network.ports.illuminator");
+    tree["network"]["ports"]["illuminator"]>>port_illuminator;
+  }
   tree["network"]["ports"]["timestamp"] >> port_timestamp;
   tree["network"]["ports"]["timing"] >> port_timing;
   tree["network"]["ports"]["iqdata"] >> port_iqdata;
@@ -324,6 +404,8 @@ try
     socket_map = std::make_unique<Socket>(ip, port_map);
     socket_detection = std::make_unique<Socket>(ip, port_detection);
     socket_track = std::make_unique<Socket>(ip, port_track);
+    if(multiIlluminatorEnabled)
+      socket_illuminator = std::make_unique<Socket>(ip, port_illuminator);
     if(bearingEnabled)socket_bearing = std::make_unique<Socket>(ip, port_bearing);
     if(manifoldRecorderEnabled)socket_manifold = std::make_unique<Socket>(ip, port_manifold);
     socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
@@ -555,6 +637,14 @@ try
     configuredWorkers, fftThreads, blah2::available_cpu_threads());
   const std::size_t surveillanceWorkers = threadPlan.workers;
   fftThreads = static_cast<uint32_t>(threadPlan.fftThreads);
+  const std::size_t multiIlluminatorWorkers = multiIlluminatorEnabled ?
+    blah2::choose_illuminator_lane_workers(illuminatorDefinitions.size(),
+      0, threadPlan.availableCpus) : 1;
+  if (multiIlluminatorEnabled)
+    // Every active wideband lane consumes the common FFT output even when
+    // radar contexts are processed in narrower cache-bounded batches.
+    fftThreads = static_cast<uint32_t>(blah2::cap_fft_threads_for_lanes(
+      fftThreads, illuminatorDefinitions.size(), threadPlan.availableCpus));
   blah2::set_fftw_planner_threads(fftThreads);
   std::cout << "Surveillance paths=" << surveillanceChannels.size()
     << " workers=" << surveillanceWorkers << " fft_threads=" << fftThreads
@@ -1082,7 +1172,7 @@ try
   blah2::resident::Config residentConfig;
   std::unique_ptr<blah2::resident::Coordinator> resident;
   uint64_t residentLogical=0,residentConsumed=0;
-  if(residentMode){
+  if(residentMode&&!multiIlluminatorEnabled){
     if(!arrayReference||!isClutter||pairedQueueRequested||surveillanceChannels.size()!=captureChannelCount||!gpuDevice||std::string(gpuDevice)=="auto")
       throw std::invalid_argument("Resident GPU requires array reference, clutter, identity all-capture surveillance and an explicit GPU device");
     residentConfig.geometry={ambiguity.front()->get_nfft(),ambiguity.front()->get_n_doppler_bins(),ambiguity.front()->get_n_delay_bins(),uint32_t(surveillanceChannels.size()),delayMin,nSamples,uint32_t(clutterBins),delayMinClutter};
@@ -1165,6 +1255,94 @@ try
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
       (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);
     resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
+  }
+
+  std::unique_ptr<blah2::channelizer::IlluminatorChannelizerBank>
+    multiChannelizer;
+  std::unique_ptr<blah2::multi_illuminator::MultiIlluminatorRadar> multiRadar;
+  std::unique_ptr<blah2::utility::FixedExecutor> multiSerializationExecutor;
+  std::unique_ptr<blah2::utility::FixedExecutor> multiGpuSubmissionExecutor;
+  std::unique_ptr<blah2::wideband_gpu::Backend> multiGpuChannelizer;
+  std::vector<double> multiGroupDelays;
+  bool widebandGpuRequested = false;
+  bool multiGpuQualified = false;
+  std::optional<std::string> multiQualificationFatal;
+  uint64_t multiFallbackInputSample = 0;
+  blah2::multi_illuminator::PendingPublication<std::vector<
+    blah2::channelizer::IlluminatorOutput>> multiPendingPublication;
+  bool multiPipelineDelayed = false;
+  blah2::multi_illuminator::PipelineState multiPipelineState;
+  if (multiIlluminatorEnabled)
+  {
+    if (!isClutter || !isDetection || !isTracker)
+      throw std::invalid_argument(
+        "Multi-illuminator mode requires clutter, detection, and tracking");
+    blah2::multi_illuminator::RadarConfig multiConfig;
+    multiConfig.cpiSeconds = tCpi;
+    multiConfig.delayMin = delayMin;
+    multiConfig.delayMax = delayMax;
+    multiConfig.dopplerMin = dopplerMin;
+    multiConfig.dopplerMax = dopplerMax;
+    multiConfig.clutterDelayMin = delayMinClutter;
+    multiConfig.clutterDelayMax = delayMaxClutter;
+    multiConfig.pfa = pfa;
+    multiConfig.guardCells = nGuard;
+    multiConfig.trainingCells = nTrain;
+    multiConfig.minimumDelay = minDelay;
+    multiConfig.minimumDopplerHz = minDoppler;
+    multiConfig.centroidRadius = nCentroid;
+    multiConfig.trackerM = m;
+    multiConfig.trackerN = n;
+    multiConfig.trackerDelete = nDelete;
+    multiConfig.trackerMaximumAcceleration = maxAcc;
+    multiConfig.trackerMinimumSnrDb = trackerMinInitiationSnrDb;
+    multiConfig.workers = surveillanceWorkers;
+    multiConfig.laneWorkers = multiIlluminatorWorkers;
+    multiConfig.arrayReference = arrayReference;
+    multiConfig.referenceChannel = referenceChannel;
+    multiConfig.referenceChannels = referenceChannels;
+    multiConfig.surveillanceChannels = surveillanceChannels;
+    multiConfig.reference = referenceConfig;
+    widebandGpuRequested=accelerationMode=="gpu"||
+      accelerationMode=="gpu-resident"||accelerationMode=="auto";
+    if(widebandGpuRequested){
+      try {
+        blah2::wideband_gpu::Config gpuConfig;gpuConfig.inputRateHz=fs;
+        gpuConfig.channels=captureChannelCount;gpuConfig.maxInputSamples=nSamples;
+        for(const auto& definition:illuminatorDefinitions){auto taps=
+            blah2::wideband_gpu::designFilter(fs,definition.outputRateHz,
+              definition.occupiedBandwidthHz,definition.tapsPerPhase);
+          multiGroupDelays.push_back((taps.size()-1)/2.0);
+          gpuConfig.lanes.push_back({definition.frequencyHz,
+            fs/definition.outputRateHz,
+            double(int64_t(definition.frequencyHz)-int64_t(fc)),
+            std::move(taps)});}
+        multiGpuChannelizer=blah2::wideband_gpu::createProcess(gpuConfig,
+          gpuDevice?gpuDevice:"auto");
+        std::cout<<"[MultiIlluminator] channelizer=vulkan-worker device="
+          <<multiGpuChannelizer->deviceName()<<"\n";
+      } catch(const std::exception& error) {
+        multiGroupDelays.clear();
+        if(accelerationMode!="auto")throw;
+        std::cerr<<"[MultiIlluminator] channelizer=cpu reason="
+          <<error.what()<<"\n";
+      }
+    }
+    // The first real GPU block is always compared with an independently
+    // advanced CPU oracle. AUTO also retains it for same-block failover.
+    multiChannelizer = std::make_unique<
+      blah2::channelizer::IlluminatorChannelizerBank>(fc, fs,
+        captureChannelCount, illuminatorDefinitions);
+    multiRadar = std::make_unique<
+      blah2::multi_illuminator::MultiIlluminatorRadar>(fs,
+        captureChannelCount, illuminatorDefinitions, multiConfig);
+    multiSerializationExecutor = std::make_unique<blah2::utility::FixedExecutor>(
+      std::min(illuminatorDefinitions.size(),
+        std::max<std::size_t>(1, threadPlan.availableCpus - 1)));
+    multiGpuSubmissionExecutor =
+      std::make_unique<blah2::utility::FixedExecutor>(1);
+    std::cout << "[MultiIlluminator] enabled=1 inputs="
+      << illuminatorDefinitions.size() << " capture_rate_hz=" << fs << "\n";
   }
 
   // set up output data
@@ -1434,6 +1612,16 @@ try
             delete tracker;
             tracker = new Tracker(m, n, nDelete, ambiguity.front()->get_cpi(),
               maxAcc, rangeRes, lambda, trackerMinInitiationSnrDb);
+            if (multiChannelizer) multiChannelizer->reset();
+            if (multiGpuChannelizer) multiGpuChannelizer->reset();
+            if (multiRadar) multiRadar->reset();
+            multiPendingPublication.reset();
+            multiPipelineDelayed = multiGpuChannelizer &&
+              multiGpuChannelizer->supportsSplitFrame();
+            multiPipelineState.input_epoch_reset();
+            if (multiGpuChannelizer) multiGpuQualified = false;
+            multiQualificationFatal.reset();
+            multiFallbackInputSample = 0;
           }
           // Advance signal time for every accepted input CPI, even if clutter
           // later rejects it. UI publication timestamps remain wall-clock.
@@ -1443,6 +1631,212 @@ try
           physicalChannels.reserve(captureData.size());
           for (auto& channel : captureData) physicalChannels.push_back(channel.get());
           echoInjector.apply(trackerFrame * uint64_t(nSamples), physicalChannels);
+          if (multiIlluminatorEnabled)
+          {
+            std::vector<const std::deque<std::complex<double>>*>
+              channelizerInput;
+            channelizerInput.reserve(captureData.size());
+            for (const auto& channel : captureData)
+              channelizerInput.push_back(&channel->view_data());
+            const uint64_t firstInputSample = captureSamplePositionAvailable ?
+              captureFirstEpochSample : multiFallbackInputSample;
+            multiFallbackInputSample = firstInputSample + nSamples;
+            std::vector<blah2::channelizer::IlluminatorOutput> channelized;
+            const auto convertGpu = [&](std::vector<blah2::wideband_gpu::LaneOutput> gpu) {
+              std::vector<blah2::channelizer::IlluminatorOutput> converted;
+              converted.reserve(gpu.size());
+              for(size_t index=0;index<gpu.size();++index){blah2::channelizer::SubbandChannelizer::Output samples;samples.channels=std::move(gpu[index].channels);samples.firstInputSample=gpu[index].firstInputSample;samples.hasFirstInputSample=gpu[index].hasFirstInputSample;samples.inputSamplesPerOutput=gpu[index].inputSamplesPerOutput;samples.groupDelayInputSamples=multiGroupDelays[index];converted.push_back({illuminatorDefinitions[index].id,gpu[index].frequencyHz,std::move(samples)});}
+              return converted;
+            };
+            const auto cpuQualificationView = [](const std::vector<
+                blah2::channelizer::IlluminatorOutput>& cpu) {
+              std::vector<blah2::wideband_gpu::LaneOutput> result;
+              result.reserve(cpu.size());
+              for (const auto& lane : cpu)
+                result.push_back({lane.frequencyHz,
+                  lane.samples.firstInputSample,
+                  lane.samples.hasFirstInputSample,
+                  lane.samples.inputSamplesPerOutput,
+                  lane.samples.channels});
+              return result;
+            };
+            using PipelineClock = std::chrono::steady_clock;
+            const auto pipelineStart = PipelineClock::now();
+            const auto channelizerStart = pipelineStart;
+            bool splitBegan=false,splitScheduled=false,splitFinished=false,
+              haveChannelized=false,publicationIsFatal=false;
+            std::future<void> splitSubmission;
+            std::optional<blah2::multi_illuminator::PublicationContext>
+              publication;
+            const auto currentPublication = [&](double channelizerMs,
+                bool qualificationFrame = false) {
+              const auto status=multiPipelineState.acceleration_status(
+                accelerationMode,bool(multiGpuChannelizer),
+                widebandGpuRequested,qualificationFrame);
+              return multiPipelineState.publication(frameTimestampMs,
+                eventTime, captureSamplePositionAvailable, captureEpoch,
+                captureFirstEpochSample, captureEndEpochSample,
+                captureBacklogSamples, captureDroppedSamples, channelizerMs,
+                qualificationFrame,status);
+            };
+            const auto runtimeFallback = [&](const char* stage,
+                const std::exception& error) {
+              const std::string reason = std::string("GPU channelizer ") +
+                stage + " failed: " + error.what();
+              std::cerr << "[MultiIlluminator] " << reason <<
+                "; CPU same-block reset/fallback\n";
+              multiGpuChannelizer.reset();
+              multiPipelineState.runtime_fallback(reason,
+                [&] { multiChannelizer->reset(); },
+                [&] { multiRadar->reset(); });
+            };
+            const auto qualifyGpu = [&](const std::vector<
+                blah2::channelizer::IlluminatorOutput>& cpu,
+                const std::vector<blah2::wideband_gpu::LaneOutput>& gpu,
+                double gpuMilliseconds) {
+              const auto result = blah2::wideband_gpu::qualifyFirstBlock(
+                cpuQualificationView(cpu), gpu, gpuMilliseconds,
+                tCpi * 1000.0);
+              if (result.status ==
+                  blah2::wideband_gpu::QualificationStatus::passed)
+              {
+                multiGpuQualified = true;
+                return;
+              }
+              if (result.status ==
+                  blah2::wideband_gpu::QualificationStatus::inconclusive)
+                return;
+              const std::string reason = result.reason;
+              multiGpuChannelizer.reset();
+              multiPipelineState.qualification_fallback(reason,
+                [&] { multiRadar->reset(); });
+              if (accelerationMode != "auto")
+                multiQualificationFatal = reason;
+            };
+            if(multiPendingPublication.has_value()){
+              auto pending=multiPendingPublication.take();
+              channelized=std::move(pending.first);
+              publication=std::move(pending.second);
+              haveChannelized=true;
+              publicationIsFatal=multiQualificationFatal.has_value();
+            }
+            const auto queueCurrent=[&](std::vector<
+                blah2::channelizer::IlluminatorOutput> current,
+                blah2::multi_illuminator::PublicationContext context){
+              if(multiPipelineDelayed||haveChannelized)
+                multiPendingPublication.store(std::move(current),
+                  std::move(context));
+              else{
+                channelized=std::move(current);
+                publication=std::move(context);
+                haveChannelized=true;
+              }
+            };
+            if(publicationIsFatal){
+              // Explicit GPU qualification publishes its CPU oracle exactly
+              // once, then fails without consuming another capture on CPU.
+            }else if(multiGpuChannelizer&&multiGpuChannelizer->supportsSplitFrame()){
+              multiPipelineDelayed=true;
+              const auto submittedInput=channelizerInput;
+              splitSubmission=multiGpuSubmissionExecutor->submit(
+                [&,submittedInput,firstInputSample]{multiGpuChannelizer->beginDeques(submittedInput,firstInputSample);});
+              splitScheduled=true;
+            }else if(multiGpuChannelizer){std::vector<blah2::wideband_gpu::LaneOutput> gpu;bool qualificationFrame=!multiGpuQualified;
+              const bool gpuSucceeded=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{gpu=multiGpuChannelizer->processDeques(channelizerInput,firstInputSample);},[&](const std::exception& error){runtimeFallback("process",error);});
+              std::vector<blah2::channelizer::IlluminatorOutput> current;if(!gpuSucceeded)current=multiChannelizer->process(channelizerInput,firstInputSample);else if(qualificationFrame){const double gpuMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();current=multiChannelizer->process(channelizerInput,firstInputSample);qualifyGpu(current,gpu,gpuMs);}else current=convertGpu(std::move(gpu));const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();queueCurrent(std::move(current),currentPublication(channelizerMs,qualificationFrame));
+            }else{auto current=multiChannelizer->process(channelizerInput,firstInputSample);const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();queueCurrent(std::move(current),currentPublication(channelizerMs));}
+            const auto finishCurrent=[&]{if(!splitScheduled||splitFinished)return;splitFinished=true;std::vector<blah2::channelizer::IlluminatorOutput> next;std::vector<blah2::wideband_gpu::LaneOutput> gpu;const bool qualificationFrame=!multiGpuQualified;const bool began=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{splitSubmission.get();splitBegan=true;},[&](const std::exception& error){runtimeFallback("begin",error);});bool success=false;if(began)success=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{gpu=multiGpuChannelizer->finishFrame();},[&](const std::exception& error){runtimeFallback("finish",error);});if(!success)next=multiChannelizer->process(channelizerInput,firstInputSample);else if(qualificationFrame){const double gpuMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();next=multiChannelizer->process(channelizerInput,firstInputSample);qualifyGpu(next,gpu,gpuMs);}else next=convertGpu(std::move(gpu));const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();multiPendingPublication.store(std::move(next),currentPublication(channelizerMs,qualificationFrame));};
+            if(!haveChannelized){finishCurrent();
+              // Explicit qualification failure publishes its just-computed
+              // CPU oracle from this capture before throwing. Do not wait for
+              // or extract a newer CPI merely to drive the delayed pipeline.
+              if(multiQualificationFatal&&multiPendingPublication.has_value()){
+                auto failed=multiPendingPublication.take();
+                channelized=std::move(failed.first);
+                publication=std::move(failed.second);
+                haveChannelized=true;
+              }else{timing_time.clear();timing_name.clear();time.clear();continue;}}
+            // Until the first representative block qualifies, complete and
+            // measure GPU work before either the CPU oracle or prior-frame
+            // radar can contend with it. Steady-state overlap starts only
+            // after qualification passes.
+            if(splitScheduled&&!multiGpuQualified)finishCurrent();
+            if(!publication)
+              throw std::logic_error("Channelized frame lacks publication metadata");
+            const auto radarStart=PipelineClock::now();
+            auto frames = multiRadar->process(std::move(channelized));
+            const auto radarEnd=PipelineClock::now();
+            const auto attachPublicationTime = [&](std::string json) {
+              return blah2::annotate_event_time(std::move(json),
+                publication->eventTime);
+            };
+            struct SerializedIlluminatorFrame
+            {
+              std::string map, detections, tracks;
+            };
+            std::vector<SerializedIlluminatorFrame> serialized(frames.size());
+            multiSerializationExecutor->parallel_for(frames.size(),
+              [&](std::size_t index) {
+                const auto& frame = frames[index];
+                serialized[index].map = attachPublicationTime(
+                  frame.map->to_json_km(publication->timestampMs,
+                    frame.sampleRateHz));
+                serialized[index].detections = attachPublicationTime(
+                  frame.detections->to_json_km(publication->timestampMs,
+                    frame.sampleRateHz));
+                serialized[index].tracks = attachPublicationTime(
+                  frame.tracks->to_json(publication->timestampMs));
+              });
+            const auto serializationEnd=PipelineClock::now();
+            for (std::size_t index = 0; index < frames.size(); ++index)
+            {
+              const auto& frame = frames[index];
+              const auto& product = serialized[index];
+              socket_illuminator->sendData(multi_illuminator_frame_json(
+                frame, publication->timestampMs, product.map, product.detections,
+                product.tracks));
+              if (frame.illuminatorId == illuminatorDefinitions.front().id)
+              {
+                socket_map->sendData(product.map);
+                socket_detection->sendData(product.detections);
+                socket_track->sendData(product.tracks);
+              }
+            }
+            const auto outputEnd=PipelineClock::now();
+            finishCurrent();
+            const auto pipelineEnd=PipelineClock::now();
+            const auto milliseconds=[](auto end,auto start){return std::chrono::duration<double,std::milli>(end-start).count();};
+            const std::vector<std::string> multiTimingNames{
+              "multi_channelizer_wall", "multi_illuminator_radar",
+              "multi_serialize", "multi_output", "multi_pipeline_advance",
+              "cpi"};
+            const std::vector<double> multiTimingValues{
+              publication->channelizerMs, milliseconds(radarEnd,radarStart),
+              milliseconds(serializationEnd,radarEnd),
+              milliseconds(outputEnd,serializationEnd),
+              milliseconds(pipelineEnd,outputEnd),
+              milliseconds(pipelineEnd,pipelineStart)};
+            timing->update(publication->timestampMs, multiTimingValues,
+              multiTimingNames);
+            timing->set_capture_queues(publication->captureBacklogSamples,
+              publication->captureDroppedSamples);
+            timing->set_capture_sample_position(
+              publication->samplePositionAvailable, publication->captureEpoch,
+              publication->captureFirst, publication->captureEnd);
+            timing->set_input_discontinuity(publication->inputDiscontinuity);
+            const auto& multiStatus=publication->acceleration;
+            timing->set_acceleration(multiStatus);
+            timing->set_clutter_acceleration(multiStatus, false, true);
+            socket_timing->sendData(attachPublicationTime(timing->to_json()));
+            socket_timestamp->sendData("{\"timestamp\":" +
+              std::to_string(publication->timestampMs) + "}");
+            if(multiQualificationFatal)
+              throw std::runtime_error(*multiQualificationFatal);
+            timing_time.clear();
+            timing_name.clear();
+            time.clear();
+            continue;
+          }
           const bool residentOracle=resident&&resident->qualifying();
           if(resident){
             if(residentLogical==UINT64_MAX||residentConsumed==UINT64_MAX)throw std::overflow_error("Resident frame sequence exhausted");
@@ -1821,6 +2215,52 @@ try
           std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
       }
+      // A finite replay can end with one completed GPU CPI intentionally held
+      // for overlap. Publish it before normal EOF; epoch resets clear this
+      // state explicitly above so identities can never cross configurations.
+      if(multiPendingPublication.has_value()){using DrainClock=std::chrono::steady_clock;
+        const auto drainStart=DrainClock::now();auto pending=
+          multiPendingPublication.take();auto publication=std::move(pending.second);
+        auto frames=multiRadar->process(std::move(pending.first));
+        const auto radarEnd=DrainClock::now();
+        struct FinalSerialized{std::string map,detections,tracks;};
+        std::vector<FinalSerialized> serialized(frames.size());
+        multiSerializationExecutor->parallel_for(frames.size(),
+          [&](std::size_t index){const auto& frame=frames[index];
+            serialized[index].map=blah2::annotate_event_time(
+              frame.map->to_json_km(publication.timestampMs,
+                frame.sampleRateHz),publication.eventTime);
+            serialized[index].detections=blah2::annotate_event_time(
+              frame.detections->to_json_km(publication.timestampMs,
+                frame.sampleRateHz),publication.eventTime);
+            serialized[index].tracks=blah2::annotate_event_time(
+              frame.tracks->to_json(publication.timestampMs),publication.eventTime);});
+        const auto serializationEnd=DrainClock::now();
+        for(std::size_t index=0;index<frames.size();++index){const auto& frame=frames[index];const auto& product=serialized[index];socket_illuminator->sendData(multi_illuminator_frame_json(frame,publication.timestampMs,product.map,product.detections,product.tracks));if(frame.illuminatorId==illuminatorDefinitions.front().id){socket_map->sendData(product.map);socket_detection->sendData(product.detections);socket_track->sendData(product.tracks);}}
+        const auto drainEnd=DrainClock::now();
+        const auto milliseconds=[](auto end,auto start){return std::chrono::duration<double,std::milli>(end-start).count();};
+        timing->update(publication.timestampMs,
+          {publication.channelizerMs,milliseconds(radarEnd,drainStart),
+           milliseconds(serializationEnd,radarEnd),
+           milliseconds(drainEnd,serializationEnd),0.0,
+           milliseconds(drainEnd,drainStart)},
+          {"multi_channelizer_wall","multi_illuminator_radar","multi_serialize",
+           "multi_output","multi_pipeline_advance","cpi"});
+        timing->set_capture_queues(publication.captureBacklogSamples,
+          publication.captureDroppedSamples);
+        timing->set_capture_sample_position(publication.samplePositionAvailable,
+          publication.captureEpoch,publication.captureFirst,
+          publication.captureEnd);
+        timing->set_input_discontinuity(publication.inputDiscontinuity);
+        const auto& multiStatus=publication.acceleration;
+        timing->set_acceleration(multiStatus);
+        timing->set_clutter_acceleration(multiStatus,false,true);
+        socket_timing->sendData(blah2::annotate_event_time(
+          timing->to_json(),publication.eventTime));
+        socket_timestamp->sendData("{\"timestamp\":"+
+          std::to_string(publication.timestampMs)+"}");
+        if(multiQualificationFatal)
+          throw std::runtime_error(*multiQualificationFatal);}
     } catch (const std::exception& error) {
       if(resident)resident->stop();
       capture->processing_error(error.what());

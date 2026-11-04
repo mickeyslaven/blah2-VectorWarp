@@ -335,6 +335,22 @@ try {
   const remoteIdSource = clone(adsbBaseline);
   remoteIdSource.truth.remote_id.source = 'http://remote-id.local:8754';
   persistGroup('remote-id-source', adsbBaseline, remoteIdSource, ['truth.remote_id.source']);
+  const multiIlluminatorBase = clone(krakenBase);
+  multiIlluminatorBase.process.performance.acceleration = 'auto';
+  const multiIlluminator = clone(multiIlluminatorBase);
+  multiIlluminator.capture.fc = 90900000;
+  multiIlluminator.process.multi_illuminator = {enabled: true, illuminators: [
+    {id: 'fm-90.5', enabled: true, standard: 'FM', frequency_hz: 90500000,
+      occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+      filter_taps_per_phase: 24,
+      transmitter: {name: 'FM 90.5', latitude: 40.44, longitude: -80, altitude: 300}},
+    {id: 'fm-91.3', enabled: true, standard: 'FM', frequency_hz: 91300000,
+      occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+      filter_taps_per_phase: 24,
+      transmitter: {name: 'FM 91.3', latitude: 40.45, longitude: -80.01, altitude: 310}}
+  ]};
+  persistGroup('multi-illuminator', multiIlluminatorBase, multiIlluminator,
+    ['process.multi_illuminator.enabled', 'process.multi_illuminator.illuminators']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);
