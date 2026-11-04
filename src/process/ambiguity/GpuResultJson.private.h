@@ -385,7 +385,8 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
  size_t ordinal=0;
  for(size_t i=0;i<size_t(total);++i){const size_t base=32+recordWords*i;
  const uint32_t state=w[base+14],packed=w[base+13],head=packed&255,length=(packed>>8)&255,start=(packed>>16)&255,display=packed>>24;
-  require(state<4&&w[base+12]<65535&&head<historyCapacity&&length&&length<=historyCapacity&&start<historyCapacity&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
+  const uint32_t identity=w[base+12];
+  require(state<4&&(identity&0x7fff0000u)==0u&&(identity&65535u)<65535&&head<historyCapacity&&length&&length<=historyCapacity&&start<historyCapacity&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
   // Validate the supplied slice, but copy start/display directly below.
   require(display==(length>=100?100:length)&&start==(head+length-display)%historyCapacity&&(length==historyCapacity||head==0),"GPU tracker display metadata inconsistent");
   ++observed[state];
@@ -415,7 +416,7 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   h.d.push_back(d);
   h.f.push_back(f);
   h.s.push_back(w[at+6]);}
-  rows[ordinal]={w[base+12],state,realPair(w,base),realPair(w,base+2),realPair(w,base+6),wordPair(w,base+8),{{h.d.data(),h.d.size()},{h.f.data(),h.f.size()},{h.s.data(),h.s.size()}}};
+  rows[ordinal]={identity&65535u,state,realPair(w,base),realPair(w,base+2),realPair(w,base+6),wordPair(w,base+8),{{h.d.data(),h.d.size()},{h.f.data(),h.f.size()},{h.s.data(),h.s.size()}}};
   ++ordinal;
  }
  require(observed==counts&&ordinal==published,"GPU tracker record/header counts differ");

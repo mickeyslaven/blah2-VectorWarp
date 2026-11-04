@@ -263,7 +263,8 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
   // Record word 12 uses its low 16 bits for the public ID. Its high bit
   // latches the first real association, so a later miss cannot reopen the
   // broad acceleration-estimation gate.
-  bool adaptiveTentative=adaptiveGate()&&(src(r+12u)&0x80000000u)==0u;
+  bool adaptiveTentative=adaptiveGate()&&state<2u&&
+    (src(r+12u)&0x80000000u)==0u;
   precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi,span=0.0LF,time=md(50u),gateTime=time,q=0.0LF;
   if(adaptiveTentative){gateTime=time*double(src(r+10u)+1u);span=md(48u)*double(m[37]);
    q=md(46u)*0.5LF*gateTime*gateTime/md(44u);delayMargin+=q*span;dopplerMargin+=span*gateTime;}

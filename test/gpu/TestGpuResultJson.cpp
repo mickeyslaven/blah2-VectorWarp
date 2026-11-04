@@ -242,7 +242,9 @@ void trackCases(){
  rejects([&]{auto wrong=binding;++wrong.generation;trackerCheckpoint(0,raw(),wrong);});rejects([&]{auto v=raw();--v.count;trackerCheckpoint(0,v,binding);});
  bank[base+15]=1;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+15]=0;bank[base+13]^=1u<<16;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+13]^=1u<<16;
  pair(20,0);rejects([&]{trackerCheckpoint(0,raw(),binding);});pair(20,1);
- bank[base+12]=65534;rapidjson::Document wrapped;wrapped.Parse(trackerCheckpoint(0,raw(),binding).c_str());check(std::string(wrapped["data"][0]["id"].GetString())=="FFFE","GPU ID copy/hex differs");bank[base+12]=0;
+ bank[base+12]=65534;rapidjson::Document wrapped;wrapped.Parse(trackerCheckpoint(0,raw(),binding).c_str());check(std::string(wrapped["data"][0]["id"].GetString())=="FFFE","GPU ID copy/hex differs");
+ bank[base+12]=0x8000fffeu;wrapped.Parse(trackerCheckpoint(0,raw(),binding).c_str());check(!wrapped.HasParseError()&&std::string(wrapped["data"][0]["id"].GetString())=="FFFE","GPU acceleration latch leaked into public ID");
+ bank[base+12]=0x00010000u;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+12]=0;
  Track tentative;tentative.add(Detection(1,1,1));same(tracks({0,1,1,0,0,0,{}}),tentative.to_json(0));Track empty;same(tracks({0,0,0,0,0,0,{}}),empty.to_json(0));
  rejects([&]{tracks({0,1,0,1,0,0,{}});});auto bad=row;bad.state=0;rejects([&]{tracks({0,1,0,0,1,0,{&bad,1}});});bad=row;bad.history.state.count-=1;rejects([&]{tracks({0,1,0,0,1,0,{&bad,1}});});
  std::cout<<"PASS serializer-track gpu_selected_slice=100 raw_checkpoint=1 binding_rejects=1 legacy_ids=1 uint64_counts=1 tentative_omitted=1\n";
