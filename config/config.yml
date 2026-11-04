@@ -19,6 +19,9 @@ capture:
     provenance: 'legacy-unqualified'
 
 process:
+  multi_illuminator:
+    enabled: false
+    illuminators: []
   data:
     cpi: 0.75
     buffer: 2
@@ -60,12 +63,12 @@ process:
       max_file_mb: 10
       max_files: 3
     initiate:
-      M: 4
+      M: 3
       N: 6
       maxAcc: 10
       min_snr_db: 5
-      acceleration_model: hypothesis_bank
-    delete: 3
+      acceleration_model: adaptive_gate
+    delete: 10
   bearing:
     enable: false
     min_consistent: 3
@@ -102,6 +105,7 @@ network:
     track: 3003
     bearing: 3004
     manifold: 3005
+    illuminator: 3007
     timestamp: 4000
     timing: 4001
     iqdata: 4002

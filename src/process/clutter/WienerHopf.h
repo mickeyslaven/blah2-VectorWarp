@@ -50,6 +50,8 @@ public:
   WienerHopf& operator=(const WienerHopf&) = delete;
   uint32_t filter_fft_length() const;
   bool process(IqData* reference, IqData* surveillance, bool borrowOutput = false);
+  bool process_float(const std::complex<float>* reference,
+    const std::complex<float>* surveillance, uint32_t samples);
   bool process(const PreparedReference& reference, IqData* surveillance);
   FilteredView filtered_view() const;
 };

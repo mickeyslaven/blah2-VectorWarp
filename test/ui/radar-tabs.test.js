@@ -13,7 +13,7 @@ dom.window.addRadarViewControl(panel, panel);
 
 const control = panel.querySelector('.radar-view-control');
 assert.ok(control);
-assert.equal(control.querySelector('summary').getAttribute('aria-label'), 'Choose radar map');
+assert.equal(control.querySelector('summary').getAttribute('aria-label'), 'Choose radar view');
 assert.equal(control.querySelectorAll('a').length, 5);
 assert.equal(control.querySelector('[aria-current="page"]').textContent, 'Range–Doppler');
 assert.deepEqual([...control.querySelectorAll('a')].map(link => link.textContent),

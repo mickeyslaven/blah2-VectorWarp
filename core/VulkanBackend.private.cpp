@@ -14,6 +14,7 @@
 #include <cmath>
 #include <iomanip>
 #include <sstream>
+#include <type_traits>
 #include <vulkan/vulkan.h>
 #include <glslang/Include/glslang_c_interface.h>
 #if __has_include(<glslang/Public/resource_limits_c.h>)
@@ -334,6 +335,7 @@ struct Context {
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);
       VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+      poolInfo.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
       poolInfo.queueFamilyIndex = candidate.queue;
       check(vkCreateCommandPool(device, &poolInfo, nullptr, &pool), "command allocation");
       VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -500,7 +502,10 @@ struct Kernel {
   VkPipelineLayout layout = VK_NULL_HANDLE;
   VkShaderModule shader = VK_NULL_HANDLE;
   VkPipeline pipeline = VK_NULL_HANDLE;
-  Kernel(Context& ctx, const char* source, const std::vector<Buffer*>& buffers) : context(ctx) {
+  uint32_t pushBytes=sizeof(Push);
+  Kernel(Context& ctx, const char* source, const std::vector<Buffer*>& buffers,
+      uint32_t requestedPushBytes=sizeof(Push)) : context(ctx),pushBytes(requestedPushBytes) {
+    if(!pushBytes||pushBytes>128||pushBytes%4)throw std::invalid_argument("GPU push constant shape invalid");
     try {
       glslang_input_t input{};
       input.language = GLSLANG_SOURCE_GLSL;
@@ -551,7 +556,7 @@ struct Kernel {
       setInfo.bindingCount = bindings.size();
       setInfo.pBindings = bindings.data();
       check(vkCreateDescriptorSetLayout(ctx.device, &setInfo, nullptr, &setLayout), "descriptor layout");
-      VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push)};
+      VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, pushBytes};
       VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
       layoutInfo.setLayoutCount = 1;
       layoutInfo.pSetLayouts = &setLayout;
@@ -604,6 +609,15 @@ struct Kernel {
     const uint32_t groups = (push.count + 127) / 128;
     const uint32_t x = std::min(groups, 65535u);
     vkCmdDispatch(command, x, (groups + x - 1) / x, 1);
+  }
+  template<class T>void appendWide(VkCommandBuffer command,const T& push,uint32_t count){
+    static_assert(std::is_trivially_copyable<T>::value,"GPU push constants must be trivial");
+    if(sizeof(T)!=pushBytes)throw std::logic_error("GPU push constant ABI differs");
+    vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
+    vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,nullptr);
+    vkCmdPushConstants(command,layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(T),&push);
+    const uint32_t groups=(count+127)/128,x=std::min(groups,65535u);
+    if(groups)vkCmdDispatch(command,x,(groups+x-1)/x,1);
   }
 };
 constexpr const char* multiplySource = R"glsl(#version 450
@@ -783,15 +797,13 @@ constexpr const char* clutterProductsSource = R"glsl(#version 450
 layout(local_size_x=128) in;
 layout(binding=0) readonly buffer Reference { vec2 ref[]; };
 layout(binding=1) readonly buffer Surveillance { vec2 surv[]; };
-layout(binding=2) writeonly buffer Auto { vec2 autocorr[]; };
-layout(binding=3) writeonly buffer Cross { vec2 crosscorr[]; };
+layout(binding=2) writeonly buffer Cross { vec2 crosscorr[]; };
 layout(push_constant) uniform Parameters { uint count; uint samples; uint channels; uint unused; int unused2; } p;
 void main() {
   uint i = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 128;
   if (i >= p.count) return;
   vec2 x = ref[i % p.samples], y = surv[i];
   crosscorr[i] = vec2(y.x*x.x+y.y*x.y, y.y*x.x-y.x*x.y);
-  if (i < p.samples) autocorr[i] = vec2(dot(x,x), 0);
 })glsl";
 constexpr const char* clutterMultiplySource = R"glsl(#version 450
 layout(local_size_x=128) in;
@@ -832,7 +844,7 @@ class ClutterPipeline {
   friend class ResidentModule;
   Context& context_;
   uint32_t samples_, bins_, channels_, length_;
-  std::unique_ptr<Buffer> reference_, surveillance_, estimate_, autocorrelation_, crosscorrelation_;
+  std::unique_ptr<Buffer> reference_, surveillance_, estimate_;
   std::unique_ptr<Buffer> filterReference_, weights_, filtered_;
   std::unique_ptr<Buffer> input_, correlations_, weightUpload_, output_;
   std::unique_ptr<Plan> referencePlan_, surveillancePlan_, autoPlan_, crossPlan_;
@@ -883,7 +895,7 @@ class ClutterPipeline {
     for (uint32_t channel = 0; channel < channels_; ++channel) {
       VkBufferCopy copy{uint64_t(channel)*samples_*8,
         uint64_t(bins_)*(1+channel)*8, uint64_t(bins_)*8};
-      vkCmdCopyBuffer(command, crosscorrelation_->handle, correlations_->handle, 1, &copy);
+      vkCmdCopyBuffer(command, filtered_->handle, correlations_->handle, 1, &copy);
     }
     barrier(command);
   }
@@ -936,7 +948,10 @@ public:
     const uint64_t n = g.clutterSamples, c = g.channels;
     const uint64_t b = g.clutterBins, l = filterLength(g);
     if (!l) return std::numeric_limits<uint64_t>::max();
-    uint64_t elements = 4*n + 5*n*c + l + 2*l*c + b*c + b*(1+c);
+    // The estimate buffer is idle while the reference autocorrelation is
+    // prepared, then overwritten by the saved surveillance input. Reusing it
+    // avoids one full-CPI device allocation without changing either phase.
+    uint64_t elements = 3*n + 4*n*c + l + 2*l*c + b*c + b*(1+c);
     if (resident) elements -= n + 2*n*c; // No legacy input/estimate staging.
     // Preflight allowance for the seven plan tables. Batched transforms share
     // their LUTs. Actual tables, scratch and upload allocations are additionally
@@ -995,8 +1010,6 @@ public:
     }
     startupTrace(resident_ ? "clutter resident GPU buffers selected" : direct_ ? "clutter direct mapped device memory selected" :
       "clutter persistent staging selected");
-    autocorrelation_ = std::make_unique<Buffer>(context, n*8, device);
-    crosscorrelation_ = std::make_unique<Buffer>(context, nc*8, device);
     filterReference_ = std::make_unique<Buffer>(context, l*8, device);
     weights_ = std::make_unique<Buffer>(context, lc*8, device);
     filtered_ = std::make_unique<Buffer>(context, lc*8, device);
@@ -1007,15 +1020,18 @@ public:
     const bool lut = twiddleLut();
     referencePlan_ = std::make_unique<Plan>(context, *reference_, samples_, 1, lut);
     surveillancePlan_ = std::make_unique<Plan>(context, *surveillance_, samples_, channels_, lut);
-    autoPlan_ = std::make_unique<Plan>(context, *autocorrelation_, samples_, 1, lut);
-    crossPlan_ = std::make_unique<Plan>(context, *crosscorrelation_, samples_, channels_, lut);
+    autoPlan_ = std::make_unique<Plan>(context, *estimate_, samples_, 1, lut);
+    // Correlation output is consumed before either correction pass starts.
+    // filtered_ is larger and is only written afterwards, so the two FFT
+    // plans safely share one device allocation.
+    crossPlan_ = std::make_unique<Plan>(context, *filtered_, samples_, channels_, lut);
     filterReferencePlan_ = std::make_unique<Plan>(context, *filterReference_, length_, 1, lut);
     weightPlan_ = std::make_unique<Plan>(context, *weights_, length_, channels_, lut);
     filteredPlan_ = std::make_unique<Plan>(context, *filtered_, length_, channels_, lut);
     autoProducts_ = std::make_unique<Kernel>(context, refinementAutoSource,
-      std::vector<Buffer*>{reference_.get(), autocorrelation_.get()});
+      std::vector<Buffer*>{reference_.get(), estimate_.get()});
     products_ = std::make_unique<Kernel>(context, clutterProductsSource,
-      std::vector<Buffer*>{reference_.get(), surveillance_.get(), autocorrelation_.get(), crosscorrelation_.get()});
+      std::vector<Buffer*>{reference_.get(), surveillance_.get(), filtered_.get()});
     multiply_ = std::make_unique<Kernel>(context, clutterMultiplySource,
       std::vector<Buffer*>{filterReference_.get(), weights_.get(), filtered_.get()});
     normalize_ = std::make_unique<Kernel>(context, clutterNormalizeSource,
@@ -1061,7 +1077,7 @@ public:
     autoPlan_->append(prepare_,1);
     barrier(prepare_);
     VkBufferCopy autoCopy{0,0,uint64_t(bins_)*8};
-    vkCmdCopyBuffer(prepare_,autocorrelation_->handle,correlations_->handle,1,&autoCopy);
+    vkCmdCopyBuffer(prepare_,estimate_->handle,correlations_->handle,1,&autoCopy);
     barrier(prepare_);
     timestamps_->end(prepare_,1);
     timestamps_->begin(prepare_,2);

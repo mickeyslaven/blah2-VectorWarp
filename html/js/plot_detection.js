@@ -1,9 +1,23 @@
 var plotted = false;
 var range_x = [];
 var range_y = [];
+var detectionHistory = [];
 
 // setup API
-var urlDetection = liveApiUrl(radarPresentationUrl('/stash/detection'));
+var urlDetection = null;
+
+function accumulateDetectionHistory(frame) {
+  if (typeof window === 'undefined' || window.vectorwarpDetectionHistory !== true) return frame;
+  const stamp = Array.isArray(frame?.timestamp) ? frame.timestamp.at(-1) : frame?.timestamp;
+  const delays = Array.isArray(frame?.delay) ? frame.delay : [];
+  const dopplers = Array.isArray(frame?.doppler) ? frame.doppler : [];
+  delays.forEach((delay, index) => detectionHistory.push({timestamp: stamp,
+    delay, doppler: dopplers[index]}));
+  detectionHistory = detectionHistory.slice(-2000);
+  return {timestamp: detectionHistory.map(item => item.timestamp),
+    delay: detectionHistory.map(item => item.delay),
+    doppler: detectionHistory.map(item => item.doppler)};
+}
 
 // setup plotly
 var layout = {
@@ -68,7 +82,9 @@ var data = [
 Plotly.react('data', data, layout, config);
 
 // callback function
-var radarUpdates = startRadarPlot(urlDetection, async function (data) {
+var radarUpdates = null;
+async function renderDetection(data) {
+  data = accumulateDetectionHistory(data);
 
   // case draw new plot
   if (!plotted) {
@@ -109,4 +125,11 @@ var radarUpdates = startRadarPlot(urlDetection, async function (data) {
     };
     await Plotly.update('data', trace_update);
   }
+}
+
+var vectorwarpDetectionReady = getIlluminatorContext().then(context => {
+  urlDetection = liveApiUrl(radarPresentationUrl(
+    selectedIlluminatorUrl('/api/detection', context)));
+  radarUpdates = startRadarPlot(urlDetection, renderDetection);
+  return radarUpdates;
 });

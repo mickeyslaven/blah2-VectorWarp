@@ -55,6 +55,11 @@ void Track::set_acceleration(uint64_t index, double _acceleration)
   acceleration.at(index) = _acceleration;
 }
 
+void Track::set_acceleration_estimated(uint64_t index, bool estimated)
+{
+  accelerationEstimated.at(index) = estimated;
+}
+
 void Track::set_nInactive(uint64_t index, uint64_t n)
 {
   nInactive.at(index) = n;
@@ -88,6 +93,11 @@ double Track::get_acceleration(uint64_t index)
   return acceleration.at(index);
 }
 
+bool Track::get_acceleration_estimated(uint64_t index)
+{
+  return accelerationEstimated.at(index);
+}
+
 std::string Track::get_state(uint64_t index)
 {
   return state.at(index).at(state.at(index).size()-1);
@@ -111,6 +121,7 @@ uint64_t Track::add(Detection initial)
   state.push_back(_state);
   current.push_back(initial);
   acceleration.push_back(0);
+  accelerationEstimated.push_back(false);
   std::vector<Detection> _associated;
   _associated.push_back(initial);
   associated.push_back(_associated);
@@ -174,6 +185,11 @@ void Track::remove(uint64_t index)
     acceleration.erase(acceleration.begin() + index);
   } else {
     throw std::out_of_range("Index out of bounds for 'acceleration' vector");
+  }
+  if (index < accelerationEstimated.size()) {
+    accelerationEstimated.erase(accelerationEstimated.begin() + index);
+  } else {
+    throw std::out_of_range("Index out of bounds for 'accelerationEstimated' vector");
   }
 
   if (index < associated.size()) {

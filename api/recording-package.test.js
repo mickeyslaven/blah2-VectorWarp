@@ -14,8 +14,17 @@ async function main() {
   const recording = path.join(source, 'TEST123.mchq');
   fs.writeFileSync(recording, Buffer.from([0, 1, 2, 3, 4, 5]));
   fs.writeFileSync(`${recording}.json`, JSON.stringify({channels: 5, sampleRate: 2400000}));
-  fs.writeFileSync(`${recording}.replay.json`, JSON.stringify({schema: 'vectorwarp-replay-profile-v2'}));
-  fs.writeFileSync(`${recording}.timeline.json`, JSON.stringify({schema: 'vectorwarp-recording-timeline-v1', frames: []}));
+  const replayProfile = {schema: 'vectorwarp-replay-profile-v2', configuration_complete: true,
+    multi_illuminator: {enabled: true, illuminators: [
+      {id: 'fm-a', frequency_hz: 90100000, output_sample_rate_hz: 300000,
+        transmitter: {latitude: 40.1, longitude: -79.9}}],
+    timeline_semantics: 'per-illuminator-truth-and-products-v2'}};
+  fs.writeFileSync(`${recording}.replay.json`, JSON.stringify(replayProfile));
+  const laneTimeline = {schema: 'vectorwarp-recording-timeline-v2', frames: [{timestamp_ms: 1000,
+    illuminator: 'fm-a', truth: {aircraft: {abc:{hex:'abc'}},
+      delay_doppler: {abc:{delay:1,doppler:2}}},
+    products: {map:{timestamp:1000},detections:{timestamp:1000},tracks:{timestamp:1000}}}]};
+  fs.writeFileSync(`${recording}.timeline.json`, JSON.stringify(laneTimeline));
   const value = await descriptor(recording);
   assert.deepEqual(value.entries.map(entry => entry.name),
     ['TEST123.mchq', 'TEST123.mchq.timeline.json', 'TEST123.mchq.replay.json', 'TEST123.mchq.json']);
@@ -31,7 +40,9 @@ async function main() {
     ['TEST123.mchq', 'TEST123.mchq.timeline.json', 'TEST123.mchq.replay.json', 'TEST123.mchq.json']);
   assert.deepEqual(fs.readFileSync(path.join(destination, imported.filename)), fs.readFileSync(recording));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(destination, `${imported.filename}.replay.json`))),
-    {schema: 'vectorwarp-replay-profile-v2'});
+    replayProfile, 'portable package preserves the complete multi-illuminator replay profile');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(destination, `${imported.filename}.timeline.json`))),
+    laneTimeline, 'portable package preserves per-lane truth and product timelines');
   fs.writeFileSync(path.join(destination, 'TEST123-1.mchq.json'), 'orphan must not be overwritten');
   const duplicate = await extractPackage(output, destination);
   assert.equal(duplicate.filename, 'TEST123-2.mchq',

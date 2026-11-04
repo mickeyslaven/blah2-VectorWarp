@@ -23,6 +23,7 @@ endif()
 
 option(BLAH2_KRAKEN_ONLY "Build only the Kraken capture backend" OFF)
 option(BLAH2_BUILD_OFFLINE_TOOLS "Build replay-only analysis executables" OFF)
+option(BLAH2_BUILD_BENCHMARKS "Build opt-in performance benchmark executables" OFF)
 # Keep the historical CMake behavior unless a caller explicitly selects the
 # individual live backends. Kraken remains the always-available baseline.
 set(BLAH2_OPTIONAL_RECEIVER_DEFAULT ON)
@@ -60,6 +61,7 @@ find_package(httplib CONFIG REQUIRED)
 find_package(Armadillo REQUIRED)
 find_library(BLAH2_FFTW3_LIBRARY NAMES fftw3 REQUIRED)
 find_library(BLAH2_FFTW3_THREADS_LIBRARY NAMES fftw3_threads REQUIRED)
+find_path(BLAH2_FFTW3_INCLUDE_DIR NAMES fftw3.h REQUIRED)
 if(BUILD_TESTING)
   find_package(Catch2 3 CONFIG REQUIRED)
 endif()
@@ -121,11 +123,60 @@ endif()
 
 include(cmake/ReceiverModules.cmake)
 
+# Receiver-independent coherent subband extraction. The live multi-illuminator
+# orchestration is gated separately; this library has no receiver side effects.
+add_library(blah2FixedExecutor STATIC
+  src/process/utility/FixedExecutor.cpp)
+target_link_libraries(blah2FixedExecutor PUBLIC Threads::Threads)
+
 # Production orchestration shared by the live executable and raw-IQ replay.
 # Numerical primitives keep their existing target-specific accelerator flags.
 add_library(blah2ProductionRawIq STATIC src/process/analysis/ProductionRawIq.cpp)
 target_include_directories(blah2ProductionRawIq SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
-target_link_libraries(blah2ProductionRawIq PUBLIC Threads::Threads blah2RapidJson)
+target_link_libraries(blah2ProductionRawIq PUBLIC
+  Threads::Threads blah2RapidJson blah2FixedExecutor)
+
+add_library(blah2Channelizer STATIC
+  src/process/conditioning/IlluminatorChannelizerBank.cpp
+  src/process/conditioning/SubbandChannelizer.cpp)
+target_include_directories(blah2Channelizer SYSTEM PRIVATE
+  ${BLAH2_FFTW3_INCLUDE_DIR})
+target_link_libraries(blah2Channelizer PUBLIC
+  blah2FixedExecutor ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
+target_sources(blah2Channelizer PRIVATE src/process/utility/ProcessingThreads.cpp)
+add_library(blah2MultiIlluminatorRadar STATIC
+  src/process/analysis/MultiIlluminatorRadar.cpp)
+target_include_directories(blah2MultiIlluminatorRadar SYSTEM PRIVATE
+  ${ARMADILLO_INCLUDE_DIRS})
+target_link_libraries(blah2MultiIlluminatorRadar PUBLIC
+  blah2Channelizer blah2ProductionRawIq blah2FixedExecutor)
+
+if(BLAH2_BUILD_BENCHMARKS)
+  add_executable(benchmarkMultiIlluminatorCpu
+    test/benchmark/MultiIlluminatorCpuBenchmark.cpp
+    src/process/ambiguity/Ambiguity.cpp
+    src/process/clutter/WienerHopf.cpp
+    src/process/conditioning/ArrayReferenceSynthesizer.cpp
+    src/process/fusion/Noncoherent.cpp
+    src/process/detection/CfarDetector1D.cpp
+    src/process/detection/Centroid.cpp
+    src/process/detection/Interpolate.cpp
+    src/process/tracker/Tracker.cpp
+    src/process/meta/HammingNumber.cpp
+    src/data/IqData.cpp src/data/Map.cpp src/data/Detection.cpp src/data/Track.cpp)
+  target_include_directories(benchmarkMultiIlluminatorCpu SYSTEM PRIVATE
+    ${ARMADILLO_INCLUDE_DIRS})
+  target_link_libraries(benchmarkMultiIlluminatorCpu PRIVATE
+    blah2MultiIlluminatorRadar blah2RapidJson ${ARMADILLO_LIBRARIES}
+    ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+  add_executable(benchmarkWidebandCpuChannelizer
+    test/benchmark/WidebandCpuChannelizerBenchmark.cpp)
+  target_include_directories(benchmarkWidebandCpuChannelizer SYSTEM PRIVATE
+    ${BLAH2_FFTW3_INCLUDE_DIR})
+  target_link_libraries(benchmarkWidebandCpuChannelizer PRIVATE
+    blah2Channelizer ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY}
+    Threads::Threads)
+endif()
 
 # TODO: Move to separate src/CMakeLists.txt
 add_executable(blah2
@@ -172,6 +223,8 @@ endif()
 
 target_link_libraries(blah2 PRIVATE 
   blah2ProductionRawIq
+  blah2Channelizer
+  blah2MultiIlluminatorRadar
   Threads::Threads
   blah2RapidJson
   asio::asio
@@ -213,6 +266,67 @@ if(BUILD_TESTING)
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
   add_test(NAME productionRawIqParity COMMAND testProductionRawIq)
   set_tests_properties(productionRawIqParity PROPERTIES TIMEOUT 60
+    ENVIRONMENT "VECTORWARP_FFTW_PLAN=estimate;VECTORWARP_CLUTTER_WORKERS=1;OPENBLAS_NUM_THREADS=1")
+  add_executable(testSubbandChannelizer
+    test/unit/process/conditioning/TestSubbandChannelizer.cpp
+    test/unit/process/conditioning/TestIlluminatorChannelizerBank.cpp)
+  target_link_libraries(testSubbandChannelizer PRIVATE
+    blah2Channelizer Catch2::Catch2WithMain)
+  set_target_properties(testSubbandChannelizer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  add_test(NAME subbandChannelizer COMMAND testSubbandChannelizer)
+  add_executable(testFixedExecutor
+    test/unit/process/utility/TestFixedExecutor.cpp)
+  target_link_libraries(testFixedExecutor PRIVATE
+    blah2FixedExecutor Catch2::Catch2WithMain)
+  set_target_properties(testFixedExecutor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  add_test(NAME fixedExecutor COMMAND testFixedExecutor)
+  add_executable(testGpuWidebandChannelizer
+    test/unit/process/ambiguity/TestGpuWidebandChannelizer.cpp
+    src/process/ambiguity/GpuWidebandChannelizer.cpp)
+  target_link_libraries(testGpuWidebandChannelizer PRIVATE
+    blah2Channelizer Catch2::Catch2WithMain ${BLAH2_FFTW3_LIBRARY})
+  set_target_properties(testGpuWidebandChannelizer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  add_test(NAME gpuWidebandChannelizerContract
+    COMMAND testGpuWidebandChannelizer)
+  add_executable(mockGpuWidebandWorker
+      test/unit/process/ambiguity/MockGpuWidebandWorker.cpp)
+    target_link_libraries(mockGpuWidebandWorker PRIVATE
+      blah2GpuWidebandProcess)
+    add_executable(testGpuWidebandProcess
+      test/unit/process/ambiguity/TestGpuWidebandProcess.cpp)
+    add_dependencies(testGpuWidebandProcess mockGpuWidebandWorker)
+    target_compile_definitions(testGpuWidebandProcess PRIVATE
+      GPU_WIDEBAND_MOCK="$<TARGET_FILE:mockGpuWidebandWorker>")
+    target_link_libraries(testGpuWidebandProcess PRIVATE
+      blah2GpuWidebandProcess Catch2::Catch2WithMain)
+    add_test(NAME gpuWidebandWorkerProtocol COMMAND testGpuWidebandProcess)
+  set_tests_properties(gpuWidebandWorkerProtocol PROPERTIES TIMEOUT 10)
+  add_executable(testMultiIlluminatorRadar
+    test/unit/process/analysis/TestMultiIlluminatorRadar.cpp
+    src/data/meta/Timing.cpp
+    src/process/ambiguity/Ambiguity.cpp
+    src/process/clutter/WienerHopf.cpp
+    src/process/conditioning/ArrayReferenceSynthesizer.cpp
+    src/process/fusion/Noncoherent.cpp
+    src/process/detection/CfarDetector1D.cpp
+    src/process/detection/Centroid.cpp
+    src/process/detection/Interpolate.cpp
+    src/process/tracker/Tracker.cpp
+    src/process/meta/HammingNumber.cpp
+    src/data/IqData.cpp src/data/Map.cpp src/data/Detection.cpp src/data/Track.cpp)
+  target_include_directories(testMultiIlluminatorRadar SYSTEM PRIVATE
+    ${ARMADILLO_INCLUDE_DIRS})
+  target_link_libraries(testMultiIlluminatorRadar PRIVATE
+    blah2MultiIlluminatorRadar Catch2::Catch2WithMain blah2RapidJson
+    ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
+    ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+  set_target_properties(testMultiIlluminatorRadar PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  add_test(NAME multiIlluminatorRadar COMMAND testMultiIlluminatorRadar)
+  set_tests_properties(multiIlluminatorRadar PROPERTIES TIMEOUT 60
     ENVIRONMENT "VECTORWARP_FFTW_PLAN=estimate;VECTORWARP_CLUTTER_WORKERS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME detectionManifoldNativeGrid
     COMMAND ${Python3_EXECUTABLE}

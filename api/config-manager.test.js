@@ -35,6 +35,81 @@ incompleteEnabledTracker.network.tracker_forward.enabled = true;
 assert.equal(validateConfig(incompleteEnabledTracker).valid, false,
   'enabling the tracker feed requires an explicit endpoint');
 
+const twoFmIlluminators = clone(krakenProfile);
+twoFmIlluminators.capture.fc = 90900000;
+twoFmIlluminators.process.multi_illuminator = {enabled: true, illuminators: [
+  {id: 'fm-90.5', enabled: true, standard: 'FM', frequency_hz: 90500000,
+    occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+    filter_taps_per_phase: 24,
+    transmitter: {name: 'FM 90.5', latitude: 40.44, longitude: -80.0, altitude: 300}},
+  {id: 'fm-91.3', enabled: true, standard: 'FM', frequency_hz: 91300000,
+    occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+    filter_taps_per_phase: 24,
+    transmitter: {name: 'FM 91.3', latitude: 40.45, longitude: -80.01, altitude: 310}}
+]};
+assert.equal(validateConfig(twoFmIlluminators).valid, true,
+  'one Kraken passband accepts two isolated FM illuminators');
+const adaptiveMultiIlluminator = clone(twoFmIlluminators);
+adaptiveMultiIlluminator.process.tracker.initiate.acceleration_model = 'adaptive_gate';
+assert.equal(validateConfig(adaptiveMultiIlluminator).valid, true,
+  'multi-illuminator CPU tracking supports adaptive-gate initiation');
+const dormantFmIlluminators = clone(twoFmIlluminators);
+dormantFmIlluminators.process.multi_illuminator.enabled = false;
+dormantFmIlluminators.capture.fc = 509000000;
+assert.equal(validateConfig(dormantFmIlluminators).valid, true,
+  'saved dormant lanes do not invalidate a different active passband');
+const dormantLane = clone(twoFmIlluminators);
+dormantLane.process.multi_illuminator.illuminators[1].enabled = false;
+dormantLane.process.multi_illuminator.illuminators[1].frequency_hz = 93000000;
+assert.equal(validateConfig(dormantLane).valid, true,
+  'a disabled lane may remain saved outside the active passband');
+for (const mutate of [
+  value => { value.process.multi_illuminator.illuminators[1].id = 'fm-90.5'; },
+  value => { value.process.multi_illuminator.illuminators[1].frequency_hz = 90500000; },
+  value => { value.process.multi_illuminator.illuminators[1].frequency_hz = 93000000; },
+  value => { value.process.multi_illuminator.illuminators[1].output_sample_rate_hz = 280000; },
+  value => { value.process.multi_illuminator.illuminators[1].occupied_bandwidth_hz = 300000; },
+  value => { value.process.multi_illuminator.illuminators.forEach(item => { item.enabled = false; }); },
+  value => { value.process.multi_illuminator.illuminators[1].transmitter.latitude = 91; }
+]) {
+  const invalid = clone(twoFmIlluminators);
+  mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    'multi-illuminator configuration must fail closed');
+}
+
+for (const [field, mutate] of [
+  ['coherent fusion', value => { value.process.surveillance_fusion.mode = 'coherent_beam_bank'; }],
+  ['detection manifold automation', value => {
+    value.process.surveillance_fusion.detection_manifold_automation.enabled = true;
+  }],
+  ['multi-CPI integration', value => { value.process.detection.integration_cpis = 2; }],
+  ['integration motion bins', value => {
+    value.process.detection.integration_cpis = 2;
+    value.process.detection.integration_motion_bins = 1;
+  }],
+  ['track-before-detect', value => { value.process.detection.track_before_detect.enable = true; }],
+  ['beam tolerance', value => { value.process.tracker.beam_tolerance = 1; }],
+  ['GPU tracker capacity', value => { value.process.tracker.gpu_capacity = 1024; }],
+  ['stationary clutter suppression', value => {
+    value.process.tracker.initiate.stationary_clutter = {enable: true, persistence_cpis: 4};
+  }],
+  ['track-guided shadow', value => { value.process.tracker.track_guided_shadow.enable = true; }],
+  ['track-guided promotion', value => { value.process.tracker.track_guided_shadow.promote = true; }],
+  ['bearing', value => { value.process.bearing.enable = true; }],
+  ['frequency-resolved bearing shadow', value => {
+    value.process.bearing.frequency_resolved_shadow.enabled = 'auto';
+  }],
+  ['bearing manifold recorder', value => {
+    value.process.bearing.manifold_recorder.enabled = 'on';
+  }]
+]) {
+  const invalid = clone(twoFmIlluminators);
+  mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    `multi-illuminator mode must reject unsupported ${field}`);
+}
+
 const sixChannel = load('config-kraken.yml');
 sixChannel.capture.device.channel_count = 6;
 sixChannel.capture.device.surveillance_channels = [0, 1, 2, 3, 4, 5];
@@ -178,7 +253,7 @@ assert.equal(validateConfig(adaptiveTracker).valid, true,
 const nonresidentAdaptiveTracker = clone(adaptiveTracker);
 nonresidentAdaptiveTracker.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentAdaptiveTracker).valid, false,
-  'adaptive tracker initiation requires resident acceleration');
+  'the remaining beam-bank features still require resident acceleration');
 const stationaryClutterTracker = clone(adaptiveTracker);
 stationaryClutterTracker.process.tracker.initiate.stationary_clutter = {
   enable: true, persistence_cpis: 8, max_doppler_hz: 15};

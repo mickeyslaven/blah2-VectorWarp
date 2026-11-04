@@ -260,7 +260,11 @@ const char* associateBody=R"glsl(
 shared double distances[128];shared uint identities[128];
 void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
  for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousSpatial=latestSpatial(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
-  bool adaptiveTentative=adaptiveGate()&&state==0u;
+  // Record word 12 uses its low 16 bits for the public ID. Its high bit
+  // latches the first real association, so a later miss cannot reopen the
+  // broad acceleration-estimation gate.
+  bool adaptiveTentative=adaptiveGate()&&state<2u&&
+    (src(r+12u)&0x80000000u)==0u;
   precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi,span=0.0LF,time=md(50u),gateTime=time,q=0.0LF;
   if(adaptiveTentative){gateTime=time*double(src(r+10u)+1u);span=md(48u)*double(m[37]);
    q=md(46u)*0.5LF*gateTime*gateTime/md(44u);delayMargin+=q*span;dopplerMargin+=span*gateTime;}
@@ -375,6 +379,7 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  uint beam=match==0xffffffffu?src(previousNewest+7u):detectionSpatial(match);
  for(uint k=0u;k<6u;++k){uint value=match==0xffffffffu?(k<4u?m[w+k]:0u):s[m[5]+8u*match+k];put(target+k,value);put(at+k,value);}
  put(at+6u,state);put(at+7u,beam);put(target+6u,m[w+8u]);put(target+7u,m[w+9u]);
+ if(match!=0xffffffffu)put(target+12u,src(source+12u)|0x80000000u);
  uvec2 age=plusOne(pairS(source+8u)),inactive=associated?uvec2(0u):plusOne(pairS(source+10u));
  put(target+8u,age.x);put(target+9u,age.y);put(target+10u,inactive.x);put(target+11u,inactive.y);
  uint display=min(length,100u),start=(head+length-display)%h;put(target+13u,head|(length<<8u)|(start<<16u)|(display<<24u));
@@ -413,7 +418,8 @@ void main(){uint i=indexOf();if(m[0]!=0u)return;uint count=checkedWord(4u);
   if(m[2]==2u&&(checkedWord(6u)!=m[16]||checkedWord(7u)!=m[17]||checkedWord(12u)!=m[10]||checkedWord(13u)!=m[11]||checkedWord(14u)!=m[12]||checkedWord(15u)!=m[13]))reject(311u);
  }
  if(i>=count)return;uint r=record(i),ringBits=checkedWord(r+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,start=(ringBits>>16u)&255u,display=ringBits>>24u,state=checkedWord(r+14u),h=historyCapacity();
- if(checkedWord(r+12u)>=65535u||head>=h||length==0u||length>h||(length<h&&head!=0u)||
+ uint identity=checkedWord(r+12u);
+ if((identity&0x7fff0000u)!=0u||(identity&65535u)>=65535u||head>=h||length==0u||length>h||(length<h&&head!=0u)||
     display!=min(length,100u)||start!=(head+length-display)%h||state>3u){reject(312u);return;}
  uvec2 inactive=uvec2(checkedWord(r+10u),checkedWord(r+11u));
  if(greater64(inactive,uvec2(m[41],0u))||((state==1u||state==2u)&&any(notEqual(inactive,uvec2(0u))))||(state==3u&&all(equal(inactive,uvec2(0u))))){reject(313u);return;}

@@ -41,8 +41,12 @@
     }
   } else if (kind === 'signal') {
     if (view === 'maxhold') {
-      window.urlMap = '/stash/map';
-      load('../../js/plot_map.js?v=consolidated-pages-1');
+      // Multi-lane frames do not flow through the legacy primary-only stash.
+      // Build the decaying hold in this browser from the explicitly selected
+      // lane's live map instead.
+      window.urlMap = '/api/map';
+      window.vectorwarpMapMode = 'maxhold';
+      load('../../js/plot_map.js?v=multi-illuminator-2');
     } else load('../../js/plot_spectrum.js?v=consolidated-pages-1');
   } else if (kind === 'detection') {
     const variables = {
@@ -51,6 +55,7 @@
       'range-doppler': ['Bistatic Range (km)', 'Bistatic Doppler (Hz)', 'delay', 'doppler']
     }[view];
     [window.xTitle, window.yTitle, window.xVariable, window.yVariable] = variables;
-    load('../../js/plot_detection.js?v=consolidated-pages-1');
+    window.vectorwarpDetectionHistory = view !== 'range-doppler';
+    load('../../js/plot_detection.js?v=multi-illuminator-2');
   }
 }());
