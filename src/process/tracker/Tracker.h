@@ -47,6 +47,10 @@ private:
   /// @brief Acceleration values to initiate track (Hz/s).
   std::vector<double> accInit;
 
+  /// @brief Start one zero-acceleration candidate and estimate acceleration
+  /// from associations instead of cloning every acceleration hypothesis.
+  bool adaptiveGate;
+
   /// @brief Index of detections already updated.
   std::vector<bool> doNotInitiate;
 
@@ -68,7 +72,7 @@ public:
   /// @return The object.
   Tracker(uint32_t m, uint32_t n, uint32_t nDelete, double cpi,
     double maxAccInit, double rangeRes, double lambda,
-    double minInitiationSnr = -100);
+    double minInitiationSnr = -100, bool adaptiveGate = false);
 
   /// @brief Destructor.
   /// @return Void.

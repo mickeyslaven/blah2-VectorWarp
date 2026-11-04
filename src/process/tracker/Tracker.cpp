@@ -7,7 +7,7 @@
 // constructor
 Tracker::Tracker(uint32_t _m, uint32_t _n, uint32_t _nDelete, 
   double _cpi, double _maxAccInit, double _rangeRes, double _lambda,
-  double _minInitiationSnr)
+  double _minInitiationSnr, bool _adaptiveGate)
 {
   if (_m == 0 || _m > _n || _n > 255 || !std::isfinite(_cpi) || _cpi <= 0 ||
       !std::isfinite(_rangeRes) || _rangeRes <= 0 || !std::isfinite(_lambda) ||
@@ -21,6 +21,7 @@ Tracker::Tracker(uint32_t _m, uint32_t _n, uint32_t _nDelete,
   cpi = _cpi;
   maxAccInit = _maxAccInit;
   minInitiationSnr = _minInitiationSnr;
+  adaptiveGate = _adaptiveGate;
   timestamp = 0;
   rangeRes = _rangeRes;
   lambda = _lambda;
@@ -29,7 +30,7 @@ Tracker::Tracker(uint32_t _m, uint32_t _n, uint32_t _nDelete,
   const double accelerationBins = std::floor(maxAccInit / resolutionAcc);
   if (accelerationBins > 65535)
     throw std::invalid_argument("Too many initial tracking acceleration hypotheses");
-  const int nAcc = static_cast<int>(accelerationBins);
+  const int nAcc = adaptiveGate ? 0 : static_cast<int>(accelerationBins);
   for (int i = 0; i < 2*nAcc+1; i++)
   {
     accInit.push_back(resolutionAcc*(i-nAcc));
@@ -86,6 +87,12 @@ void Tracker::update(Detection *detection, uint64_t current)
     Detection prediction = predict(detectionCurrent, acc, T);
     const double delayPredict = prediction.get_delay().front();
     const double dopplerPredict = prediction.get_doppler().front();
+    const double delayGate = adaptiveGate ? 2.0 : 1.0;
+    // A newly initiated adaptive track has no acceleration estimate yet.
+    // Include the configured acceleration envelope plus one Doppler bin so a
+    // real maneuver can supply the second observation that estimates it.
+    const double dopplerGate = adaptiveGate ?
+      maxAccInit * T + 1 / cpi : 1 / cpi;
     size_t match = detection->get_nDetections();
     double bestDistance = std::numeric_limits<double>::infinity();
     
@@ -93,10 +100,10 @@ void Tracker::update(Detection *detection, uint64_t current)
     for (size_t j = 0; j < detection->get_nDetections(); j++)
     {
       // associate detections
-      if (!doNotInitiate[j] && delay[j] > delayPredict-1 &&
-        delay[j] < delayPredict+1 &&
-        doppler[j] > dopplerPredict-1*(1/cpi) &&
-        doppler[j] < dopplerPredict+1*(1/cpi))
+      if (!doNotInitiate[j] && delay[j] > delayPredict-delayGate &&
+        delay[j] < delayPredict+delayGate &&
+        doppler[j] > dopplerPredict-dopplerGate &&
+        doppler[j] < dopplerPredict+dopplerGate)
       {
         const double deltaDelay = delay[j] - delayPredict;
         const double deltaDoppler = (doppler[j] - dopplerPredict) * cpi;

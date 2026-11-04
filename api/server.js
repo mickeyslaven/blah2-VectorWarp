@@ -37,7 +37,8 @@ const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
-const {createEvidenceStatisticsLanes} = require('./evidence-statistics.js');
+const {createEvidenceStatisticsLanes, provisionalTimingFrame} =
+  require('./evidence-statistics.js');
 const {MultiIlluminatorEvidence} = require('./multi-illuminator-evidence.js');
 const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
@@ -139,7 +140,8 @@ function recordingReplayProfile() {
       array_geometry: clone(device.array_geometry) || null},
     process: processProfile,
     multi_illuminator: {enabled: config.process?.multi_illuminator?.enabled === true,
-      illuminators, timeline_semantics: 'per-illuminator-truth-and-products-v2'},
+      illuminators, timeline_semantics: 'per-illuminator-truth-derived-products-v3',
+      map_storage: 'regenerated-from-full-passband-iq'},
     location: clone(config.location) || null};
 }
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
@@ -437,16 +439,23 @@ let captureRevision = 0;
 let replayControl = {paused: false, seekSample: 0, revision: 0};
 let replaySessionFile = '';
 let adsbSnapshotPending = false;
+const recordingChannels = () => Number(config.capture?.device?.channel_count) ||
+  (config.capture?.device?.type === 'Kraken' ? 5 : 2);
+const recordingWriteBytesPerSecond = () =>
+  Number(config.capture?.fs || 0) * recordingChannels() *
+    (['Kraken', 'HackRF'].includes(config.capture?.device?.type) ? 2 : 4);
+const recordingDiskStatus = () => recordingLibrary.canRecord({
+  writeBytesPerSecond: recordingWriteBytesPerSecond(), safetySeconds: 15});
 // Keep the safety check cheap and independent of browser activity. A manual
 // recording is asked to stop before it can consume the configured reserve;
 // automatic clips are separately rejected before admission.
 setInterval(async () => {
-  let disk = recordingLibrary.canRecord();
+  let disk = recordingDiskStatus();
   if (!disk.allowed && recordingLibrary.retention().lowSpacePolicy === 'delete_oldest') {
     const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
     try { await recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''}); }
     catch (error) { console.error(`Low-space clip cleanup failed: ${error.message}`); }
-    disk = recordingLibrary.canRecord();
+    disk = recordingDiskStatus();
   }
   if (capture && !disk.allowed) {
     capture = false; capturePaused = false; captureRevision += 1; captureStartedAt = null;
@@ -1189,7 +1198,10 @@ app.post('/api/processor/status', (req, res) => {
     if (req.body?.receiverHealth !== undefined) processorStatus = null;
     return res.status(422).json({ok: false, errors: checked.errors});
   }
-  const previous = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  // Freshness controls what the UI may claim, not lifecycle bookkeeping.  A
+  // processor restart can outlast the freshness window; retain its last state
+  // so the first new non-recording status finalizes the old timeline.
+  const previous = processorStatus?.value || null;
   const now = Date.now();
   processorStatus = {value: checked.value, receivedAt: now};
   if (checked.value.input === 'replay' && checked.value.file !== replaySessionFile) {
@@ -1897,7 +1909,7 @@ app.get('/capture/status', (req, res) => {
     capture = false;
     captureStartedAt = null;
   }
-  const disk = recordingLibrary.canRecord();
+  const disk = recordingDiskStatus();
   const status = {
     supported: !replay,
     available: !replay && disk.allowed && (capture ? acknowledgement !== null : receiving),
@@ -1934,7 +1946,8 @@ app.post('/capture/toggle', async (req, res, next) => {
     return res.status(409).json({error: 'Recording is unavailable while replay is active.'});
   if (!capture) {
     let disk;
-    try { disk = await recordingLibrary.prepareForRecording({activeFile: processor?.recordingFile || ''}); }
+    try { disk = await recordingLibrary.prepareForRecording({activeFile: processor?.recordingFile || '',
+      writeBytesPerSecond: recordingWriteBytesPerSecond(), safetySeconds: 15}); }
     catch (error) { return next(error); }
     if (!disk.allowed)
       return res.status(507).json({error: 'Recording would cross the configured free-disk reserve. Clean up recordings or change the retention settings.'});
@@ -1959,7 +1972,8 @@ app.post('/capture/pause', async (req, res, next) => {
   if (!pause && !capturePaused)
     return res.status(409).json({error: 'No paused manual recording is available to resume.'});
   if (!pause) {
-    const disk = await recordingLibrary.prepareForRecording({});
+    const disk = await recordingLibrary.prepareForRecording({
+      writeBytesPerSecond: recordingWriteBytesPerSecond(), safetySeconds: 15});
     if (!disk.allowed)
       return res.status(507).json({error: 'Recording cannot resume without crossing the free-disk reserve.'});
   }
@@ -2218,7 +2232,7 @@ const server_timing = net.createServer(socket => {
     presentationHistories.timing.add(frame);
     oprsEventRecorder.acceptTiming(frame);
     evidenceStatistics.acceptTiming(frame);
-    provisionalEvidenceStatistics.acceptTiming(frame);
+    provisionalEvidenceStatistics.acceptTiming(provisionalTimingFrame(frame));
     lastTimingAt = Date.now();
     stash_timing.update_data(timing);
     serviceErrors.delete('timing');
@@ -2250,7 +2264,7 @@ const server_iqdata = jsonStreamServer('iqdata', frame => {
 listenData(server_iqdata, 'iqdata');
 gainMonitor.start();
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
   trackerPublication.close();
@@ -2260,5 +2274,7 @@ process.on('SIGTERM', () => {
   oprsEventRecorder.close();
   bearingDiagnostic.close();
   gainMonitor.stop();
+  try { await recordingTimeline.stop(null, Date.now()); }
+  catch (error) { console.error(`Manual recording ADS-B timeline failed: ${error.message}`); }
   process.exit(0);
 });

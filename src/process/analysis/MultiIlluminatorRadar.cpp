@@ -1,4 +1,5 @@
 #include "process/analysis/MultiIlluminatorRadar.h"
+#include "process/conditioning/FmReferenceQualityFilter.h"
 #include "process/utility/ProcessingThreads.h"
 
 #include <algorithm>
@@ -34,12 +35,13 @@ void validateAdvancedFeatures(const AdvancedFeatureConfig& config)
   if (config.trackerBeamToleranceConfigured)
     throw std::invalid_argument(
       "Multi-illuminator mode does not support tracker beam_tolerance");
-  if (config.trackerGpuCapacityConfigured)
+  // Each lane currently owns a CPU tracker.  A gpu_capacity inherited from a
+  // single-illuminator profile therefore has no effect here, but it must not
+  // make an otherwise valid multi-illuminator configuration unstartable.
+  if (config.trackerAccelerationModel != "hypothesis_bank" &&
+      config.trackerAccelerationModel != "adaptive_gate")
     throw std::invalid_argument(
-      "Multi-illuminator lane trackers are CPU based; tracker gpu_capacity is not applicable");
-  if (config.trackerAccelerationModel != "hypothesis_bank")
-    throw std::invalid_argument(
-      "Multi-illuminator mode supports only hypothesis_bank tracker initiation");
+      "Multi-illuminator tracker initiation mode is invalid");
   if (config.stationaryClutter)
     throw std::invalid_argument(
       "Multi-illuminator mode does not support stationary-clutter initiation suppression");
@@ -62,6 +64,7 @@ struct MultiIlluminatorRadar::Context
   bool positioned = false;
   uint64_t pendingFirstInputSample = 0;
   IqData reference;
+  IqData conditionedReference;
   std::vector<std::unique_ptr<IqData>> ownedChannels;
   std::vector<IqData*> channels;
   std::vector<IqData*> referenceChannels;
@@ -75,6 +78,7 @@ struct MultiIlluminatorRadar::Context
   Interpolate interpolate{true, true};
   Tracker tracker;
   bool directFloatBorrowed = false;
+  std::unique_ptr<conditioning::FmReferenceQualityFilter> fmReferenceFilter;
 
   Context(uint32_t captureRateHz, std::size_t channelCount,
     channelizer::IlluminatorDefinition value, RadarConfig radar)
@@ -82,7 +86,7 @@ struct MultiIlluminatorRadar::Context
       samples(uint32_t(std::llround(radar.cpiSeconds * definition.outputRateHz))),
       decimation(captureRateHz / definition.outputRateHz), config(std::move(radar)),
       pending(channelCount),
-      reference(samples),
+      reference(samples), conditionedReference(samples),
       stages({config.clutterDelayMin, config.clutterDelayMax, samples,
         config.surveillanceChannels.size(), config.workers,
         config.borrowedClutter.value_or(!config.arrayReference &&
@@ -95,7 +99,8 @@ struct MultiIlluminatorRadar::Context
       tracker(config.trackerM, config.trackerN, config.trackerDelete,
         config.cpiSeconds, config.trackerMaximumAcceleration,
         speedOfLight / definition.outputRateHz,
-        speedOfLight / definition.frequencyHz, config.trackerMinimumSnrDb)
+        speedOfLight / definition.frequencyHz, config.trackerMinimumSnrDb,
+        config.advanced.trackerAccelerationModel == "adaptive_gate")
   {
     if (!samples || samples < 2000 || captureRateHz % definition.outputRateHz)
       throw std::invalid_argument("Multi-illuminator CPI or sample-rate ratio is invalid");
@@ -122,7 +127,10 @@ struct MultiIlluminatorRadar::Context
     else if (config.referenceChannel >= channelCount ||
         surveillanceSeen[config.referenceChannel])
       throw std::invalid_argument("Multi-illuminator dedicated reference topology is invalid");
-    directFloatBorrowed = !config.arrayReference &&
+    if (definition.standard == "FM")
+      fmReferenceFilter = std::make_unique<
+        conditioning::FmReferenceQualityFilter>(definition.outputRateHz);
+    directFloatBorrowed = !fmReferenceFilter && !config.arrayReference &&
       config.surveillanceChannels.size() == 1 &&
       config.borrowedClutter.value_or(true);
 
@@ -156,7 +164,8 @@ struct MultiIlluminatorRadar::Context
       config.trackerDelete, config.cpiSeconds,
       config.trackerMaximumAcceleration,
       speedOfLight / definition.outputRateHz,
-      speedOfLight / definition.frequencyHz, config.trackerMinimumSnrDb);
+      speedOfLight / definition.frequencyHz, config.trackerMinimumSnrDb,
+      config.advanced.trackerAccelerationModel == "adaptive_gate");
   }
 
   std::vector<RadarFrame> consume(
@@ -259,6 +268,11 @@ struct MultiIlluminatorRadar::Context
       stages.reference().process_into(referenceChannels, reference);
     else
       selectedReference = ownedChannels[config.referenceChannel].get();
+    if (fmReferenceFilter)
+    {
+      fmReferenceFilter->process(*selectedReference, conditionedReference);
+      selectedReference = &conditionedReference;
+    }
     if (!stages.clutter(*selectedReference, channels))
       throw std::runtime_error("Multi-illuminator clutter reference was rejected");
     stages.ambiguity(*selectedReference, channels, ambiguity, false);

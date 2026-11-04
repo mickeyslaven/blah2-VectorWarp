@@ -199,6 +199,24 @@ try
     std::cout << blah2::receiver_module_status_json() << '\n';
     return 0;
   }
+  // Package construction uses this hardware-free report to prove that the
+  // processor and its optional GPU modules were produced by the same build.
+  if (argc == 2 && std::string(argv[1]) == "--processing-capabilities") {
+    std::cout << "{\"schema\":1,\"residentGpu\":"
+#ifdef VECTORWARP_RESIDENT_GPU
+              << "true"
+#else
+              << "false"
+#endif
+              << ",\"widebandGpu\":"
+#ifdef VECTORWARP_WIDEBAND_GPU
+              << "true"
+#else
+              << "false"
+#endif
+              << "}\n";
+    return 0;
+  }
   // input handling
   signal(SIGTERM, signal_callback_handler);
   signal(SIGINT, signal_callback_handler);
@@ -256,7 +274,10 @@ try
   {
     auto multi = tree["process"]["multi_illuminator"];
     if (multi.has_child("enabled")) multi["enabled"] >> multiIlluminatorEnabled;
-    if (multi.has_child("illuminators"))
+    // Saved lane definitions are dormant while multi-illuminator mode is
+    // disabled.  Do not validate them against a temporary single-lane tune;
+    // otherwise switching modes can make a valid direct receiver unstartable.
+    if (multiIlluminatorEnabled && multi.has_child("illuminators"))
     {
       std::set<std::string> ids;
       std::set<uint64_t> frequencies;
@@ -267,6 +288,7 @@ try
         if (!enabled) continue;
         blah2::channelizer::IlluminatorDefinition definition;
         item["id"] >> definition.id;
+        item["standard"] >> definition.standard;
         item["frequency_hz"] >> definition.frequencyHz;
         item["occupied_bandwidth_hz"] >> definition.occupiedBandwidthHz;
         item["output_sample_rate_hz"] >> definition.outputRateHz;
@@ -276,6 +298,9 @@ try
               std::regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) ||
             !ids.insert(definition.id).second ||
             !frequencies.insert(definition.frequencyHz).second ||
+            (definition.standard != "FM" && definition.standard != "DAB" &&
+              definition.standard != "ATSC" &&
+              definition.standard != "DVB-T/T2") ||
             !definition.frequencyHz || !definition.outputRateHz ||
             !definition.occupiedBandwidthHz || definition.tapsPerPhase < 4 ||
             definition.tapsPerPhase > 128 || fs % definition.outputRateHz ||
@@ -1060,8 +1085,35 @@ try
       echo["target_azimuth_deg_array"] >> targetAzimuthDeg;
     echoConfig.targetAzimuthRad = targetAzimuthDeg * std::acos(-1.0) / 180.0;
   }
+  // Noncoherent replay still needs one injected signal per physical channel,
+  // but it deliberately does not construct the coherent-fusion geometry.
+  // Load the physical array here as well so an injected echo is not copied
+  // identically into the array reference and cancelled as direct-path energy.
+  auto echoPositions = coherentPositions;
+  if (echoConfig.enabled && echoPositions.empty())
+  {
+    echoPositions.resize(captureChannelCount);
+    if (tree["capture"]["device"].has_child("array_geometry") &&
+        tree["capture"]["device"]["array_geometry"].has_child("elements"))
+      for (auto element : tree["capture"]["device"]["array_geometry"]["elements"].children())
+      {
+        uint32_t channel = std::numeric_limits<uint32_t>::max();
+        if (!element.has_child("daq_channel") ||
+            !element.has_child("position")) continue;
+        element["daq_channel"] >> channel;
+        if (channel >= captureChannelCount) continue;
+        std::size_t coordinate = 0;
+        for (auto value : element["position"].children())
+        {
+          if (coordinate >= echoPositions[channel].size()) break;
+          value >> echoPositions[channel][coordinate++];
+        }
+        if (coordinate != echoPositions[channel].size())
+          echoPositions[channel] = {};
+      }
+  }
   blah2::analysis::ReplayEchoInjector echoInjector(echoConfig, fs, fc,
-    directPathAzimuthRad, coherentPositions, state);
+    directPathAzimuthRad, std::move(echoPositions), state);
 
   // set up process detection
   double pfa, minDoppler;
@@ -1222,7 +1274,7 @@ try
   lambda = (double)Constants::c/fc;
   Tracker *tracker = new Tracker(m, n, nDelete,
     ambiguity.front()->get_cpi(), maxAcc, rangeRes, lambda,
-    trackerMinInitiationSnrDb);
+    trackerMinInitiationSnrDb, trackerAccelerationModel == "adaptive_gate");
 
   // set up process spectrum analyser
   double spectrumBandwidth = 2000;
@@ -1340,6 +1392,7 @@ try
   std::unique_ptr<blah2::utility::FixedExecutor> multiSerializationExecutor;
   std::unique_ptr<blah2::utility::FixedExecutor> multiGpuSubmissionExecutor;
   std::unique_ptr<blah2::wideband_gpu::Backend> multiGpuChannelizer;
+  std::vector<std::vector<std::complex<float>>> multiGpuStagingInput;
   std::vector<double> multiGroupDelays;
   bool widebandGpuRequested = false;
   bool multiGpuQualified = false;
@@ -1397,6 +1450,8 @@ try
             std::move(taps)});}
         multiGpuChannelizer=blah2::wideband_gpu::createProcess(gpuConfig,
           gpuDevice?gpuDevice:"auto");
+        multiGpuStagingInput.assign(captureChannelCount,
+          std::vector<std::complex<float>>(nSamples));
         std::cout<<"[MultiIlluminator] channelizer=vulkan-worker device="
           <<multiGpuChannelizer->deviceName()<<"\n";
       } catch(const std::exception& error) {
@@ -1689,7 +1744,8 @@ try
             }
             delete tracker;
             tracker = new Tracker(m, n, nDelete, ambiguity.front()->get_cpi(),
-              maxAcc, rangeRes, lambda, trackerMinInitiationSnrDb);
+              maxAcc, rangeRes, lambda, trackerMinInitiationSnrDb,
+              trackerAccelerationModel == "adaptive_gate");
             if (multiChannelizer) multiChannelizer->reset();
             if (multiGpuChannelizer) multiGpuChannelizer->reset();
             if (multiRadar) multiRadar->reset();
@@ -1697,7 +1753,11 @@ try
             multiPipelineDelayed = multiGpuChannelizer &&
               multiGpuChannelizer->supportsSplitFrame();
             multiPipelineState.input_epoch_reset();
-            if (multiGpuChannelizer) multiGpuQualified = false;
+            // A capture gap invalidates FIR/radar history, not the already
+            // completed device/geometry parity proof. Requalifying after the
+            // expected expensive first-block oracle can itself cause another
+            // gap and otherwise trap startup in an endless qualification
+            // loop. Runtime GPU errors still clear the backend and fail over.
             multiQualificationFatal.reset();
             multiFallbackInputSample = 0;
           }
@@ -1722,6 +1782,19 @@ try
             channelizerInput.reserve(captureData.size());
             for (const auto& channel : captureData)
               channelizerInput.push_back(&channel->view_data());
+            if(multiGpuChannelizer){
+              if(multiGpuStagingInput.size()!=channelizerInput.size())
+                throw std::runtime_error("GPU staging channel count changed");
+              for(std::size_t channel=0;channel<channelizerInput.size();++channel){
+                if(channelizerInput[channel]->size()<nSamples)
+                  throw std::runtime_error(
+                    "GPU capture is shorter than one CPI");
+                auto& owned=multiGpuStagingInput[channel];
+                for(std::size_t sample=0;sample<nSamples;++sample)
+                  owned[sample]=std::complex<float>(
+                    (*channelizerInput[channel])[sample]);
+              }
+            }
             const uint64_t firstInputSample = captureSamplePositionAvailable ?
               captureFirstEpochSample : multiFallbackInputSample;
             multiFallbackInputSample = firstInputSample + nSamples;
@@ -1821,15 +1894,32 @@ try
               // once, then fails without consuming another capture on CPU.
             }else if(multiGpuChannelizer&&multiGpuChannelizer->supportsSplitFrame()){
               multiPipelineDelayed=true;
-              const auto submittedInput=channelizerInput;
-              splitSubmission=multiGpuSubmissionExecutor->submit(
-                [&,submittedInput,firstInputSample]{multiGpuChannelizer->beginDeques(submittedInput,firstInputSample);});
-              splitScheduled=true;
+              // Capture owns these deques and may recycle them as soon as the
+              // processing thread advances. Stage them into the isolated GPU
+              // shared buffer before doing prior-frame radar work; only the
+              // GPU execution remains in flight. Background staging borrowed
+              // unstable deques and could stall or corrupt a live frame.
+              splitBegan=blah2::wideband_gpu::attemptWithAutoFallback(
+                accelerationMode=="auto",
+                [&]{multiGpuChannelizer->begin(
+                  multiGpuStagingInput,firstInputSample);},
+                [&](const std::exception& error){
+                  runtimeFallback("begin",error);
+                });
+              splitScheduled=splitBegan;
+              if(!splitBegan){
+                const auto cpuStart=PipelineClock::now();
+                auto current=multiChannelizer->process(
+                  channelizerInput,firstInputSample);
+                const double cpuMs=std::chrono::duration<double,std::milli>(
+                  PipelineClock::now()-cpuStart).count();
+                queueCurrent(std::move(current),currentPublication(cpuMs));
+              }
             }else if(multiGpuChannelizer){std::vector<blah2::wideband_gpu::LaneOutput> gpu;bool qualificationFrame=!multiGpuQualified;
-              const bool gpuSucceeded=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{gpu=multiGpuChannelizer->processDeques(channelizerInput,firstInputSample);},[&](const std::exception& error){runtimeFallback("process",error);});
-              std::vector<blah2::channelizer::IlluminatorOutput> current;if(!gpuSucceeded)current=multiChannelizer->process(channelizerInput,firstInputSample);else if(qualificationFrame){const double gpuMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();current=multiChannelizer->process(channelizerInput,firstInputSample);qualifyGpu(current,gpu,gpuMs);}else current=convertGpu(std::move(gpu));const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();queueCurrent(std::move(current),currentPublication(channelizerMs,qualificationFrame));
+              const bool gpuSucceeded=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{gpu=multiGpuChannelizer->process(multiGpuStagingInput,firstInputSample);},[&](const std::exception& error){runtimeFallback("process",error);});
+              std::vector<blah2::channelizer::IlluminatorOutput> current;if(!gpuSucceeded)current=multiChannelizer->process(channelizerInput,firstInputSample);else if(qualificationFrame){const double gpuMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();current=multiChannelizer->process(multiGpuStagingInput,firstInputSample);qualifyGpu(current,gpu,gpuMs);}else current=convertGpu(std::move(gpu));const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();queueCurrent(std::move(current),currentPublication(channelizerMs,qualificationFrame));
             }else{auto current=multiChannelizer->process(channelizerInput,firstInputSample);const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();queueCurrent(std::move(current),currentPublication(channelizerMs));}
-            const auto finishCurrent=[&]{if(!splitScheduled||splitFinished)return;splitFinished=true;std::vector<blah2::channelizer::IlluminatorOutput> next;std::vector<blah2::wideband_gpu::LaneOutput> gpu;const bool qualificationFrame=!multiGpuQualified;const bool began=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{splitSubmission.get();splitBegan=true;},[&](const std::exception& error){runtimeFallback("begin",error);});bool success=false;if(began)success=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{gpu=multiGpuChannelizer->finishFrame();},[&](const std::exception& error){runtimeFallback("finish",error);});if(!success)next=multiChannelizer->process(channelizerInput,firstInputSample);else if(qualificationFrame){const double gpuMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();next=multiChannelizer->process(channelizerInput,firstInputSample);qualifyGpu(next,gpu,gpuMs);}else next=convertGpu(std::move(gpu));const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();multiPendingPublication.store(std::move(next),currentPublication(channelizerMs,qualificationFrame));};
+            const auto finishCurrent=[&]{if(!splitScheduled||splitFinished)return;splitFinished=true;std::vector<blah2::channelizer::IlluminatorOutput> next;std::vector<blah2::wideband_gpu::LaneOutput> gpu;const bool qualificationFrame=!multiGpuQualified;bool began=splitBegan;if(!began)began=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{splitSubmission.get();splitBegan=true;},[&](const std::exception& error){runtimeFallback("begin",error);});bool success=false;if(began)success=blah2::wideband_gpu::attemptWithAutoFallback(accelerationMode=="auto",[&]{gpu=multiGpuChannelizer->finishFrame();},[&](const std::exception& error){runtimeFallback("finish",error);});if(!success)next=multiChannelizer->process(channelizerInput,firstInputSample);else if(qualificationFrame){const double gpuMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();next=multiChannelizer->process(multiGpuStagingInput,firstInputSample);qualifyGpu(next,gpu,gpuMs);}else next=convertGpu(std::move(gpu));const double channelizerMs=std::chrono::duration<double,std::milli>(PipelineClock::now()-channelizerStart).count();multiPendingPublication.store(std::move(next),currentPublication(channelizerMs,qualificationFrame));};
             if(!haveChannelized){finishCurrent();
               // Explicit qualification failure publishes its just-computed
               // CPU oracle from this capture before throwing. Do not wait for

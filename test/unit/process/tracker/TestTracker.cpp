@@ -33,6 +33,34 @@ TEST_CASE("Constructor", "[constructor]")
     cpi, maxAccInit, rangeRes, lambda);
 }
 
+TEST_CASE("Adaptive initiation creates one candidate per detection", "[tracker][adaptive]")
+{
+  constexpr double cpi = .5;
+  constexpr double rangeRes = 299792458.0 / 6144000.0;
+  constexpr double lambda = 299792458.0 / 527000000.0;
+  Detection detection(10, 100, 8);
+  Tracker hypotheses(4, 6, 3, cpi, 10, rangeRes, lambda, 5, false);
+  Tracker adaptive(4, 6, 3, cpi, 10, rangeRes, lambda, 5, true);
+  CHECK(hypotheses.process(&detection, 1000)->get_n() == 5);
+  CHECK(adaptive.process(&detection, 1000)->get_n() == 1);
+}
+
+TEST_CASE("Adaptive gate retains a target through its first acceleration update",
+  "[tracker][adaptive]")
+{
+  constexpr double cpi = .5;
+  constexpr double rangeRes = 299792458.0 / 6144000.0;
+  constexpr double lambda = 299792458.0 / 527000000.0;
+  Tracker adaptive(4, 6, 3, cpi, 10, rangeRes, lambda, 5, true);
+  Detection first(10, 100, 8);
+  auto initial = adaptive.process(&first, 1000);
+  REQUIRE(initial->get_n() == 1);
+  Detection accelerated(10 - lambda * 102.5 * cpi / rangeRes, 105, 8);
+  auto associated = adaptive.process(&accelerated, 1500);
+  REQUIRE(associated->get_n() == 1);
+  CHECK(associated->get_state(0) == "ASSOCIATED");
+}
+
 /// @brief Test process for an ACTIVE track.
 TEST_CASE("Process ACTIVE track constant acc", "[process]")
 {

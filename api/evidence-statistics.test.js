@@ -5,7 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates,
-  assignments, delayBand, limits, standardizedComparison, siteKey} = require('./evidence-statistics');
+  assignments, delayBand, limits, standardizedComparison, siteKey,
+  provisionalTimingFrame} = require('./evidence-statistics');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-statistics-'));
 const filename = path.join(directory, 'statistics.json');
@@ -30,6 +31,20 @@ const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'T
   geometry: {bearing_deg_true: 91, elevation_deg: 12, ground_range_km: 9,
     slant_range_km: 10, transmitter_range_km: 20}};
 const source = {async get() { return {abc123: {...prediction, timestamp: clock / 1000}}; }};
+
+const unmappedTiming = {timestamp: clock, captureSamplePositionAvailable: true,
+  eventTime: {source: 'usrp_uhd_device_time', exact: false,
+    estimateAvailable: false, uncertaintyBounded: false}};
+const provisionalTiming = provisionalTimingFrame(unmappedTiming);
+assert.equal(provisionalTiming.eventTime.source, 'radar_host_arrival_estimate');
+assert.equal(provisionalTiming.eventTime.exact, false);
+assert.equal(provisionalTiming.eventTime.estimateAvailable, true);
+assert.equal(unmappedTiming.eventTime.estimateAvailable, false,
+  'provisional normalization must not mutate exact evidence provenance');
+const exactTimingFrame = {...unmappedTiming,
+  eventTime: {source: 'usrp_utc', exact: true, estimateAvailable: true}};
+assert.equal(provisionalTimingFrame(exactTimingFrame), exactTimingFrame,
+  'qualified exact timing must pass through unchanged');
 
 const identityConfig = JSON.parse(JSON.stringify(config));
 identityConfig.capture.device = {type: 'Kraken', channel_count: 5,

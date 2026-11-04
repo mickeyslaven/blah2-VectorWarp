@@ -74,6 +74,7 @@ const DEVICE_PROFILES = [
     sampleRate: 2000000,
     device: {
       type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
+      timing_source: 'internal',
       antenna: ['RX2', 'RX2'], gain: [20, 20]
     }
   },
@@ -457,6 +458,8 @@ function validateConfig(config, baseline = null, options = {}) {
         errors.push('capture.device.address must use unique UHD key=value arguments, such as type=b200 or type=b200,serial=…');
     }
     string(device.subdev, 'capture.device.subdev');
+    if (device.timing_source !== undefined && !['internal', 'gpsdo'].includes(device.timing_source))
+      errors.push('capture.device.timing_source must be internal or gpsdo');
     if (!Array.isArray(device.antenna) || device.antenna.length !== 2)
       errors.push('capture.device.antenna must contain exactly two values');
     if (!Array.isArray(device.gain) || device.gain.length !== 2)
@@ -829,9 +832,6 @@ function validateConfig(config, baseline = null, options = {}) {
       if (!clutter.enable || processConfig.reference_synthesis?.mode !== 'array_eigenbeam')
         errors.push('gpu-resident requires clutter and array_eigenbeam reference synthesis');
     }
-    if (initiate.acceleration_model === 'adaptive_gate' &&
-        performance.acceleration !== 'gpu-resident')
-      errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
     if (stationaryClutter?.enable && performance.acceleration !== 'gpu-resident')
       errors.push('persistent stationary-clutter initiation filtering requires gpu-resident acceleration');
     let trackGuidedShadow = null;
@@ -1232,8 +1232,6 @@ function validateConfig(config, baseline = null, options = {}) {
       unsupported.push('process.tracker.beam_tolerance');
     if (tracker.gpu_capacity !== undefined)
       unsupported.push('process.tracker.gpu_capacity');
-    if ((initiate.acceleration_model ?? 'hypothesis_bank') !== 'hypothesis_bank')
-      unsupported.push('process.tracker.initiate.acceleration_model');
     if (stationary?.enable === true)
       unsupported.push('process.tracker.initiate.stationary_clutter.enable');
     if (guided?.enable === true)

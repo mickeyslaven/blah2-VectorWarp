@@ -9,6 +9,7 @@ capture:
     type: "Usrp"
     address: "type=b200"
     subdev: "A:A A:B"
+    timing_source: "internal"
     antenna: ["RX2", "RX2"]
     gain: [20.0, 20.0]
   replay:
@@ -62,7 +63,7 @@ process:
       N: 6
       maxAcc: 10
       min_snr_db: 5
-      acceleration_model: hypothesis_bank
+      acceleration_model: adaptive_gate
     delete: 3
   bearing:
     enable: false

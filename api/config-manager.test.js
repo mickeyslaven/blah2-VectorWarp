@@ -49,6 +49,10 @@ twoFmIlluminators.process.multi_illuminator = {enabled: true, illuminators: [
 ]};
 assert.equal(validateConfig(twoFmIlluminators).valid, true,
   'one Kraken passband accepts two isolated FM illuminators');
+const adaptiveMultiIlluminator = clone(twoFmIlluminators);
+adaptiveMultiIlluminator.process.tracker.initiate.acceleration_model = 'adaptive_gate';
+assert.equal(validateConfig(adaptiveMultiIlluminator).valid, true,
+  'multi-illuminator CPU tracking supports adaptive-gate initiation');
 for (const mutate of [
   value => { value.process.multi_illuminator.illuminators[1].id = 'fm-90.5'; },
   value => { value.process.multi_illuminator.illuminators[1].frequency_hz = 90500000; },
@@ -77,9 +81,6 @@ for (const [field, mutate] of [
   ['track-before-detect', value => { value.process.detection.track_before_detect.enable = true; }],
   ['beam tolerance', value => { value.process.tracker.beam_tolerance = 1; }],
   ['GPU tracker capacity', value => { value.process.tracker.gpu_capacity = 1024; }],
-  ['adaptive acceleration', value => {
-    value.process.tracker.initiate.acceleration_model = 'adaptive_gate';
-  }],
   ['stationary clutter suppression', value => {
     value.process.tracker.initiate.stationary_clutter = {enable: true, persistence_cpis: 4};
   }],
@@ -242,7 +243,7 @@ assert.equal(validateConfig(adaptiveTracker).valid, true,
 const nonresidentAdaptiveTracker = clone(adaptiveTracker);
 nonresidentAdaptiveTracker.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentAdaptiveTracker).valid, false,
-  'adaptive tracker initiation requires resident acceleration');
+  'the remaining beam-bank features still require resident acceleration');
 const stationaryClutterTracker = clone(adaptiveTracker);
 stationaryClutterTracker.process.tracker.initiate.stationary_clutter = {
   enable: true, persistence_cpis: 8, max_doppler_hz: 15};

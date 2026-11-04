@@ -64,11 +64,12 @@ function fixture(search = '', stored = 'wesa') {
   for (const path of ['process.surveillance_fusion.mode',
     'process.detection.integration_cpis', 'process.detection.track_before_detect.max_cpis',
     'process.tracker.beam_tolerance', 'process.tracker.gpu_capacity',
-    'process.tracker.initiate.acceleration_model',
     'process.tracker.initiate.stationary_clutter.persistence_cpis',
     'process.tracker.track_guided_shadow.max_tracks', 'process.bearing.manifold_file'])
     assert.equal(multiIlluminatorUnsupportedPath(path), true, path);
   assert.equal(multiIlluminatorUnsupportedPath('process.tracker.delete'), false);
+  assert.equal(multiIlluminatorUnsupportedPath(
+    'process.tracker.initiate.acceleration_model'), false);
   assert.equal(multiIlluminatorUnsupportedPath('process.detection.pfa'), false);
   console.log('Persistent multi-illuminator selection, lane geometry/rate, and disabled settings contract passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -303,7 +303,9 @@ try {
   persistGroup('rsp-profile-edit', rspBase, rsp, ['capture.fs','capture.device.type','capture.device.serial']);
   // Explicit resident capacity is optional in legacy files but must persist
   // as a coherent resident-mode edit without changing unrelated settings.
-  const residentBase = clone(fusion); const resident = clone(residentBase);
+  const residentBase = clone(fusion);
+  residentBase.process.tracker.initiate.acceleration_model = 'hypothesis_bank';
+  const resident = clone(residentBase);
   const conservativeTracker = clone(residentBase);
   conservativeTracker.process.tracker.profile = 'conservative';
   conservativeTracker.process.tracker.initiate.min_snr_db = 7;

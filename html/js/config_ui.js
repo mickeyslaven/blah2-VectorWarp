@@ -43,6 +43,7 @@ const CONFIG_META = {
   'capture.device.heimdall.gain_control': ['Gain', 'Automatic per channel or manual'],
   'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
+  'capture.device.timing_source': ['Timing source', 'Internal works without GPS. GPSDO uses the connected GPS antenna.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
   'capture.device.gain': ['Channel gains', 'Gain for each receive channel, in dB.'],
   'capture.device.serial': ['HackRF serial numbers', 'Reference and surveillance device serial numbers'],
@@ -913,7 +914,6 @@ function multiIlluminatorUnsupportedPath(path) {
     path === 'process.detection.track_before_detect' ||
     path.startsWith('process.detection.track_before_detect.') ||
     path === 'process.tracker.beam_tolerance' || path === 'process.tracker.gpu_capacity' ||
-    path === 'process.tracker.initiate.acceleration_model' ||
     path === 'process.tracker.initiate.stationary_clutter' ||
     path.startsWith('process.tracker.initiate.stationary_clutter.') ||
     path === 'process.tracker.track_guided_shadow' ||
@@ -2253,6 +2253,12 @@ async function refreshUpstreamStatus() {
   } finally { upstreamPending = false; }
 }
 
+function receiverUsesUpstreamStatus(receiverType) {
+  // Kraken is managed by the separate Heimdall receiver. Direct receivers
+  // report their own device/API readback in the startup card instead.
+  return receiverType === 'Kraken';
+}
+
 function setRestartProgress(percent, label, state = '') {
   const progress = document.getElementById('config-restart-progress');
   const bar = document.getElementById('config-restart-bar');
@@ -2684,7 +2690,7 @@ function renderEditor() {
         renderReceiverOverload(null, health);
       }
       panel.appendChild(renderReceiverSetup());
-      if (upstream) panel.appendChild(upstream);
+      if (upstream && receiverUsesUpstreamStatus(receiverType)) panel.appendChild(upstream);
     }
     panels.appendChild(panel);
   });
@@ -3464,4 +3470,5 @@ if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
     receiverSpecificProcessPath, multiIlluminatorUnsupportedPath, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
-    receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};
+    receiverSaveDetails, receiverUsesUpstreamStatus, accelerationSummary,
+    CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

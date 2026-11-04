@@ -40,7 +40,7 @@ function setupDefaults() {
         integration_motion_bins: 0,
         track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
       tracker: {enable: true, profile: 'balanced', initiate: {M: 4, N: 6,
-        maxAcc: 10, min_snr_db: 5, acceleration_model: 'hypothesis_bank'},
+        maxAcc: 10, min_snr_db: 5, acceleration_model: 'adaptive_gate'},
         delete: 3,
         track_guided_shadow: {enable: false, max_tracks: 64}},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,

@@ -67,7 +67,7 @@ process:
       N: 6
       maxAcc: 10
       min_snr_db: 5
-      acceleration_model: hypothesis_bank
+      acceleration_model: adaptive_gate
     delete: 3
   bearing:
     enable: false

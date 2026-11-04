@@ -1,5 +1,6 @@
 #include "process/analysis/MultiIlluminatorRadar.h"
 #include "process/analysis/MultiIlluminatorPipelineState.h"
+#include "process/conditioning/FmReferenceQualityFilter.h"
 #include "process/utility/FftwThreads.h"
 #include "data/meta/Timing.h"
 
@@ -45,6 +46,44 @@ blah2::channelizer::IlluminatorOutput signal(const std::string& id,
           std::complex<double>(random(generator), random(generator)) * .005);
     }
   return result;
+}
+
+TEST_CASE("FM reference quality filter omits only low-bandwidth blocks")
+{
+  constexpr uint32_t rate = 2000;
+  constexpr std::size_t block = 10;
+  IqData input(4 * block), output(4 * block);
+  auto& values = input.resize_for_write(4 * block);
+  double phase = 0;
+  for (std::size_t sample = 0; sample < values.size(); ++sample)
+  {
+    const std::size_t section = sample / block;
+    const double step = section == 0 ? .2 :
+      .2 + .08 * std::sin(.7 * sample + section);
+    phase += step;
+    values[sample] = std::polar(1.0, phase);
+  }
+  blah2::conditioning::FmReferenceQualityFilter filter(rate, .75, .005);
+  const auto metrics = filter.process(input, output);
+  REQUIRE(metrics.blocks == 4);
+  REQUIRE(metrics.retainedBlocks == 3);
+  REQUIRE(metrics.applied);
+  for (std::size_t sample = 0; sample < block; ++sample)
+    REQUIRE(output.view_data()[sample] == std::complex<double>{});
+  for (std::size_t sample = block; sample < values.size(); ++sample)
+    REQUIRE(output.view_data()[sample] == values[sample]);
+}
+
+TEST_CASE("FM reference quality filter preserves equal-quality input")
+{
+  IqData input(40), output(40);
+  auto& values = input.resize_for_write(40);
+  for (std::size_t sample = 0; sample < values.size(); ++sample)
+    values[sample] = std::polar(1.0, .2 * sample);
+  blah2::conditioning::FmReferenceQualityFilter filter(2000, .75, .005);
+  const auto metrics = filter.process(input, output);
+  REQUIRE_FALSE(metrics.applied);
+  REQUIRE(output.view_data() == values);
 }
 
 TEST_CASE("split publication retains prior CPI identity and queue telemetry")
@@ -277,8 +316,12 @@ TEST_CASE("multi-illuminator advanced settings fail closed instead of degrading"
   rejected([](auto& value) { value.detectorIntegrationMotionBins = 1; });
   rejected([](auto& value) { value.trackBeforeDetect = true; });
   rejected([](auto& value) { value.trackerBeamToleranceConfigured = true; });
-  rejected([](auto& value) { value.trackerGpuCapacityConfigured = true; });
-  rejected([](auto& value) { value.trackerAccelerationModel = "adaptive_gate"; });
+  auto inheritedGpuCapacity = config;
+  inheritedGpuCapacity.trackerGpuCapacityConfigured = true;
+  REQUIRE_NOTHROW(validateAdvancedFeatures(inheritedGpuCapacity));
+  auto adaptiveTracker = config;
+  adaptiveTracker.trackerAccelerationModel = "adaptive_gate";
+  REQUIRE_NOTHROW(validateAdvancedFeatures(adaptiveTracker));
   rejected([](auto& value) { value.stationaryClutter = true; });
   rejected([](auto& value) { value.trackGuidedShadow = true; });
   rejected([](auto& value) { value.trackGuidedPromotion = true; });

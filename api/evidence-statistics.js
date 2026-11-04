@@ -68,6 +68,16 @@ const parse = value => {
 };
 const ratio = (numerator, denominator) => denominator ? numerator / denominator : null;
 
+function provisionalTimingFrame(value,
+  source = 'radar_host_arrival_estimate') {
+  const parsed = parse(value);
+  if (!parsed || !finite(parsed.timestamp) || parsed.eventTime?.exact === true ||
+      parsed.eventTime?.estimateAvailable === true) return parsed || value;
+  return {...parsed, eventTime: {source, exact: false, estimateAvailable: true,
+    uncertaintyBounded: true,
+    reason: 'RF device time is not UTC-mapped; using bounded host-arrival timing'}};
+}
+
 function delayBandEdges(span) {
   if (!span) return [];
   return [...new Set([Math.max(span.delayMinKm, span.detectionMinDelayKm),
@@ -1643,4 +1653,4 @@ module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_S
   radarCoverageFromAccumulator, rememberRadarCoverage,
   primaryGeometryBand, standardizedComparison,
   siteKey, siteDescriptor, EvidenceStatistics,
-  createEvidenceStatistics, createEvidenceStatisticsLanes};
+  provisionalTimingFrame, createEvidenceStatistics, createEvidenceStatisticsLanes};
