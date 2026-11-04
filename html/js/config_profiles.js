@@ -178,8 +178,6 @@
       tracker.track_guided_shadow.promote = false;
     }
     if (object(tracker.initiate?.stationary_clutter)) tracker.initiate.stationary_clutter.enable = false;
-    if (object(tracker.initiate) && tracker.initiate.acceleration_model === 'adaptive_gate')
-      tracker.initiate.acceleration_model = 'hypothesis_bank';
     if (process.surveillance_fusion?.mode === 'noise_whitened_beam_bank')
       process.surveillance_fusion.mode = 'coherent_beam_bank';
     return config;

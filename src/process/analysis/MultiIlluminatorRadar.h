@@ -33,7 +33,8 @@ struct AdvancedFeatureConfig
   bool trackBeforeDetect = false;
   bool trackerBeamToleranceConfigured = false;
   bool trackerGpuCapacityConfigured = false;
-  std::string trackerAccelerationModel = "hypothesis_bank";
+  // Multi-illuminator mode is new and Balanced is its default tracking policy.
+  std::string trackerAccelerationModel = "adaptive_gate";
   bool stationaryClutter = false;
   bool trackGuidedShadow = false;
   bool trackGuidedPromotion = false;

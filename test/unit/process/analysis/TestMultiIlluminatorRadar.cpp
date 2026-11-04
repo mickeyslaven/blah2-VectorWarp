@@ -302,6 +302,7 @@ TEST_CASE("multi-illuminator advanced settings fail closed instead of degrading"
   using blah2::multi_illuminator::AdvancedFeatureConfig;
   using blah2::multi_illuminator::validateAdvancedFeatures;
   AdvancedFeatureConfig config;
+  REQUIRE(config.trackerAccelerationModel == "adaptive_gate");
   REQUIRE_NOTHROW(validateAdvancedFeatures(config));
 
   const auto rejected = [&](auto mutate) {

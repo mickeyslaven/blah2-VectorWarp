@@ -1228,7 +1228,7 @@ try
   // set up process tracker
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
-  std::string smooth,trackerAccelerationModel="hypothesis_bank",trackerProfile="balanced";
+  std::string smooth,trackerAccelerationModel,trackerProfile="balanced";
   double trackerMinInitiationSnrDb=5.0;
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
@@ -1246,6 +1246,8 @@ try
     tree["process"]["tracker"]["profile"] >> trackerProfile;
   if(trackerProfile!="conservative"&&trackerProfile!="balanced"&&trackerProfile!="permissive")
     throw std::invalid_argument("Tracker profile must be conservative, balanced, or permissive");
+  trackerAccelerationModel = trackerProfile == "balanced" ?
+    "adaptive_gate" : "hypothesis_bank";
   if(trackerProfile=="conservative")trackerMinInitiationSnrDb=7.0;
   if(trackerProfile=="permissive")trackerMinInitiationSnrDb=4.0;
   if(tree["process"]["tracker"]["initiate"].has_child("min_snr_db"))

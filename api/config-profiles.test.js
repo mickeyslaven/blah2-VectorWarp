@@ -110,7 +110,7 @@ for (const filename of ['config.yml', 'config-hackrf.yml', 'config-kraken.yml',
     acceleration: config.process.tracker.initiate.acceleration_model,
     fusion: config.process.surveillance_fusion.mode},
   {integration: 1, motion: 0, tbd: false, bearing: false, guided: false,
-    promote: false, stationary: false, acceleration: 'hypothesis_bank',
+    promote: false, stationary: false, acceleration: 'adaptive_gate',
     fusion: 'coherent_beam_bank'});
   assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
 }
