@@ -37,6 +37,9 @@ private:
   /// @brief Current acceleration (Hz/s).
   std::vector<double> acceleration;
 
+  /// @brief Whether a real second observation has estimated acceleration.
+  std::vector<bool> accelerationEstimated;
+
   /// @brief Associated detections in track.
   std::vector<std::vector<Detection>> associated;
 
@@ -102,6 +105,8 @@ public:
   /// @return Void.
   void set_acceleration(uint64_t index, double acceleration);
 
+  void set_acceleration_estimated(uint64_t index, bool estimated);
+
   /// @brief Set the current inactivity.
   /// @param index Index of track to change.
   /// @param n Updated inactivity index.
@@ -124,6 +129,8 @@ public:
   /// @brief Get current acceleration for track index.
   /// @return Current acceleration (Hz/s).
   double get_acceleration(uint64_t index);
+
+  bool get_acceleration_estimated(uint64_t index);
 
   /// @brief Get current state for track index.
   /// @return Current state.

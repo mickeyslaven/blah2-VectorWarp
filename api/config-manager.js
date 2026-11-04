@@ -575,16 +575,18 @@ function validateConfig(config, baseline = null, options = {}) {
           `${field}.occupied_bandwidth_hz`, {integer: true, min: 1, max: UINT32_MAX});
         const outputRate = number(illuminator.output_sample_rate_hz,
           `${field}.output_sample_rate_hz`, {integer: true, min: 1, max: UINT32_MAX});
+        const activeLane = multiIlluminator.enabled === true &&
+          illuminator.enabled === true;
         if (frequencies.has(frequency))
           errors.push('process.multi_illuminator illuminator frequencies must be unique');
         frequencies.add(frequency);
-        if (Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
+        if (activeLane && Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
             capture.fs % outputRate !== 0)
           errors.push(`${field}.output_sample_rate_hz must divide capture.fs exactly`);
-        if (Number.isFinite(bandwidth) && Number.isFinite(outputRate) &&
+        if (activeLane && Number.isFinite(bandwidth) && Number.isFinite(outputRate) &&
             bandwidth >= outputRate)
           errors.push(`${field}.occupied_bandwidth_hz must be smaller than output_sample_rate_hz`);
-        if (Number.isFinite(frequency) && Number.isFinite(bandwidth) &&
+        if (activeLane && Number.isFinite(frequency) && Number.isFinite(bandwidth) &&
             Number.isFinite(capture.fc) && Number.isFinite(capture.fs) &&
             Math.abs(frequency - capture.fc) + bandwidth / 2 >= capture.fs / 2)
           errors.push(`${field}.frequency_hz and occupied bandwidth must fit inside the captured passband`);
@@ -592,7 +594,7 @@ function validateConfig(config, baseline = null, options = {}) {
           number(illuminator.filter_taps_per_phase,
             `${field}.filter_taps_per_phase`, {integer: true, min: 4, max: 128});
         const tapsPerPhase = illuminator.filter_taps_per_phase ?? 24;
-        if (Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
+        if (activeLane && Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
             outputRate > 0 && capture.fs % outputRate === 0 &&
             tapsPerPhase * (capture.fs / outputRate) + 1 > 131071)
           errors.push(`${field} full-quality channel filter exceeds 131,071 taps`);

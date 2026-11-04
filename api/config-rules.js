@@ -26,6 +26,7 @@ const rules = {
     choices: ['fixed', 'measured', 'measured_per_channel'], optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
+  'capture.device.timing_source': {type: 'string', choices: ['internal', 'gpsdo'], optional: true},
   // Published SDRplay API 3.09 section 5: RSPduo 50-ohm inputs, not Hi-Z.
   'capture.device.lnaState': {...integer(0, 9), choices: [0,1,2,3,4,5,6,7,8,9],
     frequencyBands: [{belowHz: 60000000, max: 6},

@@ -218,3 +218,24 @@ TEST_CASE("One detection cannot update two tracks", "[tracker]")
   CHECK(tracks->get_nState("ACTIVE") == 1);
   CHECK(tracks->get_nInactive(0) + tracks->get_nInactive(1) == 1);
 }
+
+TEST_CASE("Adaptive gate widens only the first association", "[tracker]")
+{
+  Tracker tracker(2, 3, 5, 1, 5, 100, 2, -100, true);
+  Detection first(20, 0, 8);
+  tracker.process(&first, 1000);
+  Detection estimating(20, 5, 8);
+  auto tracks = tracker.process(&estimating, 2000);
+  REQUIRE(tracks->get_n() == 1);
+  CHECK(tracks->get_nAssociated(0) == 2);
+
+  // The track now has an acceleration estimate. A measurement inside the
+  // former wide envelope but outside the normal one-bin gate must not steal
+  // the mature track; it starts an independent candidate instead.
+  Detection outsideMatureGate(20, 15, 8);
+  tracks = tracker.process(&outsideMatureGate, 3000);
+  REQUIRE(tracks->get_n() == 2);
+  CHECK(tracks->get_nAssociated(0) == 3);
+  CHECK(tracks->get_nInactive(0) == 1);
+  CHECK(tracks->get_current(0).get_doppler().front() == 10);
+}

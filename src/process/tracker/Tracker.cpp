@@ -87,11 +87,13 @@ void Tracker::update(Detection *detection, uint64_t current)
     Detection prediction = predict(detectionCurrent, acc, T);
     const double delayPredict = prediction.get_delay().front();
     const double dopplerPredict = prediction.get_doppler().front();
-    const double delayGate = adaptiveGate ? 2.0 : 1.0;
+    const bool needsAccelerationEstimate = adaptiveGate &&
+      !track.get_acceleration_estimated(i);
+    const double delayGate = needsAccelerationEstimate ? 2.0 : 1.0;
     // A newly initiated adaptive track has no acceleration estimate yet.
     // Include the configured acceleration envelope plus one Doppler bin so a
     // real maneuver can supply the second observation that estimates it.
-    const double dopplerGate = adaptiveGate ?
+    const double dopplerGate = needsAccelerationEstimate ?
       maxAccInit * T + 1 / cpi : 1 / cpi;
     size_t match = detection->get_nDetections();
     double bestDistance = std::numeric_limits<double>::infinity();
@@ -117,6 +119,7 @@ void Tracker::update(Detection *detection, uint64_t current)
       const std::string previousState = track.get_state(i);
       track.set_current(i, Detection(delay[match], doppler[match], snr[match]));
       track.set_acceleration(i, (doppler[match] - detectionCurrent.get_doppler().front()) / T);
+      track.set_acceleration_estimated(i, true);
       track.set_nInactive(i, 0);
       doNotInitiate[match] = true;
       track.set_state(i, previousState == "ACTIVE" || previousState == "COASTING" ?

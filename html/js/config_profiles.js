@@ -15,15 +15,14 @@
   });
 
   // A tracking profile is a detector-to-track policy. Weak-target recovery
-  // remains an independent explicit choice. Balanced is
-  // keeps the OWL/Retina detector defaults (Pfa 1e-5 and a 15 Hz
-  // zero-Doppler blank), with 4-of-6 confirmation and VectorWarp's shorter
-  // false-track lifetime.
+  // remains an independent explicit choice. Balanced keeps the OWL/Retina
+  // detector and retention defaults: Pfa 1e-5, a 15 Hz zero-Doppler blank,
+  // 3-of-6 confirmation, adaptive gating, and ten missed frames to delete.
   const trackingProfiles = Object.freeze({
     permissive: Object.freeze({pfa: 0.0001, minDoppler: 5, M: 2, N: 5,
       minSnrDb: 4, deleteAfter: 5, accelerationModel: 'hypothesis_bank'}),
-    balanced: Object.freeze({pfa: 0.00001, minDoppler: 15, M: 4, N: 6,
-      minSnrDb: 5, deleteAfter: 3, accelerationModel: 'automatic'}),
+    balanced: Object.freeze({pfa: 0.00001, minDoppler: 15, M: 3, N: 6,
+      minSnrDb: 5, deleteAfter: 10, accelerationModel: 'adaptive_gate'}),
     conservative: Object.freeze({pfa: 0.000001, minDoppler: 20, M: 4, N: 8,
       minSnrDb: 7, deleteAfter: 3, accelerationModel: 'automatic'})
   });
@@ -104,8 +103,9 @@
     initiate.M = values.M;
     initiate.N = values.N;
     initiate.min_snr_db = values.minSnrDb;
-    initiate.acceleration_model = values.accelerationModel === 'automatic' &&
-      process.performance?.acceleration === 'gpu-resident' ? 'adaptive_gate' : 'hypothesis_bank';
+    initiate.acceleration_model = values.accelerationModel === 'automatic' ?
+      (process.performance?.acceleration === 'gpu-resident' ? 'adaptive_gate' :
+        'hypothesis_bank') : values.accelerationModel;
     tracker.delete = values.deleteAfter;
     return config;
   }

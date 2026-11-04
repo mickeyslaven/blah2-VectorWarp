@@ -25,7 +25,7 @@ for (const filename of ['config.yml', 'config-hackrf.yml', 'config-kraken.yml',
   const shipped = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', filename), 'utf8'));
   assert.equal(shipped.process.tracker.profile, 'balanced', `${filename} tracker profile`);
   assert.deepEqual([shipped.process.tracker.initiate.M, shipped.process.tracker.initiate.N],
-    [4, 6], `${filename} balanced confirmation`);
+    [3, 6], `${filename} balanced confirmation`);
 }
 
 {
@@ -59,8 +59,8 @@ for (const filename of ['config.yml', 'config-hackrf.yml', 'config-kraken.yml',
     deleteAfter: config.process.tracker.delete,
     acceleration: config.process.tracker.initiate.acceleration_model,
     tbd: config.process.detection.track_before_detect.enable},
-  {profile: 'balanced', pfa: .00001, minDoppler: 15, M: 4, N: 6,
-    minSnrDb: 5, deleteAfter: 3, acceleration: 'adaptive_gate', tbd: true});
+  {profile: 'balanced', pfa: .00001, minDoppler: 15, M: 3, N: 6,
+    minSnrDb: 5, deleteAfter: 10, acceleration: 'adaptive_gate', tbd: true});
   assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
   profiles.applyTrackingProfile(config, 'permissive');
   assert.deepEqual([config.process.detection.pfa, config.process.detection.minDoppler,

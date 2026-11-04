@@ -60,12 +60,12 @@ process:
       promote: false
       max_tracks: 64
     initiate:
-      M: 4
+      M: 3
       N: 6
       maxAcc: 10
       min_snr_db: 5
       acceleration_model: adaptive_gate
-    delete: 3
+    delete: 10
   bearing:
     enable: false
     min_consistent: 3

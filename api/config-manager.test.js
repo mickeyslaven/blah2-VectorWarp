@@ -53,6 +53,16 @@ const adaptiveMultiIlluminator = clone(twoFmIlluminators);
 adaptiveMultiIlluminator.process.tracker.initiate.acceleration_model = 'adaptive_gate';
 assert.equal(validateConfig(adaptiveMultiIlluminator).valid, true,
   'multi-illuminator CPU tracking supports adaptive-gate initiation');
+const dormantFmIlluminators = clone(twoFmIlluminators);
+dormantFmIlluminators.process.multi_illuminator.enabled = false;
+dormantFmIlluminators.capture.fc = 509000000;
+assert.equal(validateConfig(dormantFmIlluminators).valid, true,
+  'saved dormant lanes do not invalidate a different active passband');
+const dormantLane = clone(twoFmIlluminators);
+dormantLane.process.multi_illuminator.illuminators[1].enabled = false;
+dormantLane.process.multi_illuminator.illuminators[1].frequency_hz = 93000000;
+assert.equal(validateConfig(dormantLane).valid, true,
+  'a disabled lane may remain saved outside the active passband');
 for (const mutate of [
   value => { value.process.multi_illuminator.illuminators[1].id = 'fm-90.5'; },
   value => { value.process.multi_illuminator.illuminators[1].frequency_hz = 90500000; },

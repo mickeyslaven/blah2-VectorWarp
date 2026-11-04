@@ -56,7 +56,7 @@ struct RadarConfig
   int8_t guardCells = 2, trainingCells = 6, minimumDelay = 1;
   double minimumDopplerHz = 15;
   uint16_t centroidRadius = 6;
-  uint32_t trackerM = 4, trackerN = 6, trackerDelete = 3;
+  uint32_t trackerM = 3, trackerN = 6, trackerDelete = 10;
   double trackerMaximumAcceleration = 10;
   double trackerMinimumSnrDb = 5;
   std::size_t workers = 1;
