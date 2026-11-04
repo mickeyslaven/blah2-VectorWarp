@@ -91,11 +91,14 @@ class MultiIlluminatorEvidence {
     const eventTime = frame.detections?.eventTime || frame.tracks?.eventTime || null;
     const timing = {timestamp: frame.timestamp, captureSamplePositionAvailable: true,
       captureEpoch: 0, captureFirstEpochSample: frame.first_input_sample,
-      captureEndEpochSample: frame.end_input_sample + 1,
-      eventTime: eventTime || {source: 'multi_illuminator_frame_timestamp', exact: false,
-        estimateAvailable: true, uncertaintyBounded: true}};
-    lane.exact.acceptTiming(timing);
-    lane.operational.acceptTiming(timing);
+      captureEndEpochSample: frame.end_input_sample + 1};
+    const fallback = {source: 'multi_illuminator_host_arrival_estimate', exact: false,
+      estimateAvailable: true, uncertaintyBounded: true,
+      reason: 'RF device time is not UTC-mapped; using bounded host-arrival timing'};
+    lane.exact.acceptTiming({...timing, eventTime: eventTime || fallback});
+    const operationalEventTime = eventTime?.exact === true ||
+      eventTime?.estimateAvailable === true ? eventTime : fallback;
+    lane.operational.acceptTiming({...timing, eventTime: operationalEventTime});
     return true;
   }
 

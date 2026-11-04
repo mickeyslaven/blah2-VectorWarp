@@ -44,6 +44,20 @@ evidence.accept({id: 'fm-a', timestamp: 1000, first_input_sample: 0,
   end_input_sample: 149999, detections: {timestamp: 1000}, tracks: {timestamp: 1000}});
 assert.equal(created[0].exact.accepted.length, 3);
 assert.equal(created[1].exact.accepted.length, 0, 'products cannot leak between lanes');
+evidence.accept({id: 'fm-a', timestamp: 2000, first_input_sample: 150000,
+  end_input_sample: 299999,
+  detections: {timestamp: 2000, eventTime: {source: 'usrp_uhd_device_time', exact: false,
+    estimateAvailable: false, uncertaintyBounded: false}}, tracks: {timestamp: 2000}});
+const exactTiming = created[0].exact.accepted.at(-1)[1];
+const operationalTiming = created[0].operational.accepted.at(-1)[1];
+assert.equal(exactTiming.eventTime.source, 'usrp_uhd_device_time',
+  'exact evidence must retain and reject the original non-UTC provenance');
+assert.equal(exactTiming.eventTime.estimateAvailable, false);
+assert.equal(operationalTiming.eventTime.source,
+  'multi_illuminator_host_arrival_estimate');
+assert.equal(operationalTiming.eventTime.exact, false);
+assert.equal(operationalTiming.eventTime.estimateAvailable, true,
+  'operational evidence must use the frame host-arrival timestamp as provisional time');
 const lane = evidence.response('scorecard', {illuminator: 'fm-a'});
 assert.equal(lane.scope, 'single-illuminator');
 assert.equal(lane.identity.sample_rate_hz, 300000);
