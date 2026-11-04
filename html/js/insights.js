@@ -4,6 +4,14 @@
   const root = document.getElementById('view-root');
   const state = document.getElementById('view-state');
   const view = document.body.dataset.insightView;
+  const getLaneContext = typeof getIlluminatorContext === 'function' ?
+    getIlluminatorContext : async () => ({enabled: false, id: null, item: null, illuminators: []});
+  const laneScope = typeof illuminatorDisplayScope === 'function' ?
+    illuminatorDisplayScope : () => ['health', 'calibration'].includes(view) ? 'aggregate' : 'selected';
+  const laneUrl = typeof selectedIlluminatorUrl === 'function' ?
+    selectedIlluminatorUrl : path => path;
+  const laneConfig = typeof selectedIlluminatorConfig === 'function' ?
+    selectedIlluminatorConfig : config => config;
   const colors = ['#ff8754', '#4dd4b0', '#70a7ff', '#f7c75f', '#d995ff', '#ff8298'];
   const plotConfig = {responsive: true, displayModeBar: false, scrollZoom: true};
   const plotBase = {
@@ -91,13 +99,22 @@
   }
 
   async function apiJson(path) {
-    const aligned = /^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing|iqdata)(?:[/?]|$)/.test(path) ?
-      radarPresentationUrl(path) : path;
+    const context = await getLaneContext();
+    const selectedProduct = laneScope() === 'selected' &&
+      /^\/api\/(?:detection|tracker|adsb\/delay-doppler|live-scorecard(?:\/provisional)?|statistics|radar\/coverage)(?:[/?]|$)/.test(path);
+    const productPath = selectedProduct ? laneUrl(path, context) : path;
+    const aligned = /^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing|iqdata)(?:[/?]|$)/.test(productPath) ?
+      radarPresentationUrl(productPath) : productPath;
     return fetchJson(liveApiUrl(aligned));
   }
 
   async function getConfig() {
-    return getRadarRuntimeConfig();
+    const config = await getRadarRuntimeConfig();
+    return laneScope() === 'selected' ? laneConfig(config) : config;
+  }
+
+  function selectedLaneLabel() {
+    return window.vectorwarpIlluminatorContext?.id || 'radar';
   }
 
   async function getAdsb() {
@@ -344,12 +361,12 @@
     const load = hop && finite(timing?.cpi) !== null ? timing.cpi / hop * 100 : null;
     const health = healthSnapshot(config, timing, tracker, adsb);
     renderHtml(root, `<div class="insight-stats insight-stats-four">
-      ${card(detections.length, 'Detections in latest CPI')}
-      ${card(tracks.length, 'Persistent tracks')}
+      ${card(detections.length, `${selectedLaneLabel()} detections in latest CPI`)}
+      ${card(tracks.length, `${selectedLaneLabel()} persistent tracks`)}
       ${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest detection')}
       ${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', load > 100 ? 'bad' : load > 80 ? 'warning' : 'good')}
     </div><div class="overview-grid controller-overview-grid">
-      <section class="overview-health"><header><div><h2>System health</h2></div><span class="state-pill ${health.overallTone === 'good' ? 'active' : health.overallTone === 'warning' ? 'coasting' : ''}">${escapeHtml(health.overall)}</span></header><div class="health-list">${health.rows}</div><a class="button-link" href="/display/diagnostics?view=health">Open diagnostics</a></section>
+      <section class="overview-health"><header><div><h2>All-lane pipeline health</h2></div><span class="state-pill ${health.overallTone === 'good' ? 'active' : health.overallTone === 'warning' ? 'coasting' : ''}">${escapeHtml(health.overall)}</span></header><div class="health-list">${health.rows}</div><a class="button-link" href="/display/diagnostics?view=health">Open diagnostics</a></section>
     </div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
@@ -411,7 +428,7 @@
     const adsb = await adsbHealth(config);
     const health = healthSnapshot(config, timing, tracker, adsb);
     const stages = Object.entries(timing || {}).filter(([key, value]) => typeof value === 'number' && finite(value) !== null && !['timestamp', 'nCpi', 'uptime_s', 'uptime_days', 'cpi_data_ms', 'cpi_hop_ms', 'cpi_overlap_fraction', 'capture_backlog_ms', 'cpi'].includes(key)).sort((left, right) => Number(right[1]) - Number(left[1]));
-    renderHtml(root, `<div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 120 ? 'bad' : health.load > 100 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', '', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
+    renderHtml(root, `<p class="view-note"><strong>All-lane pipeline:</strong> health, timing, backlog, and load cover the complete multi-illuminator processor.</p><div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 120 ? 'bad' : health.load > 100 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', '', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
 
@@ -432,7 +449,7 @@
     }
     const latest = activityHistory[activityHistory.length - 1] || {};
     renderHtml(document.getElementById('view-summary'), `${card(latest.detections ?? 0, 'Latest detections')}${card(latest.tracks ?? 0, 'Persistent tracks')}${card(Number.isFinite(latest.snr) ? `${number(latest.snr, 1)} dB` : 'None', 'Strongest return')}${card(activityHistory.length, 'Samples this browser session')}`);
-    renderDetail(`<div class="view-note">History is collected in this browser tab and is not written to the radar server.</div>`);
+    renderDetail(`<div class="view-note"><strong>Selected lane: ${escapeHtml(selectedLaneLabel())}.</strong> Detection and track history is collected in this browser tab. Processing load is the all-lane pipeline load.</div>`);
     const x = activityHistory.map(item => new Date(item.time));
     const traces = [
       {x, y: activityHistory.map(item => item.detections), name: 'Detections', type: 'scatter', mode: 'lines', line: {color: colors[0], width: 2}, yaxis: 'y'},
@@ -1328,6 +1345,7 @@
     ]);
     const receiver = config?.location?.rx || {};
     const transmitter = config?.location?.tx || {};
+    const laneContext = await getLaneContext();
     if ([receiver.latitude, receiver.longitude, transmitter.latitude, transmitter.longitude]
       .some(value => finite(value) === null)) {
       renderHtml(document.getElementById('view-summary'), card('Unavailable', 'Site coordinates'));
@@ -1365,9 +1383,10 @@
       try {
         const loadTruth = async (base, enabled) => {
           if (!enabled) return [];
-          const [feed, geometry] = await Promise.all([
-            apiJson(base), apiJson(`${base}/delay-doppler?overlay=1`)
-          ]);
+          const laneGeometryAvailable = base === '/api/adsb' ||
+            !window.vectorwarpIlluminatorContext?.enabled;
+          const [feed, geometry] = await Promise.all([apiJson(base),
+            laneGeometryAvailable ? apiJson(`${base}/delay-doppler?overlay=1`) : {}]);
           const rows = feed?.disabledForReplay ? [] : array(feed?.aircraft).filter(item =>
             finite(item.lat) !== null && finite(item.lon) !== null && (finite(item.seen_pos) ?? 0) < 120);
           const byId = new Map(Object.entries(geometry || {}).map(([id, item]) =>
@@ -1474,7 +1493,7 @@
       };
     }
     const remoteIdCount = mapAircraft.filter(item => item.remote_id).length;
-    renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(mapAircraft.length, 'Aircraft shown')}${remoteIdEnabled ? card(remoteIdCount, 'Remote ID drones') : ''}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
+    renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(mapAircraft.length, 'Aircraft shown')}${remoteIdEnabled ? card(remoteIdCount, 'Remote ID drones') : ''}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, laneContext.enabled ? `${laneContext.id} coverage passes` : 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
     renderDetail('');
     const map = await ensureLocationMap(locationMapViewport);
     syncBearingOverlayLayers(map, bearingRows);
@@ -1568,6 +1587,7 @@
   }
 
   async function renderStatistics() {
+    const context = await getLaneContext();
     const [authoritative, provisional] = await Promise.all([
       apiJson('/api/live-scorecard'), apiJson('/api/live-scorecard/provisional')]);
     const authoritativeFrames = authoritative?.data_quality?.exact_timed_cpi_frames || 0;
@@ -1638,7 +1658,7 @@
       .map(([label, item]) =>
       `<tr><td>${escapeHtml(item.azimuth_band || label.split('|')[0])}</td><td>${escapeHtml(item.elevation_band || label.split('|')[1])}</td><td>${integer(item.eligible_passes)}</td><td>${percent(item.detection_yield, 1)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
     const adsbWarning = statistics.adsb_quality?.warning;
-    renderHtml(root, `<div class="statistics-page">${adsbWarning ? `<div class="evaluation-note"><strong>ADS-B data note:</strong> ${escapeHtml(adsbWarning)}</div>` : ''}<div class="insight-stats insight-stats-four">
+    renderHtml(root, `<div class="statistics-page">${context.enabled ? `<p class="view-note"><strong>Selected lane: ${escapeHtml(context.id)}.</strong> Scorecard and coverage evidence are isolated to this illuminator.</p>` : ''}${adsbWarning ? `<div class="evaluation-note"><strong>ADS-B data note:</strong> ${escapeHtml(adsbWarning)}</div>` : ''}<div class="insight-stats insight-stats-four">
       ${card(integer(lifetime.eligible_passes), 'All-time passes')}
       ${card(percent(lifetime.detection_yield, 1), 'All-time detection yield')}
       ${card(percent(lifetime.tracking_yield, 1), 'All-time tracking yield')}
@@ -1662,8 +1682,9 @@
       <section class="info-card"><h2>Search and match limits</h2><dl><div><dt>Physical delay span</dt><dd>${number(limits.delayMinKm, 3)}–${number(limits.delayMaxKm, 3)} km</dd></div><div><dt>Doppler span</dt><dd>${number(limits.dopplerMinHz, 0)} to ${number(limits.dopplerMaxHz, 0)} Hz</dd></div><div><dt>Clutter cancellation</dt><dd>Through ${number(limits.clutterMaxKm, 3)} km</dd></div><div><dt>Strict match gate</dt><dd>±${number(limits.matchDelayKm, 2)} km / ±${number(limits.matchDopplerHz, 1)} Hz</dd></div></dl></section>
       <section class="info-card"><h2>Scoring method</h2><dl><div><dt>Timing</dt><dd>${escapeHtml(timingLabel)}</dd></div><div><dt>Frame hold</dt><dd>${integer(statistics.association_lag_cpis)} CPIs · ${integer(statistics.association_lag_ms)} ms</dd></div><div><dt>Contract</dt><dd>${escapeHtml(String(statistics.evaluation_contract_hash || '').slice(0, 12))}</dd></div><div><dt>Nuisance accounting</dt><dd>${escapeHtml(humanize(quality.nuisance_accounting))}</dd></div></dl></section>
     </div></details></div>`);
-    setState(statistics.error ? `Collection warning · ${statistics.error}` :
-      statistics.updated_at ? `Updated ${timeLabel(statistics.updated_at)} · ${timingLabel}` : 'Waiting for eligible ADS-B evidence',
+    const laneState = context.enabled ? `${context.id} · ` : '';
+    setState(statistics.error ? `${laneState}Collection warning · ${statistics.error}` :
+      statistics.updated_at ? `${laneState}Updated ${timeLabel(statistics.updated_at)} · ${timingLabel}` : `${laneState}Waiting for eligible ADS-B evidence`,
     statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
   }
 

@@ -250,6 +250,7 @@ try
   }
 
   bool multiIlluminatorEnabled = false;
+  blah2::multi_illuminator::AdvancedFeatureConfig multiAdvanced;
   std::vector<blah2::channelizer::IlluminatorDefinition> illuminatorDefinitions;
   if (tree["process"].has_child("multi_illuminator"))
   {
@@ -288,6 +289,82 @@ try
     if (multiIlluminatorEnabled &&
         (illuminatorDefinitions.empty() || illuminatorDefinitions.size() > 16))
       throw std::invalid_argument("Multi-illuminator mode requires 1 to 16 enabled illuminators");
+  }
+  if (multiIlluminatorEnabled)
+  {
+    const auto process = tree["process"];
+    if (process.has_child("surveillance_fusion") &&
+        process["surveillance_fusion"].has_child("mode"))
+      process["surveillance_fusion"]["mode"] >>
+        multiAdvanced.surveillanceFusionMode;
+    if (process.has_child("surveillance_fusion") &&
+        process["surveillance_fusion"].has_child(
+          "detection_manifold_automation") &&
+        process["surveillance_fusion"]["detection_manifold_automation"].has_child(
+          "enabled"))
+      process["surveillance_fusion"]["detection_manifold_automation"]["enabled"] >>
+        multiAdvanced.surveillanceManifoldAutomation;
+    const auto detection = process["detection"];
+    if (detection.has_child("integration_cpis"))
+      detection["integration_cpis"] >> multiAdvanced.detectorIntegrationCpis;
+    if (detection.has_child("integration_motion_bins"))
+      detection["integration_motion_bins"] >>
+        multiAdvanced.detectorIntegrationMotionBins;
+    if (detection.has_child("track_before_detect") &&
+        detection["track_before_detect"].has_child("enable"))
+      detection["track_before_detect"]["enable"] >>
+        multiAdvanced.trackBeforeDetect;
+    const auto trackerNode = process["tracker"];
+    multiAdvanced.trackerBeamToleranceConfigured =
+      trackerNode.has_child("beam_tolerance");
+    multiAdvanced.trackerGpuCapacityConfigured =
+      trackerNode.has_child("gpu_capacity");
+    if (trackerNode.has_child("initiate"))
+    {
+      const auto initiate = trackerNode["initiate"];
+      if (initiate.has_child("acceleration_model"))
+        initiate["acceleration_model"] >>
+          multiAdvanced.trackerAccelerationModel;
+      if (initiate.has_child("stationary_clutter") &&
+          initiate["stationary_clutter"].has_child("enable"))
+        initiate["stationary_clutter"]["enable"] >>
+          multiAdvanced.stationaryClutter;
+    }
+    if (trackerNode.has_child("track_guided_shadow"))
+    {
+      const auto guided = trackerNode["track_guided_shadow"];
+      if (guided.has_child("enable"))
+        guided["enable"] >> multiAdvanced.trackGuidedShadow;
+      if (guided.has_child("promote"))
+        guided["promote"] >> multiAdvanced.trackGuidedPromotion;
+    }
+    if (process.has_child("bearing"))
+    {
+      const auto bearing = process["bearing"];
+      if (bearing.has_child("enable"))
+        bearing["enable"] >> multiAdvanced.bearing;
+      const auto activeAutoBoolean = [](auto node) {
+        std::string value;
+        node >> value;
+        return value == "true" || value == "on" || value == "auto";
+      };
+      if (bearing.has_child("frequency_resolved_shadow") &&
+          bearing["frequency_resolved_shadow"].has_child("enabled"))
+        multiAdvanced.bearingFrequencyResolvedShadow = activeAutoBoolean(
+          bearing["frequency_resolved_shadow"]["enabled"]);
+      if (bearing.has_child("manifold_recorder") &&
+          bearing["manifold_recorder"].has_child("enabled"))
+      {
+        std::string value;
+        bearing["manifold_recorder"]["enabled"] >> value;
+        // Auto cannot activate with the only admitted (noncoherent) fusion
+        // mode, while explicit on/true would otherwise be silently ignored.
+        multiAdvanced.bearingManifoldRecorder =
+          value == "true" || value == "on";
+      }
+    }
+    // Do this before opening output sockets or allocating capture hardware.
+    blah2::multi_illuminator::validateAdvancedFeatures(multiAdvanced);
   }
 
   // set up socket
@@ -1303,6 +1380,7 @@ try
     multiConfig.referenceChannels = referenceChannels;
     multiConfig.surveillanceChannels = surveillanceChannels;
     multiConfig.reference = referenceConfig;
+    multiConfig.advanced = multiAdvanced;
     widebandGpuRequested=accelerationMode=="gpu"||
       accelerationMode=="gpu-resident"||accelerationMode=="auto";
     if(widebandGpuRequested){
@@ -1633,6 +1711,12 @@ try
           echoInjector.apply(trackerFrame * uint64_t(nSamples), physicalChannels);
           if (multiIlluminatorEnabled)
           {
+            // Multi-lane derived products are narrowband, but the spectrum is
+            // intentionally the complete captured passband. Publish it from
+            // one physical channel without altering the channelizer input.
+            spectrumAnalyser->process(captureData[referenceChannel].get());
+            socket_iqdata->sendData(attachEventTime(
+              captureData[referenceChannel]->to_json(frameTimestampMs)));
             std::vector<const std::deque<std::complex<double>>*>
               channelizerInput;
             channelizerInput.reserve(captureData.size());

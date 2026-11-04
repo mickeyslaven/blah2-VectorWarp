@@ -13,11 +13,29 @@ class RecordingTimeline {
     this.frames.push(frame);
     while (this.frames.length > 1 && this.frames[0].timestamp_ms < now - this.maxAgeMs)
       this.frames.shift();
-    if (this.manual && frame.timestamp_ms >= this.manual.startMs &&
-        frame.timestamp_ms > this.manual.lastTimestamp) {
-      this.manual.lastTimestamp = frame.timestamp_ms;
-      this.manual.gzip.write(`${JSON.stringify({type: 'frame', value: frame})}\n`);
+    if (this.manual && frame.timestamp_ms >= this.manual.startMs)
+      this.writeManualFrame(this.manual, frame);
+  }
+  writeManualFrame(manual, frame) {
+    if (frame.timestamp_ms < manual.lastTimestamp) return;
+    if (frame.timestamp_ms > manual.lastTimestamp) {
+      manual.lastTimestamp = frame.timestamp_ms;
+      manual.identitiesAtTimestamp.clear();
     }
+    const identity = typeof frame.illuminator === 'string' ? frame.illuminator : '';
+    if (manual.identitiesAtTimestamp.has(identity)) return;
+    manual.identitiesAtTimestamp.add(identity);
+    manual.gzip.write(`${JSON.stringify({type: 'frame', value: frame})}\n`);
+  }
+  addIlluminator(frame, now = Date.now()) {
+    if (!frame || typeof frame.illuminator !== 'string') return;
+    this.add({timestamp_ms: frame.timestamp_ms, illuminator: frame.illuminator,
+      truth: {aircraft: frame.aircraft ?? null,
+        delay_doppler: frame.delay_doppler ?? null},
+      products: {map: frame.map ?? null, detections: frame.detections ?? null,
+        tracks: frame.tracks ?? null},
+      first_input_sample: frame.first_input_sample ?? null,
+      end_input_sample: frame.end_input_sample ?? null}, now);
   }
   start(file, startMs, metadata = {}) {
     if (!file || !Number.isFinite(startMs)) return;
@@ -29,18 +47,15 @@ class RecordingTimeline {
     const gzip = zlib.createGzip({level: 6});
     gzip.pipe(destination);
     gzip.write(`${JSON.stringify({type: 'header', value: {
-      schema: 'vectorwarp-recording-timeline-v1', start_ms: startMs, ...metadata}})}\n`);
+      schema: 'vectorwarp-recording-timeline-v2', start_ms: startMs, ...metadata}})}\n`);
     const manual = {file, output, temporary, destination, gzip, startMs,
-      lastTimestamp: -1, metadata, error: null};
+      lastTimestamp: -1, identitiesAtTimestamp: new Set(), metadata, error: null};
     const failed = error => { manual.error ||= error; };
     destination.on('error', failed);
     gzip.on('error', error => { failed(error); destination.destroy(error); });
     this.manual = manual;
     for (const frame of this.frames)
-      if (frame.timestamp_ms >= startMs) {
-        manual.lastTimestamp = frame.timestamp_ms;
-        gzip.write(`${JSON.stringify({type: 'frame', value: frame})}\n`);
-      }
+      if (frame.timestamp_ms >= startMs) this.writeManualFrame(manual, frame);
   }
   async stop(file, endMs = Date.now()) {
     const manual = this.manual;
@@ -64,11 +79,13 @@ class RecordingTimeline {
   async write(file, startMs, endMs, metadata = {}) {
     if (!file || !Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
     const frames = this.frames.filter(frame => frame.timestamp_ms >= startMs && frame.timestamp_ms <= endMs);
-    const value = {schema: 'vectorwarp-recording-timeline-v1', start_ms: startMs,
+    const value = {schema: 'vectorwarp-recording-timeline-v2', start_ms: startMs,
       end_ms: endMs, ...metadata, frames};
     const output = `${file}.timeline.json`, temporary = `${output}.tmp-${process.pid}`;
     await this.io.promises.writeFile(temporary, `${JSON.stringify(value)}\n`, {mode: 0o640});
-    await this.io.promises.rename(temporary, output); return output;
+    await this.io.promises.rename(temporary, output);
+    this.cache = {file: '', mtimeMs: 0, value: null};
+    return output;
   }
   async writeReplayProfile(file, profile) {
     if (!file || profile?.schema !== 'vectorwarp-replay-profile-v2') return null;
@@ -112,17 +129,25 @@ class RecordingTimeline {
           else if (entry.type === 'footer') Object.assign(value, entry.value);
         }
       } else value = JSON.parse(this.io.readFileSync(filename, 'utf8'));
-      if (value?.schema !== 'vectorwarp-recording-timeline-v1' || !Array.isArray(value.frames)) return null;
+      if (!['vectorwarp-recording-timeline-v1', 'vectorwarp-recording-timeline-v2'].includes(value?.schema) ||
+          !Array.isArray(value.frames)) return null;
       this.cache = {file: filename, mtimeMs: stat.mtimeMs, value}; return value;
     } catch (_) { return null; }
   }
-  at(file, positionSamples, sampleRate, kind) {
+  at(file, positionSamples, sampleRate, kind, illuminator) {
     const timeline = this.load(file); if (!timeline || !(sampleRate > 0)) return null;
     const timestamp = timeline.start_ms + positionSamples * 1000 / sampleRate;
     let selected = null;
     for (const frame of timeline.frames)
-      if (frame.timestamp_ms <= timestamp && (!selected || frame.timestamp_ms > selected.timestamp_ms)) selected = frame;
-    return selected?.[kind] ?? null;
+      if (frame.timestamp_ms <= timestamp &&
+          (illuminator === undefined || frame.illuminator === illuminator) &&
+          (!selected || frame.timestamp_ms > selected.timestamp_ms)) selected = frame;
+    if (!selected) return null;
+    if (illuminator !== undefined) {
+      if (kind === 'aircraft' || kind === 'delay_doppler') return selected.truth?.[kind] ?? null;
+      return selected.products?.[kind] ?? null;
+    }
+    return selected[kind] ?? null;
   }
 }
 module.exports = {RecordingTimeline};

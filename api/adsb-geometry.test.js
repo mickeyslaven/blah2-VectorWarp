@@ -32,7 +32,11 @@ assert.equal(delayed.frequency_hz, 100000000);
 assert.equal(delayed.delay_definition, 'excess_bistatic_path_km');
 assert.deepEqual(history.update(point(104, .7)).data.abc, delayed,
   'PR #5 duplicate coordinates retain the last computed overlay');
-assert.deepEqual(history.update(point(102, .8)).data.abc, delayed, 'Out-of-order position is ignored');
+assert.equal(history.update(point(103, .7, 1)), history.update(point(103, .7, 1)),
+  'An exact aligned timestamp reuses its immutable snapshot');
+const older = history.update(point(102, .8));
+assert.equal(older.aligned_unavailable, true);
+assert.deepEqual(older.data, {}, 'Out-of-order presentation cannot leak a newer Doppler result');
 assert.deepEqual(history.update(point(120, .9, 11)).data, {}, 'Stale positions and retained output are evicted');
 const invalid = new DelayDopplerHistory(config);
 for (const extra of [{lat: 91}, {lon: 181}, {alt_geom: undefined}, {alt_geom: Number.MAX_VALUE}, {seen_pos: NaN}])

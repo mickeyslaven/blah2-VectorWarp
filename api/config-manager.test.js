@@ -64,6 +64,41 @@ for (const mutate of [
     'multi-illuminator configuration must fail closed');
 }
 
+for (const [field, mutate] of [
+  ['coherent fusion', value => { value.process.surveillance_fusion.mode = 'coherent_beam_bank'; }],
+  ['detection manifold automation', value => {
+    value.process.surveillance_fusion.detection_manifold_automation.enabled = true;
+  }],
+  ['multi-CPI integration', value => { value.process.detection.integration_cpis = 2; }],
+  ['integration motion bins', value => {
+    value.process.detection.integration_cpis = 2;
+    value.process.detection.integration_motion_bins = 1;
+  }],
+  ['track-before-detect', value => { value.process.detection.track_before_detect.enable = true; }],
+  ['beam tolerance', value => { value.process.tracker.beam_tolerance = 1; }],
+  ['GPU tracker capacity', value => { value.process.tracker.gpu_capacity = 1024; }],
+  ['adaptive acceleration', value => {
+    value.process.tracker.initiate.acceleration_model = 'adaptive_gate';
+  }],
+  ['stationary clutter suppression', value => {
+    value.process.tracker.initiate.stationary_clutter = {enable: true, persistence_cpis: 4};
+  }],
+  ['track-guided shadow', value => { value.process.tracker.track_guided_shadow.enable = true; }],
+  ['track-guided promotion', value => { value.process.tracker.track_guided_shadow.promote = true; }],
+  ['bearing', value => { value.process.bearing.enable = true; }],
+  ['frequency-resolved bearing shadow', value => {
+    value.process.bearing.frequency_resolved_shadow.enabled = 'auto';
+  }],
+  ['bearing manifold recorder', value => {
+    value.process.bearing.manifold_recorder.enabled = 'on';
+  }]
+]) {
+  const invalid = clone(twoFmIlluminators);
+  mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    `multi-illuminator mode must reject unsupported ${field}`);
+}
+
 const sixChannel = load('config-kraken.yml');
 sixChannel.capture.device.channel_count = 6;
 sixChannel.capture.device.surveillance_channels = [0, 1, 2, 3, 4, 5];

@@ -905,6 +905,47 @@ function receiverSpecificProcessPath(path) {
     path.startsWith('process.tracker.initiate.stationary_clutter.');
 }
 
+function multiIlluminatorUnsupportedPath(path) {
+  return path === 'process.surveillance_fusion' || path.startsWith('process.surveillance_fusion.') ||
+    path === 'process.bearing' || path.startsWith('process.bearing.') ||
+    path === 'process.detection.integration_cpis' ||
+    path === 'process.detection.integration_motion_bins' ||
+    path === 'process.detection.track_before_detect' ||
+    path.startsWith('process.detection.track_before_detect.') ||
+    path === 'process.tracker.beam_tolerance' || path === 'process.tracker.gpu_capacity' ||
+    path === 'process.tracker.initiate.acceleration_model' ||
+    path === 'process.tracker.initiate.stationary_clutter' ||
+    path.startsWith('process.tracker.initiate.stationary_clutter.') ||
+    path === 'process.tracker.track_guided_shadow' ||
+    path.startsWith('process.tracker.track_guided_shadow.');
+}
+
+function markMultiIlluminatorUnsupported(root) {
+  const lanes = activeConfig.process?.multi_illuminator?.illuminators || [];
+  const multi = activeConfig.process?.multi_illuminator?.enabled === true &&
+    lanes.filter(item => item?.enabled !== false).length > 1;
+  if (!multi) return;
+  const affected = [...root.querySelectorAll('.config-field[data-path]')]
+    .filter(item => multiIlluminatorUnsupportedPath(item.dataset.path));
+  for (const field of affected) {
+    field.classList.add('config-field-unavailable');
+    field.querySelectorAll('input, select, button').forEach(input => {
+      input.disabled = true;
+      input.dataset.originalDisabled = 'true';
+    });
+    const help = field.querySelector('.config-field-copy small');
+    if (help && !help.textContent.includes('Unavailable with multiple illuminators'))
+      help.textContent += ' Unavailable with multiple illuminators; each lane currently uses noncoherent fusion and the basic detector/tracker contract.';
+  }
+  const processPanel = root.querySelector('#settings-panel-process');
+  if (processPanel && affected.length) {
+    const notice = document.createElement('p');
+    notice.className = 'config-advice evaluation-note multi-illuminator-limit';
+    notice.textContent = 'Multiple illuminators are active. Coherent/bearing processing, detector integration and track-before-detect, and advanced tracker recovery controls are unavailable for every lane.';
+    processPanel.prepend(notice);
+  }
+}
+
 function switchDevice(type) {
   const profile = (capabilities.deviceProfiles || [])
     .find(item => item.type === type);
@@ -1069,7 +1110,7 @@ function illuminatorListInput(value, path) {
     wrapper.replaceChildren(anchor);
     items.forEach((item, index) => {
       const card = document.createElement('fieldset');
-      card.className = 'config-group';
+      card.className = 'illuminator-card';
       const legend = document.createElement('legend');
       legend.textContent = item.id || `Illuminator ${index + 1}`;
       card.appendChild(legend);
@@ -1090,9 +1131,12 @@ function illuminatorListInput(value, path) {
       const addNumber = (label, key, scale = 1) => addText(label, key,
         input => input === '' ? null : Number(input) * scale);
       const enabled = document.createElement('label');
+      enabled.className = 'illuminator-enabled';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox'; checkbox.checked = item.enabled === true;
-      checkbox.addEventListener('change', () => { item.enabled = checkbox.checked; commit(); });
+      checkbox.addEventListener('change', () => {
+        item.enabled = checkbox.checked; commit(); renderEditor();
+      });
       enabled.append(checkbox, document.createTextNode('Enabled')); card.appendChild(enabled);
       addText('ID', 'id');
       const standardLabel = document.createElement('label');
@@ -1116,8 +1160,10 @@ function illuminatorListInput(value, path) {
       addNumber('Longitude', 'transmitter.longitude');
       addNumber('Altitude (m)', 'transmitter.altitude');
       const remove = document.createElement('button');
-      remove.type = 'button'; remove.className = 'button-secondary'; remove.textContent = 'Remove';
-      remove.addEventListener('click', () => { items.splice(index, 1); commit(); render(); });
+      remove.type = 'button'; remove.className = 'button-secondary illuminator-remove'; remove.textContent = 'Remove';
+      remove.addEventListener('click', () => {
+        items.splice(index, 1); commit(); renderEditor();
+      });
       card.appendChild(remove); wrapper.appendChild(card);
     });
     const add = document.createElement('button');
@@ -1128,7 +1174,7 @@ function illuminatorListInput(value, path) {
         occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
         filter_taps_per_phase: 24,
         transmitter: {name: '', latitude: 0, longitude: 0, altitude: 0}});
-      commit(); render();
+      commit(); renderEditor();
     });
     wrapper.appendChild(add);
   };
@@ -1605,6 +1651,8 @@ function field(value, path) {
   help.textContent = description;
   copy.append(label, help);
   const control = path.join('.') === 'save.path' ? recordingFolderControl(value, path) : typedInput(value, path);
+  if (control.classList?.contains('illuminator-list'))
+    wrapper.classList.add('config-field-wide', 'config-field-illuminators');
   if (control.classList?.contains('adsb-source-editor'))
     wrapper.classList.add('config-field-wide', 'config-field-adsb-sources');
   const rule = capabilities.fieldRules?.[path.join('.')];
@@ -2646,6 +2694,7 @@ function renderEditor() {
     organizeTechnicalControls(panel, panel.dataset.tab));
   target.append(makeSettingsFilter(tabs, panels, activate));
   target.append(tabs, panels);
+  markMultiIlluminatorUnsupported(target);
   activate(initialTab);
   displayFieldErrors(validationErrors);
   displayValidationNotices();
@@ -3413,6 +3462,6 @@ function accelerationSummary(value, radar) {
 
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
-    receiverSpecificProcessPath, adsbExchangeId, adsbPublicSource,
+    receiverSpecificProcessPath, multiIlluminatorUnsupportedPath, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

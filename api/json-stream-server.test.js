@@ -164,6 +164,21 @@ async function send(port, chunks) {
     })).body);
     assert.equal(illuminators.primary, 'fm-90.5');
     assert.equal(illuminators.illuminators[0].frequency_hz, 90500000);
+    const laneScorecard = JSON.parse((await request(apiPort,
+      '/api/live-scorecard?illuminator=fm-90.5')).body);
+    assert.equal(laneScorecard.scope, 'single-illuminator');
+    assert.equal(laneScorecard.identity.frequency_hz, 90500000);
+    assert.equal(laneScorecard.identity.sample_rate_hz, 300000);
+    const aggregateScorecard = JSON.parse((await request(apiPort,
+      '/api/live-scorecard')).body);
+    assert.equal(aggregateScorecard.scope, 'all-illuminators-non-merged');
+    assert.equal(aggregateScorecard.illuminators.length, 1);
+    const coverage = JSON.parse((await request(apiPort,
+      '/api/radar/coverage?illuminator=fm-90.5')).body);
+    assert.equal(coverage.scope, 'single-illuminator');
+    assert.equal(coverage.identity.illuminator, 'fm-90.5');
+    assert.equal((await request(apiPort,
+      '/api/live-scorecard?illuminator=unknown')).status, 404);
     assert.equal(JSON.parse((await request(apiPort,
       '/api/detection?illuminator=fm-90.5')).body).stream, 'fm-detection');
     assert.equal(JSON.parse((await request(apiPort,

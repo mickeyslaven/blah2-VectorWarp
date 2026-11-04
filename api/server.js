@@ -38,6 +38,7 @@ const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js'
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatisticsLanes} = require('./evidence-statistics.js');
+const {MultiIlluminatorEvidence} = require('./multi-illuminator-evidence.js');
 const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
@@ -74,11 +75,13 @@ try {
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
-const illuminatorAdsbGeometry = new Map((config.process?.multi_illuminator?.illuminators || [])
+const createIlluminatorAdsbGeometry = () => new Map((config.process?.multi_illuminator?.illuminators || [])
   .filter(item => item?.enabled === true).map(item => [item.id,
     new DelayDopplerHistory({...config,
       capture: {...config.capture, fc: item.frequency_hz},
       location: {...config.location, tx: item.transmitter}})]));
+const illuminatorAdsbGeometry = createIlluminatorAdsbGeometry();
+const recordingIlluminatorAdsbGeometry = createIlluminatorAdsbGeometry();
 const remoteIdSource = createRemoteIdSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const aircraftPhotoLookup = createAircraftPhotoLookup(config, {cacheFile:
   process.env.BLAH2_AIRCRAFT_PHOTO_CACHE || '/var/lib/vectorwarp-api/aircraft-photo-metadata.json'});
@@ -122,6 +125,8 @@ function recordingReplayProfile() {
     processProfile.bearing.frequency_resolved_shadow.enabled = false;
     delete processProfile.bearing.frequency_resolved_shadow.path;
   }
+  const illuminators = clone(config.process?.multi_illuminator?.illuminators || [])
+    .filter(item => item?.enabled === true);
   return {schema: 'vectorwarp-replay-profile-v2', configuration_complete: true,
     created_at: Date.now(),
     capture: {sample_rate_hz: config.capture?.fs || null,
@@ -133,6 +138,8 @@ function recordingReplayProfile() {
       source_receiver: device.type || null,
       array_geometry: clone(device.array_geometry) || null},
     process: processProfile,
+    multi_illuminator: {enabled: config.process?.multi_illuminator?.enabled === true,
+      illuminators, timeline_semantics: 'per-illuminator-truth-and-products-v2'},
     location: clone(config.location) || null};
 }
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
@@ -157,6 +164,7 @@ const {exact: evidenceStatistics, operational: provisionalEvidenceStatistics} =
       captureTriggerQueue.acceptTrackSnapshot(event, timestamp) :
       ({accepted: false, reason: 'recording-storage-floor'})}});
 const captureEvidenceStatistics = provisionalEvidenceStatistics;
+const multiIlluminatorEvidence = new MultiIlluminatorEvidence(config, adsbSource);
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
 
@@ -307,12 +315,12 @@ function replayTruthStatus() {
   return {enabled: false, online: false, disabledForReplay: true,
     message: 'This recording does not contain an ADS-B timeline.'};
 }
-function recordedReplayTruth(kind) {
+function recordedReplayTruth(kind, illuminator) {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   if (processor?.input !== 'replay') return {replay: false, value: null};
   return {replay: true, value: recordingTimeline.at(processor.file,
     processor.positionSamples, processor.sampleRate,
-    kind === 'delayDoppler' ? 'delay_doppler' : 'aircraft')};
+    kind === 'delayDoppler' ? 'delay_doppler' : 'aircraft', illuminator)};
 }
 
 let restartCommand = null;
@@ -651,6 +659,9 @@ app.get('/', (req, res, next) => {
 function selectedIlluminator(req) {
   if (req.query.illuminator === undefined) return null;
   const id = String(req.query.illuminator);
+  const configured = (config.process?.multi_illuminator?.illuminators || [])
+    .some(item => item?.enabled === true && item.id === id);
+  if (!configured) return undefined;
   const exact = {};
   for (const [query, field] of [['frame_timestamp', 'timestamp'],
     ['first_input_sample', 'firstInputSample'],
@@ -659,9 +670,15 @@ function selectedIlluminator(req) {
       if (!Number.isSafeInteger(value) || value < 0) return undefined;
       exact[field] = value;
     }
-  return Object.keys(exact).length ?
-    illuminatorFrames.exact(id, exact) || undefined :
-    illuminatorFrames.latest(id) || undefined;
+  if (Object.keys(exact).length) return illuminatorFrames.exact(id, exact) || undefined;
+  const live = illuminatorFrames.latest(id);
+  if (live) return live;
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return undefined;
+  const at = kind => recordingTimeline.at(processor.file, processor.positionSamples,
+    processor.sampleRate, kind, id);
+  const recorded = {id, map: at('map'), detections: at('detections'), tracks: at('tracks')};
+  return recorded.map || recorded.detections || recorded.tracks ? recorded : undefined;
 }
 app.get('/api/illuminators/live', (req, res) => {
   const configured = (config.process?.multi_illuminator?.illuminators || [])
@@ -710,6 +727,13 @@ app.get('/api/tracker/publication', (req, res) => {
   res.json(trackerPublication.status());
 });
 app.get('/api/statistics', (req, res) => {
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('statistics', {
+      illuminator: req.query.illuminator,
+      timing: req.query.timing === 'provisional' ? 'provisional' : 'exact'});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   const diagnostic = bearingDiagnostic.status();
   const recorder = manifoldRecorder.status();
   const automation = manifoldAutomation.status();
@@ -720,9 +744,21 @@ app.get('/api/statistics', (req, res) => {
     frequency_resolved: frequencyResolvedShadow.status()}));
 });
 app.get('/api/live-scorecard', (req, res) => {
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('scorecard', {
+      illuminator: req.query.illuminator, timing: 'exact'});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   res.json(evidenceStatistics.liveStatus());
 });
 app.get('/api/live-scorecard/provisional', (req, res) => {
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('scorecard', {
+      illuminator: req.query.illuminator, timing: 'provisional'});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   res.json(provisionalEvidenceStatistics.liveStatus());
 });
 function recordingPasses() {
@@ -1604,18 +1640,25 @@ app.put('/api/config', async (req, res) => {
   }
 });
 app.get('/api/adsb2dd', (req, res) => {
+  const illuminator = req.query.illuminator === undefined ? undefined : String(req.query.illuminator);
+  if (illuminator !== undefined && !illuminatorAdsbGeometry.has(illuminator))
+    return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+  const query = illuminator === undefined ? '' : `?illuminator=${encodeURIComponent(illuminator)}`;
   if (replayTruthDisabled()) {
-    const recorded = recordedReplayTruth('delayDoppler');
+    const recorded = recordedReplayTruth('delayDoppler', illuminator);
     return recorded.value === null ? res.json(replayTruthStatus()) :
-      res.json({url: '/api/adsb/delay-doppler', replay: true});
+      res.json({url: `/api/adsb/delay-doppler${query}`, replay: true,
+        illuminator: illuminator ?? null});
   }
   if (!config.truth?.adsb?.enabled) return res.status(400).end();
   // Compatibility link now stays on this API; no converter URL or query is accepted.
-  res.json({url: '/api/adsb/delay-doppler'});
+  res.json({url: `/api/adsb/delay-doppler${query}`, illuminator: illuminator ?? null});
 });
 for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-doppler', 'delayDoppler']]) {
   app.get(route, async (req, res) => {
-    const recorded = recordedReplayTruth(kind);
+    const requestedIlluminator = kind === 'delayDoppler' && req.query.illuminator !== undefined ?
+      String(req.query.illuminator) : undefined;
+    const recorded = recordedReplayTruth(kind, requestedIlluminator);
     if (recorded.replay && recorded.value === null) return res.json(replayTruthStatus());
     if (!recorded.replay && replayTruthDisabled()) return res.json(replayTruthStatus());
     try {
@@ -1624,9 +1667,6 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
       if (kind === 'delayDoppler' && req.query.illuminator !== undefined && !selectedGeometry)
         return res.status(404).json({available: false,
           reason: 'Unknown illuminator.'});
-      if (selectedGeometry && recorded.replay)
-        return res.status(409).json({available: false,
-          reason: 'This recording has no per-illuminator truth timeline.'});
       const presentation = req.query.presentation;
       const requestedTimestamp = presentation === 'aligned' ?
         requestedPresentationTimestamp(req) : null;
@@ -1638,7 +1678,9 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
           requestedTimestamp ?? Date.now() - presentationDelayMs) :
         presentation && typeof adsbSource.getPresentation === 'function' ?
           await adsbSource.getPresentation(sourceKind) : await adsbSource.get(sourceKind);
-      if (selectedGeometry) value = selectedGeometry.update(value).data;
+      if (selectedGeometry && !recorded.replay) value = selectedGeometry.update(value).data;
+      if (requestedIlluminator !== undefined)
+        res.set('X-VectorWarp-Illuminator', requestedIlluminator);
       if (requestedTimestamp !== null)
         res.set('X-VectorWarp-Presentation-Timestamp', String(requestedTimestamp));
       if (kind === 'delayDoppler' &&
@@ -1719,6 +1761,13 @@ app.get('/api/radar/coverage', (req, res) => {
   const bins = Number(req.query.bins || 72);
   const altitudeBand = String(req.query.altitude || 'all');
   res.set('Cache-Control', 'private, max-age=30');
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('coverage', {
+      illuminator: req.query.illuminator, timing: 'provisional',
+      options: {hours, bins, altitudeBand}});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   res.json(provisionalEvidenceStatistics.radarCoverage({hours, bins, altitudeBand}));
 });
 app.get('/api/adsb/aircraft-photo/:hex', async (req, res) => {
@@ -2087,6 +2136,18 @@ function acceptIlluminatorFrame(frame) {
       configured.output_sample_rate_hz !== value.sample_rate_hz)
     throw new Error('Multi-illuminator frame does not match the active configuration');
   illuminatorFrames.add(value, Buffer.byteLength(frame));
+  multiIlluminatorEvidence.accept(value);
+  const geometry = recordingIlluminatorAdsbGeometry.get(value.id);
+  const record = aircraft => recordingTimeline.addIlluminator({timestamp_ms: value.timestamp,
+    illuminator: value.id, aircraft,
+    delay_doppler: aircraft && geometry ? geometry.update(aircraft).data : null,
+    map: value.map, detections: value.detections, tracks: value.tracks,
+    first_input_sample: value.first_input_sample,
+    end_input_sample: value.end_input_sample});
+  if (typeof adsbSource.getPresentationAt === 'function')
+    void adsbSource.getPresentationAt('aircraft', value.timestamp)
+      .then(record).catch(() => record(null));
+  else void adsbSource.get('aircraft').then(record).catch(() => record(null));
 }
 if (config.process?.multi_illuminator?.enabled === true &&
     Number.isInteger(config.network?.ports?.illuminator)) {
@@ -2195,6 +2256,7 @@ process.on('SIGTERM', () => {
   trackerPublication.close();
   evidenceStatistics.close();
   provisionalEvidenceStatistics.close();
+  multiIlluminatorEvidence.close();
   oprsEventRecorder.close();
   bearingDiagnostic.close();
   gainMonitor.stop();

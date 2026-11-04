@@ -16,6 +16,42 @@ namespace
 constexpr double speedOfLight = 299792458.0;
 }
 
+void validateAdvancedFeatures(const AdvancedFeatureConfig& config)
+{
+  if (config.surveillanceFusionMode != "noncoherent")
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support coherent or noise-whitened surveillance fusion");
+  if (config.surveillanceManifoldAutomation)
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support detection-manifold automation");
+  if (config.detectorIntegrationCpis != 1 ||
+      config.detectorIntegrationMotionBins != 0)
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support detector multi-CPI integration or motion bins");
+  if (config.trackBeforeDetect)
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support track-before-detect");
+  if (config.trackerBeamToleranceConfigured)
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support tracker beam_tolerance");
+  if (config.trackerGpuCapacityConfigured)
+    throw std::invalid_argument(
+      "Multi-illuminator lane trackers are CPU based; tracker gpu_capacity is not applicable");
+  if (config.trackerAccelerationModel != "hypothesis_bank")
+    throw std::invalid_argument(
+      "Multi-illuminator mode supports only hypothesis_bank tracker initiation");
+  if (config.stationaryClutter)
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support stationary-clutter initiation suppression");
+  if (config.trackGuidedShadow || config.trackGuidedPromotion)
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support track-guided shadow or promotion");
+  if (config.bearing || config.bearingFrequencyResolvedShadow ||
+      config.bearingManifoldRecorder)
+    throw std::invalid_argument(
+      "Multi-illuminator mode does not support bearing products or bearing calibration workers");
+}
+
 struct MultiIlluminatorRadar::Context
 {
   channelizer::IlluminatorDefinition definition;
@@ -287,6 +323,7 @@ MultiIlluminatorRadar::MultiIlluminatorRadar(uint32_t captureRateHz,
   if (!captureRateHz_ || !channelCount_ || illuminators.empty() ||
       !std::isfinite(config_.cpiSeconds) || config_.cpiSeconds <= 0)
     throw std::invalid_argument("Multi-illuminator radar configuration is empty");
+  validateAdvancedFeatures(config_.advanced);
   const std::size_t available = blah2::available_cpu_threads();
   const std::size_t outerMaximum = std::min(
     std::max<std::size_t>(1, available - 1), illuminators.size());

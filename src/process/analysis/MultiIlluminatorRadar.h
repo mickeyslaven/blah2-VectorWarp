@@ -20,6 +20,32 @@
 namespace blah2::multi_illuminator
 {
 
+// Settings whose production implementations currently live in the
+// single-illuminator GPU-resident pipeline.  Multi-illuminator callers must
+// pass their effective values here so the lane radar cannot silently degrade
+// to a simpler algorithm.
+struct AdvancedFeatureConfig
+{
+  std::string surveillanceFusionMode = "noncoherent";
+  bool surveillanceManifoldAutomation = false;
+  uint32_t detectorIntegrationCpis = 1;
+  uint32_t detectorIntegrationMotionBins = 0;
+  bool trackBeforeDetect = false;
+  bool trackerBeamToleranceConfigured = false;
+  bool trackerGpuCapacityConfigured = false;
+  std::string trackerAccelerationModel = "hypothesis_bank";
+  bool stationaryClutter = false;
+  bool trackGuidedShadow = false;
+  bool trackGuidedPromotion = false;
+  bool bearing = false;
+  bool bearingFrequencyResolvedShadow = false;
+  bool bearingManifoldRecorder = false;
+};
+
+// Throws with a feature-specific diagnostic if a configured algorithm would
+// otherwise be ignored by the multi-lane CPU radar.
+void validateAdvancedFeatures(const AdvancedFeatureConfig& config);
+
 struct RadarConfig
 {
   double cpiSeconds = .5;
@@ -45,6 +71,7 @@ struct RadarConfig
   std::vector<uint32_t> referenceChannels;
   std::vector<uint32_t> surveillanceChannels{1};
   ArrayReferenceSynthesizer::Config reference;
+  AdvancedFeatureConfig advanced;
 };
 
 struct RadarFrame

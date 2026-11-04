@@ -3,7 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
-const {JSDOM} = require('/tmp/vectorwarp-device-cache-pr91/test/ui/jsdom');
+const {JSDOM} = require('./jsdom');
 
 const dom = new JSDOM(`<!doctype html><body data-insight-view="health">
   <span id="view-state"></span><div id="view-root"></div></body>`,
@@ -26,7 +26,7 @@ const context = vm.createContext({
     JSON.stringify(url.startsWith('/api/timing') ? timing :
       url.startsWith('/api/tracker') ? tracker : config)})
 });
-vm.runInContext(fs.readFileSync('/tmp/vectorwarp-device-cache-pr91/html/js/insights.js', 'utf8'),
+vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'),
   context, {filename: 'insights.js'});
 
 (async () => {

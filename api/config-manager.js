@@ -1212,6 +1212,45 @@ function validateConfig(config, baseline = null, options = {}) {
     }
   }
 
+  if (multiIlluminator?.enabled === true) {
+    const fusion = processConfig.surveillance_fusion;
+    const bearing = processConfig.bearing;
+    const stationary = initiate.stationary_clutter;
+    const guided = tracker.track_guided_shadow;
+    const unsupported = [];
+    if ((fusion?.mode ?? 'noncoherent') !== 'noncoherent')
+      unsupported.push('process.surveillance_fusion.mode');
+    if (fusion?.detection_manifold_automation?.enabled === true)
+      unsupported.push('process.surveillance_fusion.detection_manifold_automation.enabled');
+    if ((detection.integration_cpis ?? 1) !== 1)
+      unsupported.push('process.detection.integration_cpis');
+    if ((detection.integration_motion_bins ?? 0) !== 0)
+      unsupported.push('process.detection.integration_motion_bins');
+    if (trackBeforeDetect?.enable === true)
+      unsupported.push('process.detection.track_before_detect.enable');
+    if (tracker.beam_tolerance !== undefined)
+      unsupported.push('process.tracker.beam_tolerance');
+    if (tracker.gpu_capacity !== undefined)
+      unsupported.push('process.tracker.gpu_capacity');
+    if ((initiate.acceleration_model ?? 'hypothesis_bank') !== 'hypothesis_bank')
+      unsupported.push('process.tracker.initiate.acceleration_model');
+    if (stationary?.enable === true)
+      unsupported.push('process.tracker.initiate.stationary_clutter.enable');
+    if (guided?.enable === true)
+      unsupported.push('process.tracker.track_guided_shadow.enable');
+    if (guided?.promote === true)
+      unsupported.push('process.tracker.track_guided_shadow.promote');
+    if (bearing?.enable === true)
+      unsupported.push('process.bearing.enable');
+    if ([true, 'on', 'auto'].includes(
+      bearing?.frequency_resolved_shadow?.enabled))
+      unsupported.push('process.bearing.frequency_resolved_shadow.enabled');
+    if ([true, 'on'].includes(bearing?.manifold_recorder?.enabled))
+      unsupported.push('process.bearing.manifold_recorder.enabled');
+    unsupported.forEach(field => errors.push(
+      `${field} is not supported in multi-illuminator mode`));
+  }
+
   string(network.ip, 'network.ip');
   if (typeof network.ip === 'string' && net.isIP(network.ip) !== 4)
     errors.push('network.ip must be an IPv4 address; the processor recording-control client does not support IPv6 URLs');

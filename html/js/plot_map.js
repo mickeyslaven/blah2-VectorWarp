@@ -56,23 +56,25 @@ function mapPresentationUrl(path, width) {
 }
 
 // setup API
-var selectedIlluminator = typeof window === 'undefined' ? '' :
-  new URLSearchParams(window.location.search).get('illuminator') || '';
+var selectedIlluminator = '';
 var selectedIlluminatorSampleRate = null;
-function illuminatorProductUrl(path) {
-  if (!selectedIlluminator) return path;
-  const url = new URL(path, typeof window === 'undefined' ?
-    'http://vectorwarp.invalid' : window.location.href);
-  url.searchParams.set('illuminator', selectedIlluminator);
-  return `${url.pathname}${url.search}`;
-}
-var urlDetection = liveApiUrl(radarPresentationUrl(illuminatorProductUrl('/api/detection')));
-var urlTracker = liveApiUrl(radarPresentationUrl(illuminatorProductUrl('/api/tracker')));
-urlMap = liveApiUrl(radarPresentationUrl(mapPresentationUrl(illuminatorProductUrl(urlMap),
-  typeof window === 'undefined' ? 1280 : window.innerWidth)));
-var urlAdsbData = liveApiUrl(radarPresentationUrl(illuminatorProductUrl(
-  '/api/adsb/delay-doppler?overlay=1')));
+var mapProductPath = urlMap;
+var urlDetection = null;
+var urlTracker = null;
+var urlAdsbData = null;
 var urlRemoteIdData = liveApiUrl(radarPresentationUrl('/api/remote-id/delay-doppler?overlay=1'));
+var maxHoldGrid = null;
+
+function applyClientMaxHold(frame) {
+  if (typeof window === 'undefined' || window.vectorwarpMapMode !== 'maxhold' ||
+      !Array.isArray(frame?.data)) return frame;
+  const sameShape = Array.isArray(maxHoldGrid) && maxHoldGrid.length === frame.data.length &&
+    maxHoldGrid.every((row, index) => Array.isArray(row) && row.length === frame.data[index]?.length);
+  if (!sameShape) maxHoldGrid = frame.data.map(row => row.slice());
+  else maxHoldGrid = frame.data.map((row, rowIndex) => row.map((value, columnIndex) =>
+    Math.max(Number(value), Number(maxHoldGrid[rowIndex][columnIndex]) * .98)));
+  return {...frame, data: maxHoldGrid, maxPower: Math.max(...maxHoldGrid.flat())};
+}
 
 // setup plotly
 var layout = {
@@ -158,30 +160,6 @@ if (typeof document !== 'undefined') {
     try { localStorage.setItem('vectorwarp-radar-overlay-mode', radarOverlayMode); } catch (_) {}
     updateOverlayControl();
   });
-  fetchRadarJson(liveApiUrl('/api/illuminators/live')).then(status => {
-    if (status?.enabled !== true || !Array.isArray(status.illuminators) ||
-        status.illuminators.length < 1) return;
-    const control = document.getElementById('illuminator-control');
-    const select = document.getElementById('illuminator-select');
-    if (!control || !select) return;
-    select.replaceChildren(...status.illuminators.map(item => {
-      const option = document.createElement('option');
-      option.value = item.id;
-      option.textContent = `${item.id} · ${(item.frequency_hz / 1e6).toFixed(1)} MHz`;
-      return option;
-    }));
-    const chosen = status.illuminators.find(item => item.id === selectedIlluminator) ||
-      status.illuminators.find(item => item.id === status.primary) || status.illuminators[0];
-    selectedIlluminator = chosen.id;
-    selectedIlluminatorSampleRate = chosen.output_sample_rate_hz;
-    select.value = chosen.id;
-    control.hidden = false;
-    select.addEventListener('change', () => {
-      const location = new URL(window.location.href);
-      location.searchParams.set('illuminator', select.value);
-      window.location.assign(location.href);
-    });
-  }).catch(() => {});
 }
 var adsb = {};
 var remoteId = {};
@@ -247,19 +225,19 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 }
 
 // callback function
-var radarUpdates = startRadarPlot(urlMap, async function (data) {
-  const runningConfig = await getRadarRuntimeConfig();
-  if (selectedIlluminator && Number.isFinite(selectedIlluminatorSampleRate)) {
-    runningConfig.capture = {...runningConfig.capture,
-      fs: selectedIlluminatorSampleRate};
-  }
+var radarUpdates = null;
+async function renderRadarMap(data) {
+  data = applyClientMaxHold(data);
+  const runningConfig = selectedIlluminatorConfig(await getRadarRuntimeConfig());
   const detectionEnabled = runningConfig.process?.detection?.enable !== false;
   const visible = overlayVisibility();
   // Bind overlays to the heatmap's exact processor frame. Waiting for these two
   // compact responses avoids clearing markers between independently selected
   // presentation snapshots and prevents adjacent-CPI data from being mixed.
   const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
-  const remoteIdEnabled = runningConfig.truth?.remote_id?.enabled === true;
+  // Remote ID currently has no per-illuminator delay/Doppler geometry. Never
+  // combine the selected FM lane with the legacy global transmitter model.
+  const remoteIdEnabled = !selectedIlluminator && runningConfig.truth?.remote_id?.enabled === true;
   if (typeof document !== 'undefined') document.querySelectorAll('[data-overlay-kind="remote-id"]').forEach(marker => {
     marker.hidden = !remoteIdEnabled;
   });
@@ -278,7 +256,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
   const stableAircraft = stabilizeAircraftSnapshots(Object.entries(data_adsb || {})
       .map(([hex, record]) => record?.hex ? record : {...record, hex}),
-    {scope: 'delay-doppler', graceMs: adsbEnabled ? 10000 : 0});
+    {scope: `delay-doppler:${selectedIlluminator || 'single'}`,
+      graceMs: adsbEnabled ? 10000 : 0});
   for (const aircraft of stableAircraft) {
       if (aircraft && 'doppler' in aircraft) {
         adsb.delay.push(aircraft.delay);
@@ -418,4 +397,17 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
     await Plotly.update('data', trace_update);
   }
   return true;
+}
+
+var vectorwarpMapReady = getIlluminatorContext().then(context => {
+  selectedIlluminator = context?.id || '';
+  selectedIlluminatorSampleRate = Number(context?.item?.output_sample_rate_hz);
+  const product = path => selectedIlluminatorUrl(path, context);
+  urlDetection = liveApiUrl(radarPresentationUrl(product('/api/detection')));
+  urlTracker = liveApiUrl(radarPresentationUrl(product('/api/tracker')));
+  urlAdsbData = liveApiUrl(radarPresentationUrl(product('/api/adsb/delay-doppler?overlay=1')));
+  urlMap = liveApiUrl(radarPresentationUrl(mapPresentationUrl(product(mapProductPath),
+    typeof window === 'undefined' ? 1280 : window.innerWidth)));
+  radarUpdates = startRadarPlot(urlMap, renderRadarMap);
+  return radarUpdates;
 });

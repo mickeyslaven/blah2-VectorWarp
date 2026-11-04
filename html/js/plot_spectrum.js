@@ -94,7 +94,8 @@ var detection = [];
 Plotly.react('data', data, layout, config);
 
 // callback function
-var radarUpdates = startRadarPlot(urlMap, async function (data) {
+var radarUpdates = null;
+async function renderSpectrum(data) {
 
   // case draw new plot
   if (data.frequency?.[0]?.length !== nRows) {
@@ -138,4 +139,36 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
     };
     await Plotly.update('data', trace_update);
   }
+}
+
+function showSpectrumUnavailable() {
+  const message = 'Global wideband spectrum is unavailable: this multi-illuminator processor is not publishing wideband IQ spectrum frames.';
+  Plotly.react('data', [], {...layout, annotations: [{text: message, showarrow: false,
+    font: {color: '#f7c75f', size: 16}}]}, config);
+  const target = typeof document === 'undefined' ? null : document.getElementById('data');
+  target?.setAttribute?.('aria-label', message);
+  target?.setAttribute?.('aria-busy', 'false');
+}
+
+var vectorwarpSpectrumReady = getRadarRuntimeConfig().then(async runtime => {
+  if (runtime?.process?.multi_illuminator?.enabled === true) {
+    try {
+      const first = await fetchRadarJson(urlMap);
+      const latestTimestamp = Array.isArray(first?.timestamp) ?
+        Number(first.timestamp.at(-1)) : Number(first?.timestamp);
+      const timestampMs = latestTimestamp < 1e11 ? latestTimestamp * 1000 : latestTimestamp;
+      const freshnessMs = Math.max(10000, Number(runtime?.process?.data?.cpi || 1) * 3000);
+      if (!first?.frequency?.[0]?.length || !Array.isArray(first?.spectrum) ||
+          !Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > freshnessMs) {
+        showSpectrumUnavailable();
+        return null;
+      }
+      await renderSpectrum(first);
+    } catch (_) {
+      showSpectrumUnavailable();
+      return null;
+    }
+  }
+  radarUpdates = startRadarPlot(urlMap, renderSpectrum);
+  return radarUpdates;
 });

@@ -41,7 +41,8 @@ function optionalNumber(value) { return finite(value) ? value : null; }
 class DelayDopplerHistory {
   constructor(config, {truthKey = 'adsb'} = {}) {
     this.truthKey = truthKey;
-    this.history = new Map(); this.output = new Map(); this.configure(config);
+    this.history = new Map(); this.output = new Map(); this.snapshots = new Map();
+    this.lastNow = null; this.configure(config);
   }
   configure(config) {
     const adsb = config.truth?.[this.truthKey] || {}, rx = config.location?.rx || {}, tx = config.location?.tx || {};
@@ -53,12 +54,26 @@ class DelayDopplerHistory {
     this.baseline = distance(this.rx, this.tx); this.frequency = config.capture.fc;
     this.valid = this.rx.every(finite) && this.tx.every(finite) && finite(this.baseline) &&
       finite(this.frequency) && this.frequency > 0;
-    this.history.clear(); this.output.clear(); // Restart/config change cannot mix geometries or frequencies.
+    this.history.clear(); this.output.clear(); this.snapshots.clear(); this.lastNow = null;
+    // Restart/config change cannot mix geometries or frequencies.
   }
-  clear() { this.history.clear(); this.output.clear(); }
+  clear() { this.history.clear(); this.output.clear(); this.snapshots.clear(); this.lastNow = null; }
+  remember(now, value) {
+    if (!finite(now)) return value;
+    this.lastNow = this.lastNow === null ? now : Math.max(this.lastNow, now);
+    this.snapshots.set(now, value);
+    while (this.snapshots.size > 64) this.snapshots.delete(this.snapshots.keys().next().value);
+    return value;
+  }
   update(feed) {
     const now = feed?.now, output = {}, warming = [];
-    if (!this.valid || !finite(now) || !Array.isArray(feed?.aircraft)) return {data: output, warming};
+    if (finite(now) && this.snapshots.has(now)) return this.snapshots.get(now);
+    // Presentation requests can arrive out of order. Never answer an older
+    // aligned request with a newer stateful Doppler result from the same lane.
+    if (finite(now) && finite(this.lastNow) && now < this.lastNow)
+      return {data: output, warming, aligned_unavailable: true};
+    if (!this.valid || !finite(now) || !Array.isArray(feed?.aircraft))
+      return this.remember(now, {data: output, warming});
     for (const [hex, result] of this.output)
       if (now - result.timestamp > this.maxAge) this.output.delete(hex);
     for (const aircraft of feed.aircraft) {
@@ -128,7 +143,7 @@ class DelayDopplerHistory {
     for (const [hex, samples] of this.history)
       if (samples.length < 2 && now - samples.at(-1).timestamp <= this.maxAge) warming.push(hex);
     for (const [hex, result] of this.output) output[hex] = result;
-    return {data: output, warming};
+    return this.remember(now, {data: output, warming});
   }
 }
 module.exports = {ecef, distance, lookGeometry, DelayDopplerHistory};

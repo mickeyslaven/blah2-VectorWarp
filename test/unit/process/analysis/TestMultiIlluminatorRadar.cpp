@@ -258,6 +258,35 @@ std::pair<double, double> strongest(const Map<std::complex<double>>& map)
 }
 }
 
+TEST_CASE("multi-illuminator advanced settings fail closed instead of degrading")
+{
+  using blah2::multi_illuminator::AdvancedFeatureConfig;
+  using blah2::multi_illuminator::validateAdvancedFeatures;
+  AdvancedFeatureConfig config;
+  REQUIRE_NOTHROW(validateAdvancedFeatures(config));
+
+  const auto rejected = [&](auto mutate) {
+    auto value = config;
+    mutate(value);
+    REQUIRE_THROWS_AS(validateAdvancedFeatures(value), std::invalid_argument);
+  };
+  rejected([](auto& value) { value.surveillanceFusionMode = "coherent_beam_bank"; });
+  rejected([](auto& value) { value.surveillanceFusionMode = "noise_whitened_beam_bank"; });
+  rejected([](auto& value) { value.surveillanceManifoldAutomation = true; });
+  rejected([](auto& value) { value.detectorIntegrationCpis = 2; });
+  rejected([](auto& value) { value.detectorIntegrationMotionBins = 1; });
+  rejected([](auto& value) { value.trackBeforeDetect = true; });
+  rejected([](auto& value) { value.trackerBeamToleranceConfigured = true; });
+  rejected([](auto& value) { value.trackerGpuCapacityConfigured = true; });
+  rejected([](auto& value) { value.trackerAccelerationModel = "adaptive_gate"; });
+  rejected([](auto& value) { value.stationaryClutter = true; });
+  rejected([](auto& value) { value.trackGuidedShadow = true; });
+  rejected([](auto& value) { value.trackGuidedPromotion = true; });
+  rejected([](auto& value) { value.bearing = true; });
+  rejected([](auto& value) { value.bearingFrequencyResolvedShadow = true; });
+  rejected([](auto& value) { value.bearingManifoldRecorder = true; });
+}
+
 TEST_CASE("independent illuminators produce independent radar products")
 {
   REQUIRE(fftw_init_threads());
