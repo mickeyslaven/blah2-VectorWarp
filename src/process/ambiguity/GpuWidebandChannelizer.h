@@ -144,6 +144,9 @@ public:
   // Isolated worker transports may split submission from completion so the
   // caller can process the prior CPI while exactly one GPU frame is running.
   virtual bool supportsSplitFrame() const noexcept { return false; }
+  virtual void begin(
+    const std::vector<std::vector<std::complex<float>>>&,
+    uint64_t) { throw std::logic_error("Split wideband frame unsupported"); }
   virtual void beginDeques(
     const std::vector<const std::deque<std::complex<double>>*>&,
     uint64_t) { throw std::logic_error("Split wideband frame unsupported"); }

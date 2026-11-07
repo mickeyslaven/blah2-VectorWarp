@@ -172,6 +172,12 @@ TEST_CASE("wideband split frame enforces one in flight and reset guards")
   REQUIRE_FALSE(process->frameInFlight());
   REQUIRE(output.front().firstInputSample==12);
   REQUIRE_THROWS(process->finishFrame());
+  std::vector<std::vector<std::complex<float>>> owned(2,
+    std::vector<std::complex<float>>(8,{1,0}));
+  process->begin(owned,24);
+  REQUIRE(process->frameInFlight());
+  output=process->finishFrame();
+  REQUIRE(output.front().firstInputSample==24);
 
   setenv("VW_MOCK_WIDEBAND_FAILURE","partial",1);
   auto failed=blah2::wideband_gpu::createProcess(config,"mock",options);

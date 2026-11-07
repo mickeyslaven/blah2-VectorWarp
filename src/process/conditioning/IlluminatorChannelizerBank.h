@@ -21,6 +21,9 @@ struct IlluminatorDefinition
   uint32_t occupiedBandwidthHz = 0;
   uint32_t outputRateHz = 0;
   uint32_t tapsPerPhase = 24;
+  // Optional broadcast-system label used by reference conditioning. Keep it
+  // last so existing aggregate initializers remain source compatible.
+  std::string standard;
 };
 
 struct IlluminatorOutput
