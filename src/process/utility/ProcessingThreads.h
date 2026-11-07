@@ -16,6 +16,10 @@ std::size_t available_cpu_threads();
 ProcessingThreads choose_processing_threads(std::size_t paths,
   std::size_t configuredWorkers, std::size_t configuredFft,
   std::size_t availableCpus);
+std::size_t cap_fft_threads_for_lanes(std::size_t configuredMaximum,
+  std::size_t activeLanes, std::size_t availableCpus);
+std::size_t choose_illuminator_lane_workers(std::size_t activeLanes,
+  std::size_t configuredWorkers, std::size_t availableCpus);
 
 namespace detail {
 // Exposed for tests with synthetic cgroup files, not changes to the host.

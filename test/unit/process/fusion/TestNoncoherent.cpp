@@ -19,4 +19,14 @@ TEST_CASE("noncoherent fusion preserves RMS magnitude")
   REQUIRE(result->data[0][0].imag() == 0);
   REQUIRE(result->delay.front() == 2);
   REQUIRE(result->doppler.front() == 5);
+
+  Map<std::complex<double>> retained(1, 1);
+  retained.data[0][0] = {-99, 7};
+  fusion.process_into({&first, &second}, retained);
+  REQUIRE(retained.data[0][0] == result->data[0][0]);
+  REQUIRE(retained.delay == result->delay);
+  REQUIRE(retained.doppler == result->doppler);
+  Map<std::complex<double>> wrong(2, 1);
+  REQUIRE_THROWS_AS(fusion.process_into({&first, &second}, wrong),
+    std::invalid_argument);
 }

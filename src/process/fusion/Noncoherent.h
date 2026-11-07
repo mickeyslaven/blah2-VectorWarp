@@ -12,6 +12,8 @@ class Noncoherent
 public:
   std::unique_ptr<Map<std::complex<double>>> process(
     const std::vector<Map<std::complex<double>> *>& maps) const;
+  void process_into(const std::vector<Map<std::complex<double>> *>& maps,
+    Map<std::complex<double>>& fused) const;
 };
 
 #endif

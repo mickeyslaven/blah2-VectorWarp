@@ -41,6 +41,7 @@ private:
   uint64_t captureEpoch = 0;
   uint64_t captureFirstEpochSample = 0;
   uint64_t captureEndEpochSample = 0;
+  bool inputDiscontinuity = false;
 
 public:
   /// @brief Constructor.
@@ -77,6 +78,7 @@ public:
     captureFirstEpochSample = first;
     captureEndEpochSample = end;
   }
+  void set_input_discontinuity(bool value) { inputDiscontinuity = value; }
 
   /// @brief Append the map to a save file.
   /// @param json JSON string of map and metadata.

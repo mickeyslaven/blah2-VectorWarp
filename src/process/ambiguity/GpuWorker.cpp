@@ -1,5 +1,6 @@
 #include "GpuProcess.h"
 #include "GpuResidentBackend.h"
+#include "GpuWidebandProcess.h"
 #include "GpuDriverStatus.h"
 #include "MacGpuCompatibility.h"
 #include <dlfcn.h>
@@ -7,6 +8,18 @@
 #include <stdexcept>
 
 int main(int argc, char** argv) {
+  if(argc==2&&std::string(argv[1])=="--wideband-v1"){
+#ifdef __linux__
+    void* module=dlopen(blah2::gpuSiblingPath("blah2-gpu-wideband-vulkan.so").c_str(),RTLD_NOW|RTLD_LOCAL);
+    if(!module){std::cerr<<"Wideband GPU module unavailable\n";return 2;}
+    const auto create=reinterpret_cast<blah2::wideband_gpu::Create>(dlsym(module,"blah2_gpu_create_wideband"));
+    if(!create){dlclose(module);std::cerr<<"Wideband GPU module ABI mismatch\n";return 2;}
+    const int result=blah2::wideband_gpu::runWorker([&](const blah2::wideband_gpu::Config& config,const std::string& device){return std::unique_ptr<blah2::wideband_gpu::Backend>(create(blah2::wideband_gpu::moduleAbi,&config,device.c_str()));});
+    dlclose(module);return result;
+#else
+    std::cerr<<"Wideband GPU worker is Linux-only\n";return 2;
+#endif
+  }
   if(argc==2&&std::string(argv[1])=="--resident-v5"){
 #ifdef __linux__
     void* module=nullptr;
@@ -47,7 +60,7 @@ int main(int argc, char** argv) {
     std::cout << response << '\n';
     return code;
   }
-  if (argc != 1) { std::cerr << "Usage: blah2-gpu-worker [--driver-status | --resident-v5]\n";
+  if (argc != 1) { std::cerr << "Usage: blah2-gpu-worker [--driver-status | --resident-v5 | --wideband-v1]\n";
   return 2; }
   void* module = nullptr;
   const int result = blah2::runGpuWorker([&](const blah2::GpuGeometry& geometry,

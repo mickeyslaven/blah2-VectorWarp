@@ -864,7 +864,11 @@ public:
   for(uint32_t c=ceiling;c>0;--c){
    auto batch=g;
    batch.channels=c;
-   if(ClutterPipeline::requiredBytes(batch,true)>budget-ambiguityBytes-lateBytes)continue;
+   const uint64_t required=ClutterPipeline::requiredBytes(batch,true);
+   // Canonical/result buffers are HOST_VISIBLE and live on a separate system
+   // heap on discrete GPUs. The allocation budget remains the hard guard when
+   // a unified-memory device charges those later buffers to its device heap.
+   if(required>budget-ambiguityBytes)continue;
    try {work_=std::make_unique<Workspace>(*this,c);
    break;}
    catch(const std::exception& error){reason=error.what();
@@ -880,6 +884,8 @@ public:
   const auto& b=deviceAllocations.at(context_.device).budget;
    std::cerr<<"GPU_RESIDENT_READY channels="<<g.channels<<" samples="<<g.clutterSamples<<" capacity="<<work_->capacity
     <<" canonical_bytes="<<work_->canonical->bytes<<" used="<<b.used()<<" peak="<<b.peak()<<" limit="<<b.limit()
+    <<" device_used="<<b.deviceUsed()<<" device_peak="<<b.devicePeak()
+    <<" device_limit="<<b.deviceLimit()
     <<" supplied_reference="<<(config_.reference.mode==ReferenceMode::supplied?1:0)<<" stages="<<config_.stages<<" cpu_bulk_calls=0 cpu_solve_calls=0"
     <<" diagnostic_capacity_bytes="<<gpu_diagnostics::FrameLog::capacity<<" diagnostic_host_bytes="<<sizeof(gpu_diagnostics::FrameLog)<<'\n';}
  }

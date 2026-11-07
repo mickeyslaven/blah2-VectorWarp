@@ -270,14 +270,17 @@ Map<std::complex<double>> *Ambiguity::process_impl(
   const Complex* rotatedReference, const Complex* filteredSurveillance,
   uint32_t fullSamples, int32_t clutterDelayMin, bool preserveSurveillance)
 {
-  if (x.size() < nDopplerBins * nCorr)
+  if (!rotatedReference && x.size() < nDopplerBins * nCorr)
     throw std::runtime_error("Reference CPI is shorter than ambiguity input");
 
   // range processing
   nSamples = nDopplerBins * nCorr;
-  if (!y || y->view_data().size() < nSamples)
+  if (!filteredSurveillance &&
+      (!y || y->view_data().size() < nSamples))
     throw std::runtime_error("Surveillance CPI is shorter than ambiguity input");
-  auto surveillanceIt = y->view_data().cbegin();
+  static const std::deque<Complex> emptySurveillance;
+  const auto& surveillanceData = y ? y->view_data() : emptySurveillance;
+  auto surveillanceIt = surveillanceData.cbegin();
   uint32_t referenceIndex = 0;
   const std::complex<double> imaginary = {0, 1};
   const auto rangePhaseStarted = std::chrono::steady_clock::now();
@@ -285,11 +288,11 @@ Map<std::complex<double>> *Ambiguity::process_impl(
 #ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
     if (gpuPartial) {
       const auto rangeStarted = std::chrono::steady_clock::now();
-      gpuPartial->start(x, y->view_data(), rotatedReference, filteredSurveillance,
+      gpuPartial->start(x, surveillanceData, rotatedReference, filteredSurveillance,
         fullSamples, clutterDelayMin);
       const uint32_t first = GpuPartialAmbiguity::gpuRows;
       const uint32_t split = first + (nDopplerBins-first)/2;
-      RangeRowWorker::Job caller{&x,&y->view_data(),&rangeRows,first,split,
+      RangeRowWorker::Job caller{&x,&surveillanceData,&rangeRows,first,split,
         nCorr,nfft,nDelayBins,fs,delayMin,dopplerMiddle};
       caller.rotatedX=rotatedReference; caller.filteredY=filteredSurveillance;
       caller.fullSamples=fullSamples; caller.rotation=clutterDelayMin;
@@ -310,11 +313,9 @@ Map<std::complex<double>> *Ambiguity::process_impl(
         gpuPartial->abort();
         throw;
       }
-      for (uint32_t row=0; row<nDopplerBins; ++row) {
-        corr.assign(rangeRows.begin()+uint64_t(row)*nDelayBins,
-          rangeRows.begin()+uint64_t(row+1)*nDelayBins);
-        map->set_row(row,corr);
-      }
+      for (uint32_t row=0; row<nDopplerBins; ++row)
+        std::copy_n(rangeRows.begin()+uint64_t(row)*nDelayBins,
+          nDelayBins, map->data[row].begin());
       if (rangeLog) {
         auto milliseconds=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
         rangeLog << "{\"frame\":" << ++rangeFrame << ",\"workers\":2,\"gpu_rows\":" << first
@@ -336,7 +337,7 @@ Map<std::complex<double>> *Ambiguity::process_impl(
     {
     const auto rangeStarted = std::chrono::steady_clock::now();
     const uint32_t split = rangeWorkers == 2 ? nDopplerBins/2 : nDopplerBins;
-    RangeRowWorker::Job job{&x,&y->view_data(),&rangeRows,0,split,nCorr,nfft,
+    RangeRowWorker::Job job{&x,&surveillanceData,&rangeRows,0,split,nCorr,nfft,
       nDelayBins,fs,delayMin,dopplerMiddle};
     job.rotatedX=rotatedReference; job.filteredY=filteredSurveillance;
     job.fullSamples=fullSamples; job.rotation=clutterDelayMin;
@@ -354,11 +355,9 @@ Map<std::complex<double>> *Ambiguity::process_impl(
     const auto callerFinished = std::chrono::steady_clock::now();
     if (started) rangeThread->finish();
     const auto joined = std::chrono::steady_clock::now();
-    for (uint32_t row=0;row<nDopplerBins;++row) {
-      corr.assign(rangeRows.begin()+uint64_t(row)*nDelayBins,
-        rangeRows.begin()+uint64_t(row+1)*nDelayBins);
-      map->set_row(row,corr);
-    }
+    for (uint32_t row=0;row<nDopplerBins;++row)
+      std::copy_n(rangeRows.begin()+uint64_t(row)*nDelayBins,
+        nDelayBins, map->data[row].begin());
     if (rangeLog) {
       auto milliseconds=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
       rangeLog << "{\"frame\":" << ++rangeFrame << ",\"workers\":" << rangeWorkers
@@ -405,15 +404,12 @@ Map<std::complex<double>> *Ambiguity::process_impl(
     fftw_execute(fftZi);
 
     // Extract signed lags directly, including the full unrounded FFT window.
-    corr.clear();
     for (uint16_t j = 0; j < nDelayBins; j++)
     {
       const int32_t lag = delayMin + j;
       const uint32_t index = lag < 0 ? static_cast<int64_t>(nfft) + lag : lag;
-      corr.push_back(dataZi[index]);
+      map->data[i][j] = dataZi[index];
     }
-
-    map->set_row(i, corr);
   }
   if (!rangeWorkers && rangeLog) {
     const double total = std::chrono::duration<double,std::milli>(
@@ -424,31 +420,26 @@ Map<std::complex<double>> *Ambiguity::process_impl(
   }
 
   if (!preserveSurveillance) {
-    y->discard_front(nSamples);
+    if (y && y->view_data().size() >= nSamples) y->discard_front(nSamples);
     // The legacy path retains the filtered short tail after consuming the
     // ambiguity rows. Copy only that tail; the next CPI replaces this deque.
-    if (filteredSurveillance)
+    if (filteredSurveillance && y)
       y->assign_complex(filteredSurveillance+nSamples, fullSamples-nSamples);
   }
 
   // doppler processing
   for (uint16_t i = 0; i < nDelayBins; i++)
   {
-    delayProfile = map->get_col(i);
     for (uint16_t j = 0; j < nDopplerBins; j++)
     {
-      dataDoppler[j] = {delayProfile[j].real(), delayProfile[j].imag()};
+      dataDoppler[j] = map->data[j][i];
     }
 
     fftw_execute(fftDoppler);
 
-    corr.clear();
     for (uint16_t j = 0; j < nDopplerBins; j++)
-    {
-      corr.push_back(dataDoppler[(j + int(nDopplerBins / 2) + 1) % nDopplerBins]);
-    }
-
-    map->set_col(i, corr);
+      map->data[j][i] =
+        dataDoppler[(j + int(nDopplerBins / 2) + 1) % nDopplerBins];
   }
 
   return map.get();

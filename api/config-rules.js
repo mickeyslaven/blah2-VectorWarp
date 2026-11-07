@@ -26,6 +26,7 @@ const rules = {
     choices: ['fixed', 'measured', 'measured_per_channel'], optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
+  'capture.device.timing_source': {type: 'string', choices: ['internal', 'gpsdo'], optional: true},
   // Published SDRplay API 3.09 section 5: RSPduo 50-ohm inputs, not Hi-Z.
   'capture.device.lnaState': {...integer(0, 9), choices: [0,1,2,3,4,5,6,7,8,9],
     frequencyBands: [{belowHz: 60000000, max: 6},
@@ -41,6 +42,8 @@ const rules = {
   'capture.replay.reference_channels': {type: 'array', optional: true},
   'process.data.cpi': {...numeric(), exclusiveMin: 0},
   'process.data.buffer': numeric(1),
+  'process.multi_illuminator.enabled': {type: 'boolean', optional: true},
+  'process.multi_illuminator.illuminators': {type: 'array', optional: true},
   'process.detection.pfa': {...numeric(), exclusiveMin: 0, exclusiveMax: 1},
   'process.detection.nGuard': integer(0, 127),
   'process.detection.nTrain': integer(1, 127),
@@ -177,10 +180,10 @@ for (const group of ['ambiguity', 'clutter']) {
       ...(group === 'clutter' ? {optional: true} : {})
     };
 }
-for (const name of ['api','map','detection','track','bearing','manifold','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','manifold','illuminator','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
     {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
-    ['bearing','manifold'].includes(name) ? {optional: true} : {})};
+    ['bearing','manifold','illuminator'].includes(name) ? {optional: true} : {})};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

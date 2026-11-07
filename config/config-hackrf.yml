@@ -21,6 +21,9 @@ capture:
     provenance: 'legacy-unqualified'
 
 process:
+  multi_illuminator:
+    enabled: false
+    illuminators: []
   data:
     cpi: 0.5
     buffer: 1.5
@@ -57,12 +60,12 @@ process:
       promote: false
       max_tracks: 64
     initiate:
-      M: 4
+      M: 3
       N: 6
       maxAcc: 10
       min_snr_db: 5
-      acceleration_model: hypothesis_bank
-    delete: 3
+      acceleration_model: adaptive_gate
+    delete: 10
   bearing:
     enable: false
     min_consistent: 3
@@ -97,6 +100,7 @@ network:
     map: 3001
     detection: 3002
     track: 3003
+    illuminator: 3007
     bearing: 3004
     manifold: 3005
     timestamp: 4000

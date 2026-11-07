@@ -43,6 +43,7 @@ const CONFIG_META = {
   'capture.device.heimdall.gain_control': ['Gain', 'Automatic per channel or manual'],
   'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
+  'capture.device.timing_source': ['Timing source', 'Internal works without GPS. GPSDO uses the connected GPS antenna.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
   'capture.device.gain': ['Channel gains', 'Gain for each receive channel, in dB.'],
   'capture.device.serial': ['HackRF serial numbers', 'Reference and surveillance device serial numbers'],
@@ -66,6 +67,9 @@ const CONFIG_META = {
   'process.performance.surveillance_workers': ['Surveillance workers', 'Auto chooses how many radar inputs to process in parallel.'],
   'process.performance.fft_threads': ['FFT threads per worker', 'Auto shares available CPU capacity with the parallel workers. Applies after restart.'],
   'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU accuracy and speed. Falls back to CPU if needed.'],
+  'process.multi_illuminator': ['Multiple illuminators', 'Process several broadcast channels independently.'],
+  'process.multi_illuminator.enabled': ['Multiple illuminators', 'Process the configured stations.'],
+  'process.multi_illuminator.illuminators': ['Illuminators', 'FM stations and transmitter sites.'],
   'process.data': ['Frame timing', ''],
   'process.data.cpi': ['Frame interval (CPI)', 'Seconds per radar frame and display update. Applies after restart.'],
   'process.data.buffer': ['Live capture queue (CPI frames)', 'Queue capacity in CPI frames; unrelated to IQ pre-roll.'],
@@ -175,6 +179,7 @@ const CONFIG_META = {
   'network.ports.map': ['Radar map port', 'Processed map input stream'],
   'network.ports.detection': ['Detection port', 'Detected-return input stream'],
   'network.ports.track': ['Track port', 'Target-track input stream'],
+  'network.ports.illuminator': ['Illuminator port', 'Multi-illuminator output stream'],
   'network.ports.bearing': ['Bearing port', 'Opt-in radar bearing input stream'],
   'network.ports.manifold': ['Calibration port', 'Opt-in sparse complex manifold-evidence stream'],
   'network.ports.timestamp': ['Timestamp port', 'Radar frame timestamp stream'],
@@ -453,6 +458,7 @@ const PRIMARY_SETTING_PATHS = new Set([
 ]);
 const EXPERIMENTAL_SETTING_PREFIXES = [
   'truth.remote_id',
+  'process.multi_illuminator',
   'process.surveillance_fusion.detection_manifold_automation',
   'process.tracker.track_guided_shadow',
   'process.tracker.publication',
@@ -900,6 +906,46 @@ function receiverSpecificProcessPath(path) {
     path.startsWith('process.tracker.initiate.stationary_clutter.');
 }
 
+function multiIlluminatorUnsupportedPath(path) {
+  return path === 'process.surveillance_fusion' || path.startsWith('process.surveillance_fusion.') ||
+    path === 'process.bearing' || path.startsWith('process.bearing.') ||
+    path === 'process.detection.integration_cpis' ||
+    path === 'process.detection.integration_motion_bins' ||
+    path === 'process.detection.track_before_detect' ||
+    path.startsWith('process.detection.track_before_detect.') ||
+    path === 'process.tracker.beam_tolerance' || path === 'process.tracker.gpu_capacity' ||
+    path === 'process.tracker.initiate.stationary_clutter' ||
+    path.startsWith('process.tracker.initiate.stationary_clutter.') ||
+    path === 'process.tracker.track_guided_shadow' ||
+    path.startsWith('process.tracker.track_guided_shadow.');
+}
+
+function markMultiIlluminatorUnsupported(root) {
+  const lanes = activeConfig.process?.multi_illuminator?.illuminators || [];
+  const multi = activeConfig.process?.multi_illuminator?.enabled === true &&
+    lanes.filter(item => item?.enabled !== false).length > 1;
+  if (!multi) return;
+  const affected = [...root.querySelectorAll('.config-field[data-path]')]
+    .filter(item => multiIlluminatorUnsupportedPath(item.dataset.path));
+  for (const field of affected) {
+    field.classList.add('config-field-unavailable');
+    field.querySelectorAll('input, select, button').forEach(input => {
+      input.disabled = true;
+      input.dataset.originalDisabled = 'true';
+    });
+    const help = field.querySelector('.config-field-copy small');
+    if (help && !help.textContent.includes('Unavailable with multiple illuminators'))
+      help.textContent += ' Unavailable with multiple illuminators; each lane currently uses noncoherent fusion and the basic detector/tracker contract.';
+  }
+  const processPanel = root.querySelector('#settings-panel-process');
+  if (processPanel && affected.length) {
+    const notice = document.createElement('p');
+    notice.className = 'config-advice evaluation-note multi-illuminator-limit';
+    notice.textContent = 'Multiple illuminators are active. Coherent/bearing processing, detector integration and track-before-detect, and advanced tracker recovery controls are unavailable for every lane.';
+    processPanel.prepend(notice);
+  }
+}
+
 function switchDevice(type) {
   const profile = (capabilities.deviceProfiles || [])
     .find(item => item.type === type);
@@ -986,6 +1032,8 @@ function frequencyInput(value, path) {
 
 function arrayInput(value, path) {
   const key = path.join('.');
+  if (key === 'process.multi_illuminator.illuminators')
+    return illuminatorListInput(value, path);
   const wrapper = document.createElement('div');
   const channelList = key === 'capture.device.surveillance_channels' ||
     key === 'process.reference_synthesis.channels';
@@ -1047,6 +1095,90 @@ function arrayInput(value, path) {
     slot.append(caption, input);
     wrapper.appendChild(slot);
   });
+  return wrapper;
+}
+
+function illuminatorListInput(value, path) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'illuminator-list';
+  let items = JSON.parse(JSON.stringify(value));
+  const anchor = document.createElement('input');
+  anchor.type = 'hidden';
+  const commit = () => setValue(path, JSON.parse(JSON.stringify(items)));
+  const render = () => {
+    anchor.value = String(items.length);
+    wrapper.replaceChildren(anchor);
+    items.forEach((item, index) => {
+      const card = document.createElement('fieldset');
+      card.className = 'illuminator-card';
+      const legend = document.createElement('legend');
+      legend.textContent = item.id || `Illuminator ${index + 1}`;
+      card.appendChild(legend);
+      const addText = (label, key, transform = value => value) => {
+        const control = document.createElement('label');
+        control.textContent = label;
+        const input = document.createElement('input');
+        input.value = key.split('.').reduce((target, part) => target?.[part], item) ?? '';
+        input.addEventListener('input', () => {
+          const parts = key.split('.'); let target = item;
+          parts.slice(0, -1).forEach(part => { target[part] ||= {}; target = target[part]; });
+          target[parts.at(-1)] = transform(input.value);
+          if (key === 'id') legend.textContent = input.value || `Illuminator ${index + 1}`;
+          commit();
+        });
+        control.appendChild(input); card.appendChild(control);
+      };
+      const addNumber = (label, key, scale = 1) => addText(label, key,
+        input => input === '' ? null : Number(input) * scale);
+      const enabled = document.createElement('label');
+      enabled.className = 'illuminator-enabled';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox'; checkbox.checked = item.enabled === true;
+      checkbox.addEventListener('change', () => {
+        item.enabled = checkbox.checked; commit(); renderEditor();
+      });
+      enabled.append(checkbox, document.createTextNode('Enabled')); card.appendChild(enabled);
+      addText('ID', 'id');
+      const standardLabel = document.createElement('label');
+      standardLabel.textContent = 'Standard';
+      const standard = selectInput(['FM', 'DAB', 'ATSC', 'DVB-T/T2'], item.standard,
+        selected => { item.standard = selected; commit(); });
+      standardLabel.appendChild(standard); card.appendChild(standardLabel);
+      const originalFrequency = item.frequency_hz; item.frequency_hz = originalFrequency / 1e6;
+      addNumber('Frequency (MHz)', 'frequency_hz', 1e6); item.frequency_hz = originalFrequency;
+      const originalBandwidth = item.occupied_bandwidth_hz;
+      item.occupied_bandwidth_hz = originalBandwidth / 1000;
+      addNumber('Bandwidth (kHz)', 'occupied_bandwidth_hz', 1000);
+      item.occupied_bandwidth_hz = originalBandwidth;
+      const originalRate = item.output_sample_rate_hz;
+      item.output_sample_rate_hz = originalRate / 1000;
+      addNumber('Output rate (kS/s)', 'output_sample_rate_hz', 1000);
+      item.output_sample_rate_hz = originalRate;
+      addNumber('Filter taps', 'filter_taps_per_phase');
+      addText('Transmitter', 'transmitter.name');
+      addNumber('Latitude', 'transmitter.latitude');
+      addNumber('Longitude', 'transmitter.longitude');
+      addNumber('Altitude (m)', 'transmitter.altitude');
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.className = 'button-secondary illuminator-remove'; remove.textContent = 'Remove';
+      remove.addEventListener('click', () => {
+        items.splice(index, 1); commit(); renderEditor();
+      });
+      card.appendChild(remove); wrapper.appendChild(card);
+    });
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'button-secondary'; add.textContent = 'Add illuminator';
+    add.addEventListener('click', () => {
+      items.push({id: `illuminator-${items.length + 1}`, enabled: true, standard: 'FM',
+        frequency_hz: activeConfig.capture?.fc || 100000000,
+        occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+        filter_taps_per_phase: 24,
+        transmitter: {name: '', latitude: 0, longitude: 0, altitude: 0}});
+      commit(); renderEditor();
+    });
+    wrapper.appendChild(add);
+  };
+  render();
   return wrapper;
 }
 
@@ -1519,6 +1651,8 @@ function field(value, path) {
   help.textContent = description;
   copy.append(label, help);
   const control = path.join('.') === 'save.path' ? recordingFolderControl(value, path) : typedInput(value, path);
+  if (control.classList?.contains('illuminator-list'))
+    wrapper.classList.add('config-field-wide', 'config-field-illuminators');
   if (control.classList?.contains('adsb-source-editor'))
     wrapper.classList.add('config-field-wide', 'config-field-adsb-sources');
   const rule = capabilities.fieldRules?.[path.join('.')];
@@ -1776,6 +1910,7 @@ function renderExperimentalSettings() {
     if (value !== undefined) section.appendChild(group(key, value, path, false));
   };
   add('remote_id', activeConfig.truth?.remote_id, ['truth']);
+  add('multi_illuminator', process.multi_illuminator, ['process']);
   if (coherentArray) add('detection_manifold_automation',
     process.surveillance_fusion?.detection_manifold_automation,
     ['process', 'surveillance_fusion']);
@@ -2116,6 +2251,20 @@ async function refreshUpstreamStatus() {
   } catch (_) {
     target.innerHTML = '<div class="upstream-header"><strong>Receiver status</strong><span class="upstream-badge bad">Unavailable</span></div><p>Could not check receiver software.</p>';
   } finally { upstreamPending = false; }
+}
+
+function receiverUsesUpstreamStatus(receiverType) {
+  // Kraken is managed by the separate Heimdall receiver. Direct receivers
+  // report their own device/API readback in the startup card instead.
+  return receiverType === 'Kraken';
+}
+
+function createUpstreamStatusSection() {
+  const section = document.createElement('section');
+  section.id = 'upstream-status';
+  section.className = 'upstream-status';
+  section.innerHTML = '<div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div>';
+  return section;
 }
 
 function setRestartProgress(percent, label, state = '') {
@@ -2549,7 +2698,8 @@ function renderEditor() {
         renderReceiverOverload(null, health);
       }
       panel.appendChild(renderReceiverSetup());
-      if (upstream) panel.appendChild(upstream);
+      if (receiverUsesUpstreamStatus(receiverType))
+        panel.appendChild(upstream || createUpstreamStatusSection());
     }
     panels.appendChild(panel);
   });
@@ -2559,6 +2709,7 @@ function renderEditor() {
     organizeTechnicalControls(panel, panel.dataset.tab));
   target.append(makeSettingsFilter(tabs, panels, activate));
   target.append(tabs, panels);
+  markMultiIlluminatorUnsupported(target);
   activate(initialTab);
   displayFieldErrors(validationErrors);
   displayValidationNotices();
@@ -3326,6 +3477,7 @@ function accelerationSummary(value, radar) {
 
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
-    receiverSpecificProcessPath, adsbExchangeId, adsbPublicSource,
+    receiverSpecificProcessPath, multiIlluminatorUnsupportedPath, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
-    receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};
+    receiverSaveDetails, receiverUsesUpstreamStatus, accelerationSummary,
+    CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

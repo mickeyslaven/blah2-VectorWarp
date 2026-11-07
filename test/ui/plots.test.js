@@ -10,6 +10,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
   for (const kind of ['map', 'spectrum', 'timing', 'detection']) {
     const calls = [];
     const fetchUrls = [];
+    const snapshotScopes = [];
     let update;
     let scheduled;
     const running = {capture: {fs: 2400000}, process: {data: {cpi: .2},
@@ -20,9 +21,18 @@ const clone = value => JSON.parse(JSON.stringify(value));
       {id: 10, state: 'COASTING', delay: 10, doppler: -3}
     ]};
     const context = vm.createContext({
-      URL,
+      URL, URLSearchParams,
       liveApiUrl: url => url,
       radarPresentationUrl: url => `${url}${url.includes('?') ? '&' : '?'}presentation=aligned`,
+      getIlluminatorContext: async () => ({enabled: true, id: 'fm-90.5',
+        item: {id: 'fm-90.5', output_sample_rate_hz: 300000}}),
+      selectedIlluminatorUrl: (path, context) => {
+        const url = new URL(path, 'http://vectorwarp.test');
+        if (context?.id) url.searchParams.set('illuminator', context.id);
+        return `${url.pathname}${url.search}`;
+      },
+      selectedIlluminatorConfig: config => ({...config,
+        capture: {...config.capture, fs: 300000}}),
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
       aircraftLabel: common.aircraftLabel,
@@ -30,7 +40,10 @@ const clone = value => JSON.parse(JSON.stringify(value));
       aircraftPlotData: common.aircraftPlotData,
       aircraftHoverText: common.aircraftHoverText,
       aircraftHoverTemplate: common.aircraftHoverTemplate,
-      stabilizeAircraftSnapshots: common.stabilizeAircraftSnapshots,
+      stabilizeAircraftSnapshots: (rows, options) => {
+        snapshotScopes.push(options?.scope);
+        return common.stabilizeAircraftSnapshots(rows, options);
+      },
       fetchRadarJson: async url => {
         fetchUrls.push(url);
         return url.startsWith('/api/detection') ? detected :
@@ -46,6 +59,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
     const source = fs.readFileSync(path.join(__dirname, '../../html/js', `plot_${kind}.js`), 'utf8');
     assert.ok(!source.includes('setInterval'), `${kind} must use shared frame timing`);
     vm.runInContext(source, context);
+    if (context.vectorwarpMapReady) await context.vectorwarpMapReady;
+    if (context.vectorwarpDetectionReady) await context.vectorwarpDetectionReady;
+    if (context.vectorwarpSpectrumReady) await context.vectorwarpSpectrumReady;
     assert.equal(typeof update, 'function');
     if (kind === 'map') {
       const mobile = context.delayDopplerPresentation(390);
@@ -81,6 +97,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       detection: {timestamp: [1000], delay: [1], doppler: [2], snr: [3]}
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
+    if (kind === 'map') assert.ok(snapshotScopes.includes('delay-doppler:fm-90.5'),
+      'ADS-B snapshot retention is isolated to the selected illuminator lane');
     assert.equal(calls.filter(call => call.method === 'react').length, 2, `${kind}: initial real frame must create correct traces without tearing down its plot root`);
     if (kind === 'map') {
       const initialTraces = calls.filter(call => call.method === 'react').at(-1).args[1];
@@ -94,11 +112,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(initialTraces[3].marker.symbol, 'circle');
       assert.equal(initialTraces[3].marker.size, 11,
         'Updated tracks are compact solid orange dots rather than bullseyes');
-      assert.equal(initialTraces[3].x[0], 8 * 299792458 / 2400000 / 1000,
-        'Tracker sample bins convert to excess-path kilometres');
+      assert.equal(initialTraces[3].x[0], 8 * 299792458 / 300000 / 1000,
+        'Tracker sample bins use the selected lane output rate');
       assert.equal(initialTraces[4].marker.symbol, 'circle-open',
         'Coasting persistent tracks remain visible as hollow orange rings');
-      assert.equal(initialTraces[4].x[0], 10 * 299792458 / 2400000 / 1000);
+      assert.equal(initialTraces[4].x[0], 10 * 299792458 / 300000 / 1000);
+      assert.ok(context.urlMap.includes('/api/map') && context.urlMap.includes('illuminator=fm-90.5'),
+        'The heatmap URL is resolved only after the selected lane is known');
       assert.ok(fetchUrls.some(url => url.includes('/api/detection') && url.includes('frame_timestamp=1000')));
       assert.ok(fetchUrls.some(url => url.includes('/api/tracker') && url.includes('frame_timestamp=1000')),
         'Both overlays are requested for the exact heatmap frame');
@@ -157,9 +177,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
       const latestMapUpdate = calls.filter(call => call.method === 'update').at(-1);
       assert.deepEqual(latestMapUpdate.args[1].x[1], [1],
         'The matching raw detection is updated atomically with the heatmap');
-      assert.equal(latestMapUpdate.args[1].x[3][0], 8 * 299792458 / 2400000 / 1000,
+      assert.equal(latestMapUpdate.args[1].x[3][0], 8 * 299792458 / 300000 / 1000,
         'The matching updated track is rendered in the same Plotly update');
-      assert.equal(latestMapUpdate.args[1].x[4][0], 10 * 299792458 / 2400000 / 1000,
+      assert.equal(latestMapUpdate.args[1].x[4][0], 10 * 299792458 / 300000 / 1000,
         'A coasting track does not disappear between direct detections');
       assert.ok(fetchUrls.some(url => url.includes('frame_timestamp=1001')));
       context.radarOverlayMode = 'tracks';
@@ -176,5 +196,23 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.ok(!calls.some(call => call.method === 'newPlot'), 'Map never tears down the plot root');
     }
   }
+  const unavailableCalls = [];
+  const unavailableContext = vm.createContext({
+    URL, Date,
+    liveApiUrl: value => value,
+    radarPresentationUrl: value => value,
+    getRadarRuntimeConfig: async () => ({process: {data: {cpi: .5},
+      multi_illuminator: {enabled: true}}}),
+    fetchRadarJson: async () => null,
+    startRadarPlot: () => { throw new Error('Absent multi-mode IQ must not start an endless poll'); },
+    document: {getElementById: () => ({setAttribute() {}})},
+    Plotly: {react: async (...args) => unavailableCalls.push(args), update: async () => {}},
+    window: {}
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../html/js/plot_spectrum.js'), 'utf8'),
+    unavailableContext);
+  await unavailableContext.vectorwarpSpectrumReady;
+  assert.match(unavailableCalls.at(-1)[2].annotations[0].text, /wideband spectrum is unavailable/i,
+    'Multi mode fails clearly when no global wideband spectrum is published');
   console.log('Plot first-frame/update, spectrum dB scale, frequency axis and late-stream tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

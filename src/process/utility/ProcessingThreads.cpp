@@ -121,4 +121,29 @@ ProcessingThreads choose_processing_threads(std::size_t paths,
     std::min<std::size_t>(4, std::max<std::size_t>(1, budget / workers));
   return {availableCpus, workers, fft};
 }
+
+std::size_t cap_fft_threads_for_lanes(std::size_t configuredMaximum,
+    std::size_t activeLanes, std::size_t availableCpus) {
+  if (!configuredMaximum || !activeLanes)
+    throw std::invalid_argument("Multi-lane FFT budgeting needs positive limits");
+  const std::size_t budget = std::max<std::size_t>(1,
+    std::max<std::size_t>(1, availableCpus) - 1);
+  return std::min(configuredMaximum,
+    std::max<std::size_t>(1, budget / activeLanes));
+}
+
+std::size_t choose_illuminator_lane_workers(std::size_t activeLanes,
+    std::size_t configuredWorkers, std::size_t availableCpus) {
+  if (!activeLanes || configuredWorkers > 256)
+    throw std::invalid_argument("Illuminator lanes need 1-256 configured workers");
+  const std::size_t budget = std::max<std::size_t>(1,
+    std::max<std::size_t>(1, availableCpus) - 1);
+  if (configuredWorkers)
+    return std::min({activeLanes, configuredWorkers, budget});
+  // Full-quality contexts are bandwidth- and cache-heavy. Physical composed
+  // GPU/radar/JSON sweeps favor four contexts through twelve lanes, but three
+  // at sixteen: the narrower 16-lane batch reduced p95 in every paired run.
+  const std::size_t measuredCacheBound = activeLanes >= 16 ? 3 : 4;
+  return std::min({activeLanes, budget, measuredCacheBound});
+}
 }

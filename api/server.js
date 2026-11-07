@@ -26,6 +26,7 @@ const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
+const {DelayDopplerHistory} = require('./adsb-geometry.js');
 const {createRemoteIdSource} = require('./remote-id-source.js');
 const {createAircraftPhotoLookup} = require('./aircraft-photo.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
@@ -36,7 +37,9 @@ const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
-const {createEvidenceStatisticsLanes} = require('./evidence-statistics.js');
+const {createEvidenceStatisticsLanes, provisionalTimingFrame} =
+  require('./evidence-statistics.js');
+const {MultiIlluminatorEvidence} = require('./multi-illuminator-evidence.js');
 const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
@@ -58,6 +61,7 @@ const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
 const {PresentationHistory, frameTimestamp} = require('./presentation-history.js');
+const {IlluminatorFrameHistory} = require('./illuminator-frame-history.js');
 const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
@@ -72,6 +76,13 @@ try {
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const createIlluminatorAdsbGeometry = () => new Map((config.process?.multi_illuminator?.illuminators || [])
+  .filter(item => item?.enabled === true).map(item => [item.id,
+    new DelayDopplerHistory({...config,
+      capture: {...config.capture, fc: item.frequency_hz},
+      location: {...config.location, tx: item.transmitter}})]));
+const illuminatorAdsbGeometry = createIlluminatorAdsbGeometry();
+const recordingIlluminatorAdsbGeometry = createIlluminatorAdsbGeometry();
 const remoteIdSource = createRemoteIdSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const aircraftPhotoLookup = createAircraftPhotoLookup(config, {cacheFile:
   process.env.BLAH2_AIRCRAFT_PHOTO_CACHE || '/var/lib/vectorwarp-api/aircraft-photo-metadata.json'});
@@ -115,6 +126,8 @@ function recordingReplayProfile() {
     processProfile.bearing.frequency_resolved_shadow.enabled = false;
     delete processProfile.bearing.frequency_resolved_shadow.path;
   }
+  const illuminators = clone(config.process?.multi_illuminator?.illuminators || [])
+    .filter(item => item?.enabled === true);
   return {schema: 'vectorwarp-replay-profile-v2', configuration_complete: true,
     created_at: Date.now(),
     capture: {sample_rate_hz: config.capture?.fs || null,
@@ -126,6 +139,9 @@ function recordingReplayProfile() {
       source_receiver: device.type || null,
       array_geometry: clone(device.array_geometry) || null},
     process: processProfile,
+    multi_illuminator: {enabled: config.process?.multi_illuminator?.enabled === true,
+      illuminators, timeline_semantics: 'per-illuminator-truth-derived-products-v3',
+      map_storage: 'regenerated-from-full-passband-iq'},
     location: clone(config.location) || null};
 }
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
@@ -150,6 +166,7 @@ const {exact: evidenceStatistics, operational: provisionalEvidenceStatistics} =
       captureTriggerQueue.acceptTrackSnapshot(event, timestamp) :
       ({accepted: false, reason: 'recording-storage-floor'})}});
 const captureEvidenceStatistics = provisionalEvidenceStatistics;
+const multiIlluminatorEvidence = new MultiIlluminatorEvidence(config, adsbSource);
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
 
@@ -300,12 +317,12 @@ function replayTruthStatus() {
   return {enabled: false, online: false, disabledForReplay: true,
     message: 'This recording does not contain an ADS-B timeline.'};
 }
-function recordedReplayTruth(kind) {
+function recordedReplayTruth(kind, illuminator) {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   if (processor?.input !== 'replay') return {replay: false, value: null};
   return {replay: true, value: recordingTimeline.at(processor.file,
     processor.positionSamples, processor.sampleRate,
-    kind === 'delayDoppler' ? 'delay_doppler' : 'aircraft')};
+    kind === 'delayDoppler' ? 'delay_doppler' : 'aircraft', illuminator)};
 }
 
 let restartCommand = null;
@@ -358,6 +375,7 @@ function receiverIndependentChange(before, after) {
 var map = '';
 var detection = '';
 var track = '';
+const illuminatorFrames = new IlluminatorFrameHistory();
 var bearing = '';
 const bearingHypotheses = new BistaticHypothesisTracker();
 var timestamp = '';
@@ -421,16 +439,23 @@ let captureRevision = 0;
 let replayControl = {paused: false, seekSample: 0, revision: 0};
 let replaySessionFile = '';
 let adsbSnapshotPending = false;
+const recordingChannels = () => Number(config.capture?.device?.channel_count) ||
+  (config.capture?.device?.type === 'Kraken' ? 5 : 2);
+const recordingWriteBytesPerSecond = () =>
+  Number(config.capture?.fs || 0) * recordingChannels() *
+    (['Kraken', 'HackRF'].includes(config.capture?.device?.type) ? 2 : 4);
+const recordingDiskStatus = () => recordingLibrary.canRecord({
+  writeBytesPerSecond: recordingWriteBytesPerSecond(), safetySeconds: 15});
 // Keep the safety check cheap and independent of browser activity. A manual
 // recording is asked to stop before it can consume the configured reserve;
 // automatic clips are separately rejected before admission.
 setInterval(async () => {
-  let disk = recordingLibrary.canRecord();
+  let disk = recordingDiskStatus();
   if (!disk.allowed && recordingLibrary.retention().lowSpacePolicy === 'delete_oldest') {
     const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
     try { await recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''}); }
     catch (error) { console.error(`Low-space clip cleanup failed: ${error.message}`); }
-    disk = recordingLibrary.canRecord();
+    disk = recordingDiskStatus();
   }
   if (capture && !disk.allowed) {
     capture = false; capturePaused = false; captureRevision += 1; captureStartedAt = null;
@@ -561,6 +586,7 @@ app.options('*', (req, res) => {
 });
 app.use((req, res, next) => {
   if (gainPublicationBlocked && ['/api/map', '/api/detection', '/api/tracker',
+    '/api/illuminators/live',
     '/api/tracker/native', '/api/bearing', '/api/locations', '/api/iqdata'].includes(req.path))
     return res.status(503).json({available: false, data: [],
       reason: 'Receiver gain is being checked or a verified restart is pending.'});
@@ -639,15 +665,69 @@ app.get('/', (req, res, next) => {
   if (fs.existsSync(path.join(__dirname, '..', 'html', 'index.html'))) return next();
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });
+function selectedIlluminator(req) {
+  if (req.query.illuminator === undefined) return null;
+  const id = String(req.query.illuminator);
+  const configured = (config.process?.multi_illuminator?.illuminators || [])
+    .some(item => item?.enabled === true && item.id === id);
+  if (!configured) return undefined;
+  const exact = {};
+  for (const [query, field] of [['frame_timestamp', 'timestamp'],
+    ['first_input_sample', 'firstInputSample'],
+    ['end_input_sample', 'endInputSample']]) if (req.query[query] !== undefined) {
+      const value = Number(req.query[query]);
+      if (!Number.isSafeInteger(value) || value < 0) return undefined;
+      exact[field] = value;
+    }
+  if (Object.keys(exact).length) return illuminatorFrames.exact(id, exact) || undefined;
+  const live = illuminatorFrames.latest(id);
+  if (live) return live;
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  if (processor?.input !== 'replay') return undefined;
+  const at = kind => recordingTimeline.at(processor.file, processor.positionSamples,
+    processor.sampleRate, kind, id);
+  const recorded = {id, map: at('map'), detections: at('detections'), tracks: at('tracks')};
+  return recorded.map || recorded.detections || recorded.tracks ? recorded : undefined;
+}
+app.get('/api/illuminators/live', (req, res) => {
+  const configured = (config.process?.multi_illuminator?.illuminators || [])
+    .filter(item => item?.enabled === true);
+  res.json({enabled: config.process?.multi_illuminator?.enabled === true,
+    primary: configured[0]?.id || null,
+    illuminators: configured.map(item => {
+      const live = illuminatorFrames.latest(item.id);
+      return {id: item.id, standard: item.standard,
+        frequency_hz: item.frequency_hz,
+        occupied_bandwidth_hz: item.occupied_bandwidth_hz,
+        output_sample_rate_hz: item.output_sample_rate_hz,
+        available: Boolean(live), first_input_sample: live?.first_input_sample ?? null,
+        end_input_sample: live?.end_input_sample ?? null,
+        timestamp: live?.timestamp ?? null};
+    })});
+});
 app.get('/api/map', async (req, res, next) => {
-  try { await sendMapResponse(req, res, presentationFrame(req, 'map', map)); }
+  try {
+    const selected = selectedIlluminator(req);
+    if (selected === undefined) return res.status(404).json({available: false,
+      reason: 'Unknown or not-yet-live illuminator.'});
+    await sendMapResponse(req, res, selected ? JSON.stringify(selected.map) :
+      presentationFrame(req, 'map', map));
+  }
   catch (error) { next(error); }
 });
 app.get('/api/detection', (req, res) => {
-  res.send(presentationFrame(req, 'detection', detection));
+  const selected = selectedIlluminator(req);
+  if (selected === undefined) return res.status(404).json({available: false,
+    reason: 'Unknown or not-yet-live illuminator.'});
+  res.send(selected ? JSON.stringify(selected.detections) :
+    presentationFrame(req, 'detection', detection));
 });
 app.get('/api/tracker', (req, res) => {
-  res.send(presentationFrame(req, 'tracker', trackerPublication.frame()));
+  const selected = selectedIlluminator(req);
+  if (selected === undefined) return res.status(404).json({available: false,
+    reason: 'Unknown or not-yet-live illuminator.'});
+  res.send(selected ? JSON.stringify(selected.tracks) :
+    presentationFrame(req, 'tracker', trackerPublication.frame()));
 });
 app.get('/api/tracker/native', (req, res) => {
   res.send(trackerPublication.nativeOnly());
@@ -656,6 +736,13 @@ app.get('/api/tracker/publication', (req, res) => {
   res.json(trackerPublication.status());
 });
 app.get('/api/statistics', (req, res) => {
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('statistics', {
+      illuminator: req.query.illuminator,
+      timing: req.query.timing === 'provisional' ? 'provisional' : 'exact'});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   const diagnostic = bearingDiagnostic.status();
   const recorder = manifoldRecorder.status();
   const automation = manifoldAutomation.status();
@@ -666,9 +753,21 @@ app.get('/api/statistics', (req, res) => {
     frequency_resolved: frequencyResolvedShadow.status()}));
 });
 app.get('/api/live-scorecard', (req, res) => {
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('scorecard', {
+      illuminator: req.query.illuminator, timing: 'exact'});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   res.json(evidenceStatistics.liveStatus());
 });
 app.get('/api/live-scorecard/provisional', (req, res) => {
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('scorecard', {
+      illuminator: req.query.illuminator, timing: 'provisional'});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   res.json(provisionalEvidenceStatistics.liveStatus());
 });
 function recordingPasses() {
@@ -1099,7 +1198,10 @@ app.post('/api/processor/status', (req, res) => {
     if (req.body?.receiverHealth !== undefined) processorStatus = null;
     return res.status(422).json({ok: false, errors: checked.errors});
   }
-  const previous = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  // Freshness controls what the UI may claim, not lifecycle bookkeeping.  A
+  // processor restart can outlast the freshness window; retain its last state
+  // so the first new non-recording status finalizes the old timeline.
+  const previous = processorStatus?.value || null;
   const now = Date.now();
   processorStatus = {value: checked.value, receivedAt: now};
   if (checked.value.input === 'replay' && checked.value.file !== replaySessionFile) {
@@ -1550,31 +1652,47 @@ app.put('/api/config', async (req, res) => {
   }
 });
 app.get('/api/adsb2dd', (req, res) => {
+  const illuminator = req.query.illuminator === undefined ? undefined : String(req.query.illuminator);
+  if (illuminator !== undefined && !illuminatorAdsbGeometry.has(illuminator))
+    return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+  const query = illuminator === undefined ? '' : `?illuminator=${encodeURIComponent(illuminator)}`;
   if (replayTruthDisabled()) {
-    const recorded = recordedReplayTruth('delayDoppler');
+    const recorded = recordedReplayTruth('delayDoppler', illuminator);
     return recorded.value === null ? res.json(replayTruthStatus()) :
-      res.json({url: '/api/adsb/delay-doppler', replay: true});
+      res.json({url: `/api/adsb/delay-doppler${query}`, replay: true,
+        illuminator: illuminator ?? null});
   }
   if (!config.truth?.adsb?.enabled) return res.status(400).end();
   // Compatibility link now stays on this API; no converter URL or query is accepted.
-  res.json({url: '/api/adsb/delay-doppler'});
+  res.json({url: `/api/adsb/delay-doppler${query}`, illuminator: illuminator ?? null});
 });
 for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-doppler', 'delayDoppler']]) {
   app.get(route, async (req, res) => {
-    const recorded = recordedReplayTruth(kind);
+    const requestedIlluminator = kind === 'delayDoppler' && req.query.illuminator !== undefined ?
+      String(req.query.illuminator) : undefined;
+    const recorded = recordedReplayTruth(kind, requestedIlluminator);
     if (recorded.replay && recorded.value === null) return res.json(replayTruthStatus());
     if (!recorded.replay && replayTruthDisabled()) return res.json(replayTruthStatus());
     try {
+      const selectedGeometry = kind === 'delayDoppler' && req.query.illuminator !== undefined ?
+        illuminatorAdsbGeometry.get(String(req.query.illuminator)) : null;
+      if (kind === 'delayDoppler' && req.query.illuminator !== undefined && !selectedGeometry)
+        return res.status(404).json({available: false,
+          reason: 'Unknown illuminator.'});
       const presentation = req.query.presentation;
       const requestedTimestamp = presentation === 'aligned' ?
         requestedPresentationTimestamp(req) : null;
       if (Number.isNaN(requestedTimestamp))
         return res.status(400).json({error: 'frame_timestamp must be a non-negative integer'});
-      const value = recorded.replay ? recorded.value : presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
-        await adsbSource.getPresentationAt(kind,
+      const sourceKind = selectedGeometry ? 'aircraft' : kind;
+      let value = recorded.replay ? recorded.value : presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
+        await adsbSource.getPresentationAt(sourceKind,
           requestedTimestamp ?? Date.now() - presentationDelayMs) :
         presentation && typeof adsbSource.getPresentation === 'function' ?
-          await adsbSource.getPresentation(kind) : await adsbSource.get(kind);
+          await adsbSource.getPresentation(sourceKind) : await adsbSource.get(sourceKind);
+      if (selectedGeometry && !recorded.replay) value = selectedGeometry.update(value).data;
+      if (requestedIlluminator !== undefined)
+        res.set('X-VectorWarp-Illuminator', requestedIlluminator);
       if (requestedTimestamp !== null)
         res.set('X-VectorWarp-Presentation-Timestamp', String(requestedTimestamp));
       if (kind === 'delayDoppler' &&
@@ -1655,6 +1773,13 @@ app.get('/api/radar/coverage', (req, res) => {
   const bins = Number(req.query.bins || 72);
   const altitudeBand = String(req.query.altitude || 'all');
   res.set('Cache-Control', 'private, max-age=30');
+  if (multiIlluminatorEvidence.enabled) {
+    const value = multiIlluminatorEvidence.response('coverage', {
+      illuminator: req.query.illuminator, timing: 'provisional',
+      options: {hours, bins, altitudeBand}});
+    if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
+    return res.json(value);
+  }
   res.json(provisionalEvidenceStatistics.radarCoverage({hours, bins, altitudeBand}));
 });
 app.get('/api/adsb/aircraft-photo/:hex', async (req, res) => {
@@ -1784,7 +1909,7 @@ app.get('/capture/status', (req, res) => {
     capture = false;
     captureStartedAt = null;
   }
-  const disk = recordingLibrary.canRecord();
+  const disk = recordingDiskStatus();
   const status = {
     supported: !replay,
     available: !replay && disk.allowed && (capture ? acknowledgement !== null : receiving),
@@ -1821,7 +1946,8 @@ app.post('/capture/toggle', async (req, res, next) => {
     return res.status(409).json({error: 'Recording is unavailable while replay is active.'});
   if (!capture) {
     let disk;
-    try { disk = await recordingLibrary.prepareForRecording({activeFile: processor?.recordingFile || ''}); }
+    try { disk = await recordingLibrary.prepareForRecording({activeFile: processor?.recordingFile || '',
+      writeBytesPerSecond: recordingWriteBytesPerSecond(), safetySeconds: 15}); }
     catch (error) { return next(error); }
     if (!disk.allowed)
       return res.status(507).json({error: 'Recording would cross the configured free-disk reserve. Clean up recordings or change the retention settings.'});
@@ -1846,7 +1972,8 @@ app.post('/capture/pause', async (req, res, next) => {
   if (!pause && !capturePaused)
     return res.status(409).json({error: 'No paused manual recording is available to resume.'});
   if (!pause) {
-    const disk = await recordingLibrary.prepareForRecording({});
+    const disk = await recordingLibrary.prepareForRecording({
+      writeBytesPerSecond: recordingWriteBytesPerSecond(), safetySeconds: 15});
     if (!disk.allowed)
       return res.status(507).json({error: 'Recording cannot resume without crossing the free-disk reserve.'});
   }
@@ -2002,6 +2129,46 @@ const server_tracker = jsonStreamServer('track', frame => {
 });
 listenData(server_tracker, 'track');
 
+function acceptIlluminatorFrame(frame) {
+  const value = JSON.parse(frame);
+  if (value?.schema !== 'vectorwarp-multi-illuminator-frame-v1' ||
+      typeof value.id !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.id) ||
+      !Number.isSafeInteger(value.frequency_hz) || value.frequency_hz < 1 ||
+      !Number.isSafeInteger(value.sample_rate_hz) || value.sample_rate_hz < 1 ||
+      !Number.isSafeInteger(value.first_input_sample) || value.first_input_sample < 0 ||
+      !Number.isSafeInteger(value.end_input_sample) ||
+      value.end_input_sample < value.first_input_sample ||
+      !Number.isSafeInteger(value.timestamp) || value.timestamp < 0 ||
+      !value.map || typeof value.map !== 'object' ||
+      !value.detections || typeof value.detections !== 'object' ||
+      !value.tracks || typeof value.tracks !== 'object')
+    throw new Error('Invalid multi-illuminator frame');
+  const configured = (config.process?.multi_illuminator?.illuminators || [])
+    .find(item => item?.enabled === true && item.id === value.id);
+  if (!configured || configured.frequency_hz !== value.frequency_hz ||
+      configured.output_sample_rate_hz !== value.sample_rate_hz)
+    throw new Error('Multi-illuminator frame does not match the active configuration');
+  illuminatorFrames.add(value, Buffer.byteLength(frame));
+  multiIlluminatorEvidence.accept(value);
+  const geometry = recordingIlluminatorAdsbGeometry.get(value.id);
+  const record = aircraft => recordingTimeline.addIlluminator({timestamp_ms: value.timestamp,
+    illuminator: value.id, aircraft,
+    delay_doppler: aircraft && geometry ? geometry.update(aircraft).data : null,
+    map: value.map, detections: value.detections, tracks: value.tracks,
+    first_input_sample: value.first_input_sample,
+    end_input_sample: value.end_input_sample});
+  if (typeof adsbSource.getPresentationAt === 'function')
+    void adsbSource.getPresentationAt('aircraft', value.timestamp)
+      .then(record).catch(() => record(null));
+  else void adsbSource.get('aircraft').then(record).catch(() => record(null));
+}
+if (config.process?.multi_illuminator?.enabled === true &&
+    Number.isInteger(config.network?.ports?.illuminator)) {
+  const server_illuminator = jsonStreamServer('illuminator', acceptIlluminatorFrame);
+  listenData(server_illuminator, 'illuminator');
+}
+
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
   const server_bearing = jsonStreamServer('bearing', frame => {
     bearing = frame;
@@ -2065,7 +2232,7 @@ const server_timing = net.createServer(socket => {
     presentationHistories.timing.add(frame);
     oprsEventRecorder.acceptTiming(frame);
     evidenceStatistics.acceptTiming(frame);
-    provisionalEvidenceStatistics.acceptTiming(frame);
+    provisionalEvidenceStatistics.acceptTiming(provisionalTimingFrame(frame));
     lastTimingAt = Date.now();
     stash_timing.update_data(timing);
     serviceErrors.delete('timing');
@@ -2097,14 +2264,17 @@ const server_iqdata = jsonStreamServer('iqdata', frame => {
 listenData(server_iqdata, 'iqdata');
 gainMonitor.start();
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
   trackerPublication.close();
   evidenceStatistics.close();
   provisionalEvidenceStatistics.close();
+  multiIlluminatorEvidence.close();
   oprsEventRecorder.close();
   bearingDiagnostic.close();
   gainMonitor.stop();
+  try { await recordingTimeline.stop(null, Date.now()); }
+  catch (error) { console.error(`Manual recording ADS-B timeline failed: ${error.message}`); }
   process.exit(0);
 });

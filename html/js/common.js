@@ -33,6 +33,127 @@ function renderAppHeader(active) {
   routeApiLinks();
   addRecordingControl();
   addFullscreenControl();
+  initializeIlluminatorDisplay();
+}
+
+const ILLUMINATOR_SELECTION_KEY = 'vectorwarp-selected-illuminator-v1';
+let illuminatorContextPromise = null;
+let illuminatorContext = {enabled: false, id: null, item: null, illuminators: []};
+
+function illuminatorDisplayScope() {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return 'selected';
+  const body = document.body;
+  const insight = body?.dataset?.insightView;
+  if (['health', 'calibration'].includes(insight)) return 'aggregate';
+  if (['overview', 'detections', 'activity', 'locations', 'evaluation', 'tracks',
+    'statistics'].includes(insight) || body?.dataset?.radarView) return 'selected';
+  const consolidated = body?.dataset?.consolidatedView;
+  const requested = new URLSearchParams(window.location.search).get('view');
+  if (consolidated === 'diagnostics')
+    return requested === 'timing' || requested === 'health' ? 'aggregate' : 'selected';
+  if (consolidated === 'signal') return requested === 'maxhold' ? 'selected' : 'wideband';
+  if (consolidated === 'detection') return 'selected';
+  return 'none';
+}
+
+function selectedIlluminatorFromStorage() {
+  try { return window.localStorage?.getItem(ILLUMINATOR_SELECTION_KEY) || ''; }
+  catch (_) { return ''; }
+}
+
+function storeSelectedIlluminator(id) {
+  try { window.localStorage?.setItem(ILLUMINATOR_SELECTION_KEY, id); }
+  catch (_) { /* Persistence is optional. */ }
+}
+
+function getIlluminatorContext() {
+  if (illuminatorContextPromise) return illuminatorContextPromise;
+  illuminatorContextPromise = fetchRadarJson(liveApiUrl('/api/illuminators/live')).then(status => {
+    const illuminators = status?.enabled === true && Array.isArray(status.illuminators) ?
+      status.illuminators : [];
+    const requested = typeof window === 'undefined' ? '' :
+      new URLSearchParams(window.location.search).get('illuminator') || '';
+    const stored = typeof window === 'undefined' ? '' : selectedIlluminatorFromStorage();
+    const item = illuminators.find(candidate => candidate.id === requested) ||
+      illuminators.find(candidate => candidate.id === stored) ||
+      illuminators.find(candidate => candidate.id === status?.primary) || illuminators[0] || null;
+    illuminatorContext = {enabled: illuminators.length > 0, id: item?.id || null,
+      item, illuminators, primary: status?.primary || null};
+    if (item) storeSelectedIlluminator(item.id);
+    if (typeof window !== 'undefined') window.vectorwarpIlluminatorContext = illuminatorContext;
+    return illuminatorContext;
+  }).catch(() => illuminatorContext);
+  return illuminatorContextPromise;
+}
+
+function selectedIlluminatorUrl(path, context = illuminatorContext) {
+  if (!context?.enabled || !context.id) return path;
+  const url = new URL(path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  url.searchParams.set('illuminator', context.id);
+  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
+    `${url.pathname}${url.search}`;
+}
+
+function selectedIlluminatorConfig(config, context = illuminatorContext) {
+  const item = context?.item;
+  if (!item) return config;
+  const configured = config?.process?.multi_illuminator?.illuminators?.find(candidate =>
+    candidate?.id === item.id);
+  const sampleRate = Number(configured?.output_sample_rate_hz ?? item.output_sample_rate_hz);
+  const transmitter = configured?.transmitter;
+  return {...config,
+    capture: Number.isFinite(sampleRate) && sampleRate > 0 ?
+      {...config?.capture, fs: sampleRate} : config?.capture,
+    location: transmitter ? {...config?.location, tx: transmitter} : config?.location};
+}
+
+function illuminatorControlTarget() {
+  return document.querySelector?.('.radar-toolbar') ||
+    document.querySelector?.('.insight-topbar > div') ||
+    document.querySelector?.('.controller-intro > div');
+}
+
+async function initializeIlluminatorDisplay() {
+  const scope = illuminatorDisplayScope();
+  if (scope === 'none' || typeof document === 'undefined') return illuminatorContext;
+  const context = await getIlluminatorContext();
+  // Recording controls render before the asynchronous lane catalog arrives.
+  // Refresh their copy once scope is known so a global raw-IQ recording is
+  // never presented as if it contained only the selected display lane.
+  renderRecordingState();
+  const target = illuminatorControlTarget();
+  if (!target || document.getElementById?.('shared-illuminator-control')) return context;
+  const control = document.createElement('label');
+  control.id = 'shared-illuminator-control';
+  control.className = 'radar-overlay-control illuminator-scope-control';
+  if (scope !== 'selected' || !context.enabled) {
+    control.innerHTML = `<span>Scope</span><strong>${scope === 'wideband' ?
+      'Global wideband' : scope === 'aggregate' ? 'All-lane pipeline' : 'Single radar stream'}</strong>`;
+    target.appendChild(control);
+    return context;
+  }
+  const label = document.createElement('span');
+  label.textContent = 'Selected lane';
+  const select = document.createElement('select');
+  select.id = 'shared-illuminator-select';
+  select.setAttribute('aria-label', 'Selected illuminator lane');
+  select.replaceChildren(...context.illuminators.map(item => {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = `${item.id} · ${(Number(item.frequency_hz) / 1e6).toFixed(1)} MHz`;
+    return option;
+  }));
+  select.value = context.id;
+  select.addEventListener('change', () => {
+    storeSelectedIlluminator(select.value);
+    const location = new URL(window.location.href);
+    location.searchParams.set('illuminator', select.value);
+    window.location.assign(location.href);
+  });
+  control.append(label, select);
+  target.appendChild(control);
+  return context;
 }
 
 function addRadarViewControl(panel, target) {
@@ -48,8 +169,8 @@ function addRadarViewControl(panel, target) {
   const control = document.createElement('details');
   control.className = 'radar-view-control';
   const summary = document.createElement('summary');
-  summary.setAttribute('aria-label', 'Choose radar map');
-  summary.setAttribute('title', 'Choose radar map');
+  summary.setAttribute('aria-label', 'Choose radar view');
+  summary.setAttribute('title', 'Choose radar view');
   summary.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/><rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/><rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/><rect x="17" y="17" width="4" height="4"/></svg>';
   const menu = document.createElement('div');
   menu.className = 'radar-view-menu';
@@ -127,6 +248,8 @@ function renderRecordingState() {
   const copy = control.querySelector('.recording-copy');
   const button = control.querySelector('.recording-toggle');
   const pause = control.querySelector('.recording-pause');
+  const recordingScope = window.vectorwarpIlluminatorContext?.enabled ?
+    ' Full-passband recording includes every illuminator lane.' : '';
   control.classList.toggle('recording', recordingState.recording);
   control.classList.toggle('unavailable', !recordingState.available);
   button.disabled = recordingRequestPending || !recordingState.available;
@@ -144,7 +267,8 @@ function renderRecordingState() {
     const elapsed = recordingState.startedAt ?
       recordingDuration(Date.now() - recordingState.startedAt) : 'Recording';
     status.innerHTML = `<span class="recording-dot"></span><strong>REC</strong><time>${elapsed}</time>`;
-    copy.textContent = recordingState.file ? `Writing ${recordingState.file}` : 'Recording confirmed.';
+    copy.textContent = (recordingState.file ? `Writing ${recordingState.file}.` : 'Recording confirmed.') +
+      recordingScope;
     button.textContent = 'Stop recording';
     if (pause) pause.textContent = 'Pause';
   } else if (recordingState.paused) {
@@ -158,7 +282,7 @@ function renderRecordingState() {
     button.textContent = 'Cancel recording';
   } else {
     status.innerHTML = '<span class="recording-dot"></span>Not recording';
-    copy.textContent = 'Press Space to record raw IQ. Press again to stop.';
+    copy.textContent = `Press Space to record raw IQ. Press again to stop.${recordingScope}`;
     button.textContent = 'Start recording';
   }
 }
@@ -1015,6 +1139,8 @@ async function renderRuntimeSummary() {
   const target = document.getElementById('runtime-summary');
   try {
     const config = await getRadarRuntimeConfig();
+    const laneContext = await getIlluminatorContext();
+    const selectedConfig = selectedIlluminatorConfig(config, laneContext);
     const capture = config.capture || {};
     const device = capture.device || {};
     const process = config.process || {};
@@ -1033,30 +1159,45 @@ async function renderRuntimeSummary() {
     const frequency = Number.isFinite(Number(capture.fc)) ?
       `${(Number(capture.fc) / 1000000).toFixed(3)} MHz` : 'Frequency unavailable';
     const hardware = device.type || 'Receiver';
-    const receiver = config.location?.rx?.name || 'Receiver site';
-    const transmitter = config.location?.tx?.name || 'Illuminator site';
+    const receiver = selectedConfig.location?.rx?.name || 'Receiver site';
+    const transmitter = selectedConfig.location?.tx?.name || 'Illuminator site';
+    const lanes = laneContext.enabled ? laneContext.illuminators.length : 0;
+    const laneFrequencyHz = Number(laneContext.item?.frequency_hz);
+    const laneRateHz = Number(laneContext.item?.output_sample_rate_hz);
+    const laneName = laneContext.id || 'Radar';
+    const laneFrequency = Number.isFinite(laneFrequencyHz) ?
+      `${(laneFrequencyHz / 1000000).toFixed(3)} MHz` : frequency;
+    const laneRate = Number.isFinite(laneRateHz) ?
+      `${(laneRateHz / 1000).toFixed(0)} kS/s` : '';
+    const laneDescriptor = laneContext.enabled ?
+      `${laneName} · ${laneFrequency}${laneRate ? ` · ${laneRate}` : ''}` :
+      `${hardware} · ${frequency} · ${channels} channels`;
+    const lanePrefix = laneContext.enabled ? `${laneName} · ` : '';
+    const globalCapture = laneContext.enabled ?
+      `${hardware} · ${frequency} wideband capture · ${channels} channels · ${lanes} lanes` :
+      `${hardware} · ${frequency} · ${channels} channels`;
     const spectrum = process.spectrum?.enable === false ?
       'Disabled in settings' : `${reference} spectrum history`;
     const adsb = config.truth?.adsb || {};
     const values = {
-      'runtime-summary': `${hardware} · ${frequency} · ${channels} channels`,
-      'display-overview-meta': `${receiver} · ${frequency}`,
+      'runtime-summary': globalCapture,
+      'display-overview-meta': laneContext.enabled ? laneDescriptor : `${receiver} · ${frequency}`,
       'display-detections-meta': detection.enable === false ? 'Detector disabled' :
-        `Detector enabled${Number.isFinite(Number(detection.pfa)) ? ` · PFA ${detection.pfa}` : ''}`,
+        `${lanePrefix}Detector enabled${Number.isFinite(Number(detection.pfa)) ? ` · PFA ${detection.pfa}` : ''}`,
       'display-tracks-meta': tracker.enable === true ?
-        `Enabled · ${tracker.initiate?.M ?? '—'} of ${tracker.initiate?.N ?? '—'} frames to initiate` : 'Disabled in settings',
-      'display-health-meta': cpi ? `${Number(cpi)} s per frame · ${channels} channels` : `${hardware} · ${channels} channels`,
+        `${lanePrefix}Enabled · ${tracker.initiate?.M ?? '—'} of ${tracker.initiate?.N ?? '—'} frames to initiate` : 'Disabled in settings',
+      'display-health-meta': cpi ? `${Number(cpi)} s per frame · ${channels} channels${lanes ? ` · ${lanes} lanes` : ''}` : `${hardware} · ${channels} channels`,
       'display-site-meta': `${receiver} · ${transmitter}`,
-      'display-locations-meta': `Live delay ellipses · ${receiver} and ${transmitter}`,
+      'display-locations-meta': `${lanePrefix}Live delay ellipses · ${receiver} and ${transmitter}`,
       'display-evaluation-meta': adsb.enabled === true ?
         `Enabled${Number.isFinite(Number(adsb.display_range_km)) ? ` · ${adsb.display_range_km} km range` : ''} · comparison only` : 'Disabled in settings',
-      'display-live-meta': `${hardware} · ${frequency} · ${channels} channels`,
-      'display-maxhold-meta': `${ambiguity.delayMin ?? '—'}–${ambiguity.delayMax ?? '—'} delay bins · ${ambiguity.dopplerMin ?? '—'}–${ambiguity.dopplerMax ?? '—'} Hz`,
-      'display-spectrum-meta': spectrum,
-      'display-range-meta': `${receiver} receiver · ${transmitter} illuminator`,
+      'display-live-meta': laneDescriptor,
+      'display-maxhold-meta': `${lanePrefix}${ambiguity.delayMin ?? '—'}–${ambiguity.delayMax ?? '—'} delay bins · ${ambiguity.dopplerMin ?? '—'}–${ambiguity.dopplerMax ?? '—'} Hz`,
+      'display-spectrum-meta': laneContext.enabled ? `Global wideband · ${frequency} capture` : spectrum,
+      'display-range-meta': `${lanePrefix}${receiver} receiver · ${transmitter} illuminator`,
       'display-doppler-meta': `${ambiguity.dopplerMin ?? '—'}–${ambiguity.dopplerMax ?? '—'} Hz search window`,
       'display-scatter-meta': `${ambiguity.delayMin ?? '—'}–${ambiguity.delayMax ?? '—'} bins · ${ambiguity.dopplerMin ?? '—'}–${ambiguity.dopplerMax ?? '—'} Hz`,
-      'display-timing-meta': cpi ? `${Number(cpi)} s per frame` : 'Timing from active configuration',
+      'display-timing-meta': cpi ? `${Number(cpi)} s per frame${lanes ? ` · all ${lanes} lanes` : ''}` : 'Timing from active configuration',
       'display-config-meta': `${hardware} · ${channels} channels · ${reference}`
     };
     Object.entries(values).forEach(([id, value]) => {
@@ -1351,5 +1492,6 @@ if (typeof module !== 'undefined')
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
     aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftFlightPathAngle,
     aircraftPlotData, aircraftHoverText, aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
-    siteSvgMarkup,
+    siteSvgMarkup, illuminatorDisplayScope, getIlluminatorContext,
+    selectedIlluminatorUrl, selectedIlluminatorConfig, initializeIlluminatorDisplay,
     stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft};

@@ -1,7 +1,6 @@
 #include "ProductionRawIq.h"
 
 #include <algorithm>
-#include <future>
 #include <stdexcept>
 #include <utility>
 
@@ -9,21 +8,20 @@ namespace blah2::production_replay {
 namespace {
 // Keep the live ordering, including visiting all paths after a rejection.
 template <typename Work>
-bool processPaths(size_t pathCount, size_t workerCount, Work work) {
-  bool success = true;
-  workerCount = std::max<size_t>(1, std::min(workerCount, pathCount));
-  if (workerCount == 1) {
+bool processPaths(size_t pathCount, blah2::utility::FixedExecutor& executor,
+  Work work) {
+  if (executor.size() == 1 || pathCount == 1) {
+    bool success = true;
     for (size_t path = 0; path < pathCount; ++path)
       success = work(path) && success;
     return success;
   }
-  for (size_t first = 0; first < pathCount; first += workerCount) {
-    std::vector<std::future<bool>> tasks;
-    const size_t last = std::min(first + workerCount, pathCount);
-    for (size_t path = first; path < last; ++path)
-      tasks.push_back(std::async(std::launch::async, work, path));
-    for (auto& task : tasks) success = task.get() && success;
-  }
+  std::vector<uint8_t> accepted(pathCount);
+  executor.parallel_for(pathCount, [&](size_t path) {
+    accepted[path] = work(path) ? 1 : 0;
+  });
+  const bool success = std::all_of(accepted.begin(), accepted.end(),
+    [](uint8_t value) { return value != 0; });
   return success;
 }
 
@@ -36,7 +34,9 @@ void validatePaths(const std::vector<IqData*>& paths, size_t expected) {
 
 RawIqStages::RawIqStages(Config config)
   : config_(std::move(config)), reference_(config_.reference),
-    filters_(config_.paths) {
+    filters_(config_.paths), executor_(std::make_unique<
+      blah2::utility::FixedExecutor>(std::max<size_t>(1,
+        std::min(config_.workers, config_.paths)))) {
   if (!config_.samples || !config_.paths)
     throw std::invalid_argument("Production raw-IQ geometry is empty");
   // The qualified Pi path plans before capture starts. Other CPU execution,
@@ -45,6 +45,21 @@ RawIqStages::RawIqStages(Config config)
     for (auto& filter : filters_)
       filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
         config_.clutterDelayMax, config_.samples);
+  else if (config_.eagerPlanning)
+    initializeShared();
+}
+
+void RawIqStages::initializeShared() {
+  auto pending = std::make_unique<WienerHopf::PreparedReference>(
+    config_.clutterDelayMin, config_.clutterDelayMax, config_.samples);
+  std::vector<std::unique_ptr<WienerHopf>> filters;
+  filters.reserve(filters_.size());
+  for (size_t path = 0; path < filters_.size(); ++path)
+    filters.push_back(std::make_unique<WienerHopf>(config_.clutterDelayMin,
+      config_.clutterDelayMax, config_.samples,
+      WienerHopf::Workspace::SharedReference));
+  filters_ = std::move(filters);
+  prepared_ = std::move(pending);
 }
 
 void RawIqStages::resetReference() {
@@ -55,30 +70,38 @@ void RawIqStages::resetReference() {
     for (auto& filter : filters_)
       filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
         config_.clutterDelayMax, config_.samples);
+  else if (config_.eagerPlanning)
+    initializeShared();
 }
 
 bool RawIqStages::clutter(IqData& reference,
   const std::vector<IqData*>& surveillance) {
   validatePaths(surveillance, config_.paths);
   if (config_.borrowed)
-    return processPaths(surveillance.size(), config_.workers, [&](size_t path) {
+    return processPaths(surveillance.size(), *executor_, [&](size_t path) {
       return filters_[path]->process(&reference, surveillance[path], true);
     });
   if (!prepared_) {
-    auto pending = std::make_unique<WienerHopf::PreparedReference>(
-      config_.clutterDelayMin, config_.clutterDelayMax, config_.samples);
-    std::vector<std::unique_ptr<WienerHopf>> filters;
-    filters.reserve(filters_.size());
-    for (size_t path = 0; path < filters_.size(); ++path)
-      filters.push_back(std::make_unique<WienerHopf>(config_.clutterDelayMin,
-        config_.clutterDelayMax, config_.samples, WienerHopf::Workspace::SharedReference));
     // Publish only a complete set: failed qualification must be retryable.
-    filters_ = std::move(filters);
-    prepared_ = std::move(pending);
+    initializeShared();
   }
   if (!prepared_->prepare(reference)) return false;
-  return processPaths(surveillance.size(), config_.workers, [&](size_t path) {
+  return processPaths(surveillance.size(), *executor_, [&](size_t path) {
     return filters_[path]->process(*prepared_, surveillance[path]);
+  });
+}
+
+bool RawIqStages::clutter_float(const std::complex<float>* reference,
+  const std::vector<const std::complex<float>*>& surveillance,
+  uint32_t samples) {
+  if (!config_.borrowed || !reference || samples < config_.samples ||
+      surveillance.size() != config_.paths ||
+      std::any_of(surveillance.begin(), surveillance.end(),
+        [](const auto* path) { return path == nullptr; }))
+    throw std::invalid_argument("Direct float clutter input differs");
+  return processPaths(surveillance.size(), *executor_, [&](size_t path) {
+    return filters_[path]->process_float(reference, surveillance[path],
+      samples);
   });
 }
 
@@ -95,7 +118,7 @@ void RawIqStages::ambiguity(const IqData& reference,
   if (processors.size() != config_.paths ||
       std::any_of(processors.begin(), processors.end(), [](auto* path) { return !path; }))
     throw std::invalid_argument("Production raw-IQ ambiguity paths differ");
-  processPaths(surveillance.size(), config_.workers, [&](size_t path) {
+  processPaths(surveillance.size(), *executor_, [&](size_t path) {
     if (config_.borrowed) {
       const auto view = filters_[path]->filtered_view();
       processors[path]->process_borrowed(reference.view_data(), surveillance[path],
@@ -105,6 +128,22 @@ void RawIqStages::ambiguity(const IqData& reference,
       processors[path]->process(reference.view_data(), surveillance[path],
         preserveSurveillance);
     }
+    return true;
+  });
+}
+
+void RawIqStages::ambiguity_borrowed(
+  const std::vector<Ambiguity*>& processors) {
+  if (!config_.borrowed || processors.size() != config_.paths ||
+      std::any_of(processors.begin(), processors.end(),
+        [](auto* path) { return path == nullptr; }))
+    throw std::invalid_argument("Direct borrowed ambiguity paths differ");
+  static const std::deque<std::complex<double>> emptyReference;
+  processPaths(processors.size(), *executor_, [&](size_t path) {
+    const auto view = filters_[path]->filtered_view();
+    processors[path]->process_borrowed(emptyReference, nullptr,
+      view.rotatedReference, view.filteredSurveillance, view.samples,
+      view.delayMin, true);
     return true;
   });
 }
