@@ -98,11 +98,44 @@ function validateEvidence(frame) {
 function automaticallyEligible(config) {
   const device = config.capture?.device || {}, geometry = device.array_geometry || {};
   const fusion = config.process?.surveillance_fusion?.mode;
-  return device.type === 'Kraken' &&
+  return Array.isArray(device.surveillance_channels) && device.surveillance_channels.length >= 2 &&
     ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion) &&
     config.process?.detection?.enable === true && config.truth?.adsb?.enabled === true &&
     geometry.mapping_confirmed === true && geometry.geometry_confirmed === true &&
     geometry.orientation_confirmed === true && finite(geometry.x_axis_bearing_deg_true);
+}
+
+// Physical placement is deliberately distinct from acquisition identity. Gain,
+// detector, replay, and selection changes must start a new qualification cohort,
+// but must not make evidence from an unchanged installed array disappear.
+function physicalSiteDescriptor(config) {
+  const device = config.capture?.device || {}, geometry = device.array_geometry || {};
+  const channels = device.surveillance_channels || [];
+  const byChannel = new Map((geometry.elements || []).map(element =>
+    [element?.daq_channel, element?.position]));
+  const location = value => [value?.latitude, value?.longitude, value?.altitude];
+  return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
+    channel_mapping: channels, positions_m: channels.map(channel => byChannel.get(channel)),
+    x_axis_bearing_deg_true: geometry.x_axis_bearing_deg_true,
+    receiver_location: location(config.location?.rx),
+    transmitter_location: location(config.location?.tx)};
+}
+
+function physicalSiteFingerprint(config) {
+  return crypto.createHash('sha256').update(
+    JSON.stringify(physicalSiteDescriptor(config))).digest('hex');
+}
+
+function physicalFingerprintFromSample(sample) {
+  const identity = sample?.manifold_identity;
+  if (!identity) return null;
+  const descriptor = {frequency_hz: identity.frequency_hz,
+    sample_rate_hz: identity.sample_rate_hz,
+    channel_mapping: identity.channel_mapping, positions_m: identity.positions_m,
+    x_axis_bearing_deg_true: identity.x_axis_bearing_deg_true,
+    receiver_location: identity.receiver_location,
+    transmitter_location: identity.transmitter_location};
+  return crypto.createHash('sha256').update(JSON.stringify(descriptor)).digest('hex');
 }
 
 function fingerprintDescriptor(config) {
@@ -201,6 +234,12 @@ class ManifoldRecorder {
       referenceUpdates: 0, referenceSamples: 0, lastReferenceAt: null,
       maxReferencePhaseStepDeg: null, maxReferenceAmplitudeStepDb: null};
     this.fingerprint = siteFingerprint(config);
+    this.physicalFingerprint = physicalSiteFingerprint(config);
+    this.state.acquisitionFingerprint = this.fingerprint;
+    this.state.physicalSiteFingerprint = this.physicalFingerprint;
+    this.state.cohortRoot = this.options.path ? `${this.options.path}.cohorts` : null;
+    this.state.cohorts = {files: 0, sampleRows: 0, referenceRows: 0,
+      physicalSites: 0, acquisitionIdentities: 0};
     this.sitePrepared = false;
     this.lastReferenceUpdate = null;
     this.lastRelativeReference = null;
@@ -265,6 +304,83 @@ class ManifoldRecorder {
     catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
 
+  async preserveCohortFile(filename, prior, kind) {
+    let payload;
+    try { payload = await this.fs.promises.readFile(filename); }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    if (!payload.length) return null;
+    const physical = prior?.physical_site_fingerprint || 'legacy-physical-site';
+    const acquisition = prior?.acquisition_fingerprint || prior?.fingerprint || 'legacy-acquisition';
+    const digest = crypto.createHash('sha256').update(payload).digest('hex');
+    const directory = path.join(this.state.cohortRoot, physical, acquisition);
+    const destination = path.join(directory, `${kind}-${digest}.jsonl`);
+    await this.fs.promises.mkdir(directory, {recursive: true});
+    let created = false;
+    try {
+      await this.fs.promises.writeFile(destination, payload, {mode: 0o600, flag: 'wx'});
+      created = true;
+    } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    if (created) {
+      const rows = payload.toString('utf8').split(/\r?\n/).filter(Boolean).length;
+      const entry = {schema: 'vectorwarp-manifold-cohort-index-v1',
+        archived_at: new Date().toISOString(), physical_site_fingerprint: physical,
+        acquisition_fingerprint: acquisition, kind, sha256: digest, rows,
+        path: path.relative(this.state.cohortRoot, destination)};
+      await this.fs.promises.appendFile(path.join(this.state.cohortRoot, 'index.jsonl'),
+        `${JSON.stringify(entry)}\n`, {mode: 0o600});
+    }
+    this.state.lastCohortArchiveAt = Date.now();
+    this.state.lastCohortArchivePath = destination;
+    return destination;
+  }
+
+  async refreshCohortStatus() {
+    const index = path.join(this.state.cohortRoot, 'index.jsonl');
+    let rows = [];
+    try { rows = (await this.fs.promises.readFile(index, 'utf8')).split(/\r?\n/)
+      .filter(Boolean).map(line => JSON.parse(line)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const unique = new Map(rows.map(row => [`${row.kind}:${row.sha256}`, row]));
+    const values = [...unique.values()];
+    this.state.cohorts = {files: values.length,
+      sampleRows: values.filter(row => row.kind === 'samples')
+        .reduce((sum, row) => sum + (row.rows || 0), 0),
+      referenceRows: values.filter(row => row.kind === 'reference')
+        .reduce((sum, row) => sum + (row.rows || 0), 0),
+      physicalSites: new Set(values.map(row => row.physical_site_fingerprint)).size,
+      acquisitionIdentities: new Set(values.map(row => row.acquisition_fingerprint)).size};
+  }
+
+  async importLegacyCohorts() {
+    const suffixes = ['site-previous'];
+    for (let index = 1; index < Math.max(2, this.options.max_files || 1); ++index)
+      suffixes.push(`site-previous.${index}`);
+    let imported = 0;
+    for (const suffix of suffixes) {
+      const samplePath = `${this.options.path}.${suffix}`;
+      let sample, acquisition = null, physical = null;
+      try {
+        const lines = (await this.fs.promises.readFile(samplePath, 'utf8')).trim().split('\n');
+        sample = lines.length && lines.at(-1) ? JSON.parse(lines.at(-1)) : null;
+        acquisition = sample?.config_fingerprint || null;
+        physical = physicalFingerprintFromSample(sample);
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (sample) {
+        await this.preserveCohortFile(samplePath, {fingerprint: acquisition,
+          acquisition_fingerprint: acquisition,
+          physical_site_fingerprint: physical || 'legacy-physical-site'}, 'samples');
+        ++imported;
+      }
+      const referencePath = `${this.state.referencePath}.${suffix}`;
+      try {
+        await this.preserveCohortFile(referencePath, {fingerprint: acquisition,
+          acquisition_fingerprint: acquisition,
+          physical_site_fingerprint: physical || 'legacy-physical-site'}, 'reference');
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    this.state.importedLegacyCohorts = imported;
+  }
+
   async prepareSite() {
     if (this.sitePrepared) return;
     const filename = this.options.path, metadata = `${filename}.site.json`;
@@ -279,14 +395,26 @@ class ManifoldRecorder {
           fingerprint: JSON.parse(lines[lines.length - 1]).config_fingerprint};
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
-    if (prior?.fingerprint && prior.fingerprint !== this.fingerprint) {
+    await this.importLegacyCohorts();
+    await this.refreshCohortStatus();
+    const priorAcquisition = prior?.acquisition_fingerprint || prior?.fingerprint;
+    if (priorAcquisition && priorAcquisition !== this.fingerprint) {
+      await this.preserveCohortFile(filename, prior, 'samples');
+      await this.preserveCohortFile(this.state.referencePath, prior, 'reference');
+      await this.refreshCohortStatus();
       await this.archiveSiteFile(filename);
       await this.archiveSiteFile(this.state.referencePath);
-      this.state.siteResetAt = Date.now();
+      if (prior?.physical_site_fingerprint &&
+          prior.physical_site_fingerprint !== this.physicalFingerprint)
+        this.state.siteResetAt = Date.now();
+      else this.state.acquisitionResetAt = Date.now();
     }
     await this.fs.promises.mkdir(path.dirname(filename), {recursive: true});
-    const site = JSON.stringify({schema: 'vectorwarp-manifold-site-v1',
-      fingerprint: this.fingerprint, started_at: new Date().toISOString()}) + '\n';
+    const site = JSON.stringify({schema: 'vectorwarp-manifold-site-v2',
+      fingerprint: this.fingerprint, acquisition_fingerprint: this.fingerprint,
+      physical_site_fingerprint: this.physicalFingerprint,
+      physical_site: physicalSiteDescriptor(this.config),
+      started_at: new Date().toISOString()}) + '\n';
     const temporary = `${metadata}.${process.pid}.tmp`;
     await this.fs.promises.writeFile(temporary, site, {mode: 0o600});
     await this.fs.promises.rename(temporary, metadata);
@@ -477,5 +605,6 @@ function createManifoldRecorder(config, adsbSource, dependencies) {
   return new ManifoldRecorder(config, adsbSource, dependencies);
 }
 
-module.exports = {azimuthElevation, validateEvidence, automaticallyEligible, fingerprintDescriptor, siteFingerprint, manifoldIdentity,
+module.exports = {azimuthElevation, validateEvidence, automaticallyEligible, fingerprintDescriptor,
+  physicalSiteDescriptor, physicalSiteFingerprint, siteFingerprint, manifoldIdentity,
   ManifoldRecorder, createManifoldRecorder};
