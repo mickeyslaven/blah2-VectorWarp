@@ -2259,6 +2259,14 @@ function receiverUsesUpstreamStatus(receiverType) {
   return receiverType === 'Kraken';
 }
 
+function createUpstreamStatusSection() {
+  const section = document.createElement('section');
+  section.id = 'upstream-status';
+  section.className = 'upstream-status';
+  section.innerHTML = '<div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div>';
+  return section;
+}
+
 function setRestartProgress(percent, label, state = '') {
   const progress = document.getElementById('config-restart-progress');
   const bar = document.getElementById('config-restart-bar');
@@ -2690,7 +2698,8 @@ function renderEditor() {
         renderReceiverOverload(null, health);
       }
       panel.appendChild(renderReceiverSetup());
-      if (upstream && receiverUsesUpstreamStatus(receiverType)) panel.appendChild(upstream);
+      if (receiverUsesUpstreamStatus(receiverType))
+        panel.appendChild(upstream || createUpstreamStatusSection());
     }
     panels.appendChild(panel);
   });
