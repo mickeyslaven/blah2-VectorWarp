@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDescriptor,
-  siteFingerprint} = require('./manifold-recorder');
+  physicalSiteFingerprint, siteFingerprint} = require('./manifold-recorder');
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-manifold-'));
@@ -87,6 +87,10 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   automaticConfig.process.detection = {enable: true};
   automaticConfig.truth = {adsb: {enabled: true}};
   assert.equal(automaticallyEligible(automaticConfig), true);
+  const genericArrayConfig = JSON.parse(JSON.stringify(automaticConfig));
+  genericArrayConfig.capture.device.type = 'Usrp';
+  assert.equal(automaticallyEligible(genericArrayConfig), true,
+    'Automatic manifold collection must depend on coherent geometry, not an SDR brand');
   const promotedConfig = JSON.parse(JSON.stringify(automaticConfig));
   promotedConfig.process.bearing.manifold_file = `${filename}.qualified.json`;
   assert.equal(siteFingerprint(promotedConfig), siteFingerprint(automaticConfig),
@@ -102,12 +106,16 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   changedGainConfig.capture.device.heimdall.gain = 1;
   assert.notEqual(siteFingerprint(fixedGainConfig), siteFingerprint(changedGainConfig),
     'Qualification cannot carry across requested gain changes');
+  assert.equal(physicalSiteFingerprint(fixedGainConfig), physicalSiteFingerprint(changedGainConfig),
+    'A gain change must not manufacture a new physical installation');
   const vectorGainConfig = JSON.parse(JSON.stringify(fixedGainConfig));
   vectorGainConfig.capture.device.heimdall.channel_gains = [14, 12];
   const changedVectorGainConfig = JSON.parse(JSON.stringify(vectorGainConfig));
   changedVectorGainConfig.capture.device.heimdall.channel_gains = [14, 11];
   assert.notEqual(siteFingerprint(vectorGainConfig), siteFingerprint(changedVectorGainConfig),
     'Qualification cannot carry across per-channel gain-vector changes');
+  assert.equal(physicalSiteFingerprint(vectorGainConfig), physicalSiteFingerprint(changedVectorGainConfig),
+    'Per-channel gain changes must remain separate cohorts at one physical installation');
   const subsetGainConfig = JSON.parse(JSON.stringify(vectorGainConfig));
   subsetGainConfig.capture.device.channel_count = 5;
   subsetGainConfig.capture.device.surveillance_channels = [1, 3, 4];
@@ -129,6 +137,14 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
     {requested_common_gain: 1, requested_channel_gains: null,
       actual_channel_gains_db: [14.2, 14.1]});
   assert.deepEqual(newGainRows[0].manifold_identity.requested_gain_db, [1, 1]);
+  const cohortRoot = `${gainPath}.cohorts`;
+  const cohortFiles = fs.readdirSync(cohortRoot, {recursive: true})
+    .filter(item => /samples-[a-f0-9]{64}\.jsonl$/.test(item));
+  assert.equal(cohortFiles.length, 1,
+    'An acquisition-identity change must preserve the prior physical-site cohort');
+  assert.ok(nextGainRecorder.status().importedLegacyCohorts >= 0);
+  assert.equal(nextGainRecorder.status().cohorts.sampleRows, 1);
+  assert.equal(nextGainRecorder.status().cohorts.physicalSites, 1);
   const changedSite = JSON.parse(JSON.stringify(automaticConfig));
   changedSite.location.rx.longitude = -80.01;
   const second = new ManifoldRecorder(changedSite, source);
@@ -142,6 +158,8 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
     'A site fingerprint change must begin a clean active collection');
   assert.ok(second.status().siteResetAt,
     'Site reset must be visible in recorder health');
+  assert.notEqual(physicalSiteFingerprint(automaticConfig), physicalSiteFingerprint(changedSite),
+    'Moving the receiver must create a new physical-site identity');
   const thirdSite = JSON.parse(JSON.stringify(changedSite));
   thirdSite.location.rx.longitude = -80.02;
   const third = new ManifoldRecorder(thirdSite, source);

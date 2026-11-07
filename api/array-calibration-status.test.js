@@ -10,7 +10,10 @@ const value = buildArrayCalibrationStatus({
   }},
   recorderStatus: {enabled: true, automatic: false, active: true,
     path: '/corpus.jsonl', samples: 15, referencePath: '/corpus.reference.jsonl',
-    referenceSamples: 699},
+    referenceSamples: 699, cohortRoot: '/corpus.jsonl.cohorts',
+    physicalSiteFingerprint: 'physical', acquisitionFingerprint: 'acquisition',
+    cohorts: {files: 4, sampleRows: 125, referenceRows: 200,
+      physicalSites: 1, acquisitionIdentities: 2}},
   bearingStatus: {enabled: true, state: 'collecting', qualified: true,
     candidatePath: '/bearing.candidate.json',
     qualifiedPath: '/bearing.qualified.json', progress: {independent_passes: 3}},
@@ -25,6 +28,8 @@ assert.equal(value.relationship.shared_evidence_corpus, true);
 assert.equal(value.relationship.shared_fitted_model, false);
 assert.equal(value.corpus.path, '/corpus.jsonl');
 assert.equal(value.corpus.accepted_samples_this_process, 15);
+assert.equal(value.corpus.accumulated_cohorts.sampleRows, 125);
+assert.equal(value.corpus.physical_site_fingerprint, 'physical');
 assert.equal(value.reference.samples, 699);
 assert.equal(value.reference.mixed_with_aircraft_responses, false);
 assert.equal(value.bearing.active_model, '/bearing.json');
