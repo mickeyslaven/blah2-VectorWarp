@@ -327,7 +327,8 @@ function validateConfig(config, baseline = null, options = {}) {
     });
     allowed.forEach(key => {
       if (!Object.prototype.hasOwnProperty.call(device, key) &&
-          !(device.type === 'RspDuo' && key === 'serial'))
+          !(device.type === 'RspDuo' && key === 'serial') &&
+          !(device.type === 'Usrp' && key === 'timing_source'))
         errors.push(`capture.device.${key} is required for ${device.type}`);
     });
   }

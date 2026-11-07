@@ -422,6 +422,10 @@ assert.equal(usrpProfile.device.address, 'type=b200',
   'The B210 profile must use a UHD USB selector, not a hostname-like bare token');
 assert.equal(load('config-usrp.yml').capture.device.address, 'type=b200',
   'The installed USRP example must select the B200 family');
+const usrpWithoutTimingSource = load('config-usrp.yml');
+delete usrpWithoutTimingSource.capture.device.timing_source;
+assert.equal(validateConfig(usrpWithoutTimingSource).valid, true,
+  'USRP timing source remains optional when no GPSDO is connected');
 for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial',
   'type=b\t200', 'type=b200,type=b210']) {
   const invalid = load('config-usrp.yml');
