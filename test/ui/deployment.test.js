@@ -93,10 +93,16 @@ function fetchHttp(url, options = {}) {
       const script = await fetchHttp(origin + '/js/common.js');
       assert.equal(script.status, 200);
       const calls = [];
-      const labels = {'live-status': {}, 'adsb-status': {}};
+      const label = () => ({innerHTML: '', replaceChildren(...children) {
+        this.innerHTML = children.map(child => child.textContent ||
+          (child.className ? `<span class="${child.className}"></span>` : '')).join('');
+      }});
+      const labels = {'live-status': label(), 'adsb-status': label()};
       const context = vm.createContext({URL, URLSearchParams, AbortController,
         window: {location: new URL(origin), setTimeout, clearTimeout},
-        document: {getElementById: id => labels[id], querySelectorAll: () => []},
+        document: {getElementById: id => labels[id], querySelectorAll: () => [],
+          createElement: () => ({className: '', textContent: ''}),
+          createTextNode: textContent => ({textContent})},
         fetch: (url, options = {}) => {
           const absolute = new URL(url, origin).href;
           calls.push(absolute);
