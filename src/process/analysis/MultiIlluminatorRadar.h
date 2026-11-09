@@ -58,7 +58,8 @@ struct RadarConfig
   std::optional<uint32_t> delayReferenceRateHz;
   bool clutterFollowsAmbiguity = false;
   double pfa = 1e-5;
-  int8_t guardCells = 2, trainingCells = 6, minimumDelay = 1;
+  int8_t guardCells = 2, trainingCells = 6;
+  int32_t minimumDelay = 1;
   double minimumDopplerHz = 15;
   uint16_t centroidRadius = 6;
   uint32_t trackerM = 3, trackerN = 6, trackerDelete = 10;

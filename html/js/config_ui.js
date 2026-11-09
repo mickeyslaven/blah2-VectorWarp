@@ -1319,8 +1319,12 @@ function illuminatorListInput(value, path) {
       atscReferenceLabel.appendChild(atscReferenceMode); card.appendChild(atscReferenceLabel);
       const inputRoleLabel = document.createElement('label');
       inputRoleLabel.textContent = 'Reference input for this RF channel';
-      const inputCount = Math.max(2, activeConfig.capture?.device?.gain?.length ||
-        activeConfig.capture?.device?.antenna?.length || 2);
+      const inputCount = Math.max(2,
+        activeConfig.capture?.replay?.state === true ?
+          (activeConfig.capture.replay.channel_count || 2) :
+          (activeConfig.capture?.device?.channel_count ||
+            activeConfig.capture?.device?.gain?.length ||
+            activeConfig.capture?.device?.antenna?.length || 2));
       const inherited = activeConfig.process?.reference_synthesis?.channels?.[0] ??
         activeConfig.capture?.device?.reference_channel ?? 0;
       const roleOptions = [

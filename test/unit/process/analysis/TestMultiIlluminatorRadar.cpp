@@ -51,6 +51,13 @@ TEST_CASE("lane delay geometry preserves physical units across sample rates")
   REQUIRE(atsc.guardCells == 6);
   REQUIRE(atsc.trainingCells == 16);
   REQUIRE(atsc.centroidRadius == 16);
+
+  auto longRange = config;
+  longRange.delayReferenceRateHz = 2000000;
+  longRange.minimumDelay = 80;
+  const auto projectedThreshold =
+    blah2::multi_illuminator::scaleRadarConfigForLane(longRange, 6144000);
+  REQUIRE(projectedThreshold.minimumDelay == 246);
 }
 
 blah2::channelizer::IlluminatorOutput signal(const std::string& id,

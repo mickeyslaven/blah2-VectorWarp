@@ -871,7 +871,11 @@ try
   blah2::multi_illuminator::RadarConfig captureDelayProjection;
   captureDelayProjection.delayMin = configuredDelayMin;
   captureDelayProjection.delayMax = configuredDelayMax;
-  captureDelayProjection.delayReferenceRateHz = delayReferenceRateHz;
+  // Multi-illuminator processing projects each lane independently below.
+  // Its unused full-passband compatibility objects must not reject valid
+  // narrow lanes because full-rate CFAR neighborhoods would exceed int8.
+  captureDelayProjection.delayReferenceRateHz = multiIlluminatorEnabled ?
+    std::nullopt : delayReferenceRateHz;
   const auto effectiveCaptureDelay =
     blah2::multi_illuminator::scaleRadarConfigForLane(
       captureDelayProjection, fs);
@@ -1176,8 +1180,9 @@ try
 
   // set up process detection
   double pfa, minDoppler;
-  int8_t configuredNGuard, configuredNTrain, configuredMinDelay;
-  int8_t nGuard, nTrain, minDelay;
+  int8_t configuredNGuard, configuredNTrain;
+  int32_t configuredMinDelay, minDelay;
+  int8_t nGuard, nTrain;
   uint32_t integrationCpis = 1;
   uint32_t integrationMotionBins = 0;
   bool trackBeforeDetect = false;

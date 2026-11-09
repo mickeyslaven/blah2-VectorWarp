@@ -665,6 +665,8 @@ function validateConfig(config, baseline = null, options = {}) {
         if (inputRoleMode === 'manual' && laneReference !== null &&
             laneSurveillance.length === 0)
           errors.push(`${field}.surveillance_channels is required with a per-lane reference channel`);
+        if (laneReference === null && laneSurveillance.length > 0)
+          errors.push(`${field}.reference_channel is required with per-lane surveillance channels`);
         if (laneReference !== null && laneReference >= topologyInputCount)
           errors.push(`${field}.reference_channel must identify one of the ${topologyInputCount} coherent inputs`);
         laneSurveillance.forEach((channel, channelIndex) => {

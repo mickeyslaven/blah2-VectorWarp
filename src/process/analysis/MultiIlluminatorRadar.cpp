@@ -66,7 +66,7 @@ RadarConfig scaleRadarConfigForLane(RadarConfig config,
     config.clutterDelayMax = checked<int32_t>(ceilRatio(config.clutterDelayMax,
       laneSampleRateHz, reference), "maximum clutter delay");
   }
-  config.minimumDelay = checked<int8_t>(ceilRatio(config.minimumDelay,
+  config.minimumDelay = checked<int32_t>(ceilRatio(config.minimumDelay,
     laneSampleRateHz, reference), "minimum detection delay");
   config.guardCells = checked<int8_t>(ceilRatio(config.guardCells,
     laneSampleRateHz, reference), "CFAR guard radius");

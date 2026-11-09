@@ -27,7 +27,7 @@ private:
   int8_t nTrain;
 
   /// @brief Minimum delay to process detections (bins).
-  int8_t minDelay;
+  int32_t minDelay;
 
   /// @brief Minimum absolute Doppler to process detections (Hz).
   double minDoppler;
@@ -43,7 +43,7 @@ public:
   /// @param minDelay Minimum delay to process detections (bins).
   /// @param minDoppler Minimum absolute Doppler to process detections (Hz).
   /// @return The object.
-  CfarDetector1D(double pfa, int8_t nGuard, int8_t nTrain, int8_t minDelay, double minDoppler);
+  CfarDetector1D(double pfa, int8_t nGuard, int8_t nTrain, int32_t minDelay, double minDoppler);
 
   /// @brief Destructor.
   /// @return Void.

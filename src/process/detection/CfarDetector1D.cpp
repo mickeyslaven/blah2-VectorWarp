@@ -8,7 +8,7 @@
 #include <algorithm>
 
 // constructor
-CfarDetector1D::CfarDetector1D(double _pfa, int8_t _nGuard, int8_t _nTrain, int8_t _minDelay, double _minDoppler)
+CfarDetector1D::CfarDetector1D(double _pfa, int8_t _nGuard, int8_t _nTrain, int32_t _minDelay, double _minDoppler)
 {
   if (!std::isfinite(_pfa) || _pfa <= 0 || _pfa >= 1 || _nGuard < 0 ||
       _nTrain <= 0 || !std::isfinite(_minDoppler) || _minDoppler < 0)
