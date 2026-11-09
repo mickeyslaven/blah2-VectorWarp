@@ -38,7 +38,7 @@ function setupDefaults() {
       delay_reference_sample_rate_hz: 2000000,
       performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
       data: {cpi: 0.5, buffer: 2},
-      multi_illuminator: {enabled: false, input_phase_correction: 'automatic',
+      multi_illuminator: {enabled: false, input_phase_correction: 'off',
         transmitter_site_grouping: 'automatic', co_location_radius_m: 100,
         illuminators: []},
       ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},

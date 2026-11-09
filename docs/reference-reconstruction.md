@@ -26,7 +26,7 @@ same illuminator.
 |---|---|---:|---:|
 | Any / custom | Raw coherent IQ | Stable | Yes |
 | FM | Demodulation-derived quality filtering; full modulation-aware regeneration next | Experimental | No |
-| ATSC 1.0 8-VSB | Held-out-qualified physical-reference pilot projection; full field-sync/exact-grid reconstruction remains a second experimental rung | Pilot projection live-selectable and fail-closed; full reconstruction offline | Pilot projection only |
+| ATSC 1.0 8-VSB | Held-out-qualified offline pilot projection; full field-sync/exact-grid reconstruction remains a second experimental rung | Experimental offline | No |
 | ATSC 3.0 OFDM | Bootstrap/L1 and bounded 9/15 PLP decoding; whole-PLP fail-closed because real PLP1 recovery is incomplete and slower than its frame cadence | Experimental rejected | No |
 | DAB | OFDM null-symbol/PRS timing and decision-directed regeneration | Experimental, not implemented | No |
 | DRM | OFDM reference-cell reconstruction | Experimental, not implemented | No |

@@ -592,6 +592,9 @@ function validateConfig(config, baseline = null, options = {}) {
     if (multiIlluminator.input_phase_correction !== undefined)
       oneOf(multiIlluminator.input_phase_correction,
         'process.multi_illuminator.input_phase_correction', ['automatic', 'off']);
+    if (multiIlluminator.enabled === true &&
+        multiIlluminator.input_phase_correction === 'automatic')
+      errors.push('process.multi_illuminator.input_phase_correction automatic is not available in this processor build');
     const siteGrouping = multiIlluminator.transmitter_site_grouping ?? 'automatic';
     oneOf(siteGrouping, 'process.multi_illuminator.transmitter_site_grouping',
       ['automatic', 'explicit']);
@@ -639,6 +642,9 @@ function validateConfig(config, baseline = null, options = {}) {
           if (illuminator.standard === 'ATSC-3.0' &&
               illuminator.atsc_reference_mode === 'pilot_aided')
             errors.push(`${field}.atsc_reference_mode pilot_aided requires standard ATSC 1.0`);
+          if (multiIlluminator.enabled === true && illuminator.enabled === true &&
+              illuminator.atsc_reference_mode === 'pilot_aided')
+            errors.push(`${field}.atsc_reference_mode pilot_aided is not available in this processor build`);
         }
         const laneReference = illuminator.reference_channel === undefined ? null :
           number(illuminator.reference_channel, `${field}.reference_channel`,
@@ -647,11 +653,18 @@ function validateConfig(config, baseline = null, options = {}) {
           integerArray(illuminator.surveillance_channels,
             `${field}.surveillance_channels`);
         const explicitInputRoles = laneReference !== null || laneSurveillance.length > 0;
-        const inputRoleMode = illuminator.input_role_mode ??
-          (explicitInputRoles ? 'manual' : 'automatic');
+        // Missing legacy values inherit the receiver topology. Automatic
+        // per-lane qualification is rejected until the native selector exists.
+        const inputRoleMode = illuminator.input_role_mode ?? 'manual';
         oneOf(inputRoleMode, `${field}.input_role_mode`, ['automatic', 'manual']);
         if (inputRoleMode === 'automatic' && explicitInputRoles)
           errors.push(`${field} automatic input roles cannot include manual channel overrides`);
+        if (multiIlluminator.enabled === true && illuminator.enabled === true &&
+            inputRoleMode === 'automatic')
+          errors.push(`${field}.input_role_mode automatic is not available in this processor build`);
+        if (inputRoleMode === 'manual' && laneReference !== null &&
+            laneSurveillance.length === 0)
+          errors.push(`${field}.surveillance_channels is required with a per-lane reference channel`);
         if (laneReference !== null && laneReference >= topologyInputCount)
           errors.push(`${field}.reference_channel must identify one of the ${topologyInputCount} coherent inputs`);
         laneSurveillance.forEach((channel, channelIndex) => {
@@ -1390,6 +1403,14 @@ function validateConfig(config, baseline = null, options = {}) {
       multiIlluminator.doppler_window !== 'rectangular' &&
       capture.replay?.state !== true)
     errors.push('experimental process.multi_illuminator.doppler_window requires replay mode');
+  if (multiIlluminator?.doppler_window !== undefined &&
+      multiIlluminator.doppler_window !== 'rectangular')
+    errors.push('process.multi_illuminator.doppler_window is not available in this processor build');
+  if (detection.doppler_ridge_scrubber?.mode &&
+      detection.doppler_ridge_scrubber.mode !== 'off')
+    errors.push('process.detection.doppler_ridge_scrubber.mode is not available in this processor build');
+  if (initiate.doppler_ridge_clutter?.enable === true)
+    errors.push('process.tracker.initiate.doppler_ridge_clutter.enable is not available in this processor build');
   if (multiIlluminator?.enabled === true) {
     const fusion = processConfig.surveillance_fusion;
     const bearing = processConfig.bearing;

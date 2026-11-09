@@ -1,7 +1,7 @@
 # ATSC reference pilot diagnostic
 
-An ATSC 1.0 lane may set `atsc_reference_mode` to `raw` or `pilot_aided`
-(default). Pilot-aided mode always keeps the original physical reference for
+The pilot-aided ATSC 1.0 path is an offline diagnostic and is not accepted by
+the live native processor. The diagnostic always keeps the original physical reference for
 direct-signal/clutter cancellation. It projects only the coherently measured
 carrier pilot from the matched-filter reference after a disjoint held-out
 suppression test. Any unavailable metric, incoherent pilot, excessive
@@ -40,7 +40,7 @@ mandatory. A pilot alone does not measure symbol timing, so timing is
 explicitly unavailable. Projection subtracts the qualified deterministic pilot
 component; it does not rotate either input or change surveillance timing.
 
-Reproduction requires the same lane mode, rate, frequency, channelizer and
+No live configuration option enables this path. Reproduction requires the same lane mode, rate, frequency, channelizer and
 sample stream. This feature does not alter recorded IQ. Before a live trial,
 validate pilot frequency and false-candidate behavior on labeled captures,
 sample provenance across gaps and replay, and CPU/Vulkan agreement.

@@ -15,6 +15,78 @@ namespace blah2::multi_illuminator
 namespace
 {
 constexpr double speedOfLight = 299792458.0;
+
+int64_t floorRatio(int64_t value, uint32_t numerator, uint32_t denominator)
+{
+  const int64_t product = value * int64_t(numerator);
+  int64_t result = product / int64_t(denominator);
+  if (product < 0 && product % int64_t(denominator)) --result;
+  return result;
+}
+
+int64_t ceilRatio(int64_t value, uint32_t numerator, uint32_t denominator)
+{
+  const int64_t product = value * int64_t(numerator);
+  int64_t result = product / int64_t(denominator);
+  if (product > 0 && product % int64_t(denominator)) ++result;
+  return result;
+}
+
+template<typename T> T checked(const int64_t value, const char* field)
+{
+  if (value < int64_t(std::numeric_limits<T>::min()) ||
+      value > int64_t(std::numeric_limits<T>::max()))
+    throw std::invalid_argument(std::string("Scaled multi-illuminator ") +
+      field + " exceeds the processor limit");
+  return T(value);
+}
+}
+
+RadarConfig scaleRadarConfigForLane(RadarConfig config,
+  const uint32_t laneSampleRateHz)
+{
+  if (!config.delayReferenceRateHz) return config;
+  const uint32_t reference = *config.delayReferenceRateHz;
+  if (!reference || !laneSampleRateHz)
+    throw std::invalid_argument("Multi-illuminator delay reference rate is invalid");
+  config.delayMin = checked<int32_t>(floorRatio(config.delayMin,
+    laneSampleRateHz, reference), "minimum delay");
+  config.delayMax = checked<int32_t>(ceilRatio(config.delayMax,
+    laneSampleRateHz, reference), "maximum delay");
+  if (config.clutterFollowsAmbiguity)
+  {
+    config.clutterDelayMin = config.delayMin;
+    config.clutterDelayMax = checked<int32_t>(int64_t(config.delayMax) + 1,
+      "clutter endpoint");
+  }
+  else
+  {
+    config.clutterDelayMin = checked<int32_t>(floorRatio(config.clutterDelayMin,
+      laneSampleRateHz, reference), "minimum clutter delay");
+    config.clutterDelayMax = checked<int32_t>(ceilRatio(config.clutterDelayMax,
+      laneSampleRateHz, reference), "maximum clutter delay");
+  }
+  config.minimumDelay = checked<int8_t>(ceilRatio(config.minimumDelay,
+    laneSampleRateHz, reference), "minimum detection delay");
+  config.guardCells = checked<int8_t>(ceilRatio(config.guardCells,
+    laneSampleRateHz, reference), "CFAR guard radius");
+  config.trainingCells = checked<int8_t>(ceilRatio(config.trainingCells,
+    laneSampleRateHz, reference), "CFAR training radius");
+  config.centroidRadius = checked<uint16_t>(ceilRatio(config.centroidRadius,
+    laneSampleRateHz, reference), "centroid radius");
+  config.delayReferenceRateHz = laneSampleRateHz;
+  return config;
+}
+
+RadarConfig applyLaneTopology(RadarConfig config,
+  const channelizer::IlluminatorDefinition& definition)
+{
+  if (!definition.hasInputRoles) return config;
+  config.arrayReference = false;
+  config.referenceChannels.clear();
+  config.referenceChannel = definition.referenceChannel;
+  config.surveillanceChannels = definition.surveillanceChannels;
+  return config;
 }
 
 void validateAdvancedFeatures(const AdvancedFeatureConfig& config)
@@ -84,7 +156,9 @@ struct MultiIlluminatorRadar::Context
     channelizer::IlluminatorDefinition value, RadarConfig radar)
     : definition(std::move(value)), captureRate(captureRateHz),
       samples(uint32_t(std::llround(radar.cpiSeconds * definition.outputRateHz))),
-      decimation(captureRateHz / definition.outputRateHz), config(std::move(radar)),
+      decimation(captureRateHz / definition.outputRateHz),
+      config(scaleRadarConfigForLane(applyLaneTopology(std::move(radar), definition),
+        definition.outputRateHz)),
       pending(channelCount),
       reference(samples), conditionedReference(samples),
       stages({config.clutterDelayMin, config.clutterDelayMax, samples,

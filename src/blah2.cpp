@@ -301,13 +301,37 @@ try
         item["output_sample_rate_hz"] >> definition.outputRateHz;
         if (item.has_child("filter_taps_per_phase"))
           item["filter_taps_per_phase"] >> definition.tapsPerPhase;
+        std::string inputRoleMode = "manual";
+        if (item.has_child("input_role_mode"))
+          item["input_role_mode"] >> inputRoleMode;
+        if (inputRoleMode == "automatic")
+          throw std::invalid_argument(
+            "Automatic per-illuminator input roles are not available in this processor build");
+        if (item.has_child("reference_channel"))
+        {
+          definition.hasInputRoles = true;
+          item["reference_channel"] >> definition.referenceChannel;
+          if (item.has_child("surveillance_channels"))
+            for (auto channel : item["surveillance_channels"].children())
+            {
+              uint32_t value = 0;
+              channel >> value;
+              definition.surveillanceChannels.push_back(value);
+            }
+        }
         if (!std::regex_match(definition.id,
               std::regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) ||
             !ids.insert(definition.id).second ||
             !frequencies.insert(definition.frequencyHz).second ||
-            (definition.standard != "FM" && definition.standard != "DAB" &&
+            (definition.standard != "AM" && definition.standard != "FM" &&
+              definition.standard != "DAB" && definition.standard != "DRM" &&
               definition.standard != "ATSC" &&
-              definition.standard != "DVB-T/T2") ||
+              definition.standard != "ATSC-1.0" &&
+              definition.standard != "ATSC-3.0" &&
+              definition.standard != "DVB-T/T2" &&
+              definition.standard != "ISDB-T" &&
+              definition.standard != "DTMB" &&
+              definition.standard != "CUSTOM") ||
             !definition.frequencyHz || !definition.outputRateHz ||
             !definition.occupiedBandwidthHz || definition.tapsPerPhase < 4 ||
             definition.tapsPerPhase > 128 || fs % definition.outputRateHz ||
@@ -828,13 +852,31 @@ try
   std::unique_ptr<Track> track;
 
   // set up process ambiguity
+  int32_t configuredDelayMin, configuredDelayMax;
   int32_t delayMin, delayMax;
   int32_t dopplerMin, dopplerMax;
   bool roundHamming = true;
-  tree["process"]["ambiguity"]["delayMin"] >> delayMin;
-  tree["process"]["ambiguity"]["delayMax"] >> delayMax;
+  tree["process"]["ambiguity"]["delayMin"] >> configuredDelayMin;
+  tree["process"]["ambiguity"]["delayMax"] >> configuredDelayMax;
   tree["process"]["ambiguity"]["dopplerMin"] >> dopplerMin;
   tree["process"]["ambiguity"]["dopplerMax"] >> dopplerMax;
+  std::optional<uint32_t> delayReferenceRateHz;
+  if (tree["process"].has_child("delay_reference_sample_rate_hz"))
+  {
+    uint32_t value = 0;
+    tree["process"]["delay_reference_sample_rate_hz"] >> value;
+    if (!value) throw std::invalid_argument("Delay reference sample rate must be positive");
+    delayReferenceRateHz = value;
+  }
+  blah2::multi_illuminator::RadarConfig captureDelayProjection;
+  captureDelayProjection.delayMin = configuredDelayMin;
+  captureDelayProjection.delayMax = configuredDelayMax;
+  captureDelayProjection.delayReferenceRateHz = delayReferenceRateHz;
+  const auto effectiveCaptureDelay =
+    blah2::multi_illuminator::scaleRadarConfigForLane(
+      captureDelayProjection, fs);
+  delayMin = effectiveCaptureDelay.delayMin;
+  delayMax = effectiveCaptureDelay.delayMax;
   std::vector<std::unique_ptr<Ambiguity>> ambiguity;
   for (std::size_t pathIndex = 0;
        pathIndex < surveillanceChannels.size(); pathIndex++)
@@ -843,6 +885,7 @@ try
 
   // Set up clutter before the shared accelerator so its worker can allocate a
   // bounded batched pipeline only when filtering is enabled.
+  int32_t configuredDelayMinClutter, configuredDelayMaxClutter;
   int32_t delayMinClutter, delayMaxClutter;
   bool isClutter;
   const auto& clutterConfig = tree["process"]["clutter"];
@@ -853,15 +896,24 @@ try
     // Ambiguity limits are inclusive; Wiener-Hopf consumes a half-open span.
     // Calculate in 64 bits so a malformed boundary cannot wrap into a huge
     // allocation before the startup checks reject it.
-    const int64_t derivedDelayMax = int64_t(delayMax) + 1;
+    const int64_t derivedDelayMax = int64_t(configuredDelayMax) + 1;
     if (derivedDelayMax > INT32_MAX)
       throw std::invalid_argument("Clutter followAmbiguity range exceeds the processor delay limit");
-    delayMinClutter = delayMin;
-    delayMaxClutter = int32_t(derivedDelayMax);
+    configuredDelayMinClutter = configuredDelayMin;
+    configuredDelayMaxClutter = int32_t(derivedDelayMax);
   } else {
-    clutterConfig["delayMin"] >> delayMinClutter;
-    clutterConfig["delayMax"] >> delayMaxClutter;
+    clutterConfig["delayMin"] >> configuredDelayMinClutter;
+    clutterConfig["delayMax"] >> configuredDelayMaxClutter;
   }
+  auto captureClutterProjection = captureDelayProjection;
+  captureClutterProjection.clutterDelayMin = configuredDelayMinClutter;
+  captureClutterProjection.clutterDelayMax = configuredDelayMaxClutter;
+  captureClutterProjection.clutterFollowsAmbiguity = followAmbiguity;
+  const auto effectiveCaptureClutter =
+    blah2::multi_illuminator::scaleRadarConfigForLane(
+      captureClutterProjection, fs);
+  delayMinClutter = effectiveCaptureClutter.clutterDelayMin;
+  delayMaxClutter = effectiveCaptureClutter.clutterDelayMax;
   clutterConfig["enable"] >> isClutter;
   const int64_t clutterBins = int64_t(delayMaxClutter) - delayMinClutter;
   if (isClutter && (clutterBins <= 0 || clutterBins > nSamples || clutterBins > UINT32_MAX))
@@ -1124,8 +1176,8 @@ try
 
   // set up process detection
   double pfa, minDoppler;
-  int8_t nGuard, nTrain;
-  int8_t minDelay;
+  int8_t configuredNGuard, configuredNTrain, configuredMinDelay;
+  int8_t nGuard, nTrain, minDelay;
   uint32_t integrationCpis = 1;
   uint32_t integrationMotionBins = 0;
   bool trackBeforeDetect = false;
@@ -1135,9 +1187,9 @@ try
   uint32_t trackBeforeDetectDopplerMotionBins = 1;
   uint32_t integrationBeamTolerance = UINT32_MAX;
   tree["process"]["detection"]["pfa"] >> pfa;
-  tree["process"]["detection"]["nGuard"] >> nGuard;
-  tree["process"]["detection"]["nTrain"] >> nTrain;
-  tree["process"]["detection"]["minDelay"] >> minDelay;
+  tree["process"]["detection"]["nGuard"] >> configuredNGuard;
+  tree["process"]["detection"]["nTrain"] >> configuredNTrain;
+  tree["process"]["detection"]["minDelay"] >> configuredMinDelay;
   tree["process"]["detection"]["minDoppler"] >> minDoppler;
   if (tree["process"]["detection"].has_child("integration_cpis"))
     tree["process"]["detection"]["integration_cpis"] >> integrationCpis;
@@ -1224,12 +1276,23 @@ try
       << " coherent_refinement_factor="
       << (bearingEnabled ? bearingScanBeams / coherentBeamCount : 0u)
       << " bearing_method=" << (bearingEnabled ? bearingMethod : "disabled") << "\n";
+  // set up process centroid
+  uint16_t configuredNCentroid, nCentroid;
+  tree["process"]["detection"]["nCentroid"] >> configuredNCentroid;
+  auto captureDetectionProjection = captureDelayProjection;
+  captureDetectionProjection.minimumDelay = configuredMinDelay;
+  captureDetectionProjection.guardCells = configuredNGuard;
+  captureDetectionProjection.trainingCells = configuredNTrain;
+  captureDetectionProjection.centroidRadius = configuredNCentroid;
+  const auto effectiveCaptureDetection =
+    blah2::multi_illuminator::scaleRadarConfigForLane(
+      captureDetectionProjection, fs);
+  minDelay = effectiveCaptureDetection.minimumDelay;
+  nGuard = effectiveCaptureDetection.guardCells;
+  nTrain = effectiveCaptureDetection.trainingCells;
+  nCentroid = effectiveCaptureDetection.centroidRadius;
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
-
-  // set up process centroid
-  uint16_t nCentroid;
-  tree["process"]["detection"]["nCentroid"] >> nCentroid;
   Centroid *centroid = new Centroid(nCentroid, nCentroid, 1/tCpi);
 
   // set up process tracker
@@ -1418,18 +1481,20 @@ try
         "Multi-illuminator mode requires clutter, detection, and tracking");
     blah2::multi_illuminator::RadarConfig multiConfig;
     multiConfig.cpiSeconds = tCpi;
-    multiConfig.delayMin = delayMin;
-    multiConfig.delayMax = delayMax;
+    multiConfig.delayMin = configuredDelayMin;
+    multiConfig.delayMax = configuredDelayMax;
+    multiConfig.delayReferenceRateHz = delayReferenceRateHz;
     multiConfig.dopplerMin = dopplerMin;
     multiConfig.dopplerMax = dopplerMax;
-    multiConfig.clutterDelayMin = delayMinClutter;
-    multiConfig.clutterDelayMax = delayMaxClutter;
+    multiConfig.clutterDelayMin = configuredDelayMinClutter;
+    multiConfig.clutterDelayMax = configuredDelayMaxClutter;
+    multiConfig.clutterFollowsAmbiguity = followAmbiguity;
     multiConfig.pfa = pfa;
-    multiConfig.guardCells = nGuard;
-    multiConfig.trainingCells = nTrain;
-    multiConfig.minimumDelay = minDelay;
+    multiConfig.guardCells = configuredNGuard;
+    multiConfig.trainingCells = configuredNTrain;
+    multiConfig.minimumDelay = configuredMinDelay;
     multiConfig.minimumDopplerHz = minDoppler;
-    multiConfig.centroidRadius = nCentroid;
+    multiConfig.centroidRadius = configuredNCentroid;
     multiConfig.trackerM = m;
     multiConfig.trackerN = n;
     multiConfig.trackerDelete = nDelete;

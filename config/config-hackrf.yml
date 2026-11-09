@@ -30,7 +30,7 @@ process:
   delay_reference_sample_rate_hz: 2000000
   multi_illuminator:
     enabled: false
-    input_phase_correction: automatic
+    input_phase_correction: off
     transmitter_site_grouping: automatic
     co_location_radius_m: 100
     illuminators: []

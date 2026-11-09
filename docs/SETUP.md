@@ -156,9 +156,11 @@ failures, contribution counts, and which source supplied each position.
 
 ## Persistent Doppler-ridge interference
 
-The optional tracker setting `process.tracker.initiate.doppler_ridge_clutter`
+The reserved tracker setting `process.tracker.initiate.doppler_ridge_clutter`
 learns narrow-Doppler interference that appears simultaneously across a broad
-delay span. It is hardware-agnostic: Doppler tolerance is configured in hertz
+delay span. The configuration is disabled and rejected by the current native
+processor; it remains documented for replay research and a future qualified
+implementation. Its contract is hardware-agnostic: Doppler tolerance is configured in hertz
 and ridge width in kilometres, so VectorWarp converts it for the active sample
 rate. Once a row persists for the configured CPI count, only new track births
 on that row are blocked. Existing tracks can cross it normally. The filter is

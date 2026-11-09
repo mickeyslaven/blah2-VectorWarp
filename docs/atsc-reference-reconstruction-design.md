@@ -87,7 +87,8 @@ Primary references: [ATSC A/53 Part 2](https://www.atsc.org/wp-content/uploads/2
   its per-channel held-out and target-preservation gates pass, otherwise
   publish raw plus the rejection reason.
 - `raw`: unchanged reference.
-- `pilot_aided`: explicit ATSC 1.0 pilot-projection request; still fail-closed.
+- `pilot_aided`: experimental offline ATSC 1.0 pilot projection; live
+  configuration rejects it until the native path meets the acceptance gates.
 - `decision_directed`: available only in builds with the reviewed reconstruction
   backend and only after runtime lock. Until then configuration validation must
   reject it rather than silently behaving like `raw`.

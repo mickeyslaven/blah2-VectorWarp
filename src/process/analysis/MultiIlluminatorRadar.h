@@ -53,6 +53,10 @@ struct RadarConfig
   int32_t delayMin = -10, delayMax = 100;
   int32_t dopplerMin = -200, dopplerMax = 200;
   int32_t clutterDelayMin = -10, clutterDelayMax = 101;
+  // When present, saved delay bins describe this reference rate and are
+  // projected independently into each lane's output sample rate.
+  std::optional<uint32_t> delayReferenceRateHz;
+  bool clutterFollowsAmbiguity = false;
   double pfa = 1e-5;
   int8_t guardCells = 2, trainingCells = 6, minimumDelay = 1;
   double minimumDopplerHz = 15;
@@ -74,6 +78,11 @@ struct RadarConfig
   ArrayReferenceSynthesizer::Config reference;
   AdvancedFeatureConfig advanced;
 };
+
+// Public for deterministic native contract tests and replay tooling. Throws
+// if a projection cannot be represented by the processor's bounded types.
+RadarConfig scaleRadarConfigForLane(RadarConfig config,
+  uint32_t laneSampleRateHz);
 
 struct RadarFrame
 {

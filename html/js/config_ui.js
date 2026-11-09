@@ -105,7 +105,7 @@ const CONFIG_META = {
   'process.multi_illuminator.transmitter_site_grouping': ['Transmitter-site grouping', 'Choose proximity fallback or require a stable physical-site ID for every channel.'],
   'process.multi_illuminator.co_location_radius_m': ['Automatic co-location radius', 'Group unassigned transmitter coordinates within this distance. IDs remain authoritative.'],
   'process.multi_illuminator.illuminators': ['Illuminators', 'FM stations and transmitter sites.'],
-  'process.multi_illuminator.illuminators.input_role_mode': ['Input roles', 'Automatic qualifies reference and surveillance independently for each RF channel at startup.'],
+  'process.multi_illuminator.illuminators.input_role_mode': ['Input roles', 'Use the receiver default or select an explicit reference input.'],
   'process.data': ['Frame timing', ''],
   'process.delay_reference_sample_rate_hz': ['Delay reference sample rate', 'Lane delay limits scale to preserve distance. Doppler stays in Hz.'],
   'process.data.cpi': ['Frame interval (CPI)', 'Seconds per radar frame and display update. Applies after restart.'],
@@ -469,7 +469,8 @@ function renderTrackerSettings() {
   fields.appendChild(field(tracker.delete, ['process', 'tracker', 'delete']));
   tuning.append(summary, fields); body.appendChild(tuning);
   const ridge = tracker.initiate?.doppler_ridge_clutter;
-  if (ridge) {
+  if (ridge && !capabilities.fieldRules?.[
+    'process.tracker.initiate.doppler_ridge_clutter.enable']?.readOnly) {
     const ridgeDetails = document.createElement('details');
     ridgeDetails.className = 'config-group composite-tuning';
     const ridgeSummary = document.createElement('summary');
@@ -1314,7 +1315,7 @@ function illuminatorListInput(value, path) {
         'Automatic compares each channel with its own raw control and fails closed to raw.' :
         'ATSC reference conditioning applies only to ATSC channels.';
       for (const option of atscReferenceMode.options)
-        if (option.value === 'pilot_aided') option.disabled = !atsc1;
+        if (option.value === 'pilot_aided') option.disabled = true;
       atscReferenceLabel.appendChild(atscReferenceMode); card.appendChild(atscReferenceLabel);
       const inputRoleLabel = document.createElement('label');
       inputRoleLabel.textContent = 'Reference input for this RF channel';
@@ -1323,18 +1324,13 @@ function illuminatorListInput(value, path) {
       const inherited = activeConfig.process?.reference_synthesis?.channels?.[0] ??
         activeConfig.capture?.device?.reference_channel ?? 0;
       const roleOptions = [
-        {value: 'automatic', label: 'Automatic (recommended)'},
         {value: 'inherit', label: `Use receiver default (Ch ${inherited})`}];
       for (let channel = 0; channel < inputCount; channel += 1)
         roleOptions.push({value: String(channel), label: `Ch ${channel}`});
       const role = selectInput(roleOptions,
-        Number.isInteger(item.reference_channel) ? String(item.reference_channel) :
-          item.input_role_mode === 'manual' ? 'inherit' : 'automatic',
+        Number.isInteger(item.reference_channel) ? String(item.reference_channel) : 'inherit',
         selected => {
-          if (selected === 'automatic') {
-            item.input_role_mode = 'automatic';
-            delete item.reference_channel; delete item.surveillance_channels;
-          } else if (selected === 'inherit') {
+          if (selected === 'inherit') {
             item.input_role_mode = 'manual';
             delete item.reference_channel; delete item.surveillance_channels;
           } else {
@@ -1345,7 +1341,7 @@ function illuminatorListInput(value, path) {
           }
           commit();
         });
-      role.title = 'Automatic qualifies both coherent input orientations once at startup for this illuminator, then holds the selected roles stable until restart.';
+      role.title = 'Use the receiver topology or explicitly choose this illuminator’s reference input.';
       inputRoleLabel.appendChild(role); card.appendChild(inputRoleLabel);
       const originalFrequency = item.frequency_hz; item.frequency_hz = originalFrequency / 1e6;
       addNumber('Frequency (MHz)', 'frequency_hz', 1e6); item.frequency_hz = originalFrequency;
@@ -1376,7 +1372,7 @@ function illuminatorListInput(value, path) {
       items.push({id: `illuminator-${items.length + 1}`, enabled: true, standard: 'FM',
         frequency_hz: activeConfig.capture?.fc || 100000000,
         occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
-        filter_taps_per_phase: 24, atsc_reference_mode: 'raw',
+        filter_taps_per_phase: 24, atsc_reference_mode: 'raw', input_role_mode: 'manual',
         transmitter: {name: '', latitude: 0, longitude: 0, altitude: 0}});
       commit(); renderEditor();
     });
