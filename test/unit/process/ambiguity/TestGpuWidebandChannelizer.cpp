@@ -153,8 +153,7 @@ TEST_CASE("wideband GPU admits a bounded small-decimation direct envelope")
 
   auto excessive = configuration();
   excessive.inputRateHz = input;
-  excessive.maxInputSamples = input;
-  for (auto& lane : excessive.lanes) lane.decimation = 2;
+  excessive.lanes.front().taps.resize(1026);
   REQUIRE_FALSE(Plan(std::move(excessive)).runtimeSelectable());
 }
 
