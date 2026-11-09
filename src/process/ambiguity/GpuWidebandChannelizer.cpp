@@ -170,7 +170,29 @@ void Plan::reset()
 bool Plan::runtimeSelectable() const noexcept
 {
   if(config_.inputRateHz<=2400000)return true;
-  if(config_.lanes.empty()||config_.lanes.front().decimation<32)return false;
+  if(config_.lanes.empty())return false;
+  // The isolated worker has two qualified execution envelopes.  Large
+  // decimations use the shared FFT/PFB path below.  A bounded direct-FIR path
+  // is also practical for wide captures with short filters (for example a
+  // small-decimation broadcast channelizer).  Admit it by operation count,
+  // not by receiver type or a site-specific sample rate; the first real block
+  // is still compared with the CPU oracle before GPU output is published.
+  uint64_t directWork=0;
+  bool direct=true;
+  for(const auto& lane:config_.lanes)
+  {
+    if(lane.decimation<2||lane.taps.empty()||lane.taps.size()>1025)
+    {direct=false;break;}
+    const uint64_t outputs=(uint64_t(config_.maxInputSamples)+
+      lane.decimation-1)/lane.decimation;
+    const uint64_t perChannel=outputs*uint64_t(lane.taps.size());
+    if(perChannel>UINT64_MAX/config_.channels||
+       directWork>UINT64_MAX-perChannel*config_.channels)
+    {direct=false;break;}
+    directWork+=perChannel*config_.channels;
+  }
+  if(direct&&directWork<=uint64_t(8'000'000'000ULL))return true;
+  if(config_.lanes.front().decimation<32)return false;
   const uint32_t decimation=config_.lanes.front().decimation;
   uint32_t maximumTaps=0;uint64_t period=decimation;
   for(const auto& lane:config_.lanes)
