@@ -584,7 +584,8 @@ function validateConfig(config, baseline = null, options = {}) {
     replay.channel_count : device.type === 'Kraken' && Number.isInteger(device.channel_count) ?
       device.channel_count : 2;
   if (processConfig.delay_reference_sample_rate_hz !== undefined) try {
-    const effective = effectiveDelayConfig(root, sampleRate).process;
+    const effective = effectiveDelayConfig(root, sampleRate,
+      {scaleNeighborhoods: multiIlluminator?.enabled !== true}).process;
     ambiguity = effective.ambiguity; clutter = effective.clutter; detection = effective.detection;
   } catch (error) { errors.push(`process.delay_reference_sample_rate_hz: ${error.message}`); }
   if (multiIlluminator) {

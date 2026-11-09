@@ -871,6 +871,13 @@ try
   blah2::multi_illuminator::RadarConfig captureDelayProjection;
   captureDelayProjection.delayMin = configuredDelayMin;
   captureDelayProjection.delayMax = configuredDelayMax;
+  // This first projection establishes only ambiguity geometry. Detector
+  // settings are read and projected later; defaults here must not reject an
+  // otherwise valid high-rate configuration.
+  captureDelayProjection.minimumDelay = 0;
+  captureDelayProjection.guardCells = 0;
+  captureDelayProjection.trainingCells = 0;
+  captureDelayProjection.centroidRadius = 0;
   // Multi-illuminator processing projects each lane independently below.
   // Its unused full-passband compatibility objects must not reject valid
   // narrow lanes because full-rate CFAR neighborhoods would exceed int8.

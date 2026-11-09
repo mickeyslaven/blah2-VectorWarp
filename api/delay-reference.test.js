@@ -109,6 +109,17 @@ associationGates(liveLimits, {timestamp: 100, delay_rate_km_s: .1,
 assert.throws(() => scaleDelayBin(2147483647, 4294967295, 1, true), /exceeds/);
 assert.throws(() => scaleDelayBin(1, 1, 0, true), /valid integers/);
 assert.equal(config.process.ambiguity.delayMax, 400, 'projection leaves saved settings unchanged');
+const singleHighRate = clone(config);
+singleHighRate.process.multi_illuminator.enabled = false;
+singleHighRate.capture.fs = 6144000;
+singleHighRate.process.delay_reference_sample_rate_hz = 2000000;
+singleHighRate.process.detection.minDelay = 80;
+singleHighRate.process.detection.nTrain = 1;
+assert.equal(validateConfig(singleHighRate).valid, true,
+  validateConfig(singleHighRate).errors.join('; '));
+singleHighRate.process.detection.nTrain = 50;
+assert.equal(validateConfig(singleHighRate).valid, false,
+  'single-stream validation rejects a projected CFAR radius above the native limit');
 const changedScale = clone(config); changedScale.process.delay_reference_sample_rate_hz = 6144000;
 assert.notEqual(siteKey(changedScale), siteKey(config), 'physical search changes reset the statistics identity');
 
