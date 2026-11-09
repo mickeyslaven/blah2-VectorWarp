@@ -75,6 +75,8 @@ async function run(name, options = {}) {
             live.recovering = true; live.cooldown_active = false;
             if (!options.stock) {live.calibration_state = 'PENDING'; live.noise_source = true;}
             status(socket);
+            for (let index = 0; index < (options.statusBursts || 0); index++)
+              send(socket, {...live, diagnostic_padding: 'x'.repeat(60000)});
           }
           setTimeout(() => {
             if (socket.destroyed) return;
@@ -164,6 +166,8 @@ async function run(name, options = {}) {
   await run('explicit calibration waits for prior cooldown', {forced: true, initialCooldown: true});
   await run('explicit calibration has a separate longer deadline', {forced: true,
     completionDelayMs: 140, transactionTimeoutMs: 100});
+  await run('explicit calibration accepts sustained bounded status traffic', {forced: true,
+    statusBursts: 5});
   await run('explicit calibration scanner active refuses reset', {forced: true,
     scanning: true, error: 'KRAKEN_RESET_UNSUPPORTED'});
   await run('stock HP explicit calibration records omitted details as unknown', {forced: true,

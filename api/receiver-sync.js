@@ -266,7 +266,6 @@ function createKrakenControlClient(options = {}) {
     return new Promise((resolve, reject) => {
       let socket;
       let buffer = '';
-      let bufferedBytes = 0;
       let timer;
       let transactionTimer;
       let settled = false;
@@ -580,13 +579,15 @@ function createKrakenControlClient(options = {}) {
         'Suite V2 did not send a compatible status update before the deadline.',
         'KRAKEN_STATUS_TIMEOUT');
       socket.on('data', chunk => {
-        bufferedBytes += Buffer.byteLength(chunk);
-        if (bufferedBytes > MAX_FRAME_BYTES * 4)
-          return fail(receiverError('KRAKEN_PROTOCOL_MISMATCH',
-            'Suite V2 control traffic exceeded the transaction limit.', 502));
         buffer += chunk;
         const lines = buffer.split('\n');
         buffer = lines.pop();
+        // Limit an incomplete frame, not the cumulative bytes in a healthy
+        // long-running calibration transaction. Suite can emit many bounded
+        // status frames while phase calibration converges.
+        if (Buffer.byteLength(buffer) > MAX_FRAME_BYTES)
+          return fail(receiverError('KRAKEN_PROTOCOL_MISMATCH',
+            'Suite V2 returned an oversized control frame.', 502));
         for (const line of lines) {
           if (settled) return;
           handleLine(line);
