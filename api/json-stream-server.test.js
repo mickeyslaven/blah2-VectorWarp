@@ -101,11 +101,27 @@ async function send(port, chunks) {
     config.network.ip = '127.0.0.1';
     fs.writeFileSync(configPath, yaml.dump(config));
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), configPath], {
-      env: {...process.env, BLAH2_RECEIVER_TYPES: 'Kraken'}, stdio: ['ignore', 'ignore', 'pipe']
+      env: {...process.env, BLAH2_RECEIVER_TYPES: 'Kraken',
+        BLAH2_OPRS_EVENTS_PATH: path.join(directory, 'oprs.ndjson')},
+      stdio: ['ignore', 'ignore', 'pipe']
     });
     child.stderr.on('data', chunk => { stderr += chunk; });
     const apiPort = config.network.ports.api;
     await waitFor(apiPort, '/api/system/status', response => response.status === 200);
+
+    const nativeTrack = {timestamp: 1, data: [{id: 'primary-units', state: 'ACTIVE',
+      n: 5, delay: 10, doppler: 20}]};
+    await send(config.network.ports.track, [Buffer.from(JSON.stringify(nativeTrack))]);
+    await waitFor(apiPort, '/api/tracker', response => {
+      try { return JSON.parse(response.body).data?.[0]?.id === 'primary-units'; }
+      catch (_) { return false; }
+    });
+    const oprsRows = fs.readFileSync(path.join(directory, 'oprs.ndjson'), 'utf8')
+      .trim().split('\n').map(JSON.parse);
+    assert.equal(oprsRows[0].sample_rate_hz, 300000,
+      'legacy tracker socket carries primary-lane bins, not full-passband capture bins');
+    assert.ok(Math.abs(oprsRows.find(row => row.kind === 'track_measurement').delay_km -
+      10 * 299792.458 / 300000) < 1e-9);
 
     const routes = [
       ['map', '/api/map'], ['detection', '/api/detection'], ['track', '/api/tracker'],

@@ -5,11 +5,19 @@ var urlTiming = liveApiUrl(radarPresentationUrl('/stash/timing'));
 var urlPresentationTiming = liveApiUrl('/api/presentation/status');
 
 function timingTraceKeys(data) {
+  const singleStreamDurations = new Set(['extract_buffer', 'spectrum', 'clutter_filter',
+    'ambiguity_processing', 'detector', 'tracker', 'output_radar_data']);
   return Object.keys(data).filter(key => {
     if (!Array.isArray(data[key])) return false;
-    if (/timestamp|uptime|epoch|sample/i.test(key)) return false;
+    if (!(key === 'cpi' || key.endsWith('_ms') || singleStreamDurations.has(key) ||
+        /^multi_(?:channelizer_wall|spectrum_output|illuminator_radar|serialize|output|pipeline_advance)$/.test(key))) return false;
     return data[key].some(value => Number.isFinite(value));
   });
+}
+
+function timingTraceLabel(key) {
+  return key.replace(/^multi_/, '').replace(/_ms$/, '').replaceAll('_', ' ')
+    .replace(/\b\w/g, value => value.toUpperCase()) + ' (ms)';
 }
 
 async function updatePresentationTiming() {
@@ -20,12 +28,17 @@ async function updatePresentationTiming() {
     const cadence = status.cadence || {};
     const percent = Number.isFinite(cadence.within_100ms_fraction) ?
       `${Math.round(cadence.within_100ms_fraction * 100)}%` : 'Measuring';
-    const source = status.event_time?.exact ? 'Exact receiver time' : 'Host-estimated receiver time';
+    const source = status.event_time?.exact ? 'Exact receiver event time.' :
+      status.event_time?.sample_contiguous === true ?
+        'Receiver event time is sample-contiguous.' :
+        status.event_time?.present === true ?
+          `Host-estimated receiver time${status.event_time.reason ? `: ${status.event_time.reason}` : '.'}` :
+          'Receiver event-time metadata unavailable.';
     target.innerHTML = `<div><strong>${status.presentation_delay_ms ?? '—'} ms</strong><span>Fixed presentation hold</span></div>` +
       `<div><strong>${status.expected_frame_interval_ms ?? '—'} ms</strong><span>Configured CPI cadence</span></div>` +
       `<div><strong>${percent}</strong><span>Frames within ±100 ms</span></div>` +
       `<div><strong>${status.relative_alignment_ms ?? '—'} ms</strong><span>Layer alignment</span></div>` +
-      `<p>${source}. ${status.event_time?.reason || 'Waiting for receiver timing metadata.'}</p>`;
+      `<p>${source}</p>`;
     const state = document.getElementById('view-state');
     if (state) {
       state.textContent = `${status.expected_frame_interval_ms ?? '—'} ms cadence`;
@@ -132,7 +145,7 @@ var radarUpdates = startRadarPlot(urlTiming, async function (data) {
         y: data[keys[i]],
         mode: 'lines+markers',
         type: 'scatter',
-        name: keys[i],
+        name: timingTraceLabel(keys[i]),
         line: {
           width: 5
         },

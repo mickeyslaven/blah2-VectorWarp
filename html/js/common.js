@@ -1,3 +1,27 @@
+const DISTANCE_VIEW_KEY = 'vectorwarp-distance-view';
+
+function initializeDistanceView() {
+  if (typeof window === 'undefined' || typeof document === 'undefined' ||
+      !document.body?.classList?.toggle) return;
+  const requested = new URLSearchParams(window.location.search).get('distance_view');
+  let enabled = requested === '1' || requested === 'true';
+  if (requested === null) try { enabled = window.localStorage?.getItem(DISTANCE_VIEW_KEY) === 'true'; }
+  catch (_) { enabled = false; }
+  else try { window.localStorage?.setItem(DISTANCE_VIEW_KEY, String(enabled)); } catch (_) {}
+  document.body.classList.toggle('distance-view', enabled);
+  const control = document.getElementById('distance-view-toggle');
+  if (control) {
+    control.checked = enabled;
+    control.addEventListener('change', () => {
+      document.body.classList.toggle('distance-view', control.checked);
+      try { window.localStorage?.setItem(DISTANCE_VIEW_KEY, String(control.checked)); } catch (_) {}
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+}
+
+initializeDistanceView();
+
 function ensureBrandFavicon() {
   if (!document.head || !document.createElement) return;
   const existing = document.querySelector('link[rel~="icon"]');
@@ -13,6 +37,8 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
+  const federationEmbed = new URLSearchParams(window.location.search).get('federationEmbed') === '1';
+  if (federationEmbed) document.body.classList.add('federation-embed');
   const current = name => active === name ? ' aria-current="page"' : '';
   target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}"${current('radar')}>Live radar</a><a href="/display/locations" class="${active === 'map' ? 'active' : ''}"${current('map')}>Map</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}"${current('controller')}>System</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}"${current('recordings')}>Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}"${current('settings')}>Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status" role="status" aria-live="polite"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" role="status" aria-live="polite" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
   restoreLiveStatusLabel(document.getElementById('live-status'), 'RADAR');
@@ -39,38 +65,51 @@ function renderAppHeader(active) {
 const ILLUMINATOR_SELECTION_KEY = 'vectorwarp-selected-illuminator-v1';
 let illuminatorContextPromise = null;
 let illuminatorContext = {enabled: false, id: null, item: null, illuminators: []};
+let illuminatorContextRetryTimer = null;
 
 function illuminatorDisplayScope() {
   if (typeof document === 'undefined' || typeof window === 'undefined') return 'selected';
   const body = document.body;
   const insight = body?.dataset?.insightView;
-  if (['health', 'calibration'].includes(insight)) return 'aggregate';
-  if (['overview', 'detections', 'activity', 'locations', 'evaluation', 'tracks',
+  // System-level status, calibration and diagnostics describe one acquisition
+  // pipeline. They default to its aggregate view and never require an RF
+  // channel choice. Pages displaying channel-specific radar products retain
+  // the shared channel selector.
+  if (['overview', 'health', 'calibration', 'activity'].includes(insight)) return 'aggregate';
+  if (['detections', 'locations', 'evaluation', 'tracks', 'recordings',
     'statistics'].includes(insight) || body?.dataset?.radarView) return 'selected';
   const consolidated = body?.dataset?.consolidatedView;
   const requested = new URLSearchParams(window.location.search).get('view');
-  if (consolidated === 'diagnostics')
-    return requested === 'timing' || requested === 'health' ? 'aggregate' : 'selected';
+  if (consolidated === 'diagnostics') return 'aggregate';
   if (consolidated === 'signal') return requested === 'maxhold' ? 'selected' : 'wideband';
   if (consolidated === 'detection') return 'selected';
   return 'none';
 }
 
 function selectedIlluminatorFromStorage() {
-  try { return window.localStorage?.getItem(ILLUMINATOR_SELECTION_KEY) || ''; }
+  try { return window.localStorage?.getItem(ILLUMINATOR_SELECTION_KEY + ':' + selectedNode()) || ''; }
   catch (_) { return ''; }
 }
 
 function storeSelectedIlluminator(id) {
-  try { window.localStorage?.setItem(ILLUMINATOR_SELECTION_KEY, id); }
+  try { window.localStorage?.setItem(ILLUMINATOR_SELECTION_KEY + ':' + selectedNode(), id); }
   catch (_) { /* Persistence is optional. */ }
 }
 
 function getIlluminatorContext() {
   if (illuminatorContextPromise) return illuminatorContextPromise;
-  illuminatorContextPromise = fetchRadarJson(liveApiUrl('/api/illuminators/live')).then(status => {
-    const illuminators = status?.enabled === true && Array.isArray(status.illuminators) ?
-      status.illuminators : [];
+  illuminatorContextPromise = fetchRadarJson(liveApiUrl('/api/illuminators/live')).then(async status => {
+    let illuminators = status?.enabled === true && Array.isArray(status?.illuminators) ? status.illuminators.map(item =>
+      ({...item, api_illuminator: true})) : [];
+    if (!illuminators.length) {
+      const config = await fetchRadarJson(liveApiUrl('/api/runtime/config'));
+      const frequency = Number(config?.capture?.fc);
+      const sampleRate = Number(config?.capture?.fs);
+      illuminators = [{id: 'primary', standard: 'Single channel', api_illuminator: false,
+        frequency_hz: Number.isFinite(frequency) ? frequency : null,
+        output_sample_rate_hz: Number.isFinite(sampleRate) ? sampleRate : null,
+        available: true}];
+    }
     const requested = typeof window === 'undefined' ? '' :
       new URLSearchParams(window.location.search).get('illuminator') || '';
     const stored = typeof window === 'undefined' ? '' : selectedIlluminatorFromStorage();
@@ -78,16 +117,23 @@ function getIlluminatorContext() {
       illuminators.find(candidate => candidate.id === stored) ||
       illuminators.find(candidate => candidate.id === status?.primary) || illuminators[0] || null;
     illuminatorContext = {enabled: illuminators.length > 0, id: item?.id || null,
-      item, illuminators, primary: status?.primary || null};
+      item, illuminators, primary: status?.primary || null, catalogUnavailable: false};
     if (item) storeSelectedIlluminator(item.id);
     if (typeof window !== 'undefined') window.vectorwarpIlluminatorContext = illuminatorContext;
     return illuminatorContext;
-  }).catch(() => illuminatorContext);
+  }).catch(() => {
+    // A transient request delay must not permanently turn a multi-lane page
+    // into an apparently single-stream page. Permit the next bounded refresh
+    // to retry the catalog without disturbing the last confirmed selection.
+    illuminatorContext = {...illuminatorContext, catalogUnavailable: true};
+    illuminatorContextPromise = null;
+    return illuminatorContext;
+  });
   return illuminatorContextPromise;
 }
 
 function selectedIlluminatorUrl(path, context = illuminatorContext) {
-  if (!context?.enabled || !context.id) return path;
+  if (!context?.enabled || !context.id || context.item?.api_illuminator === false) return path;
   const url = new URL(path, typeof window === 'undefined' ?
     'http://vectorwarp.invalid' : window.location.href);
   url.searchParams.set('illuminator', context.id);
@@ -95,22 +141,111 @@ function selectedIlluminatorUrl(path, context = illuminatorContext) {
     `${url.pathname}${url.search}`;
 }
 
+let federatedChannelsPromise = null;
+async function getFederatedChannels({fresh = false} = {}) {
+  if (federatedChannelsPromise && !fresh) return federatedChannelsPromise;
+  federatedChannelsPromise = (async () => {
+    await discoverApiEndpoint();
+    const response = await readResponse(`${apiEndpoint || ''}/api/federation/nodes`,
+      {cache: 'no-store'}, 6000);
+    const registry = await response.json();
+    if (!response.ok || !Array.isArray(registry.nodes)) throw new Error('Local node catalog unavailable');
+    const read = async (node, endpoint) => {
+      const prefix = node.local ? '' : `/api/federation/nodes/${encodeURIComponent(node.id)}`;
+      const result = await readResponse(`${apiEndpoint || ''}${prefix}${endpoint}`,
+        {cache: 'no-store'}, 6000);
+      if (!result.ok) throw new Error(`${node.label} unavailable`);
+      return result.json();
+    };
+    const rows = await Promise.all(registry.nodes.map(async node => {
+      try {
+        const status = await read(node, '/api/illuminators/live');
+        let items = status?.enabled === true && Array.isArray(status?.illuminators) ? status.illuminators.map(item =>
+          ({...item, api_illuminator: true})) : [];
+        if (!items.length) {
+          const config = await read(node, '/api/runtime/config');
+          items = [{id: 'primary', standard: 'Single channel', api_illuminator: false,
+            frequency_hz: Number(config?.capture?.fc),
+            output_sample_rate_hz: Number(config?.capture?.fs), available: true}];
+        }
+        return items.map(item => ({nodeId: node.id, nodeLabel: node.label,
+          local: node.local === true, item}));
+      } catch (_) { return []; }
+    }));
+    return {nodes: registry.nodes, channels: rows.flat()};
+  })().catch(error => { federatedChannelsPromise = null; throw error; });
+  return federatedChannelsPromise;
+}
+
+function federatedChannelUrl(path, channel) {
+  const prefix = channel?.local ? '' :
+    `/api/federation/nodes/${encodeURIComponent(channel?.nodeId || '')}`;
+  const url = new URL(prefix + path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  if (channel?.item?.api_illuminator !== false && channel?.item?.id)
+    url.searchParams.set('illuminator', channel.item.id);
+  const relative = `${url.pathname}${url.search}`;
+  return apiEndpoint ? `${apiEndpoint}${relative}` : relative;
+}
+
+// Fusion requires independent transmitter geometry, not merely multiple RF
+// channels. Multiple carriers from one authoritative transmitter_site remain
+// useful channel views but cannot localize a target as independent sites.
+function independentTransmitterSiteCount(items = []) {
+  return new Set((Array.isArray(items) ? items : [])
+    .map(item => typeof item?.transmitter_site === 'string' ? item.transmitter_site.trim() : '')
+    .filter(Boolean)).size;
+}
+
+function liveRadarCardPresentation(context, channelDescriptor) {
+  const sites = context?.enabled ? independentTransmitterSiteCount(context.illuminators) : 0;
+  if (sites > 1) return {
+    meta: `VectorWarp Fusion View · ${sites} independent sites`,
+    href: '/?radar_view=fusion'
+  };
+  if (context?.enabled && context.id) return {
+    meta: `Selected channel · ${channelDescriptor}`,
+    href: `/?illuminator=${encodeURIComponent(context.id)}`
+  };
+  return {meta: channelDescriptor, href: '/'};
+}
+
+function receiverChannelCount(device = {}) {
+  const explicit = Number(device.channel_count ?? device.adapter?.channel_count);
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+  for (const value of [device.gain, device.gainReduction, device.gain_lna,
+    device.gain_vga, device.antenna, device.serial])
+    if (Array.isArray(value) && value.length) return value.length;
+  if (Array.isArray(device.surveillance_channels) && device.surveillance_channels.length)
+    return new Set([Number.isInteger(device.reference_channel) ? device.reference_channel : 0,
+      ...device.surveillance_channels.map(Number)]).size;
+  return null;
+}
+
 function selectedIlluminatorConfig(config, context = illuminatorContext) {
   const item = context?.item;
-  if (!item) return config;
+  const profiles = typeof module !== 'undefined' && module.exports ?
+    require('./config_profiles') : globalThis.VectorWarpConfigProfiles;
+  const effective = (value, scaleNeighborhoods = false) => profiles ?
+    profiles.effectiveDelayConfig(value, value.capture?.fs, {scaleNeighborhoods}) : value;
+  if (!item) return effective(config);
   const configured = config?.process?.multi_illuminator?.illuminators?.find(candidate =>
     candidate?.id === item.id);
   const sampleRate = Number(configured?.output_sample_rate_hz ?? item.output_sample_rate_hz);
+  const frequency = Number(configured?.frequency_hz ?? item.frequency_hz);
   const transmitter = configured?.transmitter;
-  return {...config,
-    capture: Number.isFinite(sampleRate) && sampleRate > 0 ?
-      {...config?.capture, fs: sampleRate} : config?.capture,
-    location: transmitter ? {...config?.location, tx: transmitter} : config?.location};
+  return effective({...config,
+    capture: {...config?.capture,
+      ...(Number.isFinite(sampleRate) && sampleRate > 0 ? {fs: sampleRate} : {}),
+      ...(Number.isFinite(frequency) && frequency > 0 ? {fc: frequency} : {})},
+    location: transmitter ? {...config?.location, tx: transmitter} : config?.location}, true);
 }
 
 function illuminatorControlTarget() {
   return document.querySelector?.('.radar-toolbar') ||
-    document.querySelector?.('.insight-topbar > div') ||
+    // History pages are inconsistent about wrapping their heading. Target the
+    // bar itself so direct-<h1> and wrapped-title pages both get the selector.
+    document.querySelector?.('.insight-topbar') ||
     document.querySelector?.('.controller-intro > div');
 }
 
@@ -118,6 +253,23 @@ async function initializeIlluminatorDisplay() {
   const scope = illuminatorDisplayScope();
   if (scope === 'none' || typeof document === 'undefined') return illuminatorContext;
   const context = await getIlluminatorContext();
+  if (scope === 'selected' && (!context.enabled || context.catalogUnavailable) &&
+      selectedNode() !== 'local') {
+    try {
+      const fleet = await getFederatedChannels({fresh: true});
+      const fallback = fleet.channels.find(channel => channel.local) || fleet.channels[0];
+      if (fallback && fallback.nodeId !== selectedNode()) {
+        window.sessionStorage?.setItem('vectorwarp-node', fallback.nodeId);
+        const location = new URL(window.location.href);
+        if (fallback.local) location.searchParams.delete('federationNode');
+        else location.searchParams.set('federationNode', fallback.nodeId);
+        if (fallback.item.api_illuminator === false) location.searchParams.delete('illuminator');
+        else location.searchParams.set('illuminator', fallback.item.id);
+        window.location.replace(location.href);
+        return context;
+      }
+    } catch (_) { /* Keep the unavailable node visible while discovery retries. */ }
+  }
   // Recording controls render before the asynchronous lane catalog arrives.
   // Refresh their copy once scope is known so a global raw-IQ recording is
   // never presented as if it contained only the selected display lane.
@@ -129,30 +281,144 @@ async function initializeIlluminatorDisplay() {
   control.className = 'radar-overlay-control illuminator-scope-control';
   if (scope !== 'selected' || !context.enabled) {
     control.innerHTML = `<span>Scope</span><strong>${scope === 'wideband' ?
-      'Global wideband' : scope === 'aggregate' ? 'All-lane pipeline' : 'Single radar stream'}</strong>`;
-    target.appendChild(control);
+      'Global wideband' : scope === 'aggregate' ? 'All-lane pipeline' :
+      context.catalogUnavailable ? 'Lane catalog delayed' : 'Single radar stream'}</strong>`;
+    const state = target.matches?.('.insight-topbar') ?
+      target.querySelector?.('.view-state') : null;
+    if (state) target.insertBefore(control, state);
+    else target.appendChild(control);
+    if (scope === 'selected' && context.catalogUnavailable && !illuminatorContextRetryTimer) {
+      illuminatorContextRetryTimer = window.setTimeout(() => {
+        illuminatorContextRetryTimer = null;
+        control.remove?.();
+        initializeIlluminatorDisplay();
+      }, 2500);
+    }
     return context;
   }
   const label = document.createElement('span');
-  label.textContent = 'Selected lane';
+  let statisticsAggregate = document.body?.dataset?.insightView === 'statistics' &&
+    context.illuminators.length > 1;
+  label.textContent = statisticsAggregate ? 'Statistics scope' : 'Selected channel';
   const select = document.createElement('select');
   select.id = 'shared-illuminator-select';
-  select.setAttribute('aria-label', 'Selected illuminator lane');
-  select.replaceChildren(...context.illuminators.map(item => {
+  select.setAttribute('aria-label', statisticsAggregate ? 'Statistics scope' : 'Selected channel');
+  let federated = {nodes: [{id: selectedNode(), label: 'Local', local: true}],
+    channels: context.illuminators.map(item => ({nodeId: selectedNode(),
+      nodeLabel: 'Local', local: selectedNode() === 'local', item}))};
+  try { federated = await getFederatedChannels({fresh: true}); } catch (_) { /* Current node remains usable. */ }
+  statisticsAggregate ||= document.body?.dataset?.insightView === 'statistics' &&
+    (federated.channels.length > 1 || federated.nodes.length > 1);
+  label.textContent = statisticsAggregate ? 'Statistics scope' : 'Selected channel';
+  select.setAttribute('aria-label', statisticsAggregate ? 'Statistics scope' : 'Selected channel');
+  const channelOptions = federated.channels.map(channel => {
     const option = document.createElement('option');
-    option.value = item.id;
-    option.textContent = `${item.id} · ${(Number(item.frequency_hz) / 1e6).toFixed(1)} MHz`;
+    option.value = `${channel.nodeId}::${channel.item.id}`;
+    const frequency = Number(channel.item.frequency_hz);
+    option.textContent = `${channel.item.id === 'primary' ? 'Primary' : channel.item.id}${Number.isFinite(frequency) ?
+      ` · ${(frequency / 1e6).toFixed(1)} MHz` : ''} (${channel.nodeLabel})`;
     return option;
-  }));
-  select.value = context.id;
-  select.addEventListener('change', () => {
-    storeSelectedIlluminator(select.value);
-    const location = new URL(window.location.href);
-    location.searchParams.set('illuminator', select.value);
-    window.location.assign(location.href);
   });
-  control.append(label, select);
-  target.appendChild(control);
+  if (statisticsAggregate) {
+    const all = document.createElement('option');
+    all.value = '__all__';
+    all.textContent = 'All channels combined';
+    channelOptions.unshift(all);
+  }
+  select.replaceChildren(...channelOptions);
+  const initialParameters = new URL(window.location.href).searchParams;
+  const aggregateSelected = statisticsAggregate &&
+    (initialParameters.get('scope') === 'all' ||
+      (!initialParameters.has('scope') && !initialParameters.has('illuminator')));
+  select.value = aggregateSelected ? '__all__' : `${selectedNode()}::${context.id}`;
+  const referenceStatus = document.createElement('small');
+  referenceStatus.className = 'atsc-reference-status';
+  const renderReferenceStatus = item => {
+    if (!['ATSC', 'ATSC-1.0', 'ATSC-3.0'].includes(item?.standard) ||
+        (item.atsc_reference_mode || 'automatic') === 'raw') {
+      referenceStatus.textContent = '';
+      referenceStatus.hidden = true;
+      return;
+    }
+    const metric = item.atsc_reference;
+    const metricsAvailable = metric?.metrics_available ?? metric?.available;
+    const pilotCandidate = metric?.pilot_candidate ?? metric?.candidate;
+    referenceStatus.hidden = false;
+    referenceStatus.textContent = !metric ? 'ATSC reference qualification pending · raw reference' :
+      metric.effective_mode === 'pilot_projected' ?
+        'ATSC pilot projected · raw clutter cancellation' :
+      metric.reason === 'raw_control_not_beaten' ?
+        'Automatic reference: raw control is better' :
+      metricsAvailable === true ?
+        `ATSC pilot ${pilotCandidate === true ? 'candidate rejected' : 'not qualified'} · raw reference` :
+        `ATSC pilot unavailable${metric.fallback_reason || metric.reason ?
+          ` (${metric.fallback_reason || metric.reason})` : ''} · raw reference`;
+  };
+  if (aggregateSelected) referenceStatus.hidden = true;
+  else renderReferenceStatus(context.item);
+  const applySelection = id => {
+    const item = illuminatorContext.illuminators.find(candidate => candidate.id === id);
+    if (!item || item.id === illuminatorContext.id) return;
+    illuminatorContext = {...illuminatorContext, id: item.id, item};
+    illuminatorContextPromise = Promise.resolve(illuminatorContext);
+    window.vectorwarpIlluminatorContext = illuminatorContext;
+    select.value = `${selectedNode()}::${item.id}`;
+    renderReferenceStatus(item);
+    storeSelectedIlluminator(item.id);
+    window.dispatchEvent(new CustomEvent('vectorwarp:illuminator-change', {detail: illuminatorContext}));
+  };
+  select.addEventListener('change', () => {
+    const location = new URL(window.location.href);
+    if (statisticsAggregate && select.value === '__all__') {
+      location.searchParams.delete('illuminator');
+      location.searchParams.set('scope', 'all');
+      window.history.pushState(null, '', location.href);
+      referenceStatus.hidden = true;
+      window.dispatchEvent(new CustomEvent('vectorwarp:statistics-scope-change'));
+      return;
+    }
+    const [nodeId, channelId] = select.value.split('::');
+    const selected = federated.channels.find(channel => channel.nodeId === nodeId &&
+      channel.item.id === channelId);
+    if (selected && nodeId !== selectedNode()) {
+      try { window.sessionStorage.setItem('vectorwarp-node', nodeId); } catch (_) { /* optional */ }
+      location.searchParams.delete('scope');
+      if (nodeId === 'local') location.searchParams.delete('federationNode');
+      else location.searchParams.set('federationNode', nodeId);
+      if (selected.item.api_illuminator === false) location.searchParams.delete('illuminator');
+      else location.searchParams.set('illuminator', channelId);
+      window.location.assign(location.href);
+      return;
+    }
+    location.searchParams.delete('scope');
+    if (context.item?.api_illuminator === false) location.searchParams.delete('illuminator');
+    else location.searchParams.set('illuminator', channelId);
+    window.history.pushState(null, '', location.href);
+    applySelection(channelId);
+  });
+  window.addEventListener('popstate', () => {
+    const parameters = new URL(window.location.href).searchParams;
+    if (statisticsAggregate && (parameters.get('scope') === 'all' ||
+        (!parameters.has('scope') && !parameters.has('illuminator')))) {
+      select.value = '__all__';
+      referenceStatus.hidden = true;
+      window.dispatchEvent(new CustomEvent('vectorwarp:statistics-scope-change'));
+      return;
+    }
+    const id = parameters.get('illuminator') || context.id;
+    applySelection(id);
+  });
+  control.append(label, select, referenceStatus);
+  const state = target.matches?.('.insight-topbar') ?
+    target.querySelector?.('.view-state') : null;
+  if (state) target.insertBefore(control, state);
+  else target.appendChild(control);
+  // The catalog can resolve after fullscreen was entered.
+  const fullscreenPanel = document.fullscreenElement || document.webkitFullscreenElement ||
+    document.querySelector?.('.fullscreen-target.fullscreen-fallback');
+  if (fullscreenPanel?.classList?.contains('fullscreen-target') &&
+      !fullscreenPanel.contains?.(control)) fullscreenPanel.appendChild(control);
+  window.dispatchEvent(new CustomEvent('vectorwarp:illuminator-catalog-ready', {detail: context}));
   return context;
 }
 
@@ -358,7 +624,7 @@ async function pauseRecording() {
 function addRecordingControl() {
   // Starting/stopping raw-IQ capture is an operational action, not a chart
   // feature. Only explicitly opted-in live radar pages may expose it.
-  if (document.body?.dataset.captureControls !== 'true') return;
+  if (selectedNode() !== 'local' || document.body?.dataset.captureControls !== 'true') return;
   const visual = document.getElementById('data');
   if (!visual || document.getElementById('recording-control')) return;
   const panel = visual.closest('.panel') || visual.parentElement;
@@ -412,7 +678,19 @@ function addFullscreenControl() {
   labelFullscreen(false);
   const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
   const fallbackActive = () => panel.classList.contains('fullscreen-fallback');
+  const moveChannelControl = active => {
+    const control = document.getElementById('shared-illuminator-control');
+    if (!control) return;
+    if (active) panel.appendChild(control);
+    else {
+      const target = illuminatorControlTarget();
+      const state = target?.querySelector?.('.view-state');
+      if (state) target.insertBefore(control, state);
+      else target?.appendChild(control);
+    }
+  };
   const setFallback = active => {
+    moveChannelControl(active);
     panel.classList.toggle('fullscreen-fallback', active);
     document.documentElement.classList.toggle('fullscreen-page', active);
     document.body.classList.toggle('fullscreen-page', active);
@@ -496,6 +774,7 @@ function addFullscreenControl() {
   window.addEventListener('resize', resizePlot);
   const fullscreenChanged = () => {
     labelFullscreen(Boolean(fullscreenElement()));
+    moveChannelControl(fullscreenElement() === panel);
     resizePlot();
     window.setTimeout(resizePlot, 120);
     window.setTimeout(resizePlot, 360);
@@ -535,7 +814,92 @@ let apiEndpoint = null;
 let apiDiscovery = null;
 
 function liveApiUrl(path) {
-  return apiEndpoint ? `${apiEndpoint}${path}` : path;
+  const node = selectedNode();
+  const mapped = node !== 'local' && /^\/(api|stash|capture)(\/|$)/.test(path) &&
+    !path.startsWith('/api/federation/') ? `/api/federation/nodes/${encodeURIComponent(node)}${path}` : path;
+  return apiEndpoint ? `${apiEndpoint}${mapped}` : mapped;
+}
+
+function selectedNode() {
+  try {
+    const normalized = (window.location.pathname || '/').replace(/\/index\.html$/, '')
+      .replace(/\/+$/, '') || '/';
+    if (['/controller', '/display/configuration'].includes(normalized)) {
+      window.sessionStorage?.setItem('vectorwarp-node', 'local');
+      return 'local';
+    }
+    const id = new URLSearchParams(window.location.search).get('federationNode') || window.sessionStorage.getItem('vectorwarp-node');
+    return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id || '') ? id : 'local'; }
+  catch (_) { return 'local'; }
+}
+
+async function initializeNodeSelector(target, active) {
+  const node = selectedNode();
+  const aggregate = node === 'aggregate';
+  if (node !== 'local') {
+    document.body.classList.add('federated-read-only');
+    if (active === 'settings' || active === 'controller') {
+      const content = target.parentElement;
+      Array.from(content.children).forEach(child => { if (child !== target) child.hidden = true; });
+    }
+    document.addEventListener('click', event => {
+      if (event.target.closest?.('.recording-replay, .recording-share, .recording-delete, .recording-import-controls, a[href="/controller"], a[href="/display/configuration"]')) {
+        event.preventDefault(); event.stopImmediatePropagation();
+      }
+    }, true);
+  }
+  const container = document.createElement('div');
+  container.className = 'node-selector';
+  const label = document.createElement('label'); label.textContent = 'Node ';
+  const select = document.createElement('select'); select.setAttribute('aria-label', 'Radar node');
+  label.appendChild(select); container.appendChild(label);
+  const status = document.createElement('span'); status.setAttribute('role', 'status');
+  container.appendChild(status); target.appendChild(container);
+  const add = (id, name) => { const option = document.createElement('option'); option.value = id; option.textContent = name; select.appendChild(option); };
+  add('local', 'Local'); if (node !== 'local') add(node, node + ' (unavailable)'); select.value = node;
+  select.addEventListener('change', () => {
+    try { window.sessionStorage.setItem('vectorwarp-node', select.value); } catch (_) { return; }
+    const url = new URL(window.location.href); url.searchParams.delete('federationNode');
+    window.location.assign(url.href);
+  });
+  try {
+    await discoverApiEndpoint();
+    const response = await readResponse(`${apiEndpoint || ''}/api/federation/nodes`, {cache: 'no-store'});
+    const list = (await response.json()).nodes;
+    if (!response.ok || !Array.isArray(list)) throw new Error('Unavailable');
+    select.replaceChildren();
+    list.forEach(item => add(item.id, item.label));
+    if (list.length > 1) add('aggregate', 'Aggregate');
+    if (!aggregate && !list.some(item => item.id === node)) add(node, node + ' (unavailable)');
+    select.value = node;
+    if (aggregate) {
+      const shell = target.parentElement;
+      Array.from(shell.children).forEach(child => { if (child !== target) child.hidden = true; });
+      const section = document.createElement('section'); section.className = 'federation-aggregate';
+      const heading = document.createElement('h1'); heading.textContent = 'Aggregate node views'; section.appendChild(heading);
+      const explanation = document.createElement('p'); explanation.textContent = 'Separate geographic layers per node. Tracks are not merged across nodes.'; section.appendChild(explanation);
+      const summary = document.createElement('p'); summary.textContent = 'Loading node status…'; section.appendChild(summary);
+      for (const item of list) {
+        const panel = document.createElement('section');
+        const title = document.createElement('h2'); title.textContent = item.label + ' · separate map and tracks'; panel.appendChild(title);
+        const frame = document.createElement('iframe'); frame.title = item.label + ' geographic layer';
+        frame.src = `/display/locations?federationNode=${encodeURIComponent(item.id)}&federationEmbed=1`;
+        panel.appendChild(frame); section.appendChild(panel);
+      }
+      shell.appendChild(section);
+      try {
+        const aggregateResponse = await readResponse(`${apiEndpoint || ''}/api/federation/aggregate`, {cache: 'no-store'}, 20000);
+        const data = await aggregateResponse.json();
+        summary.textContent = data.nodes.map(item => `${item.label}: ${item.available ? `radar ${item.status.radar || 'unknown'}, ADS-B ${item.status.adsbEnabled ? 'enabled' : 'disabled'}, processor ${item.status.processor?.state || 'unknown'}` : 'unavailable'}`).join(' · ');
+      } catch (_) { summary.textContent = 'Aggregate status unavailable'; }
+    }
+    const results = await Promise.all(list.map(async item => {
+      const path = item.local ? '/api/system/status?summary=1' : `/api/federation/nodes/${encodeURIComponent(item.id)}/api/system/status?summary=1`;
+      try { const result = await readResponse(`${apiEndpoint || ''}${path}`, {cache: 'no-store'}, 6000); return `${item.label}: ${result.ok ? 'reachable' : 'unavailable'}`; }
+      catch (_) { return `${item.label}: unavailable`; }
+    }));
+    status.textContent = ` Fleet status (connectivity): ${results.join(' · ')}${node !== 'local' ? ' · Remote read-only' : ''}`;
+  } catch (_) { status.textContent = node !== 'local' ? ' Remote read-only · node list unavailable' : ' Node list unavailable'; }
 }
 
 function pageOrigin() {
@@ -595,6 +959,8 @@ async function discoverApiEndpoint() {
 }
 
 async function fetchStatusResource(url, options = {}, timeoutMs = 5000) {
+  if (selectedNode() !== 'local' && !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase()))
+    throw new Error('Remote nodes are read-only');
   const parsed = new URL(url, pageOrigin());
   const internal = /^\/(api|stash|capture)(\/|$)/.test(parsed.pathname) &&
     parsed.hostname === new URL(pageOrigin()).hostname;
@@ -624,7 +990,15 @@ const CLIENT_JSON_CACHE_PREFIX = 'vectorwarp-json-v2:';
 
 function clientJsonCachePolicy(url) {
   const parsed = new URL(url, pageOrigin());
-  const path = parsed.pathname;
+  // Preserve the underlying resource's freshness rules through the fixed
+  // federation prefix. Remote live frames must not inherit the generic
+  // five-minute stale fallback merely because the portal proxied them.
+  const path = parsed.pathname.replace(
+    /^\/api\/federation\/nodes\/[a-z0-9][a-z0-9_-]{0,63}(?=\/(?:api|stash|capture)(?:\/|$))/, '');
+  // Fusion positions are live navigation state.  A failed request must clear
+  // the scope immediately instead of replaying a stale position as motion.
+  if (path === '/api/tracker/fused')
+    return {freshMs: 0, staleMs: 0, storage: null};
   if (/^\/(?:stash|capture)(?:\/|$)/.test(path) ||
       /^\/api\/(?:iqdata|spectrum)(?:\/|$)/.test(path))
     return {freshMs: 0, staleMs: 0, storage: null};
@@ -650,7 +1024,7 @@ function clientJsonStorage(kind) {
 
 function clientJsonKey(url) {
   const parsed = new URL(url, pageOrigin());
-  return `${parsed.pathname}${parsed.search}`;
+  return `${selectedNode()}:${parsed.pathname}${parsed.search}`;
 }
 
 function readClientJsonCache(key, policy) {
@@ -769,7 +1143,39 @@ function rspDuoOverloadStatus(status, expected = false, now = Date.now()) {
 
 function renderReceiverHealth(status, target = document.getElementById('receiver-health-status'), detailed = false) {
   if (!target) return;
-  const expected = detailed || (!status?.processor && target.dataset.receiver === 'RspDuo');
+  const input = status?.processor?.receiverHealth?.inputQuality;
+  if (input && Array.isArray(input.channels)) {
+    const channels = input.channels.filter(channel => Number(channel.sampledComponents) >= 65536);
+    if (channels.length) {
+      const unsafe = channels.filter(channel => channel.railFraction > .00001 ||
+        channel.p999Fraction > .70);
+      const view = {visible: unsafe.length > 0, severity: 'bad', channels: unsafe,
+        message: unsafe.map(channel => `input ${channel.channel}: gain ${channel.gainDb} dB, ` +
+          `p99.9 ${(100 * channel.p999Fraction).toFixed(1)}%, ` +
+          `clipped ${(100 * channel.railFraction).toFixed(4)}%`).join(' · ')};
+      const receiver = status?.processor?.receiver || input.receiver || 'Receiver';
+      target.dataset.receiver = receiver; target.hidden = !view.visible;
+      const signature = JSON.stringify(view);
+      if (target.dataset.healthView === signature) return;
+      target.dataset.healthView = signature; target.dataset.severity = view.severity;
+      target.replaceChildren();
+      if (view.visible) {
+        const message = document.createElement(detailed ? 'p' : 'span');
+        message.textContent = `${receiver} RF input degraded · ${view.message}`;
+        target.appendChild(message);
+        const link = document.createElement('a'); link.href = '/display/configuration';
+        link.textContent = 'Receiver gain settings'; target.appendChild(link);
+      }
+      return;
+    }
+  }
+  const expectsOverload = detailed || status?.processor?.receiver === 'RspDuo' ||
+    (!status?.processor && target.dataset.receiver === 'RspDuo');
+  if (!expectsOverload) {
+    target.dataset.receiver = ''; target.hidden = true; target.replaceChildren();
+    return;
+  }
+  const expected = detailed || expectsOverload;
   const view = rspDuoOverloadStatus(status, expected);
   target.dataset.receiver = view.visible ? 'RspDuo' : '';
   target.hidden = !view.visible;
@@ -830,6 +1236,12 @@ async function replayCommand(action, seconds) {
 }
 function renderReplayTransport(processor) {
   let bar = document.getElementById('replay-transport');
+  const remoteOrEmbedded = selectedNode() !== 'local' ||
+    new URLSearchParams(window.location.search).get('federationEmbed') === '1';
+  // Replay mutation is intentionally local-only. Hiding the transport also
+  // prevents remote/aggregate views from polling an endpoint the read-only
+  // federation allowlist deliberately does not expose.
+  if (remoteOrEmbedded) processor = null;
   if (processor?.input !== 'replay') {
     if (bar) bar.hidden = true;
     if (window.blah2ReplayStatusTimer) {
@@ -902,7 +1314,8 @@ async function refreshLiveStatus() {
       label = replay.state === 'error' ? 'REPLAY ERROR' : replay.state === 'complete' ? 'REPLAY COMPLETE' :
         replay.state === 'stopped' ? 'REPLAY STOPPED' : `REPLAY ${replay.state.toUpperCase()}${progress}`;
     } else label = restarting ? 'RESTARTING' : status.errors?.length ? 'ERROR' :
-      status.radar === 'receiving' ? 'ONLINE' : status.radar === 'stale' ? 'STALE' : 'OFFLINE';
+      status.radar === 'receiving' ? 'ONLINE' : status.radar === 'degraded' ?
+        'RF DEGRADED' : status.radar === 'stale' ? 'STALE' : 'OFFLINE';
     updateLiveStatusLabel(radarLabel, 'RADAR', label, label === 'ONLINE');
     radarLabel.title = processor?.error || status.errors?.[0] || status.message || '';
     rememberLiveStatus('RADAR', label, label === 'ONLINE', radarLabel.title);
@@ -954,20 +1367,24 @@ function updateLiveStatusLabel(target, prefix, label, healthy) {
   const signature = `${prefix}:${label}:${healthy ? 'healthy' : 'degraded'}`;
   if (target._vectorwarpStatusSignature === signature) return;
   target._vectorwarpStatusSignature = signature;
-  target.innerHTML = `<span class="live-dot${healthy ? '' : ' offline'}"></span>${prefix} ${label}`;
+  const dot = document.createElement('span');
+  dot.className = `live-dot${healthy ? '' : ' offline'}`;
+  target.replaceChildren(dot, document.createTextNode(`${prefix} ${label}`));
 }
 
 const LIVE_STATUS_CACHE_KEY = 'vectorwarp:service-status:v1';
 const LIVE_STATUS_CACHE_AGE_MS = 30000;
 function readLiveStatusCache() {
-  try { return JSON.parse(window.sessionStorage?.getItem(LIVE_STATUS_CACHE_KEY) || '{}'); }
+  try { return JSON.parse(window.sessionStorage?.getItem(
+    `${LIVE_STATUS_CACHE_KEY}:${selectedNode()}`) || '{}'); }
   catch (_) { return {}; }
 }
 function rememberLiveStatus(prefix, label, healthy, title = '') {
   try {
     const cache = readLiveStatusCache();
     cache[prefix] = {label, healthy: healthy === true, title, at: Date.now()};
-    window.sessionStorage?.setItem(LIVE_STATUS_CACHE_KEY, JSON.stringify(cache));
+    window.sessionStorage?.setItem(`${LIVE_STATUS_CACHE_KEY}:${selectedNode()}`,
+      JSON.stringify(cache));
   } catch (_) { /* Status continuity must not depend on browser storage. */ }
 }
 function restoreLiveStatusLabel(target, prefix, now = Date.now()) {
@@ -996,6 +1413,15 @@ function radarPresentationUrl(path) {
   const url = new URL(path, typeof window === 'undefined' ?
     'http://vectorwarp.invalid' : window.location.href);
   url.searchParams.set('presentation', 'aligned');
+  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
+    `${url.pathname}${url.search}`;
+}
+
+function radarFrameUrl(path, timestamp) {
+  if (!Number.isSafeInteger(Number(timestamp)) || Number(timestamp) < 0) return path;
+  const url = new URL(path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  url.searchParams.set('frame_timestamp', String(Number(timestamp)));
   return path.startsWith('http://') || path.startsWith('https://') ? url.href :
     `${url.pathname}${url.search}`;
 }
@@ -1100,7 +1526,9 @@ function startRadarPlot(url, render) {
   const minimumIntervalMs = 100;
   return startRadarUpdates(async () => {
     try {
-      const data = await fetchRadarJson(url);
+      const requestUrl = typeof url === 'function' ? url() : url;
+      const data = await fetchRadarJson(requestUrl);
+      if (typeof url === 'function' && requestUrl !== url()) return;
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         if (status && renderedTimestamp === undefined) {
           status.className = 'plot-state waiting';
@@ -1112,14 +1540,24 @@ function startRadarPlot(url, render) {
       const stamp = data.frameTimestamp ?? data.timestamp;
       if (stamp === undefined || stamp === null) return;
       const key = JSON.stringify(stamp);
-      if (key === renderedTimestamp) return;
+      const frameKey = `${requestUrl}:${key}`;
+      if (frameKey === renderedTimestamp) return;
       const complete = await render(data);
       // Failed fetches/renders can be retried on the next tick.
       if (complete !== false) {
-        renderedTimestamp = key;
+        renderedTimestamp = frameKey;
         consecutiveFailures = 0;
         target?.setAttribute?.('aria-busy', 'false');
         if (status) status.hidden = true;
+      } else {
+        target?.setAttribute?.('aria-busy', 'false');
+        if (status) {
+          status.hidden = false;
+          status.className = 'plot-state waiting';
+          status.textContent = renderedTimestamp === undefined ?
+            'Waiting for a complete aligned map, detection, and tracker frame…' :
+            'New map arrived before its exact overlays. Showing the last complete frame and retrying…';
+        }
       }
     } catch (error) {
       consecutiveFailures++;
@@ -1144,9 +1582,7 @@ async function renderRuntimeSummary() {
     const capture = config.capture || {};
     const device = capture.device || {};
     const process = config.process || {};
-    const channels = device.channel_count || device.gain?.length ||
-      device.surveillance_channels?.length ||
-      (['RspDuo', 'Usrp', 'HackRF'].includes(device.type) ? 2 : '?');
+    const channels = receiverChannelCount(device) || '?';
     const cpi = process.data?.cpi;
     const ambiguity = process.ambiguity || {};
     const detection = process.detection || {};
@@ -1172,6 +1608,7 @@ async function renderRuntimeSummary() {
     const laneDescriptor = laneContext.enabled ?
       `${laneName} · ${laneFrequency}${laneRate ? ` · ${laneRate}` : ''}` :
       `${hardware} · ${frequency} · ${channels} channels`;
+    const liveRadarCard = liveRadarCardPresentation(laneContext, laneDescriptor);
     const lanePrefix = laneContext.enabled ? `${laneName} · ` : '';
     const globalCapture = laneContext.enabled ?
       `${hardware} · ${frequency} wideband capture · ${channels} channels · ${lanes} lanes` :
@@ -1191,7 +1628,7 @@ async function renderRuntimeSummary() {
       'display-locations-meta': `${lanePrefix}Live delay ellipses · ${receiver} and ${transmitter}`,
       'display-evaluation-meta': adsb.enabled === true ?
         `Enabled${Number.isFinite(Number(adsb.display_range_km)) ? ` · ${adsb.display_range_km} km range` : ''} · comparison only` : 'Disabled in settings',
-      'display-live-meta': laneDescriptor,
+      'display-live-meta': liveRadarCard.meta,
       'display-maxhold-meta': `${lanePrefix}${ambiguity.delayMin ?? '—'}–${ambiguity.delayMax ?? '—'} delay bins · ${ambiguity.dopplerMin ?? '—'}–${ambiguity.dopplerMax ?? '—'} Hz`,
       'display-spectrum-meta': laneContext.enabled ? `Global wideband · ${frequency} capture` : spectrum,
       'display-range-meta': `${lanePrefix}${receiver} receiver · ${transmitter} illuminator`,
@@ -1204,6 +1641,8 @@ async function renderRuntimeSummary() {
       const element = document.getElementById(id);
       if (element) element.textContent = value;
     });
+    const liveRadarLink = document.getElementById('display-live-meta')?.closest?.('a');
+    if (liveRadarLink) liveRadarLink.href = liveRadarCard.href;
   } catch (_) {
     if (target) target.textContent = 'Live receiver configuration unavailable';
   }
@@ -1487,11 +1926,14 @@ function siteSvgMarkup(kind = 'receiver') {
 if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
-    startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
+    startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, radarFrameUrl,
+    discoverApiEndpoint, fetchStatusResource,
     fetchCachedJsonResource, clientJsonCachePolicy,
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
     aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftFlightPathAngle,
     aircraftPlotData, aircraftHoverText, aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
     siteSvgMarkup, illuminatorDisplayScope, getIlluminatorContext,
     selectedIlluminatorUrl, selectedIlluminatorConfig, initializeIlluminatorDisplay,
+    independentTransmitterSiteCount, liveRadarCardPresentation,
+    receiverChannelCount,
     stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft};

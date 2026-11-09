@@ -8,6 +8,7 @@ const {getDeviceProfiles, validateConfig, writeConfigAtomically} = require('./co
 const FIELD_RULES = require('./config-rules');
 const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
 const {siteFingerprint} = require('./manifold-recorder');
+const {legacyDelayReferenceRate} = require('../html/js/config_profiles');
 
 // Neutral first-run form, not a running radar configuration or site claim.
 function setupDefaults() {
@@ -19,7 +20,13 @@ function setupDefaults() {
       aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
         minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
         minimum_elevation_deg: 0, maximum_elevation_deg: 90,
-        minimum_interval_seconds: 5},
+        minimum_interval_seconds: 5,
+        unmatched_motion: {enabled: false, minimum_similarity: 0.95,
+          allow_kinematic_fallback: false, minimum_measured_fraction: 0.5,
+          minimum_delay_motion_km: 0.25, minimum_net_delay_motion_km: 0.05,
+          maximum_delay_fit_rms_km: 0.05, maximum_kinematic_error_mps: 20,
+          minimum_measured_cpis: 8, minimum_duration_seconds: 7,
+          minimum_absolute_doppler_hz: 30, minimum_interval_seconds: 300}},
       // Never infer hardware on a fresh install. An invalid marker keeps the
       // processor fail-closed while still allowing the API and Settings UI to
       // load the canonical configuration and receiver profiles.
@@ -28,9 +35,12 @@ function setupDefaults() {
         file: '/var/lib/vectorwarp/recordings/recording.blah2iq', format: 'auto',
         provenance: 'legacy-unqualified'}},
     process: {
+      delay_reference_sample_rate_hz: 2000000,
       performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
       data: {cpi: 0.5, buffer: 2},
-      multi_illuminator: {enabled: false, illuminators: []},
+      multi_illuminator: {enabled: false, input_phase_correction: 'automatic',
+        transmitter_site_grouping: 'automatic', co_location_radius_m: 100,
+        illuminators: []},
       ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},
       // The numeric interval remains available for legacy/manual tuning, but
       // fresh configurations track the full ambiguity interval by default.
@@ -38,9 +48,14 @@ function setupDefaults() {
       detection: {enable: true, pfa: 0.00001, nGuard: 2, nTrain: 6,
         minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
         integration_motion_bins: 0,
-        track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
+        track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1},
+        doppler_ridge_scrubber: {mode: 'off', persistence_cpis: 12,
+          minimum_excess_db: 3, maximum_subtraction_db: 12,
+          doppler_tolerance_hz: 4, neighborhood_rows: 8, delay_stride: 4}},
       tracker: {enable: true, profile: 'balanced', initiate: {M: 3, N: 6,
-        maxAcc: 10, min_snr_db: 5, acceleration_model: 'adaptive_gate'},
+        maxAcc: 10, min_snr_db: 5, acceleration_model: 'adaptive_gate',
+        doppler_ridge_clutter: {enable: false, persistence_cpis: 12,
+          doppler_tolerance_hz: 3, minimum_delay_separation_km: 0.25}},
         delete: 10,
         track_guided_shadow: {enable: false, max_tracks: 64}},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
@@ -58,6 +73,7 @@ function setupDefaults() {
       track: 3003, bearing: 3004, manifold: 3005, illuminator: 3007,
       timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
     truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1,
+      exchange_poll_interval: 4,
       smoothing_window: 10, max_position_age: 30,
       provisional_event_time_uncertainty_s: 1},
       remote_id: {enabled: false, source: '127.0.0.1:8754', poll_interval: .5,
@@ -72,12 +88,13 @@ function setupDefaults() {
   };
 }
 
-function configurationForReceiver(type, base = setupDefaults()) {
+function configurationForReceiver(type, base) {
   const profile = getDeviceProfiles().find(item => item.type === type);
   if (!profile) throw new Error(`Unknown receiver profile: ${type}`);
-  const config = JSON.parse(JSON.stringify(base));
+  const config = JSON.parse(JSON.stringify(base === undefined ? setupDefaults() : base));
   config.capture.device = JSON.parse(JSON.stringify(profile.device));
   config.capture.fs = profile.sampleRate;
+  if (base === undefined) config.process.delay_reference_sample_rate_hz = profile.sampleRate;
   const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
     result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
       merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
@@ -159,6 +176,10 @@ function readConfig(filename) {
     parsed = null;
   }
   const defaults = setupDefaults();
+  // A missing reference means legacy lane-local bins, never an inferred
+  // 2-MS/s scale. Persist an unambiguous original rate in the migration.
+  if (parsed?.process && parsed.process.delay_reference_sample_rate_hz === undefined)
+    delete defaults.process.delay_reference_sample_rate_hz;
   // A released configuration without a profile is the legacy permissive
   // tracker. Do not silently migrate it merely by reading and saving another
   // setting; fresh configurations still start conservative.
@@ -205,8 +226,10 @@ function readConfig(filename) {
   const merge = (base, current, prefix = '') => {
     if (current === undefined) {
       if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.') &&
+          prefix !== 'process.multi_illuminator' && !prefix.startsWith('process.multi_illuminator.') &&
           prefix !== 'capture.aircraft_clips' && !prefix.startsWith('capture.aircraft_clips.') &&
           prefix !== 'truth.remote_id' && !prefix.startsWith('truth.remote_id.') &&
+          prefix !== 'network.ports.illuminator' &&
           prefix !== 'save.retention' && !prefix.startsWith('save.retention.'))
         suppliedDefaults.push(prefix);
       return base;
@@ -230,10 +253,24 @@ function readConfig(filename) {
     return result;
   };
   const config = parsed ? merge(defaults, parsed) : defaults;
+  // A multi-illuminator installation deliberately carries transmitter
+  // geometry on each enabled lane.  The legacy global location.tx is only a
+  // fallback for single-illuminator operation and must not force the first-run
+  // assistant back open when every active lane has its own geometry.
+  const laneTransmittersComplete = parsed?.process?.multi_illuminator?.enabled === true &&
+    Array.isArray(parsed.process.multi_illuminator.illuminators) &&
+    parsed.process.multi_illuminator.illuminators.some(lane => lane?.enabled === true) &&
+    parsed.process.multi_illuminator.illuminators
+      .filter(lane => lane?.enabled === true)
+      .every(lane => lane.transmitter && typeof lane.transmitter.name === 'string' &&
+        lane.transmitter.name.trim() && Number.isFinite(lane.transmitter.latitude) &&
+        Number.isFinite(lane.transmitter.longitude) && Number.isFinite(lane.transmitter.altitude));
+  const requiredDefaults = laneTransmittersComplete ?
+    suppliedDefaults.filter(field => field !== 'location.tx') : suppliedDefaults;
   const validation = validateConfig(config);
   return {config, revision: crypto.createHash('sha256').update(exists ? raw : 'missing').digest('hex'),
-    exists, readError, suppliedDefaults, validation,
-    setupRequired: Boolean(readError || suppliedDefaults.length || !validation.valid)};
+    exists, readError, suppliedDefaults: requiredDefaults, validation,
+    setupRequired: Boolean(readError || requiredDefaults.length || !validation.valid)};
 }
 
 function writable(filename) {
@@ -270,6 +307,13 @@ function migrateKnownDefaults(filename) {
   catch (_) { return false; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
   let changed = false;
+  if (parsed.process && parsed.process.delay_reference_sample_rate_hz === undefined) {
+    const reference = legacyDelayReferenceRate(parsed);
+    if (reference !== null) {
+      parsed.process.delay_reference_sample_rate_hz = reference;
+      changed = true;
+    }
+  }
   if (parsed.capture?.device?.type === 'Usrp' && parsed.capture.device.address === 'localhost') {
     parsed.capture.device.address = 'type=b200';
     changed = true;

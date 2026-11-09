@@ -3,6 +3,22 @@ var range_x = [];
 var range_y = [];
 var detectionHistory = [];
 
+function detectionSearchWindow(config) {
+  const ambiguity = config?.process?.ambiguity || {};
+  const sampleRate = Number(config?.capture?.fs);
+  const delayMin = Number(ambiguity.delayMin);
+  const delayMax = Number(ambiguity.delayMax);
+  const dopplerMin = Number(ambiguity.dopplerMin);
+  const dopplerMax = Number(ambiguity.dopplerMax);
+  // Native delay is excess-path samples, so c/fs is kilometres per bin.
+  const kmPerBin = Number.isFinite(sampleRate) && sampleRate > 0 ? 299792.458 / sampleRate : null;
+  const x = kmPerBin && Number.isFinite(delayMin) && Number.isFinite(delayMax) && delayMax > delayMin ?
+    [Math.max(0, delayMin * kmPerBin), delayMax * kmPerBin] : null;
+  const y = Number.isFinite(dopplerMin) && Number.isFinite(dopplerMax) && dopplerMax > dopplerMin ?
+    [dopplerMin, dopplerMax] : null;
+  return {x, y};
+}
+
 // setup API
 var urlDetection = null;
 
@@ -127,9 +143,36 @@ async function renderDetection(data) {
   }
 }
 
-var vectorwarpDetectionReady = getIlluminatorContext().then(context => {
+async function configureDetectionChannel(context) {
+  detectionHistory = [];
+  plotted = false;
   urlDetection = liveApiUrl(radarPresentationUrl(
     selectedIlluminatorUrl('/api/detection', context)));
-  radarUpdates = startRadarPlot(urlDetection, renderDetection);
+  if (typeof window !== 'undefined' && window.vectorwarpDetectionHistory !== true &&
+      typeof getRadarRuntimeConfig === 'function') {
+    try {
+      const runtime = await getRadarRuntimeConfig();
+      const selected = typeof selectedIlluminatorConfig === 'function' ?
+        selectedIlluminatorConfig(runtime, context) : runtime;
+      const search = detectionSearchWindow(selected);
+      if (search.x) {
+        layout.xaxis.autorange = false;
+        layout.xaxis.range = search.x;
+      }
+      if (search.y) {
+        layout.yaxis.autorange = false;
+        layout.yaxis.range = search.y;
+      }
+      if (search.x || search.y) await Plotly.relayout('data', {
+        ...(search.x ? {'xaxis.autorange': false, 'xaxis.range': search.x} : {}),
+        ...(search.y ? {'yaxis.autorange': false, 'yaxis.range': search.y} : {})
+      });
+    } catch (_) { /* Live detections still render if runtime metadata is delayed. */ }
+  }
+}
+window.addEventListener('vectorwarp:illuminator-change', event => { void configureDetectionChannel(event.detail); });
+var vectorwarpDetectionReady = getIlluminatorContext().then(async context => {
+  await configureDetectionChannel(context);
+  radarUpdates = startRadarPlot(() => urlDetection, renderDetection);
   return radarUpdates;
 });

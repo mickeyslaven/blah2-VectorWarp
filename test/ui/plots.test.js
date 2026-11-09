@@ -81,8 +81,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(context.mapPresentationUrl('/api/map', 768),
         '/api/map?max_rows=128&max_cols=128',
         'Tablets request the bounded peak-preserving map representation');
-      assert.equal(context.mapPresentationUrl('/api/map', 1280), '/api/map',
-        'Desktop keeps the full-resolution map');
+      assert.equal(context.mapPresentationUrl('/api/map', 1280),
+        '/api/map?max_rows=192&max_cols=256',
+        'Desktop uses the bounded higher-detail display representation');
     }
     if (kind === 'spectrum') {
       const fallback = context.spectrumColorRange([[NaN, Infinity]]);
@@ -93,7 +94,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       map: {timestamp: 1000, nRows: 3, delay: [1], doppler: [1, 2, 3], data: [[1], [2], [3]], maxPower: 15},
       spectrum: {timestamp: [1000], frequency: [[100000, 100001]], spectrum: [[-92, -37]]},
       timing: {timestamp: [1000], captureEpoch: [0], captureFirstEpochSample: [8448789504],
-        captureEndEpochSample: [8449989504], gpu_resident_ready: [15], cpi: [20], frameTimestamp: 1000},
+        captureEndEpochSample: [8449989504], gpu_resident_ready: [15], detector: [5],
+        cpi: [20], frameTimestamp: 1000},
       detection: {timestamp: [1000], delay: [1], doppler: [2], snr: [3]}
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
@@ -117,8 +119,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(initialTraces[4].marker.symbol, 'circle-open',
         'Coasting persistent tracks remain visible as hollow orange rings');
       assert.equal(initialTraces[4].x[0], 10 * 299792458 / 300000 / 1000);
-      assert.ok(context.urlMap.includes('/api/map') && context.urlMap.includes('illuminator=fm-90.5'),
-        'The heatmap URL is resolved only after the selected lane is known');
+      assert.ok(context.urlMap.includes('/api/radar/frame') && context.urlMap.includes('illuminator=fm-90.5'),
+        'The atomic heatmap URL is resolved only after the selected lane is known');
       assert.ok(fetchUrls.some(url => url.includes('/api/detection') && url.includes('frame_timestamp=1000')));
       assert.ok(fetchUrls.some(url => url.includes('/api/tracker') && url.includes('frame_timestamp=1000')),
         'Both overlays are requested for the exact heatmap frame');
@@ -136,7 +138,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     }
     if (kind === 'timing') {
       const traces = calls.at(-1).args[1];
-      assert.deepEqual(traces.map(trace => trace.name), ['gpu_resident_ready', 'cpi']);
+      assert.deepEqual(traces.map(trace => trace.name), ['Detector (ms)', 'Cpi (ms)']);
       assert.ok(traces.every(trace => Math.max(...trace.y) < 1000000),
         'Epoch and absolute sample counters must never be graphed as stage milliseconds');
     }

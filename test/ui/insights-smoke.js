@@ -231,9 +231,9 @@ setTimeout(() => {
       !state.textContent.includes('ellipses shown'))
     errors.push('map did not show confirmed radar ellipses by default');
   if (view === 'statistics' && mode === 'rich' &&
-      (!rendered.includes('statistics-yield-chart') || !rendered.includes('Detected') ||
-       !rendered.includes('Tracked') || !rendered.includes('statistics-matrix-cell')))
-    errors.push('statistics yield and joint-angle visuals were not rendered');
+      (!rendered.includes('association-flow') || !rendered.includes('Detected') ||
+       !rendered.includes('Tracked') || !rendered.includes('direction-sky-cell')))
+    errors.push('statistics association and directional visuals were not rendered');
   if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||
       !rendered.includes('Hard-disabled — never automatic') ||
       !rendered.includes('Support / uncertainty') ||

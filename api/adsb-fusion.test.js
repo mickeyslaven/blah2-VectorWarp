@@ -50,6 +50,17 @@ assert.deepEqual(mlat.aircraft[0].source_fields, ['lat', 'lon', 'gs']);
 assert.equal(mlat.aircraft[0].vectorwarp.provider, 'api.adsb.lol');
 assert.deepEqual(mlat.vectorwarp_fusion.position_sources, {MLAT: 1});
 
+const relayed = fuseAircraftData([snapshot({id: 'coordinator', kind: 'http',
+  endpoint: 'http://coordinator:3000/api/adsb/fused/data/aircraft.json'}, nowMs / 1000, [
+  {...mlat.aircraft[0], seen_pos: .1}
+])], {nowMs});
+assert.equal(relayed.aircraft[0].vectorwarp.provider, 'api.adsb.lol',
+  'a relay preserves the original public provider');
+assert.equal(relayed.aircraft[0].vectorwarp.source_id,
+  'exchange:https://api.adsb.lol/v2/point/1/2/60');
+assert.equal(relayed.aircraft[0].vectorwarp.relay_provider, 'coordinator');
+assert.equal(relayed.aircraft[0].vectorwarp.relay_source_id, 'coordinator');
+
 const stale = fuseAircraftData([snapshot(local, nowMs / 1000, [
   {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, seen_pos: 31}
 ])], {nowMs, maxPositionAgeSeconds: 30});
@@ -98,6 +109,35 @@ const bounded = fuseAircraftData([snapshot(local, nowMs / 1000 + 1.1, [
   {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, gs: 100, track: 90, seen_pos: 0}
 ])], {nowMs});
 assert.deepEqual(bounded.aircraft, [], 'raw observations outside the absolute one-second policy are rejected');
+
+const relayTargetTime = nowMs / 1000;
+const relayPositionTime = relayTargetTime + 2;
+const relayOriginalTime = relayTargetTime - 3;
+const relayOriginal = {lat: 40, lon: -80, gs: 360, track: 90};
+const relayAtPublication = projectAircraft(relayOriginal, 5).aircraft;
+const relayedTarget = fuseAircraftData([{source: {id: 'coordinator', kind: 'http'},
+  receivedAtMs: nowMs + 2000, data: {now: relayPositionTime,
+    vectorwarp_fusion: {schema: 'vectorwarp-adsb-fusion-v1'}, aircraft: [{
+      ...relayAtPublication, hex: 'abc123', seen_pos: 0, vectorwarp: {
+        source_id: 'upstream-readsb', provider: 'upstream',
+        observation_position_timestamp_s: relayOriginalTime,
+        position_timestamp_s: relayPositionTime}}]}}], {nowMs});
+assert.equal(relayedTarget.aircraft.length, 1,
+  'a coordinator position may be projected backward to the requested follower CPI');
+const expectedAtTarget = projectAircraft(relayOriginal, 3).aircraft;
+assert.ok(separationKm(relayedTarget.aircraft[0], expectedAtTarget) < .001,
+  'relay projection is normalized to follower event time without double projection');
+assert.equal(relayedTarget.aircraft[0].vectorwarp.observation_position_timestamp_s,
+  relayOriginalTime, 'relay preserves the original position observation epoch');
+assert.equal(relayedTarget.aircraft[0].vectorwarp.position_timestamp_s, relayTargetTime);
+
+const spoofedRelay = fuseAircraftData([{source: {id: 'external', kind: 'http'},
+  receivedAtMs: nowMs + 2000, data: {now: relayPositionTime, aircraft: [{
+    ...relayAtPublication, hex: 'abc123', seen_pos: 0, vectorwarp: {
+      observation_position_timestamp_s: relayOriginalTime,
+      position_timestamp_s: relayPositionTime}}]}}], {nowMs});
+assert.deepEqual(spoofedRelay.aircraft, [],
+  'unmarked external payloads cannot relax strict raw event-time bounds');
 
 const metadataCache = new Map();
 const enriched = fuseAircraftData([

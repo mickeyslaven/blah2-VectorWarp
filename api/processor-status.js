@@ -487,6 +487,35 @@ function usrpHealth(payload, outer, errors) {
       continuous: timing.continuous, sampleRateHz, epochTick, nextTick, samples, blocks}};
   if (epoch !== null) result.deviceTime.epoch = epoch;
   if (recovery !== undefined) result.recovery = recovery;
+  if (payload.inputQuality !== undefined) {
+    const source = payload.inputQuality;
+    if (!object(source) || source.source !== 'uhd-normalized-fc32' ||
+        !Array.isArray(source.channels) || source.channels.length !== 2) {
+      errors.push(`${name}.inputQuality has an invalid schema`);
+    } else {
+      const channels = source.channels.map((channel, index) => {
+        if (!object(channel) || channel.channel !== index ||
+            typeof channel.gainDb !== 'number' || !Number.isFinite(channel.gainDb) ||
+            channel.gainDb < 0 || channel.gainDb > 100)
+          errors.push(`${name}.inputQuality.channels[${index}] has invalid identity or gain`);
+        const sampledComponents = decimal(channel.sampledComponents,
+          `inputQuality.channels[${index}].sampledComponents`);
+        const metric = field => {
+          const value = channel[field];
+          if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)
+            errors.push(`${name}.inputQuality.channels[${index}].${field} must be a fraction`);
+          return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+        };
+        return {channel: index, gainDb: channel.gainDb,
+          sampledComponents, railFraction: metric('railFraction'),
+          nearRailFraction: metric('nearRailFraction'),
+          p999Fraction: metric('p999Fraction'), rmsFraction: metric('rmsFraction')};
+      });
+      result.inputQuality = {source: 'uhd-normalized-fc32', channels,
+        safe: channels.every(channel => BigInt(channel.sampledComponents) > 0n &&
+          channel.railFraction <= .00001 && channel.p999Fraction <= .70)};
+    }
+  }
   return result;
 }
 function hackrfStartup(payload, outer, errors) {

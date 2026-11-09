@@ -32,6 +32,10 @@ fs.writeFileSync(`${manual}.replay.json`, JSON.stringify({schema: 'vectorwarp-re
 
 const library = new RecordingLibrary(() => config, {now: () => now});
 async function main() {
+const projectedStorage = library.canRecord({writeBytesPerSecond: 1024, safetySeconds: 15});
+assert.equal(projectedStorage.projected_write_bytes, 15360);
+assert.equal(projectedStorage.estimated_write_bytes_per_second, 1024);
+assert.ok(projectedStorage.required_free_bytes >= 15360);
 const backgroundLibrary = new RecordingLibrary(() => config, {now: () => now});
 const indexing = await backgroundLibrary.list({limit: 1, waitForIndex: false});
 assert.equal(indexing.indexing, true);
@@ -40,6 +44,18 @@ await backgroundLibrary.scanPromise;
 const indexed = await backgroundLibrary.list({limit: 1, waitForIndex: false});
 assert.equal(indexed.indexing, false);
 assert.equal(indexed.total, 2);
+const nonBlockingLibrary = new RecordingLibrary(() => config, {now: () => now});
+await nonBlockingLibrary.scan();
+let releaseMetadata;
+nonBlockingLibrary.metadata = () => new Promise(resolve => { releaseMetadata = resolve; });
+const nonBlockingSearch = await Promise.race([
+  nonBlockingLibrary.list({search: 'not-present', waitForIndex: false}),
+  new Promise((_, reject) => setTimeout(() => reject(new Error('search blocked on metadata index')), 100))
+]);
+assert.equal(nonBlockingSearch.total, 0);
+assert.equal(nonBlockingSearch.metadata_indexing, true);
+assert.equal(nonBlockingSearch.search_incomplete, true);
+releaseMetadata?.({});
 const listed = await library.list({passes: [{pass_id: 'pass-one', hex: 'a1b2c3', flight: 'TEST123'}]});
 assert.equal(listed.total, 2);
 assert.equal(listed.recordings[0].kind, 'manual');
@@ -81,20 +97,23 @@ const policyConfig = {save: {path: policyDirectory, retention: {automatic_cleanu
   low_space_policy: 'stop_recording', maximum_age_days: 0,
   maximum_total_gb: 0, minimum_free_gb: 10000}}};
 const policyClip = path.join(policyDirectory, 'old-aircraft.mchq');
+const policyBlahClip = path.join(policyDirectory, 'aircraft-1794000000000-1.blah2iq');
 const policyManual = path.join(policyDirectory, 'old-manual.blah2iq');
 fs.writeFileSync(policyClip, Buffer.alloc(32));
+fs.writeFileSync(policyBlahClip, Buffer.alloc(32));
 fs.writeFileSync(`${policyClip}.json`, JSON.stringify({createdAt: now - 86400000,
   complete: true, eventIds: ['aircraft:test']}));
 fs.writeFileSync(policyManual, Buffer.alloc(32));
 fs.writeFileSync(`${policyManual}.json`, JSON.stringify({createdAt: now - 86400000, complete: true}));
-for (const filename of [policyClip, `${policyClip}.json`, policyManual, `${policyManual}.json`])
+for (const filename of [policyClip, `${policyClip}.json`, policyBlahClip, policyManual, `${policyManual}.json`])
   fs.utimesSync(filename, old, old);
 const policyLibrary = new RecordingLibrary(() => policyConfig, {now: () => now});
 assert.equal((await policyLibrary.cleanup()).deleted.length, 0,
   'stop-recording policy never deletes clips');
 policyConfig.save.retention.low_space_policy = 'delete_oldest';
 const policyCleanup = await policyLibrary.cleanup();
-assert.deepEqual(policyCleanup.deleted.map(item => item.filename), ['old-aircraft.mchq']);
+assert.deepEqual(policyCleanup.deleted.map(item => item.filename).sort(),
+  ['aircraft-1794000000000-1.blah2iq', 'old-aircraft.mchq']);
 assert.equal(fs.existsSync(policyManual), true, 'low-space cleanup preserves manual recordings');
 fs.rmSync(policyDirectory, {recursive: true, force: true});
 console.log('Recording library metadata, search, safe paths and retention passed.');

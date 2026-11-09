@@ -127,6 +127,21 @@ class CaptureTriggerQueue {
     const record = {eventId: event.id, passId: event.pass_id,
       hex: typeof event.hex === 'string' ? event.hex.trim().toUpperCase() : '',
       flight: typeof event.flight === 'string' ? event.flight.trim().toUpperCase() : '',
+      ...(typeof event.illuminator === 'string' ? {illuminator: event.illuminator} : {}),
+      ...(typeof event.lane_event_id === 'string' ? {laneEventId: event.lane_event_id} : {}),
+      ...(typeof event.kind === 'string' ? {kind: event.kind} : {}),
+      ...(typeof event.track_id === 'string' ? {trackId: event.track_id} : {}),
+      ...(finite(event.similarity_score) ? {similarityScore: event.similarity_score} : {}),
+      ...(typeof event.scoring_basis === 'string' ? {scoringBasis: event.scoring_basis} : {}),
+      ...(Number.isInteger(event.measured_cpis) ? {measuredCpis: event.measured_cpis} : {}),
+      ...(finite(event.measured_fraction) ? {measuredFraction: event.measured_fraction} : {}),
+      ...(finite(event.delay_motion_km) ? {delayMotionKm: event.delay_motion_km} : {}),
+      ...(finite(event.net_delay_motion_km) ? {netDelayMotionKm: event.net_delay_motion_km} : {}),
+      ...(finite(event.delay_fit_rms_km) ? {delayFitRmsKm: event.delay_fit_rms_km} : {}),
+      ...(finite(event.kinematic_error_mps) ? {kinematicErrorMps: event.kinematic_error_mps} : {}),
+      ...(finite(event.duration_seconds) ? {durationSeconds: event.duration_seconds} : {}),
+      ...(finite(event.mean_absolute_doppler_hz) ?
+        {meanAbsoluteDopplerHz: event.mean_absolute_doppler_hz} : {}),
       requestedEventTime: event.observed_at, state: 'pending',
       clipRevisions: [], captureWindows: [], windowStart: null, windowEnd: null, failure: null};
     this.events.set(event.id, record);
@@ -183,30 +198,8 @@ class CaptureTriggerQueue {
       file: clip.file, samples: clip.samples});
   }
 
-  acceptEligibilityEvent(event, requestedEventTime = event?.observed_at) {
-    if (!this.enabled) return {accepted: false, reason: 'disabled'};
-    if (!event || event.state !== 'pending' || !validId(event.id) ||
-        !event.id.startsWith('eligibility:') || !validId(event.pass_id) ||
-        !finite(event.observed_at) || event.observed_at < 0 ||
-        !finite(requestedEventTime) || requestedEventTime < 0 ||
-        !finite(event.predicted?.delay_km) || !finite(event.predicted?.doppler_hz) ||
-        !validId(event.receiver_epoch) || !validId(event.config_epoch) ||
-        !validId(event.site_epoch)) return {accepted: false, reason: 'invalid-event'};
-    const slantRange = event.predicted?.slant_range_km;
-    const elevation = event.predicted?.elevation_deg;
-    if (!finite(slantRange) || slantRange < this.minimumSlantRangeKm ||
-        slantRange > this.maximumSlantRangeKm)
-      return {accepted: false, reason: 'outside-slant-range'};
-    if (!finite(elevation) || elevation < this.minimumElevationDeg ||
-        elevation > this.maximumElevationDeg)
-      return {accepted: false, reason: 'outside-elevation'};
-    if (this.events.has(event.id)) return {accepted: false, reason: 'duplicate-event'};
-    const eventRecord = this.remember(event);
-
-    // Eligibility is deliberately settled after the ADS-B association lag.  The
-    // truth CPI remains event.observed_at, but a live recorder request must be
-    // centred on issuance time or it asks the finite raw ring for history that
-    // has already expired.
+  enqueueInitial(event, eventRecord, requestedEventTime, kind = 'initial') {
+    const exposureClass = kind === 'unmatched-motion' ? 'unmatched-motion' : 'aircraft';
     const eventStart = requestedEventTime - this.preSeconds * 1000;
     const eventEnd = requestedEventTime + this.postSeconds * 1000;
     const maximumMs = this.maxClipSeconds * 1000;
@@ -216,6 +209,7 @@ class CaptureTriggerQueue {
     let clip;
     if (overlapping.length) {
       clip = overlapping[0];
+      if (exposureClass === 'aircraft') clip.exposureClass = 'aircraft';
       clip.eventIds.push(event.id); clip.passIds.push(event.pass_id);
       clip.eventIds = [...new Set(clip.eventIds)]; clip.passIds = [...new Set(clip.passIds)];
       clip.requestedEventTime = Math.min(clip.requestedEventTime, requestedEventTime);
@@ -223,9 +217,6 @@ class CaptureTriggerQueue {
       clip.windowEnd = Math.max(clip.windowEnd, eventEnd);
       clip.preSeconds = (clip.requestedEventTime - clip.windowStart) / 1000;
       clip.postSeconds = (clip.windowEnd - clip.requestedEventTime) / 1000;
-      // A queued clip can be extended before the current clip is acknowledged.
-      // Renumber it and every later pending clip so polling can never observe a
-      // lower revision after advancing through the queue.
       const first = this.clips.indexOf(clip);
       for (let index = first; index < this.clips.length; ++index) {
         if (!this.clips[index].pending) continue;
@@ -245,13 +236,60 @@ class CaptureTriggerQueue {
           reason: 'queue-capacity', event: {...eventRecord}};
       }
       clip = {revision: ++this.revision, eventIds: [event.id], passIds: [event.pass_id], captureIds: {},
+        exposureClass,
         requestedEventTime, preSeconds: this.preSeconds,
         postSeconds: this.postSeconds, windowStart: eventStart, windowEnd: eventEnd,
         pending: true, acknowledged: false, failure: null};
       this.clips.push(clip);
     }
-    this.addWindow(eventRecord, clip, 'initial');
+    this.addWindow(eventRecord, clip, kind);
     return {accepted: true, coalesced: overlapping.length > 0, clip: compact(clip)};
+  }
+
+  acceptEligibilityEvent(event, requestedEventTime = event?.observed_at) {
+    if (!this.enabled) return {accepted: false, reason: 'disabled'};
+    if (!event || event.state !== 'pending' || !validId(event.id) ||
+        !event.id.startsWith('eligibility:') || !validId(event.pass_id) ||
+        !finite(event.observed_at) || event.observed_at < 0 ||
+        !finite(requestedEventTime) || requestedEventTime < 0 ||
+        !finite(event.predicted?.delay_km) || !finite(event.predicted?.doppler_hz) ||
+        !validId(event.receiver_epoch) || !validId(event.config_epoch) ||
+        !validId(event.site_epoch)) return {accepted: false, reason: 'invalid-event'};
+    const slantRange = event.predicted?.slant_range_km;
+    const elevation = event.predicted?.elevation_deg;
+    if (!finite(slantRange) || slantRange < this.minimumSlantRangeKm ||
+        slantRange > this.maximumSlantRangeKm)
+      return {accepted: false, reason: 'outside-slant-range'};
+    if (!finite(elevation) || elevation < this.minimumElevationDeg ||
+        elevation > this.maximumElevationDeg)
+      return {accepted: false, reason: 'outside-elevation'};
+    if (this.events.has(event.id)) return {accepted: false, reason: 'duplicate-event'};
+    const eventRecord = this.remember(event);
+    // Truth association is deliberately settled before issuance. Centre the
+    // finite raw-ring request on issuance time rather than the older truth CPI.
+    return this.enqueueInitial(event, eventRecord, requestedEventTime);
+  }
+
+  acceptUnmatchedMotionEvent(event, requestedEventTime = this.now()) {
+    if (!this.enabled) return {accepted: false, reason: 'disabled'};
+    if (!event || event.state !== 'pending' || !validId(event.id) ||
+        !event.id.startsWith('unmatched-motion:') || !validId(event.pass_id) ||
+        !validId(event.track_id) || !finite(event.observed_at) || event.observed_at < 0 ||
+        !finite(requestedEventTime) || requestedEventTime < 0 ||
+        !['empirical-aircraft-similarity', 'kinematic-motion-fallback']
+          .includes(event.scoring_basis) ||
+        (event.scoring_basis === 'empirical-aircraft-similarity' &&
+          (!finite(event.similarity_score) || event.similarity_score < 0 ||
+            event.similarity_score > 1)) ||
+        (event.scoring_basis === 'kinematic-motion-fallback' &&
+          (!finite(event.measured_fraction) || event.measured_fraction < 0 ||
+            event.measured_fraction > 1 || !finite(event.delay_motion_km) ||
+            event.delay_motion_km < 0)) ||
+        !Number.isInteger(event.measured_cpis) || event.measured_cpis < 3)
+      return {accepted: false, reason: 'invalid-unmatched-motion-event'};
+    if (this.events.has(event.id)) return {accepted: false, reason: 'duplicate-event'};
+    return this.enqueueInitial(event, this.remember(event), requestedEventTime,
+      'unmatched-motion');
   }
 
   acceptSnapshot(event, requestedEventTime, kind) {
@@ -344,7 +382,9 @@ class CaptureTriggerQueue {
   retryPreRollFailure(revision, requestedEventTime = this.now()) {
     const priorIndex = this.clips.findIndex(item => !item.pending && item.revision === revision);
     const prior = priorIndex < 0 ? null : this.clips[priorIndex];
-    if (!prior || prior.failure !== 'Kraken clip pre-roll is unavailable' ||
+    if (!prior || !['IQ clip pre-roll is unavailable',
+          'Kraken clip pre-roll is unavailable'].includes(prior.failure) ||
+        prior.staleAtClaim === true ||
         !finite(requestedEventTime) || requestedEventTime < 0) return null;
     const records = prior.eventIds.map(id => this.events.get(id)).filter(Boolean);
     const windows = records.map(event => event.captureWindows.find(item =>
@@ -404,24 +444,48 @@ class CaptureTriggerQueue {
   }
 
   request(expose = false) {
-    const clip = this.current();
-    if (expose && clip?.pending && !clip.exposed && this.now() < this.nextExposureAt)
+    let clip = this.current();
+    // A processor outage can leave many immutable evidence windows queued.
+    // Never feed those expired windows through the native recorder one by one:
+    // doing so blocks current captures behind guaranteed pre-roll failures.
+    if (expose) while (clip?.pending && !clip.exposed &&
+        Number.isFinite(clip.windowEnd) && this.now() > clip.windowEnd) {
+      clip.claimedAt = this.now();
+      clip.staleAtClaim = true;
+      clip.exposed = true;
+      clip.pending = false;
+      clip.failure = 'capture-window-expired-before-recorder';
+      clip.acknowledged = false;
+      this.droppedEvents += clip.eventIds.length;
+      for (const eventId of clip.eventIds) {
+        const event = this.events.get(eventId);
+        if (event) {
+          event.state = 'failed';
+          event.failure = clip.failure;
+          this.terminalWindow(clip, eventId);
+        }
+      }
+      clip = this.current();
+    }
+    // Unmatched-motion producers have their own bounded interval and all
+    // channels share this queue, so applying the ADS-B exposure cooldown here
+    // caused valid motion windows to wait until their RF pre-roll expired.
+    // The native recorder remains serialized by the pending/exposed clip.
+    if (expose && clip?.exposureClass !== 'unmatched-motion' &&
+        this.now() < this.nextExposureAt)
       return {clipRevision: 0, eventIds: [], passIds: [],
         requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
         windowStart: null, windowEnd: null, pending: false, acknowledged: false,
         failure: null, file: '', samples: 0};
     if (expose && clip?.pending && !clip.exposed) {
-      // Pending clips can wait behind an in-flight four-second recording.  A
-      // window fixed when eligibility settled may therefore be older than the
-      // native raw ring by the time the recorder claims it.  Re-center once,
-      // atomically at exposure, and propagate the physical bounds to every
-      // linked admission record.  The original truth CPI remains on the event.
-      clip.requestedEventTime = this.now();
-      clip.windowStart = clip.requestedEventTime - clip.preSeconds * 1000;
-      clip.windowEnd = clip.requestedEventTime + clip.postSeconds * 1000;
+      // The requested RF window is evidence identity and must remain tied to
+      // the truth event. Re-centering a delayed request records unrelated RF
+      // and guarantees a truth-bracket mismatch.
+      clip.claimedAt = this.now();
+      clip.staleAtClaim = clip.claimedAt > clip.windowEnd;
       clip.exposed = true;
-      this.linkRevision(clip);
-      this.nextExposureAt = clip.requestedEventTime + this.minimumExposureIntervalMs;
+      if (clip.exposureClass !== 'unmatched-motion')
+        this.nextExposureAt = clip.claimedAt + this.minimumExposureIntervalMs;
     }
     return compact(clip) || {clipRevision: 0, eventIds: [], passIds: [],
       requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,

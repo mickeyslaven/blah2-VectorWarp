@@ -2,17 +2,67 @@
 const fs = require('fs');
 const zlib = require('zlib');
 
+const mapSummary = map => map && typeof map === 'object' ? {
+  timestamp: map.timestamp ?? null, nRows: map.nRows ?? null, nCols: map.nCols ?? null,
+  noisePower: map.noisePower ?? null, maxPower: map.maxPower ?? null,
+  delay: map.delay ?? null, doppler: map.doppler ?? null,
+  eventTime: map.eventTime ?? null
+} : null;
+
+async function eventTruthAt(source, kind, timestamp) {
+  if (!source || !Number.isFinite(timestamp)) throw new Error('Recording truth time is invalid');
+  if (typeof source.getAt === 'function') return source.getAt(kind, timestamp);
+  if (typeof source.get === 'function') return source.get(kind);
+  throw new Error('Recording truth source is unavailable');
+}
+
 class RecordingTimeline {
   constructor({maxAgeMs = 30000, io = fs} = {}) {
     this.maxAgeMs = maxAgeMs; this.io = io; this.frames = [];
+    this.pending = new Set(); this.reservations = [];
     this.cache = {file: '', mtimeMs: 0, value: null};
     this.manual = null;
+  }
+  track(timestamp, promise) {
+    const item = {timestamp, promise: null};
+    item.promise = Promise.resolve(promise).finally(() => this.pending.delete(item));
+    this.pending.add(item);
+    return item.promise;
+  }
+  async settle(startMs, endMs) {
+    for (;;) {
+      const relevant = [...this.pending].filter(item =>
+        item.timestamp >= startMs && item.timestamp <= endMs);
+      if (!relevant.length) return;
+      await Promise.allSettled(relevant.map(item => item.promise));
+    }
+  }
+  reserve(startMs, endMs) {
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return;
+    const overlapping = this.reservations.filter(item =>
+      startMs <= item.endMs && endMs >= item.startMs);
+    const frames = [...this.frames.filter(frame =>
+      frame.timestamp_ms >= startMs && frame.timestamp_ms <= endMs),
+      ...overlapping.flatMap(item => item.frames)];
+    this.reservations = this.reservations.filter(item => !overlapping.includes(item));
+    const unique = new Map();
+    for (const frame of frames) {
+      const identity = typeof frame.illuminator === 'string' ? frame.illuminator : '';
+      unique.set(`${frame.timestamp_ms}:${identity}`, frame);
+    }
+    this.reservations.push({startMs: Math.min(startMs,
+      ...overlapping.map(item => item.startMs)), endMs: Math.max(endMs,
+      ...overlapping.map(item => item.endMs)), frames: [...unique.values()]});
+    while (this.reservations.length > 64) this.reservations.shift();
   }
   add(frame, now = Date.now()) {
     if (!Number.isSafeInteger(frame?.timestamp_ms) || frame.timestamp_ms < 0) return;
     this.frames.push(frame);
     while (this.frames.length > 1 && this.frames[0].timestamp_ms < now - this.maxAgeMs)
       this.frames.shift();
+    for (const reservation of this.reservations)
+      if (frame.timestamp_ms >= reservation.startMs && frame.timestamp_ms <= reservation.endMs)
+        reservation.frames.push(frame);
     if (this.manual && frame.timestamp_ms >= this.manual.startMs)
       this.writeManualFrame(this.manual, frame);
   }
@@ -32,8 +82,13 @@ class RecordingTimeline {
     this.add({timestamp_ms: frame.timestamp_ms, illuminator: frame.illuminator,
       truth: {aircraft: frame.aircraft ?? null,
         delay_doppler: frame.delay_doppler ?? null},
-      products: {map: frame.map ?? null, detections: frame.detections ?? null,
-        tracks: frame.tracks ?? null},
+      // Delay-Doppler matrices are deterministic products of the full-passband
+      // IQ and replay profile.  Do not duplicate every large matrix once per
+      // lane in the timeline; replay regenerates them.
+      products: {map: null, map_summary: mapSummary(frame.map),
+        detections: frame.detections ?? null, tracks: frame.tracks ?? null,
+        doppler_window: frame.doppler_window ?? 'unknown',
+        atsc_reference: frame.atsc_reference ?? null},
       first_input_sample: frame.first_input_sample ?? null,
       end_input_sample: frame.end_input_sample ?? null}, now);
   }
@@ -78,12 +133,16 @@ class RecordingTimeline {
   }
   async write(file, startMs, endMs, metadata = {}) {
     if (!file || !Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-    const frames = this.frames.filter(frame => frame.timestamp_ms >= startMs && frame.timestamp_ms <= endMs);
+    const reserved = this.reservations.find(item =>
+      item.startMs <= startMs && item.endMs >= endMs);
+    const frames = (reserved?.frames || this.frames)
+      .filter(frame => frame.timestamp_ms >= startMs && frame.timestamp_ms <= endMs);
     const value = {schema: 'vectorwarp-recording-timeline-v2', start_ms: startMs,
       end_ms: endMs, ...metadata, frames};
     const output = `${file}.timeline.json`, temporary = `${output}.tmp-${process.pid}`;
     await this.io.promises.writeFile(temporary, `${JSON.stringify(value)}\n`, {mode: 0o640});
     await this.io.promises.rename(temporary, output);
+    if (reserved) this.reservations = this.reservations.filter(item => item !== reserved);
     this.cache = {file: '', mtimeMs: 0, value: null};
     return output;
   }
@@ -150,4 +209,4 @@ class RecordingTimeline {
     return selected[kind] ?? null;
   }
 }
-module.exports = {RecordingTimeline};
+module.exports = {RecordingTimeline, eventTruthAt};

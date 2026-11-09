@@ -7,13 +7,20 @@
   const channels = config => config.capture?.device?.channel_count ||
     config.capture?.device?.gain?.length || config.capture?.device?.antenna?.length || 2;
   const formatBytes = value => {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB']; let amount = value, unit = 0;
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']; let amount = value, unit = 0;
     while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit++; }
     return `${amount.toFixed(unit < 2 ? 0 : 1)} ${units[unit]}`;
   };
   const configuredSite = site => finite(site?.latitude) && finite(site?.longitude) &&
     (Math.abs(site.latitude) > 1e-8 || Math.abs(site.longitude) > 1e-8) &&
     !/^Set (receiver|transmitter) site$/.test(site.name || '');
+  const configuredTransmitters = config => {
+    if (configuredSite(config.location?.tx)) return true;
+    if (config.process?.multi_illuminator?.enabled !== true) return false;
+    const lanes = (config.process.multi_illuminator.illuminators || [])
+      .filter(lane => lane?.enabled === true);
+    return lanes.length > 0 && lanes.every(lane => configuredSite(lane.transmitter));
+  };
   const gpuActive = value => typeof value?.active === 'string' &&
     value.active.startsWith('vulkan') && value.state === 'ready';
   function recordingEstimate(config) {
@@ -28,7 +35,8 @@
       clipLabel: kraken ? 'Compact native 8-bit Kraken IQ' : 'Portable float32 IQ'};
   }
   function searchWindow(config, rangeKm, speedMps) {
-    const sampleRate = Number(config.capture?.fs), frequency = Number(config.capture?.fc);
+    const sampleRate = Number(config.process?.delay_reference_sample_rate_hz ?? config.capture?.fs),
+      frequency = Number(config.capture?.fc);
     if (!(sampleRate > 0) || !(frequency > 0) || !(rangeKm > 0) || !(speedMps > 0)) return null;
     const kmPerBin = c / sampleRate / 1000;
     return {delayMax: Math.ceil(2 * rangeKm / kmPerBin),
@@ -42,6 +50,7 @@
   let wizardError = '';
   let wizardNotice = '';
   let wizardAutomatic = null;
+  let setupQueryHandled = false;
 
   const recommendedAutomatic = () => ({
     detection: true,
@@ -70,7 +79,7 @@
       {title: 'Receiver', complete: receiverConfigured && selected?.liveAvailable !== false,
         detail: selected?.liveAvailable === false ? 'Receiver software is not ready' : null},
       {title: 'Tuning', complete: Number(config.capture?.fc) > 0 && Number(config.capture?.fs) > 0},
-      {title: 'Sites', complete: configuredSite(config.location?.rx) && configuredSite(config.location?.tx)},
+      {title: 'Sites', complete: configuredSite(config.location?.rx) && configuredTransmitters(config)},
       {title: 'Radar', complete: Number(config.process?.data?.cpi) > 0 &&
         typeof config.process?.detection?.enable === 'boolean' &&
         typeof config.process?.tracker?.enable === 'boolean'},
@@ -215,7 +224,8 @@
     const status = complete ? 'Setup complete' : `${ready} of ${checks.length} setup steps ready`;
     const summary = `${escape(receiver?.label || config.capture?.device?.type || 'No receiver')} · ${frequency.toFixed(3)} MHz · ${count} channel${count === 1 ? '' : 's'}`;
     target.innerHTML = `<section class="setup-assistant setup-assistant-launcher setup-assistant-summary"><div><strong>${status}</strong><span>${summary}</span></div><button type="button" class="button-secondary" data-start-setup>${complete ? 'Review setup' : 'Finish setup'}</button></section>`;
-    target.querySelector('[data-start-setup]').addEventListener('click', async event => {
+    const startButton = target.querySelector('[data-start-setup]');
+    startButton.addEventListener('click', async event => {
       const button = event.currentTarget;
       if (complete) {
         wizardOpen = true;
@@ -247,6 +257,11 @@
       if (wizardStep < 0) wizardStep = refreshedChecks.length;
       api.refresh();
     });
+    if (!setupQueryHandled && typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).get('setup') === '1') {
+      setupQueryHandled = true;
+      queueMicrotask(() => startButton.click());
+    }
     mountWizard(target, api);
   }
   root.VectorWarpSetupAssistant = {render, recordingEstimate, searchWindow, gpuActive,

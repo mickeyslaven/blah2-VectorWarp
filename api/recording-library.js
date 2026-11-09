@@ -46,6 +46,11 @@ const storage = directory => {
   } catch (_) { return {capacity_bytes: null, free_bytes: null}; }
 };
 const sidecarsFor = filename => SIDECAR_SUFFIXES.map(suffix => `${filename}${suffix}`);
+const automaticRecordingName = filename => {
+  const extension = path.extname(filename).toLowerCase();
+  return extension === '.mchq' ||
+    (extension === '.blah2iq' && /^aircraft-\d+(?:-\d+)?\.blah2iq$/i.test(filename));
+};
 const metadataKey = item => `${item.filename}\0${item.modified_at}`;
 const cloneItems = items => items.map(item => ({...item,
   aircraft: item.aircraft.map(value => ({...value}))}));
@@ -130,7 +135,7 @@ class RecordingLibrary {
           receiver: null, channels: null, sample_rate_hz: null, frequency_hz: null,
           duration_seconds: null, complete: true,
           active: false,
-          admission: null, kind: path.extname(name).toLowerCase() === '.mchq' ? 'automatic' : 'manual',
+          admission: null, kind: automaticRecordingName(name) ? 'automatic' : 'manual',
           aircraft: []};
         item.title = titleFor(item);
         return item;
@@ -151,9 +156,19 @@ class RecordingLibrary {
   async metadata(item) {
     const key = metadataKey(item);
     if (this.metadataCache.has(key)) return this.metadataCache.get(key);
-    const [metadataValue, admissionValue] = await Promise.all([
-      readJson(`${item.path}.json`), readJson(`${item.path}.admission.json`)]);
-    const metadata = metadataValue || {};
+    const [metadataValue, provenanceValue, admissionValue] = await Promise.all([
+      readJson(`${item.path}.json`), readJson(`${item.path}.provenance.json`),
+      readJson(`${item.path}.admission.json`)]);
+    const provenance = provenanceValue || {};
+    const metadata = metadataValue || {
+      receiver: provenance.receiver,
+      format: provenance.format,
+      channels: provenance.channels,
+      sampleRate: provenance.sampleRateHz,
+      frequency: provenance.frequencyHz,
+      samplesPerChannel: Number(provenance.recording?.samples),
+      complete: provenance.recording?.complete
+    };
     const admission = admissionValue || {};
     const samples = metadata.samplesPerChannel ?? metadata.samples ?? null;
     const rate = metadata.sampleRate ?? null;
@@ -221,8 +236,11 @@ class RecordingLibrary {
     // explicit metadata-dependent query indexes every recording; a normal page
     // enriches just the visible rows below.
     const needsMetadataIndex = Boolean(normalized || kind || receiver || frequency);
-    const metadataIndex = needsMetadataIndex ? this.startMetadataIndex(items) : null;
-    if (metadataIndex) await metadataIndex;
+    // Metadata for a large archive can take minutes to read.  Start that work,
+    // but never make an interactive search wait for the whole archive.  Each
+    // refresh searches everything indexed so far and converges as the
+    // background index advances.
+    if (needsMetadataIndex) this.startMetadataIndex(items);
     const facets = {receivers: [...new Set(items.map(item =>
       this.metadataCache.get(metadataKey(item))?.receiver).filter(Boolean))].sort(),
     frequencies: [...new Set(items.map(item =>
@@ -261,6 +279,7 @@ class RecordingLibrary {
       retention: this.retention(), total, offset: boundedOffset, limit: boundedLimit,
       facets,
       indexing: this.scanPromise !== null, metadata_indexing: this.metadataIndexPromise !== null,
+      search_incomplete: needsMetadataIndex && this.metadataIndexPromise !== null,
       index_error: this.scanError,
       recordings: page};
   }
@@ -320,12 +339,19 @@ class RecordingLibrary {
       if (key.startsWith(`${path.basename(filename)}:`)) this.metadataCache.delete(key);
     return {removed: true, filename: path.basename(filename), size_bytes: stat.size};
   }
-  canRecord() {
+  canRecord({writeBytesPerSecond = 0, safetySeconds = 0} = {}) {
     const retention = this.retention();
     const current = storage(this.directory());
-    const required = bytesFromGb(retention.minimumFreeGb);
+    const reserve = bytesFromGb(retention.minimumFreeGb);
+    const projected = Math.max(0, Number(writeBytesPerSecond) || 0) *
+      Math.max(0, Number(safetySeconds) || 0);
+    const required = reserve + projected;
     return {allowed: current.free_bytes === null || current.free_bytes > required,
-      free_bytes: current.free_bytes, required_free_bytes: required};
+      free_bytes: current.free_bytes, required_free_bytes: required,
+      configured_reserve_bytes: reserve, projected_write_bytes: projected,
+      estimated_write_bytes_per_second: Math.max(0, Number(writeBytesPerSecond) || 0),
+      estimated_seconds_until_reserve: current.free_bytes === null || !writeBytesPerSecond ? null :
+        Math.max(0, (current.free_bytes - reserve) / writeBytesPerSecond)};
   }
   async cleanup({activeFile = '', force = false} = {}) {
     const retention = this.retention();
@@ -366,11 +392,13 @@ class RecordingLibrary {
     return {enabled: true, deleted, capacity_bytes: current.capacity_bytes,
       free_bytes: current.free_bytes, recording_bytes: total};
   }
-  async prepareForRecording({activeFile = ''} = {}) {
-    let status = this.canRecord();
+  async prepareForRecording({activeFile = '', writeBytesPerSecond = 0,
+    safetySeconds = 0} = {}) {
+    const projection = {writeBytesPerSecond, safetySeconds};
+    let status = this.canRecord(projection);
     if (!status.allowed && this.retention().lowSpacePolicy === 'delete_oldest') {
       const cleanup = await this.cleanup({activeFile});
-      status = this.canRecord();
+      status = this.canRecord(projection);
       return {...status, deleted: cleanup.deleted || []};
     }
     return status;

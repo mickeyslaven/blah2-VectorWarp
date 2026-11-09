@@ -171,7 +171,9 @@ std::optional<std::complex<double>> direct_path_pilot(
 std::string multi_illuminator_frame_json(
   const blah2::multi_illuminator::RadarFrame& frame, uint64_t timestamp,
   const std::string& map, const std::string& detections,
-  const std::string& tracks)
+  const std::string& tracks, bool captureSamplePositionAvailable,
+  uint64_t captureEpoch, uint64_t captureFirstInputSample,
+  uint64_t captureEndInputSample)
 {
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
@@ -182,6 +184,11 @@ std::string multi_illuminator_frame_json(
   writer.Key("sample_rate_hz"); writer.Uint(frame.sampleRateHz);
   writer.Key("first_input_sample"); writer.Uint64(frame.firstInputSample);
   writer.Key("end_input_sample"); writer.Uint64(frame.endInputSample);
+  writer.Key("capture_sample_position_available");
+  writer.Bool(captureSamplePositionAvailable);
+  writer.Key("capture_epoch"); writer.Uint64(captureEpoch);
+  writer.Key("capture_first_input_sample"); writer.Uint64(captureFirstInputSample);
+  writer.Key("capture_end_input_sample"); writer.Uint64(captureEndInputSample);
   writer.Key("timestamp"); writer.Uint64(timestamp);
   writer.Key("map"); writer.RawValue(map.c_str(), map.size(), rapidjson::kObjectType);
   writer.Key("detections"); writer.RawValue(detections.c_str(), detections.size(), rapidjson::kObjectType);
@@ -1970,7 +1977,9 @@ try
               const auto& product = serialized[index];
               socket_illuminator->sendData(multi_illuminator_frame_json(
                 frame, publication->timestampMs, product.map, product.detections,
-                product.tracks));
+                product.tracks, publication->samplePositionAvailable,
+                publication->captureEpoch, publication->captureFirst,
+                publication->captureEnd));
               if (frame.illuminatorId == illuminatorDefinitions.front().id)
               {
                 socket_map->sendData(product.map);
@@ -2412,7 +2421,7 @@ try
             serialized[index].tracks=blah2::annotate_event_time(
               frame.tracks->to_json(publication.timestampMs),publication.eventTime);});
         const auto serializationEnd=DrainClock::now();
-        for(std::size_t index=0;index<frames.size();++index){const auto& frame=frames[index];const auto& product=serialized[index];socket_illuminator->sendData(multi_illuminator_frame_json(frame,publication.timestampMs,product.map,product.detections,product.tracks));if(frame.illuminatorId==illuminatorDefinitions.front().id){socket_map->sendData(product.map);socket_detection->sendData(product.detections);socket_track->sendData(product.tracks);}}
+        for(std::size_t index=0;index<frames.size();++index){const auto& frame=frames[index];const auto& product=serialized[index];socket_illuminator->sendData(multi_illuminator_frame_json(frame,publication.timestampMs,product.map,product.detections,product.tracks,publication.samplePositionAvailable,publication.captureEpoch,publication.captureFirst,publication.captureEnd));if(frame.illuminatorId==illuminatorDefinitions.front().id){socket_map->sendData(product.map);socket_detection->sendData(product.detections);socket_track->sendData(product.tracks);}}
         const auto drainEnd=DrainClock::now();
         const auto milliseconds=[](auto end,auto start){return std::chrono::duration<double,std::milli>(end-start).count();};
         timing->update(publication.timestampMs,

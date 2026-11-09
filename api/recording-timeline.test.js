@@ -1,7 +1,21 @@
 'use strict';
 const assert = require('assert'); const fs = require('fs'); const os = require('os'); const path = require('path');
-const {RecordingTimeline} = require('./recording-timeline');
+const {RecordingTimeline, eventTruthAt} = require('./recording-timeline');
 (async () => { const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vw-timeline-'));
+  const truthCalls = [];
+  const source = {getAt(kind, timestamp) { truthCalls.push(['event', kind, timestamp]); return {kind}; },
+    get(kind) { truthCalls.push(['current', kind]); return {kind}; }};
+  assert.deepEqual(await eventTruthAt(source, 'aircraft', 750), {kind: 'aircraft'});
+  assert.deepEqual(truthCalls, [['event', 'aircraft', 750]],
+    'automatic timeline truth uses delayed event-time association, never immediate presentation truth');
+  let releaseTruth;
+  const delayedTruth = new Promise(resolve => { releaseTruth = resolve; });
+  const tracked = new RecordingTimeline();
+  tracked.track(800, delayedTruth.then(() => tracked.add({timestamp_ms: 800, aircraft: {late: true}}, 800)));
+  const settled = tracked.settle(700, 900);
+  releaseTruth(); await settled;
+  assert.equal(tracked.frames[0].aircraft.late, true,
+    'packaging waits for delayed event-time truth inside the clip window');
   const file = path.join(directory, 'clip.mchq'), timeline = new RecordingTimeline(); fs.writeFileSync(file, 'x');
   timeline.add({timestamp_ms: 1000, aircraft: {a:{hex:'A'}}, delay_doppler:{a:{delay:1}}}, 1000);
   timeline.add({timestamp_ms: 1500, aircraft: {b:{hex:'B'}}, delay_doppler:{b:{delay:2}}}, 1500);
@@ -15,6 +29,8 @@ const {RecordingTimeline} = require('./recording-timeline');
   assert.equal(timeline.load(file).schema, 'vectorwarp-recording-timeline-v2');
   assert.equal(timeline.at(file, 800, 1000, 'delay_doppler', 'fm-a').c.delay, 3);
   assert.equal(timeline.at(file, 800, 1000, 'tracks', 'fm-a').timestamp, 1700);
+  assert.equal(timeline.at(file, 800, 1000, 'map', 'fm-a'), null);
+  assert.equal(timeline.at(file, 800, 1000, 'map_summary', 'fm-a').nRows, null);
   assert.equal(timeline.at(file, 800, 1000, 'aircraft', 'fm-b'), null,
     'replay truth cannot leak across illuminators');
   const manual = path.join(directory, 'manual.blah2iq'); fs.writeFileSync(manual, 'x');
@@ -23,7 +39,8 @@ const {RecordingTimeline} = require('./recording-timeline');
   timeline.add({timestamp_ms: 2700, aircraft: {d:{hex:'D'}}, delay_doppler:{}}, 2700);
   for (const illuminator of ['fm-a', 'fm-b', 'fm-c'])
     timeline.addIlluminator({timestamp_ms: 2800, illuminator,
-      aircraft: {[illuminator]: {hex: illuminator}}, map: {illuminator}}, 2800);
+      aircraft: {[illuminator]: {hex: illuminator}},
+      map: {illuminator, nRows: 181, nCols: 111, data: ['must-not-be-recorded']}}, 2800);
   await timeline.stop(manual, 3000);
   assert.equal(timeline.at(manual, 750, 1000, 'aircraft').d.hex, 'D');
   assert.equal(timeline.load(manual).receiver, 'RspDuo');
@@ -32,11 +49,16 @@ const {RecordingTimeline} = require('./recording-timeline');
     .map(frame => frame.illuminator), ['fm-a', 'fm-b', 'fm-c'],
   'manual timeline retains every illuminator product at a shared CPI timestamp');
   assert.equal(timeline.at(manual, 850, 1000, 'aircraft', 'fm-c')['fm-c'].hex, 'fm-c');
+  assert.equal(timeline.at(manual, 850, 1000, 'map', 'fm-c'), null);
+  assert.equal(timeline.at(manual, 850, 1000, 'map_summary', 'fm-c').nCols, 111);
+  assert.equal(require('zlib').gunzipSync(fs.readFileSync(`${manual}.timeline.jsonl.gz`))
+    .includes('must-not-be-recorded'), false);
   const profile = {schema:'vectorwarp-replay-profile-v2', configuration_complete:true,
     capture:{channel_count:5}, process:{data:{cpi:0.5}}, location:{},
     multi_illuminator: {enabled:true, illuminators:[{id:'fm-a', frequency_hz:90100000,
       output_sample_rate_hz:300000, transmitter:{latitude:40.1,longitude:-79.9}}],
-      timeline_semantics:'per-illuminator-truth-and-products-v2'}};
+      timeline_semantics:'per-illuminator-truth-derived-products-v3',
+      map_storage:'regenerated-from-full-passband-iq'}};
   await timeline.writeReplayProfile(manual, profile);
   assert.deepEqual(timeline.loadReplayProfile(manual), profile);
   fs.writeFileSync(`${manual}.replay.json`, '{bad');

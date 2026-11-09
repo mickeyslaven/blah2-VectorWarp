@@ -457,5 +457,5 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
   return {apply};
 }
 
-module.exports = {createAutomaticGain, enabled, MAX_AUTOMATIC_GAIN_MS, LIMITS,
+module.exports = {createAutomaticGain, enabled, validateProbe, MAX_AUTOMATIC_GAIN_MS, LIMITS,
   validateProbe, validateRawAdc};

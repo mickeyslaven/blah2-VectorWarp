@@ -239,6 +239,33 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   await paced.get('aircraft');
   assert.equal(exchangePacedReads, 2, 'Public exchange sources refresh after their independent interval');
 
+  const rotatedReads = [];
+  const rotatedConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    poll_interval: .1, exchange_poll_interval: 1,
+    sources: ['exchange:https://one.example/v2/point/1/2/60',
+      'exchange:https://two.example/v2/point/1/2/60']}}};
+  const rotated = createAdsbSource(rotatedConfig, {now: () => clock,
+    fetchJson: async url => {
+      rotatedReads.push(url.hostname);
+      return {now: clock / 1000, ac: []};
+    }});
+  await rotated.getPresentation('aircraft');
+  clock += 101;
+  await rotated.getPresentation('aircraft');
+  assert.deepEqual(rotatedReads, ['one.example'],
+    'The public provider pool issues no concurrent or duplicate request inside its global interval');
+  clock += 900;
+  await rotated.getPresentation('aircraft');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(rotatedReads, ['one.example', 'two.example'],
+    'Public providers rotate instead of every node/provider being polled together');
+  clock += 1001;
+  await rotated.getPresentation('aircraft');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(rotatedReads, ['one.example', 'two.example', 'one.example'],
+    'Round-robin selection returns to the first healthy provider');
+  assert.equal((await rotated.status()).provider_pool.strategy, 'round_robin');
+
   let presentationRelease;
   let presentationReads = 0;
   const presentationConfig = {...config, truth: {adsb: {...config.truth.adsb,
@@ -282,6 +309,7 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
     if (req.url === '/large') return res.end('x'.repeat(200));
     if (req.url === '/redirect') { res.writeHead(302, {Location: 'http://other.invalid'}); return res.end(); }
     if (req.url === '/html') return res.end('<html>Login</html>');
+    if (req.url === '/throttle') { res.writeHead(429, {'Retry-After': '7'}); return res.end(); }
     res.end('{}');
   });
   const sockets = new Set();
@@ -294,6 +322,8 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
     await assert.rejects(readJson(url('/large'), {maxBytes: 64}), /size limit/);
     await assert.rejects(readJson(url('/redirect')), /302/);
     await assert.rejects(readJson(url('/html')), /invalid JSON/);
+    await assert.rejects(readJson(url('/throttle')), error =>
+      error.statusCode === 429 && error.retryAfterMs === 7000);
   } finally { for (const socket of sockets) socket.destroy(); await new Promise(resolve => server.close(resolve)); }
   console.log('ADS-B source addressing, freshness, warmup, cache, timeout and disabled/preview tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

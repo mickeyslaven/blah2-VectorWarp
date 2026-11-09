@@ -88,10 +88,15 @@ claimClock = 111000;
 const claimedFresh = claimFresh.request(true);
 assert.deepEqual({requestedEventTime: claimedFresh.requestedEventTime,
   windowStart: claimedFresh.windowStart, windowEnd: claimedFresh.windowEnd},
-{requestedEventTime: 111000, windowStart: 109000, windowEnd: 114000},
-  'A queued clip is re-centered exactly when the native recorder claims it');
-assert.equal(claimFresh.status().recentEvents[0].captureWindows[0].windowStart, 109000,
-  'Fresh physical bounds propagate to admission provenance');
+{requestedEventTime: 104000, windowStart: 102000, windowEnd: 107000},
+  'A queued clip retains the RF window associated with its truth event');
+assert.equal(claimFresh.status().recentEvents[0].captureWindows[0].windowStart, 102000,
+  'Recorder claim timing cannot rewrite admission provenance');
+assert.equal(claimedFresh.pending, false);
+assert.equal(claimedFresh.failure, 'capture-window-expired-before-recorder');
+assert.equal(claimFresh.status().recentEvents[0].state, 'failed');
+assert.equal(claimFresh.retryPreRollFailure(1), null,
+  'A stale queued evidence window must not be retried as unrelated current RF');
 let spacedClock = 100000;
 const spaced = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 2,
   minimumExposureIntervalMs: 5000, now: () => spacedClock});
@@ -104,7 +109,7 @@ assert.equal(spaced.request(true).clipRevision, 0,
   'The native recorder is not exposed to a second copy before the ring drains');
 spacedClock = 105000;
 assert.equal(spaced.request(true).clipRevision, 2,
-  'The queued clip is exposed and freshly centered after the bounded interval');
+  'The queued clip is exposed without rewriting its evidence window');
 let accepted = queue.acceptEligibilityEvent(event(1, 100000));
 assert.equal(accepted.accepted, true);
 assert.equal(accepted.clip.clipRevision, 1);
@@ -153,7 +158,7 @@ assert.equal(queue.acknowledge(3), false, 'A terminal clip cannot be acknowledge
 let retryClock = 5000;
 const startup = new CaptureTriggerQueue({now: () => retryClock});
 startup.acceptEligibilityEvent(event(4, 4000));
-assert.equal(startup.acknowledge(1, 'Kraken clip pre-roll is unavailable'), true);
+assert.equal(startup.acknowledge(1, 'IQ clip pre-roll is unavailable'), true);
 retryClock = 7100;
 const retry = startup.retryPreRollFailure(1);
 assert.equal(retry.clipRevision, 2);
@@ -173,14 +178,14 @@ periodicRetry.acceptEligibilityEvent(periodicRetryEvent);
 assert.equal(periodicRetry.acknowledge(1, null,
   {file: '/clips/initial.mchq', samples: 1}), true);
 periodicRetry.acceptPeriodicSnapshot(periodicRetryEvent, 120000);
-assert.equal(periodicRetry.acknowledge(2, 'Kraken clip pre-roll is unavailable'), true);
+assert.equal(periodicRetry.acknowledge(2, 'IQ clip pre-roll is unavailable'), true);
 const retriedPeriodic = periodicRetry.retryPreRollFailure(2);
 assert.equal(retriedPeriodic.clipRevision, 3,
   'A periodic window retries even when its event already has an initial capture');
 assert.equal(retriedPeriodic.requestedEventTime, 121000);
 assert.equal(periodicRetry.retryPreRollFailure(2), null,
   'The failed periodic revision cannot be retried twice');
-assert.equal(periodicRetry.acknowledge(3, 'Kraken clip pre-roll is unavailable'), true);
+assert.equal(periodicRetry.acknowledge(3, 'IQ clip pre-roll is unavailable'), true);
 assert.equal(periodicRetry.retryPreRollFailure(3), null,
   'The replacement periodic window receives only one fresh-time retry');
 
@@ -238,7 +243,8 @@ assert.deepEqual(monotonic.clips.map(clip => clip.revision), [3, 4],
 assert.equal(monotonic.acknowledge(3), true);
 assert.equal(monotonic.request().clipRevision, 4);
 
-const inFlight = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 3});
+const inFlight = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 3,
+  now: () => 100000});
 inFlight.acceptEligibilityEvent(event(23, 100000));
 assert.equal(inFlight.status().clipRevision, 1, 'Status inspection does not claim a recorder request');
 assert.equal(inFlight.request(true).clipRevision, 1, 'Recorder polling claims the current revision');

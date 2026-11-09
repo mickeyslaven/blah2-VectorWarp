@@ -75,6 +75,19 @@ function positionQuality(aircraft) {
   return .75;
 }
 
+function relayPositionMetadata(data, aircraft, rawEventTime) {
+  const fusion = data?.vectorwarp_fusion;
+  const upstream = aircraft?.vectorwarp;
+  if (fusion?.schema !== 'vectorwarp-adsb-fusion-v1' ||
+      !upstream || typeof upstream !== 'object' ||
+      !finite(upstream.position_timestamp_s) ||
+      Math.abs(upstream.position_timestamp_s - rawEventTime) > 1) return null;
+  const observationTime = finite(upstream.observation_position_timestamp_s) ?
+    upstream.observation_position_timestamp_s : upstream.position_timestamp_s;
+  if (observationTime > upstream.position_timestamp_s + 1e-3) return null;
+  return {positionTime: upstream.position_timestamp_s, observationTime};
+}
+
 function metadataValue(value) {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -148,16 +161,22 @@ function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservation
       if (!hex || !finite(aircraft.lat) || !finite(aircraft.lon) ||
           Math.abs(aircraft.lat) > 90 || Math.abs(aircraft.lon) > 180 ||
           !finite(aircraft.seen_pos) || aircraft.seen_pos < 0) continue;
-      const eventTime = data.now - aircraft.seen_pos;
+      const rawEventTime = data.now - aircraft.seen_pos;
+      const relay = relayPositionMetadata(data, aircraft, rawEventTime);
+      const eventTime = relay?.positionTime ?? rawEventTime;
+      const observationEventTime = relay?.observationTime ?? eventTime;
       const age = nowSeconds - eventTime;
-      if (!finite(eventTime) || Math.abs(age) > maxObservationOffsetSeconds ||
+      const allowedObservationOffset = relay ? maxPositionAgeSeconds :
+        maxObservationOffsetSeconds;
+      if (!finite(eventTime) || Math.abs(age) > allowedObservationOffset ||
           age < -maxPositionAgeSeconds || age > maxPositionAgeSeconds) continue;
       const projection = projectAircraft(aircraft, age);
       if (!projection.projected && Math.abs(age) >= 1e-6) continue;
       const quality = sourceReliability(source) * positionQuality(aircraft) *
         Math.exp(-Math.max(0, age) / Math.max(1, maxPositionAgeSeconds));
       output.push({hex, aircraft, projectedAircraft: projection.aircraft, source,
-        sourceId: id, receivedAtMs, eventTime, age, quality, reliability});
+        sourceId: id, receivedAtMs, eventTime, observationEventTime, age, quality,
+        reliability, relay});
     }
   });
   return output;
@@ -230,7 +249,7 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
       contributions.get(id).agreeing_aircraft += 1;
     for (const id of new Set(rejected.map(item => item.sourceId)))
       contributions.get(id).disagreement_aircraft += 1;
-    const observationOffset = nowSeconds - winner.eventTime;
+    const observationOffset = nowSeconds - winner.observationEventTime;
     const observationAge = Math.max(0, observationOffset);
     const effectiveEventTime = nowSeconds;
     const pairwise = [];
@@ -241,21 +260,27 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
     const sourceClass = positionSource(winner.aircraft);
     const metadata = retainedMetadata(hex, winner, metadataByHex.get(hex) || [],
       metadataCache, nowSeconds);
+    const upstream = winner.aircraft?.vectorwarp &&
+      typeof winner.aircraft.vectorwarp === 'object' ? winner.aircraft.vectorwarp : null;
+    const relayProvider = providerName(winner.source);
     aircraft.push({...winner.projectedAircraft, ...metadata.values, hex, seen_pos: 0,
       position_source: sourceClass, source_fields: sourceFields,
       vectorwarp: {
         position_source: sourceClass,
         source_fields: sourceFields,
-        provider: providerName(winner.source),
-        source_id: winner.sourceId,
-        source_kind: winner.source.kind || winner.source.mode || 'http',
-        source_mode: winner.source.mode || null,
-        source_endpoint: winner.source.endpoint || null,
-        source_path: winner.source.path || null,
+        provider: upstream?.provider || relayProvider,
+        source_id: upstream?.source_id || winner.sourceId,
+        source_kind: upstream?.source_kind || winner.source.kind || winner.source.mode || 'http',
+        source_mode: upstream?.source_mode || winner.source.mode || null,
+        source_endpoint: upstream?.source_endpoint || winner.source.endpoint || null,
+        source_path: upstream?.source_path || winner.source.path || null,
+        ...(upstream ? {relay_provider: relayProvider,
+          relay_source_id: winner.sourceId,
+          upstream_position_source: upstream.position_source || null} : {}),
         metadata_sources: metadata.sources,
         received_at_ms: winner.receivedAtMs,
         snapshot_timestamp_s: winner.eventTime + winner.aircraft.seen_pos,
-        observation_position_timestamp_s: winner.eventTime,
+        observation_position_timestamp_s: winner.observationEventTime,
         observation_position_age_s: observationAge,
         observation_time_offset_s: observationOffset,
         position_timestamp_s: effectiveEventTime,
@@ -268,7 +293,9 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
         rejected_sources: [...new Set(rejected.map(item => item.sourceId))],
         maximum_pairwise_projected_disagreement_km: pairwise.length ? Math.max(...pairwise) : null,
         source_observations: observations.map(item => ({source_id: item.sourceId,
-          event_time_s: item.eventTime, observation_time_offset_s: item.age,
+          event_time_s: item.observationEventTime, position_event_time_s: item.eventTime,
+          observation_time_offset_s: nowSeconds - item.observationEventTime,
+          position_time_offset_s: nowSeconds - item.eventTime,
           projected_latitude: item.projectedAircraft.lat,
           projected_longitude: item.projectedAircraft.lon,
           accepted: accepted.includes(item)})),

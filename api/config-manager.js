@@ -7,6 +7,7 @@ const {sourceAddress} = require('./adsb-source');
 const {classifyAdsbSource} = require('./adsb-discovery');
 const {recordErrors} = require('../html/js/kraken_geometry');
 const {evaluateKrakenArray} = require('./kraken-array');
+const {effectiveDelayConfig} = require('../html/js/config_profiles');
 
 const KRAKEN_MAX_CHANNELS = 8;
 const UINT32_MAX = 4294967295;
@@ -264,9 +265,9 @@ function validateConfig(config, baseline = null, options = {}) {
   const data = requireObject(processConfig.data, 'process.data');
   const multiIlluminator = processConfig.multi_illuminator === undefined ? null :
     requireObject(processConfig.multi_illuminator, 'process.multi_illuminator');
-  const ambiguity = requireObject(processConfig.ambiguity, 'process.ambiguity');
-  const clutter = requireObject(processConfig.clutter, 'process.clutter');
-  const detection = requireObject(processConfig.detection, 'process.detection');
+  let ambiguity = requireObject(processConfig.ambiguity, 'process.ambiguity');
+  let clutter = requireObject(processConfig.clutter, 'process.clutter');
+  let detection = requireObject(processConfig.detection, 'process.detection');
   const tracker = requireObject(processConfig.tracker, 'process.tracker');
   const initiate = requireObject(tracker.initiate, 'process.tracker.initiate');
   const trackerPublication = tracker.publication === undefined ? null :
@@ -303,6 +304,39 @@ function validateConfig(config, baseline = null, options = {}) {
     if (aircraftClips.minimum_interval_seconds !== undefined)
       number(aircraftClips.minimum_interval_seconds,
         'capture.aircraft_clips.minimum_interval_seconds', {min: 0, max: 3600});
+    const unmatchedMotion = aircraftClips.unmatched_motion === undefined ? null :
+      requireObject(aircraftClips.unmatched_motion,
+        'capture.aircraft_clips.unmatched_motion');
+    if (unmatchedMotion) {
+      boolean(unmatchedMotion.enabled,
+        'capture.aircraft_clips.unmatched_motion.enabled');
+      number(unmatchedMotion.minimum_similarity,
+        'capture.aircraft_clips.unmatched_motion.minimum_similarity', {min: 0, max: 1});
+      boolean(unmatchedMotion.allow_kinematic_fallback,
+        'capture.aircraft_clips.unmatched_motion.allow_kinematic_fallback');
+      number(unmatchedMotion.minimum_measured_fraction,
+        'capture.aircraft_clips.unmatched_motion.minimum_measured_fraction', {min: 0, max: 1});
+      number(unmatchedMotion.minimum_delay_motion_km,
+        'capture.aircraft_clips.unmatched_motion.minimum_delay_motion_km', {min: 0, max: 1000});
+      number(unmatchedMotion.minimum_net_delay_motion_km,
+        'capture.aircraft_clips.unmatched_motion.minimum_net_delay_motion_km', {min: 0, max: 1000});
+      number(unmatchedMotion.maximum_delay_fit_rms_km,
+        'capture.aircraft_clips.unmatched_motion.maximum_delay_fit_rms_km', {min: 0, max: 1000});
+      number(unmatchedMotion.maximum_kinematic_error_mps,
+        'capture.aircraft_clips.unmatched_motion.maximum_kinematic_error_mps', {min: 0, max: 10000});
+      number(unmatchedMotion.minimum_measured_cpis,
+        'capture.aircraft_clips.unmatched_motion.minimum_measured_cpis',
+        {min: 3, max: 255, integer: true});
+      number(unmatchedMotion.minimum_duration_seconds,
+        'capture.aircraft_clips.unmatched_motion.minimum_duration_seconds',
+        {min: 0, max: 300});
+      number(unmatchedMotion.minimum_absolute_doppler_hz,
+        'capture.aircraft_clips.unmatched_motion.minimum_absolute_doppler_hz',
+        {min: 0, max: 10000});
+      number(unmatchedMotion.minimum_interval_seconds,
+        'capture.aircraft_clips.unmatched_motion.minimum_interval_seconds',
+        {min: 5, max: 3600});
+    }
     if (Number.isFinite(aircraftClips.pre_seconds) && Number.isFinite(aircraftClips.post_seconds) &&
         aircraftClips.pre_seconds + aircraftClips.post_seconds > 10)
       errors.push('capture.aircraft_clips pre_seconds plus post_seconds cannot exceed 10 seconds');
@@ -327,8 +361,7 @@ function validateConfig(config, baseline = null, options = {}) {
     });
     allowed.forEach(key => {
       if (!Object.prototype.hasOwnProperty.call(device, key) &&
-          !(device.type === 'RspDuo' && key === 'serial') &&
-          !(device.type === 'Usrp' && key === 'timing_source'))
+          !(device.type === 'RspDuo' && key === 'serial'))
         errors.push(`capture.device.${key} is required for ${device.type}`);
     });
   }
@@ -537,9 +570,34 @@ function validateConfig(config, baseline = null, options = {}) {
   }
 
   const cpi = number(data.cpi, 'process.data.cpi', {exclusiveMin: 0});
+  if (processConfig.delay_reference_sample_rate_hz !== undefined)
+    number(processConfig.delay_reference_sample_rate_hz,
+      'process.delay_reference_sample_rate_hz', {integer: true, min: 1, max: UINT32_MAX});
   const buffer = number(data.buffer, 'process.data.buffer', {min: 1});
+  // DSP/channelization follow the recording while replay is active. Keep
+  // the saved live receiver profile independent of the recorded passband.
+  const sampleRate = replay.state === true && Number.isFinite(replay.sample_rate_hz) ?
+    replay.sample_rate_hz : Number.isFinite(capture.fs) ? capture.fs : null;
+  const inputFrequency = replay.state === true && Number.isFinite(replay.frequency_hz) ?
+    replay.frequency_hz : capture.fc;
+  const topologyInputCount = replay.state === true && Number.isInteger(replay.channel_count) ?
+    replay.channel_count : device.type === 'Kraken' && Number.isInteger(device.channel_count) ?
+      device.channel_count : 2;
+  if (processConfig.delay_reference_sample_rate_hz !== undefined) try {
+    const effective = effectiveDelayConfig(root, sampleRate).process;
+    ambiguity = effective.ambiguity; clutter = effective.clutter; detection = effective.detection;
+  } catch (error) { errors.push(`process.delay_reference_sample_rate_hz: ${error.message}`); }
   if (multiIlluminator) {
     boolean(multiIlluminator.enabled, 'process.multi_illuminator.enabled');
+    if (multiIlluminator.input_phase_correction !== undefined)
+      oneOf(multiIlluminator.input_phase_correction,
+        'process.multi_illuminator.input_phase_correction', ['automatic', 'off']);
+    const siteGrouping = multiIlluminator.transmitter_site_grouping ?? 'automatic';
+    oneOf(siteGrouping, 'process.multi_illuminator.transmitter_site_grouping',
+      ['automatic', 'explicit']);
+    if (multiIlluminator.co_location_radius_m !== undefined)
+      number(multiIlluminator.co_location_radius_m,
+        'process.multi_illuminator.co_location_radius_m', {min: 0, max: 10000});
     const illuminators = multiIlluminator.illuminators;
     if (!Array.isArray(illuminators) || illuminators.length > 16 ||
         (multiIlluminator.enabled === true && illuminators.length < 1))
@@ -555,7 +613,8 @@ function validateConfig(config, baseline = null, options = {}) {
         }
         const allowed = new Set(['id', 'enabled', 'standard', 'frequency_hz',
           'occupied_bandwidth_hz', 'output_sample_rate_hz',
-          'filter_taps_per_phase', 'transmitter']);
+          'filter_taps_per_phase', 'atsc_reference_mode', 'input_role_mode', 'reference_channel',
+          'surveillance_channels', 'transmitter']);
         Object.keys(illuminator).forEach(key => {
           if (!allowed.has(key)) errors.push(`${field}.${key} is not supported`);
         });
@@ -569,7 +628,40 @@ function validateConfig(config, baseline = null, options = {}) {
         boolean(illuminator.enabled, `${field}.enabled`);
         if (illuminator.enabled === true) enabled += 1;
         oneOf(illuminator.standard, `${field}.standard`,
-          ['FM', 'DAB', 'ATSC', 'DVB-T/T2']);
+          ['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0',
+            'DVB-T/T2', 'ISDB-T', 'DTMB', 'CUSTOM']);
+        if (illuminator.atsc_reference_mode !== undefined) {
+          oneOf(illuminator.atsc_reference_mode, `${field}.atsc_reference_mode`,
+            ['automatic', 'raw', 'pilot_aided']);
+          if (!['ATSC', 'ATSC-1.0', 'ATSC-3.0'].includes(illuminator.standard) &&
+              illuminator.atsc_reference_mode !== 'raw')
+            errors.push(`${field}.atsc_reference_mode requires an ATSC standard unless it is raw`);
+          if (illuminator.standard === 'ATSC-3.0' &&
+              illuminator.atsc_reference_mode === 'pilot_aided')
+            errors.push(`${field}.atsc_reference_mode pilot_aided requires standard ATSC 1.0`);
+        }
+        const laneReference = illuminator.reference_channel === undefined ? null :
+          number(illuminator.reference_channel, `${field}.reference_channel`,
+            {integer: true, min: 0, max: 7});
+        const laneSurveillance = illuminator.surveillance_channels === undefined ? [] :
+          integerArray(illuminator.surveillance_channels,
+            `${field}.surveillance_channels`);
+        const explicitInputRoles = laneReference !== null || laneSurveillance.length > 0;
+        const inputRoleMode = illuminator.input_role_mode ??
+          (explicitInputRoles ? 'manual' : 'automatic');
+        oneOf(inputRoleMode, `${field}.input_role_mode`, ['automatic', 'manual']);
+        if (inputRoleMode === 'automatic' && explicitInputRoles)
+          errors.push(`${field} automatic input roles cannot include manual channel overrides`);
+        if (laneReference !== null && laneReference >= topologyInputCount)
+          errors.push(`${field}.reference_channel must identify one of the ${topologyInputCount} coherent inputs`);
+        laneSurveillance.forEach((channel, channelIndex) => {
+          if (channel >= topologyInputCount)
+            errors.push(`${field}.surveillance_channels[${channelIndex}] must identify one of the ${topologyInputCount} coherent inputs`);
+        });
+        if (laneReference !== null && laneSurveillance.includes(laneReference))
+          errors.push(`${field}.reference_channel cannot also be a surveillance channel`);
+        if (new Set(laneSurveillance).size !== laneSurveillance.length)
+          errors.push(`${field}.surveillance_channels must be unique`);
         const frequency = number(illuminator.frequency_hz,
           `${field}.frequency_hz`, {integer: true, min: 1, max: UINT32_MAX});
         const bandwidth = number(illuminator.occupied_bandwidth_hz,
@@ -581,23 +673,35 @@ function validateConfig(config, baseline = null, options = {}) {
         if (frequencies.has(frequency))
           errors.push('process.multi_illuminator illuminator frequencies must be unique');
         frequencies.add(frequency);
-        if (activeLane && Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
-            capture.fs % outputRate !== 0)
-          errors.push(`${field}.output_sample_rate_hz must divide capture.fs exactly`);
+        if (activeLane && Number.isInteger(sampleRate) && Number.isInteger(outputRate) &&
+            sampleRate % outputRate !== 0)
+          errors.push(`${field}.output_sample_rate_hz must divide ${replay.state === true ?
+            'the replay sample rate' : 'capture.fs'} exactly`);
         if (activeLane && Number.isFinite(bandwidth) && Number.isFinite(outputRate) &&
             bandwidth >= outputRate)
           errors.push(`${field}.occupied_bandwidth_hz must be smaller than output_sample_rate_hz`);
         if (activeLane && Number.isFinite(frequency) && Number.isFinite(bandwidth) &&
-            Number.isFinite(capture.fc) && Number.isFinite(capture.fs) &&
-            Math.abs(frequency - capture.fc) + bandwidth / 2 >= capture.fs / 2)
+            Number.isFinite(inputFrequency) && Number.isFinite(sampleRate) &&
+            Math.abs(frequency - inputFrequency) + bandwidth / 2 >= sampleRate / 2)
           errors.push(`${field}.frequency_hz and occupied bandwidth must fit inside the captured passband`);
         if (illuminator.filter_taps_per_phase !== undefined)
           number(illuminator.filter_taps_per_phase,
             `${field}.filter_taps_per_phase`, {integer: true, min: 4, max: 128});
         const tapsPerPhase = illuminator.filter_taps_per_phase ?? 24;
-        if (activeLane && Number.isInteger(capture.fs) && Number.isInteger(outputRate) &&
-            outputRate > 0 && capture.fs % outputRate === 0 &&
-            tapsPerPhase * (capture.fs / outputRate) + 1 > 131071)
+        if (activeLane && illuminator.standard === 'ATSC-3.0' && bandwidth === 5380000)
+          advise(`${field}.occupied_bandwidth_hz`,
+            '5.38 MHz is the ATSC 1.0 width and trims useful carriers from an unreduced 6 MHz ATSC 3.0 waveform; use the decoded profile width (5.832844 MHz for bsr=2, C_red=0).');
+        if (activeLane && illuminator.standard === 'ATSC-3.0' &&
+            bandwidth >= 5800000 && tapsPerPhase < 96)
+          advise(`${field}.filter_taps_per_phase`,
+            'A short channel filter attenuates the outer ATSC 3.0 carriers; use at least 96 taps per phase after checking the live CPI budget.');
+        if (activeLane && ['ATSC', 'ATSC-1.0'].includes(illuminator.standard) &&
+            bandwidth === 5380000 && tapsPerPhase < 48)
+          advise(`${field}.filter_taps_per_phase`,
+            'A short channel filter attenuates the ATSC 1.0 occupied-band edge; 48 to 64 taps per phase preserves it more accurately.');
+        if (activeLane && Number.isInteger(sampleRate) && Number.isInteger(outputRate) &&
+            outputRate > 0 && sampleRate % outputRate === 0 &&
+            tapsPerPhase * (sampleRate / outputRate) + 1 > 131071)
           errors.push(`${field} full-quality channel filter exceeds 131,071 taps`);
         const transmitter = requireObject(illuminator.transmitter,
           `${field}.transmitter`);
@@ -607,9 +711,18 @@ function validateConfig(config, baseline = null, options = {}) {
         number(transmitter.altitude, `${field}.transmitter.altitude`,
           {min: -500, max: 100000});
         Object.keys(transmitter).forEach(key => {
-          if (!['name', 'latitude', 'longitude', 'altitude'].includes(key))
+          if (!['name', 'site_id', 'latitude', 'longitude', 'altitude'].includes(key))
             errors.push(`${field}.transmitter.${key} is not supported`);
         });
+        if (transmitter.site_id !== undefined) {
+          string(transmitter.site_id, `${field}.transmitter.site_id`);
+          if (typeof transmitter.site_id === 'string' &&
+              !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(transmitter.site_id))
+            errors.push(`${field}.transmitter.site_id must use 1 to 64 letters, numbers, dots, underscores, or dashes`);
+        }
+        if (siteGrouping === 'explicit' && illuminator.enabled === true &&
+            !(typeof transmitter.site_id === 'string' && transmitter.site_id.trim()))
+          errors.push(`${field}.transmitter.site_id is required by explicit transmitter-site grouping`);
       });
       if (multiIlluminator.enabled === true && enabled < 1)
         errors.push('process.multi_illuminator requires at least one enabled illuminator');
@@ -618,11 +731,6 @@ function validateConfig(config, baseline = null, options = {}) {
       number(ports.illuminator, 'network.ports.illuminator',
         {integer: true, min: 1, max: 65535});
   }
-  // Processing limits follow the recording while replay is active. The live
-  // receiver's saved rate remains untouched so cross-SDR replay does not make
-  // its device profile invalid.
-  const sampleRate = replay.state === true && Number.isFinite(replay.sample_rate_hz) ?
-    replay.sample_rate_hz : Number.isFinite(capture.fs) ? capture.fs : null;
   const cpiSamples = cpi !== null && sampleRate !== null ?
     Math.floor(cpi * sampleRate) : null;
   if (cpiSamples !== null && (cpiSamples < 2000 || cpiSamples > INT32_MAX))
@@ -672,12 +780,12 @@ function validateConfig(config, baseline = null, options = {}) {
       ambiguityCpi = correlationSamples * dopplerBins / sampleRate;
       // FFT rounding matches next_hamming (factors 2, 3 and 5). Never loop
       // through user-sized ranges: only bounded candidate lengths are searched.
-      const required = 2 * correlationSamples - 1;
+      const required = correlationSamples + Math.max(Math.abs(delayMin || 0), Math.abs(delayMax || 0));
       let fft = Infinity;
       for (let a = 1; a <= 65535; a *= 2)
         for (let b = a; b <= 65535; b *= 3)
           for (let n = b; n <= 65535; n *= 5)
-            if (n > required) fft = Math.min(fft, n);
+            if (n >= required) fft = Math.min(fft, n);
       if (!Number.isFinite(fft))
         errors.push('process.ambiguity.dopplerMax: widen the Doppler span; correlation FFT exceeds the processor limit');
       if (delayBins !== null && delayBins >= fft)
@@ -738,8 +846,29 @@ function validateConfig(config, baseline = null, options = {}) {
   number(detection.nCentroid, 'process.detection.nCentroid',
     {integer: true, min: 0, max: 65535});
   number(detection.minDelay, 'process.detection.minDelay',
-    {integer: true, min: -128, max: 127});
+    {integer: true, min: INT32_MIN, max: INT32_MAX});
   number(detection.minDoppler, 'process.detection.minDoppler', {min: 0});
+  if (detection.doppler_ridge_scrubber !== undefined) {
+    const scrubber = requireObject(detection.doppler_ridge_scrubber,
+      'process.detection.doppler_ridge_scrubber');
+    oneOf(scrubber.mode, 'process.detection.doppler_ridge_scrubber.mode',
+      ['off', 'shadow', 'active']);
+    number(scrubber.persistence_cpis,
+      'process.detection.doppler_ridge_scrubber.persistence_cpis',
+      {integer: true, min: 2, max: 65535});
+    ['minimum_excess_db', 'maximum_subtraction_db'].forEach(key =>
+      number(scrubber[key], `process.detection.doppler_ridge_scrubber.${key}`,
+        {exclusiveMin: 0, max: 60}));
+    number(scrubber.doppler_tolerance_hz,
+      'process.detection.doppler_ridge_scrubber.doppler_tolerance_hz',
+      {min: 0, max: 100});
+    number(scrubber.neighborhood_rows,
+      'process.detection.doppler_ridge_scrubber.neighborhood_rows',
+      {integer: true, min: 2, max: 128});
+    number(scrubber.delay_stride,
+      'process.detection.doppler_ridge_scrubber.delay_stride',
+      {integer: true, min: 1, max: 64});
+  }
   if (detection.integration_cpis !== undefined)
     number(detection.integration_cpis, 'process.detection.integration_cpis',
       {integer: true, min: 1, max: 2});
@@ -815,6 +944,21 @@ function validateConfig(config, baseline = null, options = {}) {
     if (stationaryClutter.enable === true &&
         !Number.isInteger(stationaryClutter.persistence_cpis))
       errors.push('enabled persistent clutter filtering requires persistence_cpis');
+  }
+  if (initiate.doppler_ridge_clutter !== undefined) {
+    const ridge = requireObject(initiate.doppler_ridge_clutter,
+      'process.tracker.initiate.doppler_ridge_clutter');
+    boolean(ridge.enable,
+      'process.tracker.initiate.doppler_ridge_clutter.enable');
+    number(ridge.persistence_cpis,
+      'process.tracker.initiate.doppler_ridge_clutter.persistence_cpis',
+      {integer: true, min: 2, max: 65535});
+    number(ridge.doppler_tolerance_hz,
+      'process.tracker.initiate.doppler_ridge_clutter.doppler_tolerance_hz',
+      {min: .1, max: 100});
+    number(ridge.minimum_delay_separation_km,
+      'process.tracker.initiate.doppler_ridge_clutter.minimum_delay_separation_km',
+      {min: .001, max: 1000});
   }
   if (maxAcc !== null && ambiguityCpi &&
       maxAcc * ambiguityCpi * ambiguityCpi > 65535)
@@ -1214,7 +1358,38 @@ function validateConfig(config, baseline = null, options = {}) {
         errors.push('bearing output requires confirmed mapping, geometry, and orientation');
     }
   }
+  if (device.type === 'Usrp' || device.type === 'RspDuo') {
+    // Coherent paired receivers use the same processing-topology contract as
+    // Kraken even though they do not expose an array channel-count control.
+    // In dedicated mode this single channel is the native reference input and
+    // the other coherent input is surveillance.
+    const synthesis = processConfig.reference_synthesis === undefined ?
+      {mode: 'dedicated', channels: [0]} :
+      requireObject(processConfig.reference_synthesis, 'process.reference_synthesis');
+    if (!['dedicated', 'array_eigenbeam'].includes(synthesis.mode))
+      errors.push('process.reference_synthesis.mode must be dedicated or array_eigenbeam');
+    const referenceChannels = synthesis.channels === undefined ? [] :
+      integerArray(synthesis.channels, 'process.reference_synthesis.channels');
+    const channelCount = replay.state === true && Number.isInteger(replay.channel_count) ?
+      replay.channel_count : Array.isArray(device.gain) ? device.gain.length : 2;
+    referenceChannels.forEach(channel => {
+      if (Number.isInteger(channel) && channel >= channelCount)
+        errors.push(`process.reference_synthesis.channels: input ${channel} is outside the configured channel count`);
+    });
+    if (synthesis.mode === 'dedicated' && referenceChannels.length !== 1)
+      errors.push('dedicated reference synthesis requires exactly one reference channel');
+    if (synthesis.mode === 'array_eigenbeam' && referenceChannels.length < 2)
+      errors.push('array_eigenbeam reference synthesis requires at least two reference channels');
+  }
 
+  if (multiIlluminator?.doppler_window !== undefined &&
+      !['rectangular', 'hann', 'tukey25'].includes(
+        multiIlluminator.doppler_window))
+    errors.push('process.multi_illuminator.doppler_window must be rectangular, hann, or tukey25');
+  if (multiIlluminator?.doppler_window !== undefined &&
+      multiIlluminator.doppler_window !== 'rectangular' &&
+      capture.replay?.state !== true)
+    errors.push('experimental process.multi_illuminator.doppler_window requires replay mode');
   if (multiIlluminator?.enabled === true) {
     const fusion = processConfig.surveillance_fusion;
     const bearing = processConfig.bearing;
@@ -1399,6 +1574,27 @@ function validateConfig(config, baseline = null, options = {}) {
     else {
       try { fs.accessSync(save.path, fs.constants.R_OK | fs.constants.W_OK); }
       catch (_) { errors.push('save.path is not readable and writable by the VectorWarp service'); }
+    }
+  }
+  if (multiIlluminator?.enabled === true && Array.isArray(multiIlluminator.illuminators)) {
+    for (const lane of multiIlluminator.illuminators.filter(item => item?.enabled === true)) {
+      try {
+        const rate = lane.output_sample_rate_hz;
+        const effective = effectiveDelayConfig(root, rate, {scaleNeighborhoods: true}).process;
+        const a = effective.ambiguity, d = effective.detection, c = effective.clutter;
+        const samples = Math.round(cpi * rate), bins = a.delayMax - a.delayMin + 1;
+        const dopplers = 1 + 2 * Math.floor((a.dopplerMax - a.dopplerMin) / 2 * samples / rate);
+        const correlation = Math.floor(samples / dopplers);
+        const cmin = c.followAmbiguity ? a.delayMin : c.delayMin;
+        const cmax = c.followAmbiguity ? a.delayMax + 1 : c.delayMax;
+        if (!Number.isSafeInteger(samples) || samples < 2000 || samples > INT32_MAX ||
+            !Number.isInteger(dopplers) || dopplers < 1 || dopplers > 65535 ||
+            bins < 2 || bins > 65534 || a.delayMin <= -correlation || a.delayMax >= correlation ||
+            correlation + Math.max(Math.abs(a.delayMin), Math.abs(a.delayMax)) > 65535 ||
+            d.minDelay < a.delayMin || d.minDelay > a.delayMax || 2 * d.nGuard + 2 >= bins ||
+            (c.enable && (!(cmax > cmin) || cmax - cmin > samples || cmax - cmin + samples + 1 > INT32_MAX)))
+          errors.push(`process.multi_illuminator.${lane.id}: effective delay/CPI geometry exceeds lane limits`);
+      } catch (error) { errors.push(`process.multi_illuminator.${lane.id}: ${error.message}`); }
     }
   }
   return {valid: errors.length === 0, errors: [...new Set(errors)], notices, arrayGeometry,
