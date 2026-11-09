@@ -192,7 +192,7 @@ bool Plan::runtimeSelectable() const noexcept
     directWork+=perChannel*config_.channels;
   }
   if(direct&&directWork<=uint64_t(8'000'000'000ULL))return true;
-  if(config_.lanes.front().decimation<32)return false;
+  if(config_.lanes.front().decimation<2)return false;
   const uint32_t decimation=config_.lanes.front().decimation;
   uint32_t maximumTaps=0;uint64_t period=decimation;
   for(const auto& lane:config_.lanes)
