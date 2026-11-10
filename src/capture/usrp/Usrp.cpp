@@ -4,6 +4,7 @@
 #include "UsrpIngress.h"
 #include "UsrpCoherence.h"
 
+#include <algorithm>
 #include <string.h>
 #include <iostream>
 #include <vector>
@@ -219,6 +220,14 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
 
     // Set and independently read back both channels before opening the stream.
     const auto applied = apply_usrp_settings(*usrp, uhd::usrp::subdev_spec_t(subdev), fc, fs, gain, antenna);
+    if (applied.sampleRateHz.size() != 2 ||
+        std::abs(applied.sampleRateHz[0] - applied.sampleRateHz[1]) >
+          std::max(1e-6, std::max(applied.sampleRateHz[0], applied.sampleRateHz[1]) * 1e-12))
+      throw std::runtime_error("[USRP] Applied channel sample rates are not coherent.");
+    // UHD timestamps are expressed on the hardware-applied rate. Even a
+    // sub-hertz coercion from the requested integer rate otherwise accumulates
+    // into false one-sample discontinuities during an uninterrupted stream.
+    deviceTime.configure_sample_rate(applied.sampleRateHz[0]);
     const auto attestation = attest_usrp_coherence(*usrp, subdev);
     {
       std::lock_guard<std::mutex> lock(provenanceMutex);
