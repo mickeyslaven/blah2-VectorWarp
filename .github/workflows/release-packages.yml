@@ -220,7 +220,12 @@ jobs:
     # Stable builds stage only VectorWarp's local RSPduo source kit. No job
     # receives, downloads, or caches the separately licensed SDRplay SDK.
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # Hosted mirror throughput varies substantially for the disposable
+    # installed-service OS: a fresh all-receiver package can pull hundreds of
+    # distro dependencies before the unchanged browser/replay and upgrade
+    # assertions run. Keep the complete acceptance path instead of cancelling
+    # successful slow-mirror jobs at the former 60-minute ceiling.
+    timeout-minutes: 120
     steps:
       - name: Require successful build and test-environment prerequisites
         env:
