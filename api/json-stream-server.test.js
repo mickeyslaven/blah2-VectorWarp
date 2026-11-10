@@ -257,8 +257,14 @@ async function send(port, chunks) {
     assert.equal(child.exitCode, null, 'Malformed input must not stop the API process');
     console.log('JSON stream server fragmentation, isolation, error containment and recovery tests passed.');
   } finally {
-    if (child && child.exitCode === null) child.kill('SIGTERM');
-    fs.rmSync(directory, {recursive: true, force: true});
+    if (child && child.exitCode === null) {
+      await new Promise(resolve => {
+        child.once('close', resolve);
+        if (!child.kill('SIGTERM')) resolve();
+      });
+    }
+    fs.rmSync(directory, {recursive: true, force: true, maxRetries: 10,
+      retryDelay: 50});
   }
 })().catch(error => {
   console.error(error);
