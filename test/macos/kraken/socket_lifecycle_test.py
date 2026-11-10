@@ -118,6 +118,9 @@ int fake_accept(int fd,sockaddr*,socklen_t*) {
 ssize_t fake_send(int fd,const void*,size_t bytes,int) {
     checked_fd(fd); ++send_calls; return static_cast<ssize_t>(bytes);
 }
+ssize_t fake_recv(int fd,void*,size_t,int) {
+    checked_fd(fd); errno=EAGAIN; return -1;
+}
 struct JoiningThread {
     std::thread thread;
     JoiningThread& operator=(std::thread&& value) { thread=std::move(value); return *this; }
@@ -151,6 +154,7 @@ constexpr size_t MAX_DATA_CLIENTS=8, MAX_CONTROL_CLIENTS=8;
 #define select(...) fake_select(__VA_ARGS__)
 #define accept(...) fake_accept(__VA_ARGS__)
 #define send(...) fake_send(__VA_ARGS__)
+#define recv(...) fake_recv(__VA_ARGS__)
 #define sock_socket(...) fake_socket(__VA_ARGS__)
 #define sock_close(...) fake_close(__VA_ARGS__)
 #define sock_bind(...) fake_bind(__VA_ARGS__)
@@ -158,6 +162,7 @@ constexpr size_t MAX_DATA_CLIENTS=8, MAX_CONTROL_CLIENTS=8;
 #define sock_select(...) fake_select(__VA_ARGS__)
 #define sock_accept(...) fake_accept(__VA_ARGS__)
 #define sock_send(...) fake_send(__VA_ARGS__)
+#define sock_recv(...) fake_recv(__VA_ARGS__)
 #define sock_setsockopt(...) fake_setsockopt(__VA_ARGS__)
 #define sock_fits_fd_set(fd,count) ((fd) >= 0 && (fd) < FD_SETSIZE)
 #define sock_set_keepalive(fd,idle,interval,count) ((void)0)

@@ -162,6 +162,24 @@ void test_accept_loop_cap() {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         assert(limited.client_count() == expected);
     }
+    // A data client can disconnect while calibration has FFT publication
+    // disabled. The accept loop must reap that peer without relying on a later
+    // broadcast, or eight short-lived probes permanently exhaust the server.
+    close(peers.front());
+    peers.erase(peers.begin());
+    const auto reap_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (limited.client_count() != 7 && std::chrono::steady_clock::now() < reap_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    assert(limited.client_count() == 7);
+    int replacement = socket(AF_INET, SOCK_STREAM, 0);
+    assert(replacement >= 0);
+    assert(connect(replacement, reinterpret_cast<sockaddr*>(&address), sizeof address) == 0);
+    nonblocking(replacement);
+    peers.push_back(replacement);
+    const auto replacement_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (limited.client_count() != 8 && std::chrono::steady_clock::now() < replacement_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    assert(limited.client_count() == 8);
     int ninth = socket(AF_INET, SOCK_STREAM, 0);
     assert(ninth >= 0);
     assert(connect(ninth, reinterpret_cast<sockaddr*>(&address), sizeof address) == 0);
