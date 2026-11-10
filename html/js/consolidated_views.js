@@ -31,13 +31,13 @@
     document.getElementById('view-title').textContent = titles[view];
     if (view === 'timing') {
       window.xTitle = 'Timestamp';
-      window.yTitle = 'Time (ms)';
+      window.yTitle = 'Stage time (ms)';
       content.innerHTML = '<section class="timing-summary" id="presentation-timing" aria-live="polite"><div><strong>Connecting</strong><span>Presentation timing</span></div></section><section class="panel"><div class="visualization" id="data"></div></section>';
       load('../../js/plot_timing.js?v=consolidated-pages-1');
     } else {
       document.body.dataset.insightView = view;
       content.innerHTML = '<div id="view-root"></div>';
-      load('../../js/insights.js?v=frame-health-2');
+      load('../../js/insights.js?v=ui-consistency-18');
     }
   } else if (kind === 'signal') {
     if (view === 'maxhold') {
@@ -46,7 +46,7 @@
       // lane's live map instead.
       window.urlMap = '/api/map';
       window.vectorwarpMapMode = 'maxhold';
-      load('../../js/plot_map.js?v=multi-illuminator-2');
+      load('../../js/plot_map.js?v=fusion-map-1');
     } else load('../../js/plot_spectrum.js?v=consolidated-pages-1');
   } else if (kind === 'detection') {
     const variables = {
@@ -56,6 +56,6 @@
     }[view];
     [window.xTitle, window.yTitle, window.xVariable, window.yVariable] = variables;
     window.vectorwarpDetectionHistory = view !== 'range-doppler';
-    load('../../js/plot_detection.js?v=multi-illuminator-2');
+    load('../../js/plot_detection.js?v=fusion-map-1');
   }
 }());

@@ -11,6 +11,7 @@ const dom = new JSDOM(`<!doctype html><body data-insight-view="statistics">
 let refresh;
 let now = 10000;
 let updatedAt = 1000;
+let requestCount = 0;
 const scorecard = () => ({
   updated_at: updatedAt,
   decision_grade: true,
@@ -31,8 +32,11 @@ const context = vm.createContext({
   liveApiUrl: path => path, getRadarRuntimeConfig: async () => ({}),
   radarPresentationUrl: path => path,
   startRadarUpdates: callback => { refresh = callback; return {stop() {}}; },
-  fetchStatusResource: async () => ({ok: true, status: 200,
-    text: async () => JSON.stringify(scorecard())})
+  fetchStatusResource: async () => {
+    requestCount++;
+    return {ok: true, status: 200,
+      text: async () => JSON.stringify(scorecard())};
+  }
 });
 vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), context,
   {filename: 'insights.js'});
@@ -51,8 +55,12 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
   dom.window.document.documentElement.scrollTop = 211;
 
   updatedAt = 2000;
+  const requestsAfterInitialRender = requestCount;
   now += 2000;
   await refresh();
+
+  assert.equal(requestCount, requestsAfterInitialRender,
+    'statistics kiosk avoids rebuilding the rich page between 30-second polls');
 
   assert.strictEqual(root.querySelector('.statistics-details'), details,
     'live data refresh preserves the menu node');
@@ -65,5 +73,9 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
     'live data refresh preserves focus');
   assert.equal(dom.window.document.documentElement.scrollTop, 211,
     'live data refresh does not jump the page scroll position');
+  now += 28000;
+  await refresh();
+  assert.ok(requestCount > requestsAfterInitialRender,
+    'statistics kiosk refreshes after the 30-second interval');
   console.log('Insight refresh preserves menu, node, focus, local scroll and page scroll state.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

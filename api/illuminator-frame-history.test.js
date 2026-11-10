@@ -15,4 +15,13 @@ history.add(frame('b', 4), 90);
 assert.equal(history.latest('a'), null, 'global byte bound evicts the oldest lane');
 assert.equal(history.latest('b').timestamp, 4);
 assert.throws(() => new IlluminatorFrameHistory({maxFramesPerIlluminator: 0}));
+const cohorts = new IlluminatorFrameHistory({maxFramesPerIlluminator: 4});
+const aligned = (id, timestamp) => ({...frame(id, timestamp),
+  capture_sample_position_available: true, capture_epoch: 3,
+  capture_first_input_sample: 1000, capture_end_input_sample: 2000});
+cohorts.add(aligned('a', 10)); cohorts.add(aligned('b', 11));
+assert.deepEqual(cohorts.latestCohort(['a', 'b']).map(item => item.id), ['a', 'b']);
+cohorts.add({...aligned('b', 12), capture_epoch: 4});
+assert.deepEqual(cohorts.latestCohort(['a', 'b']).map(item => item.timestamp), [10, 11],
+  'cohort selection uses capture provenance rather than unrelated latest frames');
 console.log('Bounded illuminator frame history tests passed.');

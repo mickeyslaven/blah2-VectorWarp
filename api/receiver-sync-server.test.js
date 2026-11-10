@@ -440,7 +440,8 @@ function withSixChannels(config) {
     const direct = clone(reconcile);
     direct.capture.fs = 2000000;
     direct.capture.device = {type: 'Usrp', address: 'type=b200',
-      subdev: 'A:A A:B', antenna: ['RX2', 'RX2'], gain: [20, 20]};
+      subdev: 'A:A A:B', timing_source: 'internal',
+      antenna: ['RX2', 'RX2'], gain: [20, 20]};
     delete direct.process.reference_synthesis;
     const directResult = await request(apiPort, 'PUT', '/api/config?restart=false',
       direct, revision, intent);

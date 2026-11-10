@@ -74,7 +74,8 @@ function receiverCapabilities(config) {
   const spatial = coherent && channels >= 3 && positioned &&
     finite(geometry?.x_axis_bearing_deg_true);
   return {receiver_type: type, coherent_channels: coherent ? channels : 0,
-    standards: ['FM', 'DAB', 'ATSC', 'DVB-T/T2'],
+    standards: ['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0', 'DVB-T/T2',
+      'ISDB-T', 'DTMB', 'CUSTOM'],
     managed_retune: kraken ? 'suite-v2-readback-and-calibration' :
       coherent ? 'processor-owned-restart' : 'unsupported',
     rf_prescreen: coherent,

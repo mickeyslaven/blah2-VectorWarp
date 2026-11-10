@@ -82,7 +82,8 @@ const SETTINGS_SYNC = Object.freeze({
     hardwareReadback: false}))),
   Usrp: Object.freeze([
     'capture.fc', 'capture.fs', 'capture.device.address',
-    'capture.device.subdev', 'capture.device.antenna', 'capture.device.gain'
+    'capture.device.subdev', 'capture.device.timing_source',
+    'capture.device.antenna', 'capture.device.gain'
   ].map(configField => Object.freeze({configField, authority: 'vectorwarp',
     direction: 'direct-tuning', confirmation: 'processor-startup-uhd-readback',
     hardwareReadback: true, physicalRfVerified: false}))),

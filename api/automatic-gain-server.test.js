@@ -159,6 +159,7 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     const ports = await reservePorts(Object.keys(config.network.ports).length);
     Object.keys(config.network.ports).forEach((key, i) => { config.network.ports[key] = ports[i]; });
     config.truth.adsb.enabled = false;
+    config.process.delay_reference_sample_rate_hz = config.capture.fs;
     config.capture.device.heimdall = {host: '127.0.0.1', port: iq.address().port,
       control_port: suite.address().port, gain: 14, gain_control: 'fixed'};
     config.capture.device.array_geometry = emptyRecord(5);

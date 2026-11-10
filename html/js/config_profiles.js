@@ -5,7 +5,68 @@
   'use strict';
 
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const finite = value => typeof value === 'number' && Number.isFinite(value);
   const ensure = (parent, key) => object(parent[key]) ? parent[key] : (parent[key] = {});
+
+  function scaleDelayBin(bin, sampleRate, referenceRate, roundUp) {
+    if (!Number.isInteger(bin) || bin < -2147483648 || bin > 2147483647 ||
+        !Number.isInteger(sampleRate) || sampleRate < 1 || sampleRate > 4294967295 ||
+        !Number.isInteger(referenceRate) || referenceRate < 1 || referenceRate > 4294967295)
+      throw new Error('Delay bins and sample rates must be valid integers');
+    const product = BigInt(bin) * BigInt(sampleRate), divisor = BigInt(referenceRate);
+    let result = product / divisor;
+    const remainder = product % divisor;
+    if (roundUp && remainder > 0n) result += 1n;
+    if (!roundUp && remainder < 0n) result -= 1n;
+    if (result < -2147483648n || result > 2147483647n)
+      throw new Error('Scaled delay exceeds the processor limit');
+    return Number(result);
+  }
+
+  function effectiveDelayConfig(config, sampleRate = config.capture?.fs,
+    {scaleNeighborhoods = false} = {}) {
+    const reference = config.process?.delay_reference_sample_rate_hz;
+    if (reference === undefined) return config; // Legacy lane-local bins.
+    const process = config.process || {}, ambiguity = {...process.ambiguity};
+    const clutter = {...process.clutter}, detection = {...process.detection};
+    const scaled = (value, up) => value === undefined ? value :
+      scaleDelayBin(value, sampleRate, reference, up);
+    const scaleRadius = (value, maximum, name) => {
+      if (value === undefined) return value;
+      const result = Math.ceil(value * sampleRate / reference);
+      if (!Number.isSafeInteger(result) || result < 0 || result > maximum)
+        throw new Error(`Effective ${name} exceeds the supported lane limit`);
+      return result;
+    };
+    ambiguity.delayMin = scaled(ambiguity.delayMin, false);
+    ambiguity.delayMax = scaled(ambiguity.delayMax, true);
+    if (clutter.followAmbiguity === true) {
+      clutter.delayMin = ambiguity.delayMin;
+      clutter.delayMax = ambiguity.delayMax === undefined ? undefined : ambiguity.delayMax + 1;
+      if (clutter.delayMax > 2147483647) throw new Error('Clutter followAmbiguity endpoint overflows');
+    } else {
+      clutter.delayMin = scaled(clutter.delayMin, false);
+      clutter.delayMax = scaled(clutter.delayMax, true);
+    }
+    detection.minDelay = scaled(detection.minDelay, true);
+    if (scaleNeighborhoods) {
+      detection.nGuard = scaleRadius(detection.nGuard, 127, 'CFAR guard radius');
+      detection.nTrain = scaleRadius(detection.nTrain, 127, 'CFAR training radius');
+      detection.nCentroid = scaleRadius(detection.nCentroid, 65535, 'centroid radius');
+    }
+    return {...config, process: {...process, delay_reference_sample_rate_hz: sampleRate,
+      ambiguity, clutter, detection}};
+  }
+
+  function legacyDelayReferenceRate(config) {
+    const multi = config.process?.multi_illuminator;
+    const rates = multi?.enabled === true ? (multi.illuminators || [])
+      .filter(lane => lane?.enabled === true).map(lane => lane.output_sample_rate_hz) :
+      [config.capture?.replay?.state === true ?
+        (config.capture.replay.sample_rate_hz ?? config.capture.fs) : config.capture?.fs];
+    return rates.length && rates.every(rate => Number.isInteger(rate) && rate > 0 &&
+      rate <= 4294967295 && rate === rates[0]) ? rates[0] : null;
+  }
 
   const detectionProfiles = Object.freeze({
     conservative: 0.000001,
@@ -155,6 +216,74 @@
     return config?.process?.performance?.acceleration === 'cpu' ? 'cpu' : 'automatic';
   }
 
+  function associationGates(span, prediction, timestamp, kind = 'detection',
+    eventTimeUncertaintyS = 0) {
+    const age = finite(prediction?.timestamp) ?
+      Math.min(span.maxTruthAgeS, Math.max(0, timestamp / 1000 - prediction.timestamp)) :
+      span.maxTruthAgeS;
+    const boundedTimeUncertainty = finite(eventTimeUncertaintyS) ?
+      Math.max(0, eventTimeUncertaintyS) : 0;
+    const horizon = age + span.cpiSeconds * (kind === 'tracker' ? 3 : 1) +
+      boundedTimeUncertainty;
+    const delayMotion = finite(prediction?.delay_rate_km_s) ?
+      Math.abs(prediction.delay_rate_km_s) * horizon : 0;
+    const dopplerMotion = finite(prediction?.doppler_rate_hz_s) ?
+      Math.abs(prediction.doppler_rate_hz_s) * horizon : 0;
+    const delayFloor = span.kmPerBin * (kind === 'tracker' ? 3 : 2);
+    const dopplerFloor = span.dopplerResolutionHz * (kind === 'tracker' ? 4 : 3);
+    return {
+      delayKm: Math.min(Math.max(span.matchDelayKm, delayFloor + delayMotion),
+        Math.max(1, span.kmPerBin * 8)),
+      dopplerHz: Math.min(Math.max(span.matchDopplerHz, dopplerFloor + dopplerMotion),
+        Math.max(25, span.dopplerResolutionHz * 12)),
+      eventTimeUncertaintyS: boundedTimeUncertainty
+    };
+  }
+
+  function assignments(points, predictions, gatesForPrediction, kind, frameTimestamp,
+    diagnostics = null) {
+    const result = new Map(), predictionById = new Map(predictions);
+    for (const point of points) {
+      if (diagnostics) diagnostics.points = (diagnostics.points || 0) + 1;
+      const candidates = predictions.map(([id, prediction]) => {
+        const gates = gatesForPrediction(prediction);
+        const delayError = Math.abs(point.delay - prediction.delay);
+        const dopplerError = Math.abs(point.doppler - prediction.doppler);
+        return {id, delayError, dopplerError, gates,
+          score: (delayError / gates.delayKm) ** 2 +
+            (dopplerError / gates.dopplerHz) ** 2};
+      }).filter(item => item.delayError <= item.gates.delayKm &&
+        item.dopplerError <= item.gates.dopplerHz)
+        .sort((left, right) => left.score - right.score);
+      if (diagnostics) diagnostics.candidate_matches =
+        (diagnostics.candidate_matches || 0) + candidates.length;
+      if (!candidates.length) {
+        if (diagnostics) diagnostics.unmatched_points = (diagnostics.unmatched_points || 0) + 1;
+        continue;
+      }
+      if (candidates.length > 1 && candidates[1].score <= candidates[0].score * 1.15 + .05) {
+        if (diagnostics) diagnostics.ambiguous_points = (diagnostics.ambiguous_points || 0) + 1;
+        continue;
+      }
+      const selected = candidates[0], prediction = predictionById.get(selected.id);
+      const prior = result.get(selected.id);
+      if (prior && prior.normalized_gate_score <= selected.score) continue;
+      result.set(selected.id, {kind, frame_timestamp_ms: frameTimestamp,
+        cell_index: point.index, measured_delay_raw: point.rawDelay,
+        measured_delay_km: point.delay, measured_doppler_hz: point.doppler,
+        measured_snr_db: point.snr ?? null, tracker: point.tracker ?? null,
+        predicted_delay_km: prediction?.delay ?? null,
+        predicted_doppler_hz: prediction?.doppler ?? null,
+        delay_residual_km: point.delay - (prediction?.delay ?? point.delay),
+        doppler_residual_hz: point.doppler - (prediction?.doppler ?? point.doppler),
+        gate_delay_km: selected.gates.delayKm, gate_doppler_hz: selected.gates.dopplerHz,
+        event_time_uncertainty_s: selected.gates.eventTimeUncertaintyS || 0,
+        normalized_gate_score: selected.score});
+      if (diagnostics) diagnostics.selected_points = (diagnostics.selected_points || 0) + 1;
+    }
+    return result;
+  }
+
   function applyProcessingMode(config, mode) {
     const process = ensure(config, 'process');
     const performance = ensure(process, 'performance');
@@ -183,7 +312,8 @@
     return config;
   }
 
-  return {detectionProfiles, trackingProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
+  return {scaleDelayBin, effectiveDelayConfig, legacyDelayReferenceRate,
+    detectionProfiles, trackingProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
     detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode,
-    applyTrackingProfile, processingMode, applyProcessingMode};
+    applyTrackingProfile, processingMode, applyProcessingMode, associationGates, assignments};
 });

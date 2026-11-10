@@ -110,7 +110,17 @@ function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
         response = incoming;
         // Do not forward arbitrary redirects/credentials or accept an HTML login
         // page as a healthy source. Sources are selected from config, never query parameters.
-        if (response.statusCode !== 200) return finish(new Error(`ADS-B source returned HTTP ${response.statusCode}`));
+        if (response.statusCode !== 200) {
+          const retry = response.headers['retry-after'];
+          const numericRetry = Number(retry);
+          const datedRetry = typeof retry === 'string' ? Date.parse(retry) : NaN;
+          const retryAfterMs = Number.isFinite(numericRetry) ? Math.max(0, numericRetry * 1000) :
+            Number.isFinite(datedRetry) ? Math.max(0, datedRetry - Date.now()) : null;
+          const error = new Error(`ADS-B source returned HTTP ${response.statusCode}`);
+          error.statusCode = response.statusCode;
+          if (Number.isFinite(retryAfterMs)) error.retryAfterMs = retryAfterMs;
+          return finish(error);
+        }
         let bytes = 0;
         const chunks = [];
         response.on('data', chunk => {
@@ -164,6 +174,10 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   const exchangePollMs = Number.isFinite(config.truth?.adsb?.exchange_poll_interval) ?
     Math.max(pollMs, Math.min(60000, config.truth.adsb.exchange_poll_interval * 1000)) :
     Math.max(pollMs, 2000);
+  const exchangeSlots = slots.filter(slot => slot.state.kind === 'exchange');
+  let exchangeCursor = 0;
+  let nextExchangePollAt = 0;
+  let lastExchangeSource = null;
   const cpiMs = Number.isFinite(config.process?.data?.cpi) ?
     Math.max(1, config.process.data.cpi * 1000) : 500;
   const associationLagMs = Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
@@ -220,9 +234,11 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       const truthAge = Math.min(geometry.maxAge,
         config.process?.bearing?.manifold_recorder?.max_truth_age_s ?? 3);
       const fresh = ages.filter(age => age >= 0 && age <= truthAge);
-      const {message, candidates, ...prior} = slot.state;
+      const {message, candidates, status_code, retry_after_at, ...prior} = slot.state;
+      slot.retryAfterAt = 0;
       const selectedSource = {...selection.source};
       delete selectedSource.message; delete selectedSource.candidates;
+      delete selectedSource.status_code; delete selectedSource.retry_after_at;
       slot.state = {...prior, ...selectedSource, id: slot.configured,
         mode: slot.classification.mode, state: 'active', healthy: true,
         consecutive_failures: 0,
@@ -237,9 +253,14 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       return {data, source: slot.state, receivedAtMs};
     } catch (error) {
       const failedAt = now();
+      const retryAfterMs = Number.isFinite(error.retryAfterMs) ?
+        Math.max(exchangePollMs, Math.min(3600000, error.retryAfterMs)) : 0;
+      if (retryAfterMs) slot.retryAfterAt = failedAt + retryAfterMs;
       slot.state = {...slot.state, state: 'error', healthy: false, message: error.message,
         consecutive_failures: (slot.state.consecutive_failures || 0) + 1,
         consecutive_successes: 0, last_error_at: failedAt,
+        ...(Number.isInteger(error.statusCode) ? {status_code: error.statusCode} : {}),
+        ...(retryAfterMs ? {retry_after_at: slot.retryAfterAt} : {}),
         latency_ms: Math.max(0, failedAt - startedAt)};
       throw error;
     }
@@ -248,6 +269,10 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const interval = slot.state.kind === 'exchange' ? exchangePollMs : pollMs;
     const failures = Math.max(0, Number(slot.state.consecutive_failures) || 0);
     const retryInterval = interval * Math.min(8, 2 ** failures);
+    if (Number.isFinite(slot.retryAfterAt) && now() < slot.retryAfterAt) {
+      if (slot.lastValue) return slot.lastValue;
+      throw new Error('ADS-B source Retry-After backoff active');
+    }
     if (slot.lastValue && now() - (slot.lastAttemptAt || slot.lastReadAt) < retryInterval)
       return slot.lastValue;
     if (!slot.lastValue && slot.lastAttemptAt && now() - slot.lastAttemptAt < retryInterval)
@@ -262,20 +287,44 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       // A failed refresh must not erase a previously validated feed. Event-time
       // filtering retires its aircraft naturally, while exponential backoff
       // prevents a throttled public endpoint from being hammered every CPI.
-      if (error.invalidSnapshot === true) slot.lastAttemptAt = now() - interval;
+      if (error.invalidSnapshot === true) {
+        slot.lastAttemptAt = now() - interval;
+        slot.lastValue = undefined;
+      }
       if (slot.lastValue && error.invalidSnapshot !== true) return slot.lastValue;
       throw error;
     }
+  }
+  function nextExchangeSlot() {
+    if (!exchangeSlots.length || now() < nextExchangePollAt) return null;
+    for (let offset = 0; offset < exchangeSlots.length; offset += 1) {
+      const index = (exchangeCursor + offset) % exchangeSlots.length;
+      const slot = exchangeSlots[index];
+      if (Number.isFinite(slot.retryAfterAt) && now() < slot.retryAfterAt) continue;
+      exchangeCursor = (index + 1) % exchangeSlots.length;
+      nextExchangePollAt = now() + exchangePollMs;
+      lastExchangeSource = slot.configured;
+      return slot;
+    }
+    nextExchangePollAt = now() + Math.min(exchangePollMs, 1000);
+    return null;
+  }
+  function providerPoolStatus() {
+    return {enabled: exchangeSlots.length > 0, sources: exchangeSlots.length,
+      strategy: 'round_robin', poll_interval_ms: exchangePollMs,
+      last_source: lastExchangeSource, next_poll_at: nextExchangePollAt || null};
   }
   async function rawSnapshots() {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    entry.promise = Promise.allSettled(slots.map(readSourcePaced)).then(results => {
-      const healthy = results.filter(result => result.status === 'fulfilled')
-        .map(result => result.value);
+    const selectedExchange = nextExchangeSlot();
+    const refreshSlots = slots.filter(slot => slot.state.kind !== 'exchange');
+    if (selectedExchange) refreshSlots.push(selectedExchange);
+    entry.promise = Promise.allSettled(refreshSlots.map(readSourcePaced)).then(results => {
+      const healthy = slots.map(slot => slot.lastValue).filter(Boolean);
       if (!healthy.length) throw new Error(`All ADS-B sources failed: ${results.map((result, index) =>
-        `${slots[index].configured}: ${result.reason?.message || 'unavailable'}`).join('; ')}`);
+        `${refreshSlots[index].configured}: ${result.reason?.message || 'unavailable'}`).join('; ')}`);
       return {healthy, failed: slots.length - healthy.length};
     })
       .finally(() => { entry.pending = false; entry.at = now(); });
@@ -370,7 +419,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (!config.truth?.adsb?.enabled) {
       const sources = slots.map(slot => ({...slot.state, state: 'disabled'}));
       return {enabled: false, online: false, degraded: false,
-        source: sources[0], sources, fusion: null};
+        source: sources[0], sources, fusion: null, provider_pool: providerPoolStatus()};
     }
     if (preview || config.capture?.replay?.state) {
       const message = preview ? 'Preview: no live ADS-B connection' :
@@ -379,7 +428,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
         healthy: false, message};
       const sources = slots.map(slot => ({...slot.state}));
       return {enabled: true, online: false, degraded: false, source: sources[0],
-        sources, fusion: fusionState, association_lag_cpis: associationLagMs / cpiMs,
+        sources, fusion: fusionState, provider_pool: providerPoolStatus(),
+        association_lag_cpis: associationLagMs / cpiMs,
         association_lag_ms: associationLagMs,
         aircraft: {available: false, message},
         delayDoppler: {available: false, warming: warmup.length, message}};
@@ -397,7 +447,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const online = sources.some(source => source.healthy === true);
     const degraded = online && sources.some(source => source.healthy === false);
     return {enabled: true, online, degraded, source: sources[0], sources,
-      fusion: fusionState, association_lag_cpis: associationLagMs / cpiMs,
+      fusion: fusionState, provider_pool: providerPoolStatus(),
+      association_lag_cpis: associationLagMs / cpiMs,
       association_lag_ms: associationLagMs,
       aircraft: {available: online, ...(!online ? {message: 'No healthy ADS-B source'} : {})},
       delayDoppler: {available: online, warming: warmup.length,

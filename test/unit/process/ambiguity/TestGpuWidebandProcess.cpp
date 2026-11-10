@@ -99,6 +99,10 @@ TEST_CASE("wideband repeated startup failure is bounded and recoverable")
     REQUIRE_THROWS(blah2::wideband_gpu::createProcess(config,"mock",options));}
   unsetenv("VW_MOCK_WIDEBAND_FAILURE");
   REQUIRE(std::chrono::steady_clock::now()-begin<std::chrono::seconds(2));
+  // Keep the deliberately tiny deadline above for the bounded-failure check,
+  // but do not require a healthy process spawn to finish in 20 ms on slower
+  // Intel CI hosts.
+  options.startupMs=200;
   auto process=blah2::wideband_gpu::createProcess(config,"mock",options);
   REQUIRE(process->deviceName()=="mock-wideband");
 }

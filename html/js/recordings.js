@@ -29,8 +29,12 @@
   function card(item) {
     const expanded = typeof window === 'undefined' || window.innerWidth > 760 ? ' open' : '';
     const quick = [duration(item.duration_seconds), bytes(item.size_bytes), frequency(item.frequency_hz)].filter(value => value !== '—').join(' · ');
+    const remote = typeof selectedNode === 'function' && selectedNode() !== 'local';
     const replay = `/display/configuration?replayFile=${encodeURIComponent(item.replay_file || '')}&replayId=${encodeURIComponent(item.id || '')}`;
-    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><a class="button-link recording-replay" href="${escape(replay)}">Replay recording</a><button class="button-secondary recording-share" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled title="Finish recording before sharing"' : ''}>Share recording</button><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
+    const download = remote && !item.active && /^[A-Za-z0-9_-]{1,256}$/.test(item.id || '') ?
+      `<a class="button-link" href="${escape(liveApiUrl(`/api/recordings/${item.id}/package`))}">Download package (up to 64 MiB)</a>` : '';
+    const localActions = remote ? '' : `<a class="button-link recording-replay" href="${escape(replay)}">Replay recording</a><button class="button-secondary recording-share" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled title="Finish recording before sharing"' : ''}>Share recording</button><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>`;
+    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer>${download}${localActions}${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
   }
   function query() {
     const params = new URLSearchParams({offset: state.offset, limit: pageSize(),
@@ -43,7 +47,10 @@
     const start = result.total ? result.offset + 1 : 0;
     const end = Math.min(result.total, result.offset + result.recordings.length);
     const indexing = result.indexing || result.metadata_indexing;
+    const filtering = Boolean(document.getElementById('recording-search')?.value ||
+      document.getElementById('recording-kind')?.value);
     document.getElementById('recording-page-status').textContent =
+      result.search_incomplete && filtering ? `Showing ${start}–${end} of ${result.total} indexed matches. Search indexing continues…` :
       indexing && !result.recordings.length ? 'Loading recordings… The local library is still being indexed.' :
         result.metadata_indexing ? `Showing ${start}–${end} of ${result.total}. Indexing aircraft metadata for complete search…` :
         `Showing ${start}–${end} of ${result.total}`;
@@ -90,7 +97,8 @@
       const lowSpace = retention.lowSpacePolicy === 'delete_oldest' ? 'Delete oldest aircraft clips' : 'Stop recording';
       summary.innerHTML = `<div><strong>${indexError ? 'Showing the last available recording index' : result.indexing ? 'Indexing recordings…' : `${result.total} matching recording${result.total === 1 ? '' : 's'}`}</strong><span>${indexError ? `Refresh delayed: ${escape(indexError)}` : `${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free`}</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
       const indexing = result.indexing || result.metadata_indexing;
-      list.innerHTML = recordings.length ? recordings.map(card).join('') : indexing ?
+      list.innerHTML = recordings.length ? recordings.map(card).join('') : result.search_incomplete ?
+        '<div class="empty-state recording-loading-state"><strong>No indexed matches yet</strong><p>Aircraft labels are still being indexed; search results will update automatically.</p></div>' : indexing ?
         '<div class="empty-state recording-loading-state"><strong>Loading recordings…</strong><p>Indexing the local recording library and aircraft labels.</p></div>' :
         '<div class="empty-state"><strong>No matching recordings</strong><p>Change the filters, record manually, import a recording, or enable automatic aircraft clips.</p></div>';
       state.rendered = true;
@@ -104,9 +112,11 @@
       if (error?.name === 'AbortError' || requestId !== state.requestId) return;
       if (state.rendered) {
         summary.innerHTML = '<div><strong>Refresh delayed</strong><span>The existing recording list is still available. Retrying shortly…</span></div>';
+        if (pageStatus) pageStatus.textContent = 'Refresh delayed; showing the last available list.';
         state.indexTimer = window.setTimeout(() => load(), 3000);
       } else {
         summary.textContent = 'Recording storage is unavailable.';
+        if (pageStatus) pageStatus.textContent = 'Could not load recordings.';
         list.innerHTML = `<div class="empty-state"><strong>Could not load recordings</strong><p>${escape(error.message)}</p><button type="button" id="recording-retry">Try again</button></div>`;
         document.getElementById('recording-retry')?.addEventListener('click', () => load());
       }
@@ -205,6 +215,15 @@
   }
   function renderRecordings() {
     let timer = null;
+    const remote = typeof selectedNode === 'function' && selectedNode() !== 'local';
+    if (remote) {
+      const input = document.getElementById('recording-import');
+      const label = document.querySelector('label[for="recording-import"]');
+      const status = document.getElementById('recording-import-status');
+      if (input) input.disabled = true;
+      if (label) label.hidden = true;
+      if (status) status.textContent = 'Remote libraries are read-only. Complete packages can be downloaded from this portal.';
+    }
     document.getElementById('recording-refresh')?.addEventListener('click', () => load());
     for (const id of ['recording-kind', 'recording-sort'])
       document.getElementById(id)?.addEventListener('change', () => load({reset: true}));
@@ -221,7 +240,8 @@
       const share = event.target.closest('.recording-share'); if (share) { shareRecording(share); return; }
       const remove = event.target.closest('.recording-delete'); if (remove) deleteRecording(remove);
     });
-    document.getElementById('recording-import')?.addEventListener('change', event => importRecording(event.target));
+    if (!remote)
+      document.getElementById('recording-import')?.addEventListener('change', event => importRecording(event.target));
     document.getElementById('recording-import-cancel')?.addEventListener('click', () => state.importRequest?.abort());
     load();
   }

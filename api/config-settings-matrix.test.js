@@ -61,6 +61,7 @@ try {
   for (const profile of getDeviceProfiles()) {
     const candidate = clone(base); candidate.capture.fs = profile.sampleRate; candidate.capture.device = clone(profile.device);
     if (profile.type === 'HackRF') candidate.capture.device.serial = ['0000000000000001', '0000000000000002'];
+    if (!profile.process?.reference_synthesis) delete candidate.process.reference_synthesis;
     for (const [key, value] of Object.entries(profile.process || {})) candidate.process[key] = clone(value);
     const result = validateConfig(candidate, base); assert.equal(result.valid, true, `${profile.type}: ${result.errors.join('; ')}`);
     for (const leaf of leaves(candidate)) if (FIELD_RULES[leaf.path]) covered.add(leaf.path);
@@ -341,7 +342,8 @@ try {
   multiIlluminatorBase.process.performance.acceleration = 'auto';
   const multiIlluminator = clone(multiIlluminatorBase);
   multiIlluminator.capture.fc = 90900000;
-  multiIlluminator.process.multi_illuminator = {enabled: true, illuminators: [
+  multiIlluminator.process.multi_illuminator = {
+    ...multiIlluminator.process.multi_illuminator, enabled: true, illuminators: [
     {id: 'fm-90.5', enabled: true, standard: 'FM', frequency_hz: 90500000,
       occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
       filter_taps_per_phase: 24,

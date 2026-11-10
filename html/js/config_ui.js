@@ -4,6 +4,25 @@ const configProfiles = typeof module !== 'undefined' && module.exports ?
   require('./config_profiles') : window.VectorWarpConfigProfiles;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
+const ATSC_CHANNELIZER_DEFAULTS = Object.freeze({
+  // A/53 8-VSB nominal occupied bandwidth.  The surrounding part of the
+  // 6 MHz allocation is transition band, not useful carriers.
+  ATSC: Object.freeze({occupiedBandwidthHz: 5380000, tapsPerPhase: 64}),
+  'ATSC-1.0': Object.freeze({occupiedBandwidthHz: 5380000, tapsPerPhase: 64}),
+  // A/322 6 MHz, bsr_coefficient=2, C_red=0.  Other ATSC 3 channel widths
+  // remain editable; this prevents a new 6 MHz lane inheriting A/53's width.
+  'ATSC-3.0': Object.freeze({occupiedBandwidthHz: 5832844, tapsPerPhase: 128})
+});
+
+function applyIlluminatorStandardDefaults(item, selected) {
+  item.standard = selected;
+  const profile = ATSC_CHANNELIZER_DEFAULTS[selected];
+  if (!profile) return item;
+  item.occupied_bandwidth_hz = profile.occupiedBandwidthHz;
+  item.filter_taps_per_phase = profile.tapsPerPhase;
+  item.atsc_reference_mode = 'automatic';
+  return item;
+}
 const CONFIG_META = {
   'capture': ['Receiver', 'Tuning and sites'],
   'process': ['Radar', 'Detection and tracking'],
@@ -28,6 +47,19 @@ const CONFIG_META = {
   'capture.aircraft_clips.minimum_elevation_deg': ['Lowest aircraft elevation (°)', 'Ignore aircraft below this geometric elevation angle.'],
   'capture.aircraft_clips.maximum_elevation_deg': ['Highest aircraft elevation (°)', 'Ignore aircraft above this geometric elevation angle.'],
   'capture.aircraft_clips.minimum_interval_seconds': ['Minimum time between clips (s)', 'Limits recorder and disk load when several aircraft become eligible together.'],
+  'capture.aircraft_clips.unmatched_motion': ['Unmatched aircraft-like motion', 'Bounded full-passband clips for operational tracks whose measured motion resembles ADS-B-associated aircraft but remains unassociated.'],
+  'capture.aircraft_clips.unmatched_motion.enabled': ['Record unmatched aircraft-like motion', 'Uses the empirical aircraft-motion score after normal ADS-B association; off by default.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_similarity': ['Minimum aircraft-motion score', 'Required similarity to this installation\'s ADS-B-associated radar tracks.'],
+  'capture.aircraft_clips.unmatched_motion.allow_kinematic_fallback': ['Record before a learned baseline exists', 'Without an empirical score, require persistent tracks that pass the motion gates.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_measured_fraction': ['Minimum measured fraction', 'Rejects tracks sustained mostly by prediction or coasting.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_delay_motion_km': ['Minimum delay motion (km)', 'Requires meaningful bistatic-range movement before fallback recording.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_net_delay_motion_km': ['Minimum net delay motion (km)', 'Rejects range jitter that accumulates motion but finishes near its starting point.'],
+  'capture.aircraft_clips.unmatched_motion.maximum_delay_fit_rms_km': ['Maximum delay-line fit RMS (km)', 'Rejects irregular delay motion that is inconsistent with a moving target.'],
+  'capture.aircraft_clips.unmatched_motion.maximum_kinematic_error_mps': ['Maximum delay/Doppler velocity error (m/s)', 'Requires measured range rate to agree with channel-scaled Doppler.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_measured_cpis': ['Minimum measured CPIs', 'Excludes tracks sustained mostly by tracker coasting.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_duration_seconds': ['Minimum track duration (s)', 'Requires persistent motion before recording.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_absolute_doppler_hz': ['Minimum mean absolute Doppler (Hz)', 'Rejects near-zero-Doppler clutter before recording.'],
+  'capture.aircraft_clips.unmatched_motion.minimum_interval_seconds': ['Minimum time between unmatched clips (s)', 'Bounds disk and recorder load independently of ADS-B aircraft clips.'],
   'capture.device': ['Receiver hardware', 'Radio, channels, and array'],
   'capture.device.type': ['Receiver type', 'Connected SDR'],
   'capture.device.array_geometry': ['Array setup', 'Layout, channel map, and measurements'],
@@ -69,14 +101,19 @@ const CONFIG_META = {
   'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU accuracy and speed. Falls back to CPU if needed.'],
   'process.multi_illuminator': ['Multiple illuminators', 'Process several broadcast channels independently.'],
   'process.multi_illuminator.enabled': ['Multiple illuminators', 'Process the configured stations.'],
+  'process.multi_illuminator.input_phase_correction': ['Cable phase correction', 'Remove only validated periodic phase error between coherent receiver inputs.'],
+  'process.multi_illuminator.transmitter_site_grouping': ['Transmitter-site grouping', 'Choose proximity fallback or require a stable physical-site ID for every channel.'],
+  'process.multi_illuminator.co_location_radius_m': ['Automatic co-location radius', 'Group unassigned transmitter coordinates within this distance. IDs remain authoritative.'],
   'process.multi_illuminator.illuminators': ['Illuminators', 'FM stations and transmitter sites.'],
+  'process.multi_illuminator.illuminators.input_role_mode': ['Input roles', 'Use the receiver default or select an explicit reference input.'],
   'process.data': ['Frame timing', ''],
+  'process.delay_reference_sample_rate_hz': ['Delay reference sample rate', 'Lane delay limits scale to preserve distance. Doppler stays in Hz.'],
   'process.data.cpi': ['Frame interval (CPI)', 'Seconds per radar frame and display update. Applies after restart.'],
   'process.data.buffer': ['Live capture queue (CPI frames)', 'Queue capacity in CPI frames; unrelated to IQ pre-roll.'],
   'process.data.overlap': ['Frame overlap', 'Not used by this processor. Frames do not overlap.'],
   'process.ambiguity': ['Delay & Doppler', 'Limits of the radar map'],
-  'process.ambiguity.delayMin': ['Minimum delay bin', 'First extra-path sample shown in the radar map.'],
-  'process.ambiguity.delayMax': ['Maximum delay bin', 'Last extra-path sample shown in the radar map.'],
+  'process.ambiguity.delayMin': ['Minimum delay bin', 'First bin at the fixed delay reference rate; lane bounds round outward.'],
+  'process.ambiguity.delayMax': ['Maximum delay bin', 'Last bin at the fixed delay reference rate; lane bounds round outward.'],
   'process.ambiguity.dopplerMin': ['Minimum Doppler', 'Lower Doppler limit in Hz'],
   'process.ambiguity.dopplerMax': ['Maximum Doppler', 'Upper Doppler limit in Hz'],
   'process.clutter': ['Clutter removal', 'Reduces stationary reflections and multipath.'],
@@ -141,6 +178,14 @@ const CONFIG_META = {
   'process.detection.nTrain': ['Training cells per side', 'CFAR background cells on each side. More cells reduce threshold loss but cost more.'],
   'process.detection.minDelay': ['Minimum detection delay bin', 'Ignore detections below this delay sample'],
   'process.detection.minDoppler': ['Minimum absolute Doppler', 'Ignore detections closer to zero Doppler than this many Hz'],
+  'process.detection.doppler_ridge_scrubber': ['Delay–Doppler ridge scrubber', 'Learns broad persistent interference before CFAR while preserving the raw map.'],
+  'process.detection.doppler_ridge_scrubber.mode': ['Ridge scrubber mode', 'Off disables it, shadow compares paths, and active uses the scrubbed path.'],
+  'process.detection.doppler_ridge_scrubber.persistence_cpis': ['Ridge learning intervals', 'Intervals a broad Doppler row must recur before subtraction begins.'],
+  'process.detection.doppler_ridge_scrubber.minimum_excess_db': ['Minimum ridge excess', 'Broad row power required above nearby Doppler rows.'],
+  'process.detection.doppler_ridge_scrubber.maximum_subtraction_db': ['Maximum ridge subtraction', 'Fail-safe limit on learned linear-power subtraction.'],
+  'process.detection.doppler_ridge_scrubber.doppler_tolerance_hz': ['Ridge Doppler tolerance', 'Adjacent Doppler rows treated as one drifting interference ridge.'],
+  'process.detection.doppler_ridge_scrubber.neighborhood_rows': ['Doppler comparison radius', 'Nearby Doppler rows used to estimate the local background.'],
+  'process.detection.doppler_ridge_scrubber.delay_stride': ['Ridge sampling stride', 'Delay-cell sampling interval used only for the robust row estimate.'],
   'process.detection.nCentroid': ['Position window', 'Cells used to refine each detection position.'],
   'process.detection.integration_cpis': ['Integrated intervals', 'Consecutive radar intervals combined before detection.'],
   'process.detection.integration_motion_bins': ['Motion search radius', 'Delay and Doppler bins searched between two integrated intervals.'],
@@ -161,6 +206,11 @@ const CONFIG_META = {
   'process.tracker.initiate.stationary_clutter.enable': ['Enable persistent clutter filter', 'Apply the learned clutter map only when starting a new GPU-resident track.'],
   'process.tracker.initiate.stationary_clutter.persistence_cpis': ['Clutter persistence', 'Repeated low-Doppler frames required before a cell blocks new track initiation.'],
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': ['Stationary Doppler band', 'Absolute Doppler range learned as persistent clutter, in Hz.'],
+  'process.tracker.initiate.doppler_ridge_clutter': ['Persistent Doppler-ridge filter', 'Learns recurring horizontal interference ridges and blocks only new track births on them.'],
+  'process.tracker.initiate.doppler_ridge_clutter.enable': ['Enable Doppler-ridge filter', 'Learn persistent broad-delay ridges at any Doppler, including power harmonics.'],
+  'process.tracker.initiate.doppler_ridge_clutter.persistence_cpis': ['Ridge persistence', 'Consecutive broad-delay frames required before the row blocks new track initiation.'],
+  'process.tracker.initiate.doppler_ridge_clutter.doppler_tolerance_hz': ['Ridge Doppler tolerance', 'Maximum Doppler separation for returns to belong to the same learned ridge.'],
+  'process.tracker.initiate.doppler_ridge_clutter.minimum_delay_separation_km': ['Minimum ridge width', 'Delay separation required before simultaneous returns teach a global ridge.'],
   'process.tracker.track_guided_shadow': ['Track-guided recovery shadow', 'Test weak moving-track recovery from rolling CPI maps without changing live tracks.'],
   'process.tracker.track_guided_shadow.enable': ['Enable recovery shadow', 'Run the bounded GPU-resident counterfactual and report timing and would-recover track IDs.'],
   'process.tracker.track_guided_shadow.promote': ['Promote guided recoveries', 'Send guided observations to the normal tracker; disable for shadow-only evaluation.'],
@@ -169,7 +219,8 @@ const CONFIG_META = {
   'process.tracker.track_guided_shadow.max_truth_age_s': ['Maximum ADS-B age', 'Discard recovery comparisons whose aircraft position is too old.'],
   'process.tracker.track_guided_shadow.max_file_mb': ['Recovery file size', 'Rotate the active recovery evidence file at this size in MiB.'],
   'process.tracker.track_guided_shadow.max_files': ['Recovery file count', 'Maximum number of active and rotated recovery files retained.'],
-  'process.tracker.delete': ['Missed frames before deletion', 'Consecutive misses allowed before a track is removed'],
+  'process.tracker.delete': ['Coast frames before deletion',
+    'Established-track misses allowed; unconfirmed births expire after their M-of-N window'],
   'process.tracker.smooth': ['Track smoothing', 'Reserved setting; not used by this processor.'],
   'process.tracker.gpu_capacity': ['GPU track capacity', 'Maximum simultaneous tracks retained in GPU memory.'],
   'process.tracker.beam_tolerance': ['Beam association tolerance', 'Maximum circular beam-index difference allowed when joining detections.'],
@@ -190,6 +241,7 @@ const CONFIG_META = {
   'truth.adsb.enabled': ['Show ADS-B', 'Display aircraft from the ADS-B feed'],
   'truth.adsb.tar1090': ['ADS-B sources', 'Add local receivers or public exchanges; the newest fresh source wins without blending.'],
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
+  'truth.adsb.exchange_poll_interval': ['Public exchange interval', 'Seconds between cached public-exchange snapshots. Local receiver polling is unchanged.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
   'truth.adsb.association_lag_cpis': ['Frame alignment hold', 'Hold aircraft truth this many frames for exact CPI alignment.'],
@@ -313,13 +365,52 @@ function renderDetectionSettings() {
   tuning.append(summary, fields); body.appendChild(tuning); return details;
 }
 
+function delaySampleDescription(config) {
+  const multi = config.process?.multi_illuminator;
+  const lanes = multi?.enabled === true ?
+    (multi.illuminators || []).filter(lane => lane?.enabled === true) : [];
+  const distance = rate => Number.isFinite(Number(rate)) && Number(rate) > 0 ?
+    `${(299792.458 / Number(rate)).toFixed(3)} km` : 'unavailable';
+  const reference = config.process?.delay_reference_sample_rate_hz;
+  const prefix = reference === undefined ? 'Legacy lane-local delay bins. ' :
+    `Configured delay bins represent ${distance(reference)} each at ${(reference / 1e6).toFixed(3)} MS/s; lane limits scale automatically. `;
+  if (reference !== undefined && lanes.length && config.process?.ambiguity) {
+    const windows = lanes.map(lane => {
+      const effective = configProfiles.effectiveDelayConfig(config, lane.output_sample_rate_hz,
+        {scaleNeighborhoods: true}).process;
+      const km = bin => (bin * 299792.458 / lane.output_sample_rate_hz).toFixed(3);
+      return `${lane.id}: ${effective.ambiguity.delayMin}–${effective.ambiguity.delayMax} bins ` +
+        `(${km(effective.ambiguity.delayMin)}–${km(effective.ambiguity.delayMax)} km), detection from ` +
+        `${km(effective.detection.minDelay)} km`;
+    });
+    return prefix + windows.join('; ') + '.';
+  }
+  return prefix + (lanes.length ? `One delay sample in each lane is ${lanes.map(lane =>
+    `${distance(lane.output_sample_rate_hz)} (${lane.id})`).join(', ')}.` :
+    `One delay sample is ${distance(config.capture?.fs)}.`);
+}
+
 function renderInterferenceRejectionSettings() {
   const detection = activeConfig.process.detection;
   const {details, body} = compositeGroup('Nearby and stationary rejection',
     'Exclude the direct-path neighborhood and near-zero Doppler from target detection.');
-  const sampleKm = 299792458 / Number(activeConfig.capture.fs || 1) / 1000;
+  body.appendChild(compositeField('Delay scale',
+    'Fixed distance keeps the search and rejection distances when sample rates change.',
+    selectInput([{value: 'physical', label: 'Fixed physical distance'},
+      {value: 'legacy', label: 'Legacy lane-local sample bins'}],
+    activeConfig.process.delay_reference_sample_rate_hz === undefined ? 'legacy' : 'physical',
+    value => applyComposite(config => {
+      if (value === 'legacy') delete config.process.delay_reference_sample_rate_hz;
+      else config.process.delay_reference_sample_rate_hz =
+        configProfiles.legacyDelayReferenceRate(config) ||
+        config.process.multi_illuminator?.illuminators?.find(lane => lane?.enabled === true)?.output_sample_rate_hz ||
+        config.capture.fs;
+    }))));
+  if (activeConfig.process.delay_reference_sample_rate_hz !== undefined)
+    body.appendChild(field(activeConfig.process.delay_reference_sample_rate_hz,
+      ['process', 'delay_reference_sample_rate_hz']));
   body.appendChild(compositeField('Minimum excess path',
-    `Detections closer than this are ignored. One delay sample is ${sampleKm.toFixed(3)} km of transmitter→target→receiver excess path; this is not receiver slant range.`,
+    `Detections closer than this are ignored. ${delaySampleDescription(activeConfig)} Distances are transmitter→target→receiver excess path, not receiver slant range.`,
     typedInput(detection.minDelay, ['process', 'detection', 'minDelay']), 'process.detection.minDelay'));
   body.appendChild(compositeField('Near-zero Doppler exclusion',
     'Ignore detections inside ± this frequency. Higher values suppress stationary clutter but can remove slow radial motion.',
@@ -376,7 +467,25 @@ function renderTrackerSettings() {
   for (const key of ['M', 'N', 'min_snr_db', 'maxAcc', 'acceleration_model'])
     if (tracker.initiate?.[key] !== undefined) fields.appendChild(field(tracker.initiate[key], ['process', 'tracker', 'initiate', key]));
   fields.appendChild(field(tracker.delete, ['process', 'tracker', 'delete']));
-  tuning.append(summary, fields); body.appendChild(tuning); return details;
+  tuning.append(summary, fields); body.appendChild(tuning);
+  const ridge = tracker.initiate?.doppler_ridge_clutter;
+  if (ridge && !capabilities.fieldRules?.[
+    'process.tracker.initiate.doppler_ridge_clutter.enable']?.readOnly) {
+    const ridgeDetails = document.createElement('details');
+    ridgeDetails.className = 'config-group composite-tuning';
+    const ridgeSummary = document.createElement('summary');
+    ridgeSummary.textContent = 'Persistent Doppler-ridge interference';
+    const ridgeFields = document.createElement('div');
+    ridgeFields.className = 'config-fields';
+    for (const key of ['enable', 'persistence_cpis', 'doppler_tolerance_hz',
+      'minimum_delay_separation_km'])
+      if (ridge[key] !== undefined)
+        ridgeFields.appendChild(field(ridge[key],
+          ['process', 'tracker', 'initiate', 'doppler_ridge_clutter', key]));
+    ridgeDetails.append(ridgeSummary, ridgeFields);
+    body.appendChild(ridgeDetails);
+  }
+  return details;
 }
 
 function renderPerformanceSettings() {
@@ -633,33 +742,40 @@ function renderSiteSettings() {
   const content = document.createElement('div');
   content.className = 'config-fields';
   const choices = savedSiteChoices();
+  const channelTransmitters = activeConfig.process?.multi_illuminator?.enabled === true ?
+    (activeConfig.process.multi_illuminator.illuminators || [])
+      .filter(lane => lane?.enabled === true && siteValue(lane.transmitter)) : [];
   for (const [role, title] of [['rx', 'Receiver'], ['tx', 'Transmitter']]) {
+    const perChannel = role === 'tx' && channelTransmitters.length > 0;
     const row = document.createElement('div');
     row.className = 'config-field site-setting';
     row.dataset.path = `location.${role}`;
     const copy = document.createElement('div');
     copy.className = 'config-field-copy';
     const label = document.createElement('label');
-    label.textContent = title;
+    label.textContent = perChannel ? 'Channel transmitters' : title;
     label.htmlFor = `site-select-${role}`;
     const rawSite = activeConfig.location[role];
     const current = siteValue(rawSite);
     const named = typeof rawSite?.name === 'string' && rawSite.name.trim() &&
       !/^Set (receiver|transmitter) site$/.test(rawSite.name);
     const coordinates = document.createElement('small');
-    coordinates.textContent = current ? `${current.latitude}°, ${current.longitude}° · ${current.altitude} m` :
+    coordinates.textContent = perChannel ?
+      `${channelTransmitters.length} enabled · ${channelTransmitters.map(lane => lane.id).join(', ')}` :
+      current ? `${current.latitude}°, ${current.longitude}° · ${current.altitude} m` :
       named ? 'Check coordinates' : 'Not set';
     copy.append(label, coordinates);
     const controls = document.createElement('div');
     controls.className = 'site-controls';
     const select = document.createElement('select');
     select.id = label.htmlFor;
-    select.setAttribute('aria-label', `${title} location`);
-    select.disabled = !capabilities.editable;
+    select.setAttribute('aria-label', perChannel ? 'Channel transmitter locations' : `${title} location`);
+    select.disabled = perChannel || !capabilities.editable;
     select.dataset.originalDisabled = String(select.disabled);
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = !current && named ? rawSite.name : 'Choose a location';
+    placeholder.textContent = perChannel ? 'Configured per channel' :
+      !current && named ? rawSite.name : 'Choose a location';
     placeholder.disabled = true;
     placeholder.selected = !current;
     select.appendChild(placeholder);
@@ -687,7 +803,7 @@ function renderSiteSettings() {
       button.textContent = text;
       button.dataset.siteAction = action;
       button.dataset.siteRole = role;
-      button.disabled = !capabilities.editable || (action === 'edit' && !current && !named);
+      button.disabled = perChannel || !capabilities.editable || (action === 'edit' && !current && !named);
       button.addEventListener('click', () => openSiteDialog(role, action === 'edit'));
       actions.appendChild(button);
     }
@@ -717,6 +833,7 @@ const NUMERIC_PRESENTATION = {
   'capture.fs': [1000000, 'MS/s'],
   'capture.fc': [1000000, 'MHz'],
   'process.data.cpi': [1, 's'],
+  'process.delay_reference_sample_rate_hz': [1000000, 'MS/s'],
   'process.data.buffer': [1, 'CPI frames'],
   'process.data.overlap': [1, 's'],
   'process.ambiguity.delayMin': [1, 'bin'],
@@ -1062,8 +1179,11 @@ function arrayInput(value, path) {
   value.forEach((item, index) => {
     const slot = document.createElement('label');
     const caption = document.createElement('span');
+    const referenceChannels = activeConfig.process?.reference_synthesis?.channels ||
+      [activeConfig.capture?.device?.reference_channel ?? 0];
+    const channelRole = referenceChannels.includes(index) ? 'Reference' : 'Surveillance';
     caption.textContent = key === 'capture.device.heimdall.channel_gains' ? `Channel ${index}` : value.length === 2 ?
-      (index === 0 ? 'Reference' : 'Surveillance') : `Item ${index + 1}`;
+      channelRole : `Item ${index + 1}`;
     let input;
     const update = next => {
       const changed = [...value];
@@ -1108,6 +1228,40 @@ function illuminatorListInput(value, path) {
   const render = () => {
     anchor.value = String(items.length);
     wrapper.replaceChildren(anchor);
+    const grouping = activeConfig.process.multi_illuminator.transmitter_site_grouping || 'automatic';
+    const groupingLabel = document.createElement('label');
+    groupingLabel.textContent = 'Transmitter-site grouping';
+    const groupingSelect = selectInput([
+      {value: 'automatic', label: 'Automatic with site IDs (recommended)'},
+      {value: 'explicit', label: 'Require site IDs'}], grouping, selected => {
+      activeConfig.process.multi_illuminator.transmitter_site_grouping = selected;
+      setValue(['process', 'multi_illuminator', 'transmitter_site_grouping'], selected);
+      renderEditor();
+    });
+    groupingSelect.title = 'Channels with the same site ID share one transmitter geometry. Different IDs remain independent. Automatic mode uses coordinate proximity only when an ID is blank.';
+    groupingLabel.appendChild(groupingSelect); wrapper.appendChild(groupingLabel);
+    const radiusLabel = document.createElement('label');
+    radiusLabel.textContent = 'Automatic co-location radius (m)';
+    const radius = document.createElement('input');
+    radius.type = 'number'; radius.min = '0'; radius.max = '10000'; radius.step = '1';
+    radius.value = activeConfig.process.multi_illuminator.co_location_radius_m ?? 100;
+    radius.disabled = grouping === 'explicit';
+    radius.title = 'Used only for channels whose transmitter site ID is blank.';
+    radius.addEventListener('input', () => setValue(['process', 'multi_illuminator',
+      'co_location_radius_m'], Number(radius.value)));
+    radiusLabel.appendChild(radius); wrapper.appendChild(radiusLabel);
+    const siteSummary = document.createElement('p');
+    const enabledSites = new Map();
+    items.filter(item => item.enabled === true).forEach(item => {
+      const id = String(item.transmitter?.site_id || '').trim();
+      const key = id ? `site:${id}` : `unassigned:${item.id}`;
+      if (!enabledSites.has(key)) enabledSites.set(key, []);
+      enabledSites.get(key).push(item.id);
+    });
+    siteSummary.className = 'config-field-help transmitter-site-summary';
+    siteSummary.textContent = [...enabledSites].map(([site, lanes]) =>
+      `${site.replace(/^site:/, '')}: ${lanes.join(', ')}`).join(' · ') || 'No enabled channels';
+    wrapper.appendChild(siteSummary);
     items.forEach((item, index) => {
       const card = document.createElement('fieldset');
       card.className = 'illuminator-card';
@@ -1141,9 +1295,58 @@ function illuminatorListInput(value, path) {
       addText('ID', 'id');
       const standardLabel = document.createElement('label');
       standardLabel.textContent = 'Standard';
-      const standard = selectInput(['FM', 'DAB', 'ATSC', 'DVB-T/T2'], item.standard,
-        selected => { item.standard = selected; commit(); });
+      const standard = selectInput(['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0',
+        'DVB-T/T2', 'ISDB-T', 'DTMB', 'CUSTOM'], item.standard,
+        selected => { applyIlluminatorStandardDefaults(item, selected); commit(); renderEditor(); });
+      standard.title = 'ATSC defaults use the matching US 6 MHz waveform; review bandwidth for 7 or 8 MHz ATSC 3 deployments.';
       standardLabel.appendChild(standard); card.appendChild(standardLabel);
+      const atscReferenceLabel = document.createElement('label');
+      atscReferenceLabel.textContent = 'ATSC reference conditioning';
+      const atscReferenceMode = selectInput(['automatic', 'raw', 'pilot_aided'],
+        item.atsc_reference_mode ||
+          (['ATSC', 'ATSC-1.0', 'ATSC-3.0'].includes(item.standard) ?
+            'automatic' : 'raw'), selected => {
+          item.atsc_reference_mode = selected; commit();
+        });
+      const atsc1 = item.standard === 'ATSC' || item.standard === 'ATSC-1.0';
+      const atsc3 = item.standard === 'ATSC-3.0';
+      atscReferenceMode.disabled = !(atsc1 || atsc3);
+      atscReferenceMode.title = atsc1 || atsc3 ?
+        'Automatic compares each channel with its own raw control and fails closed to raw.' :
+        'ATSC reference conditioning applies only to ATSC channels.';
+      for (const option of atscReferenceMode.options)
+        if (option.value === 'pilot_aided') option.disabled = true;
+      atscReferenceLabel.appendChild(atscReferenceMode); card.appendChild(atscReferenceLabel);
+      const inputRoleLabel = document.createElement('label');
+      inputRoleLabel.textContent = 'Reference input for this RF channel';
+      const inputCount = Math.max(2,
+        activeConfig.capture?.replay?.state === true ?
+          (activeConfig.capture.replay.channel_count || 2) :
+          (activeConfig.capture?.device?.channel_count ||
+            activeConfig.capture?.device?.gain?.length ||
+            activeConfig.capture?.device?.antenna?.length || 2));
+      const inherited = activeConfig.process?.reference_synthesis?.channels?.[0] ??
+        activeConfig.capture?.device?.reference_channel ?? 0;
+      const roleOptions = [
+        {value: 'inherit', label: `Use receiver default (Ch ${inherited})`}];
+      for (let channel = 0; channel < inputCount; channel += 1)
+        roleOptions.push({value: String(channel), label: `Ch ${channel}`});
+      const role = selectInput(roleOptions,
+        Number.isInteger(item.reference_channel) ? String(item.reference_channel) : 'inherit',
+        selected => {
+          if (selected === 'inherit') {
+            item.input_role_mode = 'manual';
+            delete item.reference_channel; delete item.surveillance_channels;
+          } else {
+            item.input_role_mode = 'manual';
+            item.reference_channel = Number(selected);
+            item.surveillance_channels = Array.from({length: inputCount}, (_, channel) => channel)
+              .filter(channel => channel !== item.reference_channel);
+          }
+          commit();
+        });
+      role.title = 'Use the receiver topology or explicitly choose this illuminator’s reference input.';
+      inputRoleLabel.appendChild(role); card.appendChild(inputRoleLabel);
       const originalFrequency = item.frequency_hz; item.frequency_hz = originalFrequency / 1e6;
       addNumber('Frequency (MHz)', 'frequency_hz', 1e6); item.frequency_hz = originalFrequency;
       const originalBandwidth = item.occupied_bandwidth_hz;
@@ -1156,6 +1359,7 @@ function illuminatorListInput(value, path) {
       item.output_sample_rate_hz = originalRate;
       addNumber('Filter taps', 'filter_taps_per_phase');
       addText('Transmitter', 'transmitter.name');
+      addText('Transmitter site group', 'transmitter.site_id');
       addNumber('Latitude', 'transmitter.latitude');
       addNumber('Longitude', 'transmitter.longitude');
       addNumber('Altitude (m)', 'transmitter.altitude');
@@ -1172,7 +1376,7 @@ function illuminatorListInput(value, path) {
       items.push({id: `illuminator-${items.length + 1}`, enabled: true, standard: 'FM',
         frequency_hz: activeConfig.capture?.fc || 100000000,
         occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
-        filter_taps_per_phase: 24,
+        filter_taps_per_phase: 24, atsc_reference_mode: 'raw', input_role_mode: 'manual',
         transmitter: {name: '', latitude: 0, longitude: 0, altitude: 0}});
       commit(); renderEditor();
     });
@@ -1838,7 +2042,7 @@ function group(key, value, path, topLevel = false, options = {}) {
     // generic editor for the same setting.
     if (capabilities.fieldRules?.[childPath.join('.')]?.structuredControl) return;
     if (dotted === 'process.data' && childKey === 'buffer') return;
-    if (dotted === 'process' && ['clutter', 'detection', 'tracker', 'performance'].includes(childKey)) return;
+    if (dotted === 'process' && ['clutter', 'detection', 'tracker', 'performance', 'delay_reference_sample_rate_hz'].includes(childKey)) return;
     if (dotted === 'capture.device' && childKey === 'type') return;
     if (dotted === 'capture.device' && childKey === 'array_geometry') return;
     if (kraken && dotted === 'capture.device' && ['channel_count', 'reference_channel',
@@ -2259,14 +2463,6 @@ function receiverUsesUpstreamStatus(receiverType) {
   return receiverType === 'Kraken';
 }
 
-function createUpstreamStatusSection() {
-  const section = document.createElement('section');
-  section.id = 'upstream-status';
-  section.className = 'upstream-status';
-  section.innerHTML = '<div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div>';
-  return section;
-}
-
 function setRestartProgress(percent, label, state = '') {
   const progress = document.getElementById('config-restart-progress');
   const bar = document.getElementById('config-restart-bar');
@@ -2578,7 +2774,7 @@ function organizeTechnicalControls(panel, tab) {
 
 function renderEditor() {
   const target = document.getElementById('config-fields');
-  const upstream = document.getElementById('upstream-status');
+  let upstream = document.getElementById('upstream-status');
   if (upstream) upstream.remove();
   target.replaceChildren();
   const tabs = document.createElement('div');
@@ -2588,6 +2784,12 @@ function renderEditor() {
   const panels = document.createElement('div');
   panels.className = 'config-tab-panels';
   const receiverType = activeConfig.capture?.device?.type;
+  if (!upstream && receiverUsesUpstreamStatus(receiverType)) {
+    upstream = document.createElement('section');
+    upstream.id = 'upstream-status';
+    upstream.className = 'upstream-status';
+    upstream.innerHTML = '<div class="upstream-header"><strong>Receiver status</strong><span class="upstream-badge">Checking…</span></div>';
+  }
   const hasArrayTab = receiverType === 'Kraken' ||
     receiverFeatureCapabilities(receiverType, capabilities.deviceProfiles || []).coherentArray === true;
   const tabOrder = ['capture', 'array', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
@@ -2698,8 +2900,7 @@ function renderEditor() {
         renderReceiverOverload(null, health);
       }
       panel.appendChild(renderReceiverSetup());
-      if (receiverUsesUpstreamStatus(receiverType))
-        panel.appendChild(upstream || createUpstreamStatusSection());
+      if (upstream && receiverUsesUpstreamStatus(receiverType)) panel.appendChild(upstream);
     }
     panels.appendChild(panel);
   });
@@ -3274,8 +3475,11 @@ async function renderConfiguration() {
     configRevision = configResponse.headers.get('ETag')?.replace(/^"|"$/g, '');
     capabilities = capabilitiesResponse.ok ? await capabilitiesResponse.json() :
       {editable: false, restartAvailable: false, changesRequireRestart: true};
+    const receiverSync = capabilities.receiverSynchronization || {};
     receiverApplyPending = ['unknown', 'saved-pending', 'partial', 'indeterminate', 'failed',
-      'receiver-confirmed-config-not-saved'].includes(capabilities.receiverSynchronization?.applicationState);
+      'receiver-confirmed-config-not-saved'].includes(receiverSync.applicationState) &&
+      !(receiverSync.applicationState === 'unknown' &&
+        receiverSync.currentReceiver?.positiveAppliedAcknowledgement === true);
     rememberOriginalConfig(activeConfig);
     const replayParameters = new URLSearchParams(window.location.search);
     const replayFile = replayParameters.get('replayFile');
@@ -3381,6 +3585,7 @@ async function renderConfiguration() {
     else
       showMessage('');
     renderEditor();
+    window.renderLocalNodes?.();
     if (replayFile)
       showMessage('Recording selected. Start replay to use its saved configuration; the live SDR stays closed.', 'warning');
     if (window.VectorWarpReports) window.VectorWarpReports.addSettingsEntry(target, () =>
@@ -3477,7 +3682,8 @@ function accelerationSummary(value, radar) {
 
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
-    receiverSpecificProcessPath, multiIlluminatorUnsupportedPath, adsbExchangeId, adsbPublicSource,
+    applyIlluminatorStandardDefaults, ATSC_CHANNELIZER_DEFAULTS,
+    receiverSpecificProcessPath, multiIlluminatorUnsupportedPath, delaySampleDescription, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, receiverUsesUpstreamStatus, accelerationSummary,
     CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

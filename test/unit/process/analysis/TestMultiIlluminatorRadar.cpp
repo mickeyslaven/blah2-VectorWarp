@@ -16,6 +16,50 @@ namespace
 {
 constexpr double pi = 3.141592653589793238462643383279502884;
 
+TEST_CASE("lane delay geometry preserves physical units across sample rates")
+{
+  blah2::multi_illuminator::RadarConfig config;
+  config.delayReferenceRateHz = 2400000;
+  config.delayMin = -10;
+  config.delayMax = 400;
+  config.clutterDelayMin = -10;
+  config.clutterDelayMax = 401;
+  config.clutterFollowsAmbiguity = true;
+  config.minimumDelay = 5;
+  config.guardCells = 2;
+  config.trainingCells = 6;
+  config.centroidRadius = 6;
+
+  const auto fm = blah2::multi_illuminator::scaleRadarConfigForLane(
+    config, 300000);
+  REQUIRE(fm.delayMin == -2);
+  REQUIRE(fm.delayMax == 50);
+  REQUIRE(fm.clutterDelayMin == -2);
+  REQUIRE(fm.clutterDelayMax == 51);
+  REQUIRE(fm.minimumDelay == 1);
+  REQUIRE(fm.guardCells == 1);
+  REQUIRE(fm.trainingCells == 1);
+  REQUIRE(fm.centroidRadius == 1);
+
+  const auto atsc = blah2::multi_illuminator::scaleRadarConfigForLane(
+    config, 6144000);
+  REQUIRE(atsc.delayMin == -26);
+  REQUIRE(atsc.delayMax == 1024);
+  REQUIRE(atsc.clutterDelayMin == -26);
+  REQUIRE(atsc.clutterDelayMax == 1025);
+  REQUIRE(atsc.minimumDelay == 13);
+  REQUIRE(atsc.guardCells == 6);
+  REQUIRE(atsc.trainingCells == 16);
+  REQUIRE(atsc.centroidRadius == 16);
+
+  auto longRange = config;
+  longRange.delayReferenceRateHz = 2000000;
+  longRange.minimumDelay = 80;
+  const auto projectedThreshold =
+    blah2::multi_illuminator::scaleRadarConfigForLane(longRange, 6144000);
+  REQUIRE(projectedThreshold.minimumDelay == 246);
+}
+
 blah2::channelizer::IlluminatorOutput signal(const std::string& id,
   uint64_t frequency, uint32_t rate, uint32_t decimation,
   std::size_t channels, std::size_t samples, uint32_t delay, double doppler,

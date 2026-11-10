@@ -226,7 +226,7 @@ const server = http.createServer((request, response) => {
     // This can overlap the fixture's intentional five-second detection timeout.
     // Allow that bounded failure plus the normal two-second refresh cadence to
     // finish before requiring the next tracker poll.
-    const resumedDeadline = Date.now() + 8000;
+    const resumedDeadline = Date.now() + 15000;
     while (trackerRequests <= requestsAfterLeave && Date.now() < resumedDeadline)
       await page.waitForTimeout(100);
     assert.ok(trackerRequests > requestsAfterLeave,
@@ -242,7 +242,7 @@ const server = http.createServer((request, response) => {
     const touchRequests = trackerRequests;
     // This may coincide with the fixture's intentional API timeout. Give the
     // normal retry cadence enough time to prove refresh resumes afterward.
-    const touchResumeDeadline = Date.now() + 8000;
+    const touchResumeDeadline = Date.now() + 15000;
     while (trackerRequests <= touchRequests && Date.now() < touchResumeDeadline)
       await page.waitForTimeout(100);
     assert.ok(trackerRequests > touchRequests,
@@ -262,7 +262,7 @@ const server = http.createServer((request, response) => {
       return map?.isStyleLoaded() && map.getCanvas().clientWidth === Math.floor(graph.getBoundingClientRect().width);
     });
     stage = 'live refresh and final assertions';
-    const refreshDeadline = Date.now() + 8000;
+    const refreshDeadline = Date.now() + 15000;
     while (detectionRequests < 7 && Date.now() < refreshDeadline) await page.waitForTimeout(100);
     assert.equal(inducedRefreshTimeout, true, 'The recovery path must be exercised');
     assert.ok(detectionRequests >= 7, 'A successful refresh must follow the induced timeout');

@@ -22,8 +22,12 @@ struct IlluminatorDefinition
   uint32_t outputRateHz = 0;
   uint32_t tapsPerPhase = 24;
   // Optional broadcast-system label used by reference conditioning. Keep it
-  // last so existing aggregate initializers remain source compatible.
+  // before new optional topology fields so existing aggregate initializers
+  // remain source compatible.
   std::string standard;
+  bool hasInputRoles = false;
+  uint32_t referenceChannel = 0;
+  std::vector<uint32_t> surveillanceChannels;
 };
 
 struct IlluminatorOutput

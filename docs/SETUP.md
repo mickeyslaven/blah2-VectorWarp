@@ -154,6 +154,18 @@ VectorWarp reads the server's aircraft data and keeps the winning source on
 each aircraft record. The source status page shows update age, request time,
 failures, contribution counts, and which source supplied each position.
 
+## Persistent Doppler-ridge interference
+
+The reserved tracker setting `process.tracker.initiate.doppler_ridge_clutter`
+learns narrow-Doppler interference that appears simultaneously across a broad
+delay span. The configuration is disabled and rejected by the current native
+processor; it remains documented for replay research and a future qualified
+implementation. Its contract is hardware-agnostic: Doppler tolerance is configured in hertz
+and ridge width in kilometres, so VectorWarp converts it for the active sample
+rate. Once a row persists for the configured CPI count, only new track births
+on that row are blocked. Existing tracks can cross it normally. The filter is
+disabled by default and does not assume fixed 60/120/180 Hz frequencies.
+
 ## Recording
 
 ### Manual recording
@@ -168,6 +180,20 @@ Open **Settings → Recording → Automatic aircraft IQ clips**. Enable automati
 recording and set the pre-roll, post-roll, aircraft range, elevation, and
 minimum time between clips. Eligible aircraft passes create labeled clips
 without changing manual recording.
+
+The nested **Unmatched aircraft-like motion** option records an operational
+track only after normal ADS-B association has run and the track remains
+unassociated. Its empirical score is learned from this installation's retained
+ADS-B-associated tracks. Before that cohort exists, the optional kinematic
+fallback additionally requires measured-fraction and bistatic-delay-motion
+gates and labels that scoring basis in the recording metadata. Both paths
+require nontrivial net delay motion, a bounded delay-line residual, and
+agreement between measured delay rate and channel-scaled Doppler. Minimum score,
+measured CPIs, duration, absolute Doppler, and an independent clip interval
+bound false or repetitive captures.
+The trigger uses the same disk floor, full-passband recorder, pre/post-roll,
+queue coalescing, and retention policy as ordinary aircraft clips. It is off by
+default and does not classify the recorded object as an aircraft.
 
 ### Share a recording
 

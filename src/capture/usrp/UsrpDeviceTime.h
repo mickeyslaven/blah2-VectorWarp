@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -23,8 +24,18 @@ public:
     uint64_t blocks = 0;
   };
 
-  explicit UsrpDeviceTime(uint32_t sampleRate) : sampleRate_(sampleRate) {
-    if (!sampleRate_) throw std::invalid_argument("[USRP] Device-time sample rate is zero.");
+  explicit UsrpDeviceTime(double sampleRate) : sampleRate_(sampleRate) {
+    if (!std::isfinite(sampleRate_) || sampleRate_ <= 0)
+      throw std::invalid_argument("[USRP] Device-time sample rate must be finite and positive.");
+  }
+
+  void configure_sample_rate(double sampleRate) {
+    if (!std::isfinite(sampleRate) || sampleRate <= 0)
+      throw std::invalid_argument("[USRP] Applied device-time sample rate must be finite and positive.");
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (available_ || samples_ || blocks_)
+      throw std::logic_error("[USRP] Device-time sample rate cannot change while a stream is active.");
+    sampleRate_ = sampleRate;
   }
 
   template<class Metadata>
@@ -33,10 +44,10 @@ public:
       throw std::runtime_error("[USRP] UHD returned an empty successful receive block.");
     if (!metadata.has_time_spec)
       throw std::runtime_error("[USRP] UHD receive metadata omitted device time. Block rejected before coherent publication.");
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto tick = metadata.time_spec.to_ticks(static_cast<double>(sampleRate_));
     if (tick < 0 || received > static_cast<uint64_t>(std::numeric_limits<int64_t>::max() - tick))
       throw std::runtime_error("[USRP] UHD device time is outside the supported sample-tick range.");
-    std::lock_guard<std::mutex> lock(mutex_);
     if (available_ && tick != nextTick_)
       throw std::runtime_error("[USRP] UHD device-time discontinuity: expected tick " +
         std::to_string(nextTick_) + ", received " + std::to_string(tick) +
@@ -51,6 +62,7 @@ public:
       throw std::runtime_error("[USRP] UHD returned an empty successful receive block.");
     if (!metadata.has_time_spec)
       throw std::runtime_error("[USRP] UHD receive metadata omitted device time. Block rejected before coherent publication.");
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto tick = metadata.time_spec.to_ticks(static_cast<double>(sampleRate_));
     if (tick < 0 || received > static_cast<uint64_t>(std::numeric_limits<int64_t>::max() - tick))
       throw std::runtime_error("[USRP] UHD device time is outside the supported sample-tick range.");
@@ -95,7 +107,7 @@ public:
   }
 
 private:
-  const uint32_t sampleRate_;
+  double sampleRate_;
   mutable std::mutex mutex_;
   uint64_t epoch_ = 0;
   bool available_ = false;

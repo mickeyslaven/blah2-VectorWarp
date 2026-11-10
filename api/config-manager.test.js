@@ -49,6 +49,28 @@ twoFmIlluminators.process.multi_illuminator = {enabled: true, illuminators: [
 ]};
 assert.equal(validateConfig(twoFmIlluminators).valid, true,
   'one Kraken passband accepts two isolated FM illuminators');
+const replayIlluminator = clone(twoFmIlluminators);
+replayIlluminator.capture.replay = {...replayIlluminator.capture.replay,
+  state: true, sample_rate_hz: 12288000, frequency_hz: 539000000};
+replayIlluminator.process.multi_illuminator.illuminators = [{
+  ...replayIlluminator.process.multi_illuminator.illuminators[0], id: 'atsc',
+  standard: 'ATSC', frequency_hz: 539000000,
+  occupied_bandwidth_hz: 6000000, output_sample_rate_hz: 6144000}];
+replayIlluminator.process.ambiguity.dopplerMin = -2400;
+replayIlluminator.process.ambiguity.dopplerMax = 2400;
+assert.equal(validateConfig(replayIlluminator).valid, true,
+  `lane validation follows replay rate/carrier: ${validateConfig(replayIlluminator).errors.join('; ')}`);
+assert.equal(replayIlluminator.capture.fs, 2400000,
+  'wideband replay leaves the Kraken live sample rate untouched');
+for (const mutate of [
+  value => { value.capture.replay.sample_rate_hz = 12000000; },
+  value => { value.capture.replay.frequency_hz = 527000000; }
+]) {
+  const invalid = clone(replayIlluminator);
+  mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    'invalid recorded passband/rate cannot borrow valid saved live geometry');
+}
 const adaptiveMultiIlluminator = clone(twoFmIlluminators);
 adaptiveMultiIlluminator.process.tracker.initiate.acceleration_model = 'adaptive_gate';
 assert.equal(validateConfig(adaptiveMultiIlluminator).valid, true,
@@ -422,10 +444,15 @@ assert.equal(usrpProfile.device.address, 'type=b200',
   'The B210 profile must use a UHD USB selector, not a hostname-like bare token');
 assert.equal(load('config-usrp.yml').capture.device.address, 'type=b200',
   'The installed USRP example must select the B200 family');
-const usrpWithoutTimingSource = load('config-usrp.yml');
-delete usrpWithoutTimingSource.capture.device.timing_source;
-assert.equal(validateConfig(usrpWithoutTimingSource).valid, true,
-  'USRP timing source remains optional when no GPSDO is connected');
+for (const type of ['Usrp', 'RspDuo']) {
+  const paired = configurationForReceiver(type, load('config.yml'));
+  delete paired.process.reference_synthesis;
+  assert.equal(validateConfig(paired).valid, true,
+    `${type} legacy configuration defaults to dedicated input zero`);
+  paired.process.reference_synthesis = {mode: 'dedicated', channels: [7]};
+  assert.equal(validateConfig(paired).valid, false,
+    `${type} rejects a reference input outside its coherent channel count`);
+}
 for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial',
   'type=b\t200', 'type=b200,type=b210']) {
   const invalid = load('config-usrp.yml');

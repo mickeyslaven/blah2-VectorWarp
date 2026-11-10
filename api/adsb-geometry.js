@@ -54,10 +54,14 @@ class DelayDopplerHistory {
     this.baseline = distance(this.rx, this.tx); this.frequency = config.capture.fc;
     this.valid = this.rx.every(finite) && this.tx.every(finite) && finite(this.baseline) &&
       finite(this.frequency) && this.frequency > 0;
-    this.history.clear(); this.output.clear(); this.snapshots.clear(); this.lastNow = null;
+    this.history.clear(); this.output.clear(); this.snapshots.clear();
+    this.feeds = new Map(); this.lastNow = null;
     // Restart/config change cannot mix geometries or frequencies.
   }
-  clear() { this.history.clear(); this.output.clear(); this.snapshots.clear(); this.lastNow = null; }
+  clearDerived() {
+    this.history.clear(); this.output.clear(); this.snapshots.clear(); this.lastNow = null;
+  }
+  clear() { this.clearDerived(); this.feeds.clear(); }
   remember(now, value) {
     if (!finite(now)) return value;
     this.lastNow = this.lastNow === null ? now : Math.max(this.lastNow, now);
@@ -65,13 +69,9 @@ class DelayDopplerHistory {
     while (this.snapshots.size > 64) this.snapshots.delete(this.snapshots.keys().next().value);
     return value;
   }
-  update(feed) {
+  processChronological(feed) {
     const now = feed?.now, output = {}, warming = [];
     if (finite(now) && this.snapshots.has(now)) return this.snapshots.get(now);
-    // Presentation requests can arrive out of order. Never answer an older
-    // aligned request with a newer stateful Doppler result from the same lane.
-    if (finite(now) && finite(this.lastNow) && now < this.lastNow)
-      return {data: output, warming, aligned_unavailable: true};
     if (!this.valid || !finite(now) || !Array.isArray(feed?.aircraft))
       return this.remember(now, {data: output, warming});
     for (const [hex, result] of this.output)
@@ -144,6 +144,27 @@ class DelayDopplerHistory {
       if (samples.length < 2 && now - samples.at(-1).timestamp <= this.maxAge) warming.push(hex);
     for (const [hex, result] of this.output) output[hex] = result;
     return this.remember(now, {data: output, warming});
+  }
+  update(feed) {
+    const now = feed?.now;
+    if (finite(now) && this.snapshots.has(now)) return this.snapshots.get(now);
+    if (finite(now)) {
+      this.feeds.set(now, feed);
+      while (this.feeds.size > 64) {
+        const oldest = [...this.feeds.keys()].sort((left, right) => left - right)[0];
+        this.feeds.delete(oldest);
+      }
+    }
+    if (finite(now) && finite(this.lastNow) && now < this.lastNow) {
+      // Browser surfaces request exact lane frames independently. Rebuild the
+      // bounded geometry timeline in event-time order instead of returning an
+      // empty overlay merely because a newer request arrived first.
+      const ordered = [...this.feeds.entries()].sort((left, right) => left[0] - right[0]);
+      this.clearDerived();
+      for (const [, value] of ordered) this.processChronological(value);
+      return this.snapshots.get(now) || {data: {}, warming: [], aligned_unavailable: true};
+    }
+    return this.processChronological(feed);
   }
 }
 module.exports = {ecef, distance, lookGeometry, DelayDopplerHistory};

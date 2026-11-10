@@ -41,7 +41,7 @@ function presentMap(frame, query = {}) {
 
   const rowStep = Math.max(1, Math.ceil(parsed.doppler.length / maxRows));
   const columnStep = Math.max(1, Math.ceil(parsed.delay.length / maxColumns));
-  if (rowStep === 1 && columnStep === 1) return frame;
+  if (rowStep === 1 && columnStep === 1) return parsed;
   const key = `${maxRows}:${maxColumns}`;
   if (cachedSource === frame && cachedKey === key) return cachedResult;
 

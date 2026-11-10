@@ -16,15 +16,18 @@ function eligible(config) {
  * settings transaction and must check the supplied revision when acquiring it.
  */
 function createGainMonitor({getConfig, getRevision, busy, measureGain, onOverload,
+  isEligible = eligible, validateMeasurement = validateProbe,
+  probeSignature = () => 'all',
   report = () => {}, intervalMs = 60000, setTimeoutImpl = setTimeout,
   clearTimeoutImpl = clearTimeout} = {}) {
-  if (![getConfig, getRevision, busy, measureGain, onOverload, report, setTimeoutImpl, clearTimeoutImpl]
+  if (![getConfig, getRevision, busy, measureGain, onOverload, isEligible,
+    validateMeasurement, probeSignature, report, setTimeoutImpl, clearTimeoutImpl]
     .every(value => typeof value === 'function') || !Number.isFinite(intervalMs) ||
     intervalMs < 1 || intervalMs > 0x7fffffff)
     throw new TypeError('Gain monitoring requires callbacks and a positive bounded interval.');
 
   let running = false, active = false, triggered = false, timer = null, controller = null, generation = 0;
-  let unsafeKey = null, probes = [];
+  let unsafeKey = null, unsafeSignature = null, probes = [];
 
   function status() {
     return {running, active, triggered, consecutiveUnsafe: probes.length, intervalMs};
@@ -34,7 +37,7 @@ function createGainMonitor({getConfig, getRevision, busy, measureGain, onOverloa
     try { Promise.resolve(report({...event, monitor: status()})).catch(() => {}); }
     catch (_) { /* A reporter is not a safety or control dependency. */ }
   }
-  function reset() { unsafeKey = null; probes = []; }
+  function reset() { unsafeKey = null; unsafeSignature = null; probes = []; }
   function snapshot() {
     const config = clone(getConfig()), revision = clone(getRevision());
     if (revision === undefined || revision === null)
@@ -48,7 +51,7 @@ function createGainMonitor({getConfig, getRevision, busy, measureGain, onOverloa
     if (expected.generation !== generation) return 'stopped';
     if (busy()) return 'busy';
     const now = snapshot();
-    if (!eligible(now.config)) return 'disabled';
+    if (!isEligible(now.config)) return 'disabled';
     return now.key === expected.key ? null : 'configuration-changed';
   }
   function clearTimer() {
@@ -66,8 +69,8 @@ function createGainMonitor({getConfig, getRevision, busy, measureGain, onOverloa
     let before;
     try {
       before = snapshot();
-      if (!eligible(before.config) || busy()) {
-        reset(); emit({status: 'skipped', reason: !eligible(before.config) ? 'disabled' : 'busy'});
+      if (!isEligible(before.config) || busy()) {
+        reset(); emit({status: 'skipped', reason: !isEligible(before.config) ? 'disabled' : 'busy'});
         return;
       }
       if (unsafeKey !== before.key) reset();
@@ -77,11 +80,14 @@ function createGainMonitor({getConfig, getRevision, busy, measureGain, onOverloa
       let stale = current(before);
       if (stale) { reset(); if (stale !== 'stopped') emit({status: 'skipped', reason: stale}); return; }
       // Tuple/metrics failures are measurement errors, never overload evidence.
-      const probe = validateProbe(measured, before.config);
+      const probe = validateMeasurement(measured, before.config);
       if (probe.safe) {
         reset(); emit({status: 'safe', revision: before.revision, probe}); return;
       }
+      const signature = String(probeSignature(probe, before.config));
+      if (probes.length && unsafeSignature !== signature) reset();
       unsafeKey = before.key;
+      unsafeSignature = signature;
       probes.push(clone(probe));
       emit({status: 'unsafe', revision: before.revision, probe});
       if (probes.length < 2) return;

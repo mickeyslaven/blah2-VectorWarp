@@ -139,6 +139,24 @@ TEST_CASE("wideband GPU plan packs five channels and all illuminators once")
   for (const auto& lane : gap.lanes) REQUIRE(lane.inputPrefix == 0);
 }
 
+TEST_CASE("wideband GPU admits a bounded small-decimation direct envelope")
+{
+  using namespace blah2::wideband_gpu;
+  constexpr uint32_t input = 24576000;
+  Config config{input, 2, input / 2, {
+    {509000000, 4, -9000000, filter(input, 6144000, 5380000, 64)},
+    {515000000, 4, -3000000, filter(input, 6144000, 5832844, 128)},
+    {527000000, 4, 9000000, filter(input, 6144000, 5380000, 64)}}};
+  Plan plan(std::move(config));
+  REQUIRE(plan.runtimeSelectable());
+  REQUIRE(std::string(plan.runtimeBlockReason()).empty());
+
+  auto excessive = configuration();
+  excessive.inputRateHz = input;
+  excessive.lanes.front().taps.resize(1033);
+  REQUIRE_FALSE(Plan(std::move(excessive)).runtimeSelectable());
+}
+
 TEST_CASE("wideband GPU plan preserves independent lane metadata")
 {
   using namespace blah2::wideband_gpu;

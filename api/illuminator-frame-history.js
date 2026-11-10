@@ -29,6 +29,22 @@ class IlluminatorFrameHistory {
     }
   }
   latest(id) { return this.frames.get(id)?.at(-1)?.frame || null; }
+  latestCohort(ids) {
+    const requested = [...new Set((ids || []).map(String))];
+    if (requested.length < 2) return null;
+    const laneKeys = requested.map(id => new Map((this.frames.get(id) || [])
+      .filter(item => item.frame.capture_sample_position_available === true &&
+        Number.isSafeInteger(item.frame.capture_epoch) &&
+        Number.isSafeInteger(item.frame.capture_first_input_sample) &&
+        Number.isSafeInteger(item.frame.capture_end_input_sample))
+      .map(item => [`${item.frame.capture_epoch}:${item.frame.capture_first_input_sample}:` +
+        `${item.frame.capture_end_input_sample}`, item])));
+    if (laneKeys.some(values => !values.size)) return null;
+    const common = [...laneKeys[0].keys()].filter(key => laneKeys.every(values => values.has(key)))
+      .sort((left, right) => Math.min(...laneKeys.map(values => values.get(right).sequence)) -
+        Math.min(...laneKeys.map(values => values.get(left).sequence)))[0];
+    return common ? laneKeys.map(values => values.get(common).frame) : null;
+  }
   exact(id, {timestamp, firstInputSample, endInputSample} = {}) {
     const values = this.frames.get(id) || [];
     for (let index = values.length - 1; index >= 0; --index) {

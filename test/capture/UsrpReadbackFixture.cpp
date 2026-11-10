@@ -6,6 +6,7 @@
 #include "data/meta/EventTime.h"
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <limits>
 #if defined(OVERFLOW)
@@ -119,6 +120,41 @@ int main() {
     deviceTime.commit(candidate); deviceTime.commit(continuation);
     assert(deviceTime.snapshot().available && deviceTime.snapshot().epoch == 1 &&
       deviceTime.snapshot().samples == 14);
+  }
+  {
+    struct FractionalTime {
+      double seconds = 0;
+      int64_t to_ticks(double rate) const {
+        return std::llround(seconds * rate);
+      }
+    };
+    struct FractionalMetadata {
+      bool has_time_spec = true;
+      FractionalTime time_spec;
+    };
+    constexpr double requestedRate = 24576000.0;
+    constexpr double appliedRate = 24576000.13882506;
+    constexpr uint64_t blockSamples = 4092;
+    UsrpDeviceTime appliedClock(requestedRate);
+    appliedClock.configure_sample_rate(appliedRate);
+    UsrpDeviceTime requestedClock(requestedRate);
+    bool requestedRateDrifted = false;
+    for (uint64_t block = 0; block < 30000; ++block) {
+      const FractionalMetadata metadata{true,
+        {static_cast<double>(block * blockSamples) / appliedRate}};
+      const auto applied = appliedClock.validate(metadata, blockSamples);
+      appliedClock.commit(applied);
+      if (!requestedRateDrifted) {
+        try {
+          const auto requested = requestedClock.validate(metadata, blockSamples);
+          requestedClock.commit(requested);
+        } catch (const std::exception&) {
+          requestedRateDrifted = true;
+        }
+      }
+    }
+    assert(appliedClock.snapshot().samples == 30000 * blockSamples);
+    assert(requestedRateDrifted);
   }
   struct Metadata {
     enum Error { ERROR_CODE_NONE, TIMEOUT, OVERFLOW, BROKEN_CHAIN, BAD_PACKET };

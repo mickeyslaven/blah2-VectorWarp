@@ -4,7 +4,13 @@ capture:
   aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
     minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
     minimum_elevation_deg: 0, maximum_elevation_deg: 90,
-    minimum_interval_seconds: 5}
+    minimum_interval_seconds: 5,
+    unmatched_motion: {enabled: false, minimum_similarity: 0.95,
+      allow_kinematic_fallback: false, minimum_measured_fraction: 0.5,
+      minimum_delay_motion_km: 0.25, minimum_net_delay_motion_km: 0.05,
+      maximum_delay_fit_rms_km: 0.05, maximum_kinematic_error_mps: 20,
+      minimum_measured_cpis: 8, minimum_duration_seconds: 7,
+      minimum_absolute_doppler_hz: 30, minimum_interval_seconds: 300}}
   device:
     # Fresh installations deliberately have no receiver selected. The Settings
     # page replaces this marker with the chosen receiver profile before saving.
@@ -19,8 +25,12 @@ capture:
     provenance: 'legacy-unqualified'
 
 process:
+  delay_reference_sample_rate_hz: 2000000
   multi_illuminator:
     enabled: false
+    input_phase_correction: off
+    transmitter_site_grouping: automatic
+    co_location_radius_m: 100
     illuminators: []
   data:
     cpi: 0.75
@@ -52,6 +62,14 @@ process:
       enable: false
       max_cpis: 8
       motion_bins: 1
+    doppler_ridge_scrubber:
+      mode: off
+      persistence_cpis: 12
+      minimum_excess_db: 3
+      maximum_subtraction_db: 12
+      doppler_tolerance_hz: 4
+      neighborhood_rows: 8
+      delay_stride: 4
   tracker:
     enable: false
     profile: balanced
@@ -68,6 +86,11 @@ process:
       maxAcc: 10
       min_snr_db: 5
       acceleration_model: adaptive_gate
+      doppler_ridge_clutter:
+        enable: false
+        persistence_cpis: 12
+        doppler_tolerance_hz: 3
+        minimum_delay_separation_km: 0.25
     delete: 10
   bearing:
     enable: false
@@ -117,6 +140,7 @@ truth:
     tar1090: 'localhost:8080'
     aircraft_photo_provider: disabled
     poll_interval: 1
+    exchange_poll_interval: 4
     smoothing_window: 10
     max_position_age: 30
     provisional_event_time_uncertainty_s: 1

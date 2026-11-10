@@ -12,7 +12,7 @@ function rawOffset(sample) {
 
 function validateTruthWindow(samples, windowStart, windowEnd,
   {cpiMs = 500, maxBracketMs = 3000, maxRawOffsetS = 1, maxDisagreementKm = .5,
-    cpiTimestampsMs = null} = {}) {
+    cpiTimestampsMs = null, allowPartialCpiCoverage = false, minimumCoveredCpis = 1} = {}) {
   const ordered = (samples || []).filter(sample => finite(sample?.timestamp_ms))
     .sort((a, b) => a.timestamp_ms - b.timestamp_ms)
     .filter((sample, index, values) => !index || sample.timestamp_ms !== values[index - 1].timestamp_ms);
@@ -25,6 +25,7 @@ function validateTruthWindow(samples, windowStart, windowEnd,
   const schedule = timestamps || (!reasons.length ? Array.from(
     {length: Math.max(0, Math.ceil((windowEnd - windowStart - cpiMs / 2) / cpiMs))},
     (_, index) => windowStart + cpiMs / 2 + index * cpiMs).filter(at => at < windowEnd) : []);
+  const excludedCpiTimestamps = [];
   if (!reasons.length) for (const at of schedule) {
     const left = [...ordered].reverse().find(sample => sample.timestamp_ms <= at);
     const right = ordered.find(sample => sample.timestamp_ms >= at);
@@ -32,6 +33,7 @@ function validateTruthWindow(samples, windowStart, windowEnd,
     // provenance than interpolation between two observations.  Treat it as a
     // zero-span bracket instead of quarantining a perfectly aligned truth row.
     if (!left || !right || (left === right && left.timestamp_ms !== at)) {
+      if (allowPartialCpiCoverage) { excludedCpiTimestamps.push(at); continue; }
       reasons.push('truth-bracket-missing'); break;
     }
     const bracketMs = right.timestamp_ms - left.timestamp_ms;
@@ -51,8 +53,12 @@ function validateTruthWindow(samples, windowStart, windowEnd,
     cpis.push({timestamp_ms: at, left_timestamp_ms: left.timestamp_ms, right_timestamp_ms: right.timestamp_ms,
       bracket_span_ms: bracketMs, max_raw_observation_offset_s: Math.max(...offsets)});
   }
+  if (!reasons.length && cpis.length < minimumCoveredCpis)
+    reasons.push('insufficient-truth-covered-cpis');
   if (!cpis.length && !reasons.length) reasons.push('no-cpis');
   return {valid: !reasons.length, reasons: [...new Set(reasons)], cpi_ms: cpiMs, cpis,
+    requested_cpis: schedule.length, excluded_cpis: excludedCpiTimestamps.length,
+    excluded_cpi_timestamps_ms: excludedCpiTimestamps,
     truth_samples: ordered, maximum_bracket_span_ms: cpis.length ? Math.max(...cpis.map(x => x.bracket_span_ms)) : null,
     maximum_raw_observation_offset_s: cpis.length ? Math.max(...cpis.map(x => x.max_raw_observation_offset_s)) : null};
 }
@@ -85,14 +91,17 @@ function validateProcessorSampleRanges(admission, metadata) {
     const timestamps = contained.map(range => range.timestamp_ms).filter(finite);
     const truth = validateTruthWindow(admission?.truth_samples || [],
       Math.min(...timestamps) - 1, Math.max(...timestamps) + 1,
-      {cpiMs: admission?.cpi_ms || 500, cpiTimestampsMs: timestamps});
+      {cpiMs: admission?.cpi_ms || 500, cpiTimestampsMs: timestamps,
+        allowPartialCpiCoverage: true,
+        minimumCoveredCpis: Math.min(3, timestamps.length)});
     const truthByTimestamp = new Map(truth.cpis.map(cpi => [cpi.timestamp_ms, cpi]));
-    const exactTiming = contained.every(range => range.exact_event_time === true);
+    const truthCovered = contained.filter(range => truthByTimestamp.has(range.timestamp_ms));
+    const exactTiming = truthCovered.every(range => range.exact_event_time === true);
     return {...truth,
       timing_policy: exactTiming ? 'exact' : 'provisional',
       decision_grade: truth.valid && exactTiming,
       event_time_uncertainty_s: exactTiming ? 0 : admission.event_time_uncertainty_s,
-      processor_cpis: contained.map(range => {
+      processor_cpis: truthCovered.map(range => {
         const cpi = truthByTimestamp.get(range.timestamp_ms);
         return {...range,
           truth_left_timestamp_ms: cpi?.left_timestamp_ms ?? null,
@@ -100,7 +109,7 @@ function validateProcessorSampleRanges(admission, metadata) {
           truth_bracket_span_ms: cpi?.bracket_span_ms ?? null,
           max_raw_observation_offset_s: cpi?.max_raw_observation_offset_s ?? null};
       }),
-      excluded_processor_cpis: ranges.length - contained.length};
+      excluded_processor_cpis: ranges.length - truthCovered.length};
   }
   return {...admission, valid: false, reasons: [...new Set(reasons)],
     processor_cpis: contained, excluded_processor_cpis: ranges.length - contained.length};
@@ -124,8 +133,13 @@ async function verifyCaptureIntegrity(filename, expected = {}, io = fs) {
       reasons.push('recording-sidecar-schema');
     if (finite(expected.revision) && metadata.clipRevision !== expected.revision) reasons.push('recording-revision-mismatch');
     if (finite(expected.samples) && metadata.samplesPerChannel !== expected.samples) reasons.push('recording-sample-count-mismatch');
-    if ((finite(expected.windowStart) && metadata.windowStart !== expected.windowStart) ||
-        (finite(expected.windowEnd) && metadata.windowEnd !== expected.windowEnd)) reasons.push('recording-window-mismatch');
+    // A native full-passband clip may be extended when another capture request
+    // overlaps the active recording. The shared artifact is valid for an event
+    // when it contains that event's requested window; exact equality would
+    // quarantine the stronger, longer recording.
+    if ((finite(expected.windowStart) && metadata.windowStart > expected.windowStart) ||
+        (finite(expected.windowEnd) && metadata.windowEnd < expected.windowEnd))
+      reasons.push('recording-window-mismatch');
     if (!/^[0-9a-f]{64}$/.test(metadata.dataSha256 || '')) reasons.push('recording-sidecar-sha256');
     if (![metadata.epoch, metadata.firstEpochSample, metadata.endEpochSample]
       .every(Number.isSafeInteger) || metadata.endEpochSample <= metadata.firstEpochSample ||
