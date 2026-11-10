@@ -13,7 +13,8 @@ const {buildMetadata} = require('./build-metadata');
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('./config-manager.js');
-const {readConfig, writable, saveConfig, migrateKnownDefaults} = require('./config-store.js');
+const {readConfig, writable, saveConfig, migrateKnownDefaults,
+  preserveConfigBytesDuringUpgrade} = require('./config-store.js');
 const {getUpstreamStatus} = require('./upstream-status.js');
 const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./receiver-routes.js');
 const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
@@ -75,7 +76,11 @@ const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW 
 // parse config file
 const configFile = path.resolve(process.argv[2] || 'config/config.yml');
 try {
-  if (migrateKnownDefaults(configFile))
+  // A package upgrade must restore a previously running API without changing
+  // the operator-owned conffile.  The package activation helper sets this
+  // short boot-relative lease across bounded startup retries; ordinary starts
+  // retain the narrowly scoped released-default migrations below.
+  if (!preserveConfigBytesDuringUpgrade(process.env, os.uptime()) && migrateKnownDefaults(configFile))
     console.error('Migrated known safe configuration defaults; the previous file is in config.yml.bak.');
 } catch (error) {
   console.error(`Could not migrate known configuration defaults: ${error.message}`);

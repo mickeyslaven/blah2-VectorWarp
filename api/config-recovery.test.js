@@ -9,7 +9,7 @@ const net = require('net');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
 const {readConfig, saveConfig, writable, migrateKnownDefaults,
-  configurationForReceiver} = require('./config-store');
+  preserveConfigBytesDuringUpgrade, configurationForReceiver} = require('./config-store');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-recovery-'));
 const file = path.join(dir, 'config.yml');
 
@@ -70,6 +70,12 @@ function availablePort(usedPorts) {
     assert.equal(readConfig(file).validation.valid, true);
     assert.equal(migrateKnownDefaults(file), false,
       'the migration must be one-shot and leave current selectors untouched');
+    assert.equal(preserveConfigBytesDuringUpgrade(
+      {VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME: '1120'}, 1000), true);
+    for (const value of ['999', '1301', 'not-a-time', '1120.5'])
+      assert.equal(preserveConfigBytesDuringUpgrade(
+        {VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME: value}, 1000), false,
+      `invalid or stale package-upgrade expiry must not suppress migration: ${value}`);
     legacyUsrp.capture.device.address = 'addr=192.168.10.2';
     legacyUsrp.truth.remote_id = {enabled: true, source: '127.0.0.1:8754',
       poll_interval: .5, source_timeout: 1.2, smoothing_window: 4,
@@ -163,14 +169,19 @@ function availablePort(usedPorts) {
     config.network.ports.map = conflict.address().port;
     for (const key of ['detection','track','timestamp','timing','iqdata','config'])
       config.network.ports[key] = await availablePort(usedPorts);
-    fs.writeFileSync(file, yaml.dump(config));
+    delete config.process.delay_reference_sample_rate_hz;
+    fs.writeFileSync(file, `${yaml.dump(config)}# operator-owned package-upgrade bytes\n`);
+    fs.rmSync(`${file}.bak`, {force: true});
+    const packageUpgradeBytes = fs.readFileSync(file);
     let childExit = null;
     let childOutput = '';
     const appendChildOutput = (label, chunk) => {
       childOutput = `${childOutput}${label}${chunk}`.slice(-4096);
     };
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), file],
-      {stdio: ['ignore', 'pipe', 'pipe']});
+      {stdio: ['ignore', 'pipe', 'pipe'],
+        env: {...process.env, VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME:
+          String(Math.floor(os.uptime()) + 120)}});
     child.stdout.on('data', chunk => appendChildOutput('stdout: ', chunk));
     child.stderr.on('data', chunk => appendChildOutput('stderr: ', chunk));
     child.once('error', error => { childExit = `spawn error: ${error.message}`; });
@@ -182,6 +193,10 @@ function availablePort(usedPorts) {
       catch (_) { await new Promise(resolve => setTimeout(resolve, 30)); }
     }
     assert.equal(response?.status, 200, `API stays available when a radar data port cannot bind (${childExit || 'startup timed out'}; ${childOutput || 'no child output'})`);
+    assert.deepEqual(fs.readFileSync(file), packageUpgradeBytes,
+      'the package-upgrade API start must preserve operator configuration byte-for-byte');
+    assert.equal(fs.existsSync(`${file}.bak`), false,
+      'a byte-preserving package-upgrade start must not create a migration backup');
     assert.ok(response.body.errors.some(error => error.includes('map data port')));
     assert.equal((await request(apiPort, '/api/config/capabilities')).body.editable, true);
     fs.writeFileSync(file, 'not: [valid yaml');

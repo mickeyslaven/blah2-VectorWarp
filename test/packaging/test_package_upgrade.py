@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import shutil
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +49,10 @@ case "$1" in
       *) exit 9 ;;
     esac ;;
   start)
+    if [ "$2" = vectorwarp-api.service ]; then
+      test -f "$PRESERVE_CONFIG_FILE" || exit 10
+      printf 'preserve-config=%s\n' "$(cat "$PRESERVE_CONFIG_FILE")" >>"$UPGRADE_TEST_LOG"
+    fi
     [ "$2" != "${FAIL_START:-none}" ] ;;
   stop|daemon-reload) exit 0 ;;
   --job-mode=ignore-dependencies)
@@ -59,12 +64,14 @@ esac
         systemctl.chmod(0o755)
         node = self.tools / 'node'
         node.write_text('#!/bin/sh\nprintf "node %s\\n" "$*" >>"$UPGRADE_TEST_LOG"\n'
+                        '[ "${NODE_DELAY:-0}" = 0 ] || sleep "$NODE_DELAY"\n'
                         '[ "${FAIL_NODE:-0}" != 1 ]\n')
         node.chmod(0o755)
         self.env = os.environ | {'PATH': f'{self.tools}:{os.environ["PATH"]}',
                                  'UPGRADE_TEST_LOG': str(self.log),
                                  'SOCKET_UNIT': str(self.socket_unit),
-                                 'SOCKET_STATE_FILE': str(self.base / 'socket.state')}
+                                 'SOCKET_STATE_FILE': str(self.base / 'socket.state'),
+                                 'PRESERVE_CONFIG_FILE': str(self.base / 'preserve-config.env')}
 
     def script(self, relative, prefix='/opt/vectorwarp'):
         source = (ROOT / relative).read_text()
@@ -73,6 +80,8 @@ esac
         source = source.replace('/run/vectorwarp-manual-stop.', str(self.base / 'manual-stop.'))
         source = source.replace('/run/vectorwarp-package-upgrade.state', str(self.state))
         source = source.replace('/run/vectorwarp-package-upgrade.lock', str(self.base / 'upgrade.lock'))
+        source = source.replace('/run/vectorwarp-api-preserve-config.env',
+                                str(self.base / 'preserve-config.env'))
         source = source.replace('/usr/lib/systemd/system/vectorwarp-receiver.socket', str(self.socket_unit))
         source = source.replace('/opt/vectorwarp/runtime/node/bin/node', str(self.tools / 'node'))
         source = source.replace('/opt/vectorwarp', str(self.package_prefix))
@@ -133,6 +142,9 @@ esac
                         next(i for i, line in enumerate(calls) if line.startswith('node ')))
         self.assertLess(next(i for i, line in enumerate(calls) if line.startswith('node ')),
                         calls.index('start vectorwarp-processor.service'))
+        self.assertTrue(any(line.startswith('preserve-config=VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME=')
+                            for line in calls), calls)
+        self.assertFalse((self.base / 'preserve-config.env').exists())
 
     def test_failed_api_readiness_never_starts_processor_or_claims_activation(self):
         post = self.script('packaging/activate-upgrade')
@@ -143,6 +155,40 @@ esac
         self.assertIn('activation failed', result.stderr)
         self.assertNotIn('start vectorwarp-processor.service', self.log.read_text())
         self.assertFalse(self.state.exists())
+        self.assertFalse((self.base / 'preserve-config.env').exists())
+
+    def test_api_unit_scopes_and_cleans_the_upgrade_only_environment(self):
+        unit = (ROOT / 'contrib/systemd/vectorwarp-api.service.in').read_text()
+        self.assertIn('EnvironmentFile=-/run/vectorwarp-api-preserve-config.env', unit)
+        self.assertNotIn('ExecStartPost=', unit)
+
+    def test_activation_signal_traps_clean_then_terminate(self):
+        script_text = (ROOT / 'packaging/activate-upgrade').read_text()
+        for signal, status in (('HUP', 129), ('INT', 130), ('TERM', 143)):
+            self.assertIn(f"trap 'cleanup; exit {status}' {signal}", script_text)
+
+        script = self.script('packaging/activate-upgrade')
+        self.state.write_text('api=1\nprocessor=1\nsocket=1\nbroker=0\n')
+        self.state.chmod(0o600)
+        process = subprocess.Popen(['sh', str(script)], env=self.env | {'NODE_DELAY': '.5'},
+                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and process.poll() is None and (
+                    not self.log.exists() or
+                    'start vectorwarp-api.service' not in self.log.read_text()):
+                time.sleep(.01)
+            self.assertIsNone(process.poll(), 'activation exited before the API readiness boundary')
+            self.assertIn('start vectorwarp-api.service', self.log.read_text())
+            process.terminate()
+            _, stderr = process.communicate(timeout=3)
+            self.assertEqual(process.returncode, 143, stderr)
+            self.assertNotIn('start vectorwarp-processor.service', self.log.read_text())
+            self.assertFalse((self.base / 'preserve-config.env').exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=3)
 
     def test_first_install_never_quiesces(self):
         pre = self.script('packaging/deb/preinst')

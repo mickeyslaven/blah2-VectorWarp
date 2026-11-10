@@ -323,6 +323,18 @@ function migrateKnownDefaults(filename) {
   return true;
 }
 
+// Package activation can restore the API more than once when systemd retries
+// an early failure.  A root-created, short expiry preserves the conffile for
+// those starts without turning a killed package transaction into a permanent
+// migration bypass.
+function preserveConfigBytesDuringUpgrade(environment = process.env,
+  uptimeSeconds) {
+  const now = Math.floor(Number(uptimeSeconds));
+  const until = Number(environment.VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME);
+  return Number.isSafeInteger(now) && Number.isSafeInteger(until) &&
+    until >= now && until <= now + 300;
+}
+
 function saveConfig(filename, candidate, expectedRevision) {
   const before = readConfig(filename);
   if (expectedRevision !== before.revision) {
@@ -356,4 +368,4 @@ function saveConfig(filename, candidate, expectedRevision) {
 }
 
 module.exports = {readConfig, writable, saveConfig, setupDefaults, configurationForReceiver,
-  migrateKnownDefaults, stripLegacyNoOps};
+  migrateKnownDefaults, preserveConfigBytesDuringUpgrade, stripLegacyNoOps};
