@@ -275,9 +275,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             ${{ matrix.image }} \
             bash -euo pipefail -c '
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install --yes --no-install-recommends \
+              test/packaging/apt-install-with-retry.sh \
                 build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
                 libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
               git config --global --add safe.directory /src
@@ -354,9 +352,7 @@ jobs:
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
             -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             ${{ matrix.image }} bash -euo pipefail -c '
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install --yes --no-install-recommends build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
+              test/packaging/apt-install-with-retry.sh build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
               git config --global --add safe.directory /src
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"

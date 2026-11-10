@@ -1,6 +1,8 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends systemd systemd-sysv dbus ca-certificates curl python3 procps util-linux && apt-get clean
+COPY apt-install-with-retry.sh /usr/local/bin/apt-install-with-retry
+RUN chmod 0755 /usr/local/bin/apt-install-with-retry && \
+    /usr/local/bin/apt-install-with-retry systemd systemd-sysv dbus ca-certificates curl python3 procps util-linux
 ENV container=podman
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

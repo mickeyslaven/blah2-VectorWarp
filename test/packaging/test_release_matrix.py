@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import pathlib
 import re
+import os
+import subprocess
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -37,6 +40,56 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertIn("run_with_log 'base test image build'", upgrade)
         self.assertIn('Dpkg::Options::=--force-confold', upgrade)
         self.assertIn("-f='\\${binary:Package}\\\\t\\${Version}\\\\n'", upgrade)
+
+    def test_debian_package_jobs_refresh_inconsistent_mirrors(self):
+        workflow = (ROOT / '.github/workflows/release-packages.yml').read_text()
+        containerfile = (ROOT / 'test/packaging/Containerfile.service-deb').read_text()
+        retry = (ROOT / 'test/packaging/apt-install-with-retry.sh').read_text()
+        self.assertEqual(workflow.count('test/packaging/apt-install-with-retry.sh'), 2)
+        self.assertIn('/usr/local/bin/apt-install-with-retry', containerfile)
+        self.assertIn('while [ "$attempt" -le 3 ]', retry)
+        self.assertIn('APT::Update::Error-Mode=any', retry)
+        self.assertEqual(retry.count('Acquire::Retries=3'), 2)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            fake_bin = root / 'bin'
+            fake_bin.mkdir()
+            log = root / 'calls'
+            state = root / 'state'
+            lists = root / 'lists'
+            lists.mkdir()
+            (lists / 'stale').write_text('stale')
+            helper = root / 'apt-install-with-retry.sh'
+            helper.write_text(retry.replace('/var/lib/apt/lists', str(lists)))
+            helper.chmod(0o755)
+            apt = fake_bin / 'apt-get'
+            apt.write_text('''#!/bin/sh
+echo "$*" >> "$APT_RETRY_LOG"
+case " $* " in
+  *" update "*)
+    case " $* " in *" APT::Update::Error-Mode=any "*) ;; *) exit 90;; esac
+    if [ ! -e "$APT_RETRY_STATE" ]; then : > "$APT_RETRY_STATE"; exit 100; fi
+    ;;
+esac
+exit 0
+''')
+            apt.chmod(0o755)
+            sleep = fake_bin / 'sleep'
+            sleep.write_text('#!/bin/sh\nexit 0\n')
+            sleep.chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                'PATH': f'{fake_bin}:/usr/bin:/bin',
+                'APT_RETRY_LOG': str(log),
+                'APT_RETRY_STATE': str(state),
+            })
+            subprocess.run([str(helper), 'example-package'],
+                           check=True, env=env, capture_output=True, text=True)
+            calls = log.read_text().splitlines()
+            self.assertEqual(sum(' update' in f' {call}' for call in calls), 2)
+            self.assertEqual(sum(' install ' in f' {call} ' for call in calls), 1)
+            self.assertFalse((lists / 'stale').exists())
 
     def test_local_matrix_matches_ci_and_dragonos_generations(self):
         rows = []
