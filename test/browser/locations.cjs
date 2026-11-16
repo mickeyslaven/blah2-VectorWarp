@@ -148,8 +148,10 @@ const server = http.createServer((request, response) => {
     assert.ok(coverageGeometry.fill && coverageGeometry.line,
       'coverage fill and line are native geographic map layers');
     assert.equal(coverageGeometry.renderer, 'maplibre-terrain');
-    assert.ok(coverageGeometry.pitch > 45 && coverageGeometry.maxPitch >= 80,
-      'the terrain renderer starts in a readable 3D view and permits steep pitch');
+    assert.equal(coverageGeometry.pitch, 0,
+      'the operating map starts straight down for an uncluttered local view');
+    assert.ok(coverageGeometry.maxPitch >= 80,
+      'operators may still tilt the terrain view when useful');
     assert.equal(coverageGeometry.terrain.source, 'vectorwarp-terrain',
       'the basemap is draped over a real raster DEM source');
     assert.equal(await page.locator('.location-radar-coverage-path').getAttribute('d'), '',

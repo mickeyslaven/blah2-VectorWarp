@@ -51,6 +51,16 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.equal(positions.aircraft.length, 1);
   assert.deepEqual(Object.keys(convertedData), [], 'One position is motion warmup, not a Doppler result');
   assert.equal(status.online, true);
+  const uncertaintySource = createAdsbSource({...config,
+    truth: {adsb: {...config.truth.adsb, uncertainty_association: {enable: true}}}}, {
+    now: () => 100000, fetchJson: async () => ({now: 100, aircraft: [{hex: 'abc123',
+      type: 'adsb_icao', lat: 1, lon: 2, alt_geom: 1000, gs: 100, track: 90,
+      seen_pos: 2.9, nic: 9, nac_p: 9}]})});
+  const uncertaintyAircraft = await uncertaintySource.getAt('aircraft', 100000);
+  assert.equal(uncertaintyAircraft.aircraft.length, 1,
+    'opt-in scoring admits predeclared 2.9-second projection without changing default one-second raw policy');
+  assert.ok(Math.abs(uncertaintyAircraft.aircraft[0].vectorwarp.observation_time_offset_s - 2.9) < 1e-9);
+  uncertaintySource.clear();
   assert.equal((await source.status()).delayDoppler.warming, 1,
     'Completed first-position conversion remains visible as motion warmup');
 

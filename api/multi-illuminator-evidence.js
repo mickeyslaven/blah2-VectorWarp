@@ -1,10 +1,11 @@
 'use strict';
 
 const path = require('path');
-const {createEvidenceStatisticsLanes, provisionalTimingFrame} =
+const {createEvidenceStatisticsLanes, provisionalTimingFrame, defaultEvidenceStatisticsPath} =
   require('./evidence-statistics');
 const {DelayDopplerHistory} = require('./adsb-geometry');
 const {effectiveDelayConfig} = require('../html/js/config_profiles');
+const {SuspiciousTrackLedger} = require('./suspicious-track-ledger');
 
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const safeId = value => String(value).replace(/[^A-Za-z0-9._-]+/g, '_');
@@ -28,6 +29,11 @@ function laneConfig(config, illuminator) {
 function statisticsFilename(base, id, timing) {
   const parsed = path.parse(base);
   return path.join(parsed.dir, `${parsed.name}-${safeId(id)}-${timing}${parsed.ext || '.json'}`);
+}
+
+function suspiciousLedgerFilename(base) {
+  const parsed = path.parse(base);
+  return path.join(parsed.dir, `${parsed.name}-suspicious-tracks${parsed.ext || '.json'}`);
 }
 
 function identity(illuminator, statistics) {
@@ -307,9 +313,11 @@ function captureDependencies(illuminator, dependencies) {
 }
 
 class MultiIlluminatorEvidence {
-  constructor(config, adsbSource, {baseFilename = process.env.BLAH2_STATISTICS_PATH ||
-    '/var/lib/vectorwarp-api/evidence-statistics.json', createLanes = createEvidenceStatisticsLanes,
-    dependencies = {}} = {}) {
+  constructor(config, adsbSource, {baseFilename = defaultEvidenceStatisticsPath(config),
+    createLanes = createEvidenceStatisticsLanes,
+    dependencies = {}, createSuspiciousLedger = (definitions, options) =>
+      new SuspiciousTrackLedger(definitions, options), suspiciousFilename =
+      suspiciousLedgerFilename(baseFilename)} = {}) {
     this.captureSampleRateHz = Number(config.capture?.fs);
     this.lanes = new Map();
     for (const illuminator of enabledIlluminators(config)) {
@@ -323,6 +331,8 @@ class MultiIlluminatorEvidence {
           ...capture}});
       this.lanes.set(illuminator.id, {illuminator: clone(illuminator), ...created});
     }
+    this.suspiciousLedger = createSuspiciousLedger(enabledIlluminators(config),
+      {filename: suspiciousFilename});
   }
 
   get enabled() { return this.lanes.size > 0; }
@@ -382,6 +392,7 @@ class MultiIlluminatorEvidence {
   accept(frame) {
     const lane = this.lane(frame?.id);
     if (!lane) return false;
+    this.suspiciousLedger.accept(frame);
     for (const statistics of [lane.exact, lane.operational]) {
       statistics.acceptDetection(frame.detections);
       statistics.acceptTracker(frame.tracks);
@@ -408,6 +419,12 @@ class MultiIlluminatorEvidence {
     lane.operational.acceptTiming(provisionalTimingFrame(observed,
       'multi_illuminator_host_arrival_estimate'));
     return true;
+  }
+
+  suspiciousTracks(options = {}) { return this.suspiciousLedger.snapshot(options); }
+
+  attachSuspiciousTruthAssessment(eventId, assessment) {
+    return this.suspiciousLedger.attachTruthAssessment(eventId, assessment);
   }
 
   associationPasses({timing = 'provisional', durationMs = 24 * 60 * 60 * 1000} = {}) {
@@ -472,10 +489,12 @@ class MultiIlluminatorEvidence {
     for (const lane of this.lanes.values()) {
       lane.exact.close(); lane.operational.close();
     }
+    this.suspiciousLedger.close();
   }
 }
 
 module.exports = {enabledIlluminators, laneConfig, laneAdsbSource, primaryRadarContext, statisticsFilename,
+  suspiciousLedgerFilename,
   captureDependencies, associationStatistics, aggregateAssociationStatistics,
   deduplicatedAssociationStatistics,
   aggregateTrackPopulations,

@@ -68,5 +68,9 @@ vm.runInContext(source, context,
     'map does not duplicate the configured ADS-B ingestion range');
   assert.equal(dom.window.document.getElementById('radar-map-overlay-mode').value, 'all',
     'confirmed radar ellipses are visible by default');
+  assert.match(dom.window.document.getElementById('radar-map-overlay-mode').title, /association continues/,
+    'Map-only help remains available as a tooltip');
+  assert.doesNotMatch(controls.textContent, /Hiding ellipses does not stop|ingestion and statistics are unchanged/,
+    'Map options do not repeat explanatory paragraphs');
   console.log('Map drawers are separate, mobile-safe, and expose all ADS-B filters.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

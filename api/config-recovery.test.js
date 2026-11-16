@@ -136,7 +136,7 @@ function availablePort(usedPorts) {
     delete legacyRsp.process.performance;
     fs.writeFileSync(file, yaml.dump(legacyRsp));
     const legacyDocument = readConfig(file);
-    assert.deepEqual(legacyDocument.config.process.performance, {surveillance_workers: 1, fft_threads: 4, acceleration: 'auto'});
+    assert.deepEqual(legacyDocument.config.process.performance, {surveillance_workers: 1, fft_threads: 1, acceleration: 'auto'});
     assert.equal(legacyDocument.setupRequired, false, 'Valid old configs must not require setup just for optional defaults');
 
     // Kraken gain is a declared string/number union: a "keep" profile default

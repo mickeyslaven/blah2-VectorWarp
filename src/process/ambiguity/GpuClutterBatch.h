@@ -7,6 +7,22 @@
 #include <stdexcept>
 
 namespace blah2 {
+// Rotate once at the frame boundary, then convert two contiguous iterator
+// ranges. This is the same circular delay as (i-delay)%N, without a division
+// and random-access deque lookup for every sample. INT32_MIN is widened
+// before negation; delays spanning multiple frames retain their old meaning.
+template <class Input, class Sample>
+void copyClutterReference(const Input& source, Sample* destination,
+    uint32_t samples, int32_t delay) {
+  if (!samples || !destination || source.size() < samples)
+    throw std::invalid_argument("Invalid GPU clutter reference input");
+  int64_t first = (-int64_t(delay)) % int64_t(samples);
+  if (first < 0) first += samples;
+  const size_t tail = samples - size_t(first);
+  std::copy_n(source.begin() + first, tail, destination);
+  std::copy_n(source.begin(), size_t(first), destination + tail);
+}
+
 // The last batch reuses a full GPU workspace. Clear its unused channels so
 // correlation/solve kernels cannot consume samples from the preceding batch.
 template <class Sample>

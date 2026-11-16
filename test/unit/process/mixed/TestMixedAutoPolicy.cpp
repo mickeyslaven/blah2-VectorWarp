@@ -25,21 +25,23 @@ int main(){
     winner.complete(choice,i%2?340:380);
   }
   assert(winner.selected()&&winner.choose(0,2000000,0)==Choice::mixed);
-  // One transient slow group does not discard a valid candidate. Two
-  // successive groups losing the measured speed margin return to CPU.
+  // Comparative latency cannot discard a correctness-qualified candidate.
   for(int i=0;i<5;++i)winner.complete(Choice::mixed,400);
   assert(winner.selected());
   for(int i=0;i<5;++i)winner.complete(Choice::mixed,340);
   assert(winner.selected());
   for(int i=0;i<10;++i)winner.complete(Choice::mixed,400);
-  assert(winner.disabled()&&winner.choose(0,2000000,0)==Choice::cpu);
+  assert(!winner.disabled()&&winner.choose(0,2000000,0)==Choice::mixed);
   AutoPolicy slower;
   slower.shadow(0,0);slower.shadow(0,0);
   for(int i=0;i<6;++i){
     const auto choice=slower.choose(0,2000000,0);
     slower.complete(choice,i%2?410:380);
   }
-  assert(!slower.selected()&&slower.choose(0,2000000,0)==Choice::cpu);
+  assert(slower.selected()&&slower.choose(0,2000000,0)==Choice::mixed);
+  assert(slower.mixedMs()==410&&slower.cpuMs()==380);
+  // Hard acquisition-health failures still close the mixed route.
+  assert(slower.choose(1500000,2000000,0)==Choice::cpu&&slower.disabled());
   AutoPolicy invalid;
   invalid.shadow(0,1.1e-4);
   assert(invalid.disabled()&&invalid.choose(0,2000000,0)==Choice::cpu);

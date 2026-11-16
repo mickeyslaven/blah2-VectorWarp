@@ -206,6 +206,7 @@ global.aircraftHoverText = common.aircraftHoverText;
 global.aircraftHoverTemplate = common.aircraftHoverTemplate;
 global.aircraftSvgMarkup = common.aircraftSvgMarkup;
 global.aircraftAltitudeColor = common.aircraftAltitudeColor;
+global.radarVisualSemantics = common.radarVisualSemantics;
 global.stabilizeAircraftSnapshots = common.stabilizeAircraftSnapshots;
 global.updateAircraftTrackHistories = common.updateAircraftTrackHistories;
 global.selectRadarAssociatedAircraft = common.selectRadarAssociatedAircraft;
@@ -220,6 +221,16 @@ setTimeout(() => {
   if (!state.textContent) errors.push('view state was not updated');
   if (state.textContent === 'Data unavailable') errors.push('renderer reported unavailable data');
   if (plotViews.has(view) && plotCalls < 1) errors.push('plot renderer was not called');
+  if (view === 'activity') {
+    const tracks = lastPlot?.traces.find(trace => trace.name === 'Radar tracks');
+    if (tracks?.y.at(-1) !== (mode === 'rich' ? 2 : 0))
+      errors.push('Activity counts tentative/associated candidates as radar tracks');
+    if (tracks?.line.color !== common.radarVisualSemantics.colors.track)
+      errors.push('Activity track color differs from DD track semantics');
+  }
+  if (view === 'overview' && mode === 'rich' &&
+      !/<strong>2<\/strong><span>[^<]*radar tracks<\/span>/.test(rendered))
+    errors.push('System summary counts tentative/associated candidates as radar tracks');
   const map = elements.get('data')?._vectorwarpMap;
   if (view === 'locations' && (!map || elements.get('data')?.dataset?.mapRenderer !== 'maplibre-terrain'))
     errors.push('location map did not initialize the persistent terrain renderer');
@@ -235,13 +246,12 @@ setTimeout(() => {
        !rendered.includes('Tracked') || !rendered.includes('direction-sky-cell')))
     errors.push('statistics association and directional visuals were not rendered');
   if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||
-      !rendered.includes('Hard-disabled — never automatic') ||
-      !rendered.includes('Support / uncertainty') ||
-      !rendered.includes('Active detection model') ||
-      !rendered.includes('2-D candidate') ||
-      !rendered.includes('Native 2-D shadow fit') ||
-      !rendered.includes('Pass-disjoint complex projection only') ||
-      !rendered.includes('physical paired A/B qualification still required')))
+      !rendered.includes('Diagnostic only — production qualification disabled') ||
+      !rendered.includes('Never automatic') ||
+      !rendered.includes('Positive-control fit') ||
+      !rendered.includes('Truth-selected replay diagnostic') ||
+      !rendered.includes('Production full-bank receipts') ||
+      !rendered.includes('Qualification details')))
     errors.push('detection manifold progress and promotion policy were not rendered');
   if (/\b(?:undefined|NaN)\b/.test(rendered)) errors.push('view rendered an invalid value');
   if (rendered.length < 100) errors.push('view rendered too little content');

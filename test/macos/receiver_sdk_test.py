@@ -27,15 +27,14 @@ def no_device(binary, receiver, env=None):
             process = subprocess.Popen([str(binary), '-c', str(config)], env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             try:
-                # Capture startup failures are deliberately retained as an API
-                # error state until the operator stops/restarts the processor.
-                # Require that observable state, then verify graceful shutdown;
-                # a timeout or SIGKILL is never counted as passing.
-                ready = replay.wait_for(lambda: process.poll() is not None or any(
+                # A live capture startup failure must publish the error and
+                # terminate nonzero so launchd/systemd can restart acquisition.
+                # Replay failures retain their inspectable-until-stopped policy.
+                ready = replay.wait_for(lambda: any(
                     item.get('input') == 'live' and item.get('state') == 'error' and item.get('error')
                     for item in status.snapshot()),
                     time.monotonic() + NO_DEVICE_TIMEOUT_SECONDS[receiver])
-                if not ready or process.poll() is not None:
+                if not ready:
                     # UHD discovery normally takes several seconds even with an
                     # exact nonexistent serial, and can exceed ten seconds on a
                     # loaded release runner. Stop and drain the child before
@@ -50,12 +49,12 @@ def no_device(binary, receiver, env=None):
                         output, _ = process.communicate(timeout=5)
                     detail = output[-4000:] if output else '<no processor output>'
                     raise AssertionError(
-                        f'{receiver} failed to publish its live-input error while remaining '
-                        f'controllable within {NO_DEVICE_TIMEOUT_SECONDS[receiver]} seconds:\n{detail}')
-                process.terminate()
-                output, _ = process.communicate(timeout=5)
-                if process.returncode != 0:
-                    raise AssertionError(f'{receiver} did not shut down cleanly after startup failure: {process.returncode}')
+                        f'{receiver} failed to publish its live-input error within '
+                        f'{NO_DEVICE_TIMEOUT_SECONDS[receiver]} seconds:\n{detail}')
+                output, _ = process.communicate(timeout=10)
+                if process.returncode == 0:
+                    raise AssertionError(
+                        f'{receiver} live startup failure exited successfully; service restart would not occur')
             finally:
                 if process.poll() is None:
                     process.kill()

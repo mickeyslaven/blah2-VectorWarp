@@ -16,6 +16,10 @@ process: {bearing: {frequency_resolved_shadow: {fft_size: 2048, subbands,
 location: {rx: {latitude: 40.442, longitude: -80.0567},
   tx: {latitude: 40.46325, longitude: -80.0043}}};
 const descriptor = analysisDescriptor(config);
+const generic = structuredClone(config);
+generic.capture.device.type = 'Usrp';
+assert.deepEqual(analysisDescriptor(generic), descriptor,
+  'Offline covariance analysis consumes explicit geometry, not a live receiver name');
 assert.equal(descriptor.channels, channels);
 assert.equal(analysisFingerprint(descriptor).length, 64);
 assert.ok(transmitterBearing(config.location.rx, config.location.tx) > 0);

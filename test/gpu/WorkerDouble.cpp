@@ -94,6 +94,12 @@ public:
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "ok";
   return blah2::runGpuWorker([&](const blah2::GpuGeometry& g, const std::string&) {
+    if (mode == "budget-set" || mode == "budget-clear") {
+      const char* actual = std::getenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES");
+      if ((mode == "budget-set" && (!actual || std::string(actual) != "33554432")) ||
+          (mode == "budget-clear" && actual))
+        throw std::runtime_error("GPU worker allocation reservation differs");
+    }
     if (mode == "fd-closed") {
       const char* inherited = std::getenv("BLAH2_TEST_INHERITED_FD");
       if (!inherited || fcntl(std::atoi(inherited), F_GETFD) >= 0 || errno != EBADF)

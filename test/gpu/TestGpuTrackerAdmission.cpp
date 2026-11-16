@@ -18,6 +18,17 @@ static double adaptiveElapsed(double frameElapsed,unsigned inactiveFrames){
 }
 
 int main()try{
+ require(gpu_tracker::persistenceBytes(false,0)==40&&
+  gpu_tracker::persistenceBytes(false,1000)==40&&
+  gpu_tracker::persistenceBytes(true,1000)==4040,
+  "disabled clutter buffer must hold its complete ten-word retirement header");
+ require(!gpu_tracker::experimentalConfirmationFeasible(4,6),"experimental 4-of-6 accepted");
+ require(gpu_tracker::experimentalConfirmationFeasible(2,3)&&
+  gpu_tracker::experimentalConfirmationFeasible(4,7)&&
+  gpu_tracker::experimentalConfirmationFeasible(1,1),"feasible experimental confirmation rejected");
+ require(!gpu_tracker::experimentalConfirmationFeasible(0,1)&&
+  !gpu_tracker::experimentalConfirmationFeasible(128,254)&&
+  gpu_tracker::experimentalConfirmationFeasible(128,255),"experimental confirmation boundary differs");
  using gpu_tracker::boundInitiations;
  using gpu_tracker::DopplerCombBirth;
  using gpu_tracker::dopplerCombBirthEligible;
@@ -111,6 +122,17 @@ int main()try{
  require(!persistentRidgeContains(37,32,10,8)&&
   !persistentRidgeContains(37,57,10,8)&&!persistentRidgeContains(37,67,10,8),
   "persistent neighborhood exceeded its delay or Doppler radius");
+ constexpr uint32_t hpRows=601,hpColumns=511,hpCenter=300*hpColumns+255;
+ require(persistentRidgeContains(hpCenter,hpCenter+hpColumns+4,hpColumns,hpRows)&&
+  !persistentRidgeContains(hpCenter,hpCenter+hpRows+4,hpColumns,hpRows),
+  "non-square persistence exchanged delay and Doppler dimensions");
+ for(uint32_t row:{0u,hpRows-1})for(uint32_t column:{0u,hpColumns-1}){
+  const uint32_t cell=row*hpColumns+column;
+  require(persistentRidgeContains(cell,cell,hpColumns,hpRows),
+   "non-square persistence lost a corner cell");
+ }
+ require(!persistentRidgeContains(hpColumns-1,hpColumns,hpColumns,hpRows),
+  "persistent neighborhood wrapped across a delay-axis edge");
  uint32_t streak=0;uint16_t frame=1;
  for(uint32_t observation=0;observation<60;++observation,frame+=2)
   streak=advancePersistentStreak(streak,frame);

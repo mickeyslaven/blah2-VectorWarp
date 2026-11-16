@@ -63,8 +63,7 @@ inline Calibration loadSchema(const std::string& path,double expectedFrequencyHz
  for(uint32_t channel=0;channel<expectedChannels;++channel){
   if(std::find(expected.channelMapping.begin(),expected.channelMapping.begin()+channel,
        expected.channelMapping[channel])!=expected.channelMapping.begin()+channel||
-     !std::isfinite(expected.requestedGainDb[channel])||expected.requestedGainDb[channel]<0||
-     expected.requestedGainDb[channel]>50)
+     !std::isfinite(expected.requestedGainDb[channel]))
    throw std::invalid_argument("Invalid expected manifold gain identity");
   for(double coordinate:expected.positionsM[channel])if(!std::isfinite(coordinate))
    throw std::invalid_argument("Invalid expected manifold geometry identity");

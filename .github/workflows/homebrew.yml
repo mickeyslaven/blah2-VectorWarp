@@ -6,6 +6,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the tested formulas to the public Homebrew tap'
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: read
@@ -117,7 +126,7 @@ jobs:
     if: >-
       github.repository == 'mickeyslaven/blah2-VectorWarp' &&
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-24.04
     environment: homebrew-publish
     steps:
@@ -146,6 +155,7 @@ jobs:
       - name: Publish with the tap-only credential
         env:
           HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          VECTORWARP_PUBLISH_HOMEBREW: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           test -n "$HOMEBREW_TAP_DEPLOY_KEY" || { echo 'Configure HOMEBREW_TAP_DEPLOY_KEY in homebrew-publish.' >&2; exit 1; }

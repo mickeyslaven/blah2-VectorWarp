@@ -19,12 +19,42 @@ assert.equal(firstRun.valid, false);
 assert.ok(firstRun.errors.includes('capture.device.type is not supported'));
 
 for (const name of ['config-hackrf.yml', 'config-usrp.yml',
-  'config-kraken.yml']) {
+  'config-kraken.yml', 'config-pi4-rspduo.yml']) {
   const result = validateConfig(load(name));
   assert.equal(result.valid, true, `${name}: ${result.errors.join('; ')}`);
 }
 
 const krakenProfile = load('config-kraken.yml');
+assert.equal(krakenProfile.process.detection.live_temporal_shadow.enabled, false);
+for (const profile of ['config-hackrf.yml', 'config-kraken.yml',
+  'config-pi4-rspduo.yml', 'config-usrp.yml']) {
+  const observer = load(profile);
+  observer.process.detection.live_temporal_shadow = {
+    enabled: true, bootstrap_covariance: 'robust_shrinkage', max_cpis: 8,
+    delay_motion_bins: 2, doppler_motion_bins: 4,
+    score_tracks: true, association_sustain: true,
+    association_sustain_cpis: 8,
+    minimum_initiation_snr_db: 6.5,
+    max_cells: 524288, max_work_ms: 20, min_interval_ms: 100};
+  assert.equal(validateConfig(observer).valid, true,
+    `${profile} accepts the isolated live observer: ${validateConfig(observer).errors.join('; ')}`);
+  for (const mutate of [
+    value => { value.process.detection.live_temporal_shadow.max_cells = 524289; },
+    value => { value.process.detection.live_temporal_shadow.max_work_ms = 0; },
+    value => { value.process.detection.live_temporal_shadow.max_work_ms = 151; },
+    value => { value.process.detection.live_temporal_shadow.min_interval_ms = 39; },
+    value => { value.process.detection.live_temporal_shadow.max_cpis = 6; },
+    value => { value.process.detection.live_temporal_shadow.association_sustain_cpis = 3; },
+    value => { value.process.detection.live_temporal_shadow.max_cpis = 4;
+      value.process.detection.live_temporal_shadow.association_sustain_cpis = 8; },
+    value => { value.process.detection.live_temporal_shadow.bootstrap_covariance = 'auto'; },
+    value => { value.capture.replay.state = true; },
+    value => { value.process.clutter.enable = false; }
+  ]) {
+    const invalid = clone(observer); mutate(invalid);
+    assert.equal(validateConfig(invalid).valid, false, 'live observer bounds fail closed');
+  }
+}
 assert.equal(krakenProfile.network.tracker_forward.enabled, false,
   'the generic Kraken profile must not start a disconnected external tracker feed');
 assert.equal(validateConfig({...krakenProfile, network: {
@@ -49,6 +79,32 @@ twoFmIlluminators.process.multi_illuminator = {enabled: true, illuminators: [
 ]};
 assert.equal(validateConfig(twoFmIlluminators).valid, true,
   'one Kraken passband accepts two isolated FM illuminators');
+const laneBirthThreshold = clone(twoFmIlluminators);
+laneBirthThreshold.process.multi_illuminator.illuminators[1].tracker_min_snr_db = 5.5;
+assert.equal(validateConfig(laneBirthThreshold).valid, true,
+  'per-lane tracker admission may be calibrated without changing detector PFA');
+assert.equal(laneBirthThreshold.process.detection.pfa, twoFmIlluminators.process.detection.pfa);
+for (const threshold of ['5.5', NaN, Infinity, -101, 101]) {
+  const invalid = clone(twoFmIlluminators);
+  invalid.process.multi_illuminator.illuminators[0].tracker_min_snr_db = threshold;
+  assert.equal(validateConfig(invalid).valid, false, 'lane birth threshold must be finite and bounded');
+}
+const multiLiveShadow = clone(twoFmIlluminators);
+Object.assign(multiLiveShadow.process.detection.live_temporal_shadow,
+  {enabled: true, illuminator_id: 'fm-91.3'});
+assert.equal(validateConfig(multiLiveShadow).valid, true,
+  `one multi-illuminator lane may own the live observer: ${validateConfig(multiLiveShadow).errors.join('; ')}`);
+for (const mutate of [
+  value => { delete value.process.detection.live_temporal_shadow.illuminator_id; },
+  value => { value.process.detection.live_temporal_shadow.illuminator_id = 'missing'; },
+  value => { value.process.detection.live_temporal_shadow.illuminator_id = ['fm-90.5', 'fm-91.3']; },
+  value => { value.process.multi_illuminator.illuminators[1].enabled = false; },
+  value => { value.process.multi_illuminator.enabled = false; },
+  value => { value.capture.replay.state = true; }
+]) {
+  const invalid = clone(multiLiveShadow); mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false, 'multi live observer fails closed on ambiguous or inactive selection');
+}
 const replayIlluminator = clone(twoFmIlluminators);
 replayIlluminator.capture.replay = {...replayIlluminator.capture.replay,
   state: true, sample_rate_hz: 12288000, frequency_hz: 539000000};
@@ -62,6 +118,30 @@ assert.equal(validateConfig(replayIlluminator).valid, true,
   `lane validation follows replay rate/carrier: ${validateConfig(replayIlluminator).errors.join('; ')}`);
 assert.equal(replayIlluminator.capture.fs, 2400000,
   'wideband replay leaves the Kraken live sample rate untouched');
+const replayShadow = clone(replayIlluminator);
+Object.assign(replayShadow.process.detection.temporal_shadow, {
+  enabled: true, illuminator_id: 'atsc', input_statistic: 'post_clutter_bootstrap',
+  bootstrap_covariance: 'shrinkage', artifact_path: 'temporal-shadow.vwtbd',
+  artifact_max_mb: 4096});
+assert.equal(validateConfig(replayShadow).valid, true,
+  `temporal shadow is a replay-only exact-lane arm: ${validateConfig(replayShadow).errors.join('; ')}`);
+const robustReplayShadow = clone(replayShadow);
+robustReplayShadow.process.detection.temporal_shadow.bootstrap_covariance = 'robust_shrinkage';
+assert.equal(validateConfig(robustReplayShadow).valid, true,
+  'the robust covariance estimator is an explicit replay-only shadow choice');
+const invalidReplayCovariance = clone(replayShadow);
+invalidReplayCovariance.process.detection.temporal_shadow.bootstrap_covariance = 'automatic';
+assert.equal(validateConfig(invalidReplayCovariance).valid, false,
+  'unknown bootstrap covariance modes fail closed');
+const liveShadow = clone(twoFmIlluminators);
+Object.assign(liveShadow.process.detection.temporal_shadow,
+  {enabled: true, illuminator_id: 'fm-90.5'});
+assert.equal(validateConfig(liveShadow).valid, false,
+  'temporal shadow cannot run on live acquisition');
+const missingShadowLane = clone(replayShadow);
+missingShadowLane.process.detection.temporal_shadow.illuminator_id = 'missing';
+assert.equal(validateConfig(missingShadowLane).valid, false,
+  'temporal shadow must identify exactly one enabled lane');
 for (const mutate of [
   value => { value.capture.replay.sample_rate_hz = 12000000; },
   value => { value.capture.replay.frequency_hz = 527000000; }
@@ -75,6 +155,51 @@ const adaptiveMultiIlluminator = clone(twoFmIlluminators);
 adaptiveMultiIlluminator.process.tracker.initiate.acceleration_model = 'adaptive_gate';
 assert.equal(validateConfig(adaptiveMultiIlluminator).valid, true,
   'multi-illuminator CPU tracking supports adaptive-gate initiation');
+for (const profile of ['balanced', 'conservative', 'permissive']) {
+  for (const model of [undefined, 'adaptive_gate', 'hypothesis_bank']) {
+    const value = clone(twoFmIlluminators);
+    value.process.tracker.profile = profile;
+    if (model === undefined) delete value.process.tracker.initiate.acceleration_model;
+    else value.process.tracker.initiate.acceleration_model = model;
+    assert.equal(validateConfig(value).valid, true,
+      `multi accepts profile ${profile} with ${model ?? 'inherited'} acceleration model`);
+  }
+}
+const residentMultiIlluminator = clone(twoFmIlluminators);
+residentMultiIlluminator.process.performance.acceleration = 'gpu-resident';
+assert.equal(validateConfig(residentMultiIlluminator).valid, true,
+  'multi admits bounded resident frontends and the common host product contract');
+for (const source of [twoFmIlluminators, ...['config-hackrf.yml', 'config-usrp.yml',
+  'config-kraken.yml', 'config-pi4-rspduo.yml'].map(load)]) {
+  for (const acceleration of ['cpu', 'auto', 'gpu', 'gpu-resident']) {
+    for (const max_cpis of [4, 8]) {
+      const value = clone(source);
+      value.process.performance.acceleration = acceleration;
+      value.process.detection.track_before_detect = {enable: true, max_cpis,
+        motion_bins: 1, fractional_delay: true};
+      value.process.tracker.initiate.stationary_clutter = {
+        enable: true, persistence_cpis: 4, max_doppler_hz: 0};
+      value.process.tracker.track_guided_shadow = {enable: true, max_tracks: 32,
+        promote: false, sustain: true};
+      const result = validateConfig(value);
+      assert.equal(result.valid, true, `${value.capture.device.type}/${acceleration}/${max_cpis}: ${result.errors.join('; ')}`);
+    }
+  }
+}
+const fmReferenceExperiment = clone(twoFmIlluminators);
+fmReferenceExperiment.process.multi_illuminator.experimental_fm_reference_quality_filter = true;
+assert.ok(validateConfig(fmReferenceExperiment).errors.some(error =>
+  error.includes('experimental FM reference quality filtering requires')));
+fmReferenceExperiment.capture.replay.state = true;
+Object.assign(fmReferenceExperiment.capture.replay, {sample_rate_hz: 2400000, frequency_hz: 90900000});
+assert.equal(validateConfig(fmReferenceExperiment).valid, true,
+  `FM reference experiment is explicit replay only: ${validateConfig(fmReferenceExperiment).errors.join('; ')}`);
+fmReferenceExperiment.process.multi_illuminator.illuminators.forEach(lane => { lane.standard = 'generic'; });
+assert.ok(validateConfig(fmReferenceExperiment).errors.some(error =>
+  error.includes('experimental FM reference quality filtering requires')));
+const invalidFmSwitch = clone(twoFmIlluminators);
+invalidFmSwitch.process.multi_illuminator.experimental_fm_reference_quality_filter = 'false';
+assert.equal(validateConfig(invalidFmSwitch).valid, false);
 const dormantFmIlluminators = clone(twoFmIlluminators);
 dormantFmIlluminators.process.multi_illuminator.enabled = false;
 dormantFmIlluminators.capture.fc = 509000000;
@@ -100,22 +225,31 @@ for (const mutate of [
     'multi-illuminator configuration must fail closed');
 }
 
+for (const motion of [0, 1]) {
+  for (const acceleration of ['cpu', 'auto', 'gpu']) {
+    const integrated = clone(twoFmIlluminators);
+    integrated.process.performance.acceleration = acceleration;
+    integrated.process.detection.integration_cpis = 2;
+    integrated.process.detection.integration_motion_bins = motion;
+    const result = validateConfig(integrated);
+    assert.equal(result.valid, true,
+      `lane integration uses the shared detector on ${acceleration}: ${result.errors.join('; ')}`);
+  }
+}
+for (const [cpis, motion] of [[0, 0], [3, 0], [1, 1], [2, 2]]) {
+  const invalid = clone(twoFmIlluminators);
+  invalid.process.detection.integration_cpis = cpis;
+  invalid.process.detection.integration_motion_bins = motion;
+  assert.equal(validateConfig(invalid).valid, false,
+    'lane integration validates the same bounded depth and motion geometry');
+}
+
 for (const [field, mutate] of [
   ['coherent fusion', value => { value.process.surveillance_fusion.mode = 'coherent_beam_bank'; }],
   ['detection manifold automation', value => {
     value.process.surveillance_fusion.detection_manifold_automation.enabled = true;
   }],
-  ['multi-CPI integration', value => { value.process.detection.integration_cpis = 2; }],
-  ['integration motion bins', value => {
-    value.process.detection.integration_cpis = 2;
-    value.process.detection.integration_motion_bins = 1;
-  }],
-  ['track-before-detect', value => { value.process.detection.track_before_detect.enable = true; }],
   ['beam tolerance', value => { value.process.tracker.beam_tolerance = 1; }],
-  ['GPU tracker capacity', value => { value.process.tracker.gpu_capacity = 1024; }],
-  ['stationary clutter suppression', value => {
-    value.process.tracker.initiate.stationary_clutter = {enable: true, persistence_cpis: 4};
-  }],
   ['track-guided shadow', value => { value.process.tracker.track_guided_shadow.enable = true; }],
   ['track-guided promotion', value => { value.process.tracker.track_guided_shadow.promote = true; }],
   ['bearing', value => { value.process.bearing.enable = true; }],
@@ -163,7 +297,7 @@ const coherentFusion = load('config-kraken.yml');
 coherentFusion.process.surveillance_fusion = {mode: 'coherent_beam_bank', beams: 12};
 coherentFusion.capture.device.array_geometry = {
   shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
-  mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
+  mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true,
   x_axis_bearing_deg_true: 0,
   bearing_channels: [...coherentFusion.capture.device.surveillance_channels], elements:
   coherentFusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
@@ -173,6 +307,46 @@ coherentFusion.capture.device.array_geometry = {
   }))};
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
+const coherentLanes = clone(coherentFusion);
+coherentLanes.capture.fs = twoFmIlluminators.capture.fs;
+coherentLanes.capture.fc = twoFmIlluminators.capture.fc;
+coherentLanes.process.multi_illuminator = clone(twoFmIlluminators.process.multi_illuminator);
+for (const lane of coherentLanes.process.multi_illuminator.illuminators)
+  lane.transmitter_location = {latitude: 40.1, longitude: -75.2, altitude: 130};
+for (const backend of ['cpu', 'auto', 'gpu', 'gpu-resident']) {
+  const configured = clone(coherentLanes);
+  configured.process.performance.acceleration = backend;
+  configured.process.tracker.gpu_capacity = 128;
+  const result = validateConfig(configured);
+  assert.equal(result.valid, true, `${backend} coherent lanes: ${result.errors.join('; ')}`);
+}
+for (const feature of ['noise-whitened', 'bearing', 'beam-history']) {
+  const configured = clone(coherentLanes);
+  configured.process.performance.acceleration = 'gpu-resident';
+  configured.process.tracker.gpu_capacity = 128;
+  if (feature === 'noise-whitened') configured.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
+  if (feature === 'bearing') configured.process.bearing.enable = true;
+  if (feature === 'beam-history') {
+    configured.process.detection.integration_cpis = 2;
+    configured.process.tracker.beam_tolerance = 1;
+  }
+  const result = validateConfig(configured);
+  assert.equal(result.valid, true, `${feature} coherent lanes: ${result.errors.join('; ')}`);
+}
+const missingLaneSite = clone(coherentLanes);
+delete missingLaneSite.process.multi_illuminator.illuminators[0].transmitter_location;
+assert.equal(validateConfig(missingLaneSite).valid, false, 'coherent lane never borrows a global transmitter site');
+for (const site of [{latitude: 91, longitude: 0, altitude: 0},
+  {latitude: 1, longitude: 181, altitude: 0}, {latitude: 1, longitude: 1}]) {
+  const invalid = clone(coherentLanes);
+  invalid.process.multi_illuminator.illuminators[0].transmitter_location = site;
+  assert.equal(validateConfig(invalid).valid, false, 'lane site coordinates must be explicit and finite');
+}
+const coherentDedicatedLane = clone(coherentLanes);
+coherentDedicatedLane.process.multi_illuminator.illuminators[0].reference_channel = 0;
+coherentDedicatedLane.process.multi_illuminator.illuminators[0].surveillance_channels = [1, 2, 3, 4];
+assert.equal(validateConfig(coherentDedicatedLane).valid, false,
+  'coherent calibration requires matching array-reference roles');
 const correlatedBeamTrials = clone(coherentFusion);
 correlatedBeamTrials.process.surveillance_fusion.effective_beam_trials = 5;
 assert.equal(validateConfig(correlatedBeamTrials).valid, true,
@@ -299,10 +473,54 @@ guidedShadowTracker.process.detection.track_before_detect = {
 guidedShadowTracker.process.tracker.track_guided_shadow = {enable: true, max_tracks: 64};
 assert.equal(validateConfig(guidedShadowTracker).valid, true,
   'bounded track-guided shadow accepts resident rolling history');
+for (const mode of [undefined, 'cpu', 'auto', 'gpu']) {
+  const invalid = clone(guidedShadowTracker);
+  if (mode === undefined) delete invalid.process.performance;
+  else invalid.process.performance.acceleration = mode;
+  const result = validateConfig(invalid);
+  assert.ok(!result.errors.some(error => /stationary-clutter.*requires gpu-resident|track-guided shadow requires gpu-resident/.test(error)),
+    `host recovery is not backend-gated for ${mode ?? 'missing performance'}`);
+}
+const inactiveStationaryTracker = clone(stationaryClutterTracker);
+inactiveStationaryTracker.process.tracker.enable = false;
+assert.ok(validateConfig(inactiveStationaryTracker).errors.some(error =>
+  error.includes('stationary-clutter initiation filtering requires enabled tracking')));
+const malformedDormantGuided = clone(krakenProfile);
+delete malformedDormantGuided.process.performance;
+malformedDormantGuided.process.tracker.track_guided_shadow = {enable: false, max_tracks: 0};
+assert.ok(validateConfig(malformedDormantGuided).errors.some(error => error.includes('track_guided_shadow.max_tracks')),
+  'omitted performance cannot bypass guided schema checks');
+const fractionalDelayTracker = clone(guidedShadowTracker);
+fractionalDelayTracker.process.detection.track_before_detect.fractional_delay = true;
+assert.equal(validateConfig(fractionalDelayTracker).valid, true,
+  'explicit fractional delay accepts resident TBD');
+for (const bad of ['true', 1, null]) {
+  const invalid = clone(fractionalDelayTracker);
+  invalid.process.detection.track_before_detect.fractional_delay = bad;
+  assert.equal(validateConfig(invalid).valid, false, 'fractional delay requires a boolean');
+}
+const fractionalWithoutTbd = clone(fractionalDelayTracker);
+fractionalWithoutTbd.process.detection.track_before_detect.enable = false;
+assert.equal(validateConfig(fractionalWithoutTbd).valid, false,
+  'fractional delay cannot silently bypass TBD');
 const promotedGuidedTracker = clone(guidedShadowTracker);
 promotedGuidedTracker.process.tracker.track_guided_shadow.promote = true;
+promotedGuidedTracker.process.tracker.initiate.M = 2;
+promotedGuidedTracker.process.tracker.initiate.N = 3;
 assert.equal(validateConfig(promotedGuidedTracker).valid, true,
-  'track-guided promotion accepts the qualified evaluator path');
+  'experimental guided promotion accepts a feasible independent-window contract');
+const impossibleGuidedTracker = clone(promotedGuidedTracker);
+impossibleGuidedTracker.process.tracker.initiate.M = 4;
+impossibleGuidedTracker.process.tracker.initiate.N = 6;
+assert.equal(validateConfig(impossibleGuidedTracker).valid, false,
+  'experimental guided promotion must reject impossible disjoint 4-of-6');
+impossibleGuidedTracker.process.tracker.track_guided_shadow.promote = false;
+assert.equal(validateConfig(impossibleGuidedTracker).valid, true,
+  'ordinary production 4-of-6 must remain valid with promotion off');
+impossibleGuidedTracker.process.tracker.track_guided_shadow.promote = true;
+impossibleGuidedTracker.process.tracker.initiate.N = 7;
+assert.equal(validateConfig(impossibleGuidedTracker).valid, true,
+  'explicit experimental 4-of-7 has a feasible endpoint window');
 const promotionWithoutShadow = clone(guidedShadowTracker);
 promotionWithoutShadow.process.tracker.track_guided_shadow = {enable: false,
   promote: true, max_tracks: 64};
@@ -353,10 +571,26 @@ Object.assign(projectedBearing.capture.device.array_geometry,
 const projectedBearingValidation = validateConfig(projectedBearing);
 assert.equal(projectedBearingValidation.valid, true,
   `projected fixed-site model accepts only the explicit native replay experiment: ${projectedBearingValidation.errors.join('; ')}`);
+for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml', 'config-hackrf.yml', 'config-kraken.yml']) {
+  const recorded = load(profile);
+  recorded.process = clone(projectedBearing.process);
+  recorded.network = clone(projectedBearing.network);
+  recorded.capture.device.array_geometry = clone(projectedBearing.capture.device.array_geometry);
+  recorded.capture.replay = {...clone(projectedBearing.capture.replay), channel_count: 5,
+    sample_rate_hz: projectedBearing.capture.fs, frequency_hz: projectedBearing.capture.fc,
+    reference_mode: 'array_eigenbeam', reference_channels: [4, 3, 2, 1, 0],
+    surveillance_channels: [2, 0, 4, 1, 3]};
+  // The recorded topology owns roles even if the dormant live profile is dedicated.
+  recorded.process.reference_synthesis.mode = 'dedicated';
+  recorded.process.reference_synthesis.channels = [0];
+  const result = validateConfig(recorded);
+  assert.equal(result.valid, true,
+    `projected replay uses recorded topology under ${profile}: ${result.errors.join('; ')}`);
+}
 for (const mutate of [
   value => { value.capture.replay.state = false; },
   value => { value.capture.replay.format = 'auto'; },
-  value => { value.capture.device.surveillance_channels = [0, 2, 1, 3, 4]; },
+  value => { value.capture.device.surveillance_channels = [0, 1, 2, 3]; },
   value => { value.process.reference_synthesis.mode = 'channel'; },
   value => { value.process.clutter.enable = false; },
   value => { value.process.performance.acceleration = 'cpu'; },
@@ -453,6 +687,40 @@ for (const type of ['Usrp', 'RspDuo']) {
   assert.equal(validateConfig(paired).valid, false,
     `${type} rejects a reference input outside its coherent channel count`);
 }
+for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml']) {
+  const residentDedicated = load(profile);
+  residentDedicated.process.performance.acceleration = 'gpu-resident';
+  residentDedicated.process.tracker.gpu_capacity = 256;
+  assert.equal(validateConfig(residentDedicated).valid, true,
+    `${profile} admits the shared resident pipeline with a dedicated reference`);
+  for (const channels of [[], [0, 1], [2]]) {
+    const invalid = clone(residentDedicated);
+    invalid.process.reference_synthesis = {mode: 'dedicated', channels};
+    assert.equal(validateConfig(invalid).valid, false,
+      `${profile} rejects malformed dedicated-reference resident topology`);
+  }
+}
+const residentHackRfReversed = load('config-hackrf.yml');
+residentHackRfReversed.process.performance.acceleration = 'gpu-resident';
+residentHackRfReversed.process.tracker.gpu_capacity = 256;
+residentHackRfReversed.process.reference_synthesis = {
+  mode: 'dedicated', channels: [1], analysis_samples: 32768,
+  analysis_interval: 10, power_iterations: 12,
+  covariance_smoothing: .8, diagonal_loading: .001};
+assert.equal(validateConfig(residentHackRfReversed).valid, true,
+  'HackRF dedicated roles are explicit even though array coherence is unavailable');
+const residentHackRfOutOfRange = clone(residentHackRfReversed);
+residentHackRfOutOfRange.process.reference_synthesis.channels = [8];
+assert.equal(validateConfig(residentHackRfOutOfRange).valid, false,
+  'HackRF rejects a dedicated reference outside its two captured inputs');
+
+const residentPartialArray = clone(sixChannel);
+residentPartialArray.process.performance.acceleration = 'gpu-resident';
+residentPartialArray.process.tracker.gpu_capacity = 256;
+residentPartialArray.process.reference_synthesis.channels = [0, 1];
+residentPartialArray.capture.device.surveillance_channels = [0, 1];
+assert.equal(validateConfig(residentPartialArray).valid, false,
+  'resident array reference must map every canonical capture input identically');
 for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial',
   'type=b\t200', 'type=b200,type=b210']) {
   const invalid = load('config-usrp.yml');
@@ -606,6 +874,48 @@ try {
   fs.rmSync(directory, {recursive: true});
 }
 
+const ownershipDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-config-owner-test-'));
+const ownershipFilename = path.join(ownershipDirectory, 'config.yml');
+const originalStatSync = fs.statSync;
+const originalChownSync = fs.chownSync;
+const originalGetuid = process.getuid;
+try {
+  fs.writeFileSync(ownershipFilename, 'original: true\n', {mode: 0o660});
+  const original = originalStatSync(ownershipFilename);
+  const calls = [];
+  fs.statSync = target => target === ownershipFilename ?
+    {...original, uid: 0, gid: original.gid} : originalStatSync(target);
+  process.getuid = () => 12345;
+  fs.chownSync = (target, uid, gid) => {
+    calls.push([target, uid, gid]);
+    if (uid === 0) {
+      const error = new Error('operation not permitted'); error.code = 'EPERM'; throw error;
+    }
+    return originalChownSync(target, originalGetuid(), gid);
+  };
+  writeConfigAtomically(ownershipFilename, sixChannel);
+  assert.deepEqual(calls.map(([, uid, gid]) => [uid, gid]),
+    [[0, original.gid], [12345, original.gid]],
+    'EPERM retaining root ownership must fall back to the service owner in the same group');
+  const replaced = originalStatSync(ownershipFilename);
+  assert.equal(replaced.gid, original.gid);
+  assert.equal(replaced.mode & 0o777, original.mode & 0o777);
+  assert.deepEqual(yaml.load(fs.readFileSync(ownershipFilename, 'utf8')), sixChannel);
+
+  fs.chownSync = () => {
+    const error = new Error('permission denied'); error.code = 'EACCES'; throw error;
+  };
+  const rejectedOwnerChange = clone(sixChannel); rejectedOwnerChange.save.iq = true;
+  assert.throws(() => writeConfigAtomically(ownershipFilename, rejectedOwnerChange),
+    error => error.code === 'EACCES', 'Unrelated ownership errors must fail closed');
+  assert.equal(yaml.load(fs.readFileSync(ownershipFilename, 'utf8')).save.iq, sixChannel.save.iq);
+} finally {
+  fs.statSync = originalStatSync;
+  fs.chownSync = originalChownSync;
+  process.getuid = originalGetuid;
+  fs.rmSync(ownershipDirectory, {recursive: true});
+}
+
 console.log('Configuration validation tests passed.');
 const ordinary = validateConfig(sixChannel);
 assert.ok(ordinary.estimatedMemoryBytes > 512 * 1048576);
@@ -726,6 +1036,30 @@ const invalidProvenance = clone(sixChannel);
 invalidProvenance.capture.replay.provenance = 'best-effort';
 assert.equal(validateConfig(invalidProvenance).valid, false,
   'Replay must not silently invent an unqualified provenance mode');
+const residentSnapshotReplay = clone(sixChannel);
+residentSnapshotReplay.capture.replay.state = true;
+residentSnapshotReplay.process.performance.acceleration = 'gpu-resident';
+residentSnapshotReplay.process.tracker.gpu_capacity = 256;
+residentSnapshotReplay.capture.replay.resident_snapshot = {enabled: true,
+  output_directory: '/var/tmp/vectorwarp-resident-snapshots', max_frames: 20,
+  max_bytes: 268435456, source_sha256: 'a'.repeat(64),
+  rf_profile_sha256: 'B'.repeat(64), rf_profile_file: '/var/tmp/replay.json'};
+assert.equal(validateConfig(residentSnapshotReplay).valid, true,
+  'Bounded resident snapshot export is accepted for offline GPU-resident replay');
+for (const mutate of [
+  value => { value.capture.replay.state = false; },
+  value => { value.process.performance.acceleration = 'cpu'; },
+  value => { value.capture.replay.resident_snapshot.output_directory = 'relative'; },
+  value => { value.capture.replay.resident_snapshot.source_sha256 = 'abc'; },
+  value => { value.capture.replay.resident_snapshot.rf_profile_file = 'relative'; },
+  value => { value.capture.replay.resident_snapshot.max_frames = 129; },
+  value => { value.capture.replay.resident_snapshot.max_bytes = 536870913; },
+  value => { value.process.multi_illuminator.enabled = true; }
+]) {
+  const invalid = clone(residentSnapshotReplay); mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    'Resident snapshot export fails closed outside its replay/provenance bounds');
+}
 const excessiveAircraftClip = clone(sixChannel);
 excessiveAircraftClip.capture.aircraft_clips = {enabled: true, pre_seconds: 6, post_seconds: 5};
 assert.equal(validateConfig(excessiveAircraftClip).valid, false,
@@ -738,3 +1072,18 @@ portableAircraftClip.capture.aircraft_clips = {enabled: true, pre_seconds: 2,
 assert.equal(validateConfig(portableAircraftClip).valid, true,
   'Automatic aircraft IQ clips are valid for a non-Kraken receiver');
 console.log(`Exhaustive type checks passed for ${checked} device-setting leaves; boundary and cross-field tests passed.`);
+
+for (const maximum of [undefined, 1, 256, 65535]) {
+  const candidate = load('config-usrp.yml');
+  candidate.process.detection.doppler_ridge_scrubber = {
+    mode: 'shadow', persistence_cpis: 12, minimum_excess_db: 3,
+    maximum_subtraction_db: 12, doppler_tolerance_hz: 4,
+    neighborhood_rows: 8, delay_stride: 4,
+    ...(maximum === undefined ? {} : {shadow_maximum_cpis: maximum})};
+  assert.equal(validateConfig(candidate).valid, true,
+    `bounded ridge shadow window ${maximum}: ${validateConfig(candidate).errors.join('; ')}`);
+  for (const invalid of [0, -1, 1.5, 65536, '256']) {
+    candidate.process.detection.doppler_ridge_scrubber.shadow_maximum_cpis = invalid;
+    assert.ok(validateConfig(candidate).errors.some(error => error.includes('shadow_maximum_cpis')));
+  }
+}

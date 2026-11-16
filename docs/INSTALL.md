@@ -154,7 +154,7 @@ installer. The application is installed at `/Applications/VectorWarp.app`.
 ## Build from source
 
 Source builds support Linux systems with Node.js 22 or newer, CMake, a C++
-compiler, and the receiver libraries selected below.
+compiler, and the receiver libraries below.
 
 ### 1. Install Linux build dependencies
 
@@ -194,15 +194,11 @@ sudo apt install libvulkan-dev glslang-dev glslang-tools
 sudo dnf install vulkan-loader-devel glslang-devel vulkan-tools
 ```
 
-### 2. Choose receiver support
+### 2. Build the unified receiver artifact
 
-| Backend | Included receivers |
-| --- | --- |
-| `all` | KrakenSDR, USRP/UHD, dual HackRF, and the local RSPduo adapter kit |
-| `kraken` | KrakenSDR |
-| `usrp` | USRP/UHD and KrakenSDR |
-| `hackrf` | Dual HackRF and KrakenSDR |
-| `rspduo` | SDRplay RSPduo and KrakenSDR |
+Public builds use `--backend all`, which includes KrakenSDR, USRP/UHD, dual
+HackRF, and the local RSPduo adapter kit. Select the receiver at runtime in
+Settings; receiver-subset builds are internal test fixtures, not install paths.
 
 For RSPduo, install the SDRplay Hardware API before building the adapter. See
 [SDRplay setup](SDRPLAY_SETUP.md).
@@ -213,9 +209,8 @@ USRP and B210 support requires UHD 4.1 or newer.
 ```bash
 git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
 cd blah2-VectorWarp
-VW_BACKEND=all
-script/build-native.sh --preflight --backend "$VW_BACKEND" --gpu auto
-script/build-native.sh --backend "$VW_BACKEND" --gpu auto
+script/build-native.sh --preflight --backend all --gpu auto
+script/build-native.sh --backend all --gpu auto
 sudo script/install-native.sh --preflight
 sudo script/install-native.sh
 vectorwarp

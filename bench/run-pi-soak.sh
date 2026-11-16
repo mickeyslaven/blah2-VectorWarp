@@ -28,7 +28,10 @@ uname -a > "$output/os.txt"
 perf --version > "$output/perf-version.txt"
 sha256sum "$binary" "$script_dir/live-rspduo-check.py" \
   "$script_dir/pi_spike_diagnostics.py" "$script_dir/run-pi-soak.sh" > "$output/hashes.sha256"
-for artifact in "$(dirname "$binary")/blah2-mixed-worker" \
+for artifact in "$(dirname "$binary")/blah2-gpu-worker" \
+                "$(dirname "$binary")/blah2-gpu-vulkan.so" \
+                "$(dirname "$binary")/blah2-gpu-wideband-vulkan.so" \
+                "$(dirname "$binary")/blah2-gpu-resident-vulkan.so" \
                 "$(dirname "$binary")/blah2-receiver-rspduo.so" \
                 "$(dirname "$binary")/libblah2-capture-core.so.1"; do
   if [[ -f "$artifact" ]]; then sha256sum "$artifact" >> "$output/hashes.sha256"; fi

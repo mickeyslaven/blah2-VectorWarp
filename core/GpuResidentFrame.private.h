@@ -22,6 +22,8 @@ enum ResidentFrameStage : uint32_t {
 };
 struct ResidentFrameConfig {
   GpuGeometry geometry{};
+  uint32_t inputChannels=0;
+  std::vector<uint32_t> surveillanceChannels;
   uint32_t correlation = 0;
   double sampleRate = 0;
   double middle = 0;
@@ -105,12 +107,13 @@ layout(local_size_x=128) in;
 layout(binding=0) readonly buffer Canonical { dvec2 raw[]; };
 layout(binding=1) writeonly buffer Surveillance { vec2 surv[]; };
 layout(binding=2) buffer Status { uint s[]; };
-layout(push_constant) uniform P { uint count; uint samples; uint first; uint activeCount; int ignored; } p;
+layout(push_constant) uniform P { uint count; uint samples; uint first; uint activeCount; uint mapping; } p;
 void main(){
  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
  if(i>=p.count)return;
  if(i>=p.samples*p.activeCount){surv[i]=vec2(0);return;}
- dvec2 x=raw[p.first*p.samples+i]; vec2 y=vec2(x);
+ uint source=(p.mapping>>(4u*(p.first+i/p.samples)))&15u;
+ dvec2 x=raw[source*p.samples+i%p.samples]; vec2 y=vec2(x);
  if(any(isnan(x))||any(isinf(x))||any(isnan(y))||any(isinf(y)))atomicCompSwap(s[0],0u,2u);
  surv[i]=y;
  if((i&127u)==0u)atomicAdd(s[3],min(128u,p.samples*p.activeCount-i));
@@ -121,14 +124,16 @@ layout(local_size_x=128) in;
 layout(binding=0) buffer Canonical { dvec2 raw[]; };
 layout(binding=1) readonly buffer Estimate { vec2 estimate[]; };
 layout(binding=2) buffer Status { uint s[]; };
-layout(push_constant) uniform P { uint count; uint samples; uint first; uint unused; int ignored; } p;
+layout(push_constant) uniform P { uint count; uint samples; uint first; uint mapping; int ignored; } p;
 void main(){
  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
  if(i>=p.count)return;
  // Exactly the original parent boundary: original FP64 y - promoted FP32 z.
- precise dvec2 value=raw[p.first*p.samples+i]-dvec2(estimate[i]);
+ uint source=(p.mapping>>(4u*(p.first+i/p.samples)))&15u;
+ uint at=source*p.samples+i%p.samples;
+ precise dvec2 value=raw[at]-dvec2(estimate[i]);
  if(any(isnan(value))||any(isinf(value)))atomicCompSwap(s[0],0u,3u);
- raw[p.first*p.samples+i]=value;
+ raw[at]=value;
  if((i&127u)==0u)atomicAdd(s[4],min(128u,p.count-i));
 })glsl";
 const char* surveillancePackSource=R"glsl(#version 450
@@ -144,9 +149,10 @@ void main(){
  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
  if(i>=p.count)return;
  uint r=i%p.range; vec2 value=vec2(0);
- if(r<p.correlation)value=vec2(raw[uint(p.first)*p.samples+(i/p.range)*p.correlation+r]);
+ uint channel=uint(p.first)&255u,source=uint(p.first)>>8;
+ if(r<p.correlation)value=vec2(raw[source*p.samples+(i/p.range)*p.correlation+r]);
  if(any(isnan(value))||any(isinf(value)))atomicCompSwap(s[0],0u,4u);
- surv[uint(p.first)*p.count+i]=value;
+ surv[channel*p.count+i]=value;
  if((i&127u)==0u)atomicAdd(s[5],live(min(i+128u,p.count))-live(i));
 })glsl";
 const char* subtractPackSource=R"glsl(#version 450
@@ -165,11 +171,11 @@ uint live(uint at){return (at/p.range)*p.correlation+min(at%p.range,p.correlatio
 void main(){
  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
  if(i>=p.count)return;
- uint encoded=uint(p.first),channel=encoded&65535u,slot=encoded>>16;
+ uint encoded=uint(p.first),channel=encoded&255u,source=(encoded>>8)&255u,slot=encoded>>16;
  uint r=i%p.range; vec2 packed=vec2(0);
  if(r<p.correlation){
   uint at=(i/p.range)*p.correlation+r;
-  precise dvec2 value=raw[channel*p.samples+at]-dvec2(estimate[slot*p.samples+at]);
+  precise dvec2 value=raw[source*p.samples+at]-dvec2(estimate[slot*p.samples+at]);
   if(any(isnan(value))||any(isinf(value)))atomicCompSwap(s[0],0u,3u);
   packed=vec2(value);
  }
@@ -287,9 +293,28 @@ inline void hostRead(VkCommandBuffer command){
 inline ResidentFrameConfig validate(ResidentFrameConfig config){
  const auto& g=config.geometry;
  const bool supplied=config.reference.mode==ReferenceMode::supplied;
+ if(!config.inputChannels||config.inputChannels>8||g.channels>config.inputChannels||
+    config.surveillanceChannels.size()!=g.channels)
+  throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED input/surveillance dimensions");
+ std::array<bool,8> used{};
+ for(auto channel:config.surveillanceChannels){
+  if(channel>=config.inputChannels||used[channel])
+   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance channel mapping");
+  used[channel]=true;
+ }
+ if(supplied||config.reference.mode==ReferenceMode::capturedArray){
+  if(config.inputChannels!=g.channels)
+   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED array input dimensions");
+  for(uint32_t i=0;i<g.channels;++i)if(config.surveillanceChannels[i]!=i)
+   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED array surveillance identity");
+ }else if(config.reference.mode==ReferenceMode::capturedDedicated&&
+          config.reference.referenceChannels.size()==1&&
+          config.reference.referenceChannels[0]<config.inputChannels&&
+          used[config.reference.referenceChannels[0]])
+  throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED dedicated reference overlaps surveillance");
  if(bool(config.replayMaxBytes)!=config.postprocess.replaySnapshot||
     config.replayMaxBytes>resident_replay::byteLimit||
-    (config.replayMaxBytes&&(supplied||!config.postprocess.detection)))
+    (config.replayMaxBytes&&(config.reference.mode!=ReferenceMode::capturedArray||!config.postprocess.detection)))
   throw std::invalid_argument("Resident replay export configuration invalid");
  const uint32_t expectedStages=(supplied?residentSupportedStages:residentCapturedSupportedStages)|
   (config.postprocess.enabled?residentMapDisplay:0u)|(config.postprocess.detection?residentDetection:0u)|(config.tracker.enabled?residentTracker:0u);
@@ -313,6 +338,10 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
      config.fusion.directPathAzimuthRad||config.fusion.directPathNullDb||
      !config.fusion.manifoldResponses.empty()||!config.fusion.directResponse.empty())))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
+ if(config.fusion.mode!=0&&!supplied&&
+    (config.reference.mode!=ReferenceMode::capturedArray||
+     config.reference.referenceChannels!=config.surveillanceChannels))
+  throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED coherent reference topology");
  for(const auto& value:config.fusion.manifoldResponses)
   if(!std::isfinite(value.real())||!std::isfinite(value.imag())||
      !(std::norm(value)>1e-12f))
@@ -329,12 +358,12 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
     uint64_t(config.correlation)*g.doppler>g.clutterSamples ||
     g.delayMin<=-int64_t(config.correlation) || int64_t(g.delayMin)+g.delays-1>=config.correlation)
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED geometry");
- const uint64_t nc=uint64_t(g.clutterSamples)*g.channels;
+ const uint64_t nc=uint64_t(g.clutterSamples)*config.inputChannels;
  const uint64_t rc=uint64_t(g.range)*g.doppler*g.channels;
  const uint64_t mc=uint64_t(g.delays)*g.doppler*g.channels;
  if(nc>UINT32_MAX/2 || rc>UINT32_MAX/2 || mc>UINT32_MAX/2 || nc>SIZE_MAX/16)
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED index capacity");
- if(!supplied)gpu_reference::validate(config.reference,g.clutterSamples,g.channels,config.sampleRate);
+ if(!supplied)gpu_reference::validate(config.reference,g.clutterSamples,config.inputChannels,config.sampleRate);
  if(config.postprocess.bearingReferenceAnchor==2){
   if(config.reference.mode!=ReferenceMode::capturedArray||
      config.reference.referenceChannels.size()!=g.channels||g.channels<2||
@@ -401,12 +430,12 @@ class ResidentFramePipeline {
    g.channels=channels;
    clutter=std::make_unique<ClutterPipeline>(context,g,false,false,true);
    if(config.reference.mode!=ReferenceMode::supplied)
-    referenceStage=std::make_unique<gpu_reference::Stage>(context,config.reference,g.clutterSamples,config.geometry.channels,config.sampleRate,clutter->borrowedReference(),clutter->borrowedWork());
+    referenceStage=std::make_unique<gpu_reference::Stage>(context,config.reference,g.clutterSamples,config.inputChannels,config.sampleRate,clutter->borrowedReference(),clutter->borrowedWork());
    constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
    constexpr auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
    // Late allocations coexist with initialized full ambiguity and clutter plans.
    // Their requirements (not requested bytes) remain charged to the same caps.
-   canonical=std::make_unique<Buffer>(context,uint64_t(g.clutterSamples)*config.geometry.channels*16,host,preferred);
+   canonical=std::make_unique<Buffer>(context,uint64_t(g.clutterSamples)*config.inputChannels*16,host,preferred);
    fused=std::make_unique<Buffer>(context,uint64_t(g.doppler)*g.delays*16,host,preferred);
    status=std::make_unique<Buffer>(context,gpu_resident::words*4,host,preferred);
    if(config.replayMaxBytes){
@@ -498,6 +527,8 @@ class ResidentFramePipeline {
    timestamps->end(command,0);
    gpu_resident::hostRead(command);
    check(vkEndCommandBuffer(command),"resident reference recording");
+   uint32_t mapping=0;
+   for(uint32_t i=0;i<config.geometry.channels;++i)mapping|=config.surveillanceChannels[i]<<(4*i);
    for(uint32_t batch=0,first=0;first<config.geometry.channels;++batch,first+=channels){
     const uint32_t active=std::min(channels,config.geometry.channels-first);
     command=commands.handles[2+3*batch];
@@ -505,7 +536,7 @@ class ResidentFramePipeline {
     gpu_resident::hostWrite(command);
     barrier(command);
     timestamps->begin(command,1);
-    surveillanceCast->append(command,{n*channels,n,first,active,0});
+    surveillanceCast->append(command,{n*channels,n,first,active,int32_t(mapping)});
     barrier(command);
     timestamps->end(command,1);
     gpu_resident::hostRead(command);
@@ -514,11 +545,11 @@ class ResidentFramePipeline {
     check(vkBeginCommandBuffer(command,&begin),"resident subtraction recording");
     barrier(command);
     timestamps->begin(command,2);
-    subtract->append(command,{n*active,n,first,0,0});
+    subtract->append(command,{n*active,n,first,mapping,0});
     barrier(command);
     // Separate dispatch after a full memory barrier: no in-place read/write race.
     for(uint32_t c=first;c<first+active;++c)
-     surveillancePack->append(command,{g.range*g.doppler,g.range,config.correlation,n,int32_t(c)});
+     surveillancePack->append(command,{g.range*g.doppler,g.range,config.correlation,n,int32_t(c|(config.surveillanceChannels[c]<<8))});
     barrier(command);
     timestamps->end(command,2);
     gpu_resident::hostRead(command);
@@ -529,7 +560,7 @@ class ResidentFramePipeline {
     timestamps->begin(command,2);
     for(uint32_t c=first;c<first+active;++c)
      subtractPack->append(command,{g.range*g.doppler,g.range,config.correlation,n,
-      int32_t(c|((c-first)<<16))});
+      int32_t(c|(config.surveillanceChannels[c]<<8)|((c-first)<<16))});
     barrier(command);
     timestamps->end(command,2);
     gpu_resident::hostRead(command);
@@ -749,8 +780,8 @@ class ResidentFramePipeline {
   const auto& g=config_.geometry;
   const size_t maps=size_t(g.doppler)*g.delays;
   const size_t tail=size_t(g.clutterSamples-uint64_t(config_.correlation)*g.doppler)*g.channels;
-  if(count!=size_t(g.clutterSamples)*g.channels || out.mapCount!=maps*g.channels || out.fusedCount!=maps ||
-    ((out.filtered!=nullptr || out.filteredCount!=0) && (!out.filtered || out.filteredCount!=count)) ||
+  if(count!=size_t(g.clutterSamples)*config_.inputChannels || out.mapCount!=maps*g.channels || out.fusedCount!=maps ||
+    ((out.filtered!=nullptr || out.filteredCount!=0) && (!out.filtered || out.filteredCount!=size_t(g.clutterSamples)*g.channels)) ||
     ((out.tail!=nullptr || out.tailCount!=0) && (!out.tail || out.tailCount!=tail || !tail)))
    throw std::invalid_argument("Resident output dimensions changed");
   std::vector<gpu_resident::HostRange> ranges{gpu_resident::hostRange(input,count,16),
@@ -790,7 +821,7 @@ class ResidentFramePipeline {
  void validateReferenceOutputs(const D* input,size_t count,const ReferenceOutputs& out){
   const auto& g=config_.geometry;
   const size_t bins=work_->referenceStage->spectrumCount();
-  if(count!=size_t(g.clutterSamples)*g.channels || !out.checkpoint || out.spectrumCount!=bins || out.spectrumDbCount!=bins ||
+  if(count!=size_t(g.clutterSamples)*config_.inputChannels || !out.checkpoint || out.spectrumCount!=bins || out.spectrumDbCount!=bins ||
    ((out.reference || out.referenceCount) && (!out.reference || out.referenceCount!=g.clutterSamples)))
    throw std::invalid_argument("Captured reference output dimensions changed");
   std::vector<gpu_resident::HostRange> ranges{gpu_resident::hostRange(input,count,16),
@@ -832,7 +863,7 @@ public:
   const auto& g=config_.geometry;
   const uint64_t r=uint64_t(g.range)*g.doppler,m=uint64_t(g.doppler)*g.delays;
   const uint64_t ambiguityBytes=(r*(1+g.channels)+2*m*g.channels)*8;
-  const uint64_t lateBytes=uint64_t(g.clutterSamples)*g.channels*16+m*16+gpu_resident::words*4;
+  const uint64_t lateBytes=uint64_t(g.clutterSamples)*config_.inputChannels*16+m*16+gpu_resident::words*4;
   const auto budget=gpu_memory::heapBudget(context_.candidate.info.memoryBytes);
   const auto& limit=context_.candidate.properties.limits;
   if(config_.replayMaxBytes){
@@ -845,7 +876,7 @@ public:
     throw std::runtime_error("GPU_RESIDENT_UNAVAILABLE replay observer capacity");
   }
   if(ambiguityBytes>budget || lateBytes>budget-ambiguityBytes ||
-    std::max({r*g.channels*8,m*g.channels*8,uint64_t(g.clutterSamples)*g.channels*16,m*16})>limit.maxStorageBufferRange ||
+    std::max({r*g.channels*8,m*g.channels*8,uint64_t(g.clutterSamples)*config_.inputChannels*16,m*16})>limit.maxStorageBufferRange ||
     limit.maxComputeWorkGroupInvocations<128 || limit.maxComputeWorkGroupSize[0]<128 || limit.maxComputeWorkGroupCount[0]<65535)
    throw std::runtime_error("GPU_RESIDENT_UNAVAILABLE capacity");
   constexpr auto device=VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
@@ -865,25 +896,36 @@ public:
    auto batch=g;
    batch.channels=c;
    const uint64_t required=ClutterPipeline::requiredBytes(batch,true);
-   // Canonical/result buffers are HOST_VISIBLE and live on a separate system
-   // heap on discrete GPUs. The allocation budget remains the hard guard when
-   // a unified-memory device charges those later buffers to its device heap.
-   if(required>budget-ambiguityBytes)continue;
+   // The estimate mixes requested device/host bytes and conservative FFT LUT
+   // allowances. Do not reject a larger batch on that approximation: actual
+   // aligned allocations (including VkFFT transients) enforce every heap cap.
+   if(required==UINT64_MAX){reason="invalid clutter geometry";continue;}
+   {std::lock_guard<std::mutex> lock(allocationsMutex);
+    deviceAllocations.at(context_.device).budget.clearRejection();}
    try {work_=std::make_unique<Workspace>(*this,c);
+   // Admit the entire workload before accepting this batch, including fixed
+   // tracker capacity. Only clutter batching changes on a retry, never tracks.
+   if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
+    work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout(),
+    work_->postprocessStage->integrationBuffer(),work_->postprocessStage->currentPowerBuffer());
    break;}
    catch(const std::exception& error){reason=error.what();
-   startupTrace(("resident retry batch="+std::to_string(c)+" reason="+reason).c_str());}
+    tracker_.reset();work_.reset();
+    std::lock_guard<std::mutex> lock(allocationsMutex);
+    const auto& b=deviceAllocations.at(context_.device).budget;const auto& rejected=b.lastRejection();
+    std::cerr<<"GPU_RESIDENT_BATCH_REJECTED batch="<<c<<" estimated_clutter_bytes="<<required
+     <<" allocation_reason="<<rejected.reason<<" allocation_requested_bytes="<<rejected.requested
+     <<" used_at_rejection="<<rejected.used<<" required_total_at_least_bytes="<<rejected.requiredAtLeast
+     <<" heap="<<rejected.heap<<" heap_used_at_rejection="<<rejected.heapUsed<<" heap_limit="<<rejected.heapLimit
+     <<" device_used_at_rejection="<<rejected.deviceUsed<<" device_limit="<<b.deviceLimit()
+     <<" used_after_cleanup="<<b.used()<<" limit="<<b.limit()<<" reason="<<reason<<'\n';}
   }
   if(!work_)throw std::runtime_error("GPU_RESIDENT_UNAVAILABLE "+reason);
-  // Tracker capacity is explicit and never retried/shrunk. All existing full-frame
-  // allocations, plans and transient peaks have already been admitted.
-  if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
-   work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout(),
-   work_->postprocessStage->integrationBuffer(),work_->postprocessStage->currentPowerBuffer());
   {std::lock_guard<std::mutex> lock(allocationsMutex);
   const auto& b=deviceAllocations.at(context_.device).budget;
    std::cerr<<"GPU_RESIDENT_READY channels="<<g.channels<<" samples="<<g.clutterSamples<<" capacity="<<work_->capacity
     <<" canonical_bytes="<<work_->canonical->bytes<<" used="<<b.used()<<" peak="<<b.peak()<<" limit="<<b.limit()
+    <<" clutter_scratch_reused_bytes="<<work_->clutter->residentScratchReusedBytes()
     <<" device_used="<<b.deviceUsed()<<" device_peak="<<b.devicePeak()
     <<" device_limit="<<b.deviceLimit()
     <<" supplied_reference="<<(config_.reference.mode==ReferenceMode::supplied?1:0)<<" stages="<<config_.stages<<" cpu_bulk_calls=0 cpu_solve_calls=0"
@@ -997,6 +1039,21 @@ public:
  void resetReferenceState(){requireCaptured(true);
  try{work_->referenceStage->reset();}catch(...){fail();
  throw;}}
+ void resetInput(){requireCaptured(true);
+  try{reset();work_->referenceStage->reset();
+   if(work_->postprocessStage){gpu_reference::CommandOwner command(context_);command.allocate();
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    check(vkBeginCommandBuffer(command.command,&begin),"resident input reset recording");
+    barrier(command.command);work_->postprocessStage->appendInputReset(command.command);
+    check(vkEndCommandBuffer(command.command),"resident input reset recording");
+    submit(command.command,"resident input reset");work_->postprocessStage->completeInputReset();}
+   if(tracker_)tracker_->resetInput();
+   capturedInput_=nullptr;capturedCount_=0;referenceHostRange_={};
+   readyEvidence_={};finalEvidence_={};batchEvidence_={};
+   // Fusion calibration has no accumulated state: the next freshly learned
+   // checkpoint rewrites every beam weight before its first radar dispatch.
+  }catch(...){fail();throw;}
+ }
  bool probePositiveLog(const double* input,size_t count,double* result){
   requireCaptured(true);
   try{return work_->referenceStage->probePositiveLog(input,count,result);}
@@ -1151,11 +1208,13 @@ private:
      throw std::runtime_error("Resident filtered coverage mismatch");
     if(out.filtered || out.tail){
      gpu_host::Scope timer(context_.hostTiming,"radar.filtered_tail_copy",first);
-     work_->canonical->invalidate(uint64_t(first)*n*16,uint64_t(active)*n*16);
      const auto* filtered=static_cast<const D*>(work_->canonical->mapped);
-     if(out.filtered)std::memcpy(out.filtered+size_t(first)*n,filtered+size_t(first)*n,size_t(active)*n*16);
-     if(out.tail)for(uint32_t c=first;c<first+active;++c)
-      std::memcpy(out.tail+size_t(c)*tail,filtered+size_t(c)*n+live,size_t(tail)*16);
+     for(uint32_t c=first;c<first+active;++c){
+      const size_t source=config_.surveillanceChannels[c];
+      work_->canonical->invalidate(uint64_t(source)*n*16,uint64_t(n)*16);
+      if(out.filtered)std::memcpy(out.filtered+size_t(c)*n,filtered+source*n,size_t(n)*16);
+      if(out.tail)std::memcpy(out.tail+size_t(c)*tail,filtered+source*n+live,size_t(tail)*16);
+     }
     }
     {gpu_host::Scope timer(context_.hostTiming,"radar.batch_query_log",first);
     context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_RESIDENT_BATCH frame="<<generation_<<" first="<<first<<" active="<<active

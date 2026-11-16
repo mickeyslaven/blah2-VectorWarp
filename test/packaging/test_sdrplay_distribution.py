@@ -36,9 +36,9 @@ class DistributionTests(unittest.TestCase):
     def test_actual_packages_stage_local_rspduo_kit_without_sdk_inputs(self):
         workflow = workflow_document()
         package = workflow['jobs']['package']
-        self.assertEqual(package['environment'], "${{ github.event_name == 'pull_request' && 'pr-packaging' || 'release-signing' }}")
+        self.assertNotIn('environment', package)
         text = str(package)
-        self.assertEqual(text.count('--backend all'), 6)
+        self.assertEqual(text.count('--backend all'), 3)
         self.assertNotIn('prepare-sdrplay-build-sdk.sh', text)
         self.assertNotIn('vectorwarp-sdrplay-sdk', text)
         self.assertNotIn('VECTORWARP_SDRPLAY', text)
@@ -73,7 +73,7 @@ class DistributionTests(unittest.TestCase):
         self.assertCountEqual([(row['distro'], row['format'], row['arch'])
                                for row in matrix], expected)
         pr_steps = [step for step in package['steps']
-                    if 'PR verification' in step.get('name', '')]
+                    if '--backend all' in step.get('run', '')]
         self.assertEqual(len(pr_steps), 3)
         text = str(pr_steps)
         self.assertEqual(text.count('--backend all'), 3)
@@ -84,7 +84,8 @@ class DistributionTests(unittest.TestCase):
                    if step.get('uses', '').startswith('actions/upload-artifact@')]
         release_uploads = [step for step in uploads if step['with']['path'] == 'dist/']
         self.assertEqual(len(release_uploads), 1)
-        self.assertEqual(release_uploads[0]['if'], "github.event_name != 'pull_request'")
+        self.assertNotIn('if', release_uploads[0])
+        self.assertTrue(all('github.event_name' not in step.get('if', '') for step in pr_steps))
 
     def test_notice_files_follow_the_existing_html_payload(self):
         for name in ('plotly-LICENSE.txt', 'plotly.min.js.LICENSE.txt', 'ieee754-LICENSE.txt'):

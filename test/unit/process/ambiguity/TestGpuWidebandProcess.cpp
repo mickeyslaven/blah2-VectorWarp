@@ -2,7 +2,48 @@
 #include "process/ambiguity/GpuWidebandFallback.h"
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <thread>
+
+TEST_CASE("wideband worker isolates inherited descriptors even with closed standard streams")
+{
+  struct Fixture {
+    int descriptor=-1;
+    ~Fixture(){if(descriptor>=0)close(descriptor);unsetenv("VW_MOCK_WIDEBAND_INHERITED_FD");}
+  } fixture;
+  const int source=open("/dev/null",O_RDONLY);
+  REQUIRE(source>=0);
+  fixture.descriptor=fcntl(source,F_DUPFD,100);close(source);
+  REQUIRE(fixture.descriptor>=100);
+  REQUIRE(setenv("VW_MOCK_WIDEBAND_INHERITED_FD",
+    std::to_string(fixture.descriptor).c_str(),1)==0);
+  const auto exercise=[] {
+    blah2::wideband_gpu::Config config{8000,2,8,
+      {{100000000,2,0,std::vector<double>(9,1.0/9)}}};
+    blah2::GpuProcessOptions options;options.executable=GPU_WIDEBAND_MOCK;
+    options.argument="--mock";options.warmup=false;
+    auto process=blah2::wideband_gpu::createProcess(config,"mock",options);
+    return process->process(std::vector<std::vector<std::complex<float>>>(2,
+      std::vector<std::complex<float>>(8)),0).size()==1;
+  };
+  REQUIRE(exercise());
+  REQUIRE(fcntl(fixture.descriptor,F_GETFD)>=0); // Parent ownership is unchanged.
+  const pid_t child=fork();
+  REQUIRE(child>=0);
+  if(child==0){
+    close(0);close(1);close(2);
+    if(setenv("VW_MOCK_WIDEBAND_CLOSED_STD","1",1))_exit(2);
+    try{_exit(exercise()?0:3);}catch(...){_exit(4);}
+  }
+  int status=0;pid_t result;
+  do{result=waitpid(child,&status,0);}while(result<0&&errno==EINTR);
+  REQUIRE(result==child);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status)==0);
+}
 
 TEST_CASE("wideband worker transports one capture to independent lanes")
 {
@@ -129,6 +170,9 @@ TEST_CASE("wideband first real block qualification is fail closed")
   REQUIRE(accepted.accepted);
   REQUIRE(accepted.status==blah2::wideband_gpu::QualificationStatus::passed);
   REQUIRE(accepted.worstRms==0);
+  // Correct work within the absolute worker deadline stays GPU-selected,
+  // including a slow device; no CPU/GPU speed-ratio policy is applied.
+  REQUIRE(blah2::wideband_gpu::qualifyFirstBlock(cpu,gpu,499,500).accepted);
 
   gpu=cpu;for(auto& channel:gpu[0].channels)
     std::fill(channel.begin(),channel.end(),std::complex<float>{});

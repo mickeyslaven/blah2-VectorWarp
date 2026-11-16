@@ -1,9 +1,14 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "process/ambiguity/GpuWidebandProcess.h"
 #include "process/utility/FixedExecutor.h"
 #include <algorithm>
 #include <chrono>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -44,6 +49,12 @@ class Process final:public Backend{
 public:
  Process(Config c,const std::string&device,GpuProcessOptions options):config_(std::move(c)),plan_(config_),options_(options),converter_(converterWorkers(config_)){
   int peer=-1,childSocket=-1,childMemory=-1;posix_spawn_file_actions_t actions;bool actionsReady=false;
+#ifdef __APPLE__
+  posix_spawnattr_t attributes;
+  bool attributesReady=false;
+  // Snapshot logging descriptors before IPC can reuse a closed standard fd.
+  const bool standardOpen[]={fcntl(0,F_GETFD)>=0,fcntl(1,F_GETFD)>=0,fcntl(2,F_GETFD)>=0};
+#endif
   try{
   if(!options_.startupMs||!options_.frameMs)
     throw std::invalid_argument("Wideband GPU worker deadlines must be nonzero");
@@ -61,9 +72,74 @@ public:
     PROT_READ|PROT_WRITE,MAP_SHARED,memory_,0));
   if(shared_==MAP_FAILED){shared_=nullptr;
     throw std::runtime_error("Wideband GPU mapping failed");}
-  int pair[2];if(socketpair(AF_UNIX,SOCK_STREAM,0,pair))throw std::runtime_error("Wideband GPU socket failed");socket_=pair[0];peer=pair[1];childSocket=fcntl(peer,F_DUPFD_CLOEXEC,10);childMemory=fcntl(memory_,F_DUPFD_CLOEXEC,10);if(childSocket<0||childMemory<0)throw std::runtime_error("Wideband GPU descriptor duplication failed");fcntl(socket_,F_SETFD,FD_CLOEXEC);fcntl(peer,F_SETFD,FD_CLOEXEC);fcntl(memory_,F_SETFD,FD_CLOEXEC);if(posix_spawn_file_actions_init(&actions))throw std::runtime_error("Wideband GPU spawn actions failed");actionsReady=true;posix_spawn_file_actions_adddup2(&actions,childSocket,3);posix_spawn_file_actions_adddup2(&actions,childMemory,4);const std::string exe=options.executable.empty()?gpuSiblingPath("blah2-gpu-worker"):options.executable;const std::string arg=options.argument.empty()?"--wideband-v1":options.argument;char*argv[]={const_cast<char*>(exe.c_str()),const_cast<char*>(arg.c_str()),nullptr};int e=posix_spawn(&child_,exe.c_str(),&actions,nullptr,argv,environ);posix_spawn_file_actions_destroy(&actions);actionsReady=false;close(childSocket);childSocket=-1;close(childMemory);childMemory=-1;close(peer);peer=-1;if(e)throw std::runtime_error("Wideband GPU worker spawn failed");Header h;h.inputRate=config_.inputRateHz;h.channels=config_.channels;h.maxInput=config_.maxInputSamples;h.lanes=config_.lanes.size();h.bytes=bytes_;std::memcpy(h.device,device.data(),device.size());io(socket_,&h,sizeof(h),true);for(const auto&l:config_.lanes){LaneWire w{l.frequencyHz,l.decimation,uint32_t(l.taps.size()),l.centerOffsetHz};io(socket_,&w,sizeof(w),true);io(socket_,const_cast<double*>(l.taps.data()),l.taps.size()*sizeof(double),true);}auto r=reply(options_.startupMs);device_=r.device;
+  int pair[2];
+  if(socketpair(AF_UNIX,SOCK_STREAM,0,pair))throw std::runtime_error("Wideband GPU socket failed");
+  socket_=pair[0];peer=pair[1];
+  childSocket=fcntl(peer,F_DUPFD_CLOEXEC,10);
+  childMemory=fcntl(memory_,F_DUPFD_CLOEXEC,10);
+  if(childSocket<0||childMemory<0||fcntl(socket_,F_SETFD,FD_CLOEXEC)||
+      fcntl(peer,F_SETFD,FD_CLOEXEC)||fcntl(memory_,F_SETFD,FD_CLOEXEC))
+    throw std::runtime_error("Wideband GPU descriptor duplication failed");
+  if(posix_spawn_file_actions_init(&actions))
+    throw std::runtime_error("Wideband GPU spawn actions failed");
+  actionsReady=true;
+  if(posix_spawn_file_actions_adddup2(&actions,childSocket,3)||
+      posix_spawn_file_actions_adddup2(&actions,childMemory,4))
+    throw std::runtime_error("Wideband GPU descriptor setup failed");
+  // Inherit only the two protocol descriptors and existing standard logging.
+  // Capture/output sockets must not stay alive in an isolated GPU worker.
+#if defined(__APPLE__)
+  if(posix_spawnattr_init(&attributes))
+    throw std::runtime_error("Wideband GPU worker isolation failed");
+  attributesReady=true;
+  if(posix_spawnattr_setflags(&attributes,POSIX_SPAWN_CLOEXEC_DEFAULT))
+    throw std::runtime_error("Wideband GPU descriptor isolation failed");
+  for(int fd=0;fd<3;++fd)
+    if(standardOpen[fd]&&posix_spawn_file_actions_addinherit_np(&actions,fd))
+      throw std::runtime_error("Wideband GPU logging inheritance failed");
+#elif defined(__GLIBC__) && defined(__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
+  if(posix_spawn_file_actions_addclosefrom_np(&actions,5))
+    throw std::runtime_error("Wideband GPU descriptor isolation failed");
+#else
+  DIR* descriptors=opendir("/proc/self/fd");
+  if(!descriptors)throw std::runtime_error("Wideband GPU descriptor inspection failed");
+  int closeError=0;
+  while(const auto* entry=readdir(descriptors)){
+    const int fd=std::atoi(entry->d_name);
+    if(fd>4&&(closeError=posix_spawn_file_actions_addclose(&actions,fd)))break;
+  }
+  closedir(descriptors);
+  if(closeError)throw std::runtime_error("Wideband GPU descriptor isolation failed");
+#endif
+  const std::string exe=options.executable.empty()?gpuSiblingPath("blah2-gpu-worker"):options.executable;
+  const std::string arg=options.argument.empty()?"--wideband-v1":options.argument;
+  char*argv[]={const_cast<char*>(exe.c_str()),const_cast<char*>(arg.c_str()),nullptr};
+  const int error=posix_spawn(&child_,exe.c_str(),&actions,
+#ifdef __APPLE__
+    &attributes,
+#else
+    nullptr,
+#endif
+    argv,environ);
+  posix_spawn_file_actions_destroy(&actions);actionsReady=false;
+#ifdef __APPLE__
+  posix_spawnattr_destroy(&attributes);attributesReady=false;
+#endif
+  close(childSocket);childSocket=-1;close(childMemory);childMemory=-1;close(peer);peer=-1;
+  if(error){child_=-1;throw std::runtime_error("Wideband GPU worker spawn failed");}
+  Header h;h.inputRate=config_.inputRateHz;h.channels=config_.channels;h.maxInput=config_.maxInputSamples;h.lanes=config_.lanes.size();h.bytes=bytes_;std::memcpy(h.device,device.data(),device.size());io(socket_,&h,sizeof(h),true);for(const auto&l:config_.lanes){LaneWire w{l.frequencyHz,l.decimation,uint32_t(l.taps.size()),l.centerOffsetHz};io(socket_,&w,sizeof(w),true);io(socket_,const_cast<double*>(l.taps.data()),l.taps.size()*sizeof(double),true);}auto r=reply(options_.startupMs);device_=r.device;
   if(options_.warmup){std::fill_n(shared_,inputElements(config_),std::complex<float>{});submit(config_.maxInputSamples,0);reset();timing_={};}
-  }catch(...){if(actionsReady)posix_spawn_file_actions_destroy(&actions);if(childSocket>=0)close(childSocket);if(childMemory>=0)close(childMemory);if(peer>=0)close(peer);stop();throw;}
+  }catch(...){
+#ifdef __APPLE__
+    if(attributesReady)posix_spawnattr_destroy(&attributes);
+#endif
+    if (actionsReady) posix_spawn_file_actions_destroy(&actions);
+    if (childSocket >= 0) close(childSocket);
+    if (childMemory >= 0) close(childMemory);
+    if (peer >= 0) close(peer);
+    stop();
+    throw;
+  }
  }
  ~Process(){stop();}
  std::string deviceName()const override{return device_;}

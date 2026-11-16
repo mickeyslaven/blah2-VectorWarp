@@ -280,6 +280,33 @@ void main() {
     atomicAdd(status[6],covered); atomicAdd(status[10],covered); }
 }
 )glsl";
+// The dense FP64 baseline used to remain resident for every channel until the
+// correction solve completed.  Each baseline tile is instead consumed
+// immediately to form the identical rounded residual, then recomputed after
+// the correction solve for the identical final FP32 merge.  This trades one
+// extra initial-weight FFT pass for N*capacity*16 fewer persistent bytes.
+const std::string residualFromWork = common + R"glsl(
+layout(binding=1) readonly buffer Work { dvec2 work[]; };
+layout(binding=2) readonly buffer Original { vec2 original[]; };
+layout(binding=3) readonly buffer Initial { dvec2 initial[]; };
+layout(binding=4) readonly buffer Suffix { vec2 suffix[]; };
+layout(binding=5) writeonly buffer Residual { vec2 residual[]; };
+// a=N,b=B,c=channel,d=first output sample,count=valid output count.
+void main() {
+  uint i=index1(); if(i>=p.count || p.c>=status[11]) return;
+  uint hop=1024u-p.b+1u,j=uint(p.d)+i;
+  precise dvec2 circular=work[(i/hop)*1024u+(p.b-1u)+i%hop]/1024.0LF;
+  for(uint k=j+1u;k<p.b;++k)
+    circular+=mul(initial[p.c*p.b+k],dvec2(suffix[p.b-1u+j-k]));
+  vec2 source=original[p.c*p.a+j];
+  vec2 value=vec2(dvec2(source)-circular);
+  if(!finite32(source) || !finite32(value)) reject(7u,6u,j,p.c);
+  residual[p.c*p.a+j]=value;
+  if(i%hop==0u) atomicAdd(status[5],1u);
+  if((i&127u)==0u) { uint covered=min(128u,p.count-i);
+    atomicAdd(status[6],covered); atomicAdd(status[10],covered); }
+}
+)glsl";
 const std::string castCorrection = common + R"glsl(
 layout(binding=1) readonly buffer Solution { dvec2 solution[]; };
 layout(binding=2) writeonly buffer Rounded { vec2 rounded[]; };
@@ -303,13 +330,28 @@ void main() {
   if(i%128u==0u) atomicAdd(status[7],min(128u,status[11]*p.a-i));
 }
 )glsl";
+const std::string mergeFromWork = common + R"glsl(
+layout(binding=1) readonly buffer Work { dvec2 work[]; };
+layout(binding=2) buffer Estimate { vec2 estimate[]; };
+// a=N,b=B,c=channel,d=first output sample,count=valid output count.
+void main() {
+  uint i=index1(); if(i>=p.count || p.c>=status[11]) return;
+  uint hop=1024u-p.b+1u,j=uint(p.d)+i;
+  precise dvec2 baseline=work[(i/hop)*1024u+(p.b-1u)+i%hop]/1024.0LF;
+  vec2 correction=estimate[p.c*p.a+j];
+  vec2 value=vec2(baseline+dvec2(correction));
+  if(!finite32(correction) || !finite32(value)) reject(9u,8u,j,p.c);
+  estimate[p.c*p.a+j]=value;
+  if((i&127u)==0u) atomicAdd(status[7],min(128u,p.count-i));
+}
+)glsl";
 
 class Refinement {
   Context& context_;
   uint32_t samples_, bins_, channels_, hop_, blocks_;
-  std::unique_ptr<Buffer> status_, cache_, work_, suffix_, baseline_, lower_, solution_, initial_, weights_;
+  std::unique_ptr<Buffer> status_, cache_, work_, suffix_, lower_, solution_, initial_, weights_;
   std::unique_ptr<NativePlan> workPlan_, weightPlan_;
-  std::unique_ptr<Kernel> pack_, factor_, solve_, weightsPack_, multiply_, gather_, residual_, cast_, merge_;
+  std::unique_ptr<Kernel> pack_, factor_, solve_, weightsPack_, multiply_, residualFromWork_, cast_, mergeFromWork_;
   bool toeplitz_ = false;
 public:
   static uint64_t requiredBytes(uint32_t samples,uint32_t bins,uint32_t channels) {
@@ -317,7 +359,7 @@ public:
     const uint64_t blocks=(uint64_t(samples)+(fft-bins))/(fft-bins+1);
     const uint64_t cache=blocks*fft;
     if(cache>UINT32_MAX) return UINT64_MAX;
-    return 16*(cache+uint64_t(tileBlocks)*fft+uint64_t(samples)*channels+
+    return 16*(cache+uint64_t(tileBlocks)*fft+
       uint64_t(bins)*bins+2*uint64_t(bins)*channels+uint64_t(fft)*channels)+
       8*std::max<uint32_t>(1,bins-1)+statusWords*4;
   }
@@ -346,7 +388,6 @@ public:
     cache_=buffer(uint64_t(blocks_)*fft*16);
     work_=buffer(uint64_t(tileBlocks)*fft*16);
     suffix_=buffer(std::max<uint32_t>(1,bins-1)*8);
-    baseline_=buffer(uint64_t(samples)*channels*16);
     lower_=buffer(uint64_t(bins)*bins*16);
     solution_=buffer(uint64_t(bins)*channels*16);
     initial_=buffer(uint64_t(bins)*channels*16);
@@ -362,14 +403,13 @@ public:
     solve_=kernel(toeplitz_?toeplitzSolve:solve,{&correlations,lower_.get(),solution_.get()});
     weightsPack_=kernel(weightPack,{initial_.get(),weights_.get()});
     multiply_=kernel(multiply,{cache_.get(),weights_.get(),work_.get()});
-    gather_=kernel(gather,{work_.get(),baseline_.get()});
-    residual_=kernel(residual,{&originalAndEstimate,initial_.get(),baseline_.get(),suffix_.get(),&surveillance});
+    residualFromWork_=kernel(residualFromWork,{work_.get(),&originalAndEstimate,initial_.get(),suffix_.get(),&surveillance});
     cast_=kernel(castCorrection,{solution_.get(),&rounded});
-    merge_=kernel(merge,{baseline_.get(),&originalAndEstimate});
+    mergeFromWork_=kernel(mergeFromWork,{work_.get(),&originalAndEstimate});
     std::cerr<<"GPU native storage requested_bytes="<<needed<<" fft="<<fft<<" tile_blocks="<<tileBlocks
       <<" shader_float64=1 host_dsp_workspace_bytes=0 cpu_baseline_calls=0 cpu_solve_calls=0\n";
   }
-  Buffer& borrowedReference() { return *baseline_; }
+  Buffer& borrowedReference() { return *cache_; }
   Buffer& borrowedWork() { return *work_; }
   void resetStatus(uint32_t active) {
     std::array<uint32_t,statusWords> values{};
@@ -429,17 +469,33 @@ public:
         barrier(command);
         workPlan_->append(command,1);
         barrier(command);
-        gather_->append(command,{std::min(valid*hop_,samples_-start),samples_,bins_,channel,int32_t(start)});
+        residualFromWork_->append(command,{std::min(valid*hop_,samples_-start),samples_,bins_,channel,int32_t(start)});
         barrier(command);
       }
   }
   void appendResidual(VkCommandBuffer command) {
-    residual_->append(command,{samples_*channels_,samples_,bins_,0,0});
+    // appendBaseline consumes each inverse-FFT tile immediately so no full
+    // FP64 baseline allocation has to survive until the correction solve.
     barrier(command);
   }
   void appendMerge(VkCommandBuffer command) {
-    merge_->append(command,{samples_*channels_,samples_,0,0,0});
+    // appendCorrection overwrote the FFT weights with correction weights.
+    // Restore the initial weights and recompute the exact FP64 baseline tiles
+    // solely for the original final FP32 merge.
+    weightsPack_->append(command,{fft*channels_,bins_,0,0,0});
     barrier(command);
+    weightPlan_->append(command,-1);
+    barrier(command);
+    for(uint32_t channel=0;channel<channels_;++channel)
+      for(uint32_t first=0;first<blocks_;first+=tileBlocks) {
+        const uint32_t valid=std::min(tileBlocks,blocks_-first),start=first*hop_;
+        multiply_->append(command,{tileBlocks*fft,channel,valid,first,0});
+        barrier(command);
+        workPlan_->append(command,1);
+        barrier(command);
+        mergeFromWork_->append(command,{std::min(valid*hop_,samples_-start),samples_,bins_,channel,int32_t(start)});
+        barrier(command);
+      }
   }
 };
 

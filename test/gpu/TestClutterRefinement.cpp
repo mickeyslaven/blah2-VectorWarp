@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -33,6 +34,44 @@ void near(const std::vector<Double>& actual,const std::vector<Double>& expected)
     check(std::isfinite(actual[i].real()) && std::isfinite(actual[i].imag()) &&
       std::abs(actual[i]-expected[i])<=2e-12*std::max(1.,std::abs(expected[i])),"FP64 FIR differs from direct convolution");
 }
+void covarianceOracle(const std::vector<Double>& actual,const std::vector<Float>& reference){
+  double power=0;
+  for(const auto value:reference)power+=std::norm(Double(value));
+  for(size_t lag=0;lag<actual.size();++lag){
+    Double expected{};
+    for(size_t i=0;i<reference.size();++i)
+      expected+=Double(reference[i])*std::conj(Double(reference[(i+reference.size()-lag)%reference.size()]));
+    check(std::abs(actual[lag]-expected)<=2e-12*std::max(power,1e-30),
+      "FP64 blocked covariance differs from direct circular sum");
+  }
+}
+void covarianceBoundaries(){
+  for(const auto shape:{std::pair<uint32_t,uint32_t>{32,1},{1057,5},{4099,1261},{37,37}}){
+    const auto n=shape.first,b=shape.second;
+    std::vector<Float> original(n),reference(n);
+    for(uint32_t i=0;i<n;++i)original[i]=Float(float(int(i%31)-15)/32,float(int(i%19)-9)/16);
+    original[0]={7,-3};original[n-1]={-5,11}; // Strong asymmetric circular edge.
+    BlockedBaseline fir(n,b);
+    rejects<std::logic_error>([&]{fir.covariance();},"Unprepared covariance accepted");
+    for(int delay:{-31,4}){
+      for(uint32_t i=0;i<n;++i)reference[i]=original[size_t((int64_t(i)-delay+n)%n)];
+      fir.prepare(reference.data(),n);
+      covarianceOracle(fir.covariance(),reference);
+      const auto cached=fir.covariance();
+      std::vector<Double> q(b),output(n);q[0]={.125,-.25};
+      fir.estimate(q.data(),output.data());
+      near(output,direct(reference,q,false));
+      check(fir.covariance()==cached,"FIR scratch mutated cached covariance");
+      fir.invalidate();
+      rejects<std::logic_error>([&]{fir.covariance();},"Invalidated covariance reused");
+    }
+    std::fill(reference.begin(),reference.end(),Float{});reference[n-1]={.125,.25};
+    fir.prepare(reference.data(),n);covarianceOracle(fir.covariance(),reference);
+    reference[0]={std::numeric_limits<float>::quiet_NaN(),0};
+    rejects<std::domain_error>([&]{fir.prepare(reference.data(),n);},"Nonfinite covariance input accepted");
+    rejects<std::logic_error>([&]{fir.covariance();},"Failed prepare retained covariance");
+  }
+}
 void boundaryAndLifetime(){
   constexpr uint32_t N=1057,B=5; // Includes a complete overlap-save block and its short tail.
   std::vector<Float> original(N),reference(N),input(N),residual(N);
@@ -56,6 +95,11 @@ void boundaryAndLifetime(){
     fir.residual(input.data(),q.data(),linear.data(),residual.data(),&power,&inputPower);
     for(auto value:residual)check(std::abs(value)<2e-12,"y=Cq correction residual not zero");
     check(power<1e-20 && inputPower>0,"Residual diagnostic powers differ");
+    std::vector<Double> fusedLinear(N);
+    std::vector<Float> fusedResidual(N);
+    fir.estimateResidual(input.data(),q.data(),fusedLinear.data(),fusedResidual.data());
+    check(fusedLinear==linear,"Fused baseline differs from separate FP64 estimate");
+    check(fusedResidual==residual,"Fused residual differs from separate formation");
     // Published baseline is linear: final y-Lq must retain the first B-1 wrapped terms.
     bool retained=false;
     for(uint32_t i=0;i<B-1;++i)retained=retained || std::abs(Double(input[i])-linear[i])>1e-4;
@@ -108,7 +152,7 @@ void geometryAndPlanner(){
 }
 }
 int main()try{
-  boundaryAndLifetime();coefficientPrecision();geometryAndPlanner();
-  std::cout<<"PASS CPU clutter refinement direct FP64, boundaries, coefficient precision, lifetime, geometry and planner restoration\n";
+  boundaryAndLifetime();coefficientPrecision();geometryAndPlanner();covarianceBoundaries();
+  std::cout<<"PASS CPU clutter refinement direct FP64, circular covariance through 1261 taps, boundaries, coefficient precision, lifetime, geometry and planner restoration\n";
   return 0;
 }catch(const std::exception& error){std::cerr<<"FAIL CPU clutter refinement: "<<error.what()<<'\n';return 1;}

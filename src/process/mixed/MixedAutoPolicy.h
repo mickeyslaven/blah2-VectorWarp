@@ -12,8 +12,7 @@ class AutoPolicy {
   uint32_t lastBacklog_=0;
   bool sawBacklog_=false;
   bool selected_=false,disabled_=false;
-  unsigned slowWindows_=0;
-  std::vector<double> cpu_,mixed_,sustained_;
+  std::vector<double> cpu_,mixed_;
   std::string reason_="Checking complete mixed-DSP map and CPI cost";
   static double median(std::vector<double> values){
     std::sort(values.begin(),values.end());return values[values.size()/2];
@@ -38,7 +37,7 @@ public:
       return Choice::shadow;
     }
     if(trialIndex_<6){
-      if(!headroom){disable("Capture backlog grew during mixed speed qualification");return Choice::cpu;}
+      if(!headroom){disable("Capture backlog grew during mixed runtime qualification");return Choice::cpu;}
       return trialIndex_%2==0?Choice::cpu:Choice::mixed;
     }
     if(selected_&&!headroom){
@@ -56,26 +55,15 @@ public:
   void complete(Choice choice,double cpiMs){
     if(disabled_||shadowPasses_<2)return;
     if(!std::isfinite(cpiMs)||cpiMs<=0)throw std::invalid_argument("Invalid complete CPI time");
-    if(trialIndex_>=6){
-      if(selected_&&choice==Choice::mixed){
-        sustained_.push_back(cpiMs);
-        if(sustained_.size()==5){
-          slowWindows_=median(sustained_)>=median(cpu_)*.95 ? slowWindows_+1 : 0;
-          sustained_.clear();
-          if(slowWindows_>=2)
-            disable("CPU selected after mixed processing lost its complete-CPI speed margin");
-        }
-      }
-      return;
-    }
+    // Complete-CPI timings remain diagnostic. Only accuracy, availability and
+    // capture/runtime health can reject a GPU candidate, not relative speed.
+    if(trialIndex_>=6)return;
     const Choice expected=trialIndex_%2==0?Choice::cpu:Choice::mixed;
-    if(choice!=expected)throw std::logic_error("Mixed speed trial order changed");
+    if(choice!=expected)throw std::logic_error("Mixed timing trial order changed");
     (choice==Choice::cpu?cpu_:mixed_).push_back(cpiMs);
     if(++trialIndex_==6){
-      const double cpuMedian=median(cpu_),mixedMedian=median(mixed_);
-      selected_=mixedMedian<cpuMedian*.95;
-      reason_=selected_?"Mixed V3D selected by complete CPI time":
-        "CPU selected by complete CPI time";
+      selected_=true;
+      reason_="Mixed V3D selected after accuracy and runtime qualification";
     }
   }
   void disable(std::string reason){disabled_=true;selected_=false;reason_=std::move(reason);}

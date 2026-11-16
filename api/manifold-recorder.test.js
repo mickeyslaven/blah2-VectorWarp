@@ -84,13 +84,29 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   Object.assign(automaticConfig.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
   automaticConfig.process.surveillance_fusion = {mode: 'coherent_beam_bank'};
+  automaticConfig.process.reference_synthesis = {mode: 'array_eigenbeam', channels: [0, 1]};
   automaticConfig.process.detection = {enable: true};
   automaticConfig.truth = {adsb: {enabled: true}};
   assert.equal(automaticallyEligible(automaticConfig), true);
   const genericArrayConfig = JSON.parse(JSON.stringify(automaticConfig));
   genericArrayConfig.capture.device.type = 'Usrp';
+  assert.equal(automaticallyEligible(genericArrayConfig), false,
+    'A coherent live adapter without applied gain metadata cannot record a measured manifold');
+  genericArrayConfig.capture.replay = {state: true, channel_count: 2,
+    reference_mode: 'array_eigenbeam', reference_channels: [0, 1], surveillance_channels: [0, 1]};
   assert.equal(automaticallyEligible(genericArrayConfig), true,
-    'Automatic manifold collection must depend on coherent geometry, not an SDR brand');
+    'Recorded coherent topology with gain metadata is independent of the selected live adapter');
+  for (const mutate of [
+    value => { value.capture.device.array_geometry.mapping_confirmed = false; },
+    value => { value.capture.device.array_geometry.elements.pop(); },
+    value => { value.capture.device.array_geometry.x_axis_bearing_deg_true = NaN; },
+    value => { value.capture.device.surveillance_channels = [0]; },
+    value => { value.capture.device.surveillance_channels = [0, 0]; },
+    value => { value.process.surveillance_fusion.mode = 'noise_whitened_beam_bank'; }
+  ]) {
+    const invalid = structuredClone(automaticConfig); mutate(invalid);
+    assert.equal(automaticallyEligible(invalid), false);
+  }
   const promotedConfig = JSON.parse(JSON.stringify(automaticConfig));
   promotedConfig.process.bearing.manifold_file = `${filename}.qualified.json`;
   assert.equal(siteFingerprint(promotedConfig), siteFingerprint(automaticConfig),

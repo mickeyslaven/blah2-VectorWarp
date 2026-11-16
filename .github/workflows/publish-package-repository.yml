@@ -1,23 +1,29 @@
 name: Publish verified package repository
 
 on:
-  # Do not deploy on a main push immediately before a release. GitHub Pages
-  # identifies deployments by commit SHA, so the later release deployment for
-  # that same SHA can otherwise be accepted without replacing the older package
-  # repository. Release publication and explicit/scheduled refreshes are enough.
-  release:
-    types: [published]
-  schedule:
-    - cron: '17 3 * * 1'
+  # Publication is separately authorized; merging CI changes or publishing a
+  # release must not silently redeploy the public package repository.
   workflow_dispatch:
     inputs:
       tag:
         description: 'Already-published latest stable release tag to republish'
         required: true
         type: string
+      release_sha:
+        description: 'Exact 40-character source commit of the reviewed release tag'
+        required: true
+        type: string
+      publish:
+        description: 'Rebuild, sign, and deploy this already-published release to Pages'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: package-repository
@@ -26,6 +32,7 @@ concurrency:
 jobs:
   validate-release:
     name: Verify latest published stable release
+    if: github.repository == 'mickeyslaven/blah2-VectorWarp' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.release.outputs.tag }}
@@ -34,17 +41,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
+          [[ $GITHUB_REPOSITORY == mickeyslaven/blah2-VectorWarp &&
+             $GITHUB_REF == refs/heads/main ]] || {
+            echo 'Repository publication requires a trusted main dispatch.' >&2; exit 1; }
+          [[ $INPUT_RELEASE_SHA =~ ^[0-9a-f]{40}$ ]] || {
+            echo 'Pin the reviewed release to its full source commit.' >&2; exit 1; }
           releases=$(gh release list --limit 100 --json tagName,isDraft,isPrerelease)
           latest=$(jq -r '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName' <<<"$releases" |
             grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -n 1)
           [[ -n $latest ]]
           case "$GITHUB_EVENT_NAME" in
-            release) tag=$EVENT_TAG ;;
-            schedule) tag="v$latest" ;;
             workflow_dispatch) tag=$INPUT_TAG ;;
             *) echo 'Unsupported repository publication event.' >&2; exit 1 ;;
           esac
@@ -57,18 +67,33 @@ jobs:
   rebuild-repository:
     name: Rebuild signed repository from reviewed assets
     needs: validate-release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-24.04
     environment: release-signing
     steps:
-      - name: Check out trusted default-branch repository generator
+      - name: Check out immutable trusted repository generator
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: main
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify publication opt-in and trusted workflow revision
+        env:
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          [[ $GITHUB_EVENT_NAME == workflow_dispatch && $PUBLISH == true &&
+             $GITHUB_REPOSITORY == mickeyslaven/blah2-VectorWarp &&
+             $GITHUB_REF == refs/heads/main ]]
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          current_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          [[ $current_main == "$GITHUB_SHA" ]] || {
+            echo 'Main advanced; dispatch and review the new workflow revision.' >&2; exit 1; }
       - name: Download and verify reviewed release package assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.validate-release.outputs.tag }}
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
           FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
         run: |
           set -euo pipefail
@@ -77,7 +102,8 @@ jobs:
             --pattern 'vectorwarp-*.rpm' --pattern SHA256SUMS --pattern SHA256SUMS.asc \
             --pattern vectorwarp-archive-key.asc --pattern signing-fingerprint.txt \
             --pattern package-manifest.json --pattern repository-manifest.json \
-            --pattern upstream-diff.txt --pattern UPSTREAM_BASELINE.json
+            --pattern upstream-diff.txt --pattern UPSTREAM_BASELINE.json \
+            --pattern release-soak-provenance.json
           cmp packages/vectorwarp-archive-key.asc packaging/keys/vectorwarp.asc
           release_fingerprint=$(tr -d '[:space:]' < packages/signing-fingerprint.txt)
           [[ $FINGERPRINT =~ ^[A-Fa-f0-9]{40}$ && ${release_fingerprint^^} == ${FINGERPRINT^^} ]]
@@ -89,6 +115,8 @@ jobs:
           test -f packages/package-manifest.json
           git fetch --no-tags origin "refs/tags/${TAG}:refs/vectorwarp-release-candidate/${TAG}"
           tag_commit=$(git rev-parse "refs/vectorwarp-release-candidate/${TAG}^{commit}")
+          [[ $tag_commit == "$EXPECTED_RELEASE_SHA" ]] || {
+            echo 'Release tag moved or differs from the explicitly authorized commit.' >&2; exit 1; }
           manifest_version=$(jq -er '.version | select(type == "string")' packages/package-manifest.json)
           manifest_commit=$(jq -er '.source_commit | select(type == "string")' packages/package-manifest.json)
           [[ $manifest_version == "${TAG#v}" && ${manifest_commit,,} == ${tag_commit,,} ]] || {
@@ -111,6 +139,22 @@ jobs:
             printf 'MACOS_RELEASE_FILE=packages/macos-release.json\n' >> "$GITHUB_ENV"
           fi
           printf 'RELEASE_VERSION=%s\nRELEASE_COMMIT=%s\n' "$manifest_version" "$tag_commit" >> "$GITHUB_ENV"
+      - name: Verify signed soak provenance matches every released package
+        run: |
+          set -euo pipefail
+          receipt=packages/release-soak-provenance.json
+          [[ -f $receipt && ! -L $receipt ]]
+          receipt_sha=$(awk '$2 == "release-soak-provenance.json" {print $1}' packages/SHA256SUMS)
+          [[ $receipt_sha =~ ^[0-9a-f]{64}$ ]] || {
+            echo 'The soak provenance must be covered exactly once by signed SHA256SUMS.' >&2; exit 1; }
+          printf '%s  %s\n' "$receipt_sha" "$receipt" | sha256sum --check --strict
+          jq -e --arg source "$RELEASE_COMMIT" --arg version "$RELEASE_VERSION" \
+            --slurpfile manifest packages/package-manifest.json '
+              .schema == 1 and .source_commit == $source and .version == $version and
+              (.packages | type == "object") and
+              ((.packages | with_entries(.value = .value.signedPackageSha256)) ==
+               ($manifest[0].packages | map({key: .filename, value: .sha256}) | from_entries))' \
+            "$receipt" >/dev/null
       - name: Install repository signing tools
         run: |
           sudo apt-get update
@@ -146,6 +190,20 @@ jobs:
             --require-release-matrix "${macos_args[@]}"
           test -f repository/repository-manifest.json -a -f repository/install.sh
           test $(du -sm repository | awk '{print $1}') -le 900
+      - name: Record publication authorization with the reviewed repository
+        env:
+          TAG: ${{ needs.validate-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg actor "$GITHUB_ACTOR" \
+            --arg triggering_actor "$GITHUB_TRIGGERING_ACTOR" --arg workflow_sha "$GITHUB_SHA" \
+            --arg release_tag "$TAG" --arg release_sha "$RELEASE_COMMIT" \
+            --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{schema: 1, authorization: "workflow_dispatch:publish=true", repository: $repository,
+              actor: $actor, triggering_actor: $triggering_actor, workflow_sha: $workflow_sha,
+              release_tag: $release_tag, release_sha: $release_sha,
+              run_id: $run_id, run_attempt: $run_attempt}' > repository/publication-authorization.json
+          cat repository/publication-authorization.json >> "$GITHUB_STEP_SUMMARY"
       - name: Stage fresh repository for protected Pages deployment
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -156,6 +214,7 @@ jobs:
   publish-pages:
     name: Publish signed repository to GitHub Pages
     needs: rebuild-repository
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
@@ -171,9 +230,24 @@ jobs:
           name: reviewed-package-repository
           path: repository
       - name: Validate deployment input
+        env:
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           test -f repository/repository-manifest.json -a -f repository/install.sh
+          jq -e --arg sha "$GITHUB_SHA" --arg run_id "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg release_sha "$EXPECTED_RELEASE_SHA" --arg tag "$TAG" \
+            '.authorization == "workflow_dispatch:publish=true" and .workflow_sha == $sha and
+             .run_id == $run_id and .run_attempt == $attempt and
+             .release_sha == $release_sha and .release_tag == $tag' \
+            repository/publication-authorization.json >/dev/null
+          tag_refs=$(git ls-remote https://github.com/mickeyslaven/blah2-VectorWarp.git \
+            "refs/tags/$TAG" "refs/tags/$TAG^{}")
+          tag_commit=$(awk '$2 ~ /\^\{\}$/ { peeled=$1; next } { direct=$1 }
+            END { print peeled ? peeled : direct }' <<< "$tag_refs")
+          [[ $tag_commit == "$EXPECTED_RELEASE_SHA" ]] || {
+            echo 'Release tag moved after signing; refusing publication.' >&2; exit 1; }
           test $(du -sm repository | awk '{print $1}') -le 900
       - name: Upload bounded signed repository artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1

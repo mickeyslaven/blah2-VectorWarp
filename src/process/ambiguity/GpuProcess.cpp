@@ -298,13 +298,25 @@ public:
 #endif
       std::string executable = options_.executable.empty() ? gpuSiblingPath("blah2-gpu-worker") : options_.executable;
       char* argv[] = {executable.data(), options_.argument.empty() ? nullptr : options_.argument.data(), nullptr};
+      // Do not mutate a shared process environment while other lanes start.
+      // The caller's reservation replaces any inherited allocation override.
+      std::vector<std::string> childEnvironment;
+      for (char** item = environ; *item; ++item)
+        if (std::string(*item).rfind("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=", 0) != 0)
+          childEnvironment.emplace_back(*item);
+      if (options_.allocationLimitBytes)
+        childEnvironment.push_back("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=" +
+          std::to_string(options_.allocationLimitBytes));
+      std::vector<char*> childEnvironmentPointers;
+      for (auto& item : childEnvironment) childEnvironmentPointers.push_back(item.data());
+      childEnvironmentPointers.push_back(nullptr);
       const int error = posix_spawn(&process_, executable.c_str(), &actions,
 #ifdef __APPLE__
         &attributes,
 #else
         nullptr,
 #endif
-        argv, environ);
+        argv, childEnvironmentPointers.data());
       if (error) { process_ = -1;
       throw std::runtime_error("GPU worker is unavailable; using CPU"); }
       close(childSocket);
@@ -486,9 +498,119 @@ std::string gpuSiblingPath(const char* filename) {
 #endif
   return path.substr(0, path.find_last_of('/')) + "/" + filename;
 }
+std::string queryGpuDriverStatus(const GpuProcessOptions& options) {
+  if (!options.startupMs || options.startupMs > 30000)
+    throw std::invalid_argument("GPU driver query deadline must be 1..30000 ms");
+  int descriptors[2]{-1, -1}, output = -1, childOutput = -1;
+  pid_t child = -1;
+  posix_spawn_file_actions_t actions;
+  bool actionsReady = false;
+#ifdef __APPLE__
+  posix_spawnattr_t attributes;
+  bool attributesReady = false;
+  const bool stderrOpen = fcntl(STDERR_FILENO, F_GETFD) >= 0;
+#endif
+  const auto cleanup = [&] {
+    for (int fd : {descriptors[0], descriptors[1], output, childOutput})
+      if (fd >= 0) close(fd);
+    if (actionsReady) posix_spawn_file_actions_destroy(&actions);
+#ifdef __APPLE__
+    if (attributesReady) posix_spawnattr_destroy(&attributes);
+#endif
+    reap(child);
+  };
+  try {
+    if (pipe(descriptors)) throw std::runtime_error("Cannot open GPU driver query pipe");
+    // Standard descriptors may be closed. Move both endpoints above them
+    // before preparing dup2/close actions, then retain CLOEXEC on the parent.
+    output = fcntl(descriptors[0], F_DUPFD_CLOEXEC, 3);
+    childOutput = fcntl(descriptors[1], F_DUPFD_CLOEXEC, 3);
+    if (output < 0 || childOutput < 0)
+      throw std::runtime_error("Cannot isolate GPU driver query pipe");
+    close(descriptors[0]); close(descriptors[1]);
+    descriptors[0] = descriptors[1] = -1;
+    if (fcntl(output, F_SETFL, O_NONBLOCK) || posix_spawn_file_actions_init(&actions))
+      throw std::runtime_error("Cannot prepare GPU driver query");
+    actionsReady = true;
+    if (posix_spawn_file_actions_adddup2(&actions, childOutput, STDOUT_FILENO) ||
+        posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
+      throw std::runtime_error("Cannot prepare GPU driver query descriptors");
+#ifdef __APPLE__
+    if (posix_spawnattr_init(&attributes))
+      throw std::runtime_error("Cannot isolate GPU driver query");
+    attributesReady = true;
+    if (posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT) ||
+        (stderrOpen && posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO)))
+      throw std::runtime_error("Cannot isolate GPU driver query descriptors");
+#elif defined(__GLIBC__) && defined(__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
+    if (posix_spawn_file_actions_addclosefrom_np(&actions, 3))
+      throw std::runtime_error("Cannot isolate GPU driver query descriptors");
+#else
+    DIR* inherited = opendir("/proc/self/fd");
+    if (!inherited) throw std::runtime_error("Cannot inspect GPU driver query descriptors");
+    while (const auto* entry = readdir(inherited)) {
+      const int fd = std::atoi(entry->d_name);
+      if (fd >= 3) posix_spawn_file_actions_addclose(&actions, fd);
+    }
+    closedir(inherited);
+#endif
+    std::string executable = options.executable.empty() ? gpuSiblingPath("blah2-gpu-worker") : options.executable;
+    std::string argument = options.argument.empty() ? "--driver-status" : options.argument;
+    char* argv[] = {executable.data(), argument.data(), nullptr};
+    const auto deadline = Clock::now() + std::chrono::milliseconds(options.startupMs);
+    const int error = posix_spawn(&child, executable.c_str(), &actions,
+#ifdef __APPLE__
+      &attributes,
+#else
+      nullptr,
+#endif
+      argv, environ);
+    if (error) { child = -1; throw std::runtime_error("GPU driver query worker is unavailable"); }
+    close(childOutput); childOutput = -1;
+    std::string result;
+    bool eof = false, exited = false;
+    int status = 0;
+    while (!eof || !exited) {
+      const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
+      if (left <= 0) throw std::runtime_error("GPU driver query timed out; resident route stopped");
+      pollfd descriptor{output, POLLIN, 0};
+      const int ready = poll(&descriptor, 1, int(std::min<int64_t>(left, 10)));
+      if (ready < 0 && errno != EINTR) throw std::runtime_error("GPU driver query poll failed");
+      if (ready > 0 && !eof) {
+        char buffer[4096];
+        const auto count = read(output, buffer, sizeof(buffer));
+        if (count > 0) {
+          result.append(buffer, size_t(count));
+          if (result.size() > 32768) throw std::runtime_error("GPU driver query exceeded output limit");
+        } else if (!count) eof = true;
+        else if (errno != EINTR && errno != EAGAIN)
+          throw std::runtime_error("GPU driver query read failed");
+      }
+      if (!exited) {
+        const auto waited = waitpid(child, &status, WNOHANG);
+        if (waited == child) { child = -1; exited = true; }
+        else if (waited < 0 && errno != EINTR) throw std::runtime_error("GPU driver query wait failed");
+      }
+      if (eof && !exited) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+      throw std::runtime_error("GPU driver query failed; resident route stopped: " + result);
+    cleanup();
+    return result;
+  } catch (...) { cleanup(); throw; }
+}
 std::unique_ptr<GpuBackend> createGpuProcess(const GpuGeometry& geometry,
     const std::string& device, const GpuProcessOptions& options) {
   return std::make_unique<Process>(geometry, device, options);
+}
+uint64_t gpuProcessMappingBytes(const GpuGeometry& geometry) {
+  const uint64_t bytes = Layout(geometry).bytes;
+  const long page = sysconf(_SC_PAGESIZE);
+  if (page <= 0 || bytes > UINT64_MAX - (uint64_t(page) - 1))
+    throw std::runtime_error("Cannot reserve GPU shared-memory pages; using CPU");
+  // mmap consumes complete pages even where fstat exposes the unrounded wire
+  // length. Reserve that physical padding without changing the IPC protocol.
+  return ((bytes + uint64_t(page) - 1) / uint64_t(page)) * uint64_t(page);
 }
 std::unique_ptr<GpuBackend> createGpuFirProcess(uint32_t samples, uint32_t taps,
     const std::string& device, const GpuProcessOptions& options) {

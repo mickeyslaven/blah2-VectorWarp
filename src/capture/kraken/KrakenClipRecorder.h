@@ -40,7 +40,10 @@ public:
   };
   struct Options
   {
-    double ringSeconds = 4.0;
+    // Match the portable recorder's hard cap. Event-time track snapshots arrive
+    // after configured association lag; their original window must still exist.
+    double ringSeconds = 10.0;
+    double lateClaimGuardSeconds = 1.0;
     double maximumClipSeconds = 10.0;
     std::size_t maximumWriterJobs = 2;
     std::function<int64_t()> clockNanoseconds;

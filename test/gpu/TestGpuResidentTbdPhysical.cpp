@@ -13,6 +13,7 @@ using namespace blah2::resident;
 namespace {
 Config configuration(const char* device) {
   Config c;
+  c.inputChannels = 5;
   auto& g = c.geometry;
   g.kind = blah2::GpuWorkKind::radar;
   g.range = 12;

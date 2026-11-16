@@ -43,6 +43,9 @@ private:
   /// @brief Associated detections in track.
   std::vector<std::vector<Detection>> associated;
 
+  /// State assigned to each measured association; predictions are excluded.
+  std::vector<std::vector<std::string>> associatedState;
+
   // Retain the entire supported M-of-N window, but send only the last 100
   // points to the browser. Lifetime counts do not shrink with the history.
   static constexpr size_t MAX_STATE_HISTORY = 255;
@@ -52,6 +55,9 @@ private:
   /// @brief Number of updates the track has been tentative/coasting.
   /// @details Forms criteria for track deletion.
   std::vector<uint64_t> nInactive;
+
+  /// Actual elapsed seconds in missed updates since the last measurement.
+  std::vector<double> missedSeconds;
 
   /// @brief Next valid track index.
   uint64_t iNext;
@@ -99,6 +105,10 @@ public:
   /// @return Void.
   void set_current(uint64_t index, Detection smoothed);
 
+  /// @brief Advance current state with a kinematic prediction only.
+  /// @details Does not append measured history or increment association count.
+  void set_predicted_current(uint64_t index, Detection predicted);
+
   /// @brief Set the current acceleration.
   /// @param index Index of track to change.
   /// @param acceleration Updated acceleration.
@@ -122,6 +132,9 @@ public:
   /// @return Number of total tracks.
   uint64_t get_n();
 
+  /// @brief Stable identity for one live track.
+  const std::string& get_id(uint64_t index) const { return id.at(index); }
+
   /// @brief Get current track position for track index.
   /// @return Current detection.
   Detection get_current(uint64_t index);
@@ -140,7 +153,13 @@ public:
   /// @return Number of updates track has been tentative/coasting.
   uint64_t get_nInactive(uint64_t index);
 
+  double get_missed_seconds(uint64_t index) const { return missedSeconds.at(index); }
+  void set_missed_seconds(uint64_t index, double value) { missedSeconds.at(index) = value; }
+
   uint64_t get_nAssociated(uint64_t index);
+
+  /// @brief Number of tracker update states retained for M-of-N lifetime.
+  uint64_t get_nUpdates(uint64_t index) const;
 
   /// @brief Update an associated detection.
   /// @param index Index of track to change.

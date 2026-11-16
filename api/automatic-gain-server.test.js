@@ -253,6 +253,20 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     await stop(); await start();
     assert.equal((await request('GET', '/api/detection')).status, 503,
       'Failed success-journal write stays interlocked after API restart');
+    const unresolvedObserver = (await request('GET', '/api/config')).body;
+    unresolvedObserver.process.detection.live_temporal_shadow = {
+      enabled: true, illuminator_id: '', bootstrap_covariance: 'diagonal', max_cpis: 4,
+      delay_motion_bins: 0, doppler_motion_bins: 0, max_cells: 524288,
+      max_work_ms: 100, min_interval_ms: 400, artifact_path: '', artifact_only: false
+    };
+    const unresolvedYaml = fs.readFileSync(filename);
+    const unresolvedJournal = fs.readFileSync(filename + '.receiver-state.json');
+    const unresolvedRejected = await request('PUT', '/api/config?restart=true', unresolvedObserver);
+    assert.equal(unresolvedRejected.status, 409, JSON.stringify(unresolvedRejected.body));
+    assert.equal(unresolvedRejected.body.code, 'OBSERVER_RECEIVER_STATE_UNSETTLED');
+    assert.deepEqual(fs.readFileSync(filename), unresolvedYaml);
+    assert.deepEqual(fs.readFileSync(filename + '.receiver-state.json'), unresolvedJournal,
+      'Observer rejection must preserve unresolved automatic-gain evidence bytewise');
     const recoveryConfig = (await request('GET', '/api/config')).body;
     const recovered = await request('PUT', '/api/config?restart=true', recoveryConfig);
     assert.equal(recovered.status, 200,
@@ -287,6 +301,85 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     const metadataJournal = JSON.parse(fs.readFileSync(filename + '.receiver-state.json', 'utf8'));
     assert.equal(metadataJournal.configRevision, metadataSave.body.revision);
     assert.equal(metadataJournal.applicationVerified, true);
+    const verifiedAutomaticGain = structuredClone(metadataJournal.receipt.automaticGain);
+    const settledYaml = fs.readFileSync(filename);
+    const settledJournal = fs.readFileSync(filename + '.receiver-state.json');
+    revision = metadataSave.body.revision;
+    // Enabling the bounded diagnostic observer must not remeasure an existing
+    // measured-gain installation or send any receiver command.
+    const observerConfig = (await request('GET', '/api/config')).body;
+    observerConfig.capture.device.heimdall.gain_control = 'measured';
+    observerConfig.process.detection.live_temporal_shadow = {
+      enabled: true, illuminator_id: '', bootstrap_covariance: 'diagonal', max_cpis: 4,
+      delay_motion_bins: 0, doppler_motion_bins: 0, max_cells: 524288,
+      max_work_ms: 100, min_interval_ms: 400, artifact_path: '', artifact_only: false
+    };
+    const observerCommands = commands.length, observerProbes = probes;
+    fs.rmSync(marker, {force: true});
+    const observerSave = await request('PUT', '/api/config?restart=true', observerConfig);
+    assert.equal(observerSave.status, 200, JSON.stringify(observerSave.body));
+    assert.equal(observerSave.body.receiverSync.observerOnly, true);
+    assert.deepEqual(observerSave.body.receiverSync.automaticGain, verifiedAutomaticGain,
+      'Observer-only Apply must preserve verified automatic-gain provenance');
+    assert.equal(commands.length, observerCommands,
+      'Observer-only Apply must not command the receiver');
+    assert.equal(probes, observerProbes,
+      'Observer-only Apply must not rerun automatic gain');
+    for (let i = 0; i < 30 && !fs.existsSync(marker); i++)
+      await new Promise(resolve => setTimeout(resolve, 25));
+    assert.ok(fs.existsSync(marker), 'Observer-only Apply must still request the processor/API restart');
+    const observerJournal = JSON.parse(fs.readFileSync(filename + '.receiver-state.json', 'utf8'));
+    assert.deepEqual(observerJournal.receipt.automaticGain, verifiedAutomaticGain,
+      'Observer journal must preserve verified automatic-gain provenance');
+    await stop();
+    fs.writeFileSync(filename, settledYaml);
+    fs.writeFileSync(filename + '.receiver-state.json', settledJournal);
+    await start();
+    const pendingConfig = (await request('GET', '/api/config')).body;
+    pendingConfig.capture.device.heimdall.gain = 12;
+    const pending = await request('PUT', '/api/config?mode=pending&restart=false', pendingConfig,
+      {'X-VectorWarp-Receiver-Sync': 'save-pending-v1'});
+    assert.equal(pending.status, 200, JSON.stringify(pending.body));
+    assert.equal(pending.body.receiverSync.status, 'saved-pending');
+    revision = pending.body.revision;
+    const pendingObserver = structuredClone(pending.body.config);
+    pendingObserver.process.detection.live_temporal_shadow.enabled =
+      !pendingObserver.process.detection.live_temporal_shadow.enabled;
+    const pendingYaml = fs.readFileSync(filename);
+    const pendingJournal = fs.readFileSync(filename + '.receiver-state.json');
+    const pendingRejected = await request('PUT', '/api/config?restart=true', pendingObserver);
+    assert.equal(pendingRejected.status, 409, JSON.stringify(pendingRejected.body));
+    assert.equal(pendingRejected.body.code, 'OBSERVER_RECEIVER_STATE_UNSETTLED');
+    assert.deepEqual(fs.readFileSync(filename), pendingYaml,
+      'Rejected observer change must preserve pending receiver YAML bytewise');
+    assert.deepEqual(fs.readFileSync(filename + '.receiver-state.json'), pendingJournal,
+      'Rejected observer change must preserve pending receiver journal bytewise');
+    await stop();
+    fs.rmSync(filename + '.receiver-state.json', {force: true});
+    await start();
+    const missingObserver = (await request('GET', '/api/config')).body;
+    missingObserver.process.detection.live_temporal_shadow.enabled =
+      !missingObserver.process.detection.live_temporal_shadow.enabled;
+    const missingYaml = fs.readFileSync(filename);
+    const missingRejected = await request('PUT', '/api/config?restart=true', missingObserver);
+    assert.equal(missingRejected.status, 409, JSON.stringify(missingRejected.body));
+    assert.equal(missingRejected.body.code, 'OBSERVER_RECEIVER_STATE_UNSETTLED');
+    assert.deepEqual(fs.readFileSync(filename), missingYaml,
+      'Missing journal rejection must preserve receiver YAML bytewise');
+    const missingMetadata = (await request('GET', '/api/config')).body;
+    missingMetadata.location.rx.name = 'Still unknown receiver state';
+    const metadataWhileUnknown = await request('PUT', '/api/config?restart=false', missingMetadata);
+    assert.equal(metadataWhileUnknown.status, 200, JSON.stringify(metadataWhileUnknown.body));
+    revision = metadataWhileUnknown.body.revision;
+    const chainedObserver = structuredClone(metadataWhileUnknown.body.config);
+    chainedObserver.process.detection.live_temporal_shadow.enabled =
+      !chainedObserver.process.detection.live_temporal_shadow.enabled;
+    const chainedRejected = await request('PUT', '/api/config?restart=true', chainedObserver);
+    assert.equal(chainedRejected.status, 409, JSON.stringify(chainedRejected.body));
+    assert.equal(chainedRejected.body.code, 'OBSERVER_RECEIVER_STATE_UNSETTLED');
+    const chainedJournal = JSON.parse(fs.readFileSync(filename + '.receiver-state.json', 'utf8'));
+    assert.equal(chainedJournal.applicationVerified, false,
+      'Metadata-only save must not manufacture verified receiver evidence');
     console.log('automatic gain API loopback: verified selection, no-restart rejection, publication interlock, rollback, crash and final-journal failure recovery passed');
   } finally {
     await stop(); for (const socket of sockets) socket.destroy(); suite.close(); iq.close();

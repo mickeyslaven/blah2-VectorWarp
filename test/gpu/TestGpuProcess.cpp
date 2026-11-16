@@ -16,6 +16,35 @@ void check(bool value, const char* message) { if (!value) throw std::runtime_err
 int main() {
   try {
     const blah2::GpuGeometry geometry{128, 21, 26, 1, -5, 64, 4, -2};
+    const uint64_t expectedMapping = (128ULL * 21 * 2 + 21 * 26 + 64 * 3) * sizeof(std::complex<float>);
+    const uint64_t page = uint64_t(sysconf(_SC_PAGESIZE));
+    check(blah2::gpuProcessMappingBytes(geometry) == ((expectedMapping + page - 1) / page) * page,
+      "Portable mapping reservation lost physical page rounding");
+    bool hugeRejected = false;
+    try { (void)blah2::gpuProcessMappingBytes({65535, 65535, 65535, 8}); }
+    catch (const std::exception&) { hugeRejected = true; }
+    check(hugeRejected, "Portable reservation overflow/capacity was accepted");
+    struct SavedAllocationEnvironment {
+      const char* previous = std::getenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES");
+      bool present = previous != nullptr;
+      std::string value = previous ? previous : "";
+      ~SavedAllocationEnvironment() {
+        if (present) setenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES", value.c_str(), 1);
+        else unsetenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES");
+      }
+    } savedAllocationEnvironment;
+    for (const std::string mode : {"budget-set", "budget-clear"}) {
+      check(setenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES", "12345", 1) == 0,
+        "Cannot prepare allocation environment fixture");
+      blah2::GpuProcessOptions options;
+      options.executable = blah2::gpuSiblingPath("testGpuWorkerDouble");
+      options.argument = mode;
+      options.allocationLimitBytes = mode == "budget-set" ? 32ULL << 20 : 0;
+      auto worker = blah2::createGpuProcess(geometry, "auto", options);
+      check(std::string(std::getenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES")) == "12345",
+        "Lane construction mutated the parent's environment");
+    }
+    unsetenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES");
     const int source = open("/dev/null", O_RDONLY);
     check(source >= 0, "Cannot open inherited descriptor fixture");
     const int inherited = fcntl(source, F_DUPFD, 100);
@@ -247,9 +276,18 @@ int main() {
         {deviceLocal | hostVisible, 0}}, {{100, true}, {200, false}}});
       check(budget.reserve(0, 20) && !budget.reserve(2, 6) && budget.used() == 20,
         "Aliased Vulkan memory types exceeded their shared heap allowance");
+      check(budget.lastRejection().requested==6&&budget.lastRejection().used==20&&
+        budget.lastRejection().heap==0&&budget.lastRejection().heapUsed==20&&
+        budget.lastRejection().heapLimit==25&&budget.lastRejection().requiredAtLeast==26&&
+        std::string(budget.lastRejection().reason)=="heap-budget",
+        "Failed larger allocation lost actual byte requirements");
       check(budget.reserve(1, 20) && !budget.reserve(1, 1) && budget.used() == 40,
         "Vulkan allocations exceeded the aggregate allowance");
       budget.release(0, 20);
+      check(budget.lastRejection().used==40&&budget.lastRejection().requiredAtLeast==41,
+        "Unwinding allocations rewrote rejection-time byte requirements");
+      budget.clearRejection();
+      check(budget.lastRejection().requested==0,"New batch retained a stale rejection receipt");
       check(budget.reserve(2, 5) && budget.used() == 25 && budget.peak() == 40,
         "Released FFT scratch was not returned to the allocation budget");
       check(!budget.reserve(0, UINT64_MAX) && !budget.reserve(99, 1) &&
@@ -266,6 +304,33 @@ int main() {
       check(heapBudget(2ULL << 30) == (512ULL << 20) &&
         heapBudget(64ULL << 30) == (2ULL << 30),
         "GPU allocation allowance did not scale with device capacity");
+      const auto unrestricted = allocationPolicy(64ULL << 30, nullptr);
+      const auto bounded = allocationPolicy(64ULL << 30, "40");
+      check(unrestricted.bytes == maximumDeviceBytes && unrestricted.separateHostHeaps &&
+        bounded.bytes == 40 && !bounded.separateHostHeaps,
+        "Lane quota did not select one combined host/device allowance");
+      check(allocationPolicy(100, "40").bytes == 25 &&
+        allocationPolicy(64ULL << 30, "2147483648").bytes == maximumDeviceBytes,
+        "Allocation override enlarged hardware default or rejected policy boundary");
+      for (const char* invalid : {"", "0", "-1", "+1", " 40", "40 ", "4x", "1.0",
+          "2147483649", "18446744073709551615", "18446744073709551616",
+          "000000000000000000000000000000000000000000000000001"}) {
+        bool rejected = false;
+        try { (void)allocationPolicy(64ULL << 30, invalid); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        check(rejected, "Malformed or over-policy allocation quota was accepted");
+      }
+      AllocationBudget boundedDiscrete(bounded.bytes,
+        {{{deviceLocal, 0}, {hostVisible, 1}}, {{400, true}, {800, false}}},
+        bounded.separateHostHeaps);
+      check(boundedDiscrete.reserve(0, 20) && boundedDiscrete.reserve(1, 20) &&
+        boundedDiscrete.used() == 40 && boundedDiscrete.limit() == 40 &&
+        !boundedDiscrete.reserve(1, 1) && !boundedDiscrete.reserve(0, 1),
+        "Portable/resident lane quota added a second host-heap allowance");
+      boundedDiscrete.release(0, 20);
+      check(boundedDiscrete.reserve(1, 20) && boundedDiscrete.used() == 40 &&
+        !boundedDiscrete.reserve(0, 1),
+        "Releasing device allocation let host memory escape the lane quota");
       AllocationBudget large(heapBudget(64ULL << 30),
         {{{deviceLocal, 0}}, {{64ULL << 30, true}}});
       check(large.reserve(0, 2ULL << 30) && !large.reserve(0, 1),

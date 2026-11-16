@@ -115,9 +115,12 @@ async function renderDetection(data) {
     }
 
     var trace1 = {
+        name: radarVisualSemantics.labels.detection,
+        legendrank: radarVisualSemantics.legendRank.detection,
         x: data[xVariable],
         y: data[yVariable],
         mode: 'markers',
+        marker: {size: 8, color: radarVisualSemantics.colors.detection, opacity: .68, symbol: 'circle'},
         type: 'scatter'
     };
 

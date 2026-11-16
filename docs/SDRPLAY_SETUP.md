@@ -12,8 +12,10 @@ package administration described below apply to Linux.
 The unified VectorWarp package includes our RSPduo adapter source kit, not
 SDRplay's proprietary API or installer. You install the API, then VectorWarp
 compiles the adapter locally from **Settings → Build SDRplay support**.
-Source builders can use `--backend all` for the same workflow, or
-`--backend rspduo` to compile the adapter before installation.
+Source builders use `--backend all` for the same workflow; receiver-specific
+core builds are not public build options. On macOS, `--backend all --with-rspduo`
+can additionally compile the adapter against an explicitly supplied local SDK
+before installation. Both methods retain the same all-receiver radar core.
 
 ## 1. Install SDRplay's API
 

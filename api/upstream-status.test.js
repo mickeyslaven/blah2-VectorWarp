@@ -25,6 +25,11 @@ for (const state of ['PENDING', 'RECOVERING']) {
   assert.equal(status.issues[0].severity, 'warning');
 }
 assert.equal(compareKrakenStatus(config, {...matching, calibration_state: 'CONVERGED'}).matched, true);
+const complex = {schema: 'vectorwarp-complex-channel-telemetry-v1', frequency_hz: 204640000,
+  sample_rate_hz: 2400000, channels: [{channel: 0, generation: 7, response: [1, 0],
+    phase_stability_deg: 2}]};
+assert.deepEqual(compareKrakenStatus(config, {...matching, complex_channel_telemetry: complex}).actual
+  .complexChannelTelemetry, complex);
 assert.equal(compareKrakenStatus(config, {settings: {}}).matched, false);
 assert.equal(compareKrakenStatus(config, {...matching, settings: {center_freq: null}}).actual.centerFrequency, null);
 const mismatched = JSON.parse(JSON.stringify(matching));

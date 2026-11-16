@@ -190,6 +190,13 @@ class MultiSiteMapSupportTracker {
       diagnostic_only:true,operational_track_claim:false,geographic_claim:false,adsb_used_by_tracker:false,
       reason,tracks:[]};
   }
+  unavailable(reason) {
+    return this.invalid(reason);
+  }
+  reset() {
+    this.tracks.clear(); this.nextId=1; this.lastKey=null; this.lastResult=null;
+    this.lastReceiptAt=null; this.lastCohort=null;
+  }
   update(frames) {
     const cohort=cohortIdentity(frames), fs=this.config?.capture?.fs;
     if (!cohort?.capture_epoch_verified || !Number.isSafeInteger(cohort.capture_epoch) ||

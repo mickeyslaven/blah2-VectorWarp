@@ -175,7 +175,60 @@ int main()
     int64_t clock = 1000000000LL;
     blah2::KrakenClipRecorder::Options options;
     options.ringSeconds = 0.02;
+    options.lateClaimGuardSeconds = 0.001;
     options.clockNanoseconds = [&] { return clock; };
+
+    // Production retention is finite and matches API late-claim policy.
+    assert(blah2::KrakenClipRecorder::Options{}.ringSeconds == 10.0);
+    assert(blah2::KrakenClipRecorder::Options{}.lateClaimGuardSeconds == 1.0);
+    for (bool ringBound : {false, true}) {
+      auto invalid = options;
+      if (ringBound) invalid.ringSeconds = 10.001;
+      else invalid.maximumClipSeconds = 10.001;
+      bool rejected = false;
+      try {
+        blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
+          SAMPLE_RATE, FREQUENCY, invalid);
+      } catch (const std::invalid_argument&) { rejected = true; }
+      assert(rejected && "native clip/ring cap must not be expandable");
+    }
+
+    // A completed event-time window remains recordable after ring wrap if its
+    // actual sample interval is retained. Wall-clock age is not sufficient:
+    // the second request has aged out even though it is a valid short window.
+    {
+      blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
+        SAMPLE_RATE, FREQUENCY, options);
+      for (unsigned sequence = 0; sequence < 30; ++sequence)
+        ingest(recorder, frame(sequence));
+      const auto before = recorder.position();
+      assert(before.nextSample == 30ULL * FRAME_SAMPLES);
+      recorder.request(request(100, 1010, 1015));
+      const auto late = wait(recorder);
+      assert(late.revision == 100 && late.error.empty() &&
+        late.samples == 5ULL * FRAME_SAMPLES && !late.file.empty());
+      // Repeated claims cannot create a second artifact or alter its identity.
+      recorder.request(request(100, 1010, 1015));
+      assert(recorder.status().file == late.file);
+      assert(recorder.position().nextSample == before.nextSample);
+      std::ifstream sidecar(late.file + ".json");
+      const std::string json(std::istreambuf_iterator<char>(sidecar), {});
+      rapidjson::Document document; document.Parse(json.c_str());
+      assert(!document.HasParseError());
+      assert(document["windowStart"].GetInt64() == 1010 &&
+        document["windowEnd"].GetInt64() == 1015);
+      assert(document["firstEpochSample"].GetUint64() == 11ULL * FRAME_SAMPLES &&
+        document["endEpochSample"].GetUint64() == 16ULL * FRAME_SAMPLES);
+      // This one still intersects a retained frame, but crosses the sample-
+      // indexed safety guard. It must fail without relying on wall-clock age.
+      recorder.request(request(101, 1009, 1015));
+      assert(recorder.status().revision == 101 && recorder.status().file.empty() &&
+        recorder.status().error == "Kraken clip pre-roll is unavailable");
+      recorder.request(request(102, 1000, 1005));
+      const auto expired = recorder.status();
+      assert(expired.revision == 102 && expired.file.empty() &&
+        expired.error == "Kraken clip pre-roll is unavailable");
+    }
 
     // Heimdall has no RF timestamp. Identical samples arriving 100 ms later
     // retain identical sample positions but necessarily move the host-derived
@@ -368,7 +421,7 @@ int main()
       std::condition_variable gateCondition;
       bool writerEntered = false, releaseWriter = false;
       auto blocked = options;
-      blocked.ringSeconds = 0.002;
+      blocked.ringSeconds = 0.004;
       blocked.beforeWrite = [&] {
         std::unique_lock<std::mutex> lock(gateMutex);
         writerEntered = true;

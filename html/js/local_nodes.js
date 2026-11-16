@@ -17,7 +17,7 @@
       panel = document.createElement('section');
       panel.id = 'local-radar-nodes';
       panel.className = 'local-node-settings';
-      panel.innerHTML = `<div><h2>Local radar nodes</h2><p>Add another VectorWarp computer by its local IP address and API port. Identity, receiver capabilities, and RF channels are discovered automatically.</p></div>
+      panel.innerHTML = `<div><h2 title="Connect another VectorWarp computer by IP address and API port.">Local radar nodes</h2></div>
         <form><label><span>IP address</span><input name="host" inputmode="decimal" autocomplete="off" placeholder="192.168.1.20" required></label>
         <label><span>Port</span><input name="port" inputmode="numeric" type="number" min="1" max="65535" value="3000" required></label>
         <label><span>Name (optional)</span><input name="label" autocomplete="off" placeholder="Roof radar"></label>
@@ -37,7 +37,7 @@
               'X-VectorWarp-Intent': 'local-node-add-v1'},
             body: JSON.stringify({host: values.get('host'), port: Number(values.get('port')),
               label: values.get('label')})});
-          message.textContent = 'Node connected. Its channels are now available throughout VectorWarp.';
+          message.textContent = 'Node connected.';
           form.reset(); form.elements.port.value = '3000';
           await renderLocalNodes();
         } catch (error) { message.textContent = error.message; }

@@ -126,6 +126,17 @@ assert.notEqual(siteKey(changedScale), siteKey(config), 'physical search changes
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-delay-reference-'));
 try {
   const filename = path.join(directory, 'config.yml');
+  for (const receiver of ['Kraken', 'Usrp', 'RspDuo', 'HackRF']) {
+    const legacyThreads = configurationForReceiver(receiver);
+    delete legacyThreads.process.performance.fft_threads;
+    fs.writeFileSync(filename, yaml.dump(legacyThreads));
+    assert.equal(readConfig(filename).config.process.performance.fft_threads, 1,
+      `${receiver}: absent FFT policy uses the common processor default`);
+    legacyThreads.process.performance.fft_threads = 3;
+    fs.writeFileSync(filename, yaml.dump(legacyThreads));
+    assert.equal(readConfig(filename).config.process.performance.fft_threads, 3,
+      `${receiver}: explicit FFT policy is preserved`);
+  }
   for (const rate of [2400000, 6144000]) {
     const legacy = clone(config); legacy.capture.fs = rate;
     legacy.process.multi_illuminator.enabled = false;

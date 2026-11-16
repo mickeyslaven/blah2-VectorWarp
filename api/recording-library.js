@@ -35,7 +35,9 @@ const options = config => {
     lowSpacePolicy: value.low_space_policy === 'delete_oldest' ? 'delete_oldest' : 'stop_recording',
     maximumAgeDays: finite(value.maximum_age_days) ? value.maximum_age_days : 0,
     maximumTotalGb: finite(value.maximum_total_gb) ? value.maximum_total_gb : 0,
-    minimumFreeGb: finite(value.minimum_free_gb) ? value.minimum_free_gb : 5};
+    minimumFreeGb: finite(value.minimum_free_gb) ? value.minimum_free_gb : 5,
+    maximumManualSeconds: finite(value.maximum_manual_seconds) ?
+      value.maximum_manual_seconds : 300};
 };
 const bytesFromGb = value => Math.round(value * 1024 * 1024 * 1024);
 const storage = directory => {
@@ -346,7 +348,11 @@ class RecordingLibrary {
     const projected = Math.max(0, Number(writeBytesPerSecond) || 0) *
       Math.max(0, Number(safetySeconds) || 0);
     const required = reserve + projected;
-    return {allowed: current.free_bytes === null || current.free_bytes > required,
+    // An unreadable/missing filesystem observation cannot establish the
+    // configured reserve. Do not admit capture when statfs fails.
+    return {allowed: current.free_bytes !== null && current.free_bytes > required,
+      reason: current.free_bytes === null ? 'storage-unavailable' :
+        current.free_bytes > required ? null : 'disk-reserve',
       free_bytes: current.free_bytes, required_free_bytes: required,
       configured_reserve_bytes: reserve, projected_write_bytes: projected,
       estimated_write_bytes_per_second: Math.max(0, Number(writeBytesPerSecond) || 0),

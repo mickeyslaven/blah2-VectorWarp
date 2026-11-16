@@ -14,6 +14,8 @@ const configured = () => {
   config.capture.device.channel_count = 5;
   geometry.applyPreset(config, 'pentagon5');
   config.capture.device.array_geometry.x_axis_bearing_deg_true = 0;
+  Object.assign(config.capture.device.array_geometry, {
+    mapping_confirmed:true, geometry_confirmed:true, orientation_confirmed:true});
   config.process.performance = {...config.process.performance, acceleration: 'gpu-resident'};
   config.process.tracker.gpu_capacity = 64;
   config.process.tracker.initiate.stationary_clutter = {enable: true, persistence_cpis: 12, max_doppler_hz: 0};
@@ -86,7 +88,8 @@ for (const filename of ['config.yml', 'config-hackrf.yml', 'config-kraken.yml',
   assert.equal(config.process.detection.track_before_detect.enable, true);
   assert.equal(config.process.detection.track_before_detect.max_cpis, 4);
   assert.equal(config.process.performance.acceleration, 'gpu-resident');
-  assert.equal(config.process.surveillance_fusion.mode, 'coherent_beam_bank');
+  assert.equal(config.process.surveillance_fusion.mode, source.process.surveillance_fusion.mode,
+    'Power recovery preserves the selected fusion contract');
   assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
 }
 {
@@ -109,10 +112,21 @@ for (const filename of ['config.yml', 'config-hackrf.yml', 'config-kraken.yml',
     stationary: config.process.tracker.initiate.stationary_clutter.enable,
     acceleration: config.process.tracker.initiate.acceleration_model,
     fusion: config.process.surveillance_fusion.mode},
-  {integration: 1, motion: 0, tbd: false, bearing: false, guided: false,
-    promote: false, stationary: false, acceleration: 'adaptive_gate',
+  {integration: 2, motion: 0, tbd: true, bearing: false, guided: true,
+    promote: true, stationary: true, acceleration: 'adaptive_gate',
     fusion: 'coherent_beam_bank'});
   assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
+}
+
+{
+  const config=configured();
+  config.process.multi_illuminator.enabled=true;
+  config.process.bearing.enable=true;
+  config.process.detection.integration_cpis=2;
+  config.process.detection.track_before_detect.enable=false;
+  profiles.applyProcessingMode(config,'automatic');
+  assert.equal(config.process.performance.acceleration,'gpu-resident',
+    'Coherent lane bearing retains the resident requirement; multi-lane mode is not a blanket exception');
 }
 
 console.log('Composite settings map to validated backend configuration and CPU-only disables GPU-resident work.');

@@ -1,0 +1,66 @@
+{
+  "schema": "vectorwarp-depth4-dedup-preregistration-v1",
+  "frozen_at_utc": "2026-11-15T03:52:09Z",
+  "new_snapshot_truth_inspected_before_freeze": false,
+  "intent": "Development-only deterministic suppression ablation on previously unscored v9 records",
+  "old_scored_snapshot": {
+    "path": "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/source.jsonl",
+    "sha256": "f7460445d3eaec29747592af1af6a37d8246e6827d27d58970cac6743e36f1dc",
+    "records": 279,
+    "last_timestamp_ms": 1794714088015,
+    "exclude_post_v9_generations": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
+  },
+  "cohort_rule": "Require exact old prefix, accept only later records with timestamp beyond old cutoff, and exclude every generation present in old post-v9 cohort. Reset tracker on every generation change or missing depth4 endpoint. No truth-selected inclusion.",
+  "depth": 4,
+  "arms": [
+    {"name": "raw", "suppression": "none"},
+    {
+      "name": "adjacent_cell_max",
+      "suppression": "Retain a candidate iff no higher-priority original candidate lies within one delay bin AND one base-CPI Doppler bin, both inclusive with 1e-9 numerical tolerance.",
+      "delay_half_width_native_bins": 1,
+      "doppler_half_width_native_bins": 1,
+      "boundary": "inclusive",
+      "rationale": "Minimal immediate CAF-cell duplicate suppression; no truth-derived scale."
+    },
+    {
+      "name": "configured_centroid_max",
+      "suppression": "Retain a candidate iff no higher-priority original candidate lies strictly within the configured native centroid rectangle.",
+      "delay_half_width_native_bins": 19,
+      "doppler_half_width_native_bins": 6,
+      "boundary": "strict",
+      "rationale": "Existing nCentroid=6 at 2MHz reference scales by ceil(6*6144000/2000000)=19 delay bins; Doppler remains six base-CPI bins. Matches production Centroid local-max geometry for unequal SNR, with deterministic equal-SNR tie handling."
+    }
+  ],
+  "priority_order": ["descending_snr_db", "ascending_delay_bins", "ascending_doppler_hz", "ascending_original_export_index"],
+  "suppression_semantics": "Compare every candidate against the complete original list, not only retained winners. Preserve original output order, original values and full support lineage. Suppression does not interpolate or average.",
+  "source_centroid_sha256": "61841399acba17dfa18776ae3e729aa4a3b6621e1fe88dab293d14c350895458",
+  "configuration_sha256": "da951d6e81d1916b91ced6aade75d15807cd8eb109a0687969faee9ce8d1183f",
+  "tracker_policy": {
+    "m": 4,
+    "n": 6,
+    "delete_after": 3,
+    "birth_snr_db": 7,
+    "base_cpi_from_each_window": true,
+    "normalized_gate": true,
+    "adaptive_acceleration": true,
+    "maximum_acceleration_hz_per_s": 10,
+    "ridge_birth_filter": false,
+    "carrier_frequency_hz": 527000000
+  },
+  "evaluation": {
+    "truth_after_inference_only": true,
+    "delay_gate_km": 0.25,
+    "doppler_gate_hz": 10,
+    "minimum_absolute_doppler_hz": 15,
+    "maximum_absolute_doppler_hz": 600,
+    "delay_extent": "recorded search extent",
+    "control_shifts_s": [17, 31, 61],
+    "control_policy": "No wrap, no generation crossing, nearest within 0.6 seconds; exclude shifted truth within twice the gate of current truth. Controls remain dependent sensitivity analyses.",
+    "minimum_episode_reporting": "Separate >=4 endpoint confirmation eligibility and >=20 endpoint nominal 80-base-CPI lifetime floor; no whole-pass claim.",
+    "no_tuning_after_truth": true,
+    "no_promotion": true
+  },
+  "bounds": {"cpu": 8, "nice": 19, "virtual_memory_kib": 786432, "cpu_seconds": 60, "wall_seconds": 120},
+  "raw_input_preservation": true,
+  "live_changes": false
+}

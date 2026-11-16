@@ -141,15 +141,28 @@ Dispatch Plan::prepare(uint64_t firstInputSample, uint32_t inputSamples)
       double(firstInputSample) / config_.inputRateHz, 2 * pi);
     const float baseReal = float(std::cos(phase));
     const float baseImaginary = float(std::sin(phase));
-    uint32_t baseRealBits = 0, baseImaginaryBits = 0;
+    const float phaseStep = float(std::remainder(
+      -2 * pi * lane.centerOffsetHz / config_.inputRateHz, 2 * pi));
+    uint32_t baseRealBits = 0, baseImaginaryBits = 0,
+      phaseStepBits = 0, phasePeriod = 0;
     std::memcpy(&baseRealBits, &baseReal, sizeof(baseRealBits));
     std::memcpy(&baseImaginaryBits, &baseImaginary,
       sizeof(baseImaginaryBits));
+    std::memcpy(&phaseStepBits, &phaseStep, sizeof(phaseStepBits));
+    const int64_t integerCenter = std::llround(lane.centerOffsetHz);
+    if (std::abs(lane.centerOffsetHz - double(integerCenter)) <= 1e-9)
+    {
+      const uint64_t magnitude = integerCenter < 0 ?
+        uint64_t(-(integerCenter + 1)) + 1 : uint64_t(integerCenter);
+      phasePeriod = uint32_t(config_.inputRateHz /
+        std::gcd<uint64_t>(config_.inputRateHz,
+          magnitude % config_.inputRateHz));
+    }
     result.lanes.push_back({uint32_t(outputOffset), count, first,
       lane.decimation, tapOffsets_[index], uint32_t(lane.taps.size()),
       result.historySamples, 0, uint32_t(centerBits),
       uint32_t(centerBits >> 32), 0, 0, baseRealBits,
-      baseImaginaryBits, 0, 0});
+      baseImaginaryBits, phaseStepBits, phasePeriod});
     outputOffset = add(outputOffset, multiply(count, config_.channels));
   }
   if (outputOffset > layout_.outputElements ||

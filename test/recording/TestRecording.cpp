@@ -1,5 +1,6 @@
 #include "capture/Recording.h"
 #include "capture/Replay.h"
+#include "capture/Sha256.h"
 #include "capture/Source.h"
 #include "capture/rspduo/SampleSequence.h"
 #include <cmath>
@@ -95,6 +96,93 @@ int main() try {
       std::filesystem::resize_file(path,std::filesystem::file_size(path)-1);
       rejects([&] { RecordingReader invalid(path,options); },"Accepted truncated recording");
       std::filesystem::remove(path);
+    }
+    {
+      const auto clipPath=directory/"portable.blah2iq";
+      const IqBlock original{{{1,2},{3,4},{5,6}},{{7,8},{9,10},{11,12}}};
+      RecordingWriter writer(clipPath,{2,2400000,527000000,0,"blah2"});
+      writer.append(original);writer.close();
+      const ReplayOptions options{"auto","Usrp",2,2400000,527000000,0};
+      RecordingReader legacy(clipPath,options);
+      require(!legacy.provenance().sourceSampleAvailable&&legacy.provenance().legacy&&
+        !legacy.provenance().contractValid&&!legacy.provenance().decisionGrade&&
+        !legacy.provenance().exactTime&&!legacy.provenance().uncertaintyBounded,
+        "Missing portable sidecar invented qualified source provenance");
+      std::ifstream input(clipPath,std::ios::binary);
+      const std::vector<uint8_t> data(std::istreambuf_iterator<char>(input),{});
+      Sha256 digest;digest.update(data.data(),data.size());const auto hash=digest.finish();
+      const auto sidecar=clipPath.string()+".json";
+      const auto metadata=[&](const std::string& sha,uint64_t end,uint64_t bytes,
+          unsigned channels=2) {
+        std::ofstream output(sidecar);
+        output<<"{\"schema\":\"vectorwarp-portable-iq-clip-v1\","
+          "\"format\":\"blah2iq\",\"encoding\":\"float32-complex-channel-major-blocks\","
+          "\"channels\":"<<channels<<",\"sampleRate\":2400000,\"frequency\":527000000,"
+          "\"samplesPerChannel\":3,\"epoch\":7,\"firstEpochSample\":1000,"
+          "\"endEpochSample\":"<<end<<",\"dataBytes\":"<<bytes<<","
+          "\"dataSha256\":\""<<sha<<"\"}";
+      };
+      metadata(hash,1003,data.size());
+      RecordingReader qualified(clipPath,options);
+      const auto& provenance=qualified.provenance();
+      require(provenance.sourceSampleAvailable&&provenance.epoch==7&&
+        provenance.sourceFirstSample==1000&&provenance.legacy&&!provenance.present&&
+        !provenance.contractValid&&!provenance.decisionGrade&&!provenance.exactTime&&
+        !provenance.uncertaintyBounded&&!provenance.deviceTimeAvailable,
+        "Portable relative identity changed exact-time or decision-grade qualification");
+      IqBlock actual;
+      require(qualified.read(actual)&&actual==original&&!qualified.read(actual),
+        "Portable sidecar verification changed replay position or samples");
+      auto decisionGrade=options;decisionGrade.provenanceMode="decision-grade";
+      rejects([&] { RecordingReader invalid(clipPath,decisionGrade); },
+        "Portable relative identity was accepted as decision-grade provenance");
+      auto wrongHash=hash;wrongHash[0]=wrongHash[0]=='0'?'1':'0';
+      metadata(wrongHash,1003,data.size());
+      rejects([&] { RecordingReader invalid(clipPath,options); },
+        "Portable sidecar accepted a mismatched SHA-256");
+      metadata(hash,1004,data.size());
+      rejects([&] { RecordingReader invalid(clipPath,options); },
+        "Portable sidecar accepted an inconsistent source sample interval");
+      metadata(hash,999,data.size());
+      rejects([&] { RecordingReader invalid(clipPath,options); },
+        "Portable sidecar accepted a reversed source sample interval");
+      metadata(hash,1003,data.size()+1);
+      rejects([&] { RecordingReader invalid(clipPath,options); },
+        "Portable sidecar accepted an inconsistent file size");
+      metadata(hash,1003,data.size(),3);
+      rejects([&] { RecordingReader invalid(clipPath,options); },
+        "Portable sidecar accepted mismatched recording metadata");
+      metadata(hash,1003,data.size());
+      auto changed=data;changed.back()^=1;write(clipPath,changed);
+      rejects([&] { RecordingReader invalid(clipPath,options); },
+        "Portable sidecar accepted modified IQ bytes with the original SHA-256");
+    }
+    {
+      const auto slicePath=directory/"slice.iq";
+      IqBlock original{{{0,10},{1,11},{2,12},{3,13},{4,14}},
+                       {{5,15},{6,16},{7,17},{8,18},{9,19}}};
+      RecordingWriter writer(slicePath,{2,2000000,100000000,0,"blah2"});
+      rejects([&] { writer.append_slice(original,0,0); },
+        "Accepted an empty recording slice");
+      rejects([&] { writer.append_slice(original,5,1); },
+        "Accepted an out-of-range recording slice");
+      rejects([&] { writer.append_slice(original,
+        std::numeric_limits<std::size_t>::max(),1); },
+        "Accepted an overflowing recording slice offset");
+      auto invalid=original;
+      invalid[0][2]={std::numeric_limits<float>::infinity(),0};
+      rejects([&] { writer.append_slice(invalid,1,3); },
+        "Accepted non-finite IQ inside a recording slice");
+      writer.append_slice(original,1,3);
+      rejects([&] { writer.append({{{1,2},{3,4}},{{5,6},{7,8},{9,10}}}); },
+        "Accepted unequal recording channels");
+      writer.close();
+      RecordingReader reader(slicePath,{"auto","Mock",2,2000000,100000000,0});
+      IqBlock actual;
+      require(reader.read(actual) &&
+        actual==IqBlock{{{1,11},{2,12},{3,13}},{{6,16},{7,17},{8,18}}},
+        "Zero-copy recording slice changed sample order or values");
+      require(!reader.read(actual),"Recording slice added unexpected samples");
     }
     {
       RecordingWriter writer(path,{2,2000000,100000000,0,"blah2"});
@@ -275,7 +363,7 @@ int main() try {
       player.run(path,{"auto","Mock",2,1000000,100000000,0},queues,4,false,stopped,
         [&](const ReplayProgress& progress) { last=progress; ++updates; }, [] { return false; });
       consume=false; consumer.join();
-      require(last.state=="complete" && last.samples==6 && last.trailingSamples==2 && updates>2,
+      require(last.state=="complete" && !last.controlsAvailable && last.samples==6 && last.trailingSamples==2 && updates>2,
         "Replay did not reach bounded EOF completion");
       require(observed.size()==4 && observed[0]==std::complex<double>(0,0) &&
         observed[3]==std::complex<double>(0,3),"Replay changed frame ordering under backpressure");
@@ -304,7 +392,7 @@ int main() try {
       // A seek is an indexed processor-generation boundary, and pause must not
       // consume samples while the user is scrubbing.
       first.clear(); second.clear(); stopped=false; consume=true;
-      std::atomic<bool> paused{true}; std::atomic<uint64_t> seek{0},revision{0};
+      ReplayControlMailbox commands; commands.publish({true,0,0});
       bool sawPaused=false; ReplayProgress controlled;
       std::thread seekConsumer([&] {
         while(consume.load()) {
@@ -315,14 +403,72 @@ int main() try {
       });
       std::thread controller([&] {
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
-        seek=2;paused=false;revision=1;
+        commands.publish({false,2,1});
       });
       player.run(path,{"auto","Mock",2,1000000,100000000,0},queues,4,false,stopped,
         [&](const ReplayProgress& progress){controlled=progress;sawPaused=sawPaused||progress.state=="paused";},
-        []{return false;},[&]{return ReplayCommand{paused.load(),seek.load(),revision.load()};});
+        []{return false;},[&]{return commands.snapshot();});
       controller.join();consume=false;seekConsumer.join();
       require(sawPaused&&controlled.state=="complete"&&controlled.samples==6&&controlled.generation==1,
         "Replay pause/seek did not publish a clean processor generation");
+
+      // No timing race: a synchronous consumer in the progress callback drains
+      // complete frames, and commands are published at exact lifecycle edges.
+      const auto drain = [&] {
+        first.lock(); second.lock();
+        if(first.get_length()>=4&&second.get_length()>=4) {
+          first.drain_front(4); second.drain_front(4);
+        }
+        second.unlock(); first.unlock();
+      };
+      first.clear(); second.clear(); stopped=false;
+      commands.publish({false,2,5});
+      uint64_t secondLoopGeneration=0;
+      player.run(path,{"auto","Mock",2,1000000,100000000,0},queues,4,true,stopped,
+        [&](const ReplayProgress& progress) {
+          drain();
+          if(progress.loops==1&&progress.samples>0) {
+            secondLoopGeneration=progress.generation; stopped=true;
+          }
+        }, []{return false;},[&]{return commands.snapshot();});
+      require(secondLoopGeneration==2,"Consumed seek revision reapplied after automatic rewind");
+
+      first.clear(); second.clear(); stopped=false; commands.publish({false,0,0});
+      unsigned completions=0; uint64_t resumedGeneration=0;
+      player.run(path,{"auto","Mock",2,1000000,100000000,0},queues,4,false,stopped,
+        [&](const ReplayProgress& progress) {
+          drain();
+          if(progress.state=="complete") {
+            require(progress.controlsAvailable,"Idle EOF player hid its controls");
+            resumedGeneration=progress.generation;
+            if(++completions==1) commands.publish({false,2,1});
+            else stopped=true;
+          }
+          if(progress.state=="stopped")
+            require(!progress.controlsAvailable,"Stopped player advertised controls");
+        }, []{return false;},[&]{return commands.snapshot();},true);
+      require(completions==2&&resumedGeneration==1,
+        "EOF player failed to consume a new seek/restart command");
+
+      // Force old/new command observations around each publication. Revision
+      // must never label fields from the previous publication.
+      commands.publish({false,0,0});
+      std::atomic<unsigned> phase{0};
+      std::thread publisher([&] {
+        while(phase.load()!=1) std::this_thread::yield();
+        commands.publish({true,123456789,9}); phase=2;
+        while(phase.load()!=3) std::this_thread::yield();
+        commands.publish({false,987654321,10}); phase=4;
+      });
+      const auto before=commands.snapshot(); phase=1;
+      while(phase.load()!=2) std::this_thread::yield();
+      const auto during=commands.snapshot(); phase=3;
+      while(phase.load()!=4) std::this_thread::yield();
+      const auto after=commands.snapshot(); publisher.join();
+      require(before.revision==0&&!before.paused&&before.seekSample==0&&
+        during.revision==9&&during.paused&&during.seekSample==123456789&&
+        after.revision==10&&!after.paused&&after.seekSample==987654321,
+        "Replay control snapshot mixed publication fields");
       std::filesystem::remove(path);
     }
 

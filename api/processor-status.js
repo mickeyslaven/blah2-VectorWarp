@@ -716,6 +716,7 @@ function status(payload) {
     totalSamples: count(payload.totalSamples, 'totalSamples', errors),
     loops: count(payload.loops, 'loops', errors),
     trailingSamples: count(payload.trailingSamples, 'trailingSamples', errors),
+    replayControlsAvailable: payload.replayControlsAvailable === true,
     recording: payload.recording === true,
     recordingFile: text(payload.recordingFile, 'recordingFile', errors),
     recordingError: errorText(payload.recordingError, 'recordingError', errors),

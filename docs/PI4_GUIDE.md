@@ -122,16 +122,15 @@ Use two RSPduo channels at **2 MS/s**, **551 MHz**, and **500 ms CPI** (one
 million samples). Enable clutter, detection, and tracking; use one surveillance
 path and no array reference. Set clutter lags **-10…399** (410 taps; the YAML
 upper bound is exclusive, so use `delayMax: 400`), delay map **-10…400** (411 bins),
-and Doppler map **±300 Hz** (301 rows). The qualified Pi path chooses CPU range
-FFT padding **4096** internally. These settings describe the tested workload; they are not a
-general real-time promise.
+and Doppler map **±300 Hz** (301 rows). These settings describe an earlier tested
+workload, not qualification of the current unified artifact or a general
+real-time promise. FFT geometry follows the same processing implementation used
+on other platforms.
 
-Set **Settings → Processing → Acceleration** to **Automatic**. To be eligible
-for the Pi-specific mixed path, keep the device request at generic `auto` and
-keep exactly the Pi 4B/BCM2711, one-surveillance, no-array-reference,
-clutter-enabled 2 MS/s, one-million-sample, 301×411, 410-tap geometry above.
-An explicit GPU device or any other geometry follows the generic CPU/Vulkan
-policy.
+Set **Settings → Processing → Acceleration** to **Automatic**. Pi follows the
+same runtime capability and correctness checks as other platforms. Geometry and
+actual device features determine supported acceleration; the Pi model or receiver
+name does not select different DSP, detection, temporal integration or tracking.
 
 ### Apply the tested service environment
 
@@ -172,31 +171,33 @@ vectorwarp status
 vectorwarp logs
 ```
 
-For the exact eligible workload, successful qualification may report the mixed
-backend as `vulkan+cpu`. CPU is also a valid AUTO outcome when the timing or
-map checks do not accept mixed processing. Confirm that the map updates and
-detection/tracking are active before treating the setup as successful. For a
-driver diagnostic, run `/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status`.
+Successful portable-stage qualification reports `vulkan`; CPU is also a valid
+AUTO outcome when a GPU is unavailable or fails correctness or runtime-health
+checks. Driver discovery alone is not qualification. Confirm fresh frame-bound
+execution receipts, map updates and active detection/tracking before treating
+the setup as successful. For a driver diagnostic, run
+`/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status`.
 
 ## Evidence and limits
 
-The tested Pi 4 profile completed live Automatic-mode processing with zero
-drops, faults, or final complete-CPI backlog. Check the live timing panel after
-changing receiver, CPI, range, or Doppler settings.
+An earlier Pi 4 profile completed live Automatic-mode processing with zero
+drops, faults, or final complete-CPI backlog. This historical result does not
+qualify the current unified artifact. Revalidate its runtime receipts and live
+timing after changing receiver, CPI, range, Doppler settings or software.
 
-## AUTO and mixed processing
+## Unified AUTO processing
 
-For the eligible Pi 4 configuration, the parent starts an isolated mixed child
-that owns Vulkan and the mixed DSP path. It first compares two complete child
-maps with CPU maps (RMS and peak relative error must each be at most `1e-4`),
-then alternates three CPU and three mixed whole CPIs. Mixed is selected only
-when its median CPI is more than 5% faster than CPU.
+Pi uses the common `Acceleration` stage selection and the shared downstream
+detector, temporal integration and tracker contract. Portable FP32 Vulkan stages
+may qualify on devices without `shaderFloat64`; FP64 resident processing must
+refuse devices lacking that feature. Correctness-qualified stages may remain
+selected even when slower than the CPU baseline, subject to runtime-health guards.
 
-The paired live input crosses the worker boundary as packed signed 16-bit data
-(8 MB rather than 32 MB of FP64); the child decodes it into persistent buffers.
-The parent keeps the original samples and switches to CPU for a worker crash or
-hang, IPC failure, invalid/non-finite map, failed comparison, capture drop,
-unacceptable backlog, or loss of the timing margin. `vulkan+cpu` includes the
-worker's CPU work, including the FP64 coefficient solve, and is not a fully GPU map.
+The earlier Pi-specific `vulkan+cpu` worker used frozen DSP code. It is no longer
+a production build target, is rejected by packaging and installation, and is
+never selected by the processor. Its retained source fixtures and old measurements
+are historical evidence only. Use the common
+[GPU qualification and capability receipts](GPU_ACCELERATION.md) for current
+acceptance; no new Pi hardware result is claimed by this source change.
 
 Image maintainers can use the [Pi image packaging guide](PI_IMAGE_PACKAGING.md).

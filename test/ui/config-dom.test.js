@@ -60,6 +60,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: status === 200, status, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/processing_capabilities.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/kraken_geometry.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
@@ -81,6 +82,13 @@ function change(input, value, event = 'input') {
       /Automatic aircraft clips require a backend version/);
     saved.capture.aircraft_clips = aircraftClipSettings;
     await window.renderConfiguration();
+    let setupScrollBehavior;
+    window.matchMedia = () => ({matches: true});
+    window.document.getElementById('config-fields').scrollIntoView = options => {
+      setupScrollBehavior = options.behavior;
+    };
+    window.__settingsModeApi.openTab('receiver');
+    assert.equal(setupScrollBehavior, 'auto', 'Setup navigation respects reduced-motion preferences');
     await window.validateActiveConfiguration();
     assert.equal(window.document.querySelectorAll('[role=tab]').length, 6,
       'The SDRplay settings surface exposes each applicable task category');

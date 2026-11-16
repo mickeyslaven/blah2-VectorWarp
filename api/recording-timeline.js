@@ -4,6 +4,11 @@ const zlib = require('zlib');
 
 const mapSummary = map => map && typeof map === 'object' ? {
   timestamp: map.timestamp ?? null, nRows: map.nRows ?? null, nCols: map.nCols ?? null,
+  sourceRows: map.sourceRows ?? null, sourceCols: map.sourceCols ?? null,
+  presentationStride: map.presentationStride ?? null,
+  presentation_only: map.presentation_only === true,
+  presentation_pooling: map.presentation_pooling ?? null,
+  presentation_precision_db: map.presentation_precision_db ?? null,
   noisePower: map.noisePower ?? null, maxPower: map.maxPower ?? null,
   delay: map.delay ?? null, doppler: map.doppler ?? null,
   eventTime: map.eventTime ?? null

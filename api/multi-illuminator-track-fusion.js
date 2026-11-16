@@ -1,6 +1,8 @@
 'use strict';
 
 const {inverse, destination} = require('./bistatic-geolocation');
+const {envelopeCandidates, constrainWithBearing, EnvelopePersistence} = require('./altitude-envelope-fusion');
+const {boundedMotionTrajectory} = require('./bounded-motion-feasibility');
 
 const C_KM_S = 299792.458;
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -15,7 +17,7 @@ const DEFAULT_LIMITS = Object.freeze({measurementsPerLane: 24, pairEvaluations: 
 const statePriority = Object.freeze({CONFIRMED: 4, ACTIVE: 4, COASTING: 3, ASSOCIATED: 2});
 const DEFAULT_GEOMETRY = Object.freeze({siteSeparationKm: .1, rangeNoiseSigmaKm: .05,
   maximumCondition: 100, maximumHorizontalSigmaKm: 2, maximumVerticalSigmaKm: 2,
-  minimumAltitudeM: 0, maximumAltitudeM: 20000, maximumReceiverRangeKm: 300});
+  minimumAltitudeM: 0, maximumAltitudeM: 20000, maximumReceiverRangeKm: 300, maximumSpeedMps:450});
 const numeric = value => value !== null && value !== '' && value !== undefined && finite(Number(value));
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const dot = (a, b) => a.reduce((sum, value, index) => sum + value * b[index], 0);
@@ -230,7 +232,10 @@ function laneMeasurements(frame, definition, receiver, limit = DEFAULT_LIMITS.me
       carrierHz, sampleRateHz: sampleRate, resolutionKm, transmitter: tx,
       sigmaKm: Math.hypot(resolutionKm / Math.sqrt(12), geometry.rangeNoiseSigmaKm,
         numeric(track.delay_sigma_bins) && Number(track.delay_sigma_bins) > 0 ?
-          Number(track.delay_sigma_bins) * resolutionKm : 0),
+          Number(track.delay_sigma_bins) * resolutionKm : 0,
+        numeric(track.federated_propagation_sigma_km) &&
+          Number(track.federated_propagation_sigma_km) >= 0 ?
+          Number(track.federated_propagation_sigma_km) : 0),
       transmitterSite,
       provenance: {illuminator: frame.id, track_id: String(track.id),
         frame: clone(frame?.provenance) ?? null, track: clone(track?.provenance) ?? null},
@@ -244,6 +249,37 @@ function laneMeasurements(frame, definition, receiver, limit = DEFAULT_LIMITS.me
 function cohortIdentity(frames) {
   if (!Array.isArray(frames) || frames.length < 2) return null;
   if (new Set(frames.map(frame => frame?.id)).size !== frames.length || frames.some(frame => !frame?.id)) return null;
+  const federated = frames.map(frame => frame?.federated_lineage);
+  if (federated.every(item => item?.schema === 'vectorwarp-federated-radar-lineage-v1')) {
+    const firstLineage = federated[0], keys = new Set(federated.map(item => item.cohort_key));
+    const epochs = new Set(federated.map(item => item.lineage_epoch));
+    const tokens = federated.map(item => item.evidence_token);
+    const timestamp = Number(firstLineage.target_timestamp);
+    const alignmentQualified = federated.every(item => item.alignment_qualified === true);
+    const alignmentDiagnostic = federated.every(item => item.alignment_qualified === false);
+    if (keys.size !== 1 || epochs.size !== 1 || new Set(tokens).size !== tokens.length ||
+        !tokens.every(item => typeof item === 'string' && item.length > 0) ||
+        !finite(timestamp) || timestamp < 0 || !(alignmentQualified || alignmentDiagnostic) ||
+        !federated.every(item =>
+          item.alignment_basis === (alignmentQualified ?
+            'receipt-relative-source-age-with-bounded-rtt-and-doppler-propagation' :
+            'diagnostic-receipt-relative-unbounded-producer-time') &&
+          Number(item.target_timestamp) === timestamp && finite(item.source_timestamp) &&
+          Number(item.source_timestamp) >= 0 && finite(item.maximum_skew_ms) &&
+          (alignmentQualified ? finite(item.alignment_uncertainty_ms) &&
+            Number(item.alignment_uncertainty_ms) >= 0 &&
+            Number(item.alignment_uncertainty_ms) <= Number(item.maximum_skew_ms) :
+            item.alignment_uncertainty_ms === null) &&
+          timestamp - Number(item.source_timestamp) >= 0 &&
+          timestamp - Number(item.source_timestamp) <= Number(item.maximum_skew_ms))) return null;
+    return {capture_epoch: firstLineage.lineage_epoch,
+      capture_first_input_sample: null, capture_end_input_sample: null,
+      timestamp, capture_epoch_verified: false, evidence_lineage_verified: true,
+      alignment_qualified: alignmentQualified,
+      lineage_kind: 'federated-radar-observations', evidence_items: tokens,
+      key: `federated:${firstLineage.cohort_key}`};
+  }
+  if (federated.some(Boolean)) return null;
   const first = frames[0];
   const captureAvailable = first.capture_sample_position_available === true;
   const epoch = captureAvailable ? first.capture_epoch : null;
@@ -392,7 +428,7 @@ function refinePoint(seed, lanes, acquisitionGateSigma = 3) {
   return {point, selected, info, uncertainty};
 }
 
-function fuseTrackCohort(frames, config, requestedLimits = {}) {
+function fuseTrackCohort(frames, config, requestedLimits = {}, {bearingConstraints=[]} = {}) {
   const limits = Object.fromEntries(Object.entries(DEFAULT_LIMITS).map(([key, maximum]) =>
     [key, Number.isSafeInteger(requestedLimits[key]) && requestedLimits[key] > 0 ?
       Math.min(maximum, requestedLimits[key]) : maximum]));
@@ -468,7 +504,9 @@ function fuseTrackCohort(frames, config, requestedLimits = {}) {
             const reasons = [];
             if (!admissible) reasons.push('outside-aircraft-envelope');
             if (!bounded) reasons.push('ill-conditioned-or-unbounded-uncertainty');
-            if (!cohort.capture_epoch_verified) reasons.push('unverified-capture-epoch');
+            if (!cohort.capture_epoch_verified &&
+                !(cohort.evidence_lineage_verified && cohort.alignment_qualified))
+              reasons.push('unverified-evidence-lineage');
             const candidate = {...geographic, local_east_km: point[0], local_north_km: point[1], local_up_km: point[2],
               contributors, support, geometric_support: support, lane_support: contributors.length,
               normalized_range_score: info?.score ?? null, altitude_model: 'three-dimensional-wgs84-ellipsoid',
@@ -495,14 +533,31 @@ function fuseTrackCohort(frames, config, requestedLimits = {}) {
   hypotheses.sort((left, right) => Number(right.resolved) - Number(left.resolved) ||
     Number(right.physically_admissible) - Number(left.physically_admissible) || right.support - left.support ||
     left.normalized_range_score - right.normalized_range_score);
+  const envelopes = envelopeCandidates(groups, receiver, geometry, cohort, geographicPoint3d,
+    {cpiSeconds: Number(config?.process?.data?.cpi) || .5,
+      pairLimit: Math.min(32, limits.pairEvaluations), candidateLimit: Math.min(32, limits.hypotheses)});
+  if (truncated) {
+    envelopes.envelope_computation.truncated = true;
+    for (const candidate of envelopes.position_candidates)
+      if (!candidate.diagnostic_reasons.includes('incomplete-bounded-search'))
+        candidate.diagnostic_reasons.push('incomplete-bounded-search');
+  }
+  const bearing = constrainWithBearing(envelopes.position_candidates,bearingConstraints,receiver,cohort,geometry,
+    configuredGeometry.bearingConstraintEnabled === true);
+  envelopes.position_candidates = bearing.candidates;
+  envelopes.bearing_constraint_status = bearing.status;
+  envelopes.position_candidate_semantics.bearing_constraint_used = bearing.status.accepted_constraints > 0;
   return {schema: 'vectorwarp-multi-illuminator-track-fusion-v1', available: true,
+    ...envelopes,
     ...cohort, lanes: frames.map(frame => frame.id), independent_transmitter_sites: siteCount,
     definition: 'Independent bistatic ranges solved in three dimensions using receiver and transmitter WGS84 coordinates.',
     adsb_used_by_solver: false, operational_localization: hypotheses.some(item => item.resolved),
     localization_limit: 'Uniqueness is conditional on the configured aircraft envelope and estimated range-noise model; uncertainty is not field-calibrated.',
     diagnostic_reasons: [...(siteCount < 3 ? ['fewer-than-three-independent-transmitter-sites'] : []),
       ...(hypotheses.length ? [] : ['no-admissible-well-conditioned-three-dimensional-solution']),
-      ...(!cohort.capture_epoch_verified ? ['unverified-capture-epoch'] : []),
+      ...(!cohort.capture_epoch_verified &&
+          !(cohort.evidence_lineage_verified && cohort.alignment_qualified) ?
+        ['unverified-evidence-lineage'] : []),
       ...(sites.size !== enabled.length ? ['missing-transmitter-altitude-or-coordinates'] : []),
       ...([...sites.values()].some(site => site.invalid) ? ['inconsistent-transmitter-site-identity'] : []),
       ...(truncated ? ['incomplete-bounded-search'] : [])],
@@ -645,6 +700,11 @@ class CrossFrequencySupportTracker {
     this.tracks = new Map(); this.nextId = 1; this.lastKey = null;
     this.lastTimestamp = null; this.lastEpoch = null; this.lastCaptureEnd = null;
     this.seenCpis = new Set(); this.lastResult = null; this.lastReceiptAt = null;
+  }
+  reset() {
+    this.tracks.clear(); this.nextId = 1; this.lastKey = null;
+    this.lastTimestamp = null; this.lastEpoch = null; this.lastCaptureEnd = null;
+    this.seenCpis.clear(); this.lastResult = null; this.lastReceiptAt = null;
   }
   invalid(reason, cohort = null) {
     return {schema: 'vectorwarp-cross-frequency-support-v1', available: false,
@@ -849,9 +909,19 @@ class MultiIlluminatorTrackFuser {
     this.deleteAfter = Math.max(1, Number(config?.process?.tracker?.delete) || 3);
     this.tracks = new Map(); this.nextId = 1; this.lastKey = null; this.lastResult = null;
     this.seenEpochs = new Set();
-    this.seenCaptureIntervals = new Set(); this.lastCaptureEnd = null;
+    this.seenCaptureIntervals = new Set(); this.seenEvidenceItems = new Set();
+    this.lastCaptureEnd = null;
     this.lastReceiptAt = null;
     this.crossFrequencySupport = new CrossFrequencySupportTracker(config);
+    this.envelopePersistence = new EnvelopePersistence({required:this.m,maxSpeedKmS:this.maxSpeedKmS,
+      maxAccelerationKmS2:this.maxAccelerationKmS2,maximumGapSeconds:this.maximumCoastSeconds,
+      cpiSeconds:Number(config?.process?.data?.cpi)||.5});
+  }
+  reset() {
+    this.tracks.clear(); this.nextId = 1; this.lastKey = null; this.lastResult = null;
+    this.seenEpochs.clear(); this.seenCaptureIntervals.clear(); this.seenEvidenceItems.clear();
+    this.lastCaptureEnd = null;
+    this.lastReceiptAt = null; this.crossFrequencySupport.reset(); this.envelopePersistence.reset();
   }
   snapshot(now = Date.now()) {
     if (!this.lastResult) return null;
@@ -866,50 +936,79 @@ class MultiIlluminatorTrackFuser {
     if (ageSeconds > this.maximumCoastSeconds) return {...this.lastResult,
       available: false, operational_localization: false,
       reason: 'Fused input cohorts stopped; stale tracks expired.', tracks: [],
+      position_candidates: [],
       cross_frequency_support: crossFrequencySupport,
       hypotheses: this.lastResult.hypotheses.map(item => ({...item, resolved: false,
         diagnostic_reasons: [...new Set([...(item.diagnostic_reasons || []), 'stale-input-cohort'])]}))};
     return {...this.lastResult, operational_localization: false,
       reason: 'Fused input cohorts are stale; last tracks are diagnostic coasts.',
+      position_candidates: (this.lastResult.position_candidates || []).map(item => ({...item,
+        state:'ENVELOPE_STALE',temporal_support:{...item.temporal_support,stale_input_seconds:ageSeconds}})),
       cross_frequency_support: crossFrequencySupport,
       tracks: this.lastResult.tracks.map(item => ({...item,
         state: item.state === 'FUSED_CANDIDATE' ? item.state : 'FUSED_COASTING',
         contributors: [], support: 0, geometric_support: 0,
         stale_input_seconds: ageSeconds}))};
   }
-  update(frames) {
+  update(frames, {bearingConstraints=[]} = {}) {
     const crossFrequencySupport = this.crossFrequencySupport.update(frames);
-    const result = fuseTrackCohort(frames, this.config);
+    const result = fuseTrackCohort(frames, this.config, {}, {bearingConstraints});
+    if (result.available && result.evidence_lineage_verified && !result.alignment_qualified) {
+      this.tracks.clear(); this.envelopePersistence.reset();
+      const diagnostic = {...result, operational_localization: false,
+        hypotheses: (result.hypotheses || []).map(item => ({...item, resolved: false,
+          diagnostic_reasons: [...new Set([...(item.diagnostic_reasons || []),
+            'unbounded-cross-node-acquisition-alignment'])]})), tracks: [],
+        position_candidates: (result.position_candidates || []).map(item => ({...item,
+          operational_position: false, state: 'ENVELOPE_DIAGNOSTIC',
+          diagnostic_reasons: [...new Set([...(item.diagnostic_reasons || []),
+            'unbounded-cross-node-acquisition-alignment'])]}))};
+      this.lastKey = result.key; this.lastResult = diagnostic; this.lastReceiptAt = Date.now();
+      return diagnostic;
+    }
     if (!result.available || result.key === this.lastKey) return result.key === this.lastKey ?
       this.lastResult : {...result, tracks: [], cross_frequency_support: crossFrequencySupport};
     const timestamp = result.timestamp;
     if (this.lastResult && this.lastResult.capture_epoch !== result.capture_epoch) {
       if (this.seenEpochs.has(result.capture_epoch)) return this.lastResult;
       this.tracks.clear(); this.lastResult = null;
-      this.seenCaptureIntervals.clear(); this.lastCaptureEnd = null;
+      this.envelopePersistence.reset();
+      this.seenCaptureIntervals.clear(); this.seenEvidenceItems.clear(); this.lastCaptureEnd = null;
     }
     if (this.lastResult && finite(this.lastResult.timestamp) &&
         timestamp <= this.lastResult.timestamp) return this.lastResult;
-    const interval = `${result.capture_first_input_sample}:${result.capture_end_input_sample}`;
-    // Raw capture evidence can vote only once, regardless of later presentation
-    // timestamps. The end watermark also rejects old intervals after eviction
-    // from the bounded ledger and prevents overlapping windows reusing samples.
-    if (this.seenCaptureIntervals.has(interval) || this.lastCaptureEnd !== null &&
-        result.capture_first_input_sample < this.lastCaptureEnd) return this.lastResult;
-    this.seenCaptureIntervals.add(interval);
-    if (this.seenCaptureIntervals.size > 128)
-      this.seenCaptureIntervals.delete(this.seenCaptureIntervals.values().next().value);
-    this.lastCaptureEnd = result.capture_end_input_sample;
+    if (result.evidence_lineage_verified && result.alignment_qualified) {
+      if (!Array.isArray(result.evidence_items) || !result.evidence_items.length ||
+          result.evidence_items.some(item => this.seenEvidenceItems.has(item))) return this.lastResult;
+      for (const item of result.evidence_items) this.seenEvidenceItems.add(item);
+      while (this.seenEvidenceItems.size > 512)
+        this.seenEvidenceItems.delete(this.seenEvidenceItems.values().next().value);
+    } else {
+      const interval = `${result.capture_first_input_sample}:${result.capture_end_input_sample}`;
+      // Raw capture evidence can vote only once, regardless of later presentation
+      // timestamps. The end watermark also rejects old intervals after eviction
+      // from the bounded ledger and prevents overlapping windows reusing samples.
+      if (this.seenCaptureIntervals.has(interval) || this.lastCaptureEnd !== null &&
+          result.capture_first_input_sample < this.lastCaptureEnd) return this.lastResult;
+      this.seenCaptureIntervals.add(interval);
+      if (this.seenCaptureIntervals.size > 128)
+        this.seenCaptureIntervals.delete(this.seenCaptureIntervals.values().next().value);
+      this.lastCaptureEnd = result.capture_end_input_sample;
+    }
     this.seenEpochs.add(result.capture_epoch);
     for (const [id, track] of this.tracks) if ((timestamp - track.timestamp) / 1000 > this.maximumCoastSeconds)
       this.tracks.delete(id);
     const hypotheses = result.hypotheses.map((item, index) => ({...item, index,
       diagnostic_reasons: [...item.diagnostic_reasons]}));
-    const pairs = [];
+    const observation = hypothesis => ({timestamp,
+      center: [hypothesis.local_east_km, hypothesis.local_north_km, hypothesis.local_up_km],
+      covariance: hypothesis.uncertainty.covariance_enu_km2});
+    const pairs = [], motionRejectedHypotheses = new Set();
+    let covarianceAttempts = 0, covarianceAttemptBudgetExhausted = false;
     for (const track of this.tracks.values()) for (const hypothesis of hypotheses.filter(item => item.resolved)) {
       const dt = (timestamp - track.timestamp) / 1000;
-      const point = [hypothesis.local_east_km, hypothesis.local_north_km, hypothesis.local_up_km];
-      const velocity = sub(point, track.point).map(value => value / dt);
+      let point = [hypothesis.local_east_km, hypothesis.local_north_km, hypothesis.local_up_km];
+      let velocity = sub(point, track.point).map(value => value / dt);
       const predicted = track.point.map((value, index) => value + track.velocity[index] * dt);
       // Each secant velocity belongs to its measurement interval's midpoint.
       // Unequal scan gaps therefore separate the two velocities by half the
@@ -917,20 +1016,43 @@ class MultiIlluminatorTrackFuser {
       const velocitySeparation = (track.velocityIntervalSeconds + dt) / 2;
       const speed = norm(velocity), acceleration = track.velocityKnown ?
         norm(sub(velocity, track.velocity)) / velocitySeparation : 0;
-      const motionValid = dt > 0 && speed <= this.maxSpeedKmS && acceleration <= this.maxAccelerationKmS2;
+      let motionValid = dt > 0 && speed <= this.maxSpeedKmS && acceleration <= this.maxAccelerationKmS2;
       const keys = new Set(track.hypothesis.contributors.map(item => `${item.illuminator}:${item.track_id}`));
       const sharedContributor = hypothesis.contributors.some(item => keys.has(`${item.illuminator}:${item.track_id}`));
-      if (!motionValid && sharedContributor) {
-        hypothesis.motion_rejected = true;
-        if (!hypothesis.diagnostic_reasons.includes('physically-impossible-track-motion'))
-          hypothesis.diagnostic_reasons.push('physically-impossible-track-motion');
-      }
-      if (motionValid) pairs.push({track, hypothesis, point, velocity, dt, distance: norm(sub(point, predicted))});
+      const history = [...track.motionHistory, observation(hypothesis)];
+      let witness = null;
+      // Uncertainty may explain a noisy point estimate only when existing lane
+      // identity supports continuation. It cannot glue unrelated wide ellipsoids.
+      if (!motionValid && sharedContributor && covarianceAttempts < 64) {
+        covarianceAttempts += 1;
+        witness = boundedMotionTrajectory(history, {maxSpeedKmS: this.maxSpeedKmS,
+          maxAccelerationKmS2: this.maxAccelerationKmS2});
+        if (witness) {
+          const envelope = result.aircraft_envelope, receiver = this.config.location.rx;
+          const localization = this.config?.process?.multi_illuminator?.localization || {};
+          const sigmaScale = 1 + witness.currentMahalanobisDistance;
+          const maximumSigma = key => numeric(localization[key]) && Number(localization[key]) > 0 ?
+            Number(localization[key]) : DEFAULT_GEOMETRY[key];
+          if (hypothesis.uncertainty.horizontal_sigma_km * sigmaScale > maximumSigma('maximumHorizontalSigmaKm') ||
+              hypothesis.uncertainty.vertical_sigma_km * sigmaScale > maximumSigma('maximumVerticalSigmaKm') ||
+              !witness.points.every(value => {
+                const altitude = geographicPoint3d(receiver, value).altitude;
+                return altitude >= envelope.minimum_altitude_m && altitude <= envelope.maximum_altitude_m &&
+                  norm(value) <= envelope.maximum_receiver_range_km;
+              })) witness = null;
+        }
+        if (witness) {
+          point = witness.points.at(-1); velocity = witness.velocity; motionValid = true;
+        }
+      } else if (!motionValid && sharedContributor) covarianceAttemptBudgetExhausted = true;
+      if (!motionValid && sharedContributor) motionRejectedHypotheses.add(hypothesis);
+      if (motionValid) pairs.push({track, hypothesis, point, velocity, dt, history, witness,
+        distance: norm(sub(point, predicted))});
     }
     pairs.sort((left, right) => left.distance - right.distance);
     const usedTracks = new Set(), usedHypotheses = new Set();
     for (const pair of pairs) {
-      if (pair.hypothesis.motion_rejected || usedTracks.has(pair.track.id) || usedHypotheses.has(pair.hypothesis.index)) continue;
+      if (usedTracks.has(pair.track.id) || usedHypotheses.has(pair.hypothesis.index)) continue;
       usedTracks.add(pair.track.id); usedHypotheses.add(pair.hypothesis.index);
       pair.track.velocity = pair.velocity; pair.track.velocityKnown = true;
       pair.track.velocityIntervalSeconds = pair.dt;
@@ -939,7 +1061,31 @@ class MultiIlluminatorTrackFuser {
       pair.track.hits.push(true);
       pair.track.hits = pair.track.hits.slice(-this.n);
       pair.track.hypothesis = pair.hypothesis;
+      pair.track.motionHistory = pair.history.map((item, index) => ({...item,
+        point: pair.witness ? pair.witness.points[index] : (item.point ?? item.center)}));
+      // Retain six adjustable observations plus two fixed boundary points. Once
+      // old observations leave the window, their feasible trajectory and its
+      // boundary velocity cannot be rewritten by a later association.
+      if (pair.track.motionHistory.length > 8) {
+        pair.track.motionHistory = pair.track.motionHistory.slice(-8);
+        pair.track.motionHistory[0].fixed = true; pair.track.motionHistory[1].fixed = true;
+      }
+      pair.track.motionAssociation = {method: pair.witness ? 'covariance-ellipsoid-trajectory-witness' : 'point-estimate',
+        ellipsoid_sigma: 3, calibrated: false,
+        history_observations: pair.track.motionHistory.length,
+        maximum_speed_m_s: this.maxSpeedKmS * 1000,
+        maximum_secant_acceleration_m_s2: this.maxAccelerationKmS2 * 1000,
+        witness_iterations: pair.witness?.iterations ?? 0,
+        current_mahalanobis_distance: pair.witness?.currentMahalanobisDistance ?? 0};
       if (pair.track.hits.filter(Boolean).length >= this.m) pair.track.confirmed = true;
+    }
+    // Motion gates apply to an association, not every hypothesis sharing one
+    // old contributor. A stale alternative must not veto a valid continuation.
+    // Without an assigned valid continuation, keep impossible jumps from
+    // escaping the gate by starting a new track with the same evidence.
+    for (const hypothesis of motionRejectedHypotheses) if (!usedHypotheses.has(hypothesis.index)) {
+      hypothesis.motion_rejected = true;
+      hypothesis.diagnostic_reasons.push('no-certified-bounded-motion-continuation');
     }
     for (const track of this.tracks.values()) if (!usedTracks.has(track.id)) {
       track.hits.push(false); track.hits = track.hits.slice(-this.n); track.misses += 1;
@@ -949,7 +1095,7 @@ class MultiIlluminatorTrackFuser {
       this.tracks.set(id, {id, point: [hypothesis.local_east_km, hypothesis.local_north_km, hypothesis.local_up_km],
         velocity: [0, 0, 0], velocityKnown: false, velocityIntervalSeconds: null,
         timestamp, hits: [true], misses: 0,
-        confirmed: false, hypothesis});
+        confirmed: false, hypothesis, motionHistory: [observation(hypothesis)]});
     }
     for (const [id, track] of this.tracks)
       if (track.misses > this.deleteAfter) this.tracks.delete(id);
@@ -961,19 +1107,27 @@ class MultiIlluminatorTrackFuser {
       // Relative to the predicted centre, a target bounded only by maximum
       // speed can travel in the opposite direction to the estimated velocity.
       const motionEnvelope = (this.maxSpeedKmS + norm(track.velocity)) * elapsed;
+      // Recentring a measurement ellipsoid at a feasible witness must not make
+      // its reported uncertainty smaller. This scaling encloses the original
+      // one-sigma ellipsoid about the new centre by the triangle inequality in
+      // Mahalanobis distance; the measured covariance remains explicitly saved.
+      const witnessScale = (1 + (track.motionAssociation?.current_mahalanobis_distance || 0)) ** 2;
       const covariance = track.hypothesis.uncertainty.covariance_enu_km2.map((row, rowIndex) => row.map((value, columnIndex) =>
-        value + (rowIndex === columnIndex ? motionEnvelope ** 2 : 0)));
+        value * witnessScale + (rowIndex === columnIndex ? motionEnvelope ** 2 : 0)));
       const normal = basis(position)[2], altitudeGradient = basis(receiver).map(axis => dot(axis, normal));
       const uncertainty = {...track.hypothesis.uncertainty,
         kind: track.misses ? 'propagated' : 'estimated', covariance_enu_km2: covariance,
         horizontal_sigma_km: Math.sqrt(covariance[0][0] + covariance[1][1]), vertical_sigma_km: Math.sqrt(covariance[2][2]),
         altitude_sigma_m: 1000 * Math.sqrt(dot(altitudeGradient, covariance.map(row => dot(row, altitudeGradient)))),
+        measurement_covariance_enu_km2: track.hypothesis.uncertainty.covariance_enu_km2,
+        witness_recentring_covariance_scale: witnessScale,
         propagation_seconds: elapsed, propagation_model: 'constant-velocity-with-maximum-speed-position-envelope',
         additional_position_envelope_km: motionEnvelope};
       return {id: track.id, ...position, local_east_km: point[0], local_north_km: point[1], local_up_km: point[2],
         timestamp, measurement_timestamp: track.timestamp,
         velocity_east_km_s: track.velocity[0], velocity_north_km_s: track.velocity[1], velocity_up_km_s: track.velocity[2],
         speed_m_s: norm(track.velocity) * 1000,
+        motion_association: track.motionAssociation ?? null,
         state: track.confirmed ? (track.misses ? 'FUSED_COASTING' : 'FUSED_ACTIVE') :
           'FUSED_CANDIDATE',
         supporting_frames: track.hits.filter(Boolean).length,
@@ -985,7 +1139,15 @@ class MultiIlluminatorTrackFuser {
         altitude_model: 'three-dimensional-wgs84-ellipsoid', uncertainty};
     });
     this.lastKey = result.key;
+    result.position_candidates = this.envelopePersistence.update(result.position_candidates || [],timestamp,
+      (result.capture_epoch_verified === true ||
+        result.evidence_lineage_verified === true && result.alignment_qualified === true) &&
+        result.envelope_computation?.truncated === false);
     this.lastResult = {...result, operational_localization: tracks.some(item => item.state === 'FUSED_ACTIVE'),
+      motion_association_computation: {covariance_feasibility_attempts: covarianceAttempts,
+        attempt_limit: 64, attempt_budget_exhausted: covarianceAttemptBudgetExhausted,
+        iteration_limit_per_attempt: 128, history_observation_limit: 8,
+        uncertified_continuation_policy: 'reject-without-claiming-proof-of-impossibility'},
       hypotheses: hypotheses.map(({index, ...item}) => ({...item, resolved: item.resolved && !item.motion_rejected})), tracks};
     this.lastResult.cross_frequency_support = crossFrequencySupport;
     this.lastReceiptAt = Date.now();

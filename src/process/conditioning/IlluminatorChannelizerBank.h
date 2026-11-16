@@ -10,6 +10,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
+#include <optional>
 
 namespace blah2::channelizer
 {
@@ -25,9 +27,13 @@ struct IlluminatorDefinition
   // before new optional topology fields so existing aggregate initializers
   // remain source compatible.
   std::string standard;
+  std::string atscReferenceMode = "raw";
   bool hasInputRoles = false;
   uint32_t referenceChannel = 0;
   std::vector<uint32_t> surveillanceChannels;
+  // Explicit physical site, never inferred from frequency or receiver name.
+  std::optional<std::array<double, 3>> transmitterLocation;
+  std::string detectionManifoldFile, bearingManifoldFile;
 };
 
 struct IlluminatorOutput

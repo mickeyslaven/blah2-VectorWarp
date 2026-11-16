@@ -1,11 +1,12 @@
 (function (root) {
   'use strict';
+  const topology = typeof module !== 'undefined' && module.exports ?
+    require('./processing_capabilities') : root.VectorWarpProcessingCapabilities;
   const c = 299792458;
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, character =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[character]));
-  const channels = config => config.capture?.device?.channel_count ||
-    config.capture?.device?.gain?.length || config.capture?.device?.antenna?.length || 2;
+  const channels = config => topology.processingCapabilities(config).channelCount;
   const formatBytes = value => {
     const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']; let amount = value, unit = 0;
     while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit++; }
@@ -25,14 +26,14 @@
     value.active.startsWith('vulkan') && value.state === 'ready';
   function recordingEstimate(config) {
     const fs = Number(config.capture?.fs) || 0, count = channels(config);
-    const kraken = config.capture?.device?.type === 'Kraken';
+    const compact = topology.processingCapabilities(config).liveMchq;
     const manualPerSecond = fs * count * 8;
-    const clipPerSecond = fs * count * (kraken ? 2 : 8);
+    const clipPerSecond = fs * count * (compact ? 2 : 8);
     const clipSeconds = Number(config.capture?.aircraft_clips?.pre_seconds || 0) +
       Number(config.capture?.aircraft_clips?.post_seconds || 0);
     return {manualPerSecond, clipPerSecond, clipSeconds,
       manualHour: manualPerSecond * 3600, clip: clipPerSecond * clipSeconds,
-      clipLabel: kraken ? 'Compact native 8-bit Kraken IQ' : 'Portable float32 IQ'};
+      clipLabel: compact ? 'Compact native 8-bit Kraken IQ' : 'Portable float32 IQ'};
   }
   function searchWindow(config, rangeKm, speedMps) {
     const sampleRate = Number(config.process?.delay_reference_sample_rate_hz ?? config.capture?.fs),
@@ -71,13 +72,16 @@
   }
 
   function wizardChecks(config, profiles = []) {
+    const recorded = config.capture?.replay?.state === true;
     const clips = config.capture?.aircraft_clips;
     const selected = profiles.find(profile => profile.type === config.capture?.device?.type);
     const receiverConfigured = Boolean(config.capture?.device?.type &&
       config.capture.device.type !== 'Unconfigured' && receiverHardwareReady(config.capture.device));
     return [
-      {title: 'Receiver', complete: receiverConfigured && selected?.liveAvailable !== false,
-        detail: selected?.liveAvailable === false ? 'Receiver software is not ready' : null},
+      {title: recorded ? 'Recorded input' : 'Receiver',
+        complete: recorded ? topology.processingCapabilities(config).validTopology :
+          receiverConfigured && selected?.liveAvailable !== false,
+        detail: !recorded && selected?.liveAvailable === false ? 'Receiver software is not ready' : null},
       {title: 'Tuning', complete: Number(config.capture?.fc) > 0 && Number(config.capture?.fs) > 0},
       {title: 'Sites', complete: configuredSite(config.location?.rx) && configuredTransmitters(config)},
       {title: 'Radar', complete: Number(config.process?.data?.cpi) > 0 &&
@@ -103,14 +107,14 @@
           `<p class="setup-wizard-readiness good"><strong>${selected ? 'Receiver ready.' : 'Choose a receiver.'}</strong></p>` :
           '<p class="setup-wizard-readiness warning"><strong>Hardware identity required.</strong> Complete the receiver fields below before continuing.</p>';
       const device = config.capture?.device || {};
-      return `<h2>Choose the receiver</h2><label class="setup-wizard-field">Receiver<select data-wizard-receiver>${profiles.map(profile => `<option value="${escape(profile.type)}"${profile.type === config.capture?.device?.type ? ' selected' : ''}>${escape(profile.label || profile.type)}</option>`).join('')}</select></label>${readiness}<p class="setup-wizard-hint">Detected receivers are selected automatically.</p>`;
+      return `<h2>Choose the receiver</h2><label class="setup-wizard-field">Receiver<select data-wizard-receiver title="Detected receivers are selected automatically.">${profiles.map(profile => `<option value="${escape(profile.type)}"${profile.type === config.capture?.device?.type ? ' selected' : ''}>${escape(profile.label || profile.type)}</option>`).join('')}</select></label>${readiness}`;
     }
     if (index === 1) return `<h2>Set frequency and sample rate</h2><div class="setup-wizard-fields"><label class="setup-wizard-field">Center frequency (MHz)<input data-wizard-fc type="number" min="0.001" step="0.001" value="${valueAttr(Number(config.capture?.fc || 0) / 1e6)}"></label><label class="setup-wizard-field">Sample rate (MS/s)<input data-wizard-fs type="number" min="0.001" step="0.001" value="${valueAttr(Number(config.capture?.fs || 0) / 1e6)}"></label></div>`;
     if (index === 2) {
       const site = (role, title) => { const item = config.location?.[role] || {}; return `<fieldset class="setup-wizard-site"><legend>${title}</legend><label>Name<input data-site="${role}.name" value="${valueAttr(item.name)}"></label><label>Latitude<input data-site="${role}.latitude" type="number" min="-90" max="90" step="any" value="${valueAttr(item.latitude)}"></label><label>Longitude<input data-site="${role}.longitude" type="number" min="-180" max="180" step="any" value="${valueAttr(item.longitude)}"></label><label>Altitude (m)<input data-site="${role}.altitude" type="number" step="any" value="${valueAttr(item.altitude)}"></label></fieldset>`; };
       return `<h2>Locate the receiver and illuminator</h2><div class="setup-wizard-sites">${site('rx','Receiver site')}${site('tx','Illuminator site')}</div>`;
     }
-    if (index === 3) return `<h2>Choose the radar search</h2><p>Range and speed set the delay and Doppler limits.</p><div class="setup-wizard-fields"><label class="setup-wizard-field">CPI (seconds)<input data-wizard-cpi type="number" min="0.01" step="0.01" value="${valueAttr(config.process?.data?.cpi)}"></label><label class="setup-wizard-field">Maximum range (km)<input data-wizard-range type="number" min="1" max="1000" value="50"></label><label class="setup-wizard-field">Maximum speed (m/s)<input data-wizard-speed type="number" min="10" max="3000" value="300"></label></div>`;
+    if (index === 3) return `<h2 title="Range and speed set the delay and Doppler limits.">Choose the radar search</h2><div class="setup-wizard-fields"><label class="setup-wizard-field">CPI (seconds)<input data-wizard-cpi type="number" min="0.01" step="0.01" value="${valueAttr(config.process?.data?.cpi)}"></label><label class="setup-wizard-field">Maximum range (km)<input data-wizard-range type="number" min="1" max="1000" value="50"></label><label class="setup-wizard-field">Maximum speed (m/s)<input data-wizard-speed type="number" min="10" max="3000" value="300"></label></div>`;
     if (index === 4) return `<h2>Review storage</h2><div class="setup-wizard-summary"><strong>Storage estimate</strong><span>${estimate.clipLabel}</span><span>Manual IQ: ${formatBytes(estimate.manualHour)} per hour</span><span>Aircraft clip: about ${formatBytes(estimate.clip)} each</span></div>`;
     const checks = wizardChecks(config, profiles).slice(0, 5);
     const automatic = wizardAutomatic || recommendedAutomatic();
@@ -214,6 +218,12 @@
   function render(target, api) {
     if (!target) return;
     const config = api.getConfig();
+    if (config.capture?.replay?.state === true) {
+      wizardOpen = false;
+      const count = channels(config);
+      target.innerHTML = `<section class="setup-assistant setup-assistant-launcher setup-assistant-summary"><div><strong>Recorded input · ${count} channels</strong><span>Live receiver setup is unavailable during replay.</span></div></section>`;
+      return;
+    }
     const checks = wizardChecks(config, api.receiverProfiles()).slice(0, 5);
     const ready = checks.filter(item => item.complete).length;
     const receiver = api.receiverProfiles().find(profile =>

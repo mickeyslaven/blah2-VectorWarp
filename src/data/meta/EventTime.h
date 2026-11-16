@@ -95,7 +95,7 @@ inline EventTimeProvenance hackrf_cpi_sample_epoch(uint64_t epoch,
   value.firstSample = firstSample;
   value.endSample = endSample;
   value.sampleRate = sampleRate;
-  if (!epoch || endSample <= firstSample || !sampleRate) return value;
+  if (endSample <= firstSample || !sampleRate) return value;
   value.reason = "Shared trigger preserves a paired relative sample epoch, but HackRF supplies no RF/UTC timestamp";
   return value;
 }

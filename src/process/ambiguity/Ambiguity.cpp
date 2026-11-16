@@ -475,11 +475,9 @@ uint32_t Ambiguity::get_n_samples() const {
 
 Map<Ambiguity::Complex>* Ambiguity::import_gpu(const std::complex<float>* output) {
   for (uint16_t delay = 0; delay < nDelayBins; ++delay) {
-    corr.resize(nDopplerBins);
     for (uint16_t d = 0; d < nDopplerBins; ++d)
-      corr[d] = output[delay * nDopplerBins +
+      map->data[d][delay] = output[delay * nDopplerBins +
         (d + nDopplerBins / 2 + 1) % nDopplerBins];
-    map->set_col(delay, corr);
   }
   return map.get();
 }

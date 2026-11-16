@@ -18,7 +18,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .panel { overflow:hidden; border:1px solid var(--line); border-radius:13px; background:rgb(28 23 21 / .92); box-shadow:0 18px 48px rgb(0 0 0 / .16); }.panel-header { display:none; }.visualization { width:100%; height:calc(100vh - 108px); min-height:480px; }
 .radar-panel { display:flex; min-height:calc(100dvh - 80px); flex-direction:column; }
 .radar-panel .visualization { flex:1 1 auto; height:calc(100dvh - 176px); min-height:430px; }
-.fusion-scope-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,34%);min-height:calc(100dvh - 176px)}.fusion-plot-pane{display:flex;min-width:0;min-height:0;flex-direction:column}.fusion-scope-layout .fusion-plot-pane .visualization{flex:1 1 auto;height:auto;min-height:320px}.fusion-scope-status{flex:0 0 auto;padding:7px 12px;border-bottom:1px solid var(--line);background:rgb(24 18 16/.84);color:#d8cec8;font-size:13px;font-weight:700;line-height:1.3;text-align:center;white-space:normal}.fusion-diagnostics{padding:18px;border-left:1px solid var(--line);background:rgb(20 16 15/.78);overflow:auto}.fusion-diagnostics h2{margin:0 0 12px;font-size:20px}.fusion-diagnostics .fusion-status{display:inline-block;padding:3px 8px;border:1px solid #8f817a;border-radius:6px;color:#cfc4be;font-weight:800}.fusion-diagnostics .fusion-status.adsb{border-color:#39d98a;color:#66e5a3}.fusion-diagnostics .fusion-status.confirmed{border-color:#ff7a45;color:#ff9a70}.fusion-diagnostics .fusion-status.diagnostic,.fusion-diagnostics .fusion-status.neutral{border-color:#8f817a;color:#cfc4be}.fusion-metric{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid rgb(255 255 255/.06)}.fusion-channel{margin-top:12px;padding:11px;border:1px solid var(--line);border-radius:9px}.fusion-channel strong{display:block}.fusion-channel small{color:var(--muted)}
+.fusion-scope-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,320px);min-height:calc(100dvh - 176px)}.fusion-plot-pane{display:flex;min-width:0;min-height:0;flex-direction:column}.fusion-scope-layout .fusion-plot-pane .visualization{flex:1 1 auto;height:auto;min-height:360px}.fusion-scope-status{flex:0 0 auto;padding:7px 12px;border-bottom:1px solid var(--line);background:rgb(24 18 16/.84);color:#d8cec8;font-size:13px;font-weight:700;line-height:1.3;text-align:center;white-space:normal}.fusion-diagnostics{padding:14px;border-left:1px solid var(--line);background:rgb(20 16 15/.78);overflow:auto}.fusion-diagnostics h2{margin:0 0 8px;font-size:20px}.fusion-diagnostics .fusion-status{display:inline-block;padding:3px 8px;border:1px solid #8f817a;border-radius:6px;color:#cfc4be;font-weight:800}.fusion-diagnostics .fusion-status.adsb{border-color:#39d98a;color:#66e5a3}.fusion-diagnostics .fusion-status.confirmed{border-color:#ff7a45;color:#ff9a70}.fusion-diagnostics .fusion-status.diagnostic,.fusion-diagnostics .fusion-status.neutral{border-color:#8f817a;color:#cfc4be}.fusion-metric{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid rgb(255 255 255/.06)}.fusion-channel{margin-top:7px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}.fusion-channel strong{display:block}.fusion-channel small{color:var(--muted)}
 .fusion-plot-pane{position:relative}.fusion-diagnostics-toggle{position:absolute;z-index:12;top:7px;right:9px;padding:4px 9px;border:1px solid var(--line);border-radius:7px;background:rgb(36 29 26/.94);color:var(--text);font-size:12px;font-weight:750;cursor:pointer}.fusion-scope-status{padding-right:96px}#fusion-radar-view.diagnostics-collapsed .fusion-scope-layout{grid-template-columns:minmax(0,1fr)}#fusion-radar-view.diagnostics-collapsed .fusion-diagnostics{display:none!important}
 @media(max-width:850px){.fusion-scope-layout{grid-template-columns:1fr}.fusion-diagnostics{display:block;padding:10px;border-left:0;border-top:1px solid var(--line)}.fusion-diagnostics .fusion-channel{display:none}.fusion-scope-layout .fusion-plot-pane .visualization{height:60dvh;min-height:320px}}
 .fusion-view-control{display:none!important}
@@ -55,6 +55,10 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 .radar-view-menu a:hover,.radar-view-menu a[aria-current="page"] { background:var(--surface-raised); color:var(--ink); }
 .radar-toolbar > .radar-view-control { position:relative; z-index:12; top:auto; right:auto; flex:0 0 34px; margin-left:auto; }
 .radar-toolbar > .radar-view-control + .fullscreen-button { margin-left:-4px; }
+/* Channel names must not push controls outside the tablet toolbar. */
+.radar-toolbar { flex-wrap:wrap; }
+.radar-toolbar > .radar-overlay-control { min-width:0; max-width:100%; }
+.radar-toolbar > .radar-overlay-control select { min-width:0; max-width:100%; }
 .radar-overlay-control { position:static; display:flex; flex:0 0 auto; align-items:center; gap:7px; padding:0; border:0; background:transparent; color:var(--muted); font-size:11px; font-weight:700; }
 .radar-overlay-control select { width:auto; min-height:26px; padding:3px 24px 3px 7px; border:1px solid var(--line); border-radius:5px; background:var(--surface-raised); color:var(--ink); font:650 12px inherit; }
 .recording-panel { display:flex; flex-direction:column; }
@@ -97,6 +101,11 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 .insight-shell { max-width:1920px; }
 .insight-topbar { display:flex; min-height:58px; align-items:center; justify-content:space-between; gap:14px; }
 .insight-topbar > .illuminator-scope-control { margin-left:auto; }
+/* Live status sentences and long channel names can wrap at kiosk/tablet widths. */
+.insight-topbar { flex-wrap:wrap; }
+.insight-topbar > .illuminator-scope-control { min-width:0; max-width:100%; }
+.insight-topbar > .illuminator-scope-control select { min-width:0; max-width:100%; }
+.insight-topbar .view-state { flex:0 1 auto; min-width:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 .insight-topbar h1 { margin:0; font-size:23px; line-height:1.15; letter-spacing:-.025em; }
 .insight-topbar p { margin:4px 0 0; color:var(--muted); font-size:13px; line-height:1.35; }
 .view-state { flex:0 0 auto; padding:6px 9px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:12px; font-weight:750; letter-spacing:.06em; text-transform:uppercase; }
@@ -130,9 +139,9 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 .view-empty { display:flex; min-height:150px; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:24px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); text-align:center; }.view-empty strong { color:var(--ink); font-size:16px; }.view-empty span { max-width:600px; font-size:14px; line-height:1.45; }
 .button-link { margin-top:7px; padding:8px 11px; border:1px solid var(--accent); border-radius:7px; color:var(--accent); font-size:13px; font-weight:750; text-decoration:none; }
 .view-note { padding:11px 13px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--muted); font-size:13px; line-height:1.5; }.evaluation-note { margin-bottom:10px; border-color:#665126; color:#f7d889; }
-.statistics-page { display:grid; gap:20px; }
+.statistics-page { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:20px; }
 .statistics-page .insight-stats { margin-bottom:0; }
-.statistics-section { display:grid; gap:9px; }
+.statistics-section { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:9px; }
 .statistics-section > header { display:flex; align-items:end; justify-content:space-between; gap:20px; padding:0 2px; }
 .statistics-section > header h2 { margin:0; font-size:17px; letter-spacing:-.01em; }
 .statistics-section > header p { max-width:62ch; margin:0; color:var(--muted); font-size:13px; line-height:1.4; text-align:right; }
@@ -423,9 +432,10 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 .aircraft-3d-depth { color:#141817; fill:#141817; stroke:#141817; opacity:.82; }
 .aircraft-3d-highlight { fill:rgb(255 255 255 / .5); stroke:none; pointer-events:none; }
 .location-aircraft-icon:focus-visible { outline:2px solid #5be7ff; outline-offset:2px; border-radius:50%; }
-.location-aircraft-label { position:absolute; top:34px; left:50%; transform:translateX(-50%); padding:1px 4px; border-radius:4px; background:rgba(16,20,18,.84); color:#d9fff3; font:700 12px/1.3 Inter,system-ui,sans-serif; white-space:nowrap; pointer-events:none; }
+.location-aircraft-label { position:absolute; top:27px; left:50%; transform:translateX(-50%); padding:1px 3px; border-radius:3px; background:rgba(16,20,18,.82); color:#d9fff3; font:700 10.5px/1.25 Inter,system-ui,sans-serif; white-space:nowrap; pointer-events:none; }
 .location-aircraft-marker.label-hidden .location-aircraft-label { display:none; }
-.location-aircraft-marker.radar-tracked::before { content:""; position:absolute; left:50%; top:19px; width:43px; height:43px; transform:translate(-50%,-50%); border:2px solid #5be7ff; border-radius:50%; box-shadow:0 0 9px rgba(91,231,255,.9); }
+.location-aircraft-marker.radar-tracked::before { content:""; position:absolute; left:50%; top:19px; width:31px; height:31px; transform:translate(-50%,-50%); border:1.5px solid #5be7ff; border-radius:50%; box-shadow:0 0 5px rgba(91,231,255,.72); }
+.location-aircraft-marker.independent-radar-position::before{display:block;border:2px solid #ff8754;box-shadow:0 0 5px rgb(255 135 84/.78);animation:none}
 @keyframes radar-track-pulse { 0%,100% { opacity:.95; transform:translate(-50%,-50%) scale(.9); } 50% { opacity:.38; transform:translate(-50%,-50%) scale(1.18); } }
 .location-aircraft-marker.radar-active::before { animation:radar-track-pulse 1.8s ease-in-out infinite; }
 .location-aircraft-marker.snapshot-stale { opacity:.58; }
@@ -448,6 +458,7 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 .page-intro .page-title { display:block; }
 .plot-state { position:absolute; z-index:24; left:50%; bottom:12px; max-width:min(560px,calc(100% - 24px)); transform:translateX(-50%); padding:8px 11px; border:1px solid var(--line); border-radius:8px; background:rgb(18 14 13 / .94); color:var(--muted); font-size:13px; line-height:1.4; text-align:center; pointer-events:none; }
 .plot-state[hidden] { display:none; }
+.radar-panel > .plot-state { position:static; flex:0 0 auto; align-self:center; margin:6px; transform:none; }
 .plot-state.error { border-color:#713c47; color:#ffb4c0; }
 .plot-state.waiting { border-color:#665126; color:#f7d889; }
 @media (max-width:760px) {
@@ -521,6 +532,7 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 .aircraft-primary-metrics strong { display:block; overflow:hidden; color:var(--ink); font-size:15px; text-overflow:ellipsis; white-space:nowrap; }
 .aircraft-primary-metrics span { display:block; margin-top:2px; color:var(--muted); font-size:9px; text-transform:uppercase; }
 .aircraft-detail-section { border-top:1px solid var(--line); }
+.aircraft-fusion-status{padding:9px 0;color:#ff8754;font-size:13px;line-height:1.4}.aircraft-fusion-status small{display:block;color:var(--muted)}
 .aircraft-detail-section > summary { padding:8px 2px; color:var(--muted); font-size:12px; font-weight:750; cursor:pointer; touch-action:manipulation; }
 .aircraft-detail-card dl { grid-template-columns:1fr; gap:0; }
 .aircraft-detail-card dl > div { display:block; padding:6px 0; }
@@ -571,15 +583,15 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 .recording-list.is-loading::before { content:"Loading recordings…"; display:block; padding:22px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); text-align:center; }
 .recording-list.is-loading > .empty-state { display:none; }
 .recording-list.is-loading > .recording-card { opacity:.58; }
-.radar-overlay-key { display:flex; min-width:0; flex-wrap:wrap; gap:5px 10px; color:var(--muted); font-size:11px; pointer-events:none; }.radar-overlay-key span { display:flex; align-items:center; gap:5px; white-space:nowrap; }.radar-overlay-key i { display:block; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }.radar-overlay-key .raw { background:#f4b183; opacity:.68; }.radar-overlay-key .track { width:11px; height:11px; border:1px solid #542012; background:#ff7a45; }.radar-overlay-key .coasting { width:13px; height:13px; border:2px solid rgb(255 122 69 / .72); background:transparent; }.radar-overlay-key .adsb { width:11px; height:11px; background:#4dd4b0; border:1px solid #10251f; }.radar-overlay-key .remote-id { width:10px; height:10px; border-radius:2px; background:#20dddc; border:1px solid #0d3535; transform:rotate(45deg); }
+.radar-overlay-key { display:flex; min-width:0; flex-wrap:wrap; gap:5px 10px; color:var(--muted); font-size:11px; pointer-events:none; }.radar-overlay-key span { display:flex; align-items:center; gap:5px; white-space:nowrap; }.radar-overlay-key i { display:block; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }.radar-overlay-key .raw { background:#f4b183; opacity:.68; }.radar-overlay-key .track { width:11px; height:11px; border:1px solid #542012; background:#ff7a45; }.radar-overlay-key .coasting { width:13px; height:13px; border:2px solid rgb(255 122 69 / .72); background:transparent; }.radar-overlay-key .adsb { width:24px; height:7px; border-radius:4px; border:1px solid #10251f; }.radar-overlay-key .remote-id { width:10px; height:10px; border-radius:2px; background:#20dddc; border:1px solid #0d3535; transform:rotate(45deg); }
 .radar-overlay-key [hidden] { display:none!important; }
 @media (max-width:600px) {
   .radar-toolbar { display:grid; grid-template-columns:minmax(0,1fr) 34px 34px; gap:6px; padding:6px; }
-  .radar-overlay-key { grid-column:1; min-width:0; gap:4px 7px; }
-  .radar-toolbar > .radar-view-control { grid-column:2; width:34px; height:34px; margin:0; }
+  .radar-overlay-key { grid-column:1; grid-row:1; min-width:0; gap:4px 7px; }
+  .radar-toolbar > .radar-view-control { grid-column:2; grid-row:1; width:34px; height:34px; margin:0; }
   .radar-toolbar > .radar-view-control > summary { height:34px; }
-  .radar-toolbar > .fullscreen-button { grid-column:3; width:34px; margin:0; }
-  .radar-overlay-control { grid-column:1 / -1; grid-row:2; width:100%; max-width:none; }
+  .radar-toolbar > .fullscreen-button { grid-column:3; grid-row:1; width:34px; margin:0; }
+  .radar-overlay-control { grid-column:1 / -1; grid-row:auto; width:100%; max-width:none; }
   .radar-overlay-control > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   .radar-overlay-control select { width:100%; min-height:30px; max-width:none; }
   .radar-toolbar > .fullscreen-button { flex-basis:34px; height:34px; border-radius:9px; font-size:23px; }
@@ -681,7 +693,7 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
   .app-header { display:grid; width:100%; grid-template-columns:minmax(0,1fr) auto; }
   .brand { min-width:0; }
   .service-statuses { grid-column:2; order:initial; min-width:0; }
-  .app-nav { grid-column:1 / -1; order:initial; width:100%; grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .app-nav { grid-column:1 / -1; order:initial; width:100%; grid-template-columns:repeat(5,minmax(0,1fr)); }
   .app-nav a { min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .radar-panel,.recording-control { box-sizing:border-box; width:100%; overflow:hidden; }
   .recording-toggle { min-width:78px; }
@@ -710,7 +722,8 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
 @media (max-width:420px) {
   .service-statuses { align-items:flex-end; flex-direction:column; gap:1px; }
   .live-status { font-size:10px; line-height:1.15; }
-  .app-nav a { padding-inline:2px; font-size:12px; }
+  .app-nav { grid-template-columns:1fr .6fr .9fr 1.3fr 1.1fr; align-items:stretch; gap:2px; }
+  .app-nav a { display:grid; min-height:44px; box-sizing:border-box; place-items:center; padding-inline:2px; font-size:12px; }
 }
 
 /* Keep the channel picker reachable in plot fullscreen, including the mobile fallback. */
@@ -777,6 +790,25 @@ body.distance-view .statistics-network-context strong{font-size:22px}body.distan
 body.distance-view .statistics-combined-catch-duplicate{display:none}
 body.distance-view .statistics-yield-row>span{overflow:visible;white-space:normal;text-overflow:clip;line-height:1.15}
 body.fusion-scope-active #fusion-radar-view{display:flex;flex:1 1 auto;min-height:0;flex-direction:column}body.fusion-scope-active #fusion-radar-view .fusion-scope-layout{width:100%;flex:1 1 auto;min-height:0}body.fusion-scope-active #fusion-radar-view .fusion-plot-pane{min-height:0}body.fusion-scope-active #fusion-radar-view .visualization{flex:1 1 auto;height:auto;min-height:0}
+/* A stacked phone/tablet scope needs its own height. Plotly's SVG is positioned
+ * inside the plot and cannot size an auto-height grid row for the details below. */
+@media(max-width:850px){
+  body.fusion-scope-active:not(.distance-view) .radar-panel:not(:fullscreen):not(.fullscreen-fallback) #fusion-radar-view .fusion-scope-layout{
+    grid-template-rows:max-content auto;align-items:start;
+  }
+  body.fusion-scope-active:not(.distance-view) .radar-panel:not(:fullscreen):not(.fullscreen-fallback) #fusion-radar-view .fusion-plot-pane{
+    overflow:hidden;
+  }
+  body.fusion-scope-active:not(.distance-view) .radar-panel:not(:fullscreen):not(.fullscreen-fallback) #fusion-scope{
+    flex:0 0 auto;height:clamp(320px,60dvh,640px);min-height:320px;
+  }
+  body.fusion-scope-active:not(.distance-view) #fusion-radar-view .fusion-diagnostics{
+    min-width:0;overflow-wrap:anywhere;
+  }
+  body.fusion-scope-active:not(.distance-view) #fusion-radar-view .fusion-metric{
+    flex-wrap:wrap;
+  }
+}
 .fusion-empty-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:12px;border-top:1px solid var(--line);background:rgb(24 18 16/.72)}.fusion-empty-summary[hidden]{display:none}.fusion-empty-summary article{display:grid;gap:2px;min-height:74px;place-content:center;padding:10px;border:1px solid var(--line);border-radius:9px;text-align:center}.fusion-empty-summary strong{font-size:28px}.fusion-empty-summary span{color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase}.fusion-empty-summary p{grid-column:1/-1;margin:2px 0;color:var(--muted);font-size:14px;text-align:center}
 body.distance-view.fusion-scope-active #fusion-radar-view .fusion-scope-layout{height:100%;flex:1 1 auto}body.distance-view.fusion-scope-active #fusion-radar-view .fusion-plot-pane{height:auto;min-height:0;overflow:hidden}body.distance-view.fusion-scope-active #fusion-radar-view .visualization{height:auto!important;max-height:none!important}body.distance-view.fusion-scope-active #fusion-radar-view .fusion-empty-summary{display:none!important}
 /* Couch-distance fusion scope: use the portrait display as an instrument, not a desktop page. */
@@ -789,33 +821,59 @@ body.distance-view.fusion-scope-active .radar-panel{height:100dvh;min-height:100
 body.distance-view.fusion-scope-active #fusion-radar-view{height:100dvh}
 body.distance-view.fusion-scope-active #fusion-radar-view .fusion-plot-pane{display:flex;flex-direction:column}
 body.distance-view.fusion-scope-active .fusion-scope-status{z-index:20;display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:8px;border:0;background:rgb(15 12 12/.96)}
-body.distance-view .fusion-glance-metric{display:grid;min-width:0;min-height:98px;grid-template-columns:auto 1fr;grid-template-rows:auto auto;align-items:center;gap:0 10px;padding:10px 8px;border:2px solid var(--line);border-radius:12px;background:rgb(34 27 25/.92);text-align:left}
-body.distance-view .fusion-glance-metric i{grid-row:1/3;width:28px;height:28px;border-radius:50%;background:#4dd4b0;box-shadow:0 0 12px rgb(77 212 176/.55)}
-body.distance-view .fusion-glance-metric strong{font-size:52px;line-height:.86}
-body.distance-view .fusion-glance-metric small{font-size:20px;font-weight:900;letter-spacing:.035em;line-height:1.02}
-body.distance-view .fusion-glance-metric.detected{border-color:rgb(255 135 84/.72)}
-body.distance-view .fusion-glance-metric.detected i{background:#4dd4b0;border:5px solid #ff8754}
-body.distance-view .fusion-glance-metric.tracked{border-color:#ff8754}
-body.distance-view .fusion-glance-metric.tracked i{border-radius:3px;background:#ff8754;box-shadow:0 0 14px rgb(255 135 84/.7);transform:rotate(45deg)}
-body.distance-view .fusion-glance-metric.fused{border-color:#f3eee9}
-body.distance-view .fusion-glance-metric.fused i{background:#ff8754;border:4px solid #fff;box-shadow:0 0 15px rgb(255 255 255/.65)}
-.fusion-glance-board{display:none}
-body.distance-view.fusion-scope-active .fusion-glance-board{display:grid;flex:0 0 292px;gap:8px;padding:8px 10px 10px;border-top:1px solid var(--line);background:rgb(15 12 12/.97)}
-body.distance-view .fusion-glance-board[hidden]{display:none!important}
-body.distance-view .fusion-glance-board>header{display:flex;align-items:center;justify-content:space-between;padding:0 4px;color:var(--muted);font-size:18px;font-weight:900;letter-spacing:.06em}
-body.distance-view .fusion-glance-board>header span{color:#f3eee9;font-size:20px}
-body.distance-view .fusion-glance-board>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-body.distance-view .fusion-glance-board article{display:grid;grid-template-columns:52px 1fr auto;grid-template-rows:auto auto;align-items:center;gap:1px 10px;padding:9px 14px;border:2px solid #4dd4b0;border-radius:12px;background:rgb(34 27 25/.94)}
-body.distance-view .fusion-glance-board article:last-child:nth-child(odd){grid-column:1/-1}
-body.distance-view .fusion-glance-board article.detected{border-color:rgb(255 135 84/.78)}
-body.distance-view .fusion-glance-board article.tracked{border-color:#ff8754;box-shadow:inset 0 0 18px rgb(255 135 84/.08)}
-body.distance-view .fusion-glance-board article i{grid-row:1/3;color:#4dd4b0;font-size:38px;font-style:normal;text-align:center;transform:rotate(var(--bearing))}
-body.distance-view .fusion-glance-board article.detected i{color:#ffb18f}
-body.distance-view .fusion-glance-board article.tracked i{color:#ff8754}
-body.distance-view .fusion-glance-board article strong{font-size:27px;line-height:1}
-body.distance-view .fusion-glance-board article b{font-size:27px;line-height:1;white-space:nowrap}
-body.distance-view .fusion-glance-board article small{grid-column:2/4;color:var(--muted);font-size:17px;font-weight:800;letter-spacing:.025em}
-@media(max-width:760px){body.distance-view .fusion-glance-metric{grid-template-columns:1fr;justify-items:center;text-align:center}body.distance-view .fusion-glance-metric i{display:none}body.distance-view .fusion-glance-metric strong{font-size:28px}body.distance-view .fusion-glance-metric small{font-size:10px}}
+/* Altitude fills the aircraft planform; the same evidence dots/rings identify
+ * states in the scope, counters and nearest-aircraft cards. */
+.fusion-aircraft-key{display:flex;flex-wrap:wrap;align-items:center;gap:7px 16px;padding:7px 12px;border-bottom:1px solid var(--line);font-size:12px;line-height:1.3;background:#181210}
+.fusion-altitude-key{display:grid;grid-template-columns:auto minmax(90px,150px);align-items:center;gap:1px 7px}.fusion-altitude-key i{height:7px;border-radius:999px;background:linear-gradient(90deg,#8f9994 0 7%,#f39a4a 8%,#f2b84b 24%,#e36a72 42%,#c45fca 60%,#8f66e5 78%,#6658d3 92%,#e05a7a)}.fusion-altitude-key small{grid-row:2;color:var(--muted);font-size:9px}.fusion-altitude-key small:last-child{text-align:right}.fusion-evidence-key{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.fusion-evidence-key i{display:inline-block;flex-shrink:0;width:12px;height:12px;border-radius:50%}.fusion-evidence-key.detected i{width:8px;height:8px;background:#f4b183}.fusion-evidence-key.tracked i{border:2px solid #5be7ff}.fusion-evidence-key.fused i{border:2px solid #ff8754}
+.fusion-diagnostic-control{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer}
+.fusion-diagnostic-control input{width:18px;height:18px;accent-color:#4dd4b0}
+.fusion-glance-board{display:grid;flex:0 0 auto;gap:8px;padding:10px;border-top:1px solid var(--line);background:#181210}
+.fusion-glance-board[hidden]{display:none!important}
+.fusion-glance-board>header{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:14px}
+.fusion-glance-board>header span{color:var(--muted)}
+.fusion-glance-board>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-height:220px;overflow:auto}
+.fusion-aircraft-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;min-width:0;min-height:64px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#221b19;color:var(--text);text-align:left;font:inherit;cursor:pointer}
+.fusion-aircraft-row strong,.fusion-aircraft-row b{font-size:16px}
+.fusion-aircraft-row strong{overflow-wrap:anywhere}.fusion-aircraft-row b{white-space:nowrap}
+.fusion-aircraft-row span{grid-column:1/2;min-width:0;white-space:normal;font-size:12px;line-height:1.35}.fusion-aircraft-row small{grid-column:2/3;color:var(--muted);font-size:12px;white-space:nowrap}
+.fusion-aircraft-row small{color:var(--muted)}
+.fusion-aircraft-row span{color:var(--ink)}
+.fusion-aircraft-row[aria-pressed="true"]{border-color:#f3eee9}
+.fusion-aircraft-row:focus-visible,.fusion-diagnostics-toggle:focus-visible,.fusion-diagnostic-control input:focus-visible{outline:3px solid #fff;outline-offset:3px}
+.fusion-diagnostics-toggle{min-height:44px;position:static;align-self:flex-end;margin:4px 8px}
+.fusion-scope-status{padding-right:12px}
+.fusion-diagnostics{min-width:0;overflow-wrap:anywhere}
+.fusion-diagnostics .fusion-status.adsb{color:#4dd4b0;border-color:#4dd4b0}
+.fusion-diagnostics .fusion-status.radar{color:#ff8754;border-color:#ff8754}
+.fusion-metric strong{max-width:62%;text-align:right;overflow-wrap:anywhere}.fusion-channel-details{margin-top:10px}.fusion-channel-details>summary{cursor:pointer;color:var(--muted);font-weight:750}.fusion-channel-details>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.fusion-channel-details .fusion-channel{min-width:0}.fusion-channel-details .fusion-channel small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fusion-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.config-field-copy small[hidden],.config-group summary small[hidden],.adsb-exchange-row small[hidden]{display:none!important}
+.config-group-heading small[hidden],.config-tabs small[hidden],.config-field>small[hidden]{display:none!important}
+body.distance-view .fusion-glance-metric{display:grid;grid-template-rows:56px 2.4em;min-width:0;min-height:136px;align-content:center;gap:9px;padding:11px;border:1px solid var(--line);border-radius:10px;background:#221b19;text-align:center;font-size:20px}
+body.distance-view .fusion-glance-metric strong{font-size:56px;line-height:1}
+body.distance-view .fusion-glance-metric small{justify-content:center;white-space:normal;font-size:20px;font-weight:750;line-height:1.18}
+body.distance-view .fusion-data-warning{grid-column:1/-1;color:#ffb18f}
+body.distance-view .fusion-aircraft-key{font-size:19px;padding:12px 18px}
+body.distance-view .fusion-altitude-key small{font-size:11px}
+body.distance-view .fusion-diagnostic-control{display:none}
+body.distance-view.fusion-scope-active .fusion-glance-board{display:grid;flex:0 0 auto;min-height:300px;padding:14px}
+body.distance-view .fusion-glance-board>header{font-size:24px}
+body.distance-view .fusion-glance-board>div{max-height:320px}
+body.distance-view .fusion-aircraft-row{min-height:108px;padding:10px 12px}
+body.distance-view .fusion-aircraft-row strong,body.distance-view .fusion-aircraft-row b{font-size:28px}
+body.distance-view .fusion-aircraft-row span{font-size:20px}
+body.distance-view .fusion-aircraft-row small{font-size:18px}
+@media(max-width:600px){.fusion-glance-board>div{grid-template-columns:1fr}.fusion-aircraft-key{font-size:12px}
+  body.distance-view.fusion-scope-active .fusion-scope-status{grid-template-columns:repeat(2,minmax(0,1fr))}
+  body.distance-view .fusion-glance-metric{grid-template-rows:28px 2.4em;min-height:68px;padding:7px;font-size:12px}
+  body.distance-view .fusion-glance-metric strong{font-size:28px}
+  body.distance-view .fusion-glance-metric small{font-size:12px}
+  body.distance-view .fusion-aircraft-key{font-size:12px}
+  body.distance-view.fusion-scope-active .fusion-glance-board{min-height:0}
+  body.distance-view .fusion-glance-board>div{max-height:200px}
+  body.distance-view .fusion-aircraft-row strong,body.distance-view .fusion-aircraft-row b{font-size:18px}
+  body.distance-view .fusion-aircraft-row span{font-size:14px}}
+@media(prefers-reduced-motion:reduce){#fusion-radar-view *,#fusion-radar-view *::before,#fusion-radar-view *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 /* Statistics distance mode is a fixed glance dashboard. Full analysis remains in normal mode. */
 body[data-insight-view="statistics"].distance-view{overflow:hidden}
 body[data-insight-view="statistics"].distance-view .app-header,
@@ -842,7 +900,6 @@ body[data-insight-view="statistics"].distance-view .statistics-network-context s
 body[data-insight-view="statistics"].distance-view .statistics-network-context span{font-size:18px}
 body[data-insight-view="statistics"].distance-view .statistics-yield-chart{gap:18px;padding:20px}
 body[data-insight-view="statistics"].distance-view .statistics-yield-row{grid-template-columns:165px minmax(120px,1fr) 112px 62px;gap:12px;min-height:72px;align-items:center}
-body[data-insight-view="statistics"].distance-view .statistics-yield-row:nth-child(2){display:none}
 body[data-insight-view="statistics"].distance-view .statistics-yield-row>span{font-size:21px;font-weight:800;line-height:1.1}
 body[data-insight-view="statistics"].distance-view .statistics-yield-row>b{font-size:24px;white-space:nowrap}
 body[data-insight-view="statistics"].distance-view .statistics-yield-row>small{font-size:16px}
@@ -868,3 +925,168 @@ body[data-insight-view="statistics"].distance-view .statistics-combined-catch-du
 @media(max-width:900px){body.distance-view .statistics-distance-hero{grid-template-columns:repeat(3,minmax(0,1fr))}body.distance-view .statistics-yield-row{grid-template-columns:minmax(112px,132px) minmax(100px,1fr) 82px 52px;gap:8px}}
 @media(max-width:760px){body.distance-view .app-header{min-height:92px}body.distance-view .app-nav{order:3;width:100%;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px}body.distance-view .app-nav a{padding:8px 2px;font-size:14px;text-align:center}body.distance-view .insight-topbar{display:grid;grid-template-columns:auto minmax(0,1fr);min-height:62px;gap:8px 14px}body.distance-view .insight-topbar h1{font-size:29px}body.distance-view .insight-topbar .view-state{max-width:none;justify-self:end;padding:6px 9px;font-size:12px;line-height:1.25}body.distance-view .insight-topbar>.illuminator-scope-control{grid-column:1/-1}body.distance-view .view-tabs a{min-height:42px;padding:8px 14px;font-size:16px}body.distance-view .metric-card{min-height:118px;padding:14px}body.distance-view .metric-card strong{font-size:31px}body.distance-view .metric-card span{font-size:13px}body.distance-view .metric-card small{font-size:13px}body.distance-view .statistics-yield-row{grid-template-columns:118px minmax(90px,1fr) 76px 48px;gap:7px}body.distance-view .statistics-yield-row>span,body.distance-view .statistics-yield-row>b{font-size:14px}body.distance-view .statistics-yield-row>small{font-size:12px}}
 @media(max-width:760px){.fusion-empty-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.fusion-empty-summary p{grid-column:1/-1}}
+.cpi-presence-block{display:grid;gap:10px;margin-top:14px}.cpi-presence-block>header{display:flex;align-items:end;justify-content:space-between;gap:16px}.cpi-presence-block>header h2,.cpi-presence-block>header p{margin:0}.cpi-presence-block>header p{max-width:560px;text-align:right;color:var(--muted)}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview{height:100%;grid-template-rows:auto auto auto;align-content:start}
+body[data-insight-view="statistics"].distance-view .cpi-presence-block{display:grid!important;gap:8px;margin-top:0}
+body[data-insight-view="statistics"].distance-view .cpi-presence-block>header{display:flex!important}
+body[data-insight-view="statistics"].distance-view .cpi-presence-block>header h2{font-size:20px}
+body[data-insight-view="statistics"].distance-view .cpi-presence-block>header p{font-size:13px;line-height:1.2}
+body[data-insight-view="statistics"].distance-view .cpi-presence-hero{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:10px}
+body[data-insight-view="statistics"].distance-view .cpi-presence-hero .metric-card{min-height:154px;padding:12px 10px 16px}
+body[data-insight-view="statistics"].distance-view .cpi-presence-hero .metric-card strong,body[data-insight-view="statistics"].distance-view .cpi-presence-hero .statistics-hero-detected strong,body[data-insight-view="statistics"].distance-view .cpi-presence-hero .statistics-hero-tracked strong{font-size:32px}
+body[data-insight-view="statistics"].distance-view .cpi-presence-hero .metric-card span{font-size:14px}
+body[data-insight-view="statistics"].distance-view .cpi-presence-hero .metric-card small{font-size:12px}
+.cpi-channel-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.cpi-channel-card{display:grid;align-content:center;gap:4px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}.cpi-channel-card strong{overflow-wrap:anywhere}.cpi-channel-card span,.cpi-channel-card small{color:var(--muted)}
+body[data-insight-view="statistics"].distance-view .statistics-page>.statistics-section:nth-child(2){display:none!important}
+body[data-insight-view="statistics"].distance-view .cpi-channel-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+body[data-insight-view="statistics"].distance-view .cpi-channel-card{min-height:150px;padding:12px 10px}
+body[data-insight-view="statistics"].distance-view .cpi-channel-card strong{font-size:16px;line-height:1.1}
+body[data-insight-view="statistics"].distance-view .cpi-channel-card span{font-size:13px}
+body[data-insight-view="statistics"].distance-view .cpi-channel-card b{font-size:20px}
+body[data-insight-view="statistics"].distance-view .cpi-channel-card small{font-size:12px;line-height:1.15}
+/* The statistics wall display presents CPI evidence as visual comparisons. */
+.statistics-kiosk-visuals{display:none}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview{box-sizing:border-box;grid-template-rows:clamp(180px,14dvh,270px) minmax(0,1fr);gap:22px;padding:22px}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-details,
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.cpi-presence-block,
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.cpi-channel-grid{display:none!important}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero{height:100%;margin:0;gap:16px}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero .metric-card{box-sizing:border-box;min-height:0;padding:22px 20px 32px}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero .metric-card>*{flex-shrink:0}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero strong{font-size:clamp(44px,6.8vw,76px);line-height:1.1;overflow:visible}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero span{font-size:clamp(19px,2.35vw,27px);line-height:1.18}
+body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero small{font-size:clamp(17px,1.95vw,23px);line-height:1.2}
+body[data-insight-view="statistics"].distance-view .statistics-kiosk-visuals{display:grid;min-height:0;grid-template-rows:minmax(0,1fr) minmax(0,1.12fr);gap:24px}
+.cpi-kiosk-coverage,.cpi-kiosk-comparison{display:grid;min-width:0;min-height:0;gap:18px}
+.cpi-kiosk-coverage{grid-template-rows:auto minmax(0,1fr)}
+.cpi-kiosk-coverage h2,.cpi-kiosk-comparison h2{margin:0;font-size:30px;line-height:1.15;letter-spacing:-.02em}
+.cpi-kiosk-coverage>header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:24px}
+.cpi-kiosk-exposure{display:flex;gap:28px}
+.cpi-kiosk-exposure>div{display:grid;gap:5px;text-align:right}
+.cpi-kiosk-exposure strong{font-size:32px;line-height:1;font-variant-numeric:tabular-nums}
+.cpi-kiosk-exposure span{font-size:19px;color:var(--muted)}
+.cpi-kiosk-gauges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;min-height:0}
+.cpi-kiosk-gauge{--cpi-color:#ff8754;display:grid;min-width:0;min-height:0;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;align-items:center;justify-items:center;gap:12px;padding:24px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.cpi-kiosk-gauge.tracked{--cpi-color:#4dd4b0}
+.cpi-kiosk-gauge h3{margin:0;font-size:26px;font-weight:700;line-height:1.2;text-align:center}
+.cpi-kiosk-ring{position:relative;width:100%;height:100%;min-width:0;min-height:0;max-height:410px}
+.cpi-kiosk-ring svg{display:block;width:100%;height:100%}
+.cpi-kiosk-ring circle{fill:none;stroke-width:20}
+.cpi-ring-track{stroke:#4b403b}
+.cpi-ring-value{stroke:var(--cpi-color)}
+.cpi-kiosk-ring>div{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:8px;text-align:center}
+.cpi-kiosk-ring strong{font-size:clamp(46px,6.5vw,72px);font-weight:800;line-height:1;color:var(--cpi-color);font-variant-numeric:tabular-nums}
+.cpi-kiosk-ring span{max-width:13ch;font-size:24px;line-height:1.2}
+.cpi-kiosk-gauge footer{display:grid;width:100%;min-height:84px;grid-template-columns:1fr 1fr;gap:16px;align-content:end}
+.cpi-kiosk-gauge footer>div{display:grid;grid-template-columns:10px minmax(0,1fr);align-items:center;gap:5px 8px}
+.cpi-kiosk-gauge footer strong{font-size:30px;font-weight:750;font-variant-numeric:tabular-nums}
+.cpi-kiosk-gauge footer span{grid-column:2;font-size:19px;line-height:1.2;color:var(--muted)}
+.cpi-series-key{width:10px;height:10px;border-radius:3px;background:var(--cpi-color)}
+.cpi-series-key.remainder{background:#8b7f78}
+.cpi-kiosk-comparison{grid-template-rows:auto auto minmax(0,1fr);padding:24px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.cpi-kiosk-comparison>header{display:grid;gap:16px}
+.cpi-kiosk-legend{display:flex;gap:28px;font-size:22px}
+.cpi-kiosk-legend span{display:flex;align-items:center;gap:9px}
+.cpi-kiosk-legend i{width:20px;height:8px;border-radius:4px;background:#ff8754}
+.cpi-kiosk-legend .tracked i{background:#4dd4b0}
+.cpi-kiosk-axis{display:flex;justify-content:space-between;padding-right:94px;color:var(--muted);font-size:19px;font-variant-numeric:tabular-nums}
+.cpi-kiosk-channels{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:repeat(var(--channel-count),minmax(112px,1fr));gap:16px;min-width:0;min-height:0;overflow:auto;scrollbar-width:thin}
+.cpi-kiosk-channel{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 23px 23px;min-width:0;align-content:center;gap:8px;border-top:1px solid var(--line);padding-top:14px}
+.cpi-kiosk-channel>header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:5px}
+.cpi-kiosk-channel>header>div{display:flex;align-items:baseline;flex-wrap:wrap;gap:7px 12px;min-width:0}
+.cpi-kiosk-channel strong{font-size:26px;line-height:1.15;overflow-wrap:anywhere}
+.cpi-kiosk-channel header span{font-size:22px;color:var(--muted)}
+.cpi-kiosk-channel header>span{flex:0 0 auto;color:var(--ink);font-variant-numeric:tabular-nums}
+.cpi-kiosk-channel small{font-size:18px;color:var(--muted)}
+.cpi-kiosk-bar{display:grid;grid-template-columns:minmax(0,1fr) 80px;gap:14px;align-items:center;min-width:0}
+.cpi-kiosk-bar-track{display:block;height:16px;border-radius:6px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),#57453b calc(25% - 1px),#57453b 25%),#29211d;overflow:hidden}
+.cpi-kiosk-bar i{display:block;height:100%;border-radius:6px;background:#ff8754}
+.cpi-kiosk-bar.tracked i{background:#4dd4b0}
+.cpi-kiosk-bar b{min-width:0;font-size:24px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cpi-kiosk-empty{align-self:center;text-align:center;color:var(--muted);font-size:24px}
+@media(min-width:1100px) and (max-height:1200px){
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview{grid-template-rows:200px minmax(0,1fr);padding:16px;gap:16px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero strong{font-size:58px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero span{font-size:21px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero small{font-size:18px}
+  body[data-insight-view="statistics"].distance-view .statistics-kiosk-visuals{grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);grid-template-rows:minmax(0,1fr);gap:20px}
+  .cpi-kiosk-coverage>header{grid-template-columns:1fr;gap:18px}.cpi-kiosk-exposure{justify-content:space-between}.cpi-kiosk-exposure>div{text-align:left}
+  .cpi-kiosk-gauges{gap:12px}.cpi-kiosk-gauge{padding:16px}.cpi-kiosk-gauge h3{font-size:22px}.cpi-kiosk-ring strong{font-size:44px}.cpi-kiosk-ring span{font-size:19px}
+  .cpi-kiosk-gauge footer{gap:10px;grid-template-columns:1fr}.cpi-kiosk-gauge footer>div{grid-template-columns:10px auto 1fr}.cpi-kiosk-gauge footer span{grid-column:auto;font-size:16px}.cpi-kiosk-gauge footer strong{font-size:23px}
+  .cpi-kiosk-channel strong{font-size:23px}.cpi-kiosk-channel header span{font-size:19px}.cpi-kiosk-channels{gap:8px;grid-template-rows:repeat(var(--channel-count),minmax(100px,1fr))}
+}
+@media(min-width:761px) and (max-width:1099px) and (max-height:1250px){
+  body[data-insight-view="statistics"].distance-view{overflow:auto}
+  body[data-insight-view="statistics"].distance-view .app-shell,body[data-insight-view="statistics"].distance-view #view-root{height:auto;min-height:100dvh;overflow:visible}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview{height:auto;grid-template-rows:220px auto}
+  body[data-insight-view="statistics"].distance-view .statistics-kiosk-visuals{grid-template-rows:auto auto}
+  .cpi-kiosk-ring{height:300px}
+  .cpi-kiosk-channels{grid-template-rows:repeat(var(--channel-count),140px);overflow:visible}
+}
+@media(max-width:760px){
+  body[data-insight-view="statistics"]:not(.distance-view) .cpi-channel-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  body[data-insight-view="statistics"].distance-view{overflow:auto}
+  body[data-insight-view="statistics"].distance-view .app-shell,body[data-insight-view="statistics"].distance-view #view-root{height:auto;min-height:100dvh;overflow:visible}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview{height:auto;grid-template-rows:auto auto;padding:12px;gap:22px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero{grid-template-columns:1fr;gap:10px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero .metric-card{min-height:150px;padding:18px 20px 26px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero strong{font-size:46px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero span{font-size:20px}
+  body[data-insight-view="statistics"].distance-view .statistics-kiosk-visuals{grid-template-rows:auto auto}
+  .cpi-kiosk-coverage>header{grid-template-columns:1fr;gap:18px}.cpi-kiosk-coverage h2,.cpi-kiosk-comparison h2{font-size:24px}.cpi-kiosk-exposure{justify-content:space-between;gap:10px}.cpi-kiosk-exposure>div{text-align:left}.cpi-kiosk-exposure strong{font-size:26px}.cpi-kiosk-exposure span{font-size:15px}
+  .cpi-kiosk-gauges{grid-template-columns:1fr}.cpi-kiosk-gauge{padding:20px}.cpi-kiosk-ring{height:270px}.cpi-kiosk-ring strong{font-size:50px}.cpi-kiosk-ring span{font-size:21px}.cpi-kiosk-gauge footer strong{font-size:26px}.cpi-kiosk-gauge footer span{font-size:16px}
+  .cpi-kiosk-comparison{padding:18px 14px;gap:16px}.cpi-kiosk-legend{gap:15px;font-size:15px}.cpi-kiosk-legend i{width:14px}.cpi-kiosk-axis{font-size:14px;padding-right:66px}.cpi-kiosk-channels{grid-template-rows:repeat(var(--channel-count),auto);overflow:visible}
+  .cpi-kiosk-channel{grid-template-rows:auto 24px 24px;padding-top:16px}.cpi-kiosk-channel>header{gap:8px}.cpi-kiosk-channel>header>div{display:grid;gap:3px}.cpi-kiosk-channel strong{font-size:19px}.cpi-kiosk-channel header span{font-size:15px}.cpi-kiosk-channel header>span{display:grid;gap:2px;text-align:right}.cpi-kiosk-channel small{font-size:13px}.cpi-kiosk-bar{grid-template-columns:minmax(0,1fr) 56px;gap:10px}.cpi-kiosk-bar b{font-size:18px}
+}
+/* The portrait wall panel uses 150% display scaling: 1080 physical pixels are
+ * 720 CSS pixels. Keep that tall kiosk as a complete dashboard, not a phone. */
+@media(min-width:700px) and (max-width:760px) and (min-height:1200px) and (orientation:portrait){
+  body[data-insight-view="statistics"].distance-view{overflow:hidden}
+  body[data-insight-view="statistics"].distance-view .app-shell,
+  body[data-insight-view="statistics"].distance-view #view-root{height:100dvh;min-height:0;overflow:hidden}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview{height:100%;grid-template-rows:170px minmax(0,1fr);padding:14px;gap:12px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero .metric-card{min-height:0;padding:12px 14px 20px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero strong{font-size:42px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero span{font-size:16.5px}
+  body[data-insight-view="statistics"].distance-view .statistics-channel-overview>.statistics-distance-hero small{font-size:15.5px}
+  body[data-insight-view="statistics"].distance-view .statistics-kiosk-visuals{grid-template-rows:minmax(0,.91fr) minmax(0,1.09fr);gap:16px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-coverage{gap:12px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-coverage>header{grid-template-columns:minmax(0,1fr) auto;gap:18px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-coverage h2,
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-comparison h2{font-size:22px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-exposure{gap:18px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-exposure>div{text-align:right}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-exposure strong{font-size:25px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-exposure span{font-size:15.5px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-gauges{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-gauge{padding:16px;gap:8px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-gauge h3{font-size:22px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-ring{height:100%;max-height:310px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-ring strong{font-size:44px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-ring span{font-size:18px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-gauge footer{min-height:60px;gap:12px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-gauge footer strong{font-size:24px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-gauge footer span{font-size:16px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-comparison{padding:18px;gap:12px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-comparison>header{gap:10px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-legend{font-size:17.5px;gap:20px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-axis{font-size:16px;padding-right:90px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channels{grid-template-rows:repeat(var(--channel-count),minmax(0,1fr));gap:6px;overflow:auto}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channel{grid-template-rows:auto 20px 20px;gap:5px;padding-top:8px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channel>header{margin-bottom:4px;gap:12px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channel>header>div{display:flex;gap:6px 10px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channel strong{font-size:22px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channel header span{font-size:17px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channel header>span{display:block}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-channel small{font-size:15.5px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-bar{grid-template-columns:minmax(0,1fr) 80px;gap:10px}
+  body[data-insight-view="statistics"].distance-view .cpi-kiosk-bar b{font-size:20px}
+}
+/* One channel uses the same pass gauges and CPI bars, with more canvas for the
+ * gauges instead of stretching the legacy four-card text summary. */
+@media(min-width:700px) and (min-height:1200px) and (orientation:portrait){
+  body[data-insight-view="statistics"].distance-view .statistics-single-kiosk-visuals{grid-template-rows:minmax(0,1.25fr) minmax(0,.75fr)}
+  .statistics-single-kiosk-visuals .cpi-kiosk-channel{grid-template-rows:auto 32px 32px;gap:16px}
+  .statistics-single-kiosk-visuals .cpi-kiosk-bar-track{height:28px}
+}

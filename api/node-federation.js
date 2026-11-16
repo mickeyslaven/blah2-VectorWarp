@@ -7,6 +7,7 @@ const os = require('os');
 const http = require('http');
 const https = require('https');
 const {geometryCatalog, CooperativeDetectionTracker} = require('./cooperative-detection-tracker');
+const {FederatedGeographicFusion} = require('./federated-geographic-fusion');
 
 const HTTP_AGENT = new http.Agent({keepAlive: true, maxSockets: 16, maxFreeSockets: 8,
   timeout: 5000});
@@ -23,7 +24,8 @@ const READS = new Set(['/api/federation/capabilities', '/api/system/status', '/a
   '/api/presentation/status', '/api/runtime/config', '/api/adsb', '/api/adsb/status',
   '/api/adsb/delay-doppler', '/api/remote-id', '/api/remote-id/status',
   '/api/remote-id/delay-doppler', '/api/radar/coverage', '/api/federation/cooperative',
-  '/api/federation/statistics-summary', '/api/live-aircraft-associations',
+  '/api/federation/statistics-summary', '/api/federation/geographic-fusion',
+  '/api/radar/observations', '/api/live-aircraft-associations',
   '/stash/map', '/stash/detection',
   '/stash/iqdata', '/stash/timing']);
 const MAX_BYTES = 16 * 1024 * 1024;
@@ -47,13 +49,13 @@ function nodeCapabilities(config = {}) {
       channel_count: config.capture?.device?.channel_count ?? null},
     processing: {multi_illuminator: multi?.enabled === true,
       illuminator_standards: standards,
-      atsc_reference_modes: ['automatic', 'raw'],
+      atsc_reference_modes: ['automatic', 'raw', 'pilot_aided'],
       atsc3_reference_modes: ['automatic', 'raw'],
       atsc_decision_directed_available: false,
       reference_reconstruction: {
         raw: {status: 'stable', standards: ['*']},
         fm_modulation_aided: {status: 'experimental', live_selectable: false},
-        atsc_8vsb: {status: 'experimental-offline', live_selectable: false,
+        atsc_8vsb: {status: 'qualified-pilot-projection', live_selectable: true,
           completed_stages: ['heldout-pilot-projection', 'raw-clutter-separation',
             'field-sync', 'confidence-gated-symbol-reconstruction'],
           full_reconstruction_live_selectable: false},
@@ -119,7 +121,9 @@ function localNodeOrigin(host, port) {
   return `http://${family === 6 ? `[${address}]` : address}:${numericPort}`;
 }
 
-function probeJson(origin, pathname, timeoutMs = 2500) {
+function probeJson(origin, pathname, timeoutMs = 2500, maxBytes = 2 * 1024 * 1024) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES)
+    return Promise.reject(new Error('Node probe byte limit is invalid'));
   return new Promise((resolve, reject) => {
     let settled = false, size = 0, deadline; const chunks = [];
     const finish = (error, value) => { if (settled) return; settled = true;
@@ -132,10 +136,7 @@ function probeJson(origin, pathname, timeoutMs = 2500) {
       if (response.statusCode !== 200) { response.resume();
         return finish(new Error(`Node probe returned HTTP ${response.statusCode}`)); }
       response.on('data', chunk => { size += chunk.length;
-        // A compact multi-channel association basis can exceed 1 MiB before
-        // transport compression because it retains per-pass direction cells.
-        // Keep the read bounded while allowing a full local-node score basis.
-        if (size > 2 * 1024 * 1024) request.destroy(new Error('Node probe response is too large'));
+        if (size > maxBytes) request.destroy(new Error('Node probe response is too large'));
         else chunks.push(chunk); });
       response.on('end', () => { try { finish(null, {value: JSON.parse(Buffer.concat(chunks)),
         identity: response.headers['x-vectorwarp-node-id'] || null}); }
@@ -351,9 +352,14 @@ function alignNodeStatistics(nodes) {
   const starts = nodes.map(node => Math.min(...(node.passes || [])
     .map(pass => Number(pass.started_at)).filter(Number.isFinite)))
     .filter(Number.isFinite);
-  const commonStart = starts.length === nodes.length ? Math.max(...starts) : null;
+  const alignmentPending = nodes.length > 1 && starts.length !== nodes.length;
+  const commonStart = !alignmentPending && starts.length === nodes.length ?
+    Math.max(...starts) : null;
   return {commonStart, nodes: nodes.map(node => {
-    const passes = (node.passes || []).filter(pass => commonStart === null ||
+    // Never mix one node's retained history with a restarted node that has not
+    // finalized its first pass. Publish an explicitly pending, empty common
+    // window until every available node supplies an alignment anchor.
+    const passes = alignmentPending ? [] : (node.passes || []).filter(pass => commonStart === null ||
       (Number(pass.finalized_at) || Number(pass.started_at) || 0) >= commonStart);
     const channelIds = new Set((node.channels || []).map(channel => channel.id));
     for (const pass of passes) channelIds.add(pass.channel || 'primary');
@@ -370,7 +376,7 @@ function alignNodeStatistics(nodes) {
     const tracked = detected.filter(pass => pass.tracked);
     return {...node, passes, channels, association: {eligible: unique.length,
       detected: detected.length, tracked: tracked.length}};
-  })};
+  }), alignmentPending};
 }
 
 function combineNodeStatistics(nodes, cooperative = null) {
@@ -422,6 +428,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
   const systemWide = {scope: 'all-nodes-all-channels-deduplicated',
     window: 'common-retained-finalized-passes',
     window_started_at: alignment.commonStart,
+    alignment_pending: alignment.alignmentPending,
     eligible_adsb_passes: eligibleUnique.length,
     detection: {associated_passes: detectedUnique.length,
       eligible_adsb_passes: eligibleUnique.length,
@@ -441,7 +448,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
     (node.timing?.cadence_ms > 0 && node.timing?.backlog_ms > node.timing.cadence_ms * 1.25));
   return {schema: 'vectorwarp-network-statistics-v1', scope: 'all-nodes',
     updated_at: Date.now(), statistics_window: {basis: 'common-retained-finalized-passes',
-      started_at: alignment.commonStart},
+      started_at: alignment.commonStart, alignment_pending: alignment.alignmentPending},
     health: {status: unhealthy.length ? 'degraded' : 'healthy',
       nodes_total: nodes.length, nodes_available: available.length,
       unhealthy_nodes: unhealthy.map(node => node?.id).filter(Boolean),
@@ -484,6 +491,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
     maximumAccelerationHzS: Number(trackerConfig?.initiate?.maxAcc) || 10,
     coLocationRadiusM: Number(process.env.VECTORWARP_COOPERATIVE_COLOCATION_M) || 100
   });
+  const geographicFusion = new FederatedGeographicFusion(config, {
+    coLocationRadiusM: Number(process.env.VECTORWARP_GEOGRAPHIC_COLOCATION_M) || 5});
   const cooperativeConfigCache = new Map([[identity, {value: config, updatedAt: Date.now()}]]);
   let cooperativeBusy = false, cooperativeLastPollAt = null, cooperativeLastError = null;
   let networkStatisticsCache = null, networkStatisticsCacheAt = 0;
@@ -496,8 +505,9 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   const cooperativeEntries = () => [{id: identity, label: localLabel,
     expectedIdentity: identity, origin: localOrigin, local: true}, ...nodes.map(node => ({id: node.id,
     label: node.label, expectedIdentity: node.expectedIdentity, origin: node.origin, local: false}))];
-  async function cooperativeRead(entry, pathname, timeoutMs = 900) {
-    const result = await probeJson(entry.origin, pathname, timeoutMs);
+  async function cooperativeRead(entry, pathname, timeoutMs = 900,
+      maxBytes = 2 * 1024 * 1024) {
+    const result = await probeJson(entry.origin, pathname, timeoutMs, maxBytes);
     if (result.identity !== entry.expectedIdentity) throw new Error(`Node identity mismatch: ${entry.id}`);
     return result.value;
   }
@@ -517,6 +527,18 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
         try { return {entry, config: await cooperativeConfig(entry)}; }
         catch (_) { return {entry, config: null}; }
       }));
+      const observationBundles = (await Promise.all(entries.map(async entry => {
+        try {
+          const requestStartedAt = Date.now();
+          const value = await cooperativeRead(entry, '/api/radar/observations', 1500);
+          const receivedAt = Date.now();
+          return value?.node_id === entry.expectedIdentity ? {...value,
+            federation_transport: {request_started_at: requestStartedAt, received_at: receivedAt},
+            federation_local: entry.local === true} : null;
+        }
+        catch (_) { return null; }
+      }))).filter(Boolean);
+      geographicFusion.update(observationBundles);
       const configuredSources = configurations.flatMap(({entry, config: value}) => value ?
         cooperativeSources(entry, value).map(source => ({...source, origin: entry.origin,
           expectedIdentity: entry.expectedIdentity})) : []);
@@ -565,6 +587,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
       total_sources: cooperativeTotalSourceCount, shared_geometry_sources: cooperativeSourceCount,
       available_sources: cooperativeAvailableSources,
       error: cooperativeLastError}}));
+  app.get('/api/federation/geographic-fusion', (_req, res) =>
+    res.json(geographicFusion.snapshot()));
   app.get('/api/federation/statistics-summary', async (_req, res) => {
     try {
       if (networkStatisticsCache && Date.now() - networkStatisticsCacheAt < 2000)
@@ -576,9 +600,11 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
               cooperativeRead(entry, '/api/system/status', 2500),
               cooperativeRead(entry, '/api/timing', 2500),
               cooperativeRead(entry,
-                '/api/live-scorecard/association-basis?timing=provisional', 3500),
+                '/api/live-scorecard/association-basis?timing=provisional', 3500,
+                8 * 1024 * 1024),
               cooperativeRead(entry,
-                '/api/association/passes?timing=provisional', 3500)]);
+                '/api/association/passes?timing=provisional', 3500,
+                8 * 1024 * 1024)]);
             return compactNodeStatistics(entry, status, timing, scorecard,
               associationPasses);
           } catch (error) { return {id: entry.id, label: entry.label, local: entry.local,
@@ -767,8 +793,9 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   cooperativeInterval.unref();
   const cooperativeInitial = setTimeout(cooperativeTick, 1000);
   cooperativeInitial.unref();
+  return {geographicFusionSnapshot: () => geographicFusion.snapshot()};
 }
 module.exports = {installNodeFederation, registry, safeConfig, nodeCapabilities, READS,
-  localNodeOrigin, discoverLocalNode, cooperativeSources, compactNodeStatistics,
+  localNodeOrigin, probeJson, discoverLocalNode, cooperativeSources, compactNodeStatistics,
   combineNodeStatistics, deduplicatePasses, alignNodeStatistics, defaultRegistryPath,
   configuredApiPort};

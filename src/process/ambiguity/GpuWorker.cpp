@@ -9,7 +9,8 @@
 
 int main(int argc, char** argv) {
   if(argc==2&&std::string(argv[1])=="--wideband-v1"){
-#ifdef __linux__
+#ifdef VECTORWARP_WIDEBAND_GPU
+    blah2::applyMacGpuCompatibilityPolicy();
     void* module=dlopen(blah2::gpuSiblingPath("blah2-gpu-wideband-vulkan.so").c_str(),RTLD_NOW|RTLD_LOCAL);
     if(!module){std::cerr<<"Wideband GPU module unavailable\n";return 2;}
     const auto create=reinterpret_cast<blah2::wideband_gpu::Create>(dlsym(module,"blah2_gpu_create_wideband"));
@@ -17,24 +18,24 @@ int main(int argc, char** argv) {
     const int result=blah2::wideband_gpu::runWorker([&](const blah2::wideband_gpu::Config& config,const std::string& device){return std::unique_ptr<blah2::wideband_gpu::Backend>(create(blah2::wideband_gpu::moduleAbi,&config,device.c_str()));});
     dlclose(module);return result;
 #else
-    std::cerr<<"Wideband GPU worker is Linux-only\n";return 2;
+    std::cerr<<"Wideband GPU module was not built for this platform cohort; use CPU channelization\n";return 2;
 #endif
   }
   if(argc==2&&std::string(argv[1])=="--resident-v5"){
-#ifdef __linux__
+#ifdef VECTORWARP_RESIDENT_GPU
     void* module=nullptr;
     const int result=blah2::resident::runWorker([&](const blah2::resident::Config& config,const blah2::resident::Mapping& mapping){
       if(module)throw std::runtime_error("Resident module already loaded");
       module=dlopen(blah2::gpuSiblingPath("blah2-gpu-resident-vulkan.so").c_str(),RTLD_NOW|RTLD_LOCAL);
-      if(!module)throw std::runtime_error("Resident ABI12 module or its Vulkan loader is unavailable; no CPU fallback");
+      if(!module)throw std::runtime_error("Resident ABI15 module or its Vulkan loader is unavailable; no CPU fallback");
       const auto create=reinterpret_cast<blah2::resident::Create>(dlsym(module,"blah2_gpu_create_resident"));
-      if(!create)throw std::runtime_error("Resident worker/module ABI12 cohort mismatch");
+      if(!create)throw std::runtime_error("Resident worker/module ABI15 cohort mismatch");
       return std::unique_ptr<blah2::resident::Backend>(create(blah2::resident::moduleAbi,&config,&mapping));
     });
     if(module)dlclose(module);
     return result;
 #else
-    std::cerr<<"Resident GPU mode is not supported by this platform cohort\n";
+    std::cerr<<"Resident GPU module was not built for this platform cohort; select cpu, auto or stage gpu acceleration explicitly\n";
     return 2;
 #endif
   }

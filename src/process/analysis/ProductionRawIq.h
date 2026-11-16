@@ -30,6 +30,9 @@ public:
   ArrayReferenceSynthesizer& reference() { return reference_; }
   const ArrayReferenceSynthesizer& reference() const { return reference_; }
   void resetReference();
+  // Switch only between CPIs. Preserve the adaptive reference learner while
+  // replacing CPU clutter workspaces after hardware qualification/fallback.
+  void setBorrowed(bool borrowed);
   bool clutter(IqData& reference, const std::vector<IqData*>& surveillance);
   bool clutter_float(const std::complex<float>* reference,
     const std::vector<const std::complex<float>*>& surveillance,
@@ -40,6 +43,11 @@ public:
     const std::vector<IqData*>& surveillance,
     const std::vector<Ambiguity*>& processors, bool preserveSurveillance);
   void ambiguity_borrowed(const std::vector<Ambiguity*>& processors);
+  void ambiguity_borrowed_reference(const IqData& reference,
+    const std::vector<Ambiguity*>& processors);
+  void ambiguity_borrowed_reference(const std::complex<double>* reference,
+    uint32_t samples, const std::vector<Ambiguity*>& processors);
+  std::vector<WienerHopf::FilteredView> borrowed_views() const;
 
 private:
   Config config_;

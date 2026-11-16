@@ -1,0 +1,148 @@
+name: Trusted unified GPU qualification
+
+# Never send pull-request code to a self-hosted GPU. Dispatch this workflow
+# only at the exact protected default-branch revision to be qualified.
+on:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gpu-qualification-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.authorize.outputs.matrix }}
+    steps:
+      - id: authorize
+        name: Require protected exact revision and explicit runner classes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FP32_LABELS: ${{ vars.VECTORWARP_GPU_FP32_RUNNER_LABELS }}
+          FP64_LABELS: ${{ vars.VECTORWARP_GPU_FP64_RUNNER_LABELS }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.parse
+          branch = urllib.parse.quote(os.environ['DEFAULT_BRANCH'], safe='')
+          report = json.loads(subprocess.check_output(['gh', 'api',
+              f"repos/{os.environ['GH_REPO']}/branches/{branch}"]))
+          if report.get('protected') is not True:
+              raise SystemExit('GPU qualification requires a protected branch')
+          if report['commit']['sha'] != os.environ['GITHUB_SHA']:
+              raise SystemExit('GPU qualification requires exact current branch SHA')
+          matrix = []
+          for feature in ('fp32', 'fp64'):
+              labels = json.loads(os.environ[feature.upper() + '_LABELS'])
+              if not isinstance(labels, list) or not labels or not all(isinstance(x, str) and x for x in labels):
+                  raise SystemExit(f'{feature}: runner labels must be a nonempty JSON string array')
+              if not {'self-hosted', 'linux', 'x64'} <= {x.lower() for x in labels}:
+                  raise SystemExit('explicit Linux x64 self-hosted labels required')
+              matrix.append({'device_class': feature, 'labels': labels})
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps({'include': matrix}, separators=(',', ':')) + '\n')
+          PY
+  build:
+    needs: authorize
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - name: Install unified-artifact build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential cmake curl git \
+            ninja-build pkg-config tar unzip zip xz-utils libarmadillo-dev libfftw3-dev \
+            libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libhackrf-dev libusb-1.0-0-dev \
+            libboost-dev libeigen3-dev libssl-dev zlib1g-dev patch
+      - name: Build one all-receiver artifact for both GPU feature classes
+        run: |
+          script/build-native.sh --backend all --gpu on --test --jobs 2 --build-dir build/gpu-qualification
+          python3 test/recording/processor_replay_test.py --binary build/gpu-qualification/artifact/bin/blah2
+          tar -C build/gpu-qualification -czf build/unified-gpu-artifact.tar.gz artifact
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unified-gpu-artifact-${{ github.sha }}
+          path: build/unified-gpu-artifact.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+  qualify:
+    needs: [authorize, build]
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.authorize.outputs.matrix) }}
+    runs-on: ${{ matrix.labels }}
+    # Administrators must restrict these environments to the protected default
+    # branch and require approval. No personal runner or device is hardcoded.
+    environment: vectorwarp-gpu-${{ matrix.device_class }}
+    timeout-minutes: 45
+    env:
+      VECTORWARP_QUALIFICATION_GPU_DEVICE: ${{ vars.VECTORWARP_QUALIFICATION_GPU_DEVICE }}
+      PYTHONDONTWRITEBYTECODE: 1
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unified-gpu-artifact-${{ github.sha }}
+          path: build/qualified-input
+      - name: Qualify CPU/GPU products, all receiver identities and temporal lineage
+        run: |
+          set -euo pipefail
+          # The downloaded artifact uses Ubuntu 24.04 shared libraries. Fail
+          # before replay if this administrator-provisioned runner lacks them.
+          python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ is required"'
+          tar -C build/qualified-input -xzf build/qualified-input/unified-gpu-artifact.tar.gz
+          while IFS= read -r -d '' native; do
+            dependencies=$(ldd "$native")
+            if [[ $dependencies == *'not found'* ]]; then
+              printf 'Missing qualification-runner dependencies for %s:\n%s\n' "$native" "$dependencies" >&2
+              exit 1
+            fi
+          done < <(find build/qualified-input/artifact/bin -maxdepth 1 -type f \( -name blah2 -o -name blah2-gpu-worker -o -name '*.so' \) -print0)
+          python3 test/gpu/product_parity_test.py \
+            --binary build/qualified-input/artifact/bin/blah2 \
+            --device-class '${{ matrix.device_class }}' --source-sha "$GITHUB_SHA" \
+            --receipt 'build/gpu-product-parity-${{ matrix.device_class }}.json'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gpu-product-parity-${{ matrix.device_class }}-${{ github.sha }}
+          path: build/gpu-product-parity-${{ matrix.device_class }}.json
+          if-no-files-found: error
+          retention-days: 30
+  acceptance:
+    needs: qualify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: gpu-product-parity-*-${{ github.sha }}
+          path: build/gpu-receipts
+      - name: Require both device classes and the same artifact hashes
+        run: python3 test/gpu/verify_qualification_receipts.py --receipts build/gpu-receipts --source-sha "$GITHUB_SHA"

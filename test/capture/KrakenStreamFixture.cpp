@@ -130,6 +130,15 @@ int main() {
     assert(c.finish(false).find("Unsupported Heimdall ingestion") != std::string::npos); c.length(0); }
   { Capture c; c.send_bytes({'x', 'M', 'x'}); c.send_bytes(frame(), true); c.finish(); c.length(8); }
   { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 1)); c.send_bytes(frame(5, 1)); c.finish(); c.length(16); }
+  // A bounded FIFO retirement is a processing epoch boundary. The main
+  // consumer can therefore discard any tail it moved before this overflow
+  // instead of forming a CPI from samples on opposite sides of the gap.
+  { Capture c;
+    for (unsigned block = 0; block < 17; ++block) c.send_bytes(frame());
+    c.finish(); c.length(128);
+    assert(c.source->processing_epoch() == 1);
+    for (auto* buffer : c.buffers) assert(buffer->get_dropped_samples() == 8);
+  }
   // A per-channel setting change is an epoch boundary even when the Suite's
   // frequency-change counter does not advance.
   { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 0, 4, 527000000.0F, 16.0F));

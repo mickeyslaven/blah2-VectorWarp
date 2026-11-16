@@ -75,7 +75,15 @@ function positionQuality(aircraft) {
   return .75;
 }
 
-function relayPositionMetadata(data, aircraft, rawEventTime) {
+function observationRecord(aircraft, timestamp) {
+  const result = {schema: 'vectorwarp-adsb-observation-v1', timestamp_s: timestamp};
+  for (const key of ['lat', 'lon', 'alt_geom', 'alt_baro', 'gs', 'track',
+    'geom_rate', 'baro_rate', 'track_rate', 'nic', 'nac_p', 'nac_v', 'rc', 'sil'])
+    if (finite(aircraft[key])) result[key] = aircraft[key];
+  return result;
+}
+
+function relayPositionMetadata(data, aircraft, rawEventTime, maximumOffset) {
   const fusion = data?.vectorwarp_fusion;
   const upstream = aircraft?.vectorwarp;
   if (fusion?.schema !== 'vectorwarp-adsb-fusion-v1' ||
@@ -84,8 +92,15 @@ function relayPositionMetadata(data, aircraft, rawEventTime) {
       Math.abs(upstream.position_timestamp_s - rawEventTime) > 1) return null;
   const observationTime = finite(upstream.observation_position_timestamp_s) ?
     upstream.observation_position_timestamp_s : upstream.position_timestamp_s;
-  if (observationTime > upstream.position_timestamp_s + 1e-3) return null;
-  return {positionTime: upstream.position_timestamp_s, observationTime};
+  // A later observation legitimately projects BACK to a historical CPI. Do
+  // not discard its original epoch on the next relay hop merely for that sign.
+  if (Math.abs(observationTime - upstream.position_timestamp_s) > maximumOffset) return null;
+  const raw = upstream.observation;
+  const observation = raw?.schema === 'vectorwarp-adsb-observation-v1' &&
+    finite(raw.timestamp_s) && Math.abs(raw.timestamp_s - observationTime) < 1e-3 &&
+    finite(raw.lat) && Math.abs(raw.lat) <= 90 && finite(raw.lon) && Math.abs(raw.lon) <= 180 ?
+    observationRecord(raw, observationTime) : null;
+  return {positionTime: upstream.position_timestamp_s, observationTime, observation};
 }
 
 function metadataValue(value) {
@@ -162,7 +177,9 @@ function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservation
           Math.abs(aircraft.lat) > 90 || Math.abs(aircraft.lon) > 180 ||
           !finite(aircraft.seen_pos) || aircraft.seen_pos < 0) continue;
       const rawEventTime = data.now - aircraft.seen_pos;
-      const relay = relayPositionMetadata(data, aircraft, rawEventTime);
+      const relay = relayPositionMetadata(data, aircraft, rawEventTime, maxPositionAgeSeconds);
+      if (data.vectorwarp_fusion?.schema === 'vectorwarp-adsb-fusion-v1' && !relay)
+        continue; // A malformed relay cannot launder its coordinates as a new observation.
       const eventTime = relay?.positionTime ?? rawEventTime;
       const observationEventTime = relay?.observationTime ?? eventTime;
       const age = nowSeconds - eventTime;
@@ -170,13 +187,20 @@ function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservation
         maxObservationOffsetSeconds;
       if (!finite(eventTime) || Math.abs(age) > allowedObservationOffset ||
           age < -maxPositionAgeSeconds || age > maxPositionAgeSeconds) continue;
-      const projection = projectAircraft(aircraft, age);
-      if (!projection.projected && Math.abs(age) >= 1e-6) continue;
+      // New relays carry the immutable original observation. Project from it
+      // exactly once; old relays retain incremental CV behavior, explicitly
+      // without the raw-lineage eligibility needed by uncertainty scoring.
+      const observation = relay ? relay.observation : observationRecord(aircraft, eventTime);
+      const projectionAge = observation ? nowSeconds - observationEventTime : age;
+      if (Math.abs(nowSeconds - observationEventTime) > maxPositionAgeSeconds) continue;
+      const {schema: _observationSchema, timestamp_s: _observationTime, ...observationFields} = observation || {};
+      const projection = projectAircraft(observation ? {...aircraft, ...observationFields} : aircraft, projectionAge);
+      if (!projection.projected && Math.abs(projectionAge) >= 1e-6) continue;
       const quality = sourceReliability(source) * positionQuality(aircraft) *
         Math.exp(-Math.max(0, age) / Math.max(1, maxPositionAgeSeconds));
       output.push({hex, aircraft, projectedAircraft: projection.aircraft, source,
         sourceId: id, receivedAtMs, eventTime, observationEventTime, age, quality,
-        reliability, relay});
+        reliability, relay, observation, snapshotTime: data.now});
     }
   });
   return output;
@@ -229,7 +253,7 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
   for (const row of rows) {
     const key = `${row.hex}:${row.sourceId}`;
     const previous = byAircraft.get(key);
-    if (!previous || row.eventTime > previous.eventTime) byAircraft.set(key, row);
+    if (!previous || row.observationEventTime > previous.observationEventTime) byAircraft.set(key, row);
   }
   const byHex = new Map();
   for (const row of byAircraft.values()) {
@@ -240,7 +264,7 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
   for (const [hex, observations] of byHex) {
     const groups = cluster(observations, disagreementKm);
     const winner = [...observations].sort((left, right) =>
-      right.eventTime - left.eventTime || right.quality - left.quality)[0];
+      right.observationEventTime - left.observationEventTime || right.quality - left.quality)[0];
     const accepted = (groups.find(group => group.includes(winner)) || [winner])
       .sort((left, right) => right.eventTime - left.eventTime || right.quality - left.quality);
     const rejected = observations.filter(item => !accepted.includes(item));
@@ -279,7 +303,10 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
           upstream_position_source: upstream.position_source || null} : {}),
         metadata_sources: metadata.sources,
         received_at_ms: winner.receivedAtMs,
-        snapshot_timestamp_s: winner.eventTime + winner.aircraft.seen_pos,
+        snapshot_timestamp_s: winner.snapshotTime,
+        snapshot_age_at_receipt_s: winner.receivedAtMs / 1000 - winner.snapshotTime,
+        observation: winner.observation,
+        projection_lineage: winner.observation ? 'single-original-observation' : 'legacy-incremental-relay',
         observation_position_timestamp_s: winner.observationEventTime,
         observation_position_age_s: observationAge,
         observation_time_offset_s: observationOffset,

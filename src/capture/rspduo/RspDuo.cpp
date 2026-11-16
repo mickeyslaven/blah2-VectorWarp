@@ -270,18 +270,18 @@ void RspDuo::signal_callback_fault(const char* discontinuity) noexcept
 {
   // SDK callbacks must never throw into vendor C code.  Stop the process loop
   // and let its owning C++ thread publish the actionable failure instead.
-  if (discontinuity) {
+  const char* expected = nullptr;
+  const bool firstFault = callbackFaultReason.compare_exchange_strong(expected,
+    discontinuity ? discontinuity : "unspecified callback failure");
+  if (firstFault && discontinuity) {
     try { recording_discontinuity(discontinuity); }
     catch (...) {}
   }
-  if (pairedCpiQueue) {
+  if (firstFault && pairedCpiQueue) {
     try { pairedCpiQueue->discontinuity(); }
     catch (...) {}
   }
-  const char* expected = nullptr;
-  callbackFaultReason.compare_exchange_strong(expected,
-    discontinuity ? discontinuity : "unspecified callback failure");
-  callbackFault.store(true, std::memory_order_relaxed);
+  callbackFault.store(true, std::memory_order_release);
   overloadHealth.monitoring(false);
   run_fg = false;
 }
@@ -756,6 +756,27 @@ unsigned int reset, void *cbContext)
     // fault. Keep them only for the FIFO append.
     std::unique_lock<IqData> outputLock1(*outputBuffer1);
     std::unique_lock<IqData> outputLock2(*outputBuffer2);
+    const uint64_t firstLength = outputBuffer1->get_length();
+    const uint64_t secondLength = outputBuffer2->get_length();
+    const uint64_t firstCapacity = outputBuffer1->get_n();
+    const uint64_t secondCapacity = outputBuffer2->get_n();
+    // A bounded FIFO may ordinarily retire its oldest element, but doing so
+    // here would leave any consumer-owned sub-CPI tail on the old side of an
+    // unobservable gap. Fail the receiver epoch closed instead: clear both
+    // channels atomically and let the C callback wrapper publish the fault and
+    // advance processing_epoch through signal_callback_fault().
+    if (firstLength != secondLength || numSamples > firstCapacity - firstLength ||
+        numSamples > secondCapacity - secondLength) {
+      outputBuffer1->clear();
+      outputBuffer2->clear();
+      samplePositionAvailable.store(false, std::memory_order_release);
+      // Latch the epoch fault while callbackBProcessingMutex and both FIFO
+      // locks still form the publication boundary. A queued B callback must
+      // observe run_fg=false before it can publish post-clear samples.
+      signal_callback_fault(
+        "RSPduo paired FIFO overflow or asymmetric queue progression");
+      throw std::runtime_error("RSPduo paired FIFO overflow or asymmetric queue progression");
+    }
     for (i = 0; i < numSamples*4; i+=4)
     {
       outputBuffer1->push_back({(double)paired[i], (double)paired[i+1]});

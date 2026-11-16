@@ -188,12 +188,17 @@ class TrackPopulationStatistics {
       if (track.samples.at(-1)?.timestamp === frame.timestamp) continue;
       track.last_at = frame.timestamp; track.observations += 1;
       const state = String(item.state).toUpperCase();
+      // Native legacy payloads omit `measured`; a coast is a prediction, not
+      // new radar evidence. Prefer an explicit producer flag, otherwise infer
+      // a measurement only from an operational confirmed-hit state.
+      const measured = typeof item.measured === 'boolean' ? item.measured :
+        state === 'ACTIVE' || state === 'CONFIRMED';
       track.state_counts[state] = (track.state_counts[state] || 0) + 1;
       track.min_delay_km = Math.min(track.min_delay_km, delay);
       track.max_delay_km = Math.max(track.max_delay_km, delay);
       track.min_doppler_hz = Math.min(track.min_doppler_hz, item.doppler);
       track.max_doppler_hz = Math.max(track.max_doppler_hz, item.doppler);
-      if (item.measured !== false) {
+      if (measured) {
         const prior = [...track.samples].reverse().find(sample => sample.measured);
         if (prior) {
           track.delay_motion_km += Math.abs(delay - prior.delay_km);
@@ -203,7 +208,7 @@ class TrackPopulationStatistics {
         track.sum_absolute_doppler_hz += Math.abs(item.doppler);
       }
       track.samples.push({timestamp: frame.timestamp, delay_km: delay,
-        doppler_hz: item.doppler, measured: item.measured !== false});
+        doppler_hz: item.doppler, measured});
       if (track.samples.length > MAX_SAMPLES_PER_TRACK)
         track.samples.splice(0, track.samples.length - MAX_SAMPLES_PER_TRACK);
     }

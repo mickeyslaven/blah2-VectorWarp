@@ -67,6 +67,11 @@
     return Array.isArray(value) ? value : [];
   }
 
+  function confirmedTracks(value) {
+    return array(value).filter(track => ['ACTIVE', 'CONFIRMED', 'COASTING']
+      .includes(String(track?.state || '').toUpperCase()));
+  }
+
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, character => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -171,7 +176,24 @@
       const channelName = (catalog?.item?.id || id) === 'primary' ? 'Primary' :
         (catalog?.item?.id || id);
       const display = `${channelName} (${node.label})`;
-      channels.push({...source, node_id: node.id, node_label: node.label,
+      const exposureCounts = array(source.passes).reduce((totals, pass) => {
+        totals.eligible += Number(pass.cpi_exposure?.eligible_cpis) || 0;
+        totals.detected += Number(pass.cpi_exposure?.detected_cpis) || 0;
+        totals.tracked += Number(pass.cpi_exposure?.operationally_tracked_cpis) || 0;
+        totals.seconds += Number(pass.cpi_exposure?.eligible_seconds) || 0;
+        return totals;
+      }, {eligible: 0, detected: 0, tracked: 0, seconds: 0});
+      const cpiExposure = {...exposureCounts,
+        detection_fraction: exposureCounts.eligible ?
+          exposureCounts.detected / exposureCounts.eligible : null,
+        missed_detection_fraction: exposureCounts.eligible ?
+          (exposureCounts.eligible - exposureCounts.detected) / exposureCounts.eligible : null,
+        operational_track_fraction: exposureCounts.eligible ?
+          exposureCounts.tracked / exposureCounts.eligible : null,
+        operationally_untracked_fraction: exposureCounts.eligible ?
+          (exposureCounts.eligible - exposureCounts.tracked) / exposureCounts.eligible : null};
+      channels.push({...source, cpi_exposure: cpiExposure,
+        node_id: node.id, node_label: node.label,
         channel_key: `${node.id}:${channelName}`, display_channel: display,
         identity: {...(source.identity || {}), illuminator: display}});
     }
@@ -182,6 +204,17 @@
     const tracked = sum(channel => channel.association_statistics?.tracking?.associated_passes);
     const audited = sum(channel => channel.association_statistics?.timing?.audited_aircraft_cpis);
     const exact = sum(channel => channel.association_statistics?.timing?.exact_timed_aircraft_cpis);
+    const exposure = {eligible: sum(channel => channel.cpi_exposure?.eligible),
+      detected: sum(channel => channel.cpi_exposure?.detected),
+      tracked: sum(channel => channel.cpi_exposure?.tracked),
+      seconds: sum(channel => channel.cpi_exposure?.seconds)};
+    exposure.detection_fraction = exposure.eligible ? exposure.detected / exposure.eligible : null;
+    exposure.missed_detection_fraction = exposure.eligible ?
+      (exposure.eligible - exposure.detected) / exposure.eligible : null;
+    exposure.operational_track_fraction = exposure.eligible ?
+      exposure.tracked / exposure.eligible : null;
+    exposure.operationally_untracked_fraction = exposure.eligible ?
+      (exposure.eligible - exposure.tracked) / exposure.eligible : null;
     const groups = [];
     const mergeBands = (target, source) => {
       for (const [name, band] of Object.entries(source || {})) {
@@ -322,6 +355,7 @@
           tracked_of_eligible_yield: eligible ? tracked / eligible : null},
         timing: {exact_timed_aircraft_cpis: exact, audited_aircraft_cpis: audited,
           exact_fraction: audited ? exact / audited : null},
+        cpi_exposure: exposure,
         track_population: population, unique_aircraft_passes: unique}};
   }
 
@@ -473,7 +507,7 @@
 
   function setupLocationMapScaffold() {
     if (root.dataset.ready) return;
-    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><div class="location-map-drawers"><details class="location-map-sidebar location-map-controls"><summary aria-label="Map controls"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.38.35.72.64 1 .3.27.68.41 1.08.4H21v4h-.1a1.7 1.7 0 0 0-1.5.6Z"></path></svg></span><span class="map-sidebar-title">Options</span><span class="map-sidebar-selected">Map layers</span></summary><div class="location-map-sidebar-body"><div class="map-controls-body"><label class="map-coverage-filter"><span>Background</span><select id="map-background-mode"><option value="aerial">Aerial imagery + roads</option><option value="street">Street map + terrain</option></select><small>Local aerial imagery is used where an offline pack is installed.</small></label><label class="map-coverage-filter"><span>Radar ellipses</span><select id="radar-map-overlay-mode"><option value="off">Hidden</option><option value="all">Show confirmed tracks</option></select><small>Hiding ellipses does not stop radar association.</small></label><label class="map-coverage-filter"><span>ADS-B aircraft</span><select id="adsb-map-filter-mode"><option value="all">Show all</option><option value="range">All within selected range</option><option value="radar">All within observed radar range</option><option value="tracked">Only radar-tracked</option></select><small>Map-only filter; ingestion and statistics are unchanged.</small></label><label class="map-coverage-filter map-adsb-range"><span>Maximum range</span><span class="map-range-input"><input id="adsb-map-range-km" type="number" min="1" max="1000" step="1" inputmode="decimal"><span>km</span></span><small>Receiver-to-aircraft ground range.</small></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>24 h observed radar reach</strong><small>Confirmed track sectors only; gaps mean no evidence.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar matches</strong><small>Keep the current radar-associated aircraft selected.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div><div class="insight-stats" id="view-summary"></div><div id="view-detail"></div></div></details><details class="location-map-sidebar location-aircraft-sidebar"><summary aria-label="Aircraft details"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 14v-2l8-3V3c0-1.1.9-2 2-2s2 .9 2 2v6l8 3v2l-8-1v5l3 2v2l-5-1-5 1v-2l3-2v-5l-8 1Z"></path></svg></span><span class="map-sidebar-title">Aircraft</span><span class="map-sidebar-selected" id="map-sidebar-selected">Select a plane</span></summary><div class="location-map-sidebar-body"><div id="selected-aircraft-detail" aria-live="polite"></div></div></details></div></div></section>`;
+    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><div class="location-map-drawers"><details class="location-map-sidebar location-map-controls"><summary aria-label="Map controls"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.38.35.72.64 1 .3.27.68.41 1.08.4H21v4h-.1a1.7 1.7 0 0 0-1.5.6Z"></path></svg></span><span class="map-sidebar-title">Options</span><span class="map-sidebar-selected">Map layers</span></summary><div class="location-map-sidebar-body"><div class="map-controls-body"><label class="map-coverage-filter"><span>Background</span><select id="map-background-mode" title="Local aerial imagery uses installed offline packs."><option value="aerial">Aerial imagery + roads</option><option value="street">Street map + terrain</option></select></label><label class="map-coverage-filter"><span>Radar ellipses</span><select id="radar-map-overlay-mode" title="Display only; radar association continues when ellipses are hidden."><option value="off">Hidden</option><option value="all">Show confirmed tracks</option></select></label><label class="map-coverage-filter"><span>ADS-B aircraft</span><select id="adsb-map-filter-mode" title="Map display filter; ingestion and statistics are unchanged."><option value="all">Show all</option><option value="range">All within selected range</option><option value="radar">All within observed radar range</option><option value="tracked">Only radar-tracked</option></select></label><label class="map-coverage-filter map-adsb-range"><span>Maximum range</span><span class="map-range-input"><input id="adsb-map-range-km" type="number" min="1" max="1000" step="1" inputmode="decimal"><span>km</span></span><small>Receiver-to-aircraft ground range.</small></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map" title="Confirmed track sectors; gaps mean no evidence."><span><strong>24 h observed radar reach</strong></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft" title="Keep the current radar-associated aircraft selected."><span><strong>Auto-select radar matches</strong></span></label><label class="map-auto-select"><input type="checkbox" id="show-fusion-envelopes"><span><strong>Diagnostic position envelopes</strong></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div><div class="insight-stats" id="view-summary"></div><div id="view-detail"></div></div></details><details class="location-map-sidebar location-aircraft-sidebar"><summary aria-label="Aircraft details"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 14v-2l8-3V3c0-1.1.9-2 2-2s2 .9 2 2v6l8 3v2l-8-1v5l3 2v2l-5-1-5 1v-2l3-2v-5l-8 1Z"></path></svg></span><span class="map-sidebar-title">Aircraft</span><span class="map-sidebar-selected" id="map-sidebar-selected">Select a plane</span></summary><div class="location-map-sidebar-body"><div id="selected-aircraft-detail" aria-live="polite"></div></div></details></div></div></section>`;
     root.dataset.ready = 'true';
     const controlsDrawer = root.querySelector?.('.location-map-controls');
     const aircraftDrawer = root.querySelector?.('.location-aircraft-sidebar');
@@ -490,6 +524,12 @@
     root.querySelector?.('.map-adsb-range')?.remove();
     const backgroundMode = document.getElementById('map-background-mode');
     const showCoverage = document.getElementById('show-radar-coverage-on-map');
+    const showEnvelopes = document.getElementById('show-fusion-envelopes');
+    if (showEnvelopes) showEnvelopes.checked = showFusionEnvelopes;
+    showEnvelopes?.addEventListener?.('change', () => {
+      showFusionEnvelopes = showEnvelopes.checked;
+      renderLocations().catch(error => { window.blah2ViewLastError = error?.message || String(error); });
+    });
     const coverageAltitude = document.getElementById('radar-coverage-altitude');
     const autoSelect = document.getElementById('auto-select-radar-aircraft');
     const syncTrackControls = () => {
@@ -600,7 +640,7 @@
     const tracker = trackersByLane[0] || {};
     const adsb = await adsbHealth(config);
     const detections = detectionsByLane.flatMap(detectionRows);
-    const tracks = trackersByLane.flatMap(value => array(value?.data));
+    const tracks = trackersByLane.flatMap(value => confirmedTracks(value?.data));
     const strongest = [...detections].sort((left, right) => (right.snr ?? -Infinity) - (left.snr ?? -Infinity))[0];
     const hop = finite(config?.process?.data?.cpi) === null ? null : config.process.data.cpi * 1000;
     const load = hop && finite(timing?.cpi) !== null ? timing.cpi / hop * 100 : null;
@@ -612,7 +652,7 @@
     }).join('');
     renderHtml(root, `<div class="insight-stats insight-stats-four">
       ${card(detections.length, aggregate ? `Detections across ${channels.length} channels` : `${selectedLaneLabel()} detections in latest CPI`)}
-      ${card(tracks.length, aggregate ? `Persistent tracks across ${statusRows.length} nodes` : `${selectedLaneLabel()} persistent tracks`)}
+      ${card(tracks.length, aggregate ? `Radar tracks across ${statusRows.length} nodes` : `${selectedLaneLabel()} radar tracks`)}
       ${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest detection')}
       ${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', load > 100 ? 'bad' : load > 80 ? 'warning' : 'good')}
     </div><div class="overview-grid controller-overview-grid">
@@ -679,7 +719,7 @@
     const adsb = await adsbHealth(config);
     const health = healthSnapshot(config, timing, tracker, adsb);
     const stages = Object.entries(timing || {}).filter(([key, value]) => typeof value === 'number' && finite(value) !== null && !['timestamp', 'nCpi', 'uptime_s', 'uptime_days', 'cpi_data_ms', 'cpi_hop_ms', 'cpi_overlap_fraction', 'capture_backlog_ms', 'cpi'].includes(key)).sort((left, right) => Number(right[1]) - Number(left[1]));
-    renderHtml(root, `<p class="view-note"><strong>All-lane pipeline:</strong> health, timing, backlog, and load cover the complete multi-illuminator processor.</p><div class="insight-stats">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 120 ? 'bad' : health.load > 100 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', '', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
+    renderHtml(root, `<div class="insight-stats" aria-label="All-channel pipeline health" title="Health, timing, backlog, and load cover all channels.">${card(health.overall, 'Overall state', health.overallTone)}${card(health.load === null ? '—' : `${number(health.load, 0)}%`, 'Load', health.load > 120 ? 'bad' : health.load > 100 ? 'warning' : 'good')}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${health.rows}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', '', config?.process?.detection?.enable === false ? 'neutral' : 'good')}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, health.overallTone);
   }
 
@@ -688,7 +728,7 @@
   function loadActivityHistory(id) {
     activityChannel = id;
     try { activityHistory = JSON.parse(sessionStorage.getItem(
-      `blah2-activity-history:${currentNode()}:${id}`) || '[]')
+      `vectorwarp-confirmed-activity-history:${currentNode()}:${id}`) || '[]')
       .filter(item => Date.now() - item.time < 3600000); } catch (_) { activityHistory = []; }
   }
 
@@ -702,18 +742,18 @@
     const channel = selectedLaneLabel();
     if (activityChannel !== channel) loadActivityHistory(channel);
     if (!activityHistory.length || activityHistory[activityHistory.length - 1].time !== timestamp) {
-      activityHistory.push({time: timestamp, detections: rows.length, tracks: array(tracker?.data).length, snr: rows.reduce((best, item) => Math.max(best, item.snr ?? -Infinity), -Infinity), load});
+      activityHistory.push({time: timestamp, detections: rows.length, tracks: confirmedTracks(tracker?.data).length, snr: rows.reduce((best, item) => Math.max(best, item.snr ?? -Infinity), -Infinity), load});
       activityHistory = activityHistory.slice(-300);
-      try { sessionStorage.setItem(`blah2-activity-history:${currentNode()}:${channel}`,
+      try { sessionStorage.setItem(`vectorwarp-confirmed-activity-history:${currentNode()}:${channel}`,
         JSON.stringify(activityHistory)); } catch (_) { /* Storage is optional. */ }
     }
     const latest = activityHistory[activityHistory.length - 1] || {};
-    renderHtml(document.getElementById('view-summary'), `${card(latest.detections ?? 0, 'Latest detections')}${card(latest.tracks ?? 0, 'Persistent tracks')}${card(Number.isFinite(latest.snr) ? `${number(latest.snr, 1)} dB` : 'None', 'Strongest return')}${card(activityHistory.length, 'Samples this browser session')}`);
-    renderDetail(`<div class="view-note"><strong>Selected channel: ${escapeHtml(selectedLaneLabel())}.</strong> Detection and track history is collected in this browser tab. Processing load is the all-lane pipeline load.</div>`);
+    renderHtml(document.getElementById('view-summary'), `${card(latest.detections ?? 0, 'Latest detections')}${card(latest.tracks ?? 0, 'Radar tracks')}${card(Number.isFinite(latest.snr) ? `${number(latest.snr, 1)} dB` : 'None', 'Strongest return')}${card(activityHistory.length, 'Samples this browser session')}`);
+    renderDetail(`<div class="view-note" title="Detection and track history is collected in this browser tab. Processing load covers all channels.">Channel · ${escapeHtml(selectedLaneLabel())}</div>`);
     const x = activityHistory.map(item => new Date(item.time));
     const traces = [
-      {x, y: activityHistory.map(item => item.detections), name: 'Detections', type: 'scatter', mode: 'lines', line: {color: colors[0], width: 2}, yaxis: 'y'},
-      {x, y: activityHistory.map(item => item.tracks), name: 'Persistent tracks', type: 'scatter', mode: 'lines', line: {color: colors[1], width: 2}, yaxis: 'y'},
+      {x, y: activityHistory.map(item => item.detections), name: 'Detections', type: 'scatter', mode: 'lines', line: {color: radarVisualSemantics.colors.detection, width: 2}, yaxis: 'y'},
+      {x, y: activityHistory.map(item => item.tracks), name: 'Radar tracks', type: 'scatter', mode: 'lines', line: {color: radarVisualSemantics.colors.track, width: 2}, yaxis: 'y'},
       {x, y: activityHistory.map(item => Number.isFinite(item.snr) ? item.snr : null), name: 'Strongest SNR', type: 'scatter', mode: 'lines', line: {color: colors[2], width: 2}, yaxis: 'y2'},
       {x, y: activityHistory.map(item => item.load), name: 'Processing load', type: 'scatter', mode: 'lines', line: {color: colors[3], width: 2}, yaxis: 'y3'}
     ];
@@ -765,6 +805,7 @@
   let showRadarTracksOnMap = true;
   let adsbMapFilterMode = 'all';
   let showRadarCoverageOnMap = true;
+  let showFusionEnvelopes = new URLSearchParams(window.location.search).get('fusion_diagnostics') === '1';
   let radarCoverageAltitudeBand = 'all';
   let radarCoverageCache = null;
   let mapBackgroundMode = 'aerial';
@@ -796,6 +837,7 @@
     radarCoverageAltitudeBand = localStorage.getItem('vectorwarp-radar-coverage-altitude') || 'all';
   } catch (_) { /* Persistence is optional. */ }
   const aircraftTrackHistories = new Map();
+  const radarAircraftTrackHistories = new Map();
   const aircraftTrailStorageKey = `vectorwarp-aircraft-trails-v1:${currentNode()}`;
   try {
     const saved = JSON.parse(localStorage.getItem(aircraftTrailStorageKey) || '{}');
@@ -850,10 +892,13 @@
   }
 
   function selectedAircraftMarkup(item, photo = null) {
-    if (!item) return `<section class="info-card aircraft-detail-card aircraft-detail-empty"><h2>Aircraft details</h2><div class="aircraft-detail-prompt">${aircraftSvgMarkup({})}<p>Tap an aircraft or drone to inspect its live identity and radar geometry.</p></div></section>`;
+    if (!item) return `<section class="info-card aircraft-detail-card aircraft-detail-empty"><h2>Aircraft details</h2><div class="aircraft-detail-prompt">${aircraftSvgMarkup({})}<p>Select an aircraft</p></div></section>`;
     const info = aircraftInfo(item);
+    const independentPosition = item._radar_position;
+    const positionLabel = independentPosition ? radarVisualSemantics.labels.independent : info.positionSource;
+    const fusionStatusMarkup = independentPosition ? `<div class="aircraft-fusion-status"><strong>${radarVisualSemantics.labels.independent}</strong> · ${window.vectorwarpFusionAircraft.stateLabel(independentPosition.state)}<small>${independentPosition.channels.length > 1 ? radarVisualSemantics.labels.multiChannel : 'Channel support'}: ${independentPosition.channels.map(escapeHtml).join(', ') || 'Not reported'}</small></div>` : '';
     const remoteId = item.remote_id && typeof item.remote_id === 'object' ? item.remote_id : null;
-    const photoMarkup = !remoteId && photo?.available ?
+    const photoMarkup = independentPosition && !independentPosition.identityMatched ? '' : !remoteId && photo?.available ?
       `<figure class="aircraft-photo"><img src="${escapeHtml(photo.thumbnail)}" alt="${escapeHtml(info.label)} aircraft" loading="lazy" referrerpolicy="no-referrer"><figcaption>Photo by ${escapeHtml(photo.photographer || 'contributor')} · <a href="${escapeHtml(photo.link)}" target="_blank" rel="noopener noreferrer">Planespotters.net</a></figcaption></figure>` :
       `<div class="aircraft-photo aircraft-photo-fallback">${aircraftSvgMarkup(item)}<span>${remoteId ? 'Broadcast Remote ID' : photo?.loading ? 'Looking for a photo…' : photo?.enabled === false ? 'Aircraft photos are off in ADS-B settings' : 'No photo available'}</span></div>`;
     const remoteIdMarkup = remoteId ? `<details class="aircraft-detail-section" open><summary>Remote ID</summary><dl>
@@ -863,13 +908,13 @@
     </dl></details>` : '';
     return `<section class="info-card aircraft-detail-card"><header><div><span class="aircraft-detail-kind">${escapeHtml(humanize(aircraftKind(item)))}</span><h2>${escapeHtml(info.label)}</h2><span class="aircraft-detail-subtitle">${aircraftValue(info.registration)} · ${aircraftValue(info.type)}</span></div><button type="button" class="button-secondary aircraft-detail-close" aria-label="Close aircraft details">Close</button></header><div class="aircraft-primary-metrics">
       <div><strong>${info.altitude === null ? '—' : integer(info.altitude)}</strong><span>ft altitude</span></div><div><strong>${info.speed === null ? '—' : integer(info.speed)}</strong><span>kt speed</span></div><div><strong>${info.heading === null ? '—' : `${integer(info.heading)}°`}</strong><span>heading</span></div><div><strong>${info.verticalRate === null ? '—' : integer(info.verticalRate)}</strong><span>ft/min</span></div>
-    </div>${photoMarkup}${remoteIdMarkup}<details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
+    </div>${fusionStatusMarkup}${photoMarkup}${remoteIdMarkup}<details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
       <div><dt>Description</dt><dd>${aircraftValue(info.description)}</dd></div><div><dt>ICAO / category</dt><dd>${aircraftValue(info.hex)} · ${aircraftValue(info.category)}</dd></div>
-      <div><dt>Squawk / signal</dt><dd>${aircraftValue(info.squawk)} · ${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div><div><dt>Position</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''} · ${info.age === null ? '—' : `${number(info.age, 1)} s old`}</dd></div>
-      <div><dt>Corroborated by</dt><dd>${info.corroboratedProviders.length ? info.corroboratedProviders.map(escapeHtml).join(', ') : 'No second fresh source'}</dd></div>
+      <div><dt>Squawk / signal</dt><dd>${aircraftValue(info.squawk)} · ${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div><div><dt>Position</dt><dd>${aircraftValue(positionLabel)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''} · ${info.age === null ? '—' : `${number(info.age, 1)} s old`}</dd></div>
+      <div><dt>Position sources</dt><dd>${info.corroboratedProviders.length ? info.corroboratedProviders.map(escapeHtml).join(', ') : 'Single source'}</dd></div>
     </dl></details><details class="aircraft-detail-section"><summary>Radar geometry</summary><dl>
-      <div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div><div><dt>Excess path / Doppler</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`} · ${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
-      <div><dt>Radar association</dt><dd>${item.radar_track_id ? `Track ${escapeHtml(item.radar_track_id)} · ${escapeHtml(humanize(item.radar_track_state))}` : 'No confirmed match'}</dd></div>
+      <div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div><div><dt>Bistatic range / Doppler</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`} · ${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
+      <div><dt>Radar association</dt><dd>${item.radar_track_id ? `Radar tracked · ${escapeHtml(item.radar_track_id)} · ${escapeHtml(humanize(item.radar_track_state))}` : remoteId ? 'Remote ID only' : 'ADS-B only'}</dd></div>
     </dl></details></section>`;
   }
 
@@ -927,9 +972,11 @@
     target.closest?.('.location-aircraft-sidebar')?.classList.toggle('has-aircraft-selection', Boolean(item));
     const sidebarLabel = document.getElementById('map-sidebar-selected');
     if (sidebarLabel) sidebarLabel.textContent = item ? aircraftInfo(item).label : 'Select a plane';
-    const hex = item ? aircraftInfo(item).hex.toLowerCase() : '';
-    renderHtml(target, selectedAircraftMarkup(item, hex ? aircraftPhotoCache.get(hex) : null));
-    target.querySelector?.('.aircraft-detail-close')?.addEventListener('click', () => {
+    const hex = item && (!item._radar_position || item._radar_position.identityMatched) ? aircraftInfo(item).hex.toLowerCase() : '';
+    renderHtml(target, selectedAircraftMarkup(item, hex ? aircraftPhotoCache.get(hex) || {loading: true} : null));
+    const close = target.querySelector?.('.aircraft-detail-close');
+    if (close) close.onclick = () => {
+      const selectedIcon = document.querySelector?.('.location-aircraft-marker.selected .location-aircraft-icon');
       selectedAircraftId = null; selectedAircraftSnapshot = null;
       renderSelectedAircraftCard(aircraft);
       const aircraftDrawer = document.querySelector?.('.location-aircraft-sidebar');
@@ -937,9 +984,10 @@
       document.querySelectorAll?.('.location-aircraft-marker.selected').forEach(marker =>
         marker.classList.remove('selected'));
       document.querySelector?.('.location-aircraft-layer')?._updatePositions?.();
-    });
+      selectedIcon?.focus();
+      if (document.activeElement !== selectedIcon) aircraftDrawer?.querySelector('summary')?.focus();
+    };
     if (!hex || (aircraftPhotoCache.has(hex) && !aircraftPhotoCache.get(hex)?.loading)) return;
-    renderHtml(target, selectedAircraftMarkup(item, {loading: true}));
     loadAircraftPhoto(hex).finally(() => {
         if (selectedAircraftId === (aircraftInfo(item).hex || aircraftInfo(item).label))
           renderSelectedAircraftCard(aircraft);
@@ -1059,7 +1107,7 @@
       style: locationMapStyle(imageryManifest),
       center: savedCamera?.center || [viewport.center.lon, viewport.center.lat],
       zoom: Number.isFinite(savedCamera?.zoom) ? savedCamera.zoom : viewport.zoom,
-      pitch: Number.isFinite(savedCamera?.pitch) ? savedCamera.pitch : 58,
+      pitch: Number.isFinite(savedCamera?.pitch) ? savedCamera.pitch : 0,
       bearing: Number.isFinite(savedCamera?.bearing) ? savedCamera.bearing : 0,
       minPitch: 0,
       maxPitch: 85,
@@ -1113,14 +1161,6 @@
     for (const item of rows) {
       const properties = {track: String(item.id ?? ''),
         uncertainty: finite(item.uncertainty_deg), state: String(item.state || '')};
-      if (item.fused === true) {
-        const coordinates = [finite(item.estimate?.longitude), finite(item.estimate?.latitude)];
-        if (coordinates.every(Number.isFinite)) features.push({type: 'Feature',
-          properties: {...properties, kind: item.resolved === true ? 'fused' : 'fusion-hypothesis',
-            support: Number(item.support) || 0},
-          geometry: {type: 'Point', coordinates}});
-        continue;
-      }
       const corridor = array(item.uncertainty_corridor).map(point =>
         [finite(point.longitude), finite(point.latitude)]).filter(point => point.every(Number.isFinite));
       if (corridor.length > 1) features.push({type: 'Feature',
@@ -1164,15 +1204,22 @@
     add({id: 'vectorwarp-bearing-candidates', type: 'circle', source: bearingOverlaySourceId,
       filter: ['==', ['get', 'kind'], 'candidate'],
       paint: {'circle-radius': 5, 'circle-color': '#f7c75f', 'circle-opacity': .55}});
-    add({id: 'vectorwarp-fused-track-hypotheses', type: 'circle', source: bearingOverlaySourceId,
-      filter: ['==', ['get', 'kind'], 'fused'],
-      paint: {'circle-radius': 8, 'circle-color': '#20dddc', 'circle-opacity': .9,
-        'circle-stroke-color': '#102c2b', 'circle-stroke-width': 3}});
-    add({id: 'vectorwarp-fusion-ambiguous-hypotheses', type: 'circle', source: bearingOverlaySourceId,
-      filter: ['==', ['get', 'kind'], 'fusion-hypothesis'],
-      paint: {'circle-radius': 5, 'circle-color': '#20dddc', 'circle-opacity': .18,
-        'circle-stroke-color': '#20dddc', 'circle-stroke-opacity': .7,
-        'circle-stroke-width': 1}});
+  }
+
+  function syncFusionEnvelopeLayers(map, data) {
+    if (!map?.addSource || !map?.getSource || !map?.addLayer || !map?.getLayer) return;
+    const sourceId = 'vectorwarp-fusion-envelopes';
+    const source = map.getSource(sourceId);
+    if (source?.setData) source.setData(data);
+    else map.addSource(sourceId, {type:'geojson',data});
+    const active = map.getSource(sourceId);
+    if (active) active._vectorwarpData = data;
+    if (!map.getLayer('vectorwarp-fusion-envelope-fill')) map.addLayer({
+      id:'vectorwarp-fusion-envelope-fill',type:'fill',source:sourceId,
+      paint:{'fill-color':'#b6aca6','fill-opacity':.08}});
+    if (!map.getLayer('vectorwarp-fusion-envelope-outline')) map.addLayer({
+      id:'vectorwarp-fusion-envelope-outline',type:'line',source:sourceId,
+      paint:{'line-color':'#b6aca6','line-width':2,'line-dasharray':[3,2]}});
   }
 
   function radarCoverageGeoJson(coverage, receiver) {
@@ -1341,7 +1388,7 @@
         if (!record) {
           const marker = document.createElement('div');
           marker.className = 'location-aircraft-marker';
-          Object.assign(marker.style, {position: 'absolute', width: '42px', height: '52px',
+          Object.assign(marker.style, {position: 'absolute', width: '38px', height: '46px',
             transform: 'translate(-50%, -50%)', pointerEvents: 'none'});
           marker.tabIndex = -1;
           marker.innerHTML = '<span class="location-aircraft-icon"></span><span class="location-aircraft-label"></span>';
@@ -1380,12 +1427,14 @@
         if (nextHeading !== null) record.heading = ((nextHeading % 360) + 360) % 360;
         record.flightPathAngle = aircraftFlightPathAngle(info.verticalRate, info.speed);
         const marker = record.marker;
-        const color = aircraftAltitudeColor(item);
+        const color = item._radar_position ? radarVisualSemantics.colors.independent : aircraftAltitudeColor(item);
         const radarTracked = Boolean(item.radar_track_id);
         marker.classList?.toggle('selected', selectedAircraftId === aircraftId);
         marker.classList?.toggle('snapshot-stale', item._snapshot_stale === true);
         marker.classList?.toggle('mlat-position', info.positionSource === 'MLAT');
         marker.classList?.toggle('radar-tracked', radarTracked);
+        marker.classList?.toggle('independent-radar-position', Boolean(item._radar_position));
+        marker.dataset.positionSource = item._radar_position ? 'radar' : 'adsb';
         marker.classList?.toggle('radar-active', radarTracked &&
           ['ACTIVE', 'CONFIRMED'].includes(String(item.radar_track_state).toUpperCase()));
         const signature = [aircraftKind(item), color, heading, info.label,
@@ -1394,7 +1443,7 @@
           record.icon.replaceChildren();
           record.label.textContent = info.label;
           record.label.style.borderColor = color;
-          record.icon.setAttribute('aria-label', `${info.label}. Select for aircraft details.`);
+          record.icon.setAttribute('aria-label', `${info.label}. ${item._radar_position ? radarVisualSemantics.labels.independent + '. ' : ''}Select for aircraft details.`);
           record.signature = signature;
         }
       }
@@ -1515,17 +1564,20 @@
         marker.style.visibility = onScreen ? 'visible' : 'hidden';
         if (isAircraft && icon) {
           const aircraftId = aircraftInfo(item).hex || aircraftInfo(item).label;
+          const selected = selectedAircraftId === aircraftId;
+          marker.classList?.toggle('selected', selected);
+          icon.setAttribute('aria-pressed', String(selected));
           if (onScreen) aircraftLabelCandidates.push({marker, item, x: point.x,
-            y: point.y - altitudeLift, selected: selectedAircraftId === aircraftId,
+            y: point.y - altitudeLift, selected,
             radarTracked: Boolean(item.radar_track_id)});
           const rotation = aircraftScreenRotation(heading, mapBearing);
           const yaw = rotation === null ? 0 : rotation;
           const pitch = Number.isFinite(flightPathAngle) ? flightPathAngle : 0;
           icon.dataset.flightPath = pitch > .5 ? 'climbing' : pitch < -.5 ? 'descending' : 'level';
-          const modelSize = mapZoom < 6 ? 11 : mapZoom < 7.5 ? 13.5 : 16.5;
+          const modelSize = mapZoom < 6 ? 8 : mapZoom < 7.5 ? 9.5 : 11;
           if (onScreen) modelInstances.push({model: aircraftKind(item), x: point.x,
             y: point.y - altitudeLift, yaw, pitch, size: modelSize,
-            color: aircraftAltitudeColor(item)});
+            color: item._radar_position ? radarVisualSemantics.colors.independent : aircraftAltitudeColor(item)});
         } else if (onScreen) {
           modelInstances.push({model: item.kind === 'transmitter' ? 'transmitter' : 'receiver',
             x: point.x, y: point.y - 23, yaw: -mapBearing, pitch: 0,
@@ -1547,8 +1599,8 @@
             {left: point.x - 164, right: point.x - 18, top: point.y + 8, bottom: point.y + 38});
         }
         const mobile = mapWidth <= 760;
-        const labelLimit = mapZoom < 6 ? (mobile ? 12 : 28) :
-          mapZoom < 7.5 ? (mobile ? 22 : 48) : (mobile ? 36 : 90);
+        const labelLimit = mapZoom < 6 ? (mobile ? 3 : 4) :
+          mapZoom < 7.5 ? (mobile ? 4 : 6) : (mobile ? 5 : 8);
         const overlaps = box => occupied.some(other => !(box.right + 4 <= other.left ||
           box.left >= other.right + 4 || box.bottom + 3 <= other.top || box.top >= other.bottom + 3));
         aircraftLabelCandidates.sort((left, right) =>
@@ -1575,7 +1627,8 @@
           layer._modelRenderer?.render(modelInstances, {fast: !settled});
         }
         if (refreshGeometry) {
-        const history = selectedAircraftId ? aircraftTrackHistories.get(selectedAircraftId) || [] : [];
+        const selectedIsRadar = layer._aircraftSnapshot.some(item => aircraftIdentity(item) === selectedAircraftId && item._radar_position);
+        const history = selectedAircraftId ? (selectedIsRadar ? radarAircraftTrackHistories : aircraftTrackHistories).get(selectedAircraftId) || [] : [];
         const points = history.map(point => {
           const projected = map.project([point.lon, point.lat]);
           return {x: projected.x, groundY: projected.y,
@@ -1605,11 +1658,11 @@
               altitudeValues.reduce((sum, value) => sum + value, 0) / altitudeValues.length : null;
             const segment = layer._flightTrail.children[index];
             segment.setAttribute('d', `M${from.x.toFixed(1)} ${from.flightY.toFixed(1)}L${to.x.toFixed(1)} ${to.flightY.toFixed(1)}`);
-            segment.setAttribute('stroke', aircraftAltitudeColor({altitude}));
+            segment.setAttribute('stroke', selectedIsRadar ? radarVisualSemantics.colors.independent : aircraftAltitudeColor({altitude}));
           }
         }
         const last = points[points.length - 1];
-        layer._altitudeConnector?.setAttribute('stroke', aircraftAltitudeColor({altitude: last?.altitude}));
+        layer._altitudeConnector?.setAttribute('stroke', selectedIsRadar ? radarVisualSemantics.colors.independent : aircraftAltitudeColor({altitude: last?.altitude}));
         layer._altitudeConnector?.setAttribute('d', last && Math.abs(last.groundY - last.flightY) > 1 ?
           `M${last.x.toFixed(1)} ${last.groundY.toFixed(1)}L${last.x.toFixed(1)} ${last.flightY.toFixed(1)}` : '');
         }
@@ -1779,7 +1832,9 @@
     const stationaryIds = new Set(array(bearingLocations?.data).filter(item => item?.stationary_clutter).map(item => item.id));
     const eligibleMapTracks = showStationary ? tracks : tracks.filter(item => !stationaryIds.has(item.id));
     const visibleTracks = showRadarTracksOnMap ? eligibleMapTracks : [];
-    const mapAircraft = filterMapAircraft(aircraft, coverage);
+    const geographicAircraft = window.vectorwarpFusionAircraft?.mapAircraft(aircraft, fused, receiver) || aircraft;
+    const mapAircraft = geographicAircraft.filter(item => item._radar_position || filterMapAircraft([item], coverage).length);
+    updateAircraftTrackHistories(radarAircraftTrackHistories, mapAircraft.filter(item => item._radar_position));
     if (selectedAircraftId && !mapAircraft.some(item => aircraftIdentity(item) === selectedAircraftId)) {
       selectedAircraftId = null;
       selectedAircraftSnapshot = null;
@@ -1792,53 +1847,49 @@
     const allBearingRows = array(bearingLocations?.data).filter(item => item &&
       (item.location || item.estimate || array(item.candidates).length));
     const bearingRows = showStationary ? allBearingRows : allBearingRows.filter(item => item.publishable !== false);
-    const fusedTracks = fused?.available === true ? array(fused?.tracks).filter(item =>
-      String(item?.state || '').toUpperCase() === 'FUSED_ACTIVE') : [];
-    const fusedHypotheses = fused?.map_support?.available === true ?
-      array(fused.map_support.tracks).filter(item =>
-        String(item?.state || '').toUpperCase() === 'PERSISTENT_AMBIGUOUS' && Number(item?.misses) === 0) : [];
-    const fusedRows = [...fusedTracks, ...fusedHypotheses].map((item, index) => ({
-      id: item.id || `fused-${index + 1}`,
-      state: item.state || 'FUSED_CANDIDATE', fused: true,
-      resolved: String(item?.state || '').toUpperCase() === 'FUSED_ACTIVE',
-      support: item.support, contributors: item.contributors,
-      estimate: {latitude: finite(item.latitude ?? item.position_hypothesis?.latitude),
-        longitude: finite(item.longitude ?? item.position_hypothesis?.longitude)}
-    })).filter(item => [item.estimate.latitude, item.estimate.longitude].every(Number.isFinite));
+    const independentPositions = mapAircraft.filter(item => item._radar_position);
+    const fusionEnvelopes = window.vectorwarpFusionAircraft?.envelopeGeoJson(fused, receiver, showFusionEnvelopes) || {type:'FeatureCollection',features:[]};
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
     const configuredExcessKm = configuredDelayBins * resolution;
-    const viewportKey = [receiver.latitude, receiver.longitude, transmitter.latitude,
+    const viewportKey = ['map-topdown-local-v3', receiver.latitude, receiver.longitude, transmitter.latitude,
       transmitter.longitude, configuredExcessKm].join(':');
     if (!locationMapViewport || locationMapViewport.key !== viewportKey) {
       // Online ADS-B radius describes feed acquisition, not radar reach. Frame
       // a fresh map from the durable 24-hour radar-confirmed envelope instead.
       // Do this only at initialization/config change so new tracks never yank
       // an operator's active pan or zoom.
-      const coverageRadiusKm = Math.max(0, ...array(coverage?.points)
-        .map(point => finite(point?.ground_range_km) ?? 0));
-      const spanKm = Math.max(10, baseline + configuredExcessKm, coverageRadiusKm * 2);
+      const coverageRadii = array(coverage?.points).map(point => finite(point?.ground_range_km))
+        .filter(value => value !== null && value >= 0).sort((left, right) => left - right);
+      // A single stale or extreme reach sample must not zoom the operating map
+      // out to a regional/continental view. Frame the durable 90th percentile,
+      // but cap the initial view at the useful local operating area. Operators
+      // can still pan and zoom without restriction.
+      const coverageRadiusKm = coverageRadii.length ?
+        coverageRadii[Math.floor((coverageRadii.length - 1) * .9)] : 0;
+      const spanKm = Math.min(120, Math.max(30, baseline + configuredExcessKm, coverageRadiusKm * 2));
       locationMapViewport = {
         key: viewportKey,
         center: {lat: (receiver.latitude + transmitter.latitude) / 2,
           lon: (receiver.longitude + transmitter.longitude) / 2},
-        zoom: Math.max(4, Math.min(12, 13 - Math.log2(spanKm)))
+        zoom: Math.max(8, Math.min(12, 15.25 - Math.log2(spanKm)))
       };
     }
     const remoteIdCount = mapAircraft.filter(item => item.remote_id).length;
-    renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(fusedTracks.length, 'Confirmed fused tracks')}${card(fusedHypotheses.length, 'Diagnostic ambiguities')}${card(mapAircraft.length, 'Aircraft shown')}${remoteIdEnabled ? card(remoteIdCount, 'Remote ID drones') : ''}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, laneContext.enabled ? `${laneContext.id} coverage passes` : 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
+    renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(independentPositions.length, 'Independent radar positions')}${showFusionEnvelopes ? card(fusionEnvelopes.features.length, 'Diagnostic envelopes') : ''}${card(mapAircraft.length, 'Aircraft shown')}${remoteIdEnabled ? card(remoteIdCount, 'Remote ID drones') : ''}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, laneContext.enabled ? `${laneContext.id} coverage passes` : 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
     renderDetail('');
     const map = await ensureLocationMap(locationMapViewport);
-    syncBearingOverlayLayers(map, [...bearingRows, ...fusedRows]);
+    syncBearingOverlayLayers(map, bearingRows);
+    syncFusionEnvelopeLayers(map, fusionEnvelopes);
     renderSelectedAircraftCard(mapAircraft);
     renderAircraftOverlays(mapAircraft, [
       {...receiver, kind: 'receiver', name: receiver.name || 'Receiver'},
       {...transmitter, kind: 'transmitter', name: transmitter.name || 'Illuminator'}
     ], radarTrackOverlays, showRadarCoverageOnMap ? coverage : null);
-    const trackStateLabel = tracks.length ?
-      `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'} · ${mapAircraft.length} aircraft shown${showRadarTracksOnMap ? ' · ellipses shown' : ''}` :
+    const trackStateLabel = tracks.length || independentPositions.length ?
+      `${tracks.length} channel tracks · ${independentPositions.length} independent radar positions · ${mapAircraft.length} aircraft shown${showRadarTracksOnMap ? ' · ellipses shown' : ''}` :
       'No current radar tracks';
     setState(aircraftError || trackStateLabel,
-      aircraftError ? 'warning' : tracks.length && showRadarTracksOnMap ? 'good' : 'warning');
+      aircraftError ? 'warning' : independentPositions.length || tracks.length && showRadarTracksOnMap ? 'good' : 'warning');
   }
 
   async function renderEvaluation() {
@@ -1883,8 +1934,8 @@
     });
     renderHtml(detail, aircraft.length ? table(['Aircraft', 'Bistatic range (km)', 'Doppler (Hz)', 'Position age'], aircraftRows) : empty('No aircraft in the feed', 'ADS-B is connected.'));
     const traces = [
-      {x: radar.map(item => item.delay), y: radar.map(item => item.doppler), type: 'scatter', mode: 'markers', name: 'Radar detections', marker: {size: 10, color: colors[0]}, customdata: radar.map(item => item.snr), hovertemplate: 'Radar<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<br>SNR %{customdata:.1f} dB<extra></extra>'},
-      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B', text: aircraft.map(aircraftLabel), hovertext: aircraft.map(item => aircraftHoverText(item, {delay: finite(item.delay), doppler: finite(item.doppler)})), textposition: 'top center', marker: {size: 11, color: colors[1], symbol: aircraft.map(aircraftPlotSymbol), line: {width: 2}}, hovertemplate: '%{hovertext}<extra></extra>'}
+      {x: radar.map(item => item.delay), y: radar.map(item => item.doppler), type: 'scatter', mode: 'markers', name: radarVisualSemantics.labels.detection, legendrank: radarVisualSemantics.legendRank.detection, marker: {size: 8, color: radarVisualSemantics.colors.detection}, customdata: radar.map(item => item.snr), hovertemplate: 'Radar<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<br>SNR %{customdata:.1f} dB<extra></extra>'},
+      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: radarVisualSemantics.labels.adsb, legendrank: radarVisualSemantics.legendRank.adsb, text: aircraft.map(aircraftLabel), hovertext: aircraft.map(item => aircraftHoverText(item, {delay: finite(item.delay), doppler: finite(item.doppler)})), textposition: 'top center', marker: {size: 10, color: aircraft.map(aircraftAltitudeColor), symbol: 'circle', line: {color: '#10251f', width: 1.2}}, hovertemplate: '%{hovertext}<extra></extra>'}
     ];
     await Plotly.react('data', traces, {...plotBase, xaxis: {title: 'Bistatic range (km)', gridcolor: '#47362e'}, yaxis: {title: 'Bistatic Doppler (Hz)', gridcolor: '#47362e'}}, plotConfig);
     setState(`ADS-B online · ${timeLabel(detection?.timestamp)}`, 'good');
@@ -1904,7 +1955,7 @@
       return;
     }
     const rows = tracks.map(track => `<tr><td>${escapeHtml(track.id)}</td><td><span class="state-pill ${escapeHtml(String(track.state || '').toLowerCase())}">${escapeHtml(humanize(track.state))}</span></td><td>${number(trackRangeKm(track.delay, config), 2)}</td><td>${number(track.doppler, 1)}</td><td>${integer(track.n)}</td></tr>`);
-    const stateGuide = '<p class="view-note"><strong>States:</strong> Tentative/Associated are candidates. Active is confirmed. Coasting is a confirmed track with missed detections.</p>';
+    const stateGuide = '<details class="statistics-table-details"><summary>Track states</summary><p>Tentative/Associated are candidates. Active is confirmed. Coasting is a confirmed track with missed detections.</p></details>';
     renderHtml(detail, stateGuide + (tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Waiting for track confirmation' : 'No confirmed tracks', tracker?.nTentative ? `${tracker.nTentative} tentative track${tracker.nTentative === 1 ? ' needs' : 's need'} more detections.` : 'No detection sequence meets the tracking rules.')));
     const traces = [];
     tracks.forEach((track, index) => {
@@ -1953,7 +2004,8 @@
     const aggregateAssociation = aggregate?.overall_association_statistics || {};
     const channelAssociationRows = array(aggregate?.illuminators).map(channel => {
       const value = channel.association_statistics || {};
-      return `<tr><td>${escapeHtml(channel.identity?.illuminator || channel.selected_channel)}</td><td>${integer(value.detection?.associated_passes)} / ${integer(value.detection?.eligible_adsb_passes)}</td><td>${percent(value.detection?.yield, 1)}</td><td>${integer(value.tracking?.associated_passes)} / ${integer(value.tracking?.detected_passes)}</td><td>${percent(value.tracking?.yield, 1)}</td><td>${integer(value.timing?.audited_aircraft_cpis)}</td></tr>`;
+      const exposure = channel.cpi_exposure || {};
+      return `<tr><td>${escapeHtml(channel.identity?.illuminator || channel.selected_channel)}</td><td>${integer(value.detection?.associated_passes)} / ${integer(value.detection?.eligible_adsb_passes)}</td><td>${percent(value.detection?.yield, 1)}</td><td>${integer(value.tracking?.associated_passes)} / ${integer(value.tracking?.detected_passes)}</td><td>${percent(value.tracking?.yield, 1)}</td><td>${number(exposure.seconds, 1)} s</td><td>${percent(exposure.detection_fraction, 1)}</td><td>${percent(exposure.operational_track_fraction, 1)}</td></tr>`;
     });
     const windows = {...(statistics?.windows || {})};
     if (statistics?.current_setup_lifetime)
@@ -1964,6 +2016,13 @@
     const coverage = day;
     const limits = statistics?.limits || {};
     const scoreRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.eligible_passes)}</td><td>${percent(item.detection_yield, 1)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
+    const cpiExposureRows = periods.map(([label, item = {}]) => {
+      const exposure = item.cpi_exposure || {};
+      const completeness = exposure.complete === false ?
+        `Partial · ${integer(exposure.excluded_archived_passes)} archived passes excluded` :
+        'Complete';
+      return `<tr><td>${label}</td><td>${number(exposure.eligible_seconds, 1)} s</td><td>${percent(exposure.detection_fraction, 1)}</td><td>${percent(exposure.missed_detection_fraction, 1)}</td><td>${percent(exposure.operational_track_fraction, 1)}</td><td>${percent(exposure.operationally_untracked_fraction, 1)}</td><td>${escapeHtml(completeness)}</td></tr>`;
+    });
     const outcomeRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_config_passes)}</td><td>${integer(item.eligible_no_radar_return)}</td><td>${integer(item.detected_not_tracked)}</td><td>${integer(item.tracked_passes)}</td></tr>`);
     const exclusionRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_span?.below_detection_floor)}</td><td>${integer(item.out_of_span?.above_delay_ceiling)}</td><td>${integer(item.out_of_span?.outside_doppler_span)}</td><td>${integer(item.out_of_span?.stale_truth)}</td><td>${integer(item.out_of_span?.missing_exact_timing)}</td><td>${integer(item.out_of_span?.beyond_clutter_cancellation)}</td></tr>`);
     const activePasses = array(statistics.active_passes);
@@ -1971,13 +2030,13 @@
       .sort((left, right) => (finite(right.tracked_cpis) ?? 0) - (finite(left.tracked_cpis) ?? 0) ||
         (finite(right.detected_cpis) ?? 0) - (finite(left.detected_cpis) ?? 0) ||
         (finite(right.eligible_cpis) ?? 0) - (finite(left.eligible_cpis) ?? 0));
-    const activeRows = activeEligible.map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.status))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${number(item.last_truth?.delay_km, 2)}</td><td>${number(item.last_truth?.doppler_hz, 1)}</td></tr>`);
+    const activeRows = activeEligible.map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.status))}</td><td>${number(item.cpi_exposure?.eligible_seconds, 1)} s</td><td>${percent(item.cpi_exposure?.detection_fraction, 1)}</td><td>${percent(item.cpi_exposure?.operational_track_fraction, 1)}</td><td>${number(item.last_truth?.delay_km, 2)}</td><td>${number(item.last_truth?.doppler_hz, 1)}</td></tr>`);
     const scoredFinalized = (array(statistics.recent_scored_passes).length ?
       array(statistics.recent_scored_passes) : array(statistics.recent_finalized_passes)
         .filter(item => (finite(item.eligible_cpis) ?? 0) >= 3))
       .sort((left, right) => (finite(right.finalized_at) ?? 0) -
         (finite(left.finalized_at) ?? 0));
-    const finalizedRows = scoredFinalized.slice(0, 25).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.outcome))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${timeLabel(item.finalized_at)}</td></tr>`);
+    const finalizedRows = scoredFinalized.slice(0, 25).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.outcome))}</td><td>${number(item.cpi_exposure?.eligible_seconds, 1)} s</td><td>${percent(item.cpi_exposure?.detection_fraction, 1)}</td><td>${percent(item.cpi_exposure?.operational_track_fraction, 1)}</td><td>${timeLabel(item.finalized_at)}</td></tr>`);
     const quality = statistics.data_quality || {};
     const yieldFraction = value => Math.max(0, Math.min(1, finite(value) ?? 0));
     const yieldChart = (rows, label) => rows.length ? `<div class="statistics-yield-chart" role="img" aria-label="${escapeHtml(label)}">
@@ -2207,9 +2266,10 @@
       const eligible = finite(item.eligible_cpis) ?? 0;
       const detected = finite(item.detected_cpis) ?? 0;
       const tracked = finite(item.tracked_cpis) ?? 0;
+      const exposure = item.cpi_exposure || {};
       const tone = tracked >= 3 ? 'tracked' : detected >= 3 ? 'detected' : 'missed';
       const state = recent ? humanize(item.outcome) : (tracked ? 'Tracked so far' : detected ? 'Detected so far' : humanize(item.status));
-      return `<article class="pass-visual-card ${tone}"><header><strong>${escapeHtml(item.flight || item.hex)}</strong><span>${escapeHtml(state)}</span></header><div class="pass-visual-tallies"><span><b>${integer(eligible)}</b>Eligible</span><span><b>${integer(detected)}</b>Detected</span><span><b>${integer(tracked)}</b>Tracked</span></div>${recent ? `<small>${timeLabel(item.finalized_at)}</small>` : `<small>${number(item.last_truth?.delay_km, 2)} km · ${number(item.last_truth?.doppler_hz, 1)} Hz</small>`}</article>`;
+      return `<article class="pass-visual-card ${tone}"><header><strong>${escapeHtml(item.flight || item.hex)}</strong><span>${escapeHtml(state)}</span></header><div class="pass-visual-tallies"><span><b>${number(exposure.eligible_seconds, 1)} s</b>Eligible</span><span><b>${percent(exposure.detection_fraction, 1)}</b>Detected CPIs</span><span><b>${percent(exposure.operational_track_fraction, 1)}</b>Tracked CPIs</span></div>${recent ? `<small>${timeLabel(item.finalized_at)}</small>` : `<small>${number(item.last_truth?.delay_km, 2)} km · ${number(item.last_truth?.doppler_hz, 1)} Hz</small>`}</article>`;
     }).join('');
     const outcomeVisual = item => `<div class="outcome-visual">${[
       ['Outside search', item?.out_of_config_passes, 'outside'],
@@ -2235,6 +2295,59 @@
       return `<div class="limits-visual" role="img" aria-label="Delay Doppler search and strict match limits"><div class="limits-search"><span class="limits-clutter" style="width:${clutterWidth.toFixed(1)}%">Clutter</span><span class="limits-gate">±${number(limits.matchDelayKm, 2)} km<br>±${number(limits.matchDopplerHz, 1)} Hz</span><i class="limits-zero"></i></div><div class="limits-axis"><span>${number(limits.delayMinKm, 2)} km</span><b>Doppler ${number(limits.dopplerMinHz, 0)}…${number(limits.dopplerMaxHz, 0)} Hz</b><span>${number(limits.delayMaxKm, 2)} km</span></div></div>`;
     };
     const scoringPipeline = () => `<div class="scoring-pipeline" role="img" aria-label="Scoring evidence pipeline"><span class="complete"><i>1</i><b>Capture</b><small>${integer(quality.unique_cpi_frames)} CPI frames</small></span><span class="complete"><i>2</i><b>Alignment</b><small>${integer(statistics.association_lag_cpis)} CPI hold</small></span><span class="complete"><i>3</i><b>Truth match</b><small>${escapeHtml(timingLabel)}</small></span><span class="complete"><i>4</i><b>Pass qualification</b><small>≥3 searchable CPIs</small></span></div>`;
+    const presenceTime = value => {
+      const seconds = finite(value);
+      if (seconds === null) return '—';
+      if (seconds >= 3600) return `${number(seconds / 3600, 2)} h`;
+      if (seconds >= 60) return `${number(seconds / 60, 1)} min`;
+      return `${number(seconds, 1)} s`;
+    };
+    const cpiPresenceHero = (exposure = {}, scope = 'Selected channel') => {
+      const seconds = finite(exposure.eligible_seconds) ?? finite(exposure.seconds);
+      return `<div class="cpi-presence-block"><header><h2 title="Denominator: searchable CPIs while an eligible ADS-B aircraft was present.">Aircraft-presence CPI coverage</h2><p>${escapeHtml(scope)}</p></header><div class="insight-stats insight-stats-four statistics-distance-hero cpi-presence-hero">
+        <article class="metric-card statistics-hero-eligible"><strong>${presenceTime(seconds)}</strong><span>Eligible aircraft-presence time</span><small>${integer(exposure.eligible_cpis ?? exposure.eligible)} CPIs</small></article>
+        <article class="metric-card good statistics-hero-detected"><strong>${percent(exposure.detection_fraction, 1)}</strong><span>Detected CPIs</span><small>${integer(exposure.detected_cpis ?? exposure.detected)} CPIs</small></article>
+        <article class="metric-card warning"><strong>${percent(exposure.missed_detection_fraction, 1)}</strong><span title="Eligible CPIs without a matched detection">Missed CPIs</span></article>
+        <article class="metric-card good statistics-hero-tracked"><strong>${percent(exposure.operational_track_fraction, 1)}</strong><span>Operationally tracked CPIs</span><small>${percent(exposure.operationally_untracked_fraction, 1)} untracked</small></article>
+      </div></div>`;
+    };
+    const kioskCpiVisuals = (exposure = {}, channels = [], uniquePasses = {}, singleChannel = false) => {
+      // Rings retain the selected scope's pass denominators: the single-channel
+      // scorecard tracks / eligible, while the deduplicated network tracks /
+      // detected. CPI fractions below are separate per-channel diagnostics.
+      const fraction = value => Math.max(0, Math.min(1, finite(value) ?? 0));
+      const complement = value => finite(value) === null ? null : 1 - fraction(value);
+      const eligiblePasses = finite(uniquePasses.eligible_adsb_passes) ?? 0;
+      const detectedPasses = finite(uniquePasses.detection?.associated_passes) ?? 0;
+      const trackedPasses = finite(uniquePasses.tracking?.associated_passes) ?? 0;
+      const trackingDenominator = singleChannel ? eligiblePasses :
+        finite(uniquePasses.tracking?.detected_passes) ?? detectedPasses;
+      const missedPasses = Math.max(0, eligiblePasses - detectedPasses);
+      const untrackedPasses = Math.max(0, trackingDenominator - trackedPasses);
+      const nodeCount = new Set(channels.map(channel => channel.node_label || channel.node_id)
+        .filter(Boolean)).size;
+      const gauge = (kind, title, value, remainderValue, label, remainder, count, remainderCount, denominator) =>
+        `<article class="cpi-kiosk-gauge ${kind}"><h3>${title}</h3><div class="cpi-kiosk-ring" role="img" aria-label="${label}: ${percent(value, 1)}; ${remainder}: ${percent(remainderValue, 1)} of ${denominator}">
+          <svg viewBox="0 0 240 240" aria-hidden="true"><circle class="cpi-ring-track" cx="120" cy="120" r="98"/><circle class="cpi-ring-value" cx="120" cy="120" r="98" pathLength="100" stroke-dasharray="${fraction(value) * 100} 100" transform="rotate(-90 120 120)"/></svg>
+          <div><strong>${percent(value, 1)}</strong><span>${label}</span></div></div>
+          <footer><div><i class="cpi-series-key"></i><strong>${integer(count)}</strong><span>${label} passes</span></div><div><i class="cpi-series-key remainder"></i><strong>${integer(remainderCount)}</strong><span>${remainder} passes</span></div></footer></article>`;
+      const ceiling = Math.min(100, Math.max(10, Math.ceil(Math.max(0, ...channels.flatMap(channel =>
+        [fraction(channel.cpi_exposure?.detection_fraction), fraction(channel.cpi_exposure?.operational_track_fraction)])) * 10) * 10));
+      const bars = channels.map(channel => {
+        const item = channel.cpi_exposure || {};
+        const label = channel.identity?.illuminator || channel.selected_channel || 'Channel';
+        const node = channel.node_label || '';
+        const name = node && label.endsWith(` (${node})`) ? label.slice(0, -node.length - 3) : label;
+        const bar = (kind, value, name) => `<div class="cpi-kiosk-bar ${kind}"><span class="cpi-kiosk-bar-track" role="img" aria-label="${escapeHtml(label)}: ${percent(value, 1)} ${name} CPIs; axis 0 to ${ceiling}%"><i style="width:${fraction(value) * 100 / ceiling * 100}%"></i></span><b>${percent(value, 1)}</b></div>`;
+        return `<article class="cpi-kiosk-channel"><header><div><strong>${escapeHtml(name)}</strong>${node ? `<span>${escapeHtml(node)}</span>` : ''}</div><span>${presenceTime(item.eligible_seconds ?? item.seconds)} <small>eligible</small></span></header>
+          ${bar('detected', item.detection_fraction, 'detected')}${bar('tracked', item.operational_track_fraction, 'operationally tracked')}</article>`;
+      }).join('');
+      return `<div class="statistics-kiosk-visuals${singleChannel ? ' statistics-single-kiosk-visuals' : ''}"><section class="cpi-kiosk-coverage" aria-labelledby="cpi-kiosk-title"><header><h2 id="cpi-kiosk-title">${singleChannel ? 'Selected channel' : 'All channels &amp; nodes'}</h2><div class="cpi-kiosk-exposure"><div><strong>${nodeCount}</strong><span>Radar nodes</span></div><div><strong>${channels.length}</strong><span>Channels</span></div></div></header>
+        <div class="cpi-kiosk-gauges">${gauge('detected', singleChannel ? 'Detected eligible passes' : 'Detected on any channel or node', uniquePasses.detection?.yield, complement(uniquePasses.detection?.yield), 'Detected', 'Missed', detectedPasses, missedPasses, singleChannel ? 'eligible aircraft passes' : 'deduplicated eligible aircraft passes')}${gauge('tracked', singleChannel ? 'Tracked eligible passes' : 'Tracked after detection', uniquePasses.tracking?.yield, complement(uniquePasses.tracking?.yield), 'Tracked', 'Not tracked', trackedPasses, untrackedPasses, singleChannel ? 'eligible aircraft passes' : 'deduplicated detected aircraft passes')}</div></section>
+        <section class="cpi-kiosk-comparison" aria-labelledby="cpi-kiosk-channel-title"><header><h2 id="cpi-kiosk-channel-title">Per-channel CPI coverage</h2><div class="cpi-kiosk-legend"><span class="detected"><i></i>Detected</span><span class="tracked"><i></i>Operationally tracked</span></div></header>
+          <div class="cpi-kiosk-axis" aria-label="Percent of eligible CPIs">${[0,.25,.5,.75,1].map(part => `<span>${number(part * ceiling, part * ceiling % 1 ? 1 : 0)}%</span>`).join('')}</div>
+          <div class="cpi-kiosk-channels" style="--channel-count:${Math.max(1, channels.length)}">${bars || '<p class="cpi-kiosk-empty">Waiting for channel evidence</p>'}</div></section></div>`;
+    };
     const associationYieldRows = multiChannel ? [
       ['Overall', {eligible_passes: aggregateAssociation.eligible_adsb_passes,
         detection_yield: aggregateAssociation.detection?.yield,
@@ -2248,9 +2361,9 @@
     if (combinedScope) {
       const unique = aggregateAssociation.unique_aircraft_passes || {};
       const combinedRows = [
-        ['All channels combined', {eligible_passes: unique.eligible_adsb_passes,
+        ['Unique passes (any channel)', {eligible_passes: unique.eligible_adsb_passes,
           detection_yield: unique.detection?.yield, tracking_yield: unique.tracking?.yield}],
-        ['Channel opportunities', {eligible_passes: aggregateAssociation.eligible_adsb_passes,
+        ['Per-channel opportunities (sum)', {eligible_passes: aggregateAssociation.eligible_adsb_passes,
           detection_yield: aggregateAssociation.detection?.yield,
           tracking_yield: aggregateAssociation.tracking?.yield}],
         ...array(aggregate?.illuminators).map(channel => {
@@ -2267,24 +2380,49 @@
         (finite(unique.detection?.yield) ?? 0) * 100)).toFixed(1);
       const uniqueTrackingPercent = Math.max(0, Math.min(100,
         (finite(unique.tracking?.yield) ?? 0) * 100)).toFixed(1);
+      const channelCpiCards = `<div class="cpi-channel-grid">${array(aggregate?.illuminators).map(channel => {
+        const exposure = channel.cpi_exposure || {};
+        const label = channel.identity?.illuminator || channel.selected_channel || 'Channel';
+        return `<article class="cpi-channel-card"><strong>${escapeHtml(label)}</strong><span>${presenceTime(exposure.seconds)} eligible</span><b>${percent(exposure.detection_fraction, 1)} detected</b><small>${percent(exposure.operational_track_fraction, 1)} operationally tracked</small></article>`;
+      }).join('')}</div>`;
       renderHtml(root, `<div class="statistics-page"><section class="statistics-section statistics-channel-overview"><header><h2>Combined aircraft-pass results · ${escapeHtml(timingLabel)}</h2></header><div class="insight-stats insight-stats-four statistics-distance-hero">
           <article class="metric-card statistics-hero-eligible"><strong>${integer(unique.eligible_adsb_passes)}</strong><span>Unique eligible aircraft passes</span></article>
           <article class="metric-card good statistics-hero-detected" style="--glance-yield:${uniqueDetectionPercent}%"><strong>${percent(unique.detection?.yield, 1)}</strong><span>Detected on any channel</span><small>${integer(unique.detection?.associated_passes)} / ${integer(unique.detection?.eligible_adsb_passes)} passes</small></article>
           <article class="metric-card good statistics-hero-tracked" style="--glance-yield:${uniqueTrackingPercent}%"><strong>${percent(unique.tracking?.yield, 1)}</strong><span>Tracked after detection</span><small>${integer(unique.tracking?.associated_passes)} / ${integer(unique.tracking?.detected_passes)} detected passes</small></article>
-          <article class="metric-card statistics-network-context"><strong>${integer(array(aggregate?.illuminators).length)} channels · ${integer(aggregate?.network_node_count || 1)} nodes</strong><span>Network scope</span></article>
-        </div>${yieldChart(combinedRows, 'Combined and per-channel detection and tracking yield')}</section>
+        </div><details class="statistics-details"><summary>Per-channel pass yields</summary>${yieldChart(combinedRows, 'Deduplicated union and additive per-channel detection and tracking yield')}</details>${cpiPresenceHero(aggregateAssociation.cpi_exposure, 'All nodes and channels · additive channel-opportunity time')}${channelCpiCards}${kioskCpiVisuals(aggregateAssociation.cpi_exposure, array(aggregate?.illuminators), unique)}</section>
         <section class="statistics-section"><div class="statistics-grid">
-          <section class="info-card statistics-combined-catch-duplicate"><h2>Combined catch rate</h2>${associationFlow('Unique aircraft passes', unique.eligible_adsb_passes, unique.detection, unique.tracking)}</section>
-          <section class="info-card"><h2>Channel opportunity totals</h2>${associationFlow('Eligible channel-passes', aggregateAssociation.eligible_adsb_passes, aggregateAssociation.detection, aggregateAssociation.tracking)}<dl>
+          <section class="info-card statistics-combined-catch-duplicate" hidden><h2>Combined catch rate</h2>${associationFlow('Unique aircraft passes', unique.eligible_adsb_passes, unique.detection, unique.tracking)}</section>
+          <section class="info-card" hidden><h2>Channel opportunity totals</h2>${associationFlow('Eligible channel-passes', aggregateAssociation.eligible_adsb_passes, aggregateAssociation.detection, aggregateAssociation.tracking)}<dl>
             <div><dt>Eligible channel-passes</dt><dd>${integer(aggregateAssociation.eligible_adsb_passes)}</dd></div>
             <div><dt>Detection associations</dt><dd>${integer(aggregateAssociation.detection?.associated_passes)}</dd></div>
             <div><dt>Tracking associations</dt><dd>${integer(aggregateAssociation.tracking?.associated_passes)}</dd></div>
             <div><dt>Audited ADS-B CPIs</dt><dd>${integer(aggregateAssociation.timing?.audited_aircraft_cpis)}</dd></div>
+            <div><dt>Eligible channel-time</dt><dd>${number(aggregateAssociation.cpi_exposure?.seconds, 1)} s</dd></div>
+            <div><dt>CPI detection / miss</dt><dd>${percent(aggregateAssociation.cpi_exposure?.detection_fraction, 1)} / ${percent(aggregateAssociation.cpi_exposure?.missed_detection_fraction, 1)}</dd></div>
+            <div><dt>CPI operational track / untracked</dt><dd>${percent(aggregateAssociation.cpi_exposure?.operational_track_fraction, 1)} / ${percent(aggregateAssociation.cpi_exposure?.operationally_untracked_fraction, 1)}</dd></div>
           </dl></section>
-        </div>${channelContributionVisual(unique.channel_contribution)}${trackPopulationVisual(aggregateAssociation.track_population, 'All-channel track population')}${directionalCoverage(unique.directional_coverage, 'Finalized 24 h · combined · deduplicated by aircraft pass', 'combined-direction')}${channelAssociationRows.length ? `<details class="statistics-table-details"><summary>Per-channel values</summary>${table(['Channel', 'Detected / eligible', 'Detection yield', 'Tracked / detected', 'Tracking yield', 'Audited CPIs'], channelAssociationRows)}</details>` : ''}</section></div>`);
+        </div>${channelContributionVisual(unique.channel_contribution)}${trackPopulationVisual(aggregateAssociation.track_population, 'All-channel track population')}${directionalCoverage(unique.directional_coverage, 'Finalized 24 h · combined · deduplicated by aircraft pass', 'combined-direction')}${channelAssociationRows.length ? `<details class="statistics-table-details"><summary>Per-channel values</summary>${table(['Channel', 'Detected / eligible', 'Detection yield', 'Tracked / detected', 'Tracking yield', 'Eligible time', 'Detected CPIs', 'Tracked CPIs'], channelAssociationRows)}</details>` : ''}</section></div>`);
       bindDirectionCells();
       setState(updatedAt ? `All channels · ${timeLabel(updatedAt)} · ${timingLabel.replace(/receiver-event\s*/i, '')}` :
         'All channels combined · Waiting for eligible ADS-B evidence', updatedAt ? 'good' : 'warning');
+      return;
+    }
+    if (document.body.classList?.contains('distance-view')) {
+      const selectedPasses = {eligible_adsb_passes:lifetime.eligible_passes,
+        detection:{associated_passes:lifetime.detected_passes, yield:lifetime.detection_yield},
+        tracking:{associated_passes:lifetime.tracked_passes, yield:lifetime.tracking_yield}};
+      const selectedChannel = {identity:{illuminator:context.enabled ? context.id : 'Primary channel'},
+        node_label:fleet?.nodes?.find(node => node.local)?.label || 'Local',
+        cpi_exposure:lifetime.cpi_exposure || {}};
+      renderHtml(root, `<div class="statistics-page"><section class="statistics-section statistics-channel-overview"><header><h2>Selected channel aircraft-pass results · ${escapeHtml(timingLabel)}</h2></header><div class="insight-stats insight-stats-four statistics-distance-hero">
+        <article class="metric-card statistics-hero-eligible"><strong>${integer(lifetime.eligible_passes)}</strong><span>All-time eligible passes</span></article>
+        <article class="metric-card good statistics-hero-detected"><strong>${percent(lifetime.detection_yield, 1)}</strong><span>Detected eligible passes</span><small>${integer(lifetime.detected_passes)} / ${integer(lifetime.eligible_passes)} passes</small></article>
+        <article class="metric-card good statistics-hero-tracked"><strong>${percent(lifetime.tracking_yield, 1)}</strong><span>Tracked eligible passes</span><small>${integer(lifetime.tracked_passes)} / ${integer(lifetime.eligible_passes)} passes</small></article>
+      </div>${kioskCpiVisuals(lifetime.cpi_exposure, [selectedChannel], selectedPasses, true)}</section></div>`);
+      const laneState = context.enabled ? `${context.id} · ` : '';
+      setState(statistics.error ? `${laneState}Collection warning · ${statistics.error}` :
+        statistics.updated_at ? `${laneState}Updated ${timeLabel(statistics.updated_at)} · ${timingLabel}` : `${laneState}Waiting for eligible ADS-B evidence`,
+      statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
       return;
     }
     const bandOrder = value => finite(String(value).match(/-?\d+(?:\.\d+)?/)?.[0]) ?? Infinity;
@@ -2319,9 +2457,9 @@
       ${card(percent(lifetime.detection_yield, 1), 'All-time detection yield')}
       ${card(percent(lifetime.tracking_yield, 1), 'All-time tracking yield')}
       ${card(integer(activeEligible.length), 'Eligible aircraft now')}
-    </div>
+    </div>${cpiPresenceHero(lifetime.cpi_exposure, context.enabled ? context.id : 'Selected channel')}
     <section class="statistics-section"><div class="statistics-grid">
-      <section class="info-card statistics-score statistics-wide"><h2>Detection and tracking evidence</h2><div class="window-evidence-pair">${periods.map(([label, item = {}]) => associationFlow(label, item.eligible_passes, {associated_passes: item.detected_passes, yield: item.detection_yield}, {associated_passes: item.tracked_passes, yield: item.tracking_yield})).join('')}</div><details class="statistics-table-details"><summary>Values</summary>${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}</details></section>
+      <details class="statistics-details statistics-wide"><summary>Detailed pass and CPI windows</summary><div class="window-evidence-pair">${periods.map(([label, item = {}]) => associationFlow(label, item.eligible_passes, {associated_passes: item.detected_passes, yield: item.detection_yield}, {associated_passes: item.tracked_passes, yield: item.tracking_yield})).join('')}</div>${table(['Window', 'Eligible time', 'Detected CPIs', 'Missed CPIs', 'Operationally tracked CPIs', 'Operationally untracked CPIs', 'Coverage'], cpiExposureRows)}${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}</details>
       ${trackPopulationVisual(statistics.track_population, 'Radar-track population')}
     </div></section>
     <section class="statistics-section"><header><h2>Past 24 hours</h2></header><div class="statistics-grid">
@@ -2331,8 +2469,8 @@
       <section class="info-card"><h2>Azimuth × elevation</h2>${jointRows.length ? table(['Azimuth', 'Elevation', 'Eligible', 'Detection yield', 'Tracking yield'], jointRows) : empty('No angle data', '')}</section>
     </div></details></section>
     <section class="statistics-section"><div class="statistics-grid">
-      <section class="info-card"><h2>Eligible aircraft now</h2>${activeRows.length ? `<div class="pass-visual-list">${passCards(activeEligible)}</div><details class="statistics-table-details"><summary>Lookup table</summary><div class="statistics-evidence-list">${table(['Aircraft', 'Status', 'Eligible', 'Detected', 'Tracked', 'Delay km', 'Doppler Hz'], activeRows)}</div></details>` : empty('No eligible aircraft now', '')}</section>
-      <section class="info-card"><h2>Recent scored passes</h2>${finalizedRows.length ? `<div class="pass-visual-list">${passCards(scoredFinalized.slice(0, 8), true)}</div><details class="statistics-table-details"><summary>Lookup table</summary><div class="statistics-evidence-list">${table(['Aircraft', 'Outcome', 'Eligible', 'Detected', 'Tracked', 'Finalized'], finalizedRows)}</div></details>` : empty('No scored passes yet', '')}</section>
+      <section class="info-card"><h2>Eligible aircraft now</h2>${activeRows.length ? `<div class="pass-visual-list">${passCards(activeEligible)}</div><details class="statistics-table-details"><summary>Lookup table</summary><div class="statistics-evidence-list">${table(['Aircraft', 'Status', 'Eligible time', 'Detected CPIs', 'Tracked CPIs', 'Delay km', 'Doppler Hz'], activeRows)}</div></details>` : empty('No eligible aircraft now', '')}</section>
+      <section class="info-card"><h2>Recent scored passes</h2>${finalizedRows.length ? `<div class="pass-visual-list">${passCards(scoredFinalized.slice(0, 8), true)}</div><details class="statistics-table-details"><summary>Lookup table</summary><div class="statistics-evidence-list">${table(['Aircraft', 'Outcome', 'Eligible time', 'Detected CPIs', 'Tracked CPIs', 'Finalized'], finalizedRows)}</div></details>` : empty('No scored passes yet', '')}</section>
     </div></section>
     <details class="statistics-details"><summary>Eligibility and scoring details</summary><div class="statistics-grid">
       <section class="info-card"><h2>Pass outcomes</h2><h3>Past 24 hours</h3>${outcomeVisual(day)}<h3>Setup lifetime</h3>${outcomeVisual(lifetime)}<details class="statistics-table-details"><summary>Values</summary>${table(['Window', 'Out of config', 'No radar return', 'Detected, not tracked', 'Tracked'], outcomeRows)}</details></section>
@@ -2420,7 +2558,7 @@
         <div><dt>Candidate</dt><dd>${automation.qualified ? 'Qualified on held-out passes' : 'Not qualified'}</dd></div>
         <div><dt>Live bearing manifold</dt><dd>${active ? escapeHtml(bearingCampaign.active_model) : bearingConfigured ? 'Ideal steering model' : 'Bearing output disabled'}</dd></div>
         <div><dt>Last sample</dt><dd>${progress.last_sample_at ? escapeHtml(timeLabel(progress.last_sample_at)) : 'Waiting for accepted evidence'}</dd></div>
-      </dl><p class="view-note">${escapeHtml(progress.limitation || 'Collection and production qualification are separate.')}</p></section>
+      </dl><details><summary>Qualification details</summary><p>${escapeHtml(progress.limitation || 'Collection and production qualification are separate.')}</p></details></section>
       <section class="info-card"><h2>Next evidence needed</h2>${!campaignAvailable ? '<p class="view-note">No array-calibration campaign is active. Enable bearing or the shared array recorder to collect evidence.</p>' : blockers.length ? `<ul class="calibration-blockers">${blockers.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="view-note">Collection gates are complete. Held-out performance gates determine whether the candidate can activate.</p>'}${failureText.length ? `<p class="view-note evaluation-note">Latest fit: ${escapeHtml(failureText.join(' '))}</p>` : ''}</section>
       <section class="info-card"><h2>Reference stability</h2><dl>
         <div><dt>Reference samples</dt><dd>${integer(reference.samples)}</dd></div>
@@ -2439,7 +2577,7 @@
         <div><dt>Runtime compatibility</dt><dd>${detectionAutomation.runtime_candidate_path ? 'Replay-only dense artifact available' : 'None — sparse offline model'}</dd></div>
         <div><dt>Promotion</dt><dd>Never automatic</dd></div>
         <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
-      </dl><p class="view-note">${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
+      </dl><details><summary>Qualification details</summary><p>${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p></details>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
     </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>
     <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>${bearingEngineeringDiagnostics(bearingDiagnostic)}`);
     const labels = sectors.map(item => `${integer(item.from_deg)}–${integer(item.to_deg)}°`);
@@ -2465,15 +2603,13 @@
     if (root.dataset.ready !== 'true' && root.dataset.loading !== 'true') {
       root.dataset.loading = 'true';
       root.setAttribute?.('aria-busy', 'true');
-      root.innerHTML = '<div class="page-loading" role="status"><span class="loading-spinner" aria-hidden="true"></span><strong>Loading live data…</strong><small>The last valid view will remain visible during later refreshes.</small></div>';
+      root.innerHTML = '<div class="page-loading" role="status"><span class="loading-spinner" aria-hidden="true"></span><strong>Loading live data…</strong></div>';
     }
     try {
       await renderers[view]();
       // Every renderer, including HTML-only views, has now produced a valid
       // snapshot.  A later transient failure must never erase it.
       root.dataset.ready = 'true';
-      root.dataset.loading = 'false';
-      root.setAttribute?.('aria-busy', 'false');
       consecutiveRefreshFailures = 0;
       window.blah2ViewLastError = null;
     } catch (error) {
@@ -2490,6 +2626,8 @@
         setState('Refresh delayed · showing last update', 'warning');
       }
     } finally {
+      root.dataset.loading = 'false';
+      root.setAttribute?.('aria-busy', 'false');
       refreshing = false;
     }
   }

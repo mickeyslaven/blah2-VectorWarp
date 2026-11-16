@@ -6,7 +6,8 @@ const os = require('os');
 const path = require('path');
 const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates,
   assignments, delayBand, limits, standardizedComparison, siteKey,
-  provisionalTimingFrame} = require('./evidence-statistics');
+  provisionalTimingFrame, defaultEvidenceStatisticsPath,
+  defaultProvisionalEvidenceStatisticsPath} = require('./evidence-statistics');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-statistics-'));
 const filename = path.join(directory, 'statistics.json');
@@ -18,6 +19,18 @@ const config = {capture: {fs: 2400000, fc: 563000000},
     clutter: {delayMax: 200}, detection: {minDelay: 5},
     bearing: {channel_mapping: [0, 1], manifold_recorder: {
       max_delay_error_km: .25, max_doppler_error_hz: 5, max_truth_age_s: 3}}}};
+
+assert.equal(defaultEvidenceStatisticsPath(config, {VECTORWARP_MACOS_STATE: '/Users/test/state'}),
+  '/Users/test/state/evidence-statistics.json');
+assert.equal(defaultProvisionalEvidenceStatisticsPath(config,
+  {VECTORWARP_MACOS_STATE: '/Users/test/state'}),
+  '/Users/test/state/evidence-statistics-provisional.json');
+assert.equal(defaultProvisionalEvidenceStatisticsPath(config,
+  {BLAH2_STATISTICS_PATH: '/srv/radar/site-scorecard.json'}),
+  '/srv/radar/site-scorecard-provisional.json');
+assert.equal(defaultProvisionalEvidenceStatisticsPath(config,
+  {BLAH2_PROVISIONAL_STATISTICS_PATH: '/custom/operational.json'}),
+  '/custom/operational.json');
 const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'TEST1',
   delay_rate_km_s: .1, doppler_rate_hz_s: 7,
   position: {latitude: 1.1, longitude: 2.1, altitude_geom_ft: 12000,
@@ -117,6 +130,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     clock += 1000;
   }
   let result = stats.status();
+  assert.equal(result.timing_policy, 'exact');
   assert.equal(result.windows.hour.active_passes, 1);
   assert.equal(result.windows.hour.eligible_passes, 0,
     'An in-progress pass must not be prematurely classified');
@@ -133,6 +147,10 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(result.windows.hour.detected_passes, 1);
   assert.equal(result.windows.hour.tracked_passes, 1);
   assert.equal(result.windows.hour.tracking_yield, 1);
+  assert.equal(result.windows.hour.cpi_exposure.eligible_cpis, 3);
+  assert.equal(result.windows.hour.cpi_exposure.eligible_seconds, 1.5);
+  assert.equal(result.windows.hour.cpi_exposure.detected_percent, 100);
+  assert.equal(result.windows.hour.cpi_exposure.missed_detection_percent, 0);
   assert.equal(result.eligibility_events.length, 1,
     'A pass must emit only one eligibility event across repeated opportunities');
   assert.equal(result.eligibility_event_count, 1);
@@ -328,6 +346,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   }}, {filename: path.join(directory, 'provisional-event-time.json'),
     timingPolicy: 'provisional',
     setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  assert.equal(provisionalStats.status().timing_policy, 'provisional');
   // This cell is outside the ordinary detection gate (9.5 Hz here), but
   // inside the declared one-second timing tube (16.5 Hz). It proves the
   // nuisance allowance affects validation association only.
@@ -449,6 +468,83 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(floorStats.liveStatus().adsb_quality.local_only, true);
   assert.match(floorStats.liveStatus().adsb_quality.warning, /Local-only ADS-B/);
 
+  const notchConfig = structuredClone(config);
+  notchConfig.process.detection.minDoppler = 15;
+  assert.equal(limits(notchConfig).detectionMinAbsDopplerHz, 15);
+  assert.notEqual(siteKey(config), siteKey(notchConfig));
+  const notchFilename = path.join(directory, 'detector-doppler-notch.json');
+  const notchStats = new EvidenceStatistics(notchConfig, source, {
+    filename: notchFilename, now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const notchCases = [
+    [-15.001, true, false], [-15, true, false], [-14.999, false, true],
+    [0, false, true], [14.999, false, true], [15, true, false], [15.001, true, false],
+    [601, false, false], [0, false, false, span.detectionMinDelayKm / 2]];
+  for (const [index, [doppler, eligible, excluded, delay = 10]] of notchCases.entries()) {
+    const at = clock + index * 500;
+    notchStats.observe('abc123', {...prediction, delay, doppler, timestamp: at / 1000},
+      at, {frame_timestamp_ms: at, kind: 'detection', cell_index: index}, null);
+    const audit = notchStats.state.active.abc123.cpiAudit.at(-1);
+    assert.equal(audit.detector_eligible, eligible, `detector mask at ${doppler} Hz`);
+    assert.equal(audit.detection_doppler_notch_excluded, excluded,
+      `exclusive notch exposure at ${doppler} Hz, delay ${delay}`);
+    assert.equal(audit.map_eligible, doppler !== 601,
+      'The notch and delay floor must not erase physical map exposure');
+  }
+  const notchPass = notchStats.state.active.abc123;
+  assert.equal(notchPass.physicalEligibleFrames, 8);
+  assert.equal(notchPass.detectorEligibleFrames, 4);
+  assert.equal(notchPass.eligibleFrames, 4);
+  assert.equal(notchPass.detectedFrames, 4,
+    'Even a supplied match inside the notch must not become a scored detection');
+  assert.equal(notchPass.dopplerNotchFrames, 3);
+  assert.equal(notchPass.outsideDopplerFrames, 1);
+  notchStats.close();
+  assert.equal(notchStats.status().windows.lifetime.out_of_span.inside_detection_doppler_notch, 3);
+  for (const minimum of [undefined, 0]) {
+    const disabled = structuredClone(config);
+    if (minimum !== undefined) disabled.process.detection.minDoppler = minimum;
+    assert.equal(limits(disabled).detectionMinAbsDopplerHz, 0);
+    const noNotch = new EvidenceStatistics(disabled, source, {
+      filename: path.join(directory, `no-notch-${minimum}.json`), now: () => clock,
+      setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+    assert.notEqual(noNotch.scoreContractHash, notchStats.scoreContractHash,
+      'The evaluation contract must bind the minimum absolute Doppler');
+    for (const [index, doppler] of [-.001, 0, .001].entries()) {
+      const at = clock + index * 500;
+      noNotch.observe('abc123', {...prediction, doppler, timestamp: at / 1000}, at, null, null);
+    }
+    assert.equal(noNotch.state.active.abc123.eligibleFrames, 3);
+    assert.equal(noNotch.state.active.abc123.dopplerNotchFrames, 0);
+    noNotch.close();
+  }
+  // Simulate loading a pre-mask-version ledger. Keep its exact pass identity
+  // and counts, but never mix those counts into the new site's denominator.
+  const legacyNotchState = JSON.parse(fs.readFileSync(notchFilename, 'utf8'));
+  const legacyKey = 'legacy-pre-doppler-mask-site';
+  legacyNotchState.sites = {[legacyKey]: {detection: {minDelay: 5, minDoppler: 15}}};
+  for (const item of legacyNotchState.passes) {
+    item.siteKey = legacyKey;
+    delete item.dopplerNotchFrames;
+  }
+  legacyNotchState.rollup = {...legacyNotchState.rollup, siteKey: legacyKey,
+    passes: 20, eligible: 17, detected: 6, tracked: 2};
+  legacyNotchState.liveScoreContract = {hash: 'legacy-v1-contract', startedAt: clock - 100000};
+  const historicalPasses = structuredClone(legacyNotchState.passes);
+  const historicalRollup = structuredClone(legacyNotchState.rollup);
+  fs.writeFileSync(notchFilename, JSON.stringify(legacyNotchState));
+  const migratedNotch = new EvidenceStatistics(notchConfig, source, {
+    filename: notchFilename, now: () => clock + 10000,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  assert.deepEqual(migratedNotch.state.passes, historicalPasses,
+    'Do not recalculate historical pass counters or rewrite their IDs/site identity');
+  assert.deepEqual(migratedNotch.state.sites[legacyKey].finalized_rollup, historicalRollup,
+    'Preserve compacted historical counts across the versioned site rollover');
+  assert.equal(migratedNotch.associationPasses().length, 0);
+  assert.equal(migratedNotch.status().windows.lifetime.eligible_passes, 0);
+  assert.equal(migratedNotch.state.liveScoreContract.startedAt, clock + 10000);
+  migratedNotch.close();
+
   const pass = (band, detected) => ({geometryBands: {[band]: {eligibleFrames: 10}},
     detectedFrames: detected ? 3 : 0, trackedFrames: detected ? 3 : 0});
   const mixAdjusted = standardizedComparison(
@@ -488,6 +584,14 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(exactPass.detectedFrames, 4);
   assert.equal(exactPass.trackedFrames, 3,
     'Tentative/under-supported tracker cells must not receive stable-track credit');
+  const exactExposure = exact.liveStatus().active_passes[0];
+  assert.equal(exactExposure.cpi_exposure.eligible_seconds, 2);
+  assert.equal(exactExposure.cpi_exposure.detected_percent, 100);
+  assert.equal(exactExposure.cpi_exposure.operationally_tracked_percent, 75);
+  assert.equal(exactExposure.track_quality.detected_and_operationally_tracked_cpis, 3);
+  assert.equal(exactExposure.track_quality.detected_but_not_operationally_tracked_cpis, 1);
+  assert.equal(exactExposure.track_quality.longest_consecutive_operationally_untracked_cpis, 1);
+  assert.equal(exactExposure.track_quality.first_operational_track_latency_seconds, .498);
   assert.deepEqual(exactPass.cpiAudit.map(item => item.timestamp_ms),
     exactTimes.map(timestamp => timestamp + 2));
   assert.deepEqual(exactPass.cpiAudit.map(item => item.timing.epoch), [12, 12, 12, 12]);
@@ -506,6 +610,29 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(exactPass.cpiAudit.at(-1).truth_reason, 'invalid-projection');
   exact.close();
 
+  // Native guided ACTIVE is a kinematic prediction, not another measured CPI.
+  let guidedNow = exactTimes[0];
+  const guidedStats = new EvidenceStatistics(config, {async getAt(_kind, at) {
+    return {abc123: {...prediction, timestamp: at / 1000}};
+  }}, {filename: path.join(directory, 'guided-provenance.json'), now: () => guidedNow,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  for (let index = 0; index < 3; ++index) {
+    guidedNow = exactTimes[0] + index * 500;
+    guidedStats.acceptTracker({timestamp: guidedNow, data: [{id: 'guided-track',
+      state: 'ACTIVE', measured: false, source: 'guided', n: 100,
+      delay: 10 / limits(config).kmPerBin, doppler: 100}]});
+    guidedStats.acceptDetection({timestamp: guidedNow, delay: [], doppler: [], snr: []});
+    guidedStats.acceptTiming({timestamp: guidedNow, eventTime: {exact: true,
+      uncertaintyBounded: true, uncertaintyNs: 0}, captureSamplePositionAvailable: true,
+      captureEpoch: 14, captureFirstEpochSample: index * 1200000,
+      captureEndEpochSample: (index + 1) * 1200000, captureDroppedSamples: [0, 0, 0, 0, 0]});
+    while (guidedStats.running) await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(guidedStats.state.active.abc123.eligibleFrames, 3);
+  assert.equal(guidedStats.state.active.abc123.trackedFrames, 0,
+    'Guided ACTIVE predictions must not inflate measured scorecard support');
+  guidedStats.close();
+
   const boundedState = new EvidenceStatistics(config, source, {
     filename: path.join(directory, 'bounded-state.json'),
     setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
@@ -514,7 +641,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     boundedState.state.active[hex] = {id: `pass-${index}`, hex,
       siteKey: boundedState.key, startedAt: index, lastAt: index, frames: 80,
       physicalEligibleFrames: 80, eligibleFrames: 80, detectedFrames: 4,
-      trackedFrames: 3,
+      trackedFrames: 3, dopplerNotchFrames: 4,
       cpiAudit: Array.from({length: 80}, (_, row) => ({timestamp_ms: row})),
       truthHistory: Array.from({length: 80}, (_, row) => ({timestamp_ms: row}))};
     boundedState.finish(hex);
@@ -523,6 +650,15 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     'Detailed finalized passes must remain bounded for restart-safe persistence');
   assert.equal(boundedState.state.rollup.passes, 1);
   assert.equal(boundedState.state.rollup.tracked, 1);
+  assert.equal(boundedState.state.rollup.eligibleCpis, 80);
+  assert.equal(boundedState.state.rollup.detectedCpis, 4);
+  assert.equal(boundedState.state.rollup.trackedCpis, 3);
+  assert.equal(boundedState.summarize(Infinity, clock).cpi_exposure.eligible_cpis, 501 * 80);
+  assert.equal(boundedState.summarize(Infinity, clock).cpi_exposure.eligible_seconds,
+    501 * 80 * .5);
+  assert.equal(boundedState.state.rollup.dopplerNotchFrames, 4);
+  assert.equal(boundedState.summarize(Infinity, clock).out_of_span.inside_detection_doppler_notch, 501 * 4,
+    'Notch exposure must survive bounded pass-detail eviction');
   assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 4);
   assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 0);
   boundedState.state.active.abcdef = {id: 'active-pass', hex: 'abcdef',
@@ -545,6 +681,30 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.ok(fs.statSync(path.join(directory, 'bounded-state.json')).size < 8 * 1024 * 1024,
     'Bounded synthetic state must remain well below the loader safety cap');
   boundedState.close();
+  const uncertaintyConfig = JSON.parse(JSON.stringify(config));
+  uncertaintyConfig.truth.adsb.uncertainty_association = {enable: true};
+  const uncertaintyStats = new EvidenceStatistics(uncertaintyConfig, source, {
+    filename: path.join(directory, 'uncertainty-state.json'), timingPolicy: 'provisional',
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const uncertaintyPrediction = {...prediction, timestamp: clock / 1000,
+    provenance: {...prediction.provenance, observation_time_offset_s: 2.9},
+    truth_uncertainty: {valid: true}};
+  uncertaintyStats.observe('abc123', uncertaintyPrediction, clock, null, null, null,
+    {valid: false, reason: 'uncertainty-exceeds-hard-cap'});
+  assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 0,
+    'an over-wide truth comparison must abstain, not become a radar miss');
+  assert.equal(uncertaintyStats.state.active.abc123.cpiAudit.at(-1).truth_reason,
+    'uncertainty-exceeds-hard-cap');
+  uncertaintyStats.observe('abc123', uncertaintyPrediction, clock + 1000, null, null, null,
+    {valid: true});
+  assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 1,
+    'opt-in source-age support preserves provisional SDR operation without a hardware clock receipt');
+  uncertaintyStats.observe('abc123', {...uncertaintyPrediction,
+    provenance: {...uncertaintyPrediction.provenance, disagreement: true}}, clock + 2000,
+  null, null, null, {valid: true});
+  assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 1,
+    'source disagreement cannot inflate the accepted denominator');
+  uncertaintyStats.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

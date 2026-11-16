@@ -41,6 +41,7 @@ private:
   blah2::ReplayOptions replayOptions;
   mutable std::mutex statusMutex;
   blah2::ReplayProgress replayProgress;
+  blah2::ReplayControlMailbox replayControl;
   std::string captureError;
   uint64_t recordingRequestId = 0;
   uint64_t unsupportedClipRevision = 0;
@@ -64,12 +65,28 @@ public:
     std::string clockSource, timeSource, motherboard, subdevices;
   };
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
+  // A fatal live-input failure must terminate the process so a service
+  // manager can restart acquisition. Replay errors intentionally remain
+  // inspectable until the operator stops the replay process.
+  std::atomic<bool> fatalLiveInputFailure{false};
+  // Publishes the immutable receiver pointer after construction and all
+  // optional extensions are installed. Readers must acquire this before
+  // touching device; empty startup polling otherwise races factory_source().
+  std::atomic<bool> sourceReady{false};
   std::atomic<bool> pairedCpiQueueActive{false};
   std::atomic<uint64_t> replayGeneration{0};
-  std::atomic<uint64_t> replayControlRevision{0}, replaySeekSample{0};
-  std::atomic<bool> replayPaused{false};
   void request_stop() { inputStopped.store(true); stopping.store(true); }
   void request_input_stop() { inputStopped.store(true); }
+  void request_input_failure() {
+    inputStopped.store(true);
+    if (!replay) {
+      fatalLiveInputFailure.store(true);
+      stopping.store(true);
+    }
+  }
+  bool fatal_live_input_failure() const {
+    return fatalLiveInputFailure.load();
+  }
   std::string status_json() const;
   void processing_error(const std::string& error);
 

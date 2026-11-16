@@ -97,8 +97,35 @@ exit 0
             "PKG_CONFIG_LOG": str(self.temp / "pkg-config.log"),
             "BLAH2_SDRPLAY_INCLUDE_DIR": str(self.sdrplay / "include"),
             "BLAH2_SDRPLAY_LIBRARY": str(self.sdrplay / "lib/libsdrplay_api.so.3.15"),
+            # Receiver subsets are CMake/adapter fault fixtures, never public
+            # installable product builds.
+            "VECTORWARP_INTERNAL_ADAPTER_FIXTURE": "true",
         })
         return environment
+
+    def test_public_build_rejects_receiver_subset_artifacts(self):
+        environment = self.build_environment(True)
+        environment.pop("VECTORWARP_INTERNAL_ADAPTER_FIXTURE")
+        for backend in ("open-test", "kraken", "rspduo", "usrp", "hackrf"):
+            with self.subTest(backend=backend):
+                result = subprocess.run([
+                    "bash", str(BUILD_SCRIPT), "--backend", backend, "--preflight"
+                ], cwd=ROOT, env=environment, text=True, capture_output=True,
+                   check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("use --backend all", result.stderr)
+
+    def test_public_macos_build_rejects_receiver_subset_artifacts(self):
+        environment = self.build_environment(True)
+        environment.pop("VECTORWARP_INTERNAL_ADAPTER_FIXTURE")
+        environment["FAKE_UNAME"] = "Darwin"
+        for backend in ("cpu", "kraken", "rspduo", "usrp", "hackrf"):
+            with self.subTest(backend=backend):
+                result = subprocess.run([
+                    "bash", str(ROOT / "script/build-macos.sh"), "--backend", backend
+                ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("use --backend all", result.stderr)
 
     def cmake_fixture_arguments(self) -> list[str]:
         packages = self.temp / "cmake-packages"
@@ -356,6 +383,22 @@ endif()
             sorted(path.name for path in
                    (stage / 'opt/vectorwarp/current/config-examples').glob('*.yml')),
             ['config.yml'])
+
+    def test_installer_rejects_historical_mixed_worker_before_staging(self):
+        for symlink in (False, True):
+            with self.subTest(dangling_symlink=symlink):
+                artifact = self.make_artifact('all', 'Usrp,HackRF,Kraken', 'false')
+                worker = artifact / 'bin/blah2-mixed-worker'
+                if symlink:
+                    worker.symlink_to('absent-historical-worker')
+                else:
+                    executable(worker)
+                stage = self.temp / f'mixed-refusal-{symlink}'
+                result = self.install(artifact, stage)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('historical mixed DSP workers are not part of the unified',
+                              result.stderr)
+                self.assertFalse(stage.exists())
 
     def test_installer_renders_the_validated_compiled_receiver_manifest(self):
         for backend, (receivers, _) in RECEIVERS.items():

@@ -21,7 +21,8 @@ function createReceiverJournal(configFile, {io = fs} = {}) {
           typeof value.reconciliationRequired !== 'boolean') throw new Error('Invalid receiver journal');
       // A malformed state cannot turn an interrupted transaction into permission
       // to start. Only known settled states may carry a clear interlock.
-      const settled = ['unknown', 'not-required', 'already-matched', 'synchronized', 'saved-pending'];
+      const settled = ['unknown', 'not-required', 'already-matched', 'synchronized', 'saved-pending',
+        'api-runtime-restart-pending'];
       return {...value, exists: true,
         reconciliationRequired: value.reconciliationRequired || !settled.includes(value.state)};
     } catch (error) {

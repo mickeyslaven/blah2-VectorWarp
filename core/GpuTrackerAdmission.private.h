@@ -5,6 +5,14 @@
 #include <stdexcept>
 
 namespace gpu_tracker {
+inline constexpr uint32_t persistenceHeaderWords=10;
+inline uint64_t persistenceBytes(bool enabled,uint32_t cells){
+ // The immutable retirement header is initialized even when filtering is off.
+ return (uint64_t(enabled?cells:0)+persistenceHeaderWords)*sizeof(uint32_t);
+}
+inline bool experimentalConfirmationFeasible(uint32_t m,uint32_t n){
+ return m>0&&m<=n&&n<=255&&n>=2u*m-1u;
+}
 // Fine-bearing evidence requires a primary lobe. Secondary and tertiary lobes
 // are optional (zero) but, when present, must be inside the configured bank.
 inline constexpr const char* fineSpatialInvalidGlsl=

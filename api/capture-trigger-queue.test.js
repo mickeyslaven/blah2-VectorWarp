@@ -22,21 +22,21 @@ assert.deepEqual(optionsFromEnvironment({}),
     periodicIntervalSeconds: 0, periodicMaxSnapshots: 0,
     minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
     minimumElevationDeg: 0, maximumElevationDeg: 90,
-    minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
   BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8', BLAH2_CAPTURE_TRIGGER_ENABLED: '1'}),
 {enabled: true, preSeconds: 2, postSeconds: 8, maxClipSeconds: 10,
   periodicIntervalSeconds: 0, periodicMaxSnapshots: 0,
   minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
   minimumElevationDeg: 0, maximumElevationDeg: 90,
-  minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '3'}),
 {enabled: false, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 3,
   minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
   minimumElevationDeg: 0, maximumElevationDeg: 90,
-  minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
   {interval_seconds: 15, max_snapshots: 2}, aircraft_clips:
   {enabled: true, pre_seconds: 1, post_seconds: 4}}}),
@@ -44,7 +44,7 @@ assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
   periodicIntervalSeconds: 15, periodicMaxSnapshots: 2,
   minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
   minimumElevationDeg: 0, maximumElevationDeg: 90,
-  minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '9',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '1'}), /at least 10/);
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
@@ -459,5 +459,6 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   assert.equal(legacy.capture_samples, 1,
     'Legacy capture scalars remain attached to the initial window after periodic acknowledgements');
   periodicStats.close(); fs.rmSync(periodicDirectory, {recursive: true, force: true});
+  require('./capture-trigger-late-claim.test');
   console.log('Capture trigger queue coalescing, bounds and ADS-B-only admission tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

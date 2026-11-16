@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: '41 8 * * 3'
   workflow_dispatch:
+    inputs:
+      notify:
+        description: 'Create public review issues for verified upstream updates'
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: read
@@ -95,7 +104,7 @@ jobs:
             build-essential ca-certificates cmake curl git libarmadillo-dev \
             libboost-all-dev libfftw3-dev libgrpc++-dev libncurses-dev libprotobuf-dev \
             libusb-1.0-0-dev ninja-build protobuf-compiler protobuf-compiler-grpc \
-            pkg-config python3-dev python3-mako python3-numpy python3-requests \
+            pkg-config libeigen3-dev libssl-dev zlib1g-dev patch python3-dev python3-mako python3-numpy python3-requests \
             python3-ruamel.yaml python3-setuptools tar unzip zip
       - id: candidate-build
         name: Build the pinned candidate as a dedicated non-sudo user
@@ -122,6 +131,7 @@ jobs:
           sudo --user="$build_user" --set-home /usr/bin/env -i \
             HOME="$build_home" LANG=C.UTF-8 PATH="$PATH" \
             SOFTWARE_ID="$SOFTWARE_ID" BACKEND="$BACKEND" \
+            VECTORWARP_INTERNAL_ADAPTER_FIXTURE=true \
             SOURCE_COMMIT="$SOURCE_COMMIT" VECTORWARP_COMMIT="$VECTORWARP_COMMIT" \
             RUNNER_TEMP="$build_root" \
             CANDIDATE_DIR="$build_root/candidate" \
@@ -223,6 +233,7 @@ jobs:
     needs: [discover, candidate-source-build]
     if: >-
       always() &&
+      github.event_name == 'workflow_dispatch' && inputs.notify &&
       needs.discover.result == 'success' &&
       needs.discover.outputs.has_updates == 'true' &&
       github.ref_name == github.event.repository.default_branch &&

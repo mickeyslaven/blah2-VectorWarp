@@ -84,7 +84,7 @@ function setupDefaults() {
     save: {iq: false, map: false, detection: false, timing: false,
       path: '/var/lib/vectorwarp/recordings/',
       retention: {automatic_cleanup: false, low_space_policy: 'stop_recording', maximum_age_days: 30,
-        maximum_total_gb: 100, minimum_free_gb: 5}}
+        maximum_total_gb: 100, minimum_free_gb: 5, maximum_manual_seconds: 300}}
   };
 }
 
@@ -118,19 +118,24 @@ function configurationForReceiver(type, base) {
         config.process.bearing.manifold_recorder.enabled = false;
     }
     if (config.process.detection) {
-      config.process.detection.integration_cpis = 1;
-      config.process.detection.integration_motion_bins = 0;
+      if (!profile.features?.residentIntegration) {
+        config.process.detection.integration_cpis = 1;
+        config.process.detection.integration_motion_bins = 0;
+      }
       if (config.process.detection.track_before_detect)
         config.process.detection.track_before_detect.enable = false;
     }
     if (config.process.tracker) {
-      delete config.process.tracker.gpu_capacity;
       delete config.process.tracker.beam_tolerance;
-      if (config.process.tracker.track_guided_shadow) {
+      if (!profile.features?.residentIntegration)
+        delete config.process.tracker.gpu_capacity;
+      if (!profile.features?.residentIntegration &&
+          config.process.tracker.track_guided_shadow) {
         config.process.tracker.track_guided_shadow.enable = false;
         config.process.tracker.track_guided_shadow.promote = false;
       }
-      if (config.process.tracker.initiate?.stationary_clutter)
+      if (!profile.features?.residentIntegration &&
+          config.process.tracker.initiate?.stationary_clutter)
         config.process.tracker.initiate.stationary_clutter.enable = false;
     }
   }
@@ -197,7 +202,7 @@ function readConfig(filename) {
       // Missing optional fields must use processor defaults, not the more
       // aggressive new-device preset (which opts into array synthesis).
       defaults.process.performance.surveillance_workers = 1;
-      defaults.process.performance.fft_threads = profile.type === 'Kraken' ? 1 : 4;
+      defaults.process.performance.fft_threads = 1;
     }
     if (profile.type === 'Kraken') {
       const count = Number.isInteger(parsed.capture.device.channel_count) ?

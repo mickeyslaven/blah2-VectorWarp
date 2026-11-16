@@ -108,7 +108,7 @@ case "$DISTRO" in
 esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
-for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-resident-vulkan.so bin/blah2-mixed-worker \
+for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-wideband-vulkan.so bin/blah2-gpu-resident-vulkan.so \
   bin/heimdall share/heimdall/build.json share/heimdall/sbom.cdx.json share/heimdall/service.py share/heimdall/controller.py \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
   bin/blah2-receiver-hackrf.so \
@@ -121,7 +121,9 @@ fi
 for notice in asio cpp-httplib rapidjson ryml VkFFT; do
   [[ -s $ARTIFACT/licenses/$notice.txt ]] || die "artifact lacks third-party notice: $notice"
 done
-[[ -x $ARTIFACT/bin/blah2 && -x $ARTIFACT/bin/blah2-gpu-worker && -x $ARTIFACT/bin/blah2-mixed-worker ]] ||
+[[ ! -e $ARTIFACT/bin/blah2-mixed-worker && ! -L $ARTIFACT/bin/blah2-mixed-worker ]] ||
+  die 'historical mixed DSP workers are not part of the unified release artifact'
+[[ -x $ARTIFACT/bin/blah2 && -x $ARTIFACT/bin/blah2-gpu-worker ]] ||
   die 'release processor binaries are not executable'
 [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'installed launcher is missing from release artifact'
 [[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing from release artifact'
@@ -297,8 +299,8 @@ if [[ $FORMAT == deb ]]; then
   binaries=(
     "$STAGE/opt/vectorwarp/current/bin/blah2"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-worker"
-    "$STAGE/opt/vectorwarp/current/bin/blah2-mixed-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-vulkan.so"
+    "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-wideband-vulkan.so"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-resident-vulkan.so"
     "$STAGE/opt/vectorwarp/current/bin/libblah2-capture-core.so.1"
     "$STAGE/opt/vectorwarp/current/bin/blah2-receiver-usrp.so"

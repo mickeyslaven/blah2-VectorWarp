@@ -9,10 +9,23 @@
 #include <stdint.h>
 #include <vector>
 #include <complex>
+#include <array>
+#include <stdexcept>
+#include <utility>
 
 class Detection
 {
+public:
+  // Radar-only, exact CPI support. Empty metadata denotes an ordinary
+  // single-CPI measurement, never an inferred temporal history.
+  struct Evidence {
+    uint64_t epoch = 0, newestSequence = 0;
+    uint8_t depth = 0, bank = 0;
+    int8_t delayMotion = 0, dopplerMotion = 0;
+    std::array<uint64_t, 8> sequences{};
+  };
 private:
+  std::vector<Evidence> evidence;
   /// @brief Detections in delay (bins).
   std::vector<double> delay;
 
@@ -23,6 +36,12 @@ private:
   std::vector<double> snr;
 
 public:
+  const std::vector<Evidence>& get_evidence() const { return evidence; }
+  void set_evidence(std::vector<Evidence> value) {
+    if (!value.empty() && value.size() != delay.size())
+      throw std::invalid_argument("Detection evidence dimensions differ");
+    evidence = std::move(value);
+  }
   /// @brief Constructor.
   /// @param delay Detections in delay (bins).
   /// @param doppler Detections in Doppler (Hz).

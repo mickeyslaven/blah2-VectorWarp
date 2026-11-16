@@ -38,14 +38,14 @@ function analysisDescriptor(config) {
     [element.daq_channel, element.position]));
   const positions = selected.map(channel => byChannel.get(channel));
   const options = config.process?.bearing?.frequency_resolved_shadow || {};
-  if (device.type !== 'Kraken' || !Number.isInteger(device.channel_count) ||
+  if (!Number.isInteger(device.channel_count) ||
       device.channel_count < 2 || device.channel_count > 8 || selected.length < 2 ||
       selected.length > device.channel_count || new Set(selected).size !== selected.length ||
       selected.some(channel => !Number.isInteger(channel) || channel < 0 || channel >= device.channel_count) ||
       positions.some(position => !Array.isArray(position) || position.length !== 3 ||
         !position.every(finite)) || !finite(geometry.x_axis_bearing_deg_true) ||
       !finite(config.capture?.fc) || !finite(config.capture?.fs))
-    throw new Error('Frequency-resolved shadow requires complete coherent Kraken geometry');
+    throw new Error('Frequency-resolved analysis requires complete coherent channel geometry');
   const centre = [0, 1, 2].map(axis => positions.reduce((sum, position) =>
     sum + position[axis], 0) / positions.length);
   const bearing = transmitterBearing(config.location?.rx, config.location?.tx);

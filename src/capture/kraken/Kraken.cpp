@@ -309,6 +309,15 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
       samplePositionAvailable.store(true, std::memory_order_release);
     }
     else samplePositionAvailable.store(false, std::memory_order_release);
+    const bool queueOverflow = std::any_of(buffers.begin(), buffers.end(),
+      [&](IqData* buffer) {
+        return channels.front().size() >
+          std::size_t(buffer->get_n() - buffer->get_length());
+      });
+    // Consumer-owned live chunks are intentionally outside these FIFO locks.
+    // Advance the coordinated epoch before an append retires producer samples
+    // so the consumer discards its old tail instead of bridging the gap.
+    if (queueOverflow) advance_processing_epoch();
     for (std::size_t channel = 0; channel < channels.size(); channel++)
       buffers[channel]->append_unlocked(channels[channel]);
     for (auto it = buffers.rbegin(); it != buffers.rend(); ++it)

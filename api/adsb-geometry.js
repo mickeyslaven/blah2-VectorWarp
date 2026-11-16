@@ -4,6 +4,7 @@
 // This in-process version derives delay/Doppler solely from the configured raw
 // tar1090 feed; it never accepts a converter URL or request-supplied geometry.
 const C = 299792458;
+const truthUncertainty = require('./truth-uncertainty');
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const radians = value => value * Math.PI / 180;
 const degrees = value => value * 180 / Math.PI;
@@ -48,6 +49,7 @@ class DelayDopplerHistory {
     const adsb = config.truth?.[this.truthKey] || {}, rx = config.location?.rx || {}, tx = config.location?.tx || {};
     this.window = Number.isInteger(adsb.smoothing_window) ? adsb.smoothing_window : 10;
     this.maxAge = finite(adsb.max_position_age) ? adsb.max_position_age : 30;
+    this.uncertaintyPolicy = truthUncertainty.policy(adsb.uncertainty_association);
     this.rx = ecef(rx.latitude, rx.longitude, rx.altitude);
     this.tx = ecef(tx.latitude, tx.longitude, tx.altitude);
     this.rxSite = {...rx}; this.txSite = {...tx};
@@ -89,20 +91,40 @@ class DelayDopplerHistory {
       if (!target.every(finite) || !finite(delay)) continue;
       const previous = this.history.get(aircraft.hex) || [];
       const last = previous.at(-1);
-      if (last && (timestamp <= last.timestamp ||
-          (last.lat === aircraft.lat && last.lon === aircraft.lon && last.alt === aircraft.alt_geom))) continue;
+      if (last && (timestamp <= last.timestamp || (!this.uncertaintyPolicy &&
+          last.lat === aircraft.lat && last.lon === aircraft.lon && last.alt === aircraft.alt_geom))) continue;
       // PR #5: timestamps are feed.now - seen_pos and duplicate coordinates are
       // compared against processing history, never the sparse output object.
-      const samples = [...previous, {timestamp, delay, lat: aircraft.lat, lon: aircraft.lon, alt: altitudeFeet}]
+      const observation = aircraft.vectorwarp?.observation;
+      const observationSource = aircraft.vectorwarp?.source_id;
+      const priorObservation = [...previous].reverse().find(item =>
+        typeof observationSource === 'string' && item.observationSource === observationSource &&
+        finite(item.observation?.timestamp_s) && item.observation.timestamp_s < observation?.timestamp_s)?.observation;
+      const observationDt = priorObservation && observation.timestamp_s - priorObservation.timestamp_s;
+      const motion = {};
+      if (observationDt > .05 && observationDt <= 10) {
+        if (finite(observation.gs) && finite(priorObservation.gs))
+          motion.accelerationMS2 = (observation.gs - priorObservation.gs) * .514444 / observationDt;
+        if (finite(observation.track) && finite(priorObservation.track))
+          motion.turnRateDegS = ((observation.track - priorObservation.track + 540) % 360 - 180) / observationDt;
+        const up = observation.geom_rate ?? observation.baro_rate;
+        const oldUp = priorObservation.geom_rate ?? priorObservation.baro_rate;
+        if (finite(up) && finite(oldUp)) motion.verticalAccelerationMS2 =
+          (up - oldUp) * .3048 / 60 / observationDt;
+      }
+      const uncertainty = truthUncertainty.projectedUncertainty({aircraft, target,
+        rx: this.rx, tx: this.tx, frequency: this.frequency, config: this.uncertaintyPolicy, motion});
+      const samples = [...previous, {timestamp, delay, lat: aircraft.lat, lon: aircraft.lon,
+        alt: altitudeFeet, observation, observationSource}]
         .filter(item => timestamp - item.timestamp <= this.maxAge).slice(-Math.max(2, this.window + 1));
       this.history.set(aircraft.hex, samples);
-      if (samples.length < 2) continue;
+      if (samples.length < 2 && !uncertainty?.valid) continue;
       const slopes = [];
       for (let i = 1; i < samples.length; i++) {
         const dt = samples[i].timestamp - samples[i - 1].timestamp;
         if (dt > 0) slopes.push((samples[i].delay - samples[i - 1].delay) / dt);
       }
-      if (!slopes.length) continue;
+      if (!slopes.length && !uncertainty?.valid) continue;
       const look = lookGeometry(this.rxSite, aircraft);
       const transmitterRange = distance(this.tx, target) / 1000;
       const result = {timestamp,
@@ -117,7 +139,9 @@ class DelayDopplerHistory {
         desc: typeof aircraft.desc === 'string' ? aircraft.desc : '',
         ownOp: typeof aircraft.ownOp === 'string' ? aircraft.ownOp : '',
         year: typeof aircraft.year === 'string' || Number.isFinite(aircraft.year) ? aircraft.year : '',
-        delay: delay / 1000, doppler: -median(slopes) / (C / this.frequency),
+        delay: delay / 1000, doppler: uncertainty?.valid ? uncertainty.doppler_hz :
+          -median(slopes) / (C / this.frequency),
+        ...(uncertainty ? {truth_uncertainty: uncertainty} : {}),
         frequency_hz: this.frequency,
         delay_definition: 'excess_bistatic_path_km',
         position: {latitude: aircraft.lat, longitude: aircraft.lon,
@@ -125,6 +149,8 @@ class DelayDopplerHistory {
           altitude_source: finite(aircraft.alt_geom) ? 'GEOMETRIC' : 'BAROMETRIC_FALLBACK',
           ground_speed_kt: optionalNumber(aircraft.gs), track_deg_true: optionalNumber(aircraft.track),
           geom_rate_fpm: optionalNumber(aircraft.geom_rate), baro_rate_fpm: optionalNumber(aircraft.baro_rate),
+          nic: optionalNumber(aircraft.nic), nac_p: optionalNumber(aircraft.nac_p),
+          nac_v: optionalNumber(aircraft.nac_v), track_rate_deg_s: optionalNumber(aircraft.track_rate),
           category: typeof aircraft.category === 'string' ? aircraft.category : null,
           squawk: typeof aircraft.squawk === 'string' ? aircraft.squawk : null,
           rssi_dbfs: optionalNumber(aircraft.rssi), seen_s: optionalNumber(aircraft.seen),
@@ -136,6 +162,7 @@ class DelayDopplerHistory {
       const rateDt = priorResult && timestamp - priorResult.timestamp;
       result.delay_rate_km_s = rateDt > 0 ? (result.delay - priorResult.delay) / rateDt : null;
       result.doppler_rate_hz_s = rateDt > 0 ? (result.doppler - priorResult.doppler) / rateDt : null;
+      if (uncertainty?.valid) result.delay_rate_km_s = uncertainty.delay_rate_km_s;
       if (!finite(result.delay) || !finite(result.doppler)) continue;
       this.output.set(aircraft.hex, result); output[aircraft.hex] = result;
     }

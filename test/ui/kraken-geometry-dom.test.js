@@ -100,6 +100,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     let upstream = {supported: true, available: false, matched: false, message: 'Fixture has no receiver'};
     window.fetch = async (url, options = {}) => {
       if (url === '/api/upstream/status') return {ok: true, json: async () => upstream};
+      if (url === '/api/receivers/discover') return {ok:true,json:async()=>({receivers:[],errors:[]})};
       return request(url, options);
     };
     // Preserve configFetch's third timeout argument. In particular, a save has
@@ -107,7 +108,8 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     // HTTP fixture retain its unrelated 500-ms default under CI contention.
     window.fetchStatusResource = (url, options, timeoutMs) => window.fetch(url,
       {...options, ...(timeoutMs === undefined ? {} : {timeout: timeoutMs})});
-    for (const file of ['html/js/config_profiles.js', 'html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
+    for (const file of ['html/js/processing_capabilities.js', 'html/js/config_profiles.js', 'html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8') +
+      (file.endsWith('/config_ui.js') ? '\nwindow.validateFixtureConfiguration = () => { window.clearTimeout(validationTimer); return validateActiveConfiguration(); };' : ''));
     const doc = window.document;
     const query = key => doc.querySelector(`[data-path="${key}"] input, [data-path="${key}"] select`);
     const g = key => query(`capture.device.array_geometry.${key}`);
@@ -119,7 +121,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     const click = text => { const button = [...doc.querySelectorAll('.kraken-geometry button')].find(item => item.textContent === text); assert.ok(button, text); button.click(); };
     const current = () => readConfig(filename).config;
     const save = async () => {
-      assert.equal(await window.validateActiveConfiguration(), true, doc.getElementById('config-message').textContent);
+      assert.equal(await window.validateFixtureConfiguration(), true, doc.getElementById('config-message').textContent);
       await window.saveConfiguration();
       assert.ok(!doc.getElementById('config-message').textContent.includes('Unable'), doc.getElementById('config-message').textContent);
       assert.match(doc.getElementById('config-message').textContent, /Configuration saved/,
@@ -171,7 +173,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.ok(doc.querySelector('.geometry-visual').textContent.includes('Actual neighbour spacing'));
     assert.ok(doc.querySelector('.geometry-ideal-ring'),
       'Multi-element arrays show the wavelength-derived reference ring');
-    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(await window.validateFixtureConfiguration(), true);
     assert.ok(doc.getElementById('geometry-assessment').textContent.includes('Measurements not confirmed'));
     for (const name of ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed']) change(g(name), true);
     await save();
@@ -280,7 +282,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     writeConfigAtomically(filename, imported);
     await window.renderConfiguration();
     assert.equal(g('shape').value, 'unsupported_imported_shape');
-    assert.equal(await window.validateActiveConfiguration(), false);
+    assert.equal(await window.validateFixtureConfiguration(), false);
     assert.equal(g('shape').getAttribute('aria-invalid'), 'true');
     assert.ok(g('shape').closest('.config-field').querySelector('.config-field-error').textContent);
     assert.equal(current().capture.device.array_geometry.shape, 'unsupported_imported_shape');
@@ -288,7 +290,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     writeConfigAtomically(filename, imported);
     await window.renderConfiguration();
     assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Unsupported saved layout'));
-    assert.equal(await window.validateActiveConfiguration(), false);
+    assert.equal(await window.validateFixtureConfiguration(), false);
     assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Unsupported saved layout'));
     window.confirm = () => true; click('Remove layout'); await save();
     assert.equal(current().capture.device.type, 'Kraken');

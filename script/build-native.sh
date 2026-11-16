@@ -23,7 +23,7 @@ Usage: script/build-native.sh [options]
 
 Build a relocatable VectorWarp artifact without installing it.
 
-  --backend NAME          all (default); open-test, kraken, rspduo, usrp or hackrf for development
+  --backend all           Unified build (default); other values are internal fixtures only
   --gpu auto|on|off       Optional Vulkan worker selection (default: auto)
   --build-dir PATH        Build/output directory (default: build/native)
   --deps-dir PATH         Pinned source dependency cache
@@ -65,20 +65,30 @@ done
 case "$BACKEND" in
   open-test)
     # Open CI-only package coverage: no licensed SDRplay SDK or adapter.
+    [[ ${VECTORWARP_INTERNAL_ADAPTER_FIXTURE:-false} == true ]] ||
+      die 'receiver-subset builds are internal adapter fixtures; use --backend all'
     ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=ON
     COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true ;;
   kraken)
+    [[ ${VECTORWARP_INTERNAL_ADAPTER_FIXTURE:-false} == true ]] ||
+      die 'receiver-subset builds are internal adapter fixtures; use --backend all'
     ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true ;;
   rspduo)
+    [[ ${VECTORWARP_INTERNAL_ADAPTER_FIXTURE:-false} == true ]] ||
+      die 'receiver-subset builds are internal adapter fixtures; use --backend all'
     ENABLE_RSPDUO=ON; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=RspDuo,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=RspDuo,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true ;;
   usrp)
+    [[ ${VECTORWARP_INTERNAL_ADAPTER_FIXTURE:-false} == true ]] ||
+      die 'receiver-subset builds are internal adapter fixtures; use --backend all'
     ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Usrp,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=Usrp,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true ;;
   hackrf)
+    [[ ${VECTORWARP_INTERNAL_ADAPTER_FIXTURE:-false} == true ]] ||
+      die 'receiver-subset builds are internal adapter fixtures; use --backend all'
     ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true ;;
   all)
     ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=ON
     COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=RspDuo; LOCAL_BUILD_RSPDUO=ON; TEST_ONLY=false ;;
@@ -131,6 +141,18 @@ if $PREFLIGHT_ONLY; then
 fi
 if $DRY_RUN; then
   say "dry run for backend=$BACKEND receivers=$COMPILED_RECEIVERS gpu=${GPU,,}"
+fi
+
+# A development build may use local edits, but it must never claim that its
+# bytes came from an immutable release commit. Capture this before building as
+# well as afterwards; a commit made during compilation also invalidates it.
+source_clean=false
+if ! $DRY_RUN; then
+  source_commit=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+  [[ $source_commit =~ ^[0-9a-f]{40}$ ]] || die 'cannot identify source commit'
+  if [[ -z $(git -C "$SOURCE_DIR" status --porcelain --untracked-files=normal) ]]; then
+    source_clean=true
+  fi
 fi
 
 ensure_checkout() {
@@ -342,6 +364,8 @@ run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 
 if ! $DRY_RUN; then
+  [[ ! -e $ARTIFACT_TMP/bin/blah2-mixed-worker && ! -L $ARTIFACT_TMP/bin/blah2-mixed-worker ]] ||
+    die 'historical mixed DSP workers are not part of the unified build artifact'
   if find "$ARTIFACT_TMP/bin" -maxdepth 1 \( -type f -o -type l \) -name 'test*' -print -quit | grep -q .; then
     die 'release artifact contains a test executable'
   fi
@@ -359,8 +383,9 @@ if ! $DRY_RUN; then
   done
   [[ -f $ARTIFACT_TMP/api/server.js && -f $ARTIFACT_TMP/html/index.html ]] ||
     die 'API/UI artifact is incomplete'
-  source_commit=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || printf unknown)
-  [[ $source_commit =~ ^[0-9a-f]{40}$ ]] || die 'could not bind artifact to an exact source commit'
+  [[ $(git -C "$SOURCE_DIR" rev-parse HEAD) == "$source_commit" ]] ||
+    die 'source commit changed during build; rebuild the frozen candidate'
+  [[ -z $(git -C "$SOURCE_DIR" status --porcelain --untracked-files=normal) ]] || source_clean=false
   revision=${source_commit:0:12}
   build_id="$(date -u +%Y%m%dT%H%M%SZ)-$revision"
   build_os_id=unknown
@@ -369,8 +394,8 @@ if ! $DRY_RUN; then
     build_os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"' | head -n 1)
     build_os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
   fi
-  printf 'build_id=%s\nsource_commit=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
-    "$build_id" "$source_commit" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
+  printf 'build_id=%s\nsource_commit=%s\nsource_clean=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
+    "$build_id" "$source_commit" "$source_clean" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"

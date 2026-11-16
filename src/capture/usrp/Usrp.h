@@ -20,6 +20,7 @@
 #include "UsrpCoherence.h"
 #include "UsrpDeviceTime.h"
 #include "UsrpReadback.h"
+#include "UsrpInputQuality.h"
 
 #include <stdint.h>
 #include <atomic>
@@ -51,6 +52,7 @@ private:
   bool appliedSettingsAvailable = false;
   UsrpAppliedSettings appliedSettings;
   std::atomic<bool> monitoring{false};
+  UsrpInputQuality inputQuality;
   static constexpr uint64_t REQUALIFICATION_BLOCKS = 2;
   static constexpr uint64_t MAX_CONSECUTIVE_DISCONTINUITIES = 8;
   std::string timingState = "unavailable";

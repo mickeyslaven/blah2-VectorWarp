@@ -289,6 +289,48 @@ assert.equal(speedFuser.update(resetFrames), reset, 'Repeating one capture canno
 assert.equal(speedFuser.update(cohort(illuminators, target, 4)), reset,
   'A delayed cohort from an already retired epoch cannot restore old track identities');
 
+// A coasting alternative may share one lane with a valid continuation. Rotate
+// around that lane's receiver/transmitter baseline so its measured range stays
+// exactly unchanged: the shared lane alone cannot identify the old 3-D branch.
+const rotationAxis = tx.map(value => value / Math.hypot(...tx));
+const axialProjection = original.reduce((sum, value, axis) => sum + value * rotationAxis[axis], 0);
+const axisCrossPoint = [rotationAxis[1] * original[2] - rotationAxis[2] * original[1],
+  rotationAxis[2] * original[0] - rotationAxis[0] * original[2],
+  rotationAxis[0] * original[1] - rotationAxis[1] * original[0]];
+const rotatedPoint = angle => original.map((value, axis) => value * Math.cos(angle) +
+  axisCrossPoint[axis] * Math.sin(angle) + rotationAxis[axis] * axialProjection * (1 - Math.cos(angle)));
+for (const reverseTracks of [false, true]) {
+  const branchFuser = new MultiIlluminatorTrackFuser({...config,
+    process: {...config.process, tracker: {...config.process.tracker, initiate: {M: 4, N: 6}}}});
+  let continuationId, branchResult;
+  for (let index = 0; index < 5; index += 1) {
+    const local = index ? rotatedPoint(.1 + .004 * (index - 1)) : original;
+    assert.ok(Math.abs(excessPath3d(local, tx) - excessPath3d(original, tx)) < 1e-8,
+      'The shared lane has identical range on both historical alternatives');
+    const frames = cohort(illuminators, geographicPoint3d(receiver, local), index);
+    frames.forEach((frame, lane) => {
+      if (index > 0 && !(index >= 2 && lane === 0)) frame.tracks.data[0].id += '-new';
+    });
+    if (index === 2 && reverseTracks) branchFuser.tracks = new Map([...branchFuser.tracks].reverse());
+    branchResult = branchFuser.update(frames);
+    if (index === 1) {
+      assert.equal(branchResult.tracks.length, 2, 'The separated second candidate starts its own history');
+      continuationId = branchResult.tracks.find(track => track.misses === 0).id;
+    }
+    if (index >= 2) {
+      const continuation = branchResult.tracks.find(track => track.id === continuationId);
+      assert.equal(continuation.supporting_frames, index,
+        'An incompatible stale alternative cannot veto another track\'s valid continuation');
+      assert.equal(continuation.misses, 0);
+      assert.ok(continuation.speed_m_s < 55);
+      assert.equal(resolved(branchResult).length, 1);
+    }
+    if (index < 4) assert.equal(branchResult.operational_localization, false,
+      'Contributor reassignment cannot bypass four-of-six confirmation');
+  }
+  assert.equal(branchResult.tracks.find(track => track.id === continuationId).state, 'FUSED_ACTIVE');
+}
+
 // New presentation timestamps cannot turn previously consumed sample windows
 // into an additional confirming observation.
 const replayFuser = new MultiIlluminatorTrackFuser(config);
@@ -323,12 +365,16 @@ assert.equal(replayFuser.seenCaptureIntervals.size, 1, 'Interval history resets 
 
 // Secant velocities are -382.5 and +42.5 m/s over one- and nine-second
 // intervals. Their midpoints are five seconds apart: acceleration is 85 m/s².
-const irregularFuser = new MultiIlluminatorTrackFuser(config);
+// Tight observation regions keep this genuinely impossible after accounting
+// for measurement uncertainty; broad regions can legitimately explain 85 m/s²
+// of point-estimate acceleration with a trajectory below the physical limit.
+const preciseIlluminators = illuminators.map(item => ({...item, output_sample_rate_hz: 2.4e9}));
+const irregularFuser = new MultiIlluminatorTrackFuser(configFor(preciseIlluminators, receiver, {rangeNoiseSigmaKm: .00001}));
 let irregular;
 for (const [index, seconds, eastKm] of [[0, 0, 0], [1, 1, -.3825], [2, 10, 0]]) {
   const point = geographicPoint3d(receiver, localPoint3d(receiver, target)
     .map((value, axis) => value + (axis === 0 ? eastKm : 0)));
-  const frames = cohort(illuminators, point, index);
+  const frames = cohort(preciseIlluminators, point, index);
   frames.forEach(frame => { frame.timestamp = frame.tracks.timestamp = 100000 + seconds * 1000; });
   irregular = irregularFuser.update(frames);
 }
@@ -338,6 +384,30 @@ assert.equal(irregular.tracks.length, 1);
 assert.equal(irregular.tracks[0].supporting_frames, 2);
 assert.equal(irregular.tracks[0].measurement_timestamp, 101000);
 assert.ok(irregular.hypotheses.some(item => item.motion_rejected));
+
+const jitterConfig = {...config, process: {...config.process,
+  tracker: {...config.process.tracker, initiate: {M: 4, N: 6}}}};
+const jitterFuser = new MultiIlluminatorTrackFuser(jitterConfig);
+let jitterResult, covarianceContinuation = false;
+for (let index = 0; index < 12; index += 1) {
+  const local = original.map((value, axis) => value + (axis === 0 ? (index % 2 ? .06 : -.06) : 0));
+  const frames = cohort(illuminators, geographicPoint3d(receiver, local), index);
+  frames.forEach(frame => { frame.timestamp = frame.tracks.timestamp = 100000 + index * 500; });
+  jitterResult = jitterFuser.update(frames);
+  assert.equal(jitterResult.tracks.length, 1, 'Noisy estimates retain one feasible track identity');
+  const track = jitterResult.tracks[0];
+  assert.equal(track.supporting_frames, Math.min(index + 1, 6));
+  assert.equal(track.state, index < 3 ? 'FUSED_CANDIDATE' : 'FUSED_ACTIVE');
+  assert.ok(track.speed_m_s <= 450);
+  if (track.motion_association?.method === 'covariance-ellipsoid-trajectory-witness') {
+    covarianceContinuation = true;
+    assert.ok(track.uncertainty.witness_recentring_covariance_scale >= 1);
+  }
+}
+assert.ok(covarianceContinuation, 'Point acceleration jitter is explained by an explicit covariance witness');
+assert.equal(jitterFuser.tracks.values().next().value.motionHistory.length, 8, 'Motion history is bounded');
+assert.ok(jitterFuser.tracks.values().next().value.motionHistory.slice(0, 2).every(item => item.fixed),
+  'Older trajectory boundaries are fixed when history rolls forward');
 
 // Quantized noisy observations exercise an overdetermined fit and uncertainty.
 const fourth = {...illuminators[0], id: 'south', transmitter: {latitude: 39.8, longitude: -80.08, altitude: 450}};
@@ -375,6 +445,20 @@ assert.equal(oneHypothesis.hypotheses.length, 1);
 assertDiagnostic(oneHypothesis, 'Dropping the last mirror at the output limit cannot establish uniqueness');
 
 const serverSource = require('fs').readFileSync(require.resolve('./server.js'), 'utf8');
+const parserSource = serverSource.slice(serverSource.indexOf('function parseIlluminatorFrame'),
+  serverSource.indexOf('function acceptIlluminatorFrame'));
+const parserContext = {input: JSON.stringify({schema:'vectorwarp-multi-illuminator-frame-v1',
+  id:'lane',map:{timestamp:1,nRows:1,nCols:1,sourceRows:2,sourceCols:2,
+    presentationStride:2,presentation_only:true,presentation_pooling:'max',data:[[12.25]]},
+  detections:{data:[]},tracks:{data:[]}})};
+require('node:vm').runInNewContext(`${parserSource}; result=parseIlluminatorFrame(input)`,
+  parserContext);
+assert.equal(parserContext.result.map.presentation_only, true,
+  'Compact parser must retain the presentation-only scientific boundary');
+assert.equal(parserContext.result.map.presentationStride, 2,
+  'Compact parser must retain source/presentation geometry provenance');
+assert.match(parserContext.result.map_json, /"data":\[\[12\.25\]\]/,
+  'Compact parser must retain display raster bytes');
 const fusedRoute = serverSource.slice(serverSource.indexOf("app.get('/api/tracker/fused'"),
   serverSource.indexOf("app.get('/api/tracker/native'"));
 assert.doesNotMatch(fusedRoute, /multiIlluminatorTrackFuser\.update/,
@@ -384,5 +468,9 @@ const ingestRoute = serverSource.slice(serverSource.indexOf('function acceptIllu
 assert.match(ingestRoute,
   /latestMultiIlluminatorFusion = multiIlluminatorTrackFuser\.update\(cohort\)/,
   'Every newly completed capture cohort advances fusion without a browser poll');
+assert.match(ingestRoute, /item\.map\?\.presentation_only === true/,
+  'Presentation-only maps are identified before scientific map support');
+assert.match(ingestRoute, /multiSiteMapSupportTracker\.unavailable/,
+  'Presentation-only maps explicitly disable scientific map support');
 
 console.log('Three-dimensional held-out-truth bistatic localization, uncertainty and adversarial tracking passed.');

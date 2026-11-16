@@ -81,6 +81,23 @@ recording, replay, receiver setup, and a 3D airspace map.
 - Sanitized issue reports with free-form comments, configuration, service
   status, and logs.
 
+## Next release (unreleased)
+
+Since v0.1.38, the next release adds:
+
+- One unified all-receiver build for KrakenSDR, USRP/UHD, dual HackRF, and the
+  local SDRplay adapter kit; choose the connected receiver in Settings.
+- Accelerated multi-illuminator and wider GPU channelization paths, with
+  capability reporting and CPU fallback where GPU work is unavailable.
+- More resilient receiver timing, calibration telemetry, browser reconnects,
+  and preservation of bearing evidence across acquisition changes.
+- Package upgrades that preserve the existing VectorWarp configuration, plus
+  more tolerant Debian repository setup on slow or temporarily skewed mirrors.
+
+This is a development summary, not a release announcement. Physical hardware
+qualification, final artifact acceptance and soak evidence, and explicit
+publication authorization are still required before release.
+
 ## Install
 
 ### Linux

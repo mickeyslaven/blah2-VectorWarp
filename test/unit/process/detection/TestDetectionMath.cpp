@@ -9,6 +9,8 @@
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
 #include "process/detection/CfarDetector1D.h"
+#include "process/detection/IntegratedCfar.h"
+#include "process/detection/DopplerRidgeScrubber.h"
 
 #include <cmath>
 #include <complex>
@@ -26,6 +28,42 @@ Map<std::complex<double>> makeMap() {
   return map;
 }
 
+TEST_CASE("Integrated CFAR uses the Gamma power-mean null", "[detection]")
+{
+  constexpr double pfa = 1e-4;
+  constexpr uint32_t depth = 4;
+  constexpr uint32_t training = 4;
+  const double alpha = blah2::detection::integrated_cfar::alpha(
+    pfa, training, depth);
+  CHECK(std::abs(blah2::detection::integrated_cfar::survival(
+    alpha, training, depth) - pfa) < 1e-12);
+
+  Map<std::complex<double>> map(1, 5);
+  map.delay = {0, 1, 2, 3, 4}; map.doppler = {10}; map.noisePower = 0;
+  CfarDetector1D detector(pfa, 0, 2, 0, 0, depth);
+  for (const double power : {alpha * (1.0 - 1e-8),
+      alpha * (1.0 + 1e-8)}) {
+    map.data[0] = {{1, 0}, {1, 0}, {std::sqrt(power), 0}, {1, 0}, {1, 0}};
+    CHECK(detector.process(&map)->get_nDetections() ==
+      (power > alpha ? 1 : 0));
+  }
+  CHECK_THROWS_AS(CfarDetector1D(pfa, 0, 2, 0, 0, 3),
+    std::invalid_argument);
+}
+
+TEST_CASE("CFAR bounds dense diagnostic output before candidate materialization",
+  "[detection]")
+{
+  Map<std::complex<double>> map(1, 5);
+  map.delay = {0, 1, 2, 3, 4}; map.doppler = {10}; map.noisePower = 0;
+  map.data[0].assign(5, {1, 0});
+  CfarDetector1D detector(.9, 0, 1, 0, 0);
+  uint64_t truncated = 0;
+  const auto result = detector.process(&map, nullptr, nullptr, 2, &truncated);
+  REQUIRE(result->get_nDetections() == 2);
+  REQUIRE(truncated == 3);
+}
+
 } // namespace
 
 TEST_CASE("CFAR includes the first valid training bin and skips empty windows", "[detection]")
@@ -40,6 +78,34 @@ TEST_CASE("CFAR includes the first valid training bin and skips empty windows", 
   CHECK(detector.process(&single)->get_nDetections() == 0);
   CHECK_THROWS_AS(CfarDetector1D(0, 0, 1, 1, 0), std::invalid_argument);
   CHECK_THROWS_AS(CfarDetector1D(.5, 0, 0, 1, 0), std::invalid_argument);
+}
+
+TEST_CASE("Persistent broad Doppler power is learned without changing the map", "[detection]")
+{
+  Map<std::complex<double>> map(9, 101);
+  for (int column = 0; column < 101; ++column) map.delay.push_back(column);
+  for (int row = 0; row < 9; ++row) map.doppler.push_back(row - 4);
+  map.data.assign(9, std::vector<std::complex<double>>(101, {1, 0}));
+  const double ridgeAmplitude = std::sqrt(10.0);
+  std::fill(map.data[4].begin(), map.data[4].end(),
+    std::complex<double>(ridgeAmplitude, 0));
+  map.data[4][30] = {std::sqrt(50.0), 0};
+
+  DopplerRidgeScrubber scrubber({"shadow", 2, 3.0, 12.0, 0.0, 3, 2});
+  CHECK(scrubber.process(&map, 1)[4][20] == 0);
+  scrubber.process(&map, 1);
+  map.data[4][60] = {std::sqrt(50.0), 0};
+  const auto original = map.data;
+  const auto& background = scrubber.process(&map, 1);
+  CHECK(background[4][20] > 8.5);
+  CHECK(scrubber.metrics().qualifiedRows == 1);
+  CHECK(map.data == original);
+
+  CfarDetector1D detector(.1, 0, 2, 1, 0);
+  CHECK(detector.process(&map)->get_nDetections() == 2);
+  const auto detections = detector.process(&map, &background);
+  REQUIRE(detections->get_nDetections() == 1);
+  CHECK(detections->get_delay().front() == 60);
 }
 
 TEST_CASE("Centroid suppresses a stronger neighbour across delay zero", "[detection]")

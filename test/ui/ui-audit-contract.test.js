@@ -3,6 +3,7 @@
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -49,6 +50,10 @@ assert.match(common, /dataset\.captureControls !== 'true'/,
   'Shared chart scaffolding must not add recording controls without an explicit opt-in');
 assert.match(common, /aria-current="page"/,
   'Primary navigation exposes the current route to assistive technology');
+assert.match(common, /menu\.setAttribute\('aria-label', 'Radar views'\)/,
+  'Radar-view links use native labeled navigation');
+assert.doesNotMatch(common, /setAttribute\('role', 'menu(?:item)?'\)/,
+  'Native links must not advertise a custom ARIA menu without its arrow-key behavior');
 assert.match(common, /consecutiveFailures >= 3/,
   'Plot pages expose repeated refresh failures without erasing the last valid frame');
 assert.match(common, /Waiting for the first radar frame/,
@@ -110,6 +115,20 @@ for (const route of ['/', '/display/signal?view=maxhold', '/display/detection?vi
 for (const view of ['activity', 'timing', 'health', 'spectrum', 'maxhold', 'range', 'doppler', 'range-doppler'])
   assert.match(consolidated, new RegExp(`['"]${view}['"]`),
     `Consolidated page controller retains the ${view} view`);
+for (const [kind, views] of Object.entries({diagnostics: {activity:'Activity', timing:'Timing', health:'Health'},
+  signal:{spectrum:'Reference spectrum',maxhold:'Maximum hold'},
+  detection:{range:'Range history',doppler:'Doppler history','range-doppler':'Range–Doppler'}})) {
+  for (const [view, title] of Object.entries(views)) {
+    const heading = {}, content = {}, scripts = [];
+    const document = {body:{dataset:{consolidatedView:kind},appendChild:script=>scripts.push(script)},
+      getElementById:id=>id==='view-title'?heading:content,
+      createElement:()=>({}),querySelectorAll:()=>[]};
+    vm.runInNewContext(consolidated, {document,URLSearchParams,window:{location:{search:`?view=${view}`}}});
+    assert.equal(heading.textContent,title,`${kind}/${view} exposes the selected view heading`);
+    assert.equal(document.title,`VectorWarp · ${title}`);
+    assert.equal(scripts.length,1,`${kind}/${view} loads one renderer`);
+  }
+}
 assert.match(insights, /addSource\(radarCoverageSourceId, \{type: 'geojson', data\}\)/,
   'Radar coverage uses a geographic Mapbox source so zoom cannot tear a screen-space path');
 assert.match(insights, /source\.setData\(data\)/,

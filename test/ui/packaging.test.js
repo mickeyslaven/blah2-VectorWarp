@@ -205,7 +205,7 @@ assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
 const releaseWorkflow = read('.github/workflows/release-packages.yml');
 const standaloneWorkflow = read('.github/workflows/macos-standalone.yml');
 const releaseCommands = releaseWorkflow.replace(/\\\n\s*/g, ' ').split('\n');
-const debHackrfInstalls = releaseCommands.filter(line => /apt-get install/.test(line) && /\blibhackrf-dev\b/.test(line));
+const debHackrfInstalls = releaseCommands.filter(line => /apt-get install|apt-install-with-retry\.sh/.test(line) && /\blibhackrf-dev\b/.test(line));
 const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\bhackrf-devel\b/.test(line));
 assert.doesNotMatch(releaseWorkflow, /\blibhackrf-devel\b/, 'Fedora calls its SDK package hackrf-devel');
 assert.ok(debHackrfInstalls.length >= 3, 'Every Debian-family build path needs the complete SDK');
@@ -234,25 +234,20 @@ const workflowCheck = spawnSync('node', ['-e',
   path.join(root, '.github/workflows/release-packages.yml')], {cwd: path.join(root, 'api'), encoding: 'utf8'});
 assert.equal(workflowCheck.status, 0, workflowCheck.stderr);
 const packageJob = JSON.parse(workflowCheck.stdout).jobs.package;
-const prPackageSteps = packageJob.steps.filter(step => /PR verification/.test(step.name || ''));
-const trustedPackageSteps = packageJob.steps.filter(step =>
-  /github\.event_name != 'pull_request'/.test(step.if || '') && /Build native/.test(step.name || ''));
-const isolatedPackageSteps = [...prPackageSteps, ...trustedPackageSteps]
+const packageBuildSteps = packageJob.steps.filter(step => /script\/build-native\.sh --backend all/.test(step.run || ''));
+const isolatedPackageSteps = packageBuildSteps
   .filter(step => /podman run/.test(step.run || ''));
-assert.equal(prPackageSteps.length, 3, 'PRs must smoke Debian, Debian-family, and Fedora package groups');
-assert.equal(trustedPackageSteps.length, 3, 'Trusted builds retain all three package groups');
-assert.equal(isolatedPackageSteps.length, 4, 'Both PR and trusted builds retain Debian-family and Fedora isolation');
+assert.equal(packageBuildSteps.length, 3, 'PR and trusted builds share Debian, Debian-family, and Fedora package groups');
+assert.ok(packageBuildSteps.every(step => !/github\.event_name/.test(step.if || '')),
+  'Every event must use the same native build and smoke steps');
+assert.equal(isolatedPackageSteps.length, 2, 'Debian-family and Fedora builds retain isolation');
 assert.equal(isolatedPackageSteps.filter(step =>
-  /git config --global --add safe\.directory \/src/.test(step.run || '')).length, 4,
+  /git config --global --add safe\.directory \/src/.test(step.run || '')).length, 2,
   'every root container must trust only the mounted source checkout before binding artifact provenance');
-assert.equal(prPackageSteps.filter(step => /--backend all/.test(step.run || '') &&
+assert.equal(packageBuildSteps.filter(step => /--backend all/.test(step.run || '') &&
   /smoke-native-package\.sh --package/.test(step.run || '') &&
   !/--test-only/.test(step.run || '')).length, 3,
-  'every PR package group must compile, package, and smoke the local-kit release contract');
-assert.equal(trustedPackageSteps.filter(step => /--backend all/.test(step.run || '') &&
-  /smoke-native-package\.sh --package/.test(step.run || '') &&
-  !/smoke-native-package\.sh --test-only/.test(step.run || '')).length, 3,
-  'every trusted package group must compile and smoke the stable all-adapter build');
+  'every package group must compile, package, and smoke the local-kit release contract');
 assert.doesNotMatch(releaseWorkflow, /prepare-sdrplay-build-sdk\.sh|vectorwarp-sdrplay-sdk|VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED/,
   'Stable packages stage our local kit without protected vendor SDK inputs.');
 assert.match(releaseWorkflow, /'compiled_receivers',\s*\n\s*'local_build_receivers', 'test_only'/,

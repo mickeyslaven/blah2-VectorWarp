@@ -40,7 +40,8 @@ class HomebrewPublishTest(unittest.TestCase):
             "GITHUB_ACTIONS": "true",
             "GITHUB_REPOSITORY": publisher.SOURCE_REPO,
             "GITHUB_REF": "refs/heads/main",
-            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "VECTORWARP_PUBLISH_HOMEBREW": "true",
             "GITHUB_SHA": COMMIT,
         }
 
@@ -78,6 +79,9 @@ class HomebrewPublishTest(unittest.TestCase):
 
     def test_context_rejects_pr_fork_branch_and_sha_mismatch(self):
         for key, value in (("GITHUB_EVENT_NAME", "pull_request"),
+                           ("GITHUB_EVENT_NAME", "push"),
+                           ("VECTORWARP_PUBLISH_HOMEBREW", "false"),
+                           ("VECTORWARP_PUBLISH_HOMEBREW", ""),
                            ("GITHUB_REPOSITORY", "fork/vectorwarp"),
                            ("GITHUB_REF", "refs/heads/topic"),
                            ("GITHUB_SHA", NEXT_COMMIT),
@@ -242,10 +246,12 @@ class HomebrewPublishTest(unittest.TestCase):
         self.assertIn("brew test mickeyslaven/vectorwarp/vectorwarp", workflow)
         self.assertIn("needs: [policy, formula]", workflow)
         self.assertIn("name: reviewed-homebrew-tap", workflow)
-        publish = workflow.split("  publish:\n", 1)[1]
+        publish = workflow.split("\n  publish:\n", 1)[1]
         self.assertIn("github.repository == 'mickeyslaven/blah2-VectorWarp'", publish)
         self.assertIn("github.ref == 'refs/heads/main'", publish)
-        self.assertIn("github.event_name == 'push' || github.event_name == 'workflow_dispatch'", publish)
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.publish", publish)
+        self.assertNotIn("github.event_name == 'push'", publish)
+        self.assertIn("VECTORWARP_PUBLISH_HOMEBREW: ${{ inputs.publish }}", publish)
         self.assertIn("secrets.HOMEBREW_TAP_DEPLOY_KEY", publish)
         self.assertIn("StrictHostKeyChecking=yes", publish)
         self.assertIn("UserKnownHostsFile=", publish)

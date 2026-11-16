@@ -7,7 +7,8 @@ const {configurationForReceiver} = require('../../api/config-store');
 const {getDeviceProfiles} = require('../../api/config-manager');
 
 test('recording estimates distinguish compact Kraken clips from portable recordings', () => {
-  const config = {capture: {fs: 2_400_000, device: {type: 'Kraken', channel_count: 5},
+  const config = {capture: {fs: 2_400_000, device: {type: 'Kraken', channel_count: 5,
+    heimdall: {host:'127.0.0.1',port:5000}},
     aircraft_clips: {pre_seconds: 2, post_seconds: 2}}};
   const estimate = recordingEstimate(config);
   assert.equal(estimate.manualPerSecond, 96_000_000);
@@ -15,6 +16,28 @@ test('recording estimates distinguish compact Kraken clips from portable recordi
   assert.equal(estimate.clipPerSecond, 24_000_000);
   assert.equal(estimate.clip, 96_000_000);
   assert.equal(estimate.clipLabel, 'Compact native 8-bit Kraken IQ');
+});
+
+test('recorded topology overrides live setup, channel count and clip format', () => {
+  for (const type of ['Kraken', 'Usrp', 'RspDuo', 'HackRF']) {
+    const config = configurationForReceiver(type);
+    config.capture.replay = {...config.capture.replay,state:true,channel_count:5,
+      reference_mode:'array_eigenbeam',reference_channel:0,
+      reference_channels:[0,1,2,3,4],surveillance_channels:[0,1,2,3,4]};
+    const before = JSON.stringify(config), dom = new JSDOM('<div id="assistant"></div>');
+    const target = dom.window.document.getElementById('assistant');
+    const profiles = [{type,liveAvailable:false}];
+    assert.equal(wizardChecks(config,profiles)[0].complete,true);
+    assert.equal(recordingEstimate(config).manualPerSecond,config.capture.fs*5*8);
+    assert.equal(recordingEstimate(config).clipLabel,'Portable float32 IQ');
+    render(target,{getConfig:()=>config,receiverProfiles:()=>profiles,
+      discoverReceivers(){throw new Error('Replay must not discover or select live hardware');}});
+    assert.match(target.textContent,/Recorded input · 5 channels/);
+    assert.match(target.textContent,/unavailable during replay/);
+    assert.equal(target.querySelector('[data-start-setup]'),null);
+    assert.equal(JSON.stringify(config),before);
+    dom.window.close();
+  }
 });
 
 test('automatic search window conservatively covers range and target speed', () => {
@@ -91,8 +114,11 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   target.querySelector('[data-wizard-step="0"]').click();
   assert.equal(target.querySelectorAll('[data-receiver-field]').length, 0,
     'Beginner setup must not expose receiver host, port, serial, or subdevice overrides');
-  assert.match(target.querySelector('.setup-wizard-content').textContent,
+  assert.match(target.querySelector('[data-wizard-receiver]').title,
     /detected receivers are selected automatically/i);
+  assert.doesNotMatch(target.querySelector('.setup-wizard-content').textContent,
+    /detected receivers are selected automatically/i,
+    'Receiver setup help is available without a permanent explanation paragraph');
   assert.equal(target.querySelector('[data-wizard-step="0"]').disabled, false,
     'A completed receiver step remains directly selectable');
   assert.equal(target.querySelector('[data-wizard-step="1"]').disabled, false,

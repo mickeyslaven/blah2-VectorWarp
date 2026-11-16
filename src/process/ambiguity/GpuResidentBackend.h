@@ -1,6 +1,7 @@
 #pragma once
 #include "GpuBackend.h"
 #include "GpuProcess.h"
+#include "process/tracker/CausalTraceLayout.h"
 #include "process/analysis/ResidentReplaySnapshot.h"
 #include <algorithm>
 #include <array>
@@ -15,11 +16,15 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=12;
-constexpr uint32_t protocol=0x4247520c,packetBytes=160,configBytes=32768;
+constexpr unsigned moduleAbi=15;
+constexpr uint32_t protocol=0x4247520f,packetBytes=160,configBytes=32768;
 static_assert(configBytes>=640+(360+127+1)*8*sizeof(std::complex<float>)+152,
  "Resident config cannot carry maximum fusion and bearing manifolds");
 constexpr uint64_t sharedLimit=512ULL<<20;
+// Exact replay snapshots duplicate the complete resident state in the sealed
+// mapping.  Keep the ordinary live ceiling unchanged; only an explicitly
+// configured replay export may use the larger bounded mapping.
+constexpr uint64_t replaySharedLimit=1ULL<<30;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
 template<class T> struct Span {T* data=nullptr;
@@ -31,7 +36,7 @@ using Hash=std::array<uint8_t,32>;
 enum class Op:uint32_t {initialize=1,initialized=2,restore=3,restored=4,
  begin=5,referenceReady=6,framePrepared=7,commit=8,committed=9,abort=10,
  aborted=11,published=12,settled=13,rejected=14,failure=15,quit=16,
- snapshot=17,snapshotted=18};
+ snapshot=17,snapshotted=18,resetInput=19,inputReset=20};
 enum class Phase:uint32_t {idle=0,begun=1,referenceReady=2,prepared=3,
  committed=4,settled=5,rejected=6,poisoned=7};
 enum class Status:uint32_t {success=0,numeric=1,capacity=2,unsupported=3,
@@ -41,14 +46,16 @@ enum class Section:uint32_t {config=1,delayAxis=2,dopplerAxis=3,canonical=4,
  referenceCheckpoint=12,tracker0=13,tracker1=14,detections=15,filtered=16,
  tail=17,fullReference=18,levels=19,unflooredSnr=20,cfar=21,centroid=22,
  flags=23,detectionCells=24,readyEvidence=25,reason=26,device=27,
- preparedEvidence=28,controlEvidence=29,guidedRecoveries=30,replaySnapshot=31};
+ preparedEvidence=28,controlEvidence=29,guidedRecoveries=30,replaySnapshot=31,causalTrace=32};
 constexpr uint64_t bit(Section s){return uint64_t(1)<<uint32_t(s);}
 constexpr uint64_t diagnosticMask=((uint64_t(1)<<25)-1)&~((uint64_t(1)<<16)-1);
 inline uint64_t outputPresence(uint64_t capacity,uint64_t requested){return (capacity&~diagnosticMask)|requested;}
+enum class ReferenceMode:uint32_t {capturedArray=1,capturedDedicated=2};
 struct ReferenceConfig {
  std::vector<uint32_t> channels;
  uint32_t analysisSamples=32768,analysisInterval=10,powerIterations=12;
  double covarianceSmoothing=.8,diagonalLoading=.001,bandwidthHz=2000,centreHz=0;
+ ReferenceMode mode=ReferenceMode::capturedArray;
 };
 enum class FusionMode:uint32_t {noncoherent=0,coherentRegularPolygon=1,
  noiseWhitenedRegularPolygon=2};
@@ -99,6 +106,8 @@ struct TrackerConfig {
  double stationaryMaxDopplerHz=0;
  bool trackGuidedShadow=false;
  bool trackGuidedPromote=false;
+ bool trackGuidedSustain=false;
+ bool normalizedInnovationGate=false;
  uint32_t trackGuidedShadowMaxTracks=0;
 };
 constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;
@@ -110,6 +119,9 @@ inline uint32_t trackerRecordWords(const TrackerConfig& t){
 }
 struct Config {
  GpuGeometry geometry{};
+ // Canonical capture order; geometry.channels counts surveillance outputs.
+ // Both mappings index this input, never a silently compacted channel list.
+ uint32_t inputChannels=0;
  uint32_t correlation=0,spectrumBins=0;
  double sampleRate=0,middle=0;
  uint64_t epoch=0,presence=0;
@@ -165,7 +177,7 @@ struct OutputViews {
  // Parent Session-owned immutable setup metadata; no new wire/GPU allocation.
  Span<const double> delayKm,doppler;
  Span<const DetectionRecord> detections,cfar,centroid;
- Span<const uint32_t> flags,detectionCells,trackerCheckpoint,guidedRecoveryWords;
+ Span<const uint32_t> flags,detectionCells,trackerCheckpoint,guidedRecoveryWords,causalTrace;
  double noise=0,maxPower=0;
  uint64_t cfarCount=0,centroidCount=0,detectionCount=0;
  Token trackerToken{};
@@ -187,6 +199,8 @@ public:
  virtual void commit(const Packet&)=0;
  virtual void abort(const Packet&)=0;
  virtual void restore(const Packet&)=0;
+ // Input discontinuity, not configuration change: retain plans and identity.
+ virtual void resetInput(const Packet&)=0;
  virtual void settle(const Packet&)=0;
  virtual void shutdown(const Packet&)=0;
  virtual void snapshot(const Packet&){throw std::logic_error("Resident replay snapshot unsupported");}
@@ -208,6 +222,8 @@ public:
  virtual void abort(Token)=0;
  virtual void published()=0;
  virtual void restore(ConstBytes reference,Span<const uint32_t> tracker)=0;
+ // Idle/settled only. Discard learned/temporal state, never rewind frame IDs.
+ virtual void resetInput()=0;
  virtual std::vector<uint8_t> snapshot(){throw std::logic_error("Resident replay snapshot unsupported");}
  virtual void stop()noexcept=0;
 };

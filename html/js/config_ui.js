@@ -2,6 +2,8 @@ const geometryEditor = typeof module !== 'undefined' && module.exports ?
   require('./kraken_geometry') : window.KrakenGeometry;
 const configProfiles = typeof module !== 'undefined' && module.exports ?
   require('./config_profiles') : window.VectorWarpConfigProfiles;
+const processingTopology = typeof module !== 'undefined' && module.exports ?
+  require('./processing_capabilities') : window.VectorWarpProcessingCapabilities;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
 const ATSC_CHANNELIZER_DEFAULTS = Object.freeze({
@@ -36,6 +38,7 @@ const CONFIG_META = {
   'save.retention.maximum_age_days': ['Keep recordings for (days)', 'Oldest completed recordings become eligible for cleanup. Set 0 to disable the age limit.'],
   'save.retention.maximum_total_gb': ['Maximum recording storage (GB)', 'Cleanup removes the oldest completed recordings above this total. Set 0 for no size limit.'],
   'save.retention.minimum_free_gb': ['Always leave disk free (GB)', 'New recordings stop or are refused below this safety floor.'],
+  'save.retention.maximum_manual_seconds': ['Maximum manual recording (seconds)', 'Manual recording stops at this duration so one active file cannot grow without bound.'],
   'capture.fs': ['Sample rate', 'Radio samples per second. Kraken is fixed at 2.4 MS/s.'],
   'capture.fc': ['Center frequency', 'Tune in MHz, kHz and Hz.'],
   'capture.aircraft_clips': ['Automatic aircraft IQ clips', 'Receiver-independent bounded recordings triggered by eligible ADS-B aircraft passes.'],
@@ -98,7 +101,16 @@ const CONFIG_META = {
   'process.performance': ['Performance', 'CPU and GPU settings'],
   'process.performance.surveillance_workers': ['Surveillance workers', 'Auto chooses how many radar inputs to process in parallel.'],
   'process.performance.fft_threads': ['FFT threads per worker', 'Auto shares available CPU capacity with the parallel workers. Applies after restart.'],
-  'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU accuracy and speed. Falls back to CPU if needed.'],
+  'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU correctness and health, not speed; falls back to CPU.'],
+  'process.evidence': ['Evidence collection', 'Optional bounded, truth-blind research evidence.'],
+  'process.evidence.causal_funnel': ['Causal-funnel evidence', 'Bounded truth-blind candidate records for offline analysis.'],
+  'process.evidence.causal_funnel.epoch_id': ['Evidence epoch ID', 'Immutable 8–64 character identifier separating one evidence collection run.'],
+  'process.evidence.causal_funnel.path': ['Evidence output folder', 'Absolute folder for bounded causal-funnel evidence files.'],
+  'process.evidence.causal_funnel.max_candidates': ['Candidates per record', 'Maximum candidates retained in each causal-funnel evidence record.'],
+  'process.evidence.causal_funnel.max_queue': ['Evidence queue capacity', 'Maximum causal-funnel records waiting to be written.'],
+  'process.evidence.causal_funnel.max_queue_mb': ['Evidence queue memory (MiB)', 'Memory cap for causal-funnel records waiting to be written.'],
+  'process.evidence.causal_funnel.max_file_mb': ['Evidence file size (MiB)', 'Rotate the active causal-funnel evidence file at this size.'],
+  'process.evidence.causal_funnel.max_files': ['Evidence file count', 'Maximum active and rotated causal-funnel evidence files retained.'],
   'process.multi_illuminator': ['Multiple illuminators', 'Process several broadcast channels independently.'],
   'process.multi_illuminator.enabled': ['Multiple illuminators', 'Process the configured stations.'],
   'process.multi_illuminator.input_phase_correction': ['Cable phase correction', 'Remove only validated periodic phase error between coherent receiver inputs.'],
@@ -179,20 +191,48 @@ const CONFIG_META = {
   'process.detection.minDelay': ['Minimum detection delay bin', 'Ignore detections below this delay sample'],
   'process.detection.minDoppler': ['Minimum absolute Doppler', 'Ignore detections closer to zero Doppler than this many Hz'],
   'process.detection.doppler_ridge_scrubber': ['Delay–Doppler ridge scrubber', 'Learns broad persistent interference before CFAR while preserving the raw map.'],
-  'process.detection.doppler_ridge_scrubber.mode': ['Ridge scrubber mode', 'Off disables it, shadow compares paths, and active uses the scrubbed path.'],
+  'process.detection.doppler_ridge_scrubber.mode': ['Ridge scrubber mode', 'Choose off, bounded multi-lane shadow evaluation, or continuous active scrubbing.'],
   'process.detection.doppler_ridge_scrubber.persistence_cpis': ['Ridge learning intervals', 'Intervals a broad Doppler row must recur before subtraction begins.'],
   'process.detection.doppler_ridge_scrubber.minimum_excess_db': ['Minimum ridge excess', 'Broad row power required above nearby Doppler rows.'],
   'process.detection.doppler_ridge_scrubber.maximum_subtraction_db': ['Maximum ridge subtraction', 'Fail-safe limit on learned linear-power subtraction.'],
   'process.detection.doppler_ridge_scrubber.doppler_tolerance_hz': ['Ridge Doppler tolerance', 'Adjacent Doppler rows treated as one drifting interference ridge.'],
   'process.detection.doppler_ridge_scrubber.neighborhood_rows': ['Doppler comparison radius', 'Nearby Doppler rows used to estimate the local background.'],
   'process.detection.doppler_ridge_scrubber.delay_stride': ['Ridge sampling stride', 'Delay-cell sampling interval used only for the robust row estimate.'],
+  'process.detection.doppler_ridge_scrubber.shadow_maximum_cpis': ['Shadow comparison window', 'Maximum consecutive accepted intervals per multi-lane shadow epoch (default 256). Completion stays visible; an explicit reset, sample gap, or rejected input starts a new epoch. Active mode ignores this limit. This is a work-count bound, not a wall-clock deadline.'],
   'process.detection.nCentroid': ['Position window', 'Cells used to refine each detection position.'],
   'process.detection.integration_cpis': ['Integrated intervals', 'Consecutive radar intervals combined before detection.'],
   'process.detection.integration_motion_bins': ['Motion search radius', 'Delay and Doppler bins searched between two integrated intervals.'],
   'process.detection.track_before_detect': ['Track before detect', 'Accumulate subthreshold motion-consistent energy before normal tracking.'],
   'process.detection.track_before_detect.enable': ['Enable track before detect', 'Run GPU 2/4/8-CPI motion banks and candidate-only coherent refinement.'],
+  'process.detection.track_before_detect.fractional_delay': ['Align fractional delay', 'Opt in to Doppler-derived nearest-cell power alignment before integration.'],
   'process.detection.track_before_detect.max_cpis': ['Longest weak-target bank', 'Use 2/4 banks or 2/4/8 banks; longer banks add sensitivity and latency.'],
   'process.detection.track_before_detect.motion_bins': ['Trajectory search radius', 'Delay and Doppler cells allowed to move per CPI along a constant path.'],
+  'process.detection.temporal_shadow': ['Temporal detection shadow', 'Offline comparison lane; it does not change live detections.'],
+  'process.detection.temporal_shadow.enabled': ['Run temporal shadow', 'Enable the offline replay-only temporal comparison lane.'],
+  'process.detection.temporal_shadow.input_statistic': ['Shadow input statistic', 'Choose fused-map or post-clutter-bootstrap values for the comparison.'],
+  'process.detection.temporal_shadow.bootstrap_covariance': ['Bootstrap covariance', 'Covariance estimator used by the temporal shadow comparison.'],
+  'process.detection.temporal_shadow.max_cpis': ['Temporal shadow intervals', 'Number of radar intervals used by the offline comparison lane.'],
+  'process.detection.temporal_shadow.artifact_path': ['Shadow artifact file', 'Full path for bounded temporal-shadow replay output.'],
+  'process.detection.temporal_shadow.artifact_max_mb': ['Shadow artifact limit (MiB)', 'Maximum bounded temporal-shadow replay output size.'],
+  'process.detection.live_temporal_shadow': ['Live evidence observer', 'Observe post-clutter energy without changing detections or tracks.'],
+  'process.detection.live_temporal_shadow.enabled': ['Enable live observer', 'Run one bounded background observer on a single live radar lane.'],
+  'process.detection.live_temporal_shadow.bootstrap_covariance': ['Observer covariance', 'Choose the background covariance estimator for diagnostic scores.'],
+  'process.detection.live_temporal_shadow.max_cpis': ['Longest observer window', 'Use separate 2/4 or 2/4/8 interval evidence banks.'],
+  'process.detection.live_temporal_shadow.illuminator_id': ['Observer illuminator', 'In multi-illuminator mode, select exactly one enabled illuminator by ID. Leave empty for single-illuminator capture.'],
+  'process.detection.live_temporal_shadow.artifact_path': ['Live evidence file', 'Absolute path for a bounded native CAF evidence file. Leave empty to disable recording.'],
+  'process.detection.live_temporal_shadow.artifact_max_mb': ['Live evidence size limit (MiB)', 'Stop recording after this file size limit.'],
+  'process.detection.live_temporal_shadow.artifact_max_frames': ['Live evidence frame limit', 'Stop recording after this many complete radar frames.'],
+  'process.detection.live_temporal_shadow.artifact_only': ['Record evidence only', 'Record native CAFs for offline qualification without running live temporal scoring.'],
+  'process.detection.live_temporal_shadow.score_tracks': ['Score disjoint shadow tracks', 'Score disjoint 2/4/8-CPI windows without publishing tracks.'],
+  'process.detection.live_temporal_shadow.association_sustain': ['Sustain operational tracks', 'Use one disjoint temporal bank to sustain an existing track without creating or moving it.'],
+  'process.detection.live_temporal_shadow.association_sustain_cpis': ['Track-support window', 'Choose one 2, 4, or 8-CPI bank for survival credit; the other depths remain shadow-only.'],
+  'process.detection.live_temporal_shadow.maximum_candidates': ['Shadow candidate limit', 'Limit the strongest candidates passed to each shadow tracker window.'],
+  'process.detection.live_temporal_shadow.minimum_initiation_snr_db': ['Shadow birth SNR (dB)', 'Optional experiment override. When omitted, inherit the production tracker birth threshold.'],
+  'process.detection.live_temporal_shadow.delay_motion_bins': ['Observer delay motion', 'Maximum delay cells moved per interval in a diagnostic path.'],
+  'process.detection.live_temporal_shadow.doppler_motion_bins': ['Observer Doppler motion', 'Maximum Doppler cells moved per interval in a diagnostic path.'],
+  'process.detection.live_temporal_shadow.max_cells': ['Observer map limit', 'Reject larger maps to bound observer memory; no cropping or resampling.'],
+  'process.detection.live_temporal_shadow.max_work_ms': ['Observer work budget (ms)', 'Stop the observer after a budget failure; radar processing continues.'],
+  'process.detection.live_temporal_shadow.min_interval_ms': ['Observer overload backoff (ms)', 'Backoff after copy pressure; successful idle-worker observations are accepted immediately.'],
   'process.tracker': ['Tracking', 'Joins repeated detections into persistent tracks.'],
   'process.tracker.enable': ['Multi-CPI data-association tracker', 'M-of-N association and state estimation across CPIs. This does not integrate power.'],
   'process.tracker.profile': ['Detection and tracking profile', 'Balanced matches the OWL-style detector and M-of-N confirmation.'],
@@ -203,7 +243,7 @@ const CONFIG_META = {
   'process.tracker.initiate.min_snr_db': ['Minimum initiation SNR', 'Minimum SNR for a new conservative track. Existing tracks may update below it.'],
   'process.tracker.initiate.acceleration_model': ['Acceleration initiation', 'Choose duplicate acceleration hypotheses or one adaptive tentative track.'],
   'process.tracker.initiate.stationary_clutter': ['Persistent clutter initiation filter', 'Blocks new tracks in recurring low-Doppler cells. Existing tracks are unaffected.'],
-  'process.tracker.initiate.stationary_clutter.enable': ['Enable persistent clutter filter', 'Apply the learned clutter map only when starting a new GPU-resident track.'],
+  'process.tracker.initiate.stationary_clutter.enable': ['Enable persistent clutter filter', 'Use radar-only occupancy to reject births and quarantine persistent clutter tracks.'],
   'process.tracker.initiate.stationary_clutter.persistence_cpis': ['Clutter persistence', 'Repeated low-Doppler frames required before a cell blocks new track initiation.'],
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': ['Stationary Doppler band', 'Absolute Doppler range learned as persistent clutter, in Hz.'],
   'process.tracker.initiate.doppler_ridge_clutter': ['Persistent Doppler-ridge filter', 'Learns recurring horizontal interference ridges and blocks only new track births on them.'],
@@ -212,8 +252,9 @@ const CONFIG_META = {
   'process.tracker.initiate.doppler_ridge_clutter.doppler_tolerance_hz': ['Ridge Doppler tolerance', 'Maximum Doppler separation for returns to belong to the same learned ridge.'],
   'process.tracker.initiate.doppler_ridge_clutter.minimum_delay_separation_km': ['Minimum ridge width', 'Delay separation required before simultaneous returns teach a global ridge.'],
   'process.tracker.track_guided_shadow': ['Track-guided recovery shadow', 'Test weak moving-track recovery from rolling CPI maps without changing live tracks.'],
-  'process.tracker.track_guided_shadow.enable': ['Enable recovery shadow', 'Run the bounded GPU-resident counterfactual and report timing and would-recover track IDs.'],
+  'process.tracker.track_guided_shadow.enable': ['Enable recovery shadow', 'Check bounded motion-aligned evidence without changing tracks unless opted in.'],
   'process.tracker.track_guided_shadow.promote': ['Promote guided recoveries', 'Send guided observations to the normal tracker; disable for shadow-only evaluation.'],
+  'process.tracker.track_guided_shadow.sustain': ['Sustain established tracks', 'Coast established tracks with lineage-disjoint guided evidence.'],
   'process.tracker.track_guided_shadow.max_tracks': ['Maximum shadow tracks', 'Hard per-frame GPU cap for the selected tracks and their small CFAR windows.'],
   'process.tracker.track_guided_shadow.evidence_path': ['Recovery evidence path', 'Absolute JSONL path for ADS-B-labelled shadow recovery evidence.'],
   'process.tracker.track_guided_shadow.max_truth_age_s': ['Maximum ADS-B age', 'Discard recovery comparisons whose aircraft position is too old.'],
@@ -233,6 +274,7 @@ const CONFIG_META = {
   'network.ports.illuminator': ['Illuminator port', 'Multi-illuminator output stream'],
   'network.ports.bearing': ['Bearing port', 'Opt-in radar bearing input stream'],
   'network.ports.manifold': ['Calibration port', 'Opt-in sparse complex manifold-evidence stream'],
+  'network.ports.causal_funnel': ['Causal-funnel port', 'Local API port for bounded truth-blind causal-funnel evidence.'],
   'network.ports.timestamp': ['Timestamp port', 'Radar frame timestamp stream'],
   'network.ports.timing': ['Timing port', 'Processing-performance stream'],
   'network.ports.iqdata': ['IQ metadata port', 'Radio-sample metadata stream'],
@@ -292,13 +334,17 @@ function compositeField(title, description, control, path) {
   const copy = document.createElement('div'); copy.className = 'config-field-copy';
   const label = document.createElement('label'); label.textContent = title;
   const help = document.createElement('small'); help.textContent = description;
+  help.hidden = true;
+  copy.title = description;
   copy.append(label, help);
   const controls = control.matches?.('input, select') ? [control] : control.querySelectorAll('input, select');
   Array.from(controls).forEach((input, index) => {
     input.disabled ||= !capabilities.editable;
     input.dataset.originalDisabled = String(input.disabled);
     if (!input.id) input.id = `composite-${(path || title).replace(/[^a-z0-9]+/gi, '-')}-${index}`;
-    if (!index) label.htmlFor = input.id;
+    input.title = description;
+    if (!index) { label.htmlFor = input.id; help.id = `${input.id}-help`; }
+    input.setAttribute('aria-describedby', help.id);
   });
   const error = document.createElement('small'); error.className = 'config-field-error';
   wrapper.append(copy, control, error); return wrapper;
@@ -310,6 +356,8 @@ function compositeGroup(title, description) {
   const copy = document.createElement('span');
   const strong = document.createElement('strong'); strong.textContent = title;
   const small = document.createElement('small'); small.textContent = description;
+  small.hidden = true;
+  summary.title = description;
   copy.append(strong, small); summary.appendChild(copy);
   const body = document.createElement('div'); body.className = 'config-fields';
   details.append(summary, body); return {details, body};
@@ -326,11 +374,19 @@ function renderClutterSettings() {
     {value: 'full_window', label: 'Full current search window'},
     {value: 'custom', label: 'Custom filter range'}
   ], configProfiles.clutterMode(activeConfig), value => {
+    if (select.selectedOptions[0]?.disabled) return;
     applyComposite(config => configProfiles.applyClutterMode(config, value));
     custom.hidden = value !== 'custom';
   });
+  if (activeConfig.process.multi_illuminator?.enabled === true) {
+    const off = [...select.options].find(option => option.value === 'off');
+    off.disabled = true;
+    off.title = 'Multi-illuminator processing requires clutter removal before detection.';
+  }
   body.appendChild(compositeField('Clutter removal',
-    'Automatic follows the complete delay map. Custom is only for installations that must limit cancellation.',
+    (activeConfig.process.multi_illuminator?.enabled === true ?
+      'Multi-illuminator processing requires clutter removal. ' : '') +
+      'Automatic follows the complete delay map. Custom is only for installations that must limit cancellation.',
     select, 'process.clutter.enable'));
   custom.append(field(activeConfig.process.clutter.delayMin, ['process', 'clutter', 'delayMin']),
     field(activeConfig.process.clutter.delayMax, ['process', 'clutter', 'delayMax']));
@@ -420,12 +476,9 @@ function renderInterferenceRejectionSettings() {
 
 function renderWeakTargetSettings() {
   const detection = activeConfig.process.detection;
-  const coherent = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
-    capabilities.deviceProfiles || []).coherentArray;
-  const residentCoherent = coherent &&
-    activeConfig.capture?.device?.array_geometry?.shape === 'regular_polygon';
+  const available = processingControlCapabilities();
   const {details, body} = compositeGroup('Multi-CPI integration and track-before-detect',
-    'Accumulate target energy across coherent processing intervals before conventional tracking. Longer banks add latency, trajectory hypotheses, and GPU work.');
+    'Accumulate target power across processing intervals before conventional tracking. Longer banks add latency, trajectory hypotheses, and processing work.');
   const choices = [{value: 'off', label: 'Off (single frame)'},
     {value: 'two', label: 'Two-frame integration'},
     {value: 'two_motion', label: 'Two-frame integration + motion search'},
@@ -433,16 +486,17 @@ function renderWeakTargetSettings() {
     {value: 'eight', label: 'Eight-frame track-before-detect'},
     {value: 'custom', label: 'Custom'}];
   const select = selectInput(choices, configProfiles.weakTargetMode(activeConfig), value => {
-    if (value !== 'custom') applyComposite(config => configProfiles.applyWeakTargetMode(config, value));
+    if (select.selectedOptions[0]?.disabled) return;
+    if (value !== 'custom') {
+      applyComposite(config => configProfiles.applyWeakTargetMode(config, value));
+      renderEditor();
+    }
     custom.hidden = value !== 'custom' && settingsMode !== 'advanced';
   });
-  if (!coherent) [...select.options].forEach(option => { if (!['off', 'custom'].includes(option.value)) option.disabled = true; });
-  else if (!residentCoherent) [...select.options].forEach(option => {
-    if (['four', 'eight'].includes(option.value)) option.disabled = true;
-  });
-  body.appendChild(compositeField('Integration / accumulation mode', coherent ?
-    'Two-frame modes integrate adjacent CPIs. Four- and eight-frame modes use track-before-detect to accumulate motion-consistent subthreshold energy.' :
-    'Multi-frame coherent recovery requires a supported coherent array receiver.', select));
+  select.dataset.processingControl = 'recovery-mode';
+  body.appendChild(compositeField('Integration / accumulation mode', available.integration ?
+    `Two-, four-, and eight-frame modes integrate power${available.laneIntegration ? ' independently in each illuminator lane' : ''} on CPU or qualified GPU paths. Overlapping source CPIs do not count as fresh confirmation.` :
+    'Multi-frame recovery is unavailable in this build for the selected input topology.', select));
   const custom = document.createElement('details'); custom.className = 'config-group composite-tuning';
   custom.hidden = configProfiles.weakTargetMode(activeConfig) !== 'custom' && settingsMode !== 'advanced';
   const summary = document.createElement('summary'); summary.textContent = 'Recovery tuning';
@@ -494,10 +548,12 @@ function renderPerformanceSettings() {
     'Automatic prefers an available qualified GPU and safely falls back to CPU.');
   const select = selectInput([{value: 'automatic', label: `Automatic (${performance.acceleration === 'gpu-resident' ? 'GPU resident' : performance.acceleration === 'gpu' ? 'GPU with fallback' : 'best available'})`},
     {value: 'cpu', label: 'CPU only (free the GPU)'}], configProfiles.processingMode(activeConfig), value => {
-    const gpuFeatures = configProfiles.weakTargetMode(activeConfig) !== 'off' ||
+    const gpuFeatures = (activeConfig.process.tracker?.beam_tolerance !== undefined &&
+        (activeConfig.process.detection?.integration_cpis > 1 ||
+          activeConfig.process.detection?.track_before_detect?.enable === true)) ||
       activeConfig.process.bearing?.enable === true ||
-      activeConfig.process.tracker?.initiate?.stationary_clutter?.enable === true;
-    if (value === 'cpu' && gpuFeatures && !window.confirm('CPU only will disable weak-target recovery, bearing, GPU stationary-clutter initiation, and guided GPU recovery. Continue?')) {
+      activeConfig.process.surveillance_fusion?.mode === 'noise_whitened_beam_bank';
+    if (value === 'cpu' && gpuFeatures && !window.confirm('CPU only will disable beam-conditioned recovery, bearing, and whitening. Shared power recovery stays available. Continue?')) {
       select.value = 'automatic'; return;
     }
     applyComposite(config => configProfiles.applyProcessingMode(config, value));
@@ -597,7 +653,12 @@ function refreshSetupAssistant() {
   window.VectorWarpSetupAssistant.render(target, {
     getConfig: () => activeConfig, mode: () => settingsMode,
     setMode() {},
-    openTab(tab) { activateSettingsTab(tab); document.getElementById('config-fields')?.scrollIntoView({behavior: 'smooth'}); },
+    openTab(tab) {
+      activateSettingsTab(tab);
+      document.getElementById('config-fields')?.scrollIntoView({
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+      });
+    },
     set: setValue, refresh: renderEditor, refreshEditor: renderEditor,
     receiverProfiles: () => capabilities.deviceProfiles || [],
     switchReceiver: switchDevice,
@@ -907,6 +968,24 @@ function setValue(path, value) {
   let target = activeConfig;
   path.slice(0, -1).forEach(key => { target = target[key]; });
   target[path[path.length - 1]] = value;
+  if (value === false && ['process.detection.track_before_detect.enable',
+    'process.tracker.track_guided_shadow.enable'].includes(path.join('.'))) {
+    if (path.join('.') === 'process.detection.track_before_detect.enable') {
+      const tbd = activeConfig.process.detection.track_before_detect;
+      if (tbd.fractional_delay !== undefined) tbd.fractional_delay = false;
+    }
+    const guided = activeConfig.process.tracker?.track_guided_shadow;
+    if (guided) for (const key of ['enable', 'promote', 'sustain'])
+      if (guided[key] !== undefined) guided[key] = false;
+    // Reflect the operator's explicit disable action; loading settings never
+    // clears saved, currently unavailable values.
+    renderEditor();
+  }
+  if ((value === true && (path.join('.') === 'process.bearing.enable' ||
+    path.join('.') === 'process.detection.track_before_detect.enable' &&
+      activeConfig.process.tracker?.beam_tolerance !== undefined)) ||
+    (path.join('.') === 'process.surveillance_fusion.mode' && value === 'noise_whitened_beam_bank'))
+    configProfiles.applyProcessingMode(activeConfig, 'automatic');
   if (path.join('.') === 'capture.device.heimdall.gain_control' && value === 'measured') {
     delete activeConfig.capture.device.heimdall.channel_gains;
     document.querySelector('[data-path="capture.device.heimdall.channel_gains"]')?.remove();
@@ -959,9 +1038,13 @@ function normalizeKrakenChannels(config, previousCount = null) {
 function applyDeviceProfile(config, profile) {
   const geometry = config.capture?.device?.array_geometry;
   const acceleration = config.process?.performance?.acceleration ?? 'auto';
+  const recorded = config.capture?.replay?.state === true;
   config.capture.device = JSON.parse(JSON.stringify(profile.device));
   if (geometry !== undefined) config.capture.device.array_geometry = geometryEditor ?
-    geometryEditor.invalidate(geometry) : geometry;
+    recorded ? geometry : geometryEditor.invalidate(geometry) : geometry;
+  // Selecting a dormant live adapter must not rewrite the active recording's
+  // processing, sample rate, or surveyed geometry.
+  if (recorded) return config;
   config.capture.fs = profile.sampleRate;
   const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
     result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
@@ -974,7 +1057,8 @@ function applyDeviceProfile(config, profile) {
     else config.process[key] = merge(config.process[key] || {}, value);
   }
   if (!profile.process?.reference_synthesis) delete config.process.reference_synthesis;
-  if (!profile.features?.coherentArray) {
+  const topology = processingTopology.processingCapabilities(config);
+  if (!topology.coherentSurveillance) {
     delete config.process.surveillance_fusion;
     if (config.process.bearing) {
       config.process.bearing.enable = false;
@@ -984,19 +1068,17 @@ function applyDeviceProfile(config, profile) {
         config.process.bearing.manifold_recorder.enabled = false;
     }
     if (config.process.detection) {
-      config.process.detection.integration_cpis = 1;
-      config.process.detection.integration_motion_bins = 0;
-      if (config.process.detection.track_before_detect)
-        config.process.detection.track_before_detect.enable = false;
+      if (!topology.validTopology) {
+        config.process.detection.integration_cpis = 1;
+        config.process.detection.integration_motion_bins = 0;
+      }
     }
     if (config.process.tracker) {
-      delete config.process.tracker.gpu_capacity;
       delete config.process.tracker.beam_tolerance;
-      if (config.process.tracker.track_guided_shadow) {
-        config.process.tracker.track_guided_shadow.enable = false;
-        config.process.tracker.track_guided_shadow.promote = false;
-      }
-      if (config.process.tracker.initiate?.stationary_clutter)
+      if (!topology.validTopology)
+        delete config.process.tracker.gpu_capacity;
+      if (!topology.validTopology &&
+          config.process.tracker.initiate?.stationary_clutter)
         config.process.tracker.initiate.stationary_clutter.enable = false;
     }
   }
@@ -1006,6 +1088,193 @@ function applyDeviceProfile(config, profile) {
 
 function receiverFeatureCapabilities(type, profiles = []) {
   return profiles.find(profile => profile.type === type)?.features || {};
+}
+
+function processingControlCapabilities(config = activeConfig, backends = capabilities.processingBackends) {
+  const topology = processingTopology.processingCapabilities(config);
+  const process = config.process || {}, tracker = process.tracker || {};
+  const stage = backends?.stages?.resident;
+  const recorded = config.capture?.replay?.state === true;
+  const lanes = process.multi_illuminator?.enabled === true ?
+    (process.multi_illuminator.illuminators || []).filter(lane => lane?.enabled === true) : [];
+  const laneIntegration = lanes.length > 0;
+  const laneSites = lanes.every(lane => {
+    const site = lane.transmitter_location;
+    return site && Number.isFinite(site.latitude) && Math.abs(site.latitude) <= 90 &&
+      Number.isFinite(site.longitude) && Math.abs(site.longitude) <= 180 && Number.isFinite(site.altitude) &&
+      !(site.latitude === config.location?.rx?.latitude && site.longitude === config.location?.rx?.longitude);
+  });
+  const laneArrayRoles = lanes.every(lane => lane.reference_channel === undefined &&
+    lane.surveillance_channels === undefined);
+  const coherentLanes = laneSites && laneArrayRoles;
+  const allInputs = values => Array.isArray(values) && values.length === topology.channelCount &&
+    values.every((channel, index) => channel === index);
+  const residentReference = topology.validTopology && (topology.referenceMode === 'dedicated' ||
+    topology.coherent && allInputs(topology.referenceChannels) && allInputs(topology.surveillanceChannels));
+  const resident = stage?.selectable === true && residentReference && process.clutter?.enable === true;
+  // Mirror the validator's native regular-polygon contract, not just its label.
+  const geometry = config.capture?.device?.array_geometry || {};
+  const points = new Map((Array.isArray(geometry.elements) ? geometry.elements : []).map(item => [item?.daq_channel, item?.position]));
+  const positions = (Array.isArray(topology.surveillanceChannels) ? topology.surveillanceChannels : []).map(channel => points.get(channel));
+  let regular = geometry.shape === 'regular_polygon' && positions.length >= 3 &&
+    positions.every(point => Array.isArray(point) && point.length === 3 && point.every(Number.isFinite));
+  if (regular) {
+    const center = [0, 1, 2].map(axis => positions.reduce((sum, point) => sum + point[axis], 0) / positions.length);
+    const radii = positions.map(point => Math.hypot(point[0] - center[0], point[1] - center[1]));
+    const angles = positions.map(point => Math.atan2(point[1] - center[1], point[0] - center[0]));
+    const radius = radii.reduce((sum, value) => sum + value, 0) / radii.length;
+    const wrap = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
+    const step = wrap(angles[1] - angles[0]), tolerance = Math.max(1e-6, radius * 1e-5);
+    regular = radius > 0 && Math.abs(step) > 1e-5 && Math.abs(wrap(positions.length * step)) <= 1e-5 &&
+      positions.every((point, index) => Math.abs(radii[index] - radius) <= tolerance &&
+        Math.abs(point[2] - center[2]) <= tolerance &&
+        Math.abs(wrap(angles[index] - angles[0] - index * step)) <= 1e-5 &&
+        angles.slice(0, index).every(prior => Math.abs(wrap(angles[index] - prior)) > 1e-5));
+  }
+  const coherentGeometry = topology.coherentSurveillance && topology.surveillanceGeometry && topology.confirmedGeometry;
+  const coherentFusion = ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(process.surveillance_fusion?.mode);
+  const residentArray = resident && coherentGeometry && regular && coherentLanes;
+  const detection = process.detection?.enable === true;
+  const tbd = topology.validTopology && detection &&
+    (tracker.beam_tolerance === undefined || residentArray && coherentFusion);
+  const guided = tbd && tracker.enable === true && process.detection?.track_before_detect?.enable === true;
+  const manifold = !laneIntegration && coherentGeometry && coherentFusion && coherentLanes && topology.appliedGainMetadata &&
+    detection && config.truth?.adsb?.enabled === true;
+  const nativeGeometry = [config.capture?.fs,config.capture?.fc,process.data?.cpi]
+    .every(value=>Number.isFinite(value) && value>0) &&
+    lanes.every(lane => [lane.frequency_hz,lane.output_sample_rate_hz]
+      .every(value=>Number.isFinite(value) && value>0));
+  const powerReason = !topology.validTopology ? 'Recovery requires valid reference and surveillance input roles.' :
+    !detection ? 'Enable detection to use power integration and recovery.' :
+    tracker.enable !== true ? 'Enable tracking to use stationary suppression and guided recovery.' :
+    !process.detection?.track_before_detect?.enable ? 'Enable track-before-detect before fractional alignment or guided recovery.' :
+    !nativeGeometry ? 'Fractional alignment requires valid sample rate, carrier frequency, and CPI duration.' :
+    tracker.track_guided_shadow?.enable !== true ? 'Enable guided recovery before promotion or sustain.' :
+    'Guided promotion requires N ≥ 2×M−1; overlapping CPI evidence is not counted twice.';
+  const laneReason = !laneSites ?
+    'Coherent lanes require explicit transmitter latitude, longitude, and altitude, distinct from the receiver, for every enabled lane; the global transmitter is never reused.' :
+    'Coherent lanes must inherit matching array-eigenbeam reference and surveillance inputs; dedicated per-lane overrides are incompatible.';
+  const reason = !coherentLanes ? laneReason :
+    stage?.selectable !== true ? `GPU-resident processing unavailable${stage?.reason ? `: ${stage.reason}` : ' on the current backend'}.` :
+    !resident ? 'Resident controls require enabled clutter and valid input roles.' :
+    !residentArray || !coherentFusion ? 'Coherent resident features require confirmed regular-polygon geometry and coherent array fusion.' :
+    !detection || tracker.enable !== true ? 'Enable detection and tracking to use resident recovery.' :
+    !process.detection?.track_before_detect?.enable ? 'Enable track-before-detect before fractional alignment or guided recovery.' :
+    tracker.track_guided_shadow?.enable !== true ? 'Enable guided recovery before promotion or sustain.' :
+    'Guided promotion requires N ≥ 2×M−1; saved settings remain unchanged.';
+  return {topology, recorded, laneIntegration, coherentLanes, laneReason, resident, residentArray, tbd, guided,
+    manifold,
+    manifoldRecorder: manifold && Number.isInteger(config.network?.ports?.manifold) &&
+      config.network.ports.manifold > 0 && config.network.ports.manifold <= 65535,
+    frequencyShadow: !laneIntegration && topology.liveMchq && coherentGeometry && topology.referenceGeometry,
+    projectedBearing: recorded && config.capture.replay.format === 'blah2' &&
+      residentArray && topology.channelCount === 5 && process.bearing?.enable === true &&
+      process.bearing?.method === 'covariance_mvdr' && process.bearing?.manifold_file === undefined &&
+      process.surveillance_fusion?.manifold_file === undefined &&
+      lanes.every(lane => lane.detection_manifold_file === undefined && lane.bearing_manifold_file === undefined) &&
+      process.surveillance_fusion?.mode === 'coherent_beam_bank' &&
+      (process.surveillance_fusion?.direct_path_null_db ?? 0) === 0,
+    arrayEditor: topology.liveMchq || topology.coherentSurveillance,
+    integration: topology.validTopology && detection &&
+      (tracker.beam_tolerance === undefined || residentArray && coherentFusion),
+    stationary: topology.validTopology && detection && tracker.enable === true,
+    capacity: resident && detection && tracker.enable === true,
+    beamTolerance: coherentGeometry && coherentFusion && coherentLanes && tracker.enable === true &&
+      ((process.detection?.integration_cpis ?? 1) <= 1 || residentArray),
+    fractional: tbd && nativeGeometry && process.detection?.track_before_detect?.enable === true,
+    promote: guided && tracker.track_guided_shadow?.enable === true &&
+      Number.isInteger(tracker.initiate?.M) && Number.isInteger(tracker.initiate?.N) &&
+      tracker.initiate.N >= 2 * tracker.initiate.M - 1,
+    sustain: guided && tracker.track_guided_shadow?.enable === true,
+    coherentFusion: coherentGeometry && coherentLanes && (process.performance?.acceleration !== 'gpu-resident' || regular),
+    bearing: residentArray && coherentFusion && detection && tracker.enable === true,
+    reason, powerReason};
+}
+
+function updateProcessingControlAvailability(root = document.getElementById('config-fields')) {
+  if (!root || !activeConfig) return;
+  const available = processingControlCapabilities();
+  const permits = path => path.startsWith('process.bearing.frequency_resolved_shadow.') ? available.frequencyShadow :
+    path.startsWith('process.bearing.manifold_recorder.') ? available.manifoldRecorder :
+    path.startsWith('process.surveillance_fusion.detection_manifold_automation.') ? available.manifold :
+    path.startsWith('process.reference_synthesis.') ? available.topology.coherentSurveillance :
+    path.startsWith('process.detection.track_before_detect.') ?
+    (path.endsWith('.fractional_delay') ? available.fractional : available.tbd) :
+    path.startsWith('process.tracker.track_guided_shadow.') ?
+      path.endsWith('.promote') ? available.promote : path.endsWith('.sustain') ? available.sustain : available.guided :
+    path.startsWith('process.tracker.initiate.stationary_clutter.') ? available.stationary :
+    path === 'process.tracker.gpu_capacity' ? available.capacity :
+    path === 'process.tracker.beam_tolerance' ? available.beamTolerance :
+    path.startsWith('process.bearing.') ? available.bearing :
+    ['process.detection.integration_cpis', 'process.detection.integration_motion_bins'].includes(path) ? available.integration : null;
+  const reasonFor = path => path.startsWith('process.bearing.frequency_resolved_shadow.') ?
+    (available.laneIntegration ? 'Frequency-resolved capture requires a single live lane; saved settings are retained.' :
+      'Frequency-resolved analysis requires a live MCHQ endpoint and confirmed coherent array geometry.') :
+    path.startsWith('process.bearing.manifold_recorder.') ||
+      path.startsWith('process.surveillance_fusion.detection_manifold_automation.') ?
+      (available.laneIntegration ? 'Live calibration capture is single-lane; use RF/rate/site-matched calibration files for each illuminator.' :
+        'Array calibration requires coherent detection, applied gain metadata, ADS-B truth, and a configured manifold port for recording.') :
+    (['process.detection.integration_cpis', 'process.detection.integration_motion_bins'].includes(path) ||
+      path.startsWith('process.detection.track_before_detect.')) &&
+      activeConfig.process.tracker?.beam_tolerance !== undefined ?
+      'Beam-conditioned integration requires selectable GPU-resident coherent array processing.' :
+    path.startsWith('process.detection.track_before_detect.') ||
+      path.startsWith('process.tracker.track_guided_shadow.') ||
+      path.startsWith('process.tracker.initiate.stationary_clutter.') ? available.powerReason :
+    path.startsWith('process.reference_synthesis.') ?
+      'Array reference tuning requires matching coherent reference and surveillance inputs.' : available.reason;
+  let unavailable = false, firstReason = null;
+  const disable = (control, denied, reason = available.reason) => {
+    if (control.dataset.capabilityBaseDisabled === undefined) {
+      control.dataset.capabilityBaseDisabled = String(control.disabled);
+      control.dataset.capabilityBaseTitle = control.title;
+    }
+    control.disabled = denied || control.dataset.capabilityBaseDisabled === 'true';
+    if (control.tagName !== 'OPTION') control.dataset.originalDisabled = String(control.disabled);
+    if (denied) {
+      unavailable = true;
+      firstReason ||= reason;
+      control.title = reason;
+      if (control.tagName !== 'OPTION') {
+        const description = (control.getAttribute('aria-describedby') || '').split(' ').filter(Boolean);
+        if (!description.includes('processing-capability-note')) description.push('processing-capability-note');
+        control.setAttribute('aria-describedby', description.join(' '));
+      }
+    } else {
+      control.title = control.dataset.capabilityBaseTitle;
+      const description = (control.getAttribute('aria-describedby') || '').split(' ')
+        .filter(id => id && id !== 'processing-capability-note');
+      if (description.length) control.setAttribute('aria-describedby', description.join(' '));
+      else control.removeAttribute('aria-describedby');
+    }
+  };
+  root.querySelectorAll('.config-field[data-path]').forEach(item => {
+    const permitted = permits(item.dataset.path);
+    if (permitted !== null) {
+      item.classList.toggle('config-field-unavailable', !permitted);
+      item.querySelectorAll('input,select,button').forEach(control => disable(control, !permitted, reasonFor(item.dataset.path)));
+    }
+  });
+  root.querySelectorAll('[data-processing-control="recovery-mode"] option').forEach(option => {
+    disable(option, ['two', 'two_motion'].includes(option.value) ? !available.integration :
+      ['four', 'eight'].includes(option.value) ? !available.tbd : false,
+      ['four','eight'].includes(option.value) ? available.powerReason : available.reason);
+  });
+  root.querySelectorAll('[data-path="process.surveillance_fusion.mode"] option').forEach(option => {
+    disable(option, option.value === 'noise_whitened_beam_bank' ? !available.residentArray :
+      option.value === 'coherent_beam_bank' ? !available.coherentFusion : false,
+      !available.coherentLanes ? available.laneReason : available.reason);
+  });
+  root.querySelectorAll('[data-path="process.bearing.reference_anchor"] option[value="fixed_site_projected"]').forEach(option =>
+    disable(option, !available.projectedBearing,
+      'Projected bearing requires five-channel native replay, confirmed lane geometry, resident covariance bearing, ideal coherent fusion with zero null, and no measured manifold files.'));
+  let note = root.querySelector('#processing-capability-note');
+  if (!unavailable) { note?.remove(); return; }
+  if (!note) {
+    note = document.createElement('p'); note.id = 'processing-capability-note';
+    note.className = 'config-capability-note'; root.prepend(note);
+  }
+  note.textContent = `${firstReason} Saved values are preserved.`;
 }
 
 function receiverSpecificProcessPath(path) {
@@ -1021,46 +1290,6 @@ function receiverSpecificProcessPath(path) {
     path.startsWith('process.tracker.track_guided_shadow.') ||
     path === 'process.tracker.initiate.stationary_clutter' ||
     path.startsWith('process.tracker.initiate.stationary_clutter.');
-}
-
-function multiIlluminatorUnsupportedPath(path) {
-  return path === 'process.surveillance_fusion' || path.startsWith('process.surveillance_fusion.') ||
-    path === 'process.bearing' || path.startsWith('process.bearing.') ||
-    path === 'process.detection.integration_cpis' ||
-    path === 'process.detection.integration_motion_bins' ||
-    path === 'process.detection.track_before_detect' ||
-    path.startsWith('process.detection.track_before_detect.') ||
-    path === 'process.tracker.beam_tolerance' || path === 'process.tracker.gpu_capacity' ||
-    path === 'process.tracker.initiate.stationary_clutter' ||
-    path.startsWith('process.tracker.initiate.stationary_clutter.') ||
-    path === 'process.tracker.track_guided_shadow' ||
-    path.startsWith('process.tracker.track_guided_shadow.');
-}
-
-function markMultiIlluminatorUnsupported(root) {
-  const lanes = activeConfig.process?.multi_illuminator?.illuminators || [];
-  const multi = activeConfig.process?.multi_illuminator?.enabled === true &&
-    lanes.filter(item => item?.enabled !== false).length > 1;
-  if (!multi) return;
-  const affected = [...root.querySelectorAll('.config-field[data-path]')]
-    .filter(item => multiIlluminatorUnsupportedPath(item.dataset.path));
-  for (const field of affected) {
-    field.classList.add('config-field-unavailable');
-    field.querySelectorAll('input, select, button').forEach(input => {
-      input.disabled = true;
-      input.dataset.originalDisabled = 'true';
-    });
-    const help = field.querySelector('.config-field-copy small');
-    if (help && !help.textContent.includes('Unavailable with multiple illuminators'))
-      help.textContent += ' Unavailable with multiple illuminators; each lane currently uses noncoherent fusion and the basic detector/tracker contract.';
-  }
-  const processPanel = root.querySelector('#settings-panel-process');
-  if (processPanel && affected.length) {
-    const notice = document.createElement('p');
-    notice.className = 'config-advice evaluation-note multi-illuminator-limit';
-    notice.textContent = 'Multiple illuminators are active. Coherent/bearing processing, detector integration and track-before-detect, and advanced tracker recovery controls are unavailable for every lane.';
-    processPanel.prepend(notice);
-  }
 }
 
 function switchDevice(type) {
@@ -1268,19 +1497,24 @@ function illuminatorListInput(value, path) {
       const legend = document.createElement('legend');
       legend.textContent = item.id || `Illuminator ${index + 1}`;
       card.appendChild(legend);
-      const addText = (label, key, transform = value => value) => {
+      const addText = (label, key, transform = value => value, optional = false) => {
         const control = document.createElement('label');
         control.textContent = label;
         const input = document.createElement('input');
+        input.dataset.laneField = key;
         input.value = key.split('.').reduce((target, part) => target?.[part], item) ?? '';
         input.addEventListener('input', () => {
           const parts = key.split('.'); let target = item;
           parts.slice(0, -1).forEach(part => { target[part] ||= {}; target = target[part]; });
-          target[parts.at(-1)] = transform(input.value);
+          if (optional && input.value === '') {
+            delete target[parts.at(-1)];
+            if (parts.length === 2 && Object.keys(target).length === 0) delete item[parts[0]];
+          } else target[parts.at(-1)] = transform(input.value);
           if (key === 'id') legend.textContent = input.value || `Illuminator ${index + 1}`;
           commit();
         });
         control.appendChild(input); card.appendChild(control);
+        return input;
       };
       const addNumber = (label, key, scale = 1) => addText(label, key,
         input => input === '' ? null : Number(input) * scale);
@@ -1319,21 +1553,18 @@ function illuminatorListInput(value, path) {
       atscReferenceLabel.appendChild(atscReferenceMode); card.appendChild(atscReferenceLabel);
       const inputRoleLabel = document.createElement('label');
       inputRoleLabel.textContent = 'Reference input for this RF channel';
-      const inputCount = Math.max(2,
-        activeConfig.capture?.replay?.state === true ?
-          (activeConfig.capture.replay.channel_count || 2) :
-          (activeConfig.capture?.device?.channel_count ||
-            activeConfig.capture?.device?.gain?.length ||
-            activeConfig.capture?.device?.antenna?.length || 2));
-      const inherited = activeConfig.process?.reference_synthesis?.channels?.[0] ??
-        activeConfig.capture?.device?.reference_channel ?? 0;
+      const topology = processingControlCapabilities().topology;
+      const inputCount = topology.channelCount;
+      const inherited = topology.referenceChannel;
       const roleOptions = [
-        {value: 'inherit', label: `Use receiver default (Ch ${inherited})`}];
+        {value: 'inherit', label: topology.referenceMode === 'array_eigenbeam' ?
+          'Use array-eigenbeam inputs' : `Use input default (Ch ${inherited})`}];
       for (let channel = 0; channel < inputCount; channel += 1)
         roleOptions.push({value: String(channel), label: `Ch ${channel}`});
       const role = selectInput(roleOptions,
         Number.isInteger(item.reference_channel) ? String(item.reference_channel) : 'inherit',
         selected => {
+          if (role.selectedOptions[0]?.disabled) return;
           if (selected === 'inherit') {
             item.input_role_mode = 'manual';
             delete item.reference_channel; delete item.surveillance_channels;
@@ -1346,6 +1577,12 @@ function illuminatorListInput(value, path) {
           commit();
         });
       role.title = 'Use the receiver topology or explicitly choose this illuminator’s reference input.';
+      const coherent = ['coherent_beam_bank', 'noise_whitened_beam_bank']
+        .includes(activeConfig.process.surveillance_fusion?.mode);
+      if (coherent) {
+        [...role.options].filter(option => option.value !== 'inherit').forEach(option => { option.disabled = true; });
+        role.title = 'Coherent lanes must inherit matching array-eigenbeam reference and surveillance inputs. Saved overrides remain visible.';
+      }
       inputRoleLabel.appendChild(role); card.appendChild(inputRoleLabel);
       const originalFrequency = item.frequency_hz; item.frequency_hz = originalFrequency / 1e6;
       addNumber('Frequency (MHz)', 'frequency_hz', 1e6); item.frequency_hz = originalFrequency;
@@ -1363,6 +1600,26 @@ function illuminatorListInput(value, path) {
       addNumber('Latitude', 'transmitter.latitude');
       addNumber('Longitude', 'transmitter.longitude');
       addNumber('Altitude (m)', 'transmitter.altitude');
+      const siteHelp = document.createElement('p');
+      siteHelp.className = 'config-field-help illuminator-calibration-note';
+      siteHelp.textContent = 'Coherent processing uses this lane’s explicit site, RF frequency, and output rate. Global transmitter geometry is never inherited; calibration files must match all three.';
+      card.appendChild(siteHelp);
+      for (const [label, key, min, max] of [
+        ['Coherent site latitude', 'latitude', -90, 90],
+        ['Coherent site longitude', 'longitude', -180, 180],
+        ['Coherent site altitude (m)', 'altitude', undefined, undefined]]) {
+        const input = addText(label, `transmitter_location.${key}`, Number, true);
+        input.type = 'number'; input.step = 'any';
+        if (min !== undefined) input.min = String(min);
+        if (max !== undefined) input.max = String(max);
+        input.placeholder = 'Required for coherent lanes';
+      }
+      for (const [label, key] of [['Lane detection calibration file', 'detection_manifold_file'],
+        ['Lane bearing calibration file', 'bearing_manifold_file']]) {
+        const input = addText(label, key, value => value.trim(), true);
+        input.placeholder = 'Optional lane-specific calibration';
+        input.title = 'An inherited or lane-specific calibration file must match this lane’s RF frequency, sample rate, and surveyed site.';
+      }
       const remove = document.createElement('button');
       remove.type = 'button'; remove.className = 'button-secondary illuminator-remove'; remove.textContent = 'Remove';
       remove.addEventListener('click', () => {
@@ -1482,10 +1739,7 @@ function adsbSourcesInput(legacyValue, path) {
 
   const renderRows = () => {
     wrapper.replaceChildren();
-    const intro = document.createElement('p');
-    intro.className = 'adsb-source-note';
-    intro.textContent = 'Newest healthy position wins.';
-    wrapper.appendChild(intro);
+    wrapper.title = 'Newest healthy position wins.';
 
     const lagCpis = Number(activeConfig.truth?.adsb?.association_lag_cpis || 0);
     const cpiSeconds = Number(activeConfig.process?.data?.cpi);
@@ -1540,6 +1794,8 @@ function adsbSourcesInput(legacyValue, path) {
       title.textContent = exchange.label;
       const detail = document.createElement('small');
       detail.textContent = exchange.description;
+      detail.hidden = true;
+      row.title = exchange.description;
       copy.append(title, detail);
       const label = document.createElement('label');
       label.className = 'switch';
@@ -1587,11 +1843,15 @@ function adsbSourcesInput(legacyValue, path) {
     photoTitle.textContent = 'Selected-aircraft photo';
     const photoDetail = document.createElement('small');
     photoDetail.textContent = 'Loaded only after a map selection; never blocks or enlarges the live ADS-B feed.';
+    photoDetail.hidden = true;
+    photoDetail.id = 'adsb-photo-help';
     photoCopy.append(photoTitle, photoDetail);
     const photoSelect = document.createElement('select');
     photoSelect.dataset.adsbPhotoProvider = 'true';
     photoSelect.setAttribute('aria-label', 'Aircraft photo provider');
-    for (const [value, label] of [['disabled', 'Off (private and fastest)'],
+    photoSelect.setAttribute('aria-describedby', photoDetail.id);
+    photoSelect.title = 'Cached aircraft photos';
+    for (const [value, label] of [['disabled', 'Off'],
       ['planespotters', 'Planespotters.net thumbnails']]) {
       const option = document.createElement('option');
       option.value = value; option.textContent = label;
@@ -1602,10 +1862,6 @@ function adsbSourcesInput(legacyValue, path) {
       setValue(['truth', 'adsb', 'aircraft_photo_provider'], photoSelect.value));
     photoRow.append(photoCopy, photoSelect);
     wrapper.appendChild(photoRow);
-    const photoNote = document.createElement('p');
-    photoNote.className = 'adsb-source-note';
-    photoNote.textContent = 'Aircraft photos are cached.';
-    wrapper.appendChild(photoNote);
 
     const custom = sources.map((source, index) => ({source, index}))
       .filter(({source}) => source.startsWith('exchange:') && !adsbExchangeId(source));
@@ -1750,8 +2006,7 @@ function typedInput(value, path) {
         Array.from({length: activeConfig.capture.device.channel_count},
           (_, index) => index) :
       key === 'process.performance.surveillance_workers' ?
-        Array.from({length: activeConfig.capture.device.type === 'Kraken' ?
-          activeConfig.capture.device.channel_count + 1 : 2},
+        Array.from({length: processingControlCapabilities().topology.surveillanceChannels.length + 1},
           (_, index) => index) :
       key === 'process.performance.fft_threads' ?
         [0, 1, 2, 4, 8, 16, 32, 64] : ['none'];
@@ -1853,6 +2108,7 @@ function field(value, path) {
   label.textContent = labelText;
   const help = document.createElement('small');
   help.textContent = description;
+  help.hidden = true;
   copy.append(label, help);
   const control = path.join('.') === 'save.path' ? recordingFolderControl(value, path) : typedInput(value, path);
   if (control.classList?.contains('illuminator-list'))
@@ -1875,6 +2131,8 @@ function field(value, path) {
   if (readOnly) help.textContent = unusedDedicatedInput ?
     'Not used in combined-input mode. The reference is synthesized from the inputs below.' :
     `${description} ${rule?.readOnly || (!rule ? 'Unknown setting preserved; edit in YAML if needed.' : '')}`;
+  copy.title = help.textContent;
+  Array.from(inputs).forEach(input => { input.title = help.textContent; });
   const error = document.createElement('small');
   error.className = 'config-field-error';
   error.setAttribute('aria-live', 'polite');
@@ -1987,6 +2245,7 @@ function group(key, value, path, topLevel = false, options = {}) {
   const currentPath = [...path, key];
   const dotted = currentPath.join('.');
   const kraken = activeConfig.capture?.device?.type === 'Kraken';
+  const processing = processingControlCapabilities();
   let [title, description] = metadata(currentPath);
   if (options.groupMeta?.[dotted]) [title, description] = options.groupMeta[dotted];
   if (dotted === 'capture.device') {
@@ -2009,11 +2268,13 @@ function group(key, value, path, topLevel = false, options = {}) {
   strong.textContent = title;
   const small = document.createElement('small');
   small.textContent = description;
+  small.hidden = true;
+  summary.title = description;
   heading.append(strong, small);
   summary.append(heading);
   const content = document.createElement('div');
   content.className = 'config-fields';
-  if (dotted === 'capture' && value.device?.type !== undefined)
+  if (dotted === 'capture' && value.device?.type !== undefined && !processing.recorded)
     content.appendChild(field(value.device.type, ['capture', 'device', 'type']));
   const order = {
     capture: ['fc', 'fs', 'device', 'aircraft_clips', 'replay'],
@@ -2045,6 +2306,8 @@ function group(key, value, path, topLevel = false, options = {}) {
     if (dotted === 'process' && ['clutter', 'detection', 'tracker', 'performance', 'delay_reference_sample_rate_hz'].includes(childKey)) return;
     if (dotted === 'capture.device' && childKey === 'type') return;
     if (dotted === 'capture.device' && childKey === 'array_geometry') return;
+    if (processing.recorded && dotted === 'capture.device') return;
+    if (processing.recorded && dotted === 'capture' && ['fc', 'fs'].includes(childKey)) return;
     if (kraken && dotted === 'capture.device' && ['channel_count', 'reference_channel',
       'surveillance_channels'].includes(childKey)) return;
     if (kraken && dotted === 'capture.device.heimdall' && ['gain', 'channel_gains'].includes(childKey)) return;
@@ -2075,7 +2338,7 @@ function group(key, value, path, topLevel = false, options = {}) {
     content.appendChild(advancedReference);
   const savedGeometry = activeConfig.capture?.device?.array_geometry;
   if (dotted === 'capture.device' && geometryEditor &&
-      (kraken || savedGeometry !== undefined))
+      (processing.arrayEditor || savedGeometry !== undefined))
     content.appendChild(makeGeometryEditor());
   if (dotted === 'process') appendCompositeRadarSettings(content);
   return finishSettingsGroup(details, summary, content, topLevel);
@@ -2084,19 +2347,20 @@ function group(key, value, path, topLevel = false, options = {}) {
 function renderReceiverFeatures() {
   const section = document.createElement('section');
   section.className = 'receiver-feature-section';
-  const type = activeConfig.capture?.device?.type;
-  const features = receiverFeatureCapabilities(type, capabilities.deviceProfiles || []);
-  if (!features.coherentArray) return section;
+  const topology = processingControlCapabilities().topology;
   const featureOptions = {groupMeta: {
     'process.detection': ['Coherent integration', 'Combine consecutive radar intervals and search short motion paths.'],
-    'process.tracker': ['Array recovery experiments', 'Bounded array-only recovery tests; normal tracking remains in Radar.']
+    'process.tracker': ['Persistent tracker recovery', 'Bounded motion-consistent recovery settings available to every supported SDR path.']
   }};
   const process = activeConfig.process || {};
   const tracker = process.tracker || {};
   const residentTracker = {};
-  for (const key of ['gpu_capacity', 'beam_tolerance', 'track_guided_shadow'])
+  for (const key of ['gpu_capacity', 'track_guided_shadow'])
     if (tracker[key] !== undefined && !experimentalSettingPath(`process.tracker.${key}`))
       residentTracker[key] = tracker[key];
+  if (topology.coherentSurveillance && tracker.beam_tolerance !== undefined &&
+      !experimentalSettingPath('process.tracker.beam_tolerance'))
+    residentTracker.beam_tolerance = tracker.beam_tolerance;
   if (tracker.initiate?.stationary_clutter !== undefined)
     residentTracker.initiate = {stationary_clutter: tracker.initiate.stationary_clutter};
   if (Object.keys(residentTracker).length)
@@ -2108,8 +2372,7 @@ function renderExperimentalSettings() {
   const section = document.createElement('section');
   section.className = 'experimental-settings';
   const process = activeConfig.process || {};
-  const coherentArray = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
-    capabilities.deviceProfiles || []).coherentArray;
+  const coherentArray = processingControlCapabilities().topology.coherentSurveillance;
   const add = (key, value, path) => {
     if (value !== undefined) section.appendChild(group(key, value, path, false));
   };
@@ -2118,7 +2381,7 @@ function renderExperimentalSettings() {
   if (coherentArray) add('detection_manifold_automation',
     process.surveillance_fusion?.detection_manifold_automation,
     ['process', 'surveillance_fusion']);
-  if (coherentArray) add('track_guided_shadow', process.tracker?.track_guided_shadow,
+  add('track_guided_shadow', process.tracker?.track_guided_shadow,
     ['process', 'tracker']);
   add('publication', process.tracker?.publication, ['process', 'tracker']);
   if (coherentArray) add('frequency_resolved_shadow', process.bearing?.frequency_resolved_shadow,
@@ -2135,6 +2398,8 @@ function renderExperimentalSettings() {
     const small = document.createElement('small');
     strong.textContent = 'Diagnostic exports (not IQ recording)';
     small.textContent = 'Legacy processed products for offline debugging. These do not record receiver samples or aircraft clips.';
+    small.hidden = true;
+    summary.title = small.textContent;
     heading.append(strong, small);
     summary.append(heading);
     const fields = document.createElement('div');
@@ -2172,15 +2437,16 @@ function renderRecordingSettings() {
 }
 
 function makeGeometryEditor() {
+  const available = processingControlCapabilities();
   if (receiverInvalidatedGeometry)
     geometryEditor?.invalidate(activeConfig.capture?.device?.array_geometry);
   const editor = geometryEditor.render(document, activeConfig, rebuild => {
     if (rebuild) refreshGeometryEditor();
     scheduleValidation();
   }, () => Boolean(capabilities.editable && !saveInProgress && !restartInProgress),
-  (_count, previousCount) => normalizeKrakenChannels(activeConfig, previousCount));
+  (_count, previousCount) => normalizeKrakenChannels(activeConfig, previousCount), available.topology);
   const content = editor.querySelector(':scope > .config-fields');
-  if (!content || activeConfig.capture?.device?.type !== 'Kraken') return editor;
+  if (!content || !available.arrayEditor) return editor;
   const process = activeConfig.process || {};
   if (settingsMode === 'advanced' && process.reference_synthesis) {
     const tuning = Object.fromEntries(['analysis_samples', 'analysis_interval', 'power_iterations',
@@ -2209,7 +2475,7 @@ function makeGeometryEditor() {
 function refreshGeometryEditor() {
   const old = document.querySelector('.kraken-geometry');
   if (old && geometryEditor) {
-    if (activeConfig.capture?.device?.type === 'Kraken' || activeConfig.capture?.device?.array_geometry !== undefined)
+    if (processingControlCapabilities().arrayEditor || activeConfig.capture?.device?.array_geometry !== undefined)
       old.replaceWith(makeGeometryEditor());
     else old.remove();
   }
@@ -2292,6 +2558,7 @@ async function validateActiveConfiguration() {
 }
 
 function scheduleValidation() {
+  updateProcessingControlAvailability();
   validationSequence += 1;
   validatedSnapshot = null;
   if (validationTimer) window.clearTimeout(validationTimer);
@@ -2513,7 +2780,7 @@ async function monitorRadarRestart(previousState) {
       return;
     }
     if (apiRestarted && state.radar !== 'receiving' &&
-        activeConfig.capture.device.type === 'Kraken' &&
+        processingTopology.processingCapabilities(activeConfig).liveMchq &&
         Date.now() - started > 2000 && Date.now() - upstreamCheckedAt > 2000) {
       upstreamCheckedAt = Date.now();
       let message;
@@ -2758,6 +3025,8 @@ function organizeTechnicalControls(panel, tab) {
   const description = document.createElement('small');
   title.textContent = 'Technical controls';
   description.textContent = 'Ports and expert tuning';
+  description.hidden = true;
+  summary.title = description.textContent;
   heading.append(title, description);
   summary.append(heading);
   const body = document.createElement('div');
@@ -2790,8 +3059,7 @@ function renderEditor() {
     upstream.className = 'upstream-status';
     upstream.innerHTML = '<div class="upstream-header"><strong>Receiver status</strong><span class="upstream-badge">Checking…</span></div>';
   }
-  const hasArrayTab = receiverType === 'Kraken' ||
-    receiverFeatureCapabilities(receiverType, capabilities.deviceProfiles || []).coherentArray === true;
+  const {arrayEditor:hasArrayTab, recorded} = processingControlCapabilities();
   const tabOrder = ['capture', 'array', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
   const entries = Object.entries(activeConfig).filter(([key]) => key !== 'location');
   if (hasArrayTab) entries.push(['array', {}]);
@@ -2849,6 +3117,8 @@ function renderEditor() {
     const small = document.createElement('small');
     strong.textContent = title;
     small.textContent = description;
+    small.hidden = true;
+    button.title = description;
     button.append(strong, small);
     button.addEventListener('click', () => activate(key));
     button.addEventListener('keydown', event => {
@@ -2884,14 +3154,14 @@ function renderEditor() {
     if (key === 'capture') {
       panel.appendChild(renderSiteSettings());
       panel.appendChild(renderReceiverFeatures());
-      if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
+      if (!recorded && ['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
         startup.className = 'upstream-status receiver-startup';
         panel.appendChild(startup);
         renderReceiverStartup(null, startup);
       }
-      if (activeConfig.capture?.device?.type === 'RspDuo') {
+      if (!recorded && activeConfig.capture?.device?.type === 'RspDuo') {
         const health = document.createElement('section');
         health.id = 'receiver-health';
         health.className = 'upstream-status receiver-health';
@@ -2899,8 +3169,8 @@ function renderEditor() {
         panel.appendChild(health);
         renderReceiverOverload(null, health);
       }
-      panel.appendChild(renderReceiverSetup());
-      if (upstream && receiverUsesUpstreamStatus(receiverType)) panel.appendChild(upstream);
+      if (!recorded) panel.appendChild(renderReceiverSetup());
+      if (!recorded && upstream && receiverUsesUpstreamStatus(receiverType)) panel.appendChild(upstream);
     }
     panels.appendChild(panel);
   });
@@ -2910,7 +3180,7 @@ function renderEditor() {
     organizeTechnicalControls(panel, panel.dataset.tab));
   target.append(makeSettingsFilter(tabs, panels, activate));
   target.append(tabs, panels);
-  markMultiIlluminatorUnsupported(target);
+  updateProcessingControlAvailability(target);
   activate(initialTab);
   displayFieldErrors(validationErrors);
   displayValidationNotices();
@@ -3140,8 +3410,6 @@ function renderReceiverSetup() {
   section.id = 'receiver-setup';
   const heading = document.createElement('h3');
   heading.textContent = 'Receiver software';
-  const description = document.createElement('p');
-  description.textContent = 'Scan connected SDRs.';
   const check = document.createElement('button');
   check.type = 'button'; check.className = 'button-secondary';
   check.textContent = 'Scan for receivers';
@@ -3316,7 +3584,7 @@ function renderReceiverSetup() {
     finally { check.disabled = false; }
   }
   check.addEventListener('click', discover);
-  section.append(heading, description, check, output);
+  section.append(heading, check, output);
   window.setTimeout(() => { if (section.isConnected) discover(); }, 0);
   return section;
 }
@@ -3683,7 +3951,7 @@ function accelerationSummary(value, radar) {
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
     applyIlluminatorStandardDefaults, ATSC_CHANNELIZER_DEFAULTS,
-    receiverSpecificProcessPath, multiIlluminatorUnsupportedPath, delaySampleDescription, adsbExchangeId, adsbPublicSource,
+    receiverSpecificProcessPath, delaySampleDescription, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, receiverUsesUpstreamStatus, accelerationSummary,
     CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

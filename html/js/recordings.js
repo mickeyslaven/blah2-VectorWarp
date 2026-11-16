@@ -22,7 +22,7 @@
       Number.isFinite(value.elevation_deg) ? `${value.elevation_deg.toFixed(1)}° elevation` : null]
       .filter(Boolean).join(' · ');
     return `<span class="recording-aircraft"><strong>${escape(name)}</strong>${details ? `<small>${escape(details)}</small>` : ''}</span>`;
-  }).join('') : '<span class="recording-aircraft"><strong>No aircraft label</strong><small>Manual recording or unavailable ADS-B metadata</small></span>';
+  }).join('') : '<span class="recording-aircraft" title="Manual recording or unavailable ADS-B metadata"><strong>No aircraft label</strong></span>';
   const integrity = item => item.complete === false ? '<span class="recording-integrity bad">Incomplete</span>' :
     item.admission ? `<span class="recording-integrity">${escape(item.admission)}</span>` :
       '<span class="recording-integrity">Portable recording</span>';
@@ -215,14 +215,18 @@
   }
   function renderRecordings() {
     let timer = null;
+    const importButton = document.getElementById('recording-import-button');
+    const importInput = document.getElementById('recording-import');
+    const scrollToTop = () => window.scrollTo({top: 0,
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
     const remote = typeof selectedNode === 'function' && selectedNode() !== 'local';
     if (remote) {
-      const input = document.getElementById('recording-import');
-      const label = document.querySelector('label[for="recording-import"]');
       const status = document.getElementById('recording-import-status');
-      if (input) input.disabled = true;
-      if (label) label.hidden = true;
+      if (importInput) importInput.disabled = true;
+      if (importButton) importButton.hidden = true;
       if (status) status.textContent = 'Remote libraries are read-only. Complete packages can be downloaded from this portal.';
+    } else {
+      importButton?.addEventListener('click', () => { if (!importInput?.disabled) importInput?.click(); });
     }
     document.getElementById('recording-refresh')?.addEventListener('click', () => load());
     for (const id of ['recording-kind', 'recording-sort'])
@@ -231,10 +235,10 @@
       clearTimeout(timer); timer = setTimeout(() => load({reset: true}), 300);
     });
     document.getElementById('recording-previous')?.addEventListener('click', () => {
-      state.offset = Math.max(0, state.offset - pageSize()); load(); window.scrollTo({top: 0, behavior: 'smooth'});
+      state.offset = Math.max(0, state.offset - pageSize()); load(); scrollToTop();
     });
     document.getElementById('recording-next')?.addEventListener('click', () => {
-      state.offset += pageSize(); load(); window.scrollTo({top: 0, behavior: 'smooth'});
+      state.offset += pageSize(); load(); scrollToTop();
     });
     document.getElementById('recording-list')?.addEventListener('click', event => {
       const share = event.target.closest('.recording-share'); if (share) { shareRecording(share); return; }

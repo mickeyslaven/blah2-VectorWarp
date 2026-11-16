@@ -233,12 +233,16 @@ function selectedIlluminatorConfig(config, context = illuminatorContext) {
     candidate?.id === item.id);
   const sampleRate = Number(configured?.output_sample_rate_hz ?? item.output_sample_rate_hz);
   const frequency = Number(configured?.frequency_hz ?? item.frequency_hz);
-  const transmitter = configured?.transmitter;
+  const coherentLane = config?.process?.multi_illuminator?.enabled === true &&
+    ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(config.process.surveillance_fusion?.mode);
+  const explicitSite = configured?.transmitter_location ?? item.transmitter_location;
+  const transmitter = coherentLane ? (explicitSite ? {...configured?.transmitter, ...explicitSite} : null) :
+    configured?.transmitter;
   return effective({...config,
     capture: {...config?.capture,
       ...(Number.isFinite(sampleRate) && sampleRate > 0 ? {fs: sampleRate} : {}),
       ...(Number.isFinite(frequency) && frequency > 0 ? {fc: frequency} : {})},
-    location: transmitter ? {...config?.location, tx: transmitter} : config?.location}, true);
+    location: transmitter || coherentLane ? {...config?.location, tx: transmitter || {}} : config?.location}, true);
 }
 
 function illuminatorControlTarget() {
@@ -438,14 +442,13 @@ function addRadarViewControl(panel, target) {
   summary.setAttribute('aria-label', 'Choose radar view');
   summary.setAttribute('title', 'Choose radar view');
   summary.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/><rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/><rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/><rect x="17" y="17" width="4" height="4"/></svg>';
-  const menu = document.createElement('div');
+  const menu = document.createElement('nav');
   menu.className = 'radar-view-menu';
-  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Radar views');
   menu.replaceChildren(...views.map(([key, href, label]) => {
     const link = document.createElement('a');
     link.href = href;
     link.textContent = label;
-    link.setAttribute('role', 'menuitem');
     if (key === active) link.setAttribute('aria-current', 'page');
     return link;
   }));
@@ -877,7 +880,7 @@ async function initializeNodeSelector(target, active) {
       Array.from(shell.children).forEach(child => { if (child !== target) child.hidden = true; });
       const section = document.createElement('section'); section.className = 'federation-aggregate';
       const heading = document.createElement('h1'); heading.textContent = 'Aggregate node views'; section.appendChild(heading);
-      const explanation = document.createElement('p'); explanation.textContent = 'Separate geographic layers per node. Tracks are not merged across nodes.'; section.appendChild(explanation);
+      heading.title = 'Separate geographic layers per node. Tracks are not merged across nodes.';
       const summary = document.createElement('p'); summary.textContent = 'Loading node status…'; section.appendChild(summary);
       for (const item of list) {
         const panel = document.createElement('section');
@@ -1213,7 +1216,10 @@ function renderReceiverHealth(status, target = document.getElementById('receiver
     const help = document.createElement('p');
     help.textContent = 'Counts reset when receiver capture starts. SDRplay overload events do not prove continuous ADC clipping. “No overload reported” does not guarantee RF quality. ' +
       'If overload repeats, increase the affected channel’s gain reduction with AGC off, or choose a higher LNA state to reduce RF gain. With AGC on, try a more negative AGC target. Use Save & Restart, then check both channels again.';
-    target.appendChild(help);
+    const guidance = document.createElement('details');
+    const summary = document.createElement('summary'); summary.textContent = 'Overload guidance';
+    guidance.append(summary, help);
+    target.appendChild(guidance);
   } else {
     target.appendChild(message);
     const link = document.createElement('a');
@@ -1812,6 +1818,24 @@ function aircraftAltitudeColor(aircraft = {}) {
   return `#${channel(0)}${channel(1)}${channel(2)}`;
 }
 
+// Display semantics only. Geographic views retain the canonical Map artwork;
+// delay–Doppler views use coordinate-appropriate circles with the same colors.
+// A support ring describes evidence, while a white outline describes selection.
+const radarVisualSemantics = Object.freeze({
+  colors: Object.freeze({detection: '#f4b183', track: '#ff7a45', coasting: '#ff7a45',
+    support: '#5be7ff', selected: '#ffffff', remoteId: '#20dddc',
+    independent: '#ff8754', adsbFallback: '#4dd4b0'}),
+  labels: Object.freeze({detection: 'Detection', track: 'Radar track', coasting: 'Coasting',
+    adsb: 'ADS-B position', independent: 'Independent radar position', remoteId: 'Remote ID',
+    adsbOnly: 'ADS-B only', detected: 'Radar detected', tracked: 'Radar tracked',
+    multiChannel: 'Multi-channel support'}),
+  legendOrder: Object.freeze(['detection', 'track', 'coasting', 'adsb', 'remoteId']),
+  legendRank: Object.freeze({detection: 10, track: 20, coasting: 30, adsb: 40, remoteId: 50}),
+  aircraftColor: aircraftAltitudeColor,
+  aircraftSvgMarkup
+});
+if (typeof window !== 'undefined') window.VectorWarpVisualSemantics = radarVisualSemantics;
+
 const aircraftSnapshotCaches = new Map();
 function stabilizeAircraftSnapshots(rows = [], options = {}) {
   const scope = String(options.scope || 'default');
@@ -1932,6 +1956,7 @@ if (typeof module !== 'undefined')
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
     aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftFlightPathAngle,
     aircraftPlotData, aircraftHoverText, aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
+    radarVisualSemantics,
     siteSvgMarkup, illuminatorDisplayScope, getIlluminatorContext,
     selectedIlluminatorUrl, selectedIlluminatorConfig, initializeIlluminatorDisplay,
     independentTransmitterSiteCount, liveRadarCardPresentation,

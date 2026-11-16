@@ -240,8 +240,13 @@ KrakenClipRecorder::KrakenClipRecorder(std::string directory,
     throw std::invalid_argument("Invalid Kraken clip recording metadata");
   if (!std::isfinite(this->options.ringSeconds) ||
       this->options.ringSeconds <= 0 ||
+      this->options.ringSeconds > 10.0 ||
+      !std::isfinite(this->options.lateClaimGuardSeconds) ||
+      this->options.lateClaimGuardSeconds < 0 ||
+      this->options.lateClaimGuardSeconds >= this->options.ringSeconds ||
       !std::isfinite(this->options.maximumClipSeconds) ||
       this->options.maximumClipSeconds <= 0 ||
+      this->options.maximumClipSeconds > 10.0 ||
       this->options.maximumWriterJobs == 0)
     throw std::invalid_argument("Invalid Kraken clip recorder bounds");
   const long double samples = this->options.ringSeconds * sampleRate;
@@ -455,6 +460,18 @@ void KrakenClipRecorder::start_request_locked(const IqClipRequest& value)
   const int64_t end = sample_for_time(value.windowEndMs * NS_PER_MILLISECOND);
   if (first < 0 || end <= first)
   {
+    publish_locked({value.revision, true, {},
+      "Kraken clip pre-roll is unavailable", 0});
+    return;
+  }
+  // Wall clocks only make the API's request budget; actual retained sample
+  // positions decide admission. For a completed late window keep the declared
+  // guard behind the newest sample, even if a large frame straddles ring wrap.
+  const uint64_t firstSample = static_cast<uint64_t>(first);
+  const uint64_t endSample = static_cast<uint64_t>(end);
+  const uint64_t guardSamples = static_cast<uint64_t>(
+    std::ceil(options.lateClaimGuardSeconds * sampleRate));
+  if (endSample <= nextSample && nextSample - firstSample > ringSamples - guardSamples) {
     publish_locked({value.revision, true, {},
       "Kraken clip pre-roll is unavailable", 0});
     return;

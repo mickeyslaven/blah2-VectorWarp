@@ -54,6 +54,11 @@ public:
   RecordingWriter(const std::string& path, RecordingMetadata metadata);
   ~RecordingWriter();
   void append(const IqBlock& samples);
+  // Append a common aligned range without copying it into a temporary block.
+  // This keeps event-clip persistence from competing with live DSP for memory
+  // bandwidth while preserving the exact portable on-disk representation.
+  void append_slice(const IqBlock& samples, std::size_t offset,
+    std::size_t count);
   void close();
   uint64_t samples() const;
 };

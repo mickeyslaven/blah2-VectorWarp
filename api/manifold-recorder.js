@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {compatibilityFingerprint} = require('./manifold-identity');
+const {processingCapabilities} = require('./processing-capabilities');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const normalize = value => ((value % 360) + 360) % 360;
@@ -96,13 +97,14 @@ function validateEvidence(frame) {
 }
 
 function automaticallyEligible(config) {
-  const device = config.capture?.device || {}, geometry = device.array_geometry || {};
+  const capabilities = processingCapabilities(config);
   const fusion = config.process?.surveillance_fusion?.mode;
-  return Array.isArray(device.surveillance_channels) && device.surveillance_channels.length >= 2 &&
+  return capabilities.coherentSurveillance && capabilities.surveillanceGeometry &&
+    capabilities.confirmedGeometry && capabilities.appliedGainMetadata &&
     ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion) &&
-    config.process?.detection?.enable === true && config.truth?.adsb?.enabled === true &&
-    geometry.mapping_confirmed === true && geometry.geometry_confirmed === true &&
-    geometry.orientation_confirmed === true && finite(geometry.x_axis_bearing_deg_true);
+    (fusion !== 'noise_whitened_beam_bank' ||
+      config.process?.performance?.acceleration === 'gpu-resident') &&
+    config.process?.detection?.enable === true && config.truth?.adsb?.enabled === true;
 }
 
 // Physical placement is deliberately distinct from acquisition identity. Gain,
@@ -212,6 +214,16 @@ function manifoldIdentity(config, actualGainDb, frequencyHz = config.capture?.fc
     receiver_location:receiver,transmitter_location:transmitter};
   identity.compatibility_fingerprint = compatibilityFingerprint(identity);
   return identity;
+}
+
+// This is the acquisition identity carried by recorded samples and fitted
+// detection-manifold candidates. It is deliberately distinct from the
+// settings-only site fingerprint because it includes observed applied gains.
+function manifoldSampleFingerprint(config, actualGainDb, frequencyHz = config.capture?.fc,
+  sampleRateHz = config.capture?.fs) {
+  const identity = manifoldIdentity(config, actualGainDb, frequencyHz, sampleRateHz);
+  return crypto.createHash('sha256').update(JSON.stringify({
+    configuration: fingerprintDescriptor(config), identity})).digest('hex');
 }
 
 class ManifoldRecorder {
@@ -485,8 +497,8 @@ class ManifoldRecorder {
       (finite(configuredUncertainty) ? Math.max(0, Math.min(5, configuredUncertainty)) : 1);
     const identity = manifoldIdentity(this.config, frame.actual_gain_db, frame.frequency_hz,
       frame.sample_rate_hz);
-    const identityFingerprint = crypto.createHash('sha256').update(JSON.stringify({
-      configuration: fingerprintDescriptor(this.config), identity})).digest('hex');
+    const identityFingerprint = manifoldSampleFingerprint(this.config, frame.actual_gain_db,
+      frame.frequency_hz, frame.sample_rate_hz);
     const [raw, delayDoppler] = await Promise.all([
       this.adsbSource.get('aircraft'), this.adsbSource.get('delayDoppler')]);
     const aircraftByHex = new Map((raw.aircraft || []).map(item => [item.hex, item]));
@@ -607,4 +619,4 @@ function createManifoldRecorder(config, adsbSource, dependencies) {
 
 module.exports = {azimuthElevation, validateEvidence, automaticallyEligible, fingerprintDescriptor,
   physicalSiteDescriptor, physicalSiteFingerprint, siteFingerprint, manifoldIdentity,
-  ManifoldRecorder, createManifoldRecorder};
+  manifoldSampleFingerprint, ManifoldRecorder, createManifoldRecorder};

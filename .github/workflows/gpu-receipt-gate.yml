@@ -1,0 +1,48 @@
+name: Require qualified Linux GPU receipts
+
+on:
+  workflow_call:
+    inputs:
+      source-sha:
+        required: true
+        type: string
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  receipt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
+      - name: Fetch only successful trusted dispatch evidence for this exact SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          sha = os.environ['SOURCE_SHA']
+          assert re.fullmatch(r'[0-9a-f]{40}', sha)
+          runs = json.loads(subprocess.check_output(['gh', 'run', 'list',
+              '--workflow', 'gpu-qualification.yml', '--commit', sha, '--event', 'workflow_dispatch',
+              '--status', 'success', '--limit', '20', '--json', 'databaseId,headSha,event,conclusion']))
+          runs = [run for run in runs if run['headSha'] == sha and run['event'] == 'workflow_dispatch'
+                  and run['conclusion'] == 'success']
+          assert runs, 'No qualified Linux GPU receipt for exact source SHA; dispatch trusted GPU qualification first'
+          for feature in ('fp32', 'fp64'):
+              subprocess.run(['gh', 'run', 'download', str(runs[0]['databaseId']),
+                  '--name', f'gpu-product-parity-{feature}-{sha}', '--dir', f'build/gpu-receipts/{feature}'], check=True)
+          PY
+          python3 test/gpu/verify_qualification_receipts.py --receipts build/gpu-receipts --source-sha "$SOURCE_SHA"

@@ -74,6 +74,29 @@ void RawIqStages::resetReference() {
     initializeShared();
 }
 
+void RawIqStages::setBorrowed(bool borrowed) {
+  if (borrowed == config_.borrowed) return;
+  std::unique_ptr<WienerHopf::PreparedReference> prepared;
+  std::vector<std::unique_ptr<WienerHopf>> filters(config_.paths);
+  if (borrowed) {
+    for (auto& filter : filters)
+      filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
+        config_.clutterDelayMax, config_.samples);
+  } else if (config_.eagerPlanning) {
+    prepared = std::make_unique<WienerHopf::PreparedReference>(
+      config_.clutterDelayMin, config_.clutterDelayMax, config_.samples);
+    for (auto& filter : filters)
+      filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
+        config_.clutterDelayMax, config_.samples,
+        WienerHopf::Workspace::SharedReference);
+  }
+  // Publish only complete workspaces; allocation/planning failure leaves the
+  // prior mode and reference learner intact.
+  filters_ = std::move(filters);
+  prepared_ = std::move(prepared);
+  config_.borrowed = borrowed;
+}
+
 bool RawIqStages::clutter(IqData& reference,
   const std::vector<IqData*>& surveillance) {
   validatePaths(surveillance, config_.paths);
@@ -146,5 +169,46 @@ void RawIqStages::ambiguity_borrowed(
       view.delayMin, true);
     return true;
   });
+}
+
+void RawIqStages::ambiguity_borrowed_reference(const IqData& reference,
+  const std::vector<Ambiguity*>& processors) {
+  if (!config_.borrowed || processors.size() != config_.paths ||
+      std::any_of(processors.begin(), processors.end(),
+        [](auto* path) { return path == nullptr; }) ||
+      reference.view_data().size() < config_.samples)
+    throw std::invalid_argument("Qualified borrowed ambiguity reference differs");
+  processPaths(processors.size(), *executor_, [&](size_t path) {
+    const auto view = filters_[path]->filtered_view();
+    processors[path]->process_borrowed(reference.view_data(), nullptr, nullptr,
+      view.filteredSurveillance, view.samples, view.delayMin, true);
+    return true;
+  });
+}
+
+void RawIqStages::ambiguity_borrowed_reference(
+  const std::complex<double>* reference, uint32_t samples,
+  const std::vector<Ambiguity*>& processors) {
+  if (!config_.borrowed || !reference || samples < config_.samples ||
+      processors.size() != config_.paths ||
+      std::any_of(processors.begin(), processors.end(),
+        [](auto* path) { return path == nullptr; }))
+    throw std::invalid_argument("Contiguous borrowed ambiguity reference differs");
+  static const std::deque<std::complex<double>> emptyReference;
+  processPaths(processors.size(), *executor_, [&](size_t path) {
+    const auto view = filters_[path]->filtered_view();
+    processors[path]->process_borrowed(emptyReference, nullptr, reference,
+      view.filteredSurveillance, samples, 0, true);
+    return true;
+  });
+}
+
+std::vector<WienerHopf::FilteredView> RawIqStages::borrowed_views() const {
+  if (!config_.borrowed)
+    throw std::logic_error("Borrowed clutter views are unavailable");
+  std::vector<WienerHopf::FilteredView> result;
+  result.reserve(filters_.size());
+  for (const auto& filter : filters_) result.push_back(filter->filtered_view());
+  return result;
 }
 }

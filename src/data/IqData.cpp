@@ -28,9 +28,16 @@ uint32_t IqData::get_n()
   return n;
 }
 
+void IqData::set_capacity_unlocked(uint32_t capacity)
+{
+  if (capacity < get_length())
+    throw std::runtime_error("IQ FIFO capacity is shorter than queued data");
+  n = capacity;
+}
+
 uint32_t IqData::get_length()
 {
-  return data->size();
+  return floatCapture ? floatCaptureData->size() : data->size();
 }
 
 uint64_t IqData::get_dropped_samples() const { return droppedSamples; }
@@ -47,16 +54,26 @@ void IqData::unlock()
 
 std::deque<std::complex<double>> IqData::get_data()
 {
+  if (floatCapture)
+    return floatCaptureData->copy(floatCaptureData->size());
   return *data;
 }
 
 const std::deque<std::complex<double>>& IqData::view_data() const
 {
+  if (floatCapture)
+    throw std::logic_error("Native float capture storage has no FP64 borrowed view");
   return *data;
 }
 
 std::deque<std::complex<double>> IqData::drain_front(uint32_t count)
 {
+  if (floatCapture)
+  {
+    auto samples = floatCaptureData->copy(count);
+    floatCaptureData->discard(count);
+    return samples;
+  }
   if (count > data->size())
   {
     throw std::runtime_error("Attempting to drain past the end of a deque");
@@ -83,8 +100,59 @@ std::deque<std::complex<double>> IqData::drain_front(uint32_t count)
   return samples;
 }
 
+std::deque<std::complex<double>> IqData::take_all()
+{
+  if (floatCapture)
+  {
+    auto samples = floatCaptureData->copy(floatCaptureData->size());
+    floatCaptureData->clear();
+    return samples;
+  }
+  std::deque<std::complex<double>> samples;
+  samples.swap(*data);
+  return samples;
+}
+
+void IqData::enable_float_capture(uint32_t blockSamples, uint32_t warmBlocks)
+{
+  if (!data->empty() || (floatCaptureData && !floatCaptureData->empty()))
+    throw std::logic_error("Float capture storage must be enabled on an empty FIFO");
+  floatCaptureData = std::make_unique<FloatCaptureStorage>(
+    blockSamples ? blockSamples : std::max(uint32_t(1), n), n, warmBlocks);
+  floatCapture = true;
+}
+
+std::deque<std::complex<float>> IqData::take_all_float()
+{
+  if (!floatCapture)
+    throw std::logic_error("Native float capture storage is not enabled");
+  auto samples = floatCaptureData->copy<std::complex<float>>(
+    floatCaptureData->size());
+  floatCaptureData->clear();
+  return samples;
+}
+
+FloatCaptureBlockBatch IqData::take_float_blocks(std::size_t minimumSamples)
+{
+  if (!floatCapture)
+    throw std::logic_error("Native float capture storage is not enabled");
+  return floatCaptureData->take_complete(minimumSamples);
+}
+
+FloatCaptureBlockPool::Stats IqData::float_capture_pool_stats() const
+{
+  if (!floatCapture)
+    throw std::logic_error("Native float capture storage is not enabled");
+  return floatCaptureData->stats();
+}
+
 void IqData::discard_front(uint32_t count)
 {
+  if (floatCapture)
+  {
+    floatCaptureData->discard(count);
+    return;
+  }
   if (count > data->size())
     throw std::runtime_error("Attempting to discard past the end of a deque");
   data->erase(data->begin(), data->begin() + count);
@@ -115,6 +183,15 @@ void IqData::subtract_clutter(const std::complex<double>* estimate, uint32_t cou
 
 void IqData::replace(std::deque<std::complex<double>>&& samples)
 {
+  if (floatCapture)
+  {
+    if (samples.size() > n)
+      samples.erase(samples.begin(), samples.end() - n);
+    const std::vector<std::complex<float>> converted(samples.begin(), samples.end());
+    floatCaptureData->clear();
+    floatCaptureData->append(converted.data(), converted.size());
+    return;
+  }
   if (samples.size() > n)
   {
     samples.erase(samples.begin(), samples.end() - n);
@@ -124,6 +201,8 @@ void IqData::replace(std::deque<std::complex<double>>&& samples)
 
 std::deque<std::complex<double>>& IqData::resize_for_write(uint32_t count)
 {
+  if (floatCapture)
+    throw std::logic_error("Native float capture storage has no FP64 writable view");
   if (count > n)
     throw std::runtime_error("Writable IQ block exceeds FIFO capacity");
   if (count != data->size())
@@ -133,6 +212,12 @@ std::deque<std::complex<double>>& IqData::resize_for_write(uint32_t count)
 
 void IqData::push_back(std::complex<double> sample)
 {
+  if (floatCapture)
+  {
+    const std::complex<float> value(sample);
+    append_unlocked(&value, 1);
+    return;
+  }
   if (!n) { ++droppedSamples; return; }
   if (data->size() < n)
   {
@@ -157,6 +242,25 @@ void IqData::append_unlocked(const std::complex<float>* samples, std::size_t cou
   if (!count) return;
   if (!samples) throw std::invalid_argument("Null IQ sample block");
   if (!n) { droppedSamples += count; return; }
+  if (floatCapture)
+  {
+    if (count >= n)
+    {
+      droppedSamples += floatCaptureData->size() + count - n;
+      floatCaptureData->clear();
+      floatCaptureData->append(samples + (count - n), n);
+      return;
+    }
+    const std::size_t required = floatCaptureData->size() + count;
+    if (required > n)
+    {
+      const std::size_t retired = required - n;
+      floatCaptureData->discard(retired);
+      droppedSamples += retired;
+    }
+    floatCaptureData->append(samples, count);
+    return;
+  }
   if (count >= n)
   {
     droppedSamples += data->size() + count - n;
@@ -198,6 +302,12 @@ void IqData::assign_complex(const std::complex<double>* samples, uint32_t count)
 
 std::complex<double> IqData::pop_front()
 {
+  if (floatCapture)
+  {
+    const auto sample = floatCaptureData->copy(1).front();
+    floatCaptureData->discard(1);
+    return sample;
+  }
   if (data->empty()) {
     throw std::runtime_error("Attempting to pop from an empty deque");
   }
@@ -219,6 +329,7 @@ void IqData::print()
 void IqData::clear()
 {
   data->clear();
+  if (floatCaptureData) floatCaptureData->clear();
 }
 
 void IqData::update_spectrum(std::vector<std::complex<double>> _spectrum)

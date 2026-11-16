@@ -1,0 +1,46 @@
+{
+  "schema": "vectorwarp-weak-evidence-comparison-v1",
+  "policy_sha256": "0204b0b602470a5efa2ea06045105bcbcf8f79dc2e30e6b999455c4dee1a3530",
+  "note": "Already inspected development data only. Shared fixed analysis geometry is not a native execution receipt. All controls remain unqualified. SWA admission is quarantined, not an accepted scored positive.",
+  "entries": [
+    {
+      "role": "development",
+      "pass_id": "153d3cdb565752eadaae8da65bbdbbd17c56438fede4b12a07655c87fa5ec396",
+      "hardware_epoch": "hp-proof1-acquisition19-native0-frequency18",
+      "first_sample": 341450142,
+      "end_sample": 351050142,
+      "iq_path": "/var/tmp/vectorwarp-hp-fractional-replay/kraken-clip-r13-1794516877206988625-7.mchq",
+      "iq_sha256": "52b207e5f80177fdb3347a5ac1d8822c2425507b958fda8263737c9b999789a4",
+      "cutout_path": "/var/tmp/vectorwarp-hp-fractional-replay/mxy1663-cutout.jsonl",
+      "cutout_sha256": "b18aae563dc707b73dc81f3c71351afc1add8db27f3d3e768fb73d069959c438",
+      "config_path": "/var/tmp/vectorwarp-hp-fractional-replay/replay-config.json",
+      "config_sha256": "116c40ad02471efdaf1b692d3209eb0549751b63c7d122aa3a2460635924ee17",
+      "evaluation": {"delay_km": 5.25, "doppler_hz": 292}
+    },
+    {
+      "role": "development",
+      "pass_id": "bc33f82b8d8e463cc9db702d1077f9c5d079d21f93d1853e0e69ce6ddd21f256",
+      "hardware_epoch": "hp-proof1-acquisition19-native0-frequency18",
+      "first_sample": 1658927400,
+      "end_sample": 1668527400,
+      "iq_path": "/var/tmp/vectorwarp-hp-fractional-replay/kraken-clip-r28-1794517426154260646-21.mchq",
+      "iq_sha256": "b611620982cf4a990ddea833be1d5fb178e4c511e63561f5188a6da080ebc104",
+      "cutout_path": "/var/tmp/vectorwarp-hp-fractional-replay/aal743-cutout.jsonl",
+      "cutout_sha256": "ee444694e8d7747b4ed214ac9f53b400c84a579deb7b31cf0cfa341acf3760a9",
+      "config_path": "/var/tmp/vectorwarp-hp-fractional-replay/replay-config.json",
+      "config_sha256": "116c40ad02471efdaf1b692d3209eb0549751b63c7d122aa3a2460635924ee17",
+      "evaluation": {"delay_km": 6.25, "doppler_hz": -242}
+    },
+    {
+      "role": "development",
+      "pass_id": "f642f9c67601759ef658d341d652deedc84df77c16e21cda01b55179030e8e18",
+      "hardware_epoch": "hp-proof1-acquisition19-native0-frequency18",
+      "first_sample": 11970831097,
+      "end_sample": 11980431097,
+      "iq_path": "/var/tmp/vectorwarp-hp-fractional-replay/kraken-clip-r120-1794521724010427220-111.mchq",
+      "iq_sha256": "da806ace00d188211b9a8253b96282a4f9eb7df9bc3dbe7f47897c0729d407ce",
+      "cutout_path": null,
+      "admission": "quarantined-truth-raw-offset-maintenance-only"
+    }
+  ]
+}

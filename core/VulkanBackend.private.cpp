@@ -6,8 +6,9 @@
 #include "GpuDriverStatus.h"
 #include "GpuMemory.h"
 #include "process/analysis/ResidentReplaySnapshot.h"
-// Private Linux proof: importing the host bulk baseline is deliberately forbidden.
-#ifdef __APPLE__
+// The FP64 resident/portable proof is Linux-only.  The wideband module uses an
+// explicitly separate FP32 contract and is allowed on supported Vulkan hosts.
+#if !defined(__linux__) && !defined(VECTORWARP_GPU_FP32_MODULE)
 #error "GPU-native arithmetic proof is Linux-only; production platform policy is unchanged"
 #endif
 #include <array>
@@ -103,6 +104,7 @@ static VkResult budgetAllocateMemory(VkDevice device, const VkMemoryAllocateInfo
     }
   }
   state.budget.release(info->memoryTypeIndex, info->allocationSize);
+  state.budget.driverRejected(info->memoryTypeIndex, info->allocationSize);
   return result;
 }
 static void budgetFreeMemory(VkDevice device, VkDeviceMemory memory,
@@ -246,6 +248,7 @@ std::vector<Candidate> enumerate(Instance& instance) {
 struct AllocationExit {bool valid=false;
 uint64_t used=0,peak=0,limit=0,live=0;};
 struct Context {
+  enum class Arithmetic { fp32, fp64 };
   AllocationExit* releaseEvidence=nullptr;
   gpu_host::Frame* hostTiming = nullptr;
   gpu_diagnostics::FrameLog diagnostics;
@@ -260,7 +263,8 @@ struct Context {
   uint32_t timestampValidBits = 0;
   VkPhysicalDeviceFeatures supportedFeatures{};
   VkPhysicalDeviceIDProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
-  Context(std::shared_ptr<Instance> owner, Candidate selected)
+  Context(std::shared_ptr<Instance> owner, Candidate selected,
+      Arithmetic arithmetic = Arithmetic::fp64)
     : instance(std::move(owner)), candidate(std::move(selected)) {
     try {
       const float priority = 1;
@@ -274,10 +278,10 @@ struct Context {
       VkPhysicalDeviceFeatures supported{};
       vkGetPhysicalDeviceFeatures(candidate.physical, &supported);
       supportedFeatures=supported;
-      if (!supported.shaderFloat64)
+      if (arithmetic == Arithmetic::fp64 && !supported.shaderFloat64)
         throw std::runtime_error("GPU_NATIVE_UNSUPPORTED shaderFloat64=0");
       VkPhysicalDeviceFeatures enabled{};
-      enabled.shaderFloat64 = VK_TRUE;
+      enabled.shaderFloat64 = arithmetic == Arithmetic::fp64 ? VK_TRUE : VK_FALSE;
       info.pEnabledFeatures = &enabled;
       uint32_t families = 0;
       vkGetPhysicalDeviceQueueFamilyProperties(candidate.physical, &families, nullptr);
@@ -324,13 +328,16 @@ struct Context {
         <<" vendor="<<candidate.properties.vendorID<<" device="<<candidate.properties.deviceID
         <<" driver_version="<<candidate.properties.driverVersion
         <<" device_uuid="<<hex(ids.deviceUUID)<<" driver_uuid="<<hex(ids.driverUUID)
-        <<" shader_float64=1 queue="<<candidate.queue<<" timestamp_valid_bits="<<timestampValidBits
+        <<" shader_float64="<<(supported.shaderFloat64?1:0)
+        <<" arithmetic="<<(arithmetic==Arithmetic::fp64?"fp64":"fp32")
+        <<" queue="<<candidate.queue<<" timestamp_valid_bits="<<timestampValidBits
         <<" timestamp_period_ns="<<candidate.properties.limits.timestampPeriod<<'\n';
       {
+        const auto policy = gpu_memory::allocationPolicy(candidate.info.memoryBytes,
+          std::getenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES"));
         std::lock_guard<std::mutex> lock(allocationsMutex);
-        deviceAllocations.try_emplace(device,
-          gpu_memory::heapBudget(candidate.info.memoryBytes),
-          memoryProperties(candidate.physical), true);
+        deviceAllocations.try_emplace(device, policy.bytes,
+          memoryProperties(candidate.physical), policy.separateHostHeaps);
       }
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);
@@ -844,8 +851,9 @@ class ClutterPipeline {
   friend class ResidentModule;
   Context& context_;
   uint32_t samples_, bins_, channels_, length_;
-  std::unique_ptr<Buffer> reference_, surveillance_, estimate_;
-  std::unique_ptr<Buffer> filterReference_, weights_, filtered_;
+  std::unique_ptr<Buffer> reference_, estimate_;
+  std::shared_ptr<Buffer> surveillance_, weights_;
+  std::unique_ptr<Buffer> filterReference_, filtered_;
   std::unique_ptr<Buffer> input_, correlations_, weightUpload_, output_;
   std::unique_ptr<Plan> referencePlan_, surveillancePlan_, autoPlan_, crossPlan_;
   std::unique_ptr<Plan> filterReferencePlan_, weightPlan_, filteredPlan_;
@@ -952,7 +960,7 @@ public:
     // prepared, then overwritten by the saved surveillance input. Reusing it
     // avoids one full-CPI device allocation without changing either phase.
     uint64_t elements = 3*n + 4*n*c + l + 2*l*c + b*c + b*(1+c);
-    if (resident) elements -= n + 2*n*c; // No legacy input/estimate staging.
+    if (resident) elements -= n + 3*n*c; // No legacy staging; FFT scratch aliases below.
     // Preflight allowance for the seven plan tables. Batched transforms share
     // their LUTs. Actual tables, scratch and upload allocations are additionally
     // enforced by budgetAllocateMemory; this estimate is not the final guard.
@@ -1000,7 +1008,7 @@ public:
     }
     if (!direct_) {
       reference_ = std::make_unique<Buffer>(context, n*8, device);
-      surveillance_ = std::make_unique<Buffer>(context, nc*8, device);
+      surveillance_ = std::make_unique<Buffer>(context, (resident_?lc:nc)*8, device);
       estimate_ = std::make_unique<Buffer>(context, nc*8, device);
       if (!resident_) {
         input_ = std::make_unique<Buffer>(context, (n+nc)*8, host, coherent);
@@ -1011,7 +1019,12 @@ public:
     startupTrace(resident_ ? "clutter resident GPU buffers selected" : direct_ ? "clutter direct mapped device memory selected" :
       "clutter persistent staging selected");
     filterReference_ = std::make_unique<Buffer>(context, l*8, device);
-    weights_ = std::make_unique<Buffer>(context, lc*8, device);
+    // The second cross correlation is finished before appendCorrection clears
+    // and packs filter weights. No later phase reads its surveillance FFT.
+    // Share the padded allocation only on the resident path; legacy direct/
+    // staging buffer extents and mappings retain their existing contract.
+    if(resident_)weights_=surveillance_;
+    else weights_=std::make_unique<Buffer>(context, lc*8, device);
     filtered_ = std::make_unique<Buffer>(context, lc*8, device);
     correlations_ = std::make_unique<Buffer>(context, bins_*(1+channels_)*8, host,
       coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
@@ -1166,6 +1179,9 @@ public:
   return *surveillance_; }
   Buffer& residentEstimate() { requireResident();
   return *estimate_; }
+  uint64_t residentScratchReusedBytes() const {
+    return resident_&&surveillance_.get()==weights_.get()?uint64_t(samples_)*channels_*8:0;
+  }
   void requireResident() const {
     if (!resident_) throw std::logic_error("GPU clutter is not a resident pipeline");
   }
@@ -1267,7 +1283,7 @@ private:
           status[gpu_native::residualSamples]!=surveillanceCount ||
           status[gpu_native::mergeSamples]!=surveillanceCount ||
           status[gpu_native::inputSamples]!=surveillanceCount ||
-          status[gpu_native::solves]!=2*active || status[gpu_native::weightFfts]!=active) {
+          status[gpu_native::solves]!=2*active || status[gpu_native::weightFfts]!=2*active) {
         std::ostringstream message;
         message << "GPU-native batch coverage mismatch"
           << " first_channel=" << firstChannel << " active=" << active
@@ -1281,7 +1297,7 @@ private:
           << " input_samples=" << status[gpu_native::inputSamples]
           << "/" << surveillanceCount
           << " solves=" << status[gpu_native::solves] << "/" << 2*active
-          << " weight_ffts=" << status[gpu_native::weightFfts] << "/" << active;
+          << " weight_ffts=" << status[gpu_native::weightFfts] << "/" << 2*active;
         throw std::runtime_error(message.str());
       }
       if (!resident_) {

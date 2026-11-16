@@ -26,7 +26,11 @@ function compareKrakenStatus(config, live) {
     recovering: live.recovering === true,
     cooldownActive: live.cooldown_active === true,
     calibrationState: live.calibration_state || null,
-    adcHeadroom
+    adcHeadroom,
+    // This optional, platform-neutral payload is validated by the consumer
+    // against tuning and ADC generation before it is used for diagnostics.
+    // Preserve absence rather than manufacturing a nominal phase value.
+    complexChannelTelemetry: live.complex_channel_telemetry ?? null
   };
   const issues = [];
   const mismatch = (field, label, wanted, found) => {

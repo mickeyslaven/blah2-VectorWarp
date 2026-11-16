@@ -9,6 +9,7 @@ const path = require('path');
 const root = path.join(__dirname, '..', '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const capture = read('src/capture/Capture.cpp');
+const source = read('src/capture/Source.cpp');
 const rsp = read('src/capture/rspduo/RspDuo.cpp');
 const usrp = read('src/capture/usrp/Usrp.cpp');
 const usrpSettings = read('src/capture/usrp/UsrpSettings.h');
@@ -47,9 +48,13 @@ for (const assignment of ['rfFreq.rfHz = fc', 'agc.setPoint_dBfs',
   assert.ok(rsp.includes(assignment), `RSPduo startup omits ${assignment}`);
 
 assert.match(hackrf, /void HackRf::check_status[\s\S]*throw std::runtime_error/);
-assert.match(capture, /device->start\(\); device->process\(buffers\);[\s\S]*catch \(const std::exception& error\)[\s\S]*processing_error/);
+assert.match(capture, /device->start\(\);\s*device->process\(buffers\);[\s\S]*catch \(const std::exception& error\)[\s\S]*processing_error/);
 assert.match(capture, /AddMember\("sampleRate",fs,a\)[\s\S]*AddMember\("frequency",fc,a\)/,
   'Processor status must remain classified as configured-value telemetry');
+assert.match(source, /PORTABLE_LATE_CLAIM_RING_SECONDS\s*=\s*10\.0/,
+  'Portable receivers must retain the same bounded late-claim window as Kraken');
+assert.match(source, /options\.ringSeconds\s*=\s*PORTABLE_LATE_CLAIM_RING_SECONDS/,
+  'Portable clip retention must not shrink to configured pre-roll');
 
 // UHD readback gates precede stream creation. This source contract is a guard
 // against accidental removal, not a physical-device acceptance test.

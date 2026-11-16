@@ -57,24 +57,46 @@ void ComplexCutoutRecorder::append(uint64_t timestamp,
   std::optional<std::complex<double>> pilotReference)
 {
   if (!config_.enabled || frames_ >= config_.maxFrames) return;
+  const std::vector<const Map<std::complex<double>>*> native(maps.begin(), maps.end());
+  appendNative(timestamp, native, referenceWeights, pilotReference);
+}
+
+void ComplexCutoutRecorder::appendNative(uint64_t timestamp,
+  const std::vector<const Map<std::complex<double>>*>& maps,
+  const std::vector<std::complex<double>>& referenceWeights,
+  std::optional<std::complex<double>> pilotReference,
+  const NativeProductIdentity* identity)
+{
+  if (!config_.enabled || frames_ >= config_.maxFrames) return;
   if (maps.empty() || maps.front() == nullptr)
     throw std::invalid_argument("Complex cutout requires channel maps");
   auto* first = maps.front();
-  const size_t rows = first->get_nRows(), columns = first->get_nCols();
-  if (first->doppler.size() != rows || first->delay.size() != columns)
+  const size_t rows = first->data.size();
+  const size_t columns = rows ? first->data.front().size() : 0;
+  if (!rows || !columns || first->doppler.size() != rows || first->delay.size() != columns)
     throw std::invalid_argument("Complex cutout map axes do not match its data");
-  for (auto* map : maps)
-    if (!map || map->get_nRows() != rows || map->get_nCols() != columns ||
+  for (auto* map : maps) {
+    if (!map || map->data.size() != rows ||
         map->doppler != first->doppler || map->delay != first->delay)
       throw std::invalid_argument("Complex cutout channel geometry changed");
-  if (!referenceWeights.empty() && referenceWeights.size() != maps.size())
+    for (const auto& row : map->data)
+      if (row.size() != columns)
+        throw std::invalid_argument("Complex cutout channel geometry changed");
+  }
+  const size_t referenceCount = identity && !identity->referenceChannelIds.empty() ?
+    identity->referenceChannelIds.size() : maps.size();
+  if (!referenceWeights.empty() && referenceWeights.size() != referenceCount)
     throw std::invalid_argument("Complex cutout reference-weight channel count changed");
+  if (identity && (!identity->sampleRateHz ||
+      identity->channelIds.size() != maps.size()))
+    throw std::invalid_argument("Complex cutout native channel identity is invalid");
   if (pilotReference && (!std::isfinite(pilotReference->real()) ||
                          !std::isfinite(pilotReference->imag()) ||
                          std::abs(*pilotReference) <= 1e-30))
     throw std::invalid_argument("Complex cutout pilot reference is invalid");
 
-  const double delayBin = config_.delayKm * 1000.0 * sampleRate_ / Constants::c;
+  const uint32_t sampleRate = identity ? identity->sampleRateHz : sampleRate_;
+  const double delayBin = config_.delayKm * 1000.0 * sampleRate / Constants::c;
   const size_t centerColumn = nearest(first->delay, delayBin);
   const size_t centerRow = nearest(first->doppler, config_.dopplerHz);
   const size_t firstColumn = lower(centerColumn, config_.delayRadiusBins);
@@ -84,7 +106,6 @@ void ComplexCutoutRecorder::append(uint64_t timestamp,
 
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-  writer.SetMaxDecimalPlaces(10);
   writer.StartObject();
   writer.Key("schema"); writer.String("vectorwarp-complex-caf-cutout-v1");
   writer.Key("frame"); writer.Uint(frames_);
@@ -92,11 +113,11 @@ void ComplexCutoutRecorder::append(uint64_t timestamp,
   writer.Key("requested_delay_km"); writer.Double(config_.delayKm);
   writer.Key("requested_doppler_hz"); writer.Double(config_.dopplerHz);
   writer.Key("center_delay_km");
-  writer.Double(double(first->delay[centerColumn]) * Constants::c / sampleRate_ / 1000.0);
+  writer.Double(double(first->delay[centerColumn]) * Constants::c / sampleRate / 1000.0);
   writer.Key("center_doppler_hz"); writer.Double(first->doppler[centerRow]);
   writer.Key("delay_km"); writer.StartArray();
   for (size_t column = firstColumn; column < lastColumn; ++column)
-    writer.Double(double(first->delay[column]) * Constants::c / sampleRate_ / 1000.0);
+    writer.Double(double(first->delay[column]) * Constants::c / sampleRate / 1000.0);
   writer.EndArray();
   writer.Key("doppler_hz"); writer.StartArray();
   for (size_t row = firstRow; row < lastRow; ++row)
@@ -134,7 +155,9 @@ void ComplexCutoutRecorder::append(uint64_t timestamp,
   }
   writer.EndArray();
   writer.EndObject();
-  output_.write(buffer.GetString(), std::streamsize(buffer.GetSize()));
+  const std::string record = identity ?
+    annotate_native_product(buffer.GetString(), *identity) : buffer.GetString();
+  output_.write(record.data(), std::streamsize(record.size()));
   output_.put('\n'); output_.flush();
   if (!output_) throw std::runtime_error("Cannot write complex cutout output");
   ++frames_;

@@ -28,6 +28,19 @@ private:
 };
 }
 
+TEST_CASE("manifold identity does not inherit a receiver-specific gain ceiling")
+{
+  auto expected = identity();
+  expected.requestedGainDb = {76, 76};
+  // The shape/identity check must reach file validation. Device adapters own
+  // their hardware gain ranges; a manifold must not impose Kraken's 50 dB.
+  const auto absent = std::filesystem::temp_directory_path() /
+    "vectorwarp-absent-manifold-gain-range-probe.json";
+  REQUIRE_FALSE(std::filesystem::exists(absent));
+  REQUIRE_THROWS_WITH(blah2::bearing_manifold::loadBearing(absent.string(),
+    expected.frequencyHz, 2, 2, expected), "Cannot open bearing manifold_file");
+}
+
 TEST_CASE("bearing manifold loader requires exact frequency beams and channels")
 {
   ManifoldFile file(R"({"schema":"vectorwarp-bearing-manifold-v2",

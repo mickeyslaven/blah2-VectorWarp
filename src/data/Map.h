@@ -51,13 +51,13 @@ public:
   /// @param i Index of row to update.
   /// @param row Data to update.
   /// @return Void.
-  void set_row(uint32_t i, std::vector<T> row);
+  void set_row(uint32_t i, const std::vector<T>& row);
 
   /// @brief Update a column in the 2D map.
   /// @param i Index of column to update.
   /// @param col Data to update.
   /// @return Void.
-  void set_col(uint32_t i, std::vector<T> col);
+  void set_col(uint32_t i, const std::vector<T>& col);
 
   /// @brief Create map metrics (noise power, dynamic range).
   /// @return Void.
@@ -101,6 +101,17 @@ public:
   /// @brief Generate the same display JSON directly with delay in kilometres.
   /// @param fs Sampling frequency (Hz), nonzero.
   std::string to_json_km(uint64_t timestamp, uint32_t fs);
+
+  /// @brief Generate map metadata without the large cell matrix. Downstream
+  /// display code retains the most recent full matrix while consuming current
+  /// detections and tracks.
+  std::string to_json_metadata_km(uint64_t timestamp, uint32_t fs);
+
+  /// @brief Generate a bounded display-only map. Radar processing and saved
+  /// experiment products retain the complete native matrix; this method only
+  /// reduces the monitor transport raster and quantizes it to quarter dB.
+  std::string to_json_presentation_km(uint64_t timestamp, uint32_t fs,
+    bool includeData, uint32_t maximumCells = 200000);
 
   /// @brief Update JSON to convert delay bins to km.
   /// @param json Input JSON string with delay field.

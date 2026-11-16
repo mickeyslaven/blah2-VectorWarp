@@ -38,7 +38,7 @@ function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile,
   return async runtime => {
     if (platform === 'darwin') {
       const setup = {version: 1, platform: 'darwin', pi: false, state: 'unqualified',
-        qualification: 'not-run', message: 'macOS GPU processing uses Vulkan through MoltenVK. Each processing stage checks correctness and speed at startup; CPU fallback remains available. Waiting for current GPU qualification telemetry.'};
+        qualification: 'not-run', message: 'macOS GPU processing uses Vulkan through MoltenVK. Each processing stage checks correctness at startup and reports timing; CPU fallback remains available for unavailable, unqualified or failed GPU work. Waiting for current GPU qualification telemetry.'};
       const currentRuntime = typeof runtime === 'function' ? runtime() : runtime || {};
       return preview ? setup : fromRuntime(setup, currentRuntime);
     }

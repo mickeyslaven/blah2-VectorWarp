@@ -1,4 +1,6 @@
 #include "GpuResidentWire.h"
+#include "GpuResidentInput.h"
+#include "ResidentReplayFixture.h"
 #include "../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <iostream>
@@ -12,7 +14,7 @@ void check(bool ok,const char* label){++checked;if(!ok)throw std::runtime_error(
 template<class F>void reject(F f,const char*label){bool failed=false;try{f();}catch(const std::invalid_argument&){failed=true;}check(failed,label);++rejected;}
 template<size_t N>ConstBytes bytes(const std::array<uint8_t,N>& a){return {a.data(),a.size()};}
 Config config(){
- Config c;auto&g=c.geometry;g.kind=blah2::GpuWorkKind::radar;
+ Config c;c.inputChannels=2;auto&g=c.geometry;g.kind=blah2::GpuWorkKind::radar;
  g.range=12;g.doppler=7;g.delays=3;g.channels=2;g.delayMin=-1;
  g.clutterSamples=64;g.clutterBins=4;g.clutterDelayMin=0;
  c.correlation=9;c.sampleRate=128000;c.middle=0;c.epoch=9;
@@ -38,13 +40,19 @@ void packetCases(){
  auto withDiagnostic=p;withDiagnostic.op=Op::begin;withDiagnostic.restoreTrackerSlot=0;withDiagnostic.presence|=bit(Section::filtered);withDiagnostic.diagnosticPresence=bit(Section::filtered);
  check(decode(bytes(encode(withDiagnostic))).diagnosticPresence==bit(Section::filtered),"Requested diagnostic mask did not round trip");
  auto bad32=[&](size_t at,uint32_t value){auto b=raw;wire::Writer{{b.data(),b.size()}}.u32(at,value);reject([&]{decode(bytes(b));},"Malformed packet accepted");};
- bad32(0,0x42475004);bad32(4,159);bad32(8,0);bad32(8,19);bad32(12,1);
+ bad32(0,0x42475004);bad32(0,0x4247520c);bad32(0,0x4247520e);bad32(4,159);bad32(8,0);bad32(8,21);bad32(12,1);
  bad32(80,33);bad32(84,6);bad32(128,8);bad32(132,2);bad32(136,1);bad32(140,513);bad32(144,1);bad32(144,uint32_t(bit(Section::filtered)));bad32(152,1);
  auto b=raw;wire::Writer w{{b.data(),b.size()}};w.u64(16,0);w.u64(24,0);reject([&]{decode(bytes(b));},"Zero nonce accepted");
  b=raw;w.u32(8,uint32_t(Op::begin));reject([&]{decode(bytes(b));},"Non-restore input slot accepted");
- b=raw;w.u64(72,sharedLimit+1);reject([&]{decode(bytes(b));},"Oversize mapping accepted");
+ b=raw;w.u64(72,replaySharedLimit+1);reject([&]{decode(bytes(b));},"Oversize mapping accepted");
  reject([&]{decode({raw.data(),159});},"Short packet accepted");
  reject([&]{decode({nullptr,packetBytes});},"Null packet accepted");
+ for(const auto op:{Op::resetInput,Op::inputReset}){
+  auto reset=p;reset.op=op;reset.restoreTrackerSlot=0;reset.frame={};reset.tracker={};
+  const auto decoded=decode(bytes(encode(reset)));
+  check(decoded.op==op&&!decoded.frame.logicalId&&wire::same(decoded.tracker,{}),
+   "Input reset operation did not round trip");
+ }
 }
 void configCases(){
  const auto c=config();validateConfig(c);const auto canonical=encodeConfig(c);
@@ -99,6 +107,18 @@ void configCases(){
   "Expanded track-before-detect motion bounds did not round trip");
  check(wire::configHash(tbd)!=wire::configHash(coherent),
   "Track-before-detect is not bound to config identity");
+ auto fractional=tbd;
+ fractional.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,4,true);
+ const auto fractionalBytes=encodeConfig(fractional);
+ check(encodeConfig(decodeConfig(bytes(fractionalBytes),bytes(d),bytes(f)))==fractionalBytes&&
+   wire::configHash(fractional)!=wire::configHash(tbd),
+   "Fractional delay mode did not round trip or bind identity");
+ for(uint32_t unknown:{0x20000000u,0x00002000u,0x00000004u}){
+  auto bad=fractional;bad.detector.integrationMotionBins|=unknown;
+  reject([&]{validateConfig(bad);},"Unknown fractional motion bits admitted");
+ }
+ {auto bad=fractional;bad.detector.integrationCpis=2;
+  reject([&]{validateConfig(bad);},"Fractional delay without TBD admitted");}
  auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,
   BearingReferenceAnchor::fixedSite,60,3,1,3,.01,{1,0}};
  const auto bearingBytes=encodeConfig(bearing);
@@ -142,17 +162,26 @@ void configCases(){
   "Persistent clutter initiation configuration did not round trip");
  check(wire::configHash(clutterAware)!=wire::configHash(adaptive),
   "Persistent clutter initiation is not bound to config identity");
- auto guided=tbd;guided.tracker.trackGuidedShadow=true;guided.tracker.trackGuidedPromote=true;guided.tracker.trackGuidedShadowMaxTracks=4;
+ auto guided=tbd;guided.tracker.trackGuidedShadow=true;guided.tracker.trackGuidedPromote=true;
+ guided.tracker.trackGuidedSustain=true;guided.tracker.normalizedInnovationGate=true;
+ guided.tracker.trackGuidedShadowMaxTracks=4;
+ guided.tracker.m=2;guided.tracker.n=3;
  guided.presence|=bit(Section::guidedRecoveries);
  const auto guidedBytes=encodeConfig(guided);
  const auto guidedDecoded=decodeConfig(bytes(guidedBytes),bytes(d),bytes(f));
  check(guidedDecoded.tracker.trackGuidedShadow&&
   guidedDecoded.tracker.trackGuidedPromote&&
+  guidedDecoded.tracker.trackGuidedSustain&&
+  guidedDecoded.tracker.normalizedInnovationGate&&
   guidedDecoded.tracker.trackGuidedShadowMaxTracks==4&&
   encodeConfig(guidedDecoded)==guidedBytes,
   "Track-guided shadow configuration did not round trip");
  check(wire::configHash(guided)!=wire::configHash(tbd),
   "Track-guided shadow is not bound to config identity");
+ auto impossibleGuided=guided;impossibleGuided.tracker.m=4;impossibleGuided.tracker.n=6;
+ reject([&]{encodeConfig(impossibleGuided);},"experimental disjoint 4-of-6 accepted");
+ impossibleGuided.tracker.trackGuidedPromote=false;encodeConfig(impossibleGuided);
+ impossibleGuided.tracker.trackGuidedPromote=true;impossibleGuided.tracker.n=7;encodeConfig(impossibleGuided);
  auto whitened=coherent;
  whitened.fusion.mode=FusionMode::noiseWhitenedRegularPolygon;
  const auto whitenedBytes=encodeConfig(whitened);
@@ -174,6 +203,7 @@ void configCases(){
  mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=1;v.tracker.stationaryMaxDopplerHz=15;});
  mutate([](auto&v){v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=1;});
  mutate([](auto&v){v.tracker.trackGuidedPromote=true;});
+ mutate([](auto&v){v.tracker.trackGuidedSustain=true;});
  mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=0;});
  mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=v.tracker.capacity+1;});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
@@ -230,23 +260,110 @@ void mappingCases(){
  auto noTail=c;noTail.geometry.clutterSamples=63;noTail.spectrumBins=63;noTail.sampleRate=126000;noTail.tracker.cpi=63.0/126000;
  noTail.dopplerAxis={-6000,-4000,-2000,0,2000,4000,6000};
  const auto zero=makeLayout(noTail,4096).at(Section::tail);check(zero.capacityBytes==0&&zero.offset==0,"Empty tail not canonical");
- auto huge=c;huge.geometry.range=3072;huge.geometry.doppler=1025;huge.geometry.clutterSamples=2048*1025;huge.correlation=2048;huge.geometry.delays=1024;huge.geometry.delayMin=0;huge.geometry.channels=8;huge.surveillanceChannels={0,1,2,3,4,5,6,7};huge.reference.channels=huge.surveillanceChannels;huge.delayAxis.resize(1024);huge.dopplerAxis.resize(1025);for(int i=0;i<1024;++i)huge.delayAxis[i]=i;for(int i=0;i<1025;++i)huge.dopplerAxis[i]=(i-512)*2.0;huge.sampleRate=4198400;huge.spectrumBins=2100;huge.tracker.cpi=.5;
- validateConfig(huge);reject([&]{makeLayout(huge,4096);},"Oversize shared mapping admitted");
+ auto large=[&](uint32_t channels,uint32_t doppler){auto v=c;v.geometry.range=3072;
+  v.geometry.doppler=doppler;v.geometry.clutterSamples=2048*doppler;v.correlation=2048;
+  v.geometry.delays=1024;v.geometry.delayMin=0;v.geometry.channels=channels;v.inputChannels=channels;
+  v.surveillanceChannels.resize(channels);for(uint32_t i=0;i<channels;++i)v.surveillanceChannels[i]=i;
+  v.reference.channels=v.surveillanceChannels;v.delayAxis.resize(1024);v.dopplerAxis.resize(doppler);
+  for(int i=0;i<1024;++i)v.delayAxis[i]=i;
+  for(uint32_t i=0;i<doppler;++i)v.dopplerAxis[i]=(int64_t(i)-int64_t(doppler/2))*2.0;
+  v.sampleRate=4096*doppler;v.spectrumBins=1+(v.geometry.clutterSamples-1)/1000;v.tracker.cpi=.5;
+  return v;};
+ auto huge=large(8,1025);validateConfig(huge);
+ reject([&]{makeLayout(huge,4096);},"Oversize shared mapping admitted");
+ auto replayMiddle=large(4,1131);validateConfig(replayMiddle);
+ reject([&]{makeLayout(replayMiddle,4096);},"Ordinary mapping above 512 MiB admitted");
+ blah2::resident_replay::test::enable(replayMiddle);
+ for(unsigned i=16;i<=24;++i)replayMiddle.presence|=uint64_t(1)<<i;
+ validateConfig(replayMiddle);
+ const auto middle=makeLayout(replayMiddle,4096);
+ check(middle.bytes>sharedLimit&&middle.bytes<=replaySharedLimit,
+  "Explicit replay mapping did not occupy the admitted 512 MiB--1 GiB interval");
+ auto replayOver=large(4,1167);blah2::resident_replay::test::enable(replayOver);
+ for(unsigned i=16;i<=24;++i)replayOver.presence|=uint64_t(1)<<i;
+ check(blah2::resident_replay::requiredBytes(replayOver)<=blah2::resident_replay::byteLimit,
+  "Replay-over-limit fixture exceeded the independent snapshot byte limit");
+ validateConfig(replayOver);
+ reject([&]{makeLayout(replayOver,4096);},"Replay mapping above 1 GiB admitted");
  reject([&]{wire::add(UINT64_MAX,1);},"Addition wrapped");reject([&]{wire::mul(UINT64_MAX,2);},"Multiply wrapped");reject([&]{makeLayout(c,0);},"Zero page size accepted");
 }
+void topologyCases(){
+ auto c=config();c.geometry.channels=1;c.reference.mode=ReferenceMode::capturedDedicated;
+ c.reference.channels={0};c.surveillanceChannels={1};validateConfig(c);
+ const auto l=makeLayout(c,4096);
+ check(l.at(Section::canonical).capacityBytes==64*2*16&&
+  l.at(Section::filtered).capacityBytes==64*16&&l.at(Section::maps).capacityBytes==21*8,
+  "Dedicated layout confused canonical input with surveillance output");
+ std::vector<uint8_t> data(l.bytes);Mapping mapping{data.data(),data.size(),l};
+ initializeMapping(mapping,c,{7,8});validateMapping(mapping,c,{7,8});
+ const auto decoded=decodeConfig(mapping.read(Section::config),mapping.read(Section::delayAxis),mapping.read(Section::dopplerAxis));
+ check(decoded.inputChannels==2&&decoded.geometry.channels==1&&
+  decoded.reference.mode==ReferenceMode::capturedDedicated&&decoded.reference.channels==c.reference.channels&&
+  decoded.surveillanceChannels==c.surveillanceChannels,"Dedicated topology did not round trip");
+ auto reversed=c;reversed.reference.channels={1};reversed.surveillanceChannels={0};validateConfig(reversed);
+ check(wire::configHash(c)!=wire::configHash(reversed),"Physical channel selection missing from identity");
+ auto sparse=c;sparse.inputChannels=4;sparse.reference.channels={2};sparse.geometry.channels=2;sparse.surveillanceChannels={3,0};validateConfig(sparse);
+ check(wire::configHash(c)!=wire::configHash(sparse),"Canonical input count missing from identity");
+ auto bad=[&](auto mutate){auto value=c;mutate(value);reject([&]{validateConfig(value);},"Malformed dedicated topology accepted");};
+ bad([](auto&v){v.inputChannels=0;});bad([](auto&v){v.inputChannels=9;});
+ bad([](auto&v){v.surveillanceChannels={0};});bad([](auto&v){v.surveillanceChannels={2};});
+ bad([](auto&v){v.geometry.channels=2;v.surveillanceChannels={1,1};});
+ bad([](auto&v){v.reference.channels={2};});bad([](auto&v){v.reference.channels={0,0};});
+ bad([](auto&v){v.reference.channels={};});bad([](auto&v){v.reference.mode=ReferenceMode(3);});
+ bad([](auto&v){v.reference.mode=ReferenceMode::capturedArray;});
+ bad([](auto&v){blah2::resident_replay::test::enable(v);});
+ for(const auto field:std::array<std::pair<size_t,uint32_t>,5>{{{0,6},{32,0},{112,3},{168,2},{200,2}}}){
+  auto raw=encodeConfig(c);wire::Writer{{raw.data(),raw.size()}}.u32(field.first,field.second);
+  reject([&]{decodeConfig(bytes(raw),mapping.read(Section::delayAxis),mapping.read(Section::dopplerAxis));},"Malformed topology wire accepted");
+ }
+ // Exercise the same copy boundary as Coordinator::begin with distinct input
+ // samples. Reference selection must never reorder the canonical capture.
+ std::vector<std::vector<std::complex<double>>> capture(2,std::vector<std::complex<double>>(64));
+ std::fill(capture[0].begin(),capture[0].end(),std::complex<double>{2,3});
+ std::fill(capture[1].begin(),capture[1].end(),std::complex<double>{7,11});
+ std::vector<std::complex<double>> output(128);
+ const auto samples=[](const auto& values)->const auto&{return values;};
+ copyCanonicalInput(c,{output.data(),output.size()},capture,samples);
+ check(output[0]==capture[0][0]&&output[64]==capture[1][0],"Coordinator input copy silently remapped capture");
+ copyCanonicalInput(reversed,{output.data(),output.size()},capture,samples);
+ check(output[0]==capture[0][0]&&output[64]==capture[1][0],"Coordinator input copy followed surveillance order");
+ const auto before=output;capture[1].pop_back();
+ reject([&]{copyCanonicalInput(c,{output.data(),output.size()},capture,samples);},"Coordinator accepted malformed channel length");
+ check(output==before,"Malformed input partially overwrote canonical frame");
+ capture.pop_back();
+ reject([&]{copyCanonicalInput(c,{output.data(),output.size()},capture,samples);},"Coordinator accepted missing reference input");
+}
 void outputCases(){
- const auto c=config();const auto l=makeLayout(c,4096);std::vector<uint8_t>data(size_t(l.bytes));Mapping map{data.data(),data.size(),l};initializeMapping(map,c,{7,8});
+ auto c=config();const auto ordinaryHash=wire::configHash(c);c.presence|=bit(Section::causalTrace);
+ check(wire::configHash(c)!=ordinaryHash,"Causal opt-in not bound to config identity");
+ const auto l=makeLayout(c,4096);
+ check(l.at(Section::causalTrace).capacityBytes==8256,"Causal trace fixed byte bound differs");
+ std::vector<uint8_t>data(size_t(l.bytes));Mapping map{data.data(),data.size(),l};initializeMapping(map,c,{7,8});
  Packet p;p.epoch=c.epoch;p.mappedBytes=l.bytes;p.presence=c.presence;p.diagnosticPresence=c.presence&diagnosticMask;p.frame={UINT64_C(0x100000002),17,1000};p.phase=Phase::referenceReady;
- auto ready=views(map,c,p);check(ready.spectrum.size==64&&ready.display.size==0&&ready.trackerCheckpoint.size==0,"Ready exposed later-phase outputs");
+ auto ready=views(map,c,p);check(ready.spectrum.size==64&&ready.display.size==0&&ready.trackerCheckpoint.size==0&&!ready.causalTrace.data,"Ready exposed later-phase outputs");
  p.phase=Phase::prepared;p.tracker={c.epoch,3,p.frame.logicalId,p.frame.consumedSequence};wire::Writer m{map.bytes(Section::metrics)};
  const uint32_t recordWords=trackerRecordWords(c.tracker),history=trackerHistoryCapacity(c.tracker);
  m.u32(0,1);m.u32(4,128);m.u64(8,p.frame.logicalId);m.u64(16,p.frame.consumedSequence);m.f64(24,-5);m.f64(32,20);m.u64(40,3);m.u64(48,2);m.u64(56,1);m.u64(64,trackerHeaderWords+recordWords);m.u32(72,1);m.u32(76,0);m.u32(80,c.stages());m.u32(84,c.stages());
  wire::Writer bank{map.bytes(Section::tracker1)};bank.zero();bank.u32(0,1);bank.u32(4,recordWords*4);bank.u32(8,c.tracker.capacity);bank.u32(12,history);bank.u64(16,1);bank.u64(40,c.epoch);bank.u64(48,p.frame.logicalId);bank.u64(56,p.frame.consumedSequence);
  auto prepared=views(map,c,p);check(prepared.detections.size==1&&prepared.detectionCells.size==1&&prepared.cfar.size==3&&prepared.centroid.size==2&&prepared.trackerCheckpoint.size==trackerHeaderWords+recordWords&&prepared.trackerSlot==1,"Prepared prefixes/slot differ");
+ check(prepared.causalTrace.data&&prepared.causalTrace.size==2064,"Prepared causal trace fixed view missing");
+ bank.u32(0,2);check(views(map,c,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
+  "Measured-history checkpoint v2 rejected by resident envelope");
+ bank.u32(0,3);check(views(map,c,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
+  "Native support-provenance schema3 rejected by resident envelope");
+ bank.u32(0,4);reject([&]{views(map,c,p);},"Experimental schema4 accepted by ordinary policy");
+ auto experimental=c;experimental.tracker.trackGuidedPromote=true;
+ check(views(map,experimental,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
+  "Experimental support-credit schema4 rejected by matching policy");
+ bank.u32(0,3);reject([&]{views(map,experimental,p);},"Ordinary schema3 accepted by experimental policy");
+ experimental.tracker.trackGuidedPromote=false;experimental.tracker.trackGuidedSustain=true;
+ bank.u32(0,4);check(views(map,experimental,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
+  "Sustain support-credit schema4 rejected by matching policy");
+ bank.u32(0,5);reject([&]{views(map,c,p);},"Unknown tracker checkpoint schema accepted");bank.u32(0,2);
  auto minimal=p;minimal.diagnosticPresence=0;auto hidden=views(map,c,minimal);check(!hidden.filtered.data&&!hidden.reference.data&&!hidden.cfar.data&&!hidden.centroid.data&&!hidden.levels.data&&!hidden.detectionCells.data&&hidden.detections.size==1&&hidden.maps.size==prepared.maps.size,"Unrequested optional diagnostics exposed or mandatory results removed");
  auto bad=[&](size_t at,uint64_t value){const auto before=wire::Reader{map.read(Section::metrics)}.u64(at);m.u64(at,value);reject([&]{views(map,c,p);},"Invalid output metadata accepted");m.u64(at,before);};
  bad(8,p.frame.logicalId-1);bad(16,18);bad(40,25);bad(48,4);bad(56,3);bad(64,33);bad(72,2);bad(88,1);
  auto wrong=p;wrong.tracker.generation--;reject([&]{views(map,c,wrong);},"Stale prepared token accepted");wrong=p;wrong.phase=Phase::idle;reject([&]{views(map,c,wrong);},"Idle exposed outputs");wrong=p;wrong.presence^=bit(Section::canonical);reject([&]{views(map,c,wrong);},"Output presence substitution accepted");
 }
 }
-int main()try{packetCases();configCases();mappingCases();outputCases();std::cout<<"COMPLETE resident-wire CPU-only checks="<<checked<<" rejected="<<rejected<<" gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL resident-wire: "<<e.what()<<'\n';return 1;}
+int main()try{packetCases();configCases();mappingCases();topologyCases();outputCases();std::cout<<"COMPLETE resident-wire CPU-only checks="<<checked<<" rejected="<<rejected<<" gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL resident-wire: "<<e.what()<<'\n';return 1;}

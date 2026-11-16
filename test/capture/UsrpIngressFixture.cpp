@@ -1,5 +1,6 @@
 #include "capture/usrp/Usrp.h"
 #include "capture/usrp/UsrpIngress.h"
+#include "data/CaptureChunkQueue.h"
 #include <uhd/usrp/multi_usrp.hpp>
 #include <cassert>
 #include <filesystem>
@@ -34,6 +35,7 @@ void locks_released(IqData& a, IqData& b) {
 int main() {
   try {
     bool save = false;
+    for (bool native : {false, true}) {
     for (double rate : {2000000., 6000000.}) {
       for (auto error : {uhd::rx_metadata_t::ERROR_CODE_OVERFLOW,
                         uhd::rx_metadata_t::ERROR_CODE_TIMEOUT,
@@ -44,15 +46,17 @@ int main() {
         uhd::fake.error = error;
         uhd::fake.outOfSequence = error == uhd::rx_metadata_t::ERROR_CODE_NONE;
         IqData a(128), b(128);
+        if (native) { a.enable_float_capture(10); b.enable_float_capture(10); }
         Usrp radio("Usrp", 527000000, rate, "/unused", &save,
           "type=b200", "A:A A:B", {"RX2", "RX2"}, {10, 20});
         uhd::fake.beforeReceive = [&] { if (uhd::fake.calls == 7) radio.stop(); };
         radio.process(&a, &b);
         assert(a.get_length() == 21 && b.get_length() == 21 && uhd::fake.calls == 7);
+        const auto capturedA = a.get_data(), capturedB = b.get_data();
         for (unsigned i = 0; i < 21; ++i) {
           const unsigned sample = i % 7;
-          assert(a.view_data()[i] == std::complex<double>(sample + .25, -double(sample)));
-          assert(b.view_data()[i] == std::complex<double>(sample + 100.5, sample));
+          assert(capturedA[i] == std::complex<double>(sample + .25, -double(sample)));
+          assert(capturedB[i] == std::complex<double>(sample + 100.5, sample));
         }
         assert(uhd::fake.started && uhd::fake.stopped);
         rapidjson::Document health;
@@ -64,8 +68,32 @@ int main() {
         assert(std::string(health["recovery"]["requalifications"].GetString()) == "1");
         assert(std::string(health["recovery"]["discardedBlocks"].GetString()) == "1");
         assert(std::string(health["recovery"]["discardedSamplesPerChannel"].GetString()) == "21");
+        const auto position = radio.sample_time_position();
+        assert(position.available && position.epoch == 1 &&
+          position.nextSample == 21 && position.sampleRate == rate &&
+          position.deviceTimeEpochTick == static_cast<int64_t>(rate * 20) + 21);
+        if (native) {
+          FloatCaptureChunkQueue pendingA, pendingB;
+          pendingA.push(a.take_float_blocks());
+          pendingB.push(b.take_float_blocks());
+          assert(a.get_length() == 1 && b.get_length() == 1);
+          std::vector<std::complex<float>> stagedA(10), stagedB(10);
+          for (unsigned frame = 0; frame < 2; ++frame) {
+            pendingA.take(10, stagedA); pendingB.take(10, stagedB);
+            assert(pendingA.last_transfer().swapped == 10 &&
+              pendingB.last_transfer().swapped == 10);
+            for (unsigned i = 0; i < 10; ++i) {
+              assert(std::complex<double>(stagedA[i]) == capturedA[frame * 10 + i]);
+              assert(std::complex<double>(stagedB[i]) == capturedB[frame * 10 + i]);
+            }
+          }
+          // Consumer ownership does not advance or reset source timestamps.
+          assert(radio.sample_time_position().nextSample == position.nextSample);
+          assert(!a.get_dropped_samples() && !b.get_dropped_samples());
+        }
         locks_released(a, b);
       }
+    }
     }
     // Capacity/readback preconditions and both distinct queue pointers.
     for (size_t capacity : {size_t(0), size_t((1u << 20) + 1)}) {
@@ -153,20 +181,23 @@ int main() {
       assert(!position.available);
     }
     // Software queue-full must stop, not evict old IQ to hide a gap.
-    {
+    for (bool native : {false, true}) {
       uhd::fake = {}; uhd::fake.failCall = 100;
       IqData a(10), b(10);
+      if (native) { a.enable_float_capture(4); b.enable_float_capture(4); }
       Usrp radio("Usrp", 527000000, 2000000, "/unused", &save,
         "", "A:A A:B", {"RX2", "RX2"}, {10, 20});
       const auto message = rejects([&] { radio.process(&a, &b); });
       assert(message.find("IQ processing queue is full") != std::string::npos);
       assert(a.get_length() == 0 && b.get_length() == 0 && uhd::fake.stopped);
+      assert(!a.get_dropped_samples() && !b.get_dropped_samples());
       locks_released(a, b);
     }
     // Stop requested during recv must accept no new samples and stop the stream.
-    {
+    for (bool native : {false, true}) {
       uhd::fake = {};
       IqData a(128), b(128);
+      if (native) { a.enable_float_capture(10); b.enable_float_capture(10); }
       Usrp radio("Usrp", 527000000, 2000000, "/unused", &save,
         "", "A:A A:B", {"RX2", "RX2"}, {10, 20});
       uhd::fake.beforeReceive = [&] { if (uhd::fake.calls == 2) radio.stop(); };

@@ -8,6 +8,12 @@ const MAX_EVENT_IDS = 4096;
 const MAX_ID_LENGTH = 256;
 const MIN_PERIODIC_INTERVAL_SECONDS = 10;
 const MAX_PERIODIC_SNAPSHOTS = 3;
+// Matches the native recorder's hard retention cap. The control loop polls at
+// 500 ms; two seconds also cover one CPI, API processing and one slow poll.
+// This is an evidence-only allowance, never an RF-time accuracy claim.
+const NATIVE_RING_SECONDS = 10;
+const CLAIM_CONTROL_MARGIN_MS = 2000;
+const CLAIM_RING_GUARD_MS = 1000;
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 
@@ -22,6 +28,13 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
   const clips = config.capture?.aircraft_clips || {};
   const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', clips.pre_seconds ?? DEFAULT_PRE_SECONDS);
   const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', clips.post_seconds ?? DEFAULT_POST_SECONDS);
+  const lagCpis = config.truth?.adsb?.association_lag_cpis ?? 0;
+  const cpiSeconds = config.process?.data?.cpi ?? .5;
+  if (!Number.isInteger(lagCpis) || lagCpis < 0 || lagCpis > 8 ||
+      !finite(cpiSeconds) || cpiSeconds <= 0)
+    throw new Error('Automatic clip association lag/CPI is invalid.');
+  const lateClaimAllowanceMs = Math.min(NATIVE_RING_SECONDS * 1000,
+    Math.max(0, lagCpis * cpiSeconds * 1000 + CLAIM_CONTROL_MARGIN_MS - postSeconds * 1000));
   const enabledValue = environment.BLAH2_CAPTURE_TRIGGER_ENABLED;
   if (enabledValue !== undefined && !['0', '1'].includes(enabledValue))
     throw new Error('BLAH2_CAPTURE_TRIGGER_ENABLED must be 0 or 1.');
@@ -58,7 +71,8 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
   return {enabled, preSeconds, postSeconds, maxClipSeconds: MAX_CLIP_SECONDS,
     periodicIntervalSeconds, periodicMaxSnapshots,
     minimumSlantRangeKm, maximumSlantRangeKm, minimumElevationDeg,
-    maximumElevationDeg, minimumExposureIntervalMs: minimumIntervalSeconds * 1000};
+    maximumElevationDeg, minimumExposureIntervalMs: minimumIntervalSeconds * 1000,
+    lateClaimAllowanceMs};
 }
 
 function validId(value) {
@@ -80,7 +94,7 @@ class CaptureTriggerQueue {
   constructor({enabled = true, preSeconds = DEFAULT_PRE_SECONDS, postSeconds = DEFAULT_POST_SECONDS,
     maxClipSeconds = MAX_CLIP_SECONDS, maxClips = MAX_CLIPS,
     maxEventIds = MAX_EVENT_IDS, periodicIntervalSeconds = 0,
-    periodicMaxSnapshots = 0, minimumExposureIntervalMs = 0,
+    periodicMaxSnapshots = 0, minimumExposureIntervalMs = 0, lateClaimAllowanceMs = 0,
     minimumSlantRangeKm = 0, maximumSlantRangeKm = 1000,
     minimumElevationDeg = 0, maximumElevationDeg = 90, now = Date.now} = {}) {
     if (!finite(preSeconds) || preSeconds < 0 || !finite(postSeconds) || postSeconds < 0)
@@ -93,6 +107,9 @@ class CaptureTriggerQueue {
       throw new Error('Capture trigger bounds must be positive integers.');
     if (!finite(minimumExposureIntervalMs) || minimumExposureIntervalMs < 0)
       throw new Error('Capture trigger exposure interval must be non-negative.');
+    if (!finite(lateClaimAllowanceMs) || lateClaimAllowanceMs < 0 ||
+        lateClaimAllowanceMs > NATIVE_RING_SECONDS * 1000)
+      throw new Error('Capture trigger late-claim allowance exceeds the native ring bound.');
     if (!finite(minimumSlantRangeKm) || !finite(maximumSlantRangeKm) ||
         minimumSlantRangeKm < 0 || maximumSlantRangeKm > 1000 ||
         minimumSlantRangeKm > maximumSlantRangeKm)
@@ -112,6 +129,10 @@ class CaptureTriggerQueue {
     this.maxClipSeconds = maxClipSeconds;
     this.maxClips = maxClips; this.maxEventIds = maxEventIds; this.now = now;
     this.minimumExposureIntervalMs = minimumExposureIntervalMs;
+    this.lateClaimAllowanceMs = lateClaimAllowanceMs;
+    // Only existing bounded event objects are retained; a failed sink leaves
+    // the notification marked for the next control poll.
+    this.terminalNotifications = new WeakSet();
     this.minimumSlantRangeKm = minimumSlantRangeKm;
     this.maximumSlantRangeKm = maximumSlantRangeKm;
     this.minimumElevationDeg = minimumElevationDeg;
@@ -196,6 +217,10 @@ class CaptureTriggerQueue {
     Object.assign(window, {revision: clip.revision,
       state: clip.acknowledged ? 'acknowledged' : 'failed', failure: clip.failure,
       file: clip.file, samples: clip.samples});
+    if (!clip.acknowledged) {
+      window.admissionState = 'not-recorded';
+      window.admissionReasons = clip.failure ? [clip.failure] : [];
+    }
   }
 
   enqueueInitial(event, eventRecord, requestedEventTime, kind = 'initial') {
@@ -410,6 +435,7 @@ class CaptureTriggerQueue {
       const window = windows[index];
       if (window) Object.assign(window, {revision: clip.revision, requestedEventTime,
         windowStart: clip.windowStart, windowEnd: clip.windowEnd, state: 'pending', failure: null,
+        admissionState: 'pending', admissionReasons: [],
         preRollRetries: window.preRollRetries + 1});
       event.clipRevisions = [...new Set([...event.clipRevisions, clip.revision])];
       event.windowStart = clip.windowStart;
@@ -443,13 +469,37 @@ class CaptureTriggerQueue {
     return this.clips.find(clip => clip.pending) || this.clips.at(-1) || null;
   }
 
+  claimDeadline(clip) {
+    // A completed window can still be present in the native ring. Wall time is
+    // only an early rejection budget; native epoch/sample coverage is the final
+    // authority. Never move or shorten the original event/window to make it fit.
+    return Math.max(clip.windowEnd, Math.min(
+      clip.windowEnd + this.lateClaimAllowanceMs,
+      clip.windowStart + NATIVE_RING_SECONDS * 1000 - CLAIM_RING_GUARD_MS));
+  }
+
+  flushTerminalEvents(acceptEvents) {
+    if (typeof acceptEvents !== 'function')
+      throw new TypeError('Terminal capture evidence sink is required.');
+    const records = [...this.events.values()].filter(record =>
+      this.terminalNotifications.has(record));
+    if (!records.length) return;
+    acceptEvents(records);
+    for (const record of records) this.terminalNotifications.delete(record);
+  }
+
+  requestWithEvidence(acceptEvents) {
+    try { return this.request(true); }
+    finally { this.flushTerminalEvents(acceptEvents); }
+  }
+
   request(expose = false) {
     let clip = this.current();
     // A processor outage can leave many immutable evidence windows queued.
     // Never feed those expired windows through the native recorder one by one:
     // doing so blocks current captures behind guaranteed pre-roll failures.
     if (expose) while (clip?.pending && !clip.exposed &&
-        Number.isFinite(clip.windowEnd) && this.now() > clip.windowEnd) {
+        Number.isFinite(clip.windowEnd) && this.now() > this.claimDeadline(clip)) {
       clip.claimedAt = this.now();
       clip.staleAtClaim = true;
       clip.exposed = true;
@@ -463,6 +513,7 @@ class CaptureTriggerQueue {
           event.state = 'failed';
           event.failure = clip.failure;
           this.terminalWindow(clip, eventId);
+          this.terminalNotifications.add(event);
         }
       }
       clip = this.current();
@@ -497,6 +548,8 @@ class CaptureTriggerQueue {
     return {...this.request(false), enabled: this.enabled,
       queuedClips: this.clips.filter(clip => clip.pending).length,
       maximumClipSeconds: this.maxClipSeconds, droppedEvents: this.droppedEvents,
+      lateClaimAllowanceMs: this.lateClaimAllowanceMs,
+      nativeRingSeconds: NATIVE_RING_SECONDS, claimRingGuardMs: CLAIM_RING_GUARD_MS,
       recentEvents: [...this.events.values()].slice(-250).map(event =>
         ({...event, clipRevisions: [...event.clipRevisions]}))};
   }
@@ -506,5 +559,6 @@ function createCaptureTriggerQueue(options) { return new CaptureTriggerQueue(opt
 
 module.exports = {DEFAULT_PRE_SECONDS, DEFAULT_POST_SECONDS, MAX_CLIP_SECONDS,
   MAX_CLIPS, MAX_EVENT_IDS, MIN_PERIODIC_INTERVAL_SECONDS, MAX_PERIODIC_SNAPSHOTS,
+  NATIVE_RING_SECONDS, CLAIM_CONTROL_MARGIN_MS, CLAIM_RING_GUARD_MS,
   optionsFromEnvironment, CaptureTriggerQueue,
   createCaptureTriggerQueue};

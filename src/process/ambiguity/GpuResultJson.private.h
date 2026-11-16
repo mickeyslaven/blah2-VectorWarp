@@ -25,11 +25,13 @@ View<double> delayKm,doppler,display;};
 struct DetectionView {uint64_t timestamp=0;
 View<double> delayKm,doppler,snr;};
 struct HistoryView {View<double> delay,doppler;
-View<uint32_t> state;};
+View<uint32_t> state,measured;};
 struct PublishedTrack {uint32_t id=0,state=0;
 double delay=0,doppler=0,acceleration=0;
 uint64_t associated=0;
-HistoryView history;};
+HistoryView history;
+bool measurementKnown=false,measured=false;
+uint32_t source=0;}; // 0 prediction/legacy, 1 detector, 2 guided
 struct TrackView {uint64_t timestamp=0,total=0,tentative=0,associated=0,active=0,coasting=0;
 View<PublishedTrack> published;};
 inline void require(bool yes,const char*why){if(!yes)throw std::invalid_argument(why);}
@@ -160,7 +162,10 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
  values(t.history.delay);
  values(t.history.doppler);
  shape(t.history.state);
+ shape(t.history.measured);
  require(t.history.delay.count==t.history.doppler.count&&t.history.delay.count==t.history.state.count&&t.history.delay.count>0&&t.history.delay.count<=100,"GPU selected display history shape differs");
+ require(!t.history.measured.count||t.history.measured.count==t.history.state.count,"GPU selected measurement history shape differs");
+ require(!t.measurementKnown||t.source<=2,"GPU measurement provenance invalid");
  for(size_t j=0;j<t.history.state.count;++j)stateName(t.history.state.data[j]);}
  rapidjson::StringBuffer b;
  Writer w(b);
@@ -196,6 +201,8 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
  w.Double(t.acceleration);
  w.Key("n");
  w.Uint64(t.associated);
+ if(t.measurementKnown){w.Key("measured");w.Bool(t.measured);
+  w.Key("source");w.String(t.source==1?"detector":(t.source==2?"guided":"prediction"));}
  w.Key("associated_delay");
  array(w,t.history.delay);
  w.Key("associated_doppler");
@@ -204,6 +211,9 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
  w.StartArray();
  for(size_t j=0;j<t.history.state.count;++j)w.String(stateName(t.history.state.data[j]));
  w.EndArray();
+ if(t.history.measured.count){w.Key("associated_measured");w.StartArray();
+  for(size_t j=0;j<t.history.measured.count;++j)w.Bool(t.history.measured.data[j]!=0);
+  w.EndArray();}
  w.EndObject();}w.EndArray();
  w.EndObject();
  return {b.GetString(),b.GetSize()};}
@@ -360,6 +370,16 @@ inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(
 double value;
 std::memcpy(&value,&bits,sizeof(value));
 return value;}
+inline bool validHistoryMetadata(uint32_t word,uint32_t schema){
+ if(schema==1)return word<=3;
+ if(schema!=3&&schema!=4)return false;
+ const uint32_t evidence=word&12u,state=word&3u,depth=word>>(schema==4?5u:4u);
+ return word<=(schema==4?511u:255u)&&evidence!=12u&&
+  !(state==0u&&(evidence&8u)!=0u)&&!(state==3u&&evidence!=0u)&&
+  !(schema==4&&(word&16u)!=0u&&evidence==0u)&&
+  (evidence==0u?depth==0u:((evidence&8u)!=0u?depth==2u:
+   (depth==1u||depth==2u||depth==4u||depth==8u)));
+}
 // The bank is an already committed GPU checkpoint. Decode/copy only its valid
 // prefix and its GPU-selected publication slices; no tracker transition/ID,
 // prediction, count, or display-window computation occurs here.
@@ -368,25 +388,26 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
  const uint32_t recordBytes=w[1],historyCapacity=w[3];
- require(binding.capacity&&w[0]==1&&historyCapacity>=100&&historyCapacity<=255&&
+ require(binding.capacity&&(w[0]==1||w[0]==3||w[0]==4)&&historyCapacity>=100&&historyCapacity<=255&&
   recordBytes==(16+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
  const size_t recordWords=recordBytes/4;
  const uint64_t total=wordPair(w,4),published=wordPair(w,24);
  require(total<=binding.capacity&&total<=(SIZE_MAX-32)/recordWords&&bank.count==32+recordWords*size_t(total),"GPU tracker valid prefix differs");
  require(w[8]<65535&&w[9]==0&&wordPair(w,10)==binding.epoch&&wordPair(w,12)==binding.generation&&wordPair(w,14)==binding.consumedSequence,"GPU tracker checkpoint binding differs");
- for(size_t i=26;i<32;++i)require(w[i]==0,"GPU tracker reserved header nonzero");
+ for(size_t i=w[0]==4?27:26;i<32;++i)require(w[i]==0,"GPU tracker reserved header nonzero");
+ if(w[0]==4)require(w[26]<UINT32_MAX,"GPU tracker temporal counter invalid");
  const std::array<uint64_t,4>counts{wordPair(w,16),wordPair(w,18),wordPair(w,20),wordPair(w,22)};
  require(counts[0]<=total&&counts[1]<=total-counts[0]&&counts[2]<=total-counts[0]-counts[1]&&counts[3]==total-counts[0]-counts[1]-counts[2]&&published==total-counts[0],"GPU tracker header totals differ");
  std::vector<PublishedTrack>rows(size_t(published),PublishedTrack{});
  struct Storage {std::vector<double>d,f;
- std::vector<uint32_t>s;};
+ std::vector<uint32_t>s,m;};
  std::vector<Storage>history(size_t(published),Storage{});
  std::array<uint64_t,4>observed{};
  size_t ordinal=0;
  for(size_t i=0;i<size_t(total);++i){const size_t base=32+recordWords*i;
  const uint32_t state=w[base+14],packed=w[base+13],head=packed&255,length=(packed>>8)&255,start=(packed>>16)&255,display=packed>>24;
   const uint32_t identity=w[base+12];
-  require(state<4&&(identity&0x7fff0000u)==0u&&(identity&65535u)<65535&&head<historyCapacity&&length&&length<=historyCapacity&&start<historyCapacity&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
+  require(state<4&&(identity&(w[0]>=3?0x3fff0000u:0x7fff0000u))==0u&&(identity&65535u)<65535&&head<historyCapacity&&length&&length<=historyCapacity&&start<historyCapacity&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
   // Validate the supplied slice, but copy start/display directly below.
   require(display==(length>=100?100:length)&&start==(head+length-display)%historyCapacity&&(length==historyCapacity||head==0),"GPU tracker display metadata inconsistent");
   ++observed[state];
@@ -401,12 +422,15 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   h.d.reserve(display);
   h.f.reserve(display);
   h.s.reserve(display);
+  if(w[0]>=3)h.m.reserve(display);
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
   const double d=realPair(w,at),f=realPair(w,at+2);
   finite(d);
   finite(f);
   finite(realPair(w,at+4));
-  stateName(w[at+6]);
+  const uint32_t historyState=w[at+6];
+  require(validHistoryMetadata(historyState,w[0]),"GPU history measurement metadata invalid");
+  stateName(historyState&3u);
   const uint32_t spatial=w[at+7];
   if(spatial&0x80000000u){const uint32_t scan=binding.scanBeamCount?binding.scanBeamCount:binding.beamCount*4u;
    require(validFineSpatialEvidence(spatial,scan),"GPU history multi-lobe metadata invalid");}
@@ -415,8 +439,12 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
     !(coarse==0&&fineBeam!=0),"GPU history beam metadata invalid");}
   h.d.push_back(d);
   h.f.push_back(f);
-  h.s.push_back(w[at+6]);}
-  rows[ordinal]={identity&65535u,state,realPair(w,base),realPair(w,base+2),realPair(w,base+6),wordPair(w,base+8),{{h.d.data(),h.d.size()},{h.f.data(),h.f.size()},{h.s.data(),h.s.size()}}};
+  h.s.push_back(historyState&3u);
+  if(w[0]>=3)h.m.push_back((historyState&4u)!=0u);}
+  const uint32_t newestPrivate=w[base+16+8*((head+length-1u)%historyCapacity)+6u];
+  rows[ordinal]={identity&65535u,state,realPair(w,base),realPair(w,base+2),realPair(w,base+6),wordPair(w,base+8),
+   {{h.d.data(),h.d.size()},{h.f.data(),h.f.size()},{h.s.data(),h.s.size()},{h.m.data(),h.m.size()}},
+   w[0]>=3,(newestPrivate&4u)!=0u,(newestPrivate&4u)!=0u?1u:((newestPrivate&8u)!=0u?2u:0u)};
   ++ordinal;
  }
  require(observed==counts&&ordinal==published,"GPU tracker record/header counts differ");
@@ -444,7 +472,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
  const uint32_t historyCapacity=w[3],recordBytes=w[1];
- require(binding.capacity&&w[0]==1&&historyCapacity>=100&&historyCapacity<=255&&
+ require(binding.capacity&&(w[0]==1||w[0]==3||w[0]==4)&&historyCapacity>=100&&historyCapacity<=255&&
   recordBytes==(16+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
  const size_t recordWords=recordBytes/4;
  const uint64_t total=wordPair(w,4);
@@ -479,7 +507,13 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   double minimumDoppler=std::numeric_limits<double>::infinity(),maximumDoppler=-std::numeric_limits<double>::infinity();
   std::array<uint32_t,16> legacyQuality{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
-   const uint32_t historyState=w[at+6];stateName(historyState);
+   const uint32_t privateHistoryState=w[at+6];
+   require(validHistoryMetadata(privateHistoryState,w[0]),"GPU bearing measurement metadata invalid");
+   const uint32_t historyState=privateHistoryState&3u;stateName(historyState);
+   // Guided recovery carries a prediction, not a new spatial measurement.
+   // It may sustain/confirm a kinematic track but must not manufacture
+   // independent bearing support from the previously copied beam.
+   if(w[0]>=3&&(privateHistoryState&4u)==0u)continue;
    if(historyState!=1u&&historyState!=2u)continue;
    const uint32_t spatial=w[at+7];Lobes frame;frame.sample=j;
    const double sampleDelay=realPair(w,at),sampleDoppler=realPair(w,at+2);

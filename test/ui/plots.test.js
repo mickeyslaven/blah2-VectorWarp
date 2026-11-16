@@ -16,6 +16,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
     const running = {capture: {fs: 2400000}, process: {data: {cpi: .2},
       detection: {enable: true}}, truth: {adsb: {enabled: true}}};
     let detected = {timestamp: 1000, delay: [1], doppler: [2]};
+    const truthAircraft = {abc123: {hex: 'abc123', flight: 'TEST1', alt_geom: 5000,
+      delay: 1.3, doppler: 40}, def456: {hex: 'def456', flight: 'TEST2', alt_geom: 30000,
+      delay: 2.5, doppler: -20}};
     let tracked = {timestamp: 1000, data: [
       {id: 9, state: 'ACTIVE', delay: 8, doppler: 2},
       {id: 10, state: 'COASTING', delay: 10, doppler: -3}
@@ -36,6 +39,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
       aircraftLabel: common.aircraftLabel,
+      aircraftIdentity: common.aircraftIdentity,
+      radarVisualSemantics: common.radarVisualSemantics,
       aircraftPlotSymbol: common.aircraftPlotSymbol,
       aircraftPlotData: common.aircraftPlotData,
       aircraftHoverText: common.aircraftHoverText,
@@ -48,7 +53,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
         fetchUrls.push(url);
         return url.startsWith('/api/detection') ? detected :
           url.startsWith('/api/tracker') ? tracked :
-          url.startsWith('/api/adsb/delay-doppler') ? {} : new Promise(() => {});
+          url.startsWith('/api/adsb/delay-doppler') ? truthAircraft : new Promise(() => {});
       },
       window: {innerWidth: 1200, location: new URL('http://vectorwarp.test/display/map/'), addEventListener() {}, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},
@@ -99,13 +104,26 @@ const clone = value => JSON.parse(JSON.stringify(value));
       detection: {timestamp: [1000], delay: [1], doppler: [2], snr: [3]}
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
+    if (kind === 'detection') {
+      const trace = calls.filter(call => call.method === 'react').at(-1).args[1][0];
+      assert.equal(trace.name, common.radarVisualSemantics.labels.detection);
+      assert.equal(trace.marker.color, common.radarVisualSemantics.colors.detection,
+        'Standalone detection/history plots share the live DD detection color');
+      assert.equal(trace.marker.symbol, 'circle');
+    }
     if (kind === 'map') assert.ok(snapshotScopes.includes('delay-doppler:fm-90.5'),
       'ADS-B snapshot retention is isolated to the selected illuminator lane');
     assert.equal(calls.filter(call => call.method === 'react').length, 2, `${kind}: initial real frame must create correct traces without tearing down its plot root`);
     if (kind === 'map') {
       const initialTraces = calls.filter(call => call.method === 'react').at(-1).args[1];
       assert.equal(initialTraces[2].marker.symbol, 'circle',
-        'ADS-B truth stays a uniform green-dot overlay on delay–Doppler');
+        'ADS-B truth stays a circular overlay in delay–Doppler coordinates');
+      assert.deepEqual(initialTraces[2].marker.color,
+        Object.values(truthAircraft).map(common.aircraftAltitudeColor),
+        'Aircraft altitude colors match the regular geographic Map');
+      assert.equal(initialTraces[2].name, 'ADS-B position');
+      assert.deepEqual([1, 3, 4, 2, 5].map(index => initialTraces[index].legendrank),
+        [10, 20, 30, 40, 50], 'Detection, track, coast, aircraft, Remote ID keep one legend order');
       assert.equal(initialTraces[1].marker.symbol, 'circle',
         'Radar detections keep their established circular marker styling');
       assert.equal(initialTraces[1].marker.size, 8, 'Raw detections are small, light markers');
@@ -196,6 +214,26 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.ok(calls.slice(changedGridCallsBefore).some(call => call.method === 'react'),
         'Map grid changes reconcile the existing Plotly root');
       assert.ok(!calls.some(call => call.method === 'newPlot'), 'Map never tears down the plot root');
+      const events = {};
+      const plot = {on: (name, callback) => { events[name] = callback; },
+        addEventListener: (name, callback) => { events[name] = callback; }, setAttribute() {}};
+      context.document = {getElementById: () => plot, querySelectorAll: () => []};
+      context.bindDelayDopplerSelection();
+      events.plotly_click({points: [{curveNumber: 2, pointNumber: 1}]});
+      await context.refreshDelayDopplerSelection();
+      assert.equal(context.selectedDelayDopplerTarget, 'aircraft:DEF456');
+      const selectedStyle = clone(context.delayDopplerSelectionStyle(context.delayDopplerSelectionTraces[0]));
+      assert.deepEqual(selectedStyle['marker.line.color'], ['#10251f', '#ffffff'],
+        'White denotes selection without replacing altitude color or claiming radar support');
+      assert.deepEqual(selectedStyle['marker.size'], [10, 14]);
+      await update(changedGrid);
+      assert.equal(context.selectedDelayDopplerTarget, 'aircraft:DEF456', 'Selection survives frame refresh');
+      events.keydown({key: 'Escape'});
+      assert.equal(context.selectedDelayDopplerTarget, null);
+      events.plotly_click({points: [{curveNumber: 3, pointNumber: 0}]});
+      assert.equal(context.selectedDelayDopplerTarget, 'track:9');
+      context.configureMapChannel({id: 'another-channel'});
+      assert.equal(context.selectedDelayDopplerTarget, null, 'Changing channel clears lane-local selection');
     }
   }
   const unavailableCalls = [];

@@ -16,10 +16,11 @@
 namespace blah2 {
 
 // Receiver-independent bounded pre/post-roll recorder. Sample ingress never
-// waits for filesystem I/O and deliberately drops its recorder copy when the
-// short state mutex is contended.
+// waits for filesystem I/O. It may briefly wait for the short state mutex so
+// a control/status read cannot manufacture a gap in a continuous stream.
 class PortableClipRecorder {
 public:
+  static constexpr uint64_t MAXIMUM_RING_BYTES = 512ULL * 1024ULL * 1024ULL;
   struct Options {
     double ringSeconds = 2.0;
     double maximumClipSeconds = 5.0;
@@ -33,6 +34,8 @@ public:
   ~PortableClipRecorder();
   PortableClipRecorder(const PortableClipRecorder&) = delete;
   PortableClipRecorder& operator=(const PortableClipRecorder&) = delete;
+  static bool supports_retention(uint32_t channels, uint32_t sampleRate,
+    double seconds) noexcept;
 
   bool ingest(IqBlock samples, uint64_t epoch = 0,
     uint64_t firstSample = 0, bool positionAvailable = false,
@@ -69,6 +72,6 @@ private:
   void fail_active_locked(const std::string& error);
   void finish_active_locked();
   void writer_loop();
-  IqClipStatus write_job(const Job& job);
+  IqClipStatus write_job(Job& job);
 };
 }

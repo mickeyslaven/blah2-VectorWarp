@@ -125,6 +125,18 @@ fi
   });
 ' || die 'installed universal receiver adapters did not load correctly'
 
+# Reconcile the processor's build-bound stage inventory with the GPU modules
+# that every published Linux artifact is required to contain. Device discovery
+# and numerical qualification remain runtime states and are not inferred here.
+/opt/vectorwarp/current/bin/blah2 --processing-capabilities | "$node" -e '
+  let body=""; process.stdin.on("data", data => { body += data; });
+  process.stdin.on("end", () => {
+    const report=JSON.parse(body);
+    if (report.schema !== 1 || report.portableGpu !== true ||
+        report.widebandGpu !== true || report.residentGpu !== true) process.exit(1);
+  });
+' || die 'installed GPU stage inventory does not match the universal package'
+
 # This is a directly launched package-local API/static-web smoke process, never
 # a system service; BLAH2_PREVIEW prevents external truth polling.
 setsid runuser --user vectorwarp-api --group vectorwarp-api --supp-group vectorwarp-config -- \

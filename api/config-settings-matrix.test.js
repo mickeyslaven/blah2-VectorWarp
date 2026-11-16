@@ -120,6 +120,10 @@ try {
   };
   const replayBase = shipped('config-usrp.yml');
   replayBase.process.performance = {surveillance_workers: 1, fft_threads: 4, acceleration: 'auto'};
+  const ridgeWindow = clone(replayBase);
+  ridgeWindow.process.detection.doppler_ridge_scrubber.shadow_maximum_cpis = 64;
+  persistGroup('bounded-ridge-shadow-window', replayBase, ridgeWindow,
+    ['process.detection.doppler_ridge_scrubber.shadow_maximum_cpis']);
   const portableReplay = clone(replayBase);
   Object.assign(portableReplay.capture.replay, {state: true,
     sample_rate_hz: 2400000, frequency_hz: 509000000, channel_count: 5,
@@ -166,7 +170,7 @@ try {
   fusion.process.tracker.beam_tolerance = 1;
   fusion.capture.device.array_geometry = {
     shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
-    mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
+    mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true,
     x_axis_bearing_deg_true: 0,
     bearing_channels: [...fusion.capture.device.surveillance_channels],
     elements: fusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
@@ -175,8 +179,18 @@ try {
         Math.sin(2 * Math.PI * index / 5) * .2, 0]
     }))
   };
+  // Confirmation flags are meaningful persisted edits only when the measured
+  // channel geometry itself is unchanged from the reviewed baseline.
+  krakenBase.capture.device.array_geometry = clone(
+    fusion.capture.device.array_geometry);
+  krakenBase.capture.device.array_geometry.mapping_confirmed = false;
+  krakenBase.capture.device.array_geometry.geometry_confirmed = false;
+  krakenBase.capture.device.array_geometry.orientation_confirmed = false;
   persistGroup('kraken-coherent-fusion', krakenBase, fusion,
-    ['process.performance.acceleration', 'process.tracker.gpu_capacity',
+    ['capture.device.array_geometry.mapping_confirmed',
+      'capture.device.array_geometry.geometry_confirmed',
+      'capture.device.array_geometry.orientation_confirmed',
+      'process.performance.acceleration', 'process.tracker.gpu_capacity',
       'process.surveillance_fusion.mode',
       'process.surveillance_fusion.beams',
       'process.surveillance_fusion.effective_beam_trials',
@@ -188,6 +202,10 @@ try {
       'process.detection.track_before_detect.delay_motion_bins',
       'process.detection.track_before_detect.doppler_motion_bins',
       'process.tracker.beam_tolerance']);
+  const fractionalFusion = clone(fusion);
+  fractionalFusion.process.detection.track_before_detect.fractional_delay = true;
+  persistGroup('resident-fractional-delay', fusion, fractionalFusion,
+    ['process.detection.track_before_detect.fractional_delay']);
   const measuredBaseline = clone(fusion);
   Object.assign(measuredBaseline.capture.device.array_geometry,
     {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
@@ -315,7 +333,7 @@ try {
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.tracker.initiate.stationary_clutter = {enable: true,
     persistence_cpis: 8, max_doppler_hz: 15};
-  resident.process.tracker.track_guided_shadow = {enable: true, promote: true, max_tracks: 32,
+  resident.process.tracker.track_guided_shadow = {enable: true, promote: true, sustain: true, max_tracks: 32,
     evidence_path: path.join(directory, 'guided-shadow.jsonl')};
   persistGroup('resident-capacity-edit', residentBase, resident, [
     'process.tracker.initiate.acceleration_model',
@@ -324,8 +342,43 @@ try {
     'process.tracker.initiate.stationary_clutter.max_doppler_hz',
     'process.tracker.track_guided_shadow.enable',
     'process.tracker.track_guided_shadow.promote',
+    'process.tracker.track_guided_shadow.sustain',
     'process.tracker.track_guided_shadow.max_tracks',
     'process.tracker.track_guided_shadow.evidence_path']);
+  for (const mode of [undefined, 'cpu', 'auto', 'gpu']) {
+    const portable = clone(resident);
+    if (mode === undefined) delete portable.process.performance;
+    else portable.process.performance.acceleration = mode;
+    portable.process.bearing.enable = false;
+    delete portable.process.tracker.beam_tolerance;
+    delete portable.process.tracker.gpu_capacity;
+    const result = validateConfig(portable);
+    assert.equal(result.valid, true,
+      `Shared stationary/guided recovery accepts ${mode ?? 'implicit AUTO'}: ${result.errors.join('; ')}`);
+  }
+  const legacyNoPerformance = clone(krakenBase);
+  delete legacyNoPerformance.process.performance;
+  legacyNoPerformance.process.tracker.initiate.stationary_clutter = {enable: false};
+  legacyNoPerformance.process.tracker.track_guided_shadow = {enable: false, max_tracks: 32};
+  assert.equal(validateConfig(legacyNoPerformance).valid, true,
+    `disabled resident features remain valid with implicit AUTO: ${validateConfig(legacyNoPerformance).errors.join('; ')}`);
+  // Snapshot controls are tested within an existing replay context. Switching
+  // from live capture to replay intentionally invalidates geometry confirmation.
+  const residentSnapshotBase = clone(residentBase);
+  residentSnapshotBase.capture.replay.state = true;
+  const residentReplaySnapshot = clone(residentSnapshotBase);
+  residentReplaySnapshot.capture.replay.resident_snapshot = {enabled: true,
+    output_directory: '/var/tmp/vectorwarp-resident-snapshots', max_frames: 20,
+    max_bytes: 268435456, source_sha256: 'a'.repeat(64),
+    rf_profile_sha256: 'b'.repeat(64), rf_profile_file: '/var/tmp/replay.json'};
+  persistGroup('resident-replay-snapshot', residentSnapshotBase, residentReplaySnapshot, [
+    'capture.replay.resident_snapshot.enabled',
+    'capture.replay.resident_snapshot.output_directory',
+    'capture.replay.resident_snapshot.max_frames',
+    'capture.replay.resident_snapshot.max_bytes',
+    'capture.replay.resident_snapshot.source_sha256',
+    'capture.replay.resident_snapshot.rf_profile_sha256',
+    'capture.replay.resident_snapshot.rf_profile_file']);
   const measuredGain = clone(krakenBase);
   measuredGain.process.performance.acceleration = 'auto';
   measuredGain.capture.device.heimdall.gain_control = 'measured';
@@ -350,11 +403,85 @@ try {
       transmitter: {name: 'FM 90.5', latitude: 40.44, longitude: -80, altitude: 300}},
     {id: 'fm-91.3', enabled: true, standard: 'FM', frequency_hz: 91300000,
       occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
-      filter_taps_per_phase: 24,
+      filter_taps_per_phase: 24, tracker_min_snr_db: 5.5,
       transmitter: {name: 'FM 91.3', latitude: 40.45, longitude: -80.01, altitude: 310}}
   ]};
+  // The scalar +1 probe collides with the causal-funnel port (3008).
+  // Exercise a distinct output port with its multi-illuminator consumer enabled.
+  multiIlluminator.network.ports.illuminator = 3117;
   persistGroup('multi-illuminator', multiIlluminatorBase, multiIlluminator,
-    ['process.multi_illuminator.enabled', 'process.multi_illuminator.illuminators']);
+    ['process.multi_illuminator.enabled', 'process.multi_illuminator.illuminators',
+      'network.ports.illuminator']);
+  for (const receiver of ['Kraken', 'Usrp', 'RspDuo', 'HackRF'])
+    for (const stage of ['clutter', 'detection', 'tracker']) {
+      const invalid = configurationForReceiver(receiver, clone(multiIlluminator));
+      invalid.process.multi_illuminator = clone(multiIlluminator.process.multi_illuminator);
+      invalid.process[stage].enable = false;
+      const result = validateConfig(invalid);
+      assert.equal(result.valid, false);
+      assert(result.errors.some(error => error.startsWith(`process.${stage}.enable must be true:`)),
+        `${receiver}: disabled ${stage} must fail the native multi-lane contract`);
+      assert.equal(invalid.process[stage].enable, false, 'Validation must preserve saved values');
+    }
+  // Shadow enablement requires a replay, an enabled named lane and an artifact
+  // destination. Its shipped delay-motion value is already the upper bound,
+  // so a valid non-default edit must decrease it instead of the scalar +1 probe.
+  const temporalShadow = clone(multiIlluminator);
+  const fmReferenceReplay = clone(multiIlluminator);
+  fmReferenceReplay.capture.replay.state = true;
+  Object.assign(fmReferenceReplay.capture.replay,
+    {sample_rate_hz: 2400000, frequency_hz: 90900000});
+  fmReferenceReplay.process.multi_illuminator.experimental_fm_reference_quality_filter = true;
+  persistGroup('experimental-fm-reference-replay', multiIlluminator, fmReferenceReplay,
+    ['process.multi_illuminator.experimental_fm_reference_quality_filter']);
+  temporalShadow.capture.replay.state = true;
+  Object.assign(temporalShadow.process.detection.temporal_shadow, {
+    enabled: true, illuminator_id: 'fm-90.5', delay_motion_bins: 1,
+    artifact_path: '/tmp/vectorwarp-settings-temporal-shadow.vwtbd'});
+  persistGroup('offline-temporal-shadow', multiIlluminator, temporalShadow, [
+    'process.detection.temporal_shadow.enabled',
+    'process.detection.temporal_shadow.illuminator_id',
+    'process.detection.temporal_shadow.delay_motion_bins']);
+  for (const [name, mutate] of [
+    ['live capture', candidate => { candidate.capture.replay.state = false; }],
+    ['missing lane', candidate => { candidate.process.detection.temporal_shadow.illuminator_id = 'missing'; }],
+    ['invalid lane type', candidate => { candidate.process.detection.temporal_shadow.illuminator_id = 7; }],
+    ['delay-motion overflow', candidate => { candidate.process.detection.temporal_shadow.delay_motion_bins = 3; }]
+  ]) {
+    const invalid = clone(temporalShadow); mutate(invalid);
+    assert.equal(validateConfig(invalid).valid, false, `temporal-shadow group accepted ${name}`);
+    rejected++;
+  }
+  const liveTemporal = clone(krakenBase);
+  liveTemporal.process.performance.acceleration = 'auto';
+  Object.assign(liveTemporal.process.detection.live_temporal_shadow,
+    {enabled: true, delay_motion_bins: 1, max_cells: 32768,
+      minimum_initiation_snr_db: 6.5, score_tracks: true,
+      association_sustain: true, association_sustain_cpis: 8});
+  persistGroup('bounded-live-temporal-shadow', krakenBase, liveTemporal, [
+    'process.detection.live_temporal_shadow.enabled',
+    'process.detection.live_temporal_shadow.delay_motion_bins',
+    'process.detection.live_temporal_shadow.max_cells',
+    'process.detection.live_temporal_shadow.minimum_initiation_snr_db',
+    'process.detection.live_temporal_shadow.association_sustain',
+    'process.detection.live_temporal_shadow.association_sustain_cpis']);
+  const multiLiveTemporal = clone(multiIlluminator);
+  Object.assign(multiLiveTemporal.process.detection.live_temporal_shadow,
+    {enabled: true, illuminator_id: 'fm-91.3', artifact_only: true,
+      artifact_path: '/var/tmp/vectorwarp-live-test.vwcaf', artifact_max_mb: 64,
+      artifact_max_frames: 8});
+  persistGroup('bounded-live-temporal-lane', multiIlluminator, multiLiveTemporal,
+    ['process.detection.live_temporal_shadow.illuminator_id',
+      'process.detection.live_temporal_shadow.artifact_path',
+      'process.detection.live_temporal_shadow.artifact_max_mb',
+      'process.detection.live_temporal_shadow.artifact_max_frames',
+      'process.detection.live_temporal_shadow.artifact_only']);
+  const apiCausalBase = clone(krakenBase);
+  apiCausalBase.process.performance.acceleration = 'auto';
+  const apiCausal = clone(apiCausalBase);
+  apiCausal.process.evidence.causal_funnel.api_ingest_enabled = true;
+  persistGroup('api-ingested-causal-funnel', apiCausalBase, apiCausal,
+    ['process.evidence.causal_funnel.api_ingest_enabled']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);

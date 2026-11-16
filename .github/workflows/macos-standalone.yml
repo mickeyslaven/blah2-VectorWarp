@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: macos-standalone-${{ github.ref }}
   cancel-in-progress: true
@@ -295,6 +299,9 @@ jobs:
           # A failed/crashed probe still fails this job; diagnostics do not waive it.
           driver_status=0
           "$runtime/python/bin/python3" -s -P test/macos/standalone_driver_probe.py --worker "$runtime/bin/blah2-gpu-worker" --evidence build/standalone-driver-probe || driver_status=$?
+          # Hosted macOS VMs need not expose a physical GPU. The loader probe
+          # validates structured availability; physical parity is a separate
+          # explicit qualification and must never be inferred from this job.
           restore_homebrew
           trap - EXIT INT TERM
           "$runtime/python/bin/python3" -s -P script/package-macos-standalone.py audit --runtime "$runtime" 2>&1 | tee build/standalone-audit.log

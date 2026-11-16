@@ -79,6 +79,12 @@ Object.keys(config.network.ports).forEach((key, index) => {
   config.network.ports[key] = basePort + index;
 });
 fs.writeFileSync(filename, yaml.dump(config));
+const pendingReceiverReceipt = {schemaVersion: 1, receiverType: 'Kraken',
+  status: 'partial', configPersisted: false, operations: [{operation: 'set_frequency',
+    commandSent: true, commandOutcome: 'unknown'}]};
+fs.writeFileSync(`${filename}.receiver-state.json`, JSON.stringify({schemaVersion: 1,
+  state: 'unknown', reconciliationRequired: true, applicationVerified: false,
+  receipt: pendingReceiverReceipt}) + '\n');
 
 const child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {
   env: {...process.env, BLAH2_RECEIVER_ORIGINS: 'http://127.0.0.1:49153',
@@ -275,6 +281,7 @@ function connect(port) {
     assert.ok(truthRequests.some(url => url === '/receiver/data/aircraft.json'));
 
     const replayStatus = {input: 'replay', receiver: 'Kraken', state: 'playing',
+      replayControlsAvailable: true,
       error: '', file: '/tmp/pass.mchq', sampleRate: 2400000, frequency: 527000000,
       positionSamples: 12, totalSamples: 24, loops: 0, trailingSamples: 0,
       recording: false, recordingFile: '', recordingError: '', recordedSamples: 0};
@@ -295,6 +302,21 @@ function connect(port) {
     assert.equal(replayControl.body.seekSample, 6);
     assert.equal((await request('POST', '/api/replay/control', {action: 'seek', seconds: 'bad'},
       replayControlHeaders)).status, 400);
+    await request('POST', '/api/processor/status', {...replayStatus, state: 'complete'});
+    assert.equal((await request('GET', '/api/replay/status')).body.controlsAvailable, true);
+    replayControl = await request('POST', '/api/replay/control', {action: 'play'}, replayControlHeaders);
+    assert.equal(replayControl.status, 200);
+    assert.equal(replayControl.body.seekSample, 0, 'Play at idle EOF must publish a rewind command');
+    for (const terminal of [
+      {...replayStatus, state: 'complete', replayControlsAvailable: false},
+      {...replayStatus, state: 'error', error: 'Replay input failed'},
+      {...replayStatus, state: 'stopped'}]) {
+      await request('POST', '/api/processor/status', terminal);
+      assert.equal((await request('GET', '/api/replay/status')).body.controlsAvailable, false);
+      assert.equal((await request('POST', '/api/replay/control', {action: 'seek', seconds: 0},
+        replayControlHeaders)).status, 409);
+    }
+    await request('POST', '/api/processor/status', replayStatus);
     assert.equal((await request('POST', '/api/replay/control', {action: 'play'},
       {Origin: 'https://unrelated.example', 'X-VectorWarp-Intent': 'replay-control-v1'})).status, 403);
     const truthRequestsBeforeReplay = truthRequests.length;
@@ -395,6 +417,34 @@ function connect(port) {
     assert.equal(timingFrame.presentation_delay_ms, 0);
     assert.equal(timingFrame.frame_excess_age_ms, timingFrame.frame_age_ms,
       'Unaligned timing reports the complete frame age as excess age');
+    const exactEvidenceBeforeTerminal = (await request('GET', '/api/live-scorecard')).body
+      .data_quality.event_time_rejections;
+    const provisionalEvidenceBeforeTerminal =
+      (await request('GET', '/api/live-scorecard/provisional')).body
+        .data_quality.event_time_rejections;
+    const terminalTimestamp = 1002;
+    const terminalTimingSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing},
+        () => {
+          socket.write(JSON.stringify({timestamp: terminalTimestamp, cpi: 10,
+            captureTerminal: true, captureBacklogSamples: [1200, 2400]}));
+          setTimeout(() => resolve(socket), 20);
+        });
+      socket.on('error', reject);
+    });
+    const terminalTiming = (await request('GET', '/api/timing')).body;
+    assert.equal(terminalTiming.captureTerminal, true,
+      'Terminal capture accounting remains the latest health snapshot');
+    assert.equal((await request('GET',
+      `/api/timing?presentation=aligned&frame_timestamp=${terminalTimestamp}`)).body, null,
+    'Terminal capture accounting is not inserted into presentation history');
+    assert.equal((await request('GET', '/api/live-scorecard')).body
+      .data_quality.event_time_rejections, exactEvidenceBeforeTerminal,
+    'Terminal capture accounting does not create an exact-timing rejection');
+    assert.equal((await request('GET', '/api/live-scorecard/provisional')).body
+      .data_quality.event_time_rejections, provisionalEvidenceBeforeTerminal,
+    'Terminal capture accounting does not create a provisional evidence frame');
+    terminalTimingSocket.end();
     const ambiguityBackend = {requested: 'auto', active: 'vulkan', state: 'ready',
       device: 'simulated GPU', reason: '', cpuMs: 8, gpuMs: 2};
     for (const [index, clutterBackend] of [
@@ -565,6 +615,40 @@ function connect(port) {
       'POST', '/api/config/validate', config);
     assert.equal(validationAccepted.status, 200);
     assert.equal(validationAccepted.body.valid, true);
+
+    const adsbOnly = (await request('GET', '/api/config')).body;
+    adsbOnly.truth.adsb.association_lag_cpis = 1;
+    const runtimeLagBeforeSave = (await request('GET', '/api/adsb/status')).body.association_lag_cpis;
+    const adsbSaved = await request('PUT', '/api/config?restart=false', adsbOnly,
+      {'X-VectorWarp-Receiver-Sync': ''});
+    assert.equal(adsbSaved.status, 200, JSON.stringify(adsbSaved.body));
+    assert.equal(adsbSaved.body.restarting, false);
+    assert.deepEqual(adsbSaved.body.receiverSync, pendingReceiverReceipt,
+      'ADS-B persistence must not replace an unresolved receiver receipt');
+    assert.equal(fs.existsSync(restartMarker), false,
+      'ADS-B-only settings must not invoke the restart helper');
+    assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).truth.adsb.association_lag_cpis, 1);
+    assert.equal((await request('GET', '/api/adsb/status')).body.association_lag_cpis,
+      runtimeLagBeforeSave, 'Saved ADS-B lag must not be claimed as live before API restart');
+    revision = adsbSaved.body.revision;
+
+    const mixedAdsbAndReceiver = JSON.parse(JSON.stringify(adsbOnly));
+    mixedAdsbAndReceiver.capture.fc += 1000;
+    const mixedRejected = await request('PUT', '/api/config?restart=false', mixedAdsbAndReceiver,
+      {'X-VectorWarp-Receiver-Sync': ''});
+    assert.equal(mixedRejected.status, 428,
+      'An ADS-B edit must not bypass synchronization for a receiver change');
+    assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.fc, adsbOnly.capture.fc);
+
+    const adsbApply = JSON.parse(JSON.stringify(adsbOnly));
+    adsbApply.truth.adsb.poll_interval = 2;
+    const adsbRestart = await request('PUT', '/api/config?restart=true', adsbApply,
+      {'X-VectorWarp-Receiver-Sync': ''});
+    assert.equal(adsbRestart.status, 409, JSON.stringify(adsbRestart.body));
+    assert.equal(adsbRestart.body.code, 'RECEIVER_RECONCILIATION_REQUIRED');
+    assert.deepEqual(adsbRestart.body.receiverSync, pendingReceiverReceipt);
+    assert.equal(fs.existsSync(restartMarker), false,
+      'An unresolved receiver transaction must block ADS-B Apply without restart');
 
     const updated = JSON.parse(JSON.stringify(config));
     updated.process.data.cpi = 0.25;

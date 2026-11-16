@@ -16,6 +16,7 @@ const {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCap
   require('../../html/js/config_ui.js');
 const {RECEIVER_SYNC_BUDGET} = require('../../api/receiver-sync.js');
 const {MAX_AUTOMATIC_GAIN_MS} = require('../../api/automatic-gain.js');
+const configProfiles = require('../../html/js/config_profiles.js');
 
 assert.ok(CONFIG_SAVE_TIMEOUT_MS >= RECEIVER_SYNC_BUDGET.maxTransactionTimeoutMs + 15000,
   'Browser save must allow the entire receiver transaction plus response overhead');
@@ -49,6 +50,14 @@ assert.equal(metadata(['capture', 'aircraft_clips', 'enabled'])[0],
 assert.equal(metadata(['process', 'clutter', 'followAmbiguity'])[0], 'Follow radar delay range');
 const captureSource = fs.readFileSync(path.join(
   __dirname, '..', '..', 'src', 'capture', 'Capture.cpp'), 'utf8');
+const configUiSource = fs.readFileSync(path.join(
+  __dirname, '..', '..', 'html', 'js', 'config_ui.js'), 'utf8');
+assert.match(configUiSource,
+  /\n  add\('track_guided_shadow', process\.tracker\?\.track_guided_shadow,/,
+  'Track-guided recovery settings must render for every receiver type');
+assert.doesNotMatch(configUiSource,
+  /if \(coherentArray\) add\('track_guided_shadow'/,
+  'Track-guided recovery settings cannot be restricted to coherent arrays');
 const validTypes = captureSource.match(
   /Capture::VALID_TYPE\[[^\]]+\]\s*=\s*\{([^}]+)\}/)?.[1]
   .match(/"([^"]+)"/g).map(value => value.slice(1, -1));
@@ -66,6 +75,20 @@ for (const profile of getDeviceProfiles()) {
   assert.equal(validateConfig(changed, base).valid, true, profile.type);
   const features = receiverFeatureCapabilities(profile.type, getDeviceProfiles());
   assert.equal(Boolean(features.coherentArray), profile.type === 'Kraken');
+  if (['Usrp', 'RspDuo', 'HackRF'].includes(profile.type))
+    assert.equal(features.residentIntegration, true,
+      `${profile.type} must not inherit the Kraken-only beamforming gate for two-CPI integration`);
+  for (const mode of ['two', 'two_motion']) {
+    const recovery = applyDeviceProfile(clone(base), profile);
+    if (profile.type === 'HackRF') recovery.capture.device.serial = ['0001', '0002'];
+    configProfiles.applyWeakTargetMode(recovery, mode);
+    const result = validateConfig(recovery, base);
+    assert.equal(result.valid, true,
+      `${profile.type}/${mode}: ${result.errors.join('; ')}`);
+    assert.equal(recovery.process.reference_synthesis?.mode ?? 'dedicated',
+      profile.type === 'Kraken' ? recovery.process.reference_synthesis.mode : 'dedicated',
+      `${profile.type}/${mode} changed receiver topology`);
+  }
 }
 assert.equal(receiverSpecificProcessPath('process.surveillance_fusion.mode'), true);
 assert.equal(receiverSpecificProcessPath('process.bearing.manifold_recorder.enabled'), true);
@@ -84,12 +107,32 @@ const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo'
 applyDeviceProfile(krakenOnlyEnabled, rspProfile);
 assert.equal(krakenOnlyEnabled.capture.aircraft_clips.enabled, true,
   'Automatic aircraft clips remain enabled when changing receivers');
-assert.equal(krakenOnlyEnabled.process.detection.integration_cpis, 1);
-assert.equal(krakenOnlyEnabled.process.detection.track_before_detect.enable, false);
+assert.equal(krakenOnlyEnabled.process.detection.integration_cpis, 4,
+  'Paired receiver keeps resident temporal integration capability');
+assert.equal(krakenOnlyEnabled.process.detection.track_before_detect.enable, true);
 assert.equal(krakenOnlyEnabled.process.bearing.enable, false);
 assert.equal(krakenOnlyEnabled.process.bearing.frequency_resolved_shadow.enabled, false);
 assert.equal(krakenOnlyEnabled.process.bearing.manifold_recorder.enabled, false);
-assert.equal(krakenOnlyEnabled.process.tracker.track_guided_shadow.enable, false);
+assert.equal(krakenOnlyEnabled.process.tracker.track_guided_shadow.enable, true,
+  'Portable guided recovery survives a live receiver switch');
+
+for (const profile of getDeviceProfiles()) {
+  const replay = clone(base);
+  replay.capture.replay = {...replay.capture.replay,state:true,channel_count:5,
+    reference_mode:'array_eigenbeam',reference_channel:0,
+    reference_channels:[0,1,2,3,4],surveillance_channels:[0,1,2,3,4]};
+  replay.capture.device.array_geometry = {mapping_confirmed:true,geometry_confirmed:true,
+    orientation_confirmed:true,elements:[]};
+  const processBefore = clone(replay.process), recordingBefore = clone(replay.capture.replay);
+  const geometryBefore = clone(replay.capture.device.array_geometry), rate = replay.capture.fs;
+  const previous = clone(replay);
+  applyDeviceProfile(replay,{...profile,features:{coherentArray:false,residentIntegration:false}});
+  require('../../html/js/kraken_geometry').reconcile(replay,previous);
+  assert.deepEqual(replay.process,processBefore,'Dormant live receiver switch preserves recorded processing');
+  assert.deepEqual(replay.capture.replay,recordingBefore);
+  assert.deepEqual(replay.capture.device.array_geometry,geometryBefore,'Recorded geometry confirmations survive');
+  assert.equal(replay.capture.fs,rate);
+}
 
 const resized = clone(base);
 resized.capture.device.channel_count = 6;

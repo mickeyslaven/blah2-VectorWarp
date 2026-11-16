@@ -14,4 +14,13 @@ source_commit=$(git -C "$source_dir" rev-parse HEAD)
   printf 'artifact-source-commit: artifact source commit does not match packaging source checkout\n' >&2
   exit 1
 }
+[[ $(grep -c '^source_clean=' "$manifest" || true) == 1 ]] &&
+  grep -qx 'source_clean=true' "$manifest" || {
+    printf 'artifact-source-commit: artifact was not built from a clean source checkout\n' >&2
+    exit 1
+  }
+[[ -z $(git -C "$source_dir" status --porcelain --untracked-files=normal) ]] || {
+  printf 'artifact-source-commit: packaging source checkout is dirty\n' >&2
+  exit 1
+}
 printf '%s\n' "$commit"

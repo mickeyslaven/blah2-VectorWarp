@@ -1,8 +1,14 @@
-name: macOS CPU and receiver adapters
+name: macOS unified GPU and receiver adapters
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: read
@@ -13,6 +19,7 @@ concurrency:
 
 jobs:
   local-runtime:
+    # Preserve the check name used by branch protection.
     name: CPU, open receiver adapters and local lifecycle (${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -26,24 +33,54 @@ jobs:
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
       - name: Set up Node 24
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24.22.1
           package-manager-cache: false
       - name: Install open-source build dependencies
-        run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb
+        run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb vulkan-loader vulkan-headers molten-vk glslang
+      - name: Pin VkFFT for the common Vulkan stages
+        run: |
+          git clone --filter=blob:none https://github.com/DTolm/VkFFT.git "$RUNNER_TEMP/VkFFT"
+          git -C "$RUNNER_TEMP/VkFFT" fetch --depth=1 origin 066a17c17068c0f11c9298d848c2976c71fad1c1
+          git -C "$RUNNER_TEMP/VkFFT" checkout --detach 066a17c17068c0f11c9298d848c2976c71fad1c1
+          echo "VKFFT_ROOT=$RUNNER_TEMP/VkFFT" >> "$GITHUB_ENV"
       - name: Verify vendor header isolation from project warnings
         run: python3 test/macos/rapidjson_system_include_test.py
+      - name: Verify GPU platform and receiver build contracts
+        run: python3 test/packaging/test_gpu_platform_contract.py -v
       - name: Verify npm 11 installs the API in an absolute artifact directory
         run: python3 test/macos/build_macos_npm_install_test.py
-      - name: Build CPU processing and open receiver adapters
-        run: script/build-macos.sh --backend all --test --jobs 3
+      - name: Build unified GPU processing and open receiver adapters
+        run: script/build-macos.sh --backend all --gpu on --test --jobs 3
       - name: Run synthetic processor replay
         run: |
-          python3 test/recording/processor_replay_test.py --binary build/macos/artifact/bin/blah2
-          python3 test/macos/config_runtime_test.py --binary build/macos/artifact/bin/blah2
+          python3 test/recording/processor_replay_test.py --binary build/macos/artifact/bin/blah2 | tee build/macos/processor-replay.json
+          build/macos/artifact/bin/blah2 --processing-capabilities > build/macos/processing-capabilities.json
+          build/macos/artifact/bin/blah2 --receiver-status > build/macos/receiver-capabilities.json
+          python3 test/macos/config_runtime_test.py --gpu-capable --binary build/macos/artifact/bin/blah2
           python3 test/macos/receiver_sdk_test.py --binary build/macos/artifact/bin/blah2
+      - name: Probe the hosted GPU loader without claiming physical qualification
+        run: |
+          python3 test/macos/standalone_driver_probe.py \
+            --worker build/macos/artifact/bin/blah2-gpu-worker --evidence build/macos-driver-probe \
+            --icd-library "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib"
+      - name: Preserve hosted GPU loader diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-driver-probe-${{ matrix.runner }}-${{ github.sha }}
+          path: |
+            build/macos-driver-probe/
+            build/macos/processor-replay.json
+            build/macos/processing-capabilities.json
+            build/macos/receiver-capabilities.json
+            build/macos/cmake/Testing/Temporary/
+          if-no-files-found: warn
+          retention-days: 30
       - name: Build local Kraken controller and simulate its native USB pipeline
         run: |
           npm ci --prefix api --ignore-scripts --no-audit --no-fund

@@ -92,6 +92,8 @@ for file in .vectorwarp-build bin/blah2 api/server.js html/index.html config-exa
   [[ -e $ARTIFACT/$file ]] || die "artifact is incomplete: $file"
 done
 [[ -x $ARTIFACT/bin/blah2 ]] || die 'artifact processor is not executable'
+[[ ! -e $ARTIFACT/bin/blah2-mixed-worker && ! -L $ARTIFACT/bin/blah2-mixed-worker ]] ||
+  die 'historical mixed DSP workers are not part of the unified runtime artifact'
 read_manifest_field() {
   local field=$1 output=$2 count value
   count=$(grep -c "^${field}=" "$ARTIFACT/.vectorwarp-build" || true)
@@ -229,7 +231,7 @@ if [[ -z $DESTDIR ]]; then
   fi
   for runtime in "$ARTIFACT/bin/blah2-gpu-worker" "$ARTIFACT/bin/blah2-gpu-vulkan.so" \
       "$ARTIFACT/bin/blah2-gpu-resident-vulkan.so" \
-      "$ARTIFACT/bin/blah2-mixed-worker"; do
+      "$ARTIFACT/bin/blah2-gpu-wideband-vulkan.so"; do
     if [[ -e $runtime ]] && ldd "$runtime" 2>&1 | grep -q 'not found'; then
       ldd "$runtime" >&2
       die "runtime libraries are missing for $(basename "$runtime")"
@@ -442,7 +444,13 @@ fi
 
 if [[ ! -d $target_sysconf ]]; then
   run install -d -m 0770 "$target_sysconf"
-  if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then run chown root:vectorwarp-config "$target_sysconf"; fi
+fi
+if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then
+  # Atomic config saves create and rename a sibling file. Repair permissions on
+  # pre-existing installations too; ownership alone leaves a historical 0755
+  # directory unwritable by the API's vectorwarp-config group.
+  run chown root:vectorwarp-config "$target_sysconf"
+  run chmod 0770 "$target_sysconf"
 fi
 if [[ ! -e $target_sysconf/config.yml ]]; then
   run install -m 0660 "$ARTIFACT/config-examples/config.yml" "$target_sysconf/config.yml"
@@ -451,6 +459,10 @@ if [[ ! -e $target_sysconf/config.yml ]]; then
   fi
   say 'installed the neutral first-run configuration; choose a receiver and review frequency and sites in Settings'
 else
+  if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then
+    run chown vectorwarp-api:vectorwarp-config "$target_sysconf/config.yml"
+    run chmod 0660 "$target_sysconf/config.yml"
+  fi
   say 'kept the existing configuration byte-for-byte'
 fi
 

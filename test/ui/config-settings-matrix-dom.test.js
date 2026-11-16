@@ -44,9 +44,11 @@ window.fetch = async (url, options = {}) => {
   return {ok: true, status: 200, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/processing_capabilities.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/kraken_geometry.js'), 'utf8'));
-window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8') +
+  '\nwindow.fixtureDraft = () => activeConfig;');
 const field = key => window.document.querySelector(`[data-path="${key}"]`);
 const control = key => {
   const result = field(key);
@@ -110,22 +112,15 @@ async function saveAndAssert(label, expected) {
       assert.deepEqual([...control(key).options].map(option => option.value), ['auto', 'on', 'off']);
       assert.equal(control(key).value, index ? 'on' : 'off');
     }
-    // This unqualified RSPduo fixture cannot enable either worker. Turning the
-    // recorder off must leave the unedited shadow's legacy false value intact.
-    setScalar(autoBooleanPaths[1], 'off');
-    await saveAndAssert('Unedited legacy boolean mode', {
-      [autoBooleanPaths[0]]: false, [autoBooleanPaths[1]]: 'off'
-    });
-    for (const key of autoBooleanPaths) {
-      setScalar(key, 'on');
-      assert.equal(await window.validateActiveConfiguration(), false,
-        `${key}: the dropdown must retain receiver qualification checks`);
-      setScalar(key, 'off');
-    }
-    await saveAndAssert('Explicit off modes', Object.fromEntries(
-      autoBooleanPaths.map(key => [key, 'off'])));
-    setScalar(autoBooleanPaths[1], 'auto');
-    await saveAndAssert('Automatic recorder mode', {[autoBooleanPaths[1]]: 'auto'});
+    // Unqualified saved settings are retained and unavailable, not silently
+    // edited or made actionable by a synthetic event on a disabled control.
+    for (const key of autoBooleanPaths) assert.equal(control(key).disabled,true,key);
+    assert.equal(saved.process.bearing.manifold_recorder.enabled,true);
+    assert.equal(await window.validateActiveConfiguration(),false,
+      'The validator still reports unavailable saved enablement');
+    // Load a valid independent fixture for the editable round-trip matrix.
+    saved.process.bearing.manifold_recorder.enabled = false;
+    await window.renderConfiguration();
 
     // Receiver-only array controls disappear when a non-array backend is
     // selected; portable radar, replay, tracker, and ADS-B controls remain.
@@ -263,6 +258,7 @@ async function saveAndAssert(label, expected) {
     assert.ok(field('capture.aircraft_clips.maximum_slant_range_km'),
       'Automatic clips expose range selection');
     assert.ok(field('process.surveillance_fusion.mode'), 'Kraken exposes coherent fusion controls');
+    setScalar('process.detection.enable', true);
     setScalar('process.detection.integration_cpis', 1);
     setScalar('capture.device.heimdall.host', '127.0.0.1');
     setScalar('capture.device.heimdall.port', 8091);
@@ -277,6 +273,7 @@ async function saveAndAssert(label, expected) {
     setScalar('process.reference_synthesis.covariance_smoothing', .25);
     setScalar('process.reference_synthesis.diagonal_loading', .001);
     await saveAndAssert('Kraken', {
+      'process.detection.enable': true,
       'process.detection.integration_cpis': 1,
       'process.reference_synthesis.analysis_samples': 65536,
       'process.reference_synthesis.analysis_interval': 3, 'process.reference_synthesis.power_iterations': 8,
@@ -320,7 +317,21 @@ async function saveAndAssert(label, expected) {
       'process.reference_synthesis.diagonal_loading'
     ];
     for (const key of requiredCoverage) assert.ok(covered.has(key), `Coverage gate: ${key} was saved and re-rendered`);
-    assert.ok(writes >= 6, 'Common and each receiver/synthesis profile round-tripped.');
+    assert.ok(writes >= 5, 'Common and four receiver/synthesis profiles round-tripped; unavailable legacy fields were read-only.');
+    for (const receiver of ['Kraken', 'Usrp', 'RspDuo', 'HackRF']) {
+      window.switchDevice(receiver);
+      window.fixtureDraft().process.multi_illuminator.enabled = true;
+      window.fixtureDraft().process.clutter.enable = false;
+      const settings = window.renderClutterSettings();
+      const select = settings.querySelector('select');
+      const off = [...select.options].find(option => option.value === 'off');
+      assert.equal(off.disabled, true, receiver);
+      assert.match(off.title, /requires clutter/);
+      assert.equal(select.value, 'off', 'Saved unsupported value is preserved for correction');
+      change(select, 'off');
+      assert.equal(window.fixtureDraft().process.clutter.enable, false);
+      assert(settings.textContent.includes('requires clutter removal'));
+    }
     console.log('Settings matrix DOM: common, location, network, ADS-B, performance, detector/tracker, and all receiver profiles round-trip locally.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -184,12 +184,19 @@
     const process = ensure(config, 'process');
     const performance = ensure(process, 'performance');
     performance.acceleration = 'gpu-resident';
+    const tracker = ensure(process, 'tracker');
+    if (!Number.isInteger(tracker.gpu_capacity)) tracker.gpu_capacity = 256;
     const fusion = ensure(process, 'surveillance_fusion');
     if (!fusion.mode || fusion.mode === 'noncoherent') fusion.mode = 'coherent_beam_bank';
-    const reference = ensure(process, 'reference_synthesis');
-    const channels = [...(config.capture?.device?.surveillance_channels || [])];
-    reference.mode = 'array_eigenbeam';
-    reference.channels = channels;
+    // Recording roles are authoritative; selecting recovery must not rewrite
+    // either their metadata or the dormant live receiver's reference mapping.
+    if (!(config.capture?.replay?.state === true && Number.isInteger(config.capture.replay.channel_count))) {
+      const topology = (typeof module !== 'undefined' && module.exports ?
+        require('./processing_capabilities') : globalThis.VectorWarpProcessingCapabilities).processingCapabilities(config);
+      const reference = ensure(process, 'reference_synthesis');
+      reference.mode = 'array_eigenbeam';
+      reference.channels = [...topology.surveillanceChannels];
+    }
     return config;
   }
 
@@ -201,14 +208,16 @@
     tbd.enable = ['four', 'eight'].includes(mode);
     if (mode === 'four') tbd.max_cpis = 4;
     if (mode === 'eight') tbd.max_cpis = 8;
-    if (['four', 'eight'].includes(mode)) prepareResidentArray(config);
-    else if (mode !== 'off') {
-      const process = ensure(config, 'process');
-      ensure(process, 'performance').acceleration = 'gpu-resident';
-      const reference = ensure(process, 'reference_synthesis');
-      reference.mode = 'array_eigenbeam';
-      reference.channels = [...(config.capture?.device?.surveillance_channels || [])];
+    if (!tbd.enable) {
+      if (tbd.fractional_delay !== undefined) tbd.fractional_delay = false;
+      const guided = config.process.tracker?.track_guided_shadow;
+      if (object(guided)) for (const key of ['enable', 'promote', 'sustain'])
+        if (guided[key] !== undefined) guided[key] = false;
     }
+    if (['two', 'two_motion','four','eight'].includes(mode) &&
+        config.process.tracker?.beam_tolerance !== undefined) prepareResidentArray(config);
+    // Adjacent-CPI integration is supported by CPU and portable GPU paths too.
+    // Two-frame presets must not silently switch an FP32 machine to resident.
     return config;
   }
 
@@ -217,7 +226,50 @@
   }
 
   function associationGates(span, prediction, timestamp, kind = 'detection',
-    eventTimeUncertaintyS = 0) {
+    eventTimeUncertaintyS = 0, timingContext = null) {
+    if (span.truthUncertaintyPolicy) {
+      const model = prediction?.truth_uncertainty;
+      const invalid = reason => ({shape: 'ellipse', valid: false, reason,
+        delayKm: 0, dopplerHz: 0, evaluationOnly: true});
+      if (!model?.valid || model.schema !== 'vectorwarp-truth-uncertainty-v1')
+        return invalid(model?.reason || 'truth-uncertainty-unavailable');
+      if (timingContext?.declared !== true || !finite(eventTimeUncertaintyS) || eventTimeUncertaintyS < 0)
+        return invalid('frame-alignment-model-unavailable');
+      const age = timestamp / 1000 - prediction.timestamp;
+      if (!finite(age) || Math.abs(age) > .001) return invalid('truth-not-at-requested-frame');
+      const offset = timingContext.frameOffsetS ?? 0;
+      if (!finite(offset) || Math.abs(offset) > .1) return invalid('radar-frame-offset');
+      const covariance = model.covariance;
+      if (!Array.isArray(covariance) || covariance.length !== 4 || !covariance.every(finite))
+        return invalid('invalid-covariance');
+      const cpi = span.cpiSeconds, delayResolution = span.kmPerBin;
+      const dopplerResolution = span.dopplerResolutionHz;
+      if (![cpi, delayResolution, dopplerResolution].every(value => finite(value) && value > 0))
+        return invalid('invalid-radar-resolution');
+      // Resolution and the CPI integration aperture are not observation age.
+      // Uniform alignment within the aperture supplies T^2/12. A declared
+      // external alignment bound is conservatively treated as one sigma.
+      const timeVariance = cpi * cpi / 12 + (eventTimeUncertaintyS + Math.abs(offset)) ** 2;
+      const delayRate = model.delay_rate_km_s;
+      const dopplerRate = model.geometric_doppler_rate_hz_s;
+      const dopplerRateBound = model.doppler_rate_bound_hz_s;
+      if (![delayRate, dopplerRate, dopplerRateBound].every(finite)) return invalid('motion-rate-unavailable');
+      const a = covariance[0] + delayResolution ** 2 / 12 + timeVariance * delayRate ** 2;
+      const b = .5 * (covariance[1] + covariance[2]) + timeVariance * delayRate * dopplerRate;
+      const d = covariance[3] + dopplerResolution ** 2 / 12 + timeVariance * dopplerRateBound ** 2;
+      const determinant = a * d - b * b, maximumNis = 9.210340371976184;
+      if (!(a > 0 && d > 0 && determinant > 0) || !finite(determinant)) return invalid('invalid-covariance');
+      const delayKm = Math.sqrt(maximumNis * a), dopplerHz = Math.sqrt(maximumNis * d);
+      const area = Math.PI * maximumNis * Math.sqrt(determinant);
+      // Do not clip an unbounded/too-wide ellipse into a deceptively valid one.
+      if (delayKm > Math.max(1, delayResolution * 8) ||
+          dopplerHz > Math.max(25, dopplerResolution * 12) ||
+          area / (delayResolution * dopplerResolution) > span.truthUncertaintyPolicy.maxAreaBins)
+        return invalid('uncertainty-exceeds-hard-cap');
+      return {shape: 'ellipse', valid: true, delayKm, dopplerHz, covariance: [a, b, b, d],
+        determinant, maximumNis, areaKmHz: area, evaluationOnly: true,
+        nullCalibrated: false, eventTimeUncertaintyS, timingModel: timingContext.model};
+    }
     const age = finite(prediction?.timestamp) ?
       Math.min(span.maxTruthAgeS, Math.max(0, timestamp / 1000 - prediction.timestamp)) :
       span.maxTruthAgeS;
@@ -243,17 +295,23 @@
   function assignments(points, predictions, gatesForPrediction, kind, frameTimestamp,
     diagnostics = null) {
     const result = new Map(), predictionById = new Map(predictions);
+    const uncertaintyContenders = new Map();
     for (const point of points) {
       if (diagnostics) diagnostics.points = (diagnostics.points || 0) + 1;
       const candidates = predictions.map(([id, prediction]) => {
         const gates = gatesForPrediction(prediction);
         const delayError = Math.abs(point.delay - prediction.delay);
         const dopplerError = Math.abs(point.doppler - prediction.doppler);
+        const dx = point.delay - prediction.delay, dy = point.doppler - prediction.doppler;
+        const covariance = gates.covariance;
         return {id, delayError, dopplerError, gates,
-          score: (delayError / gates.delayKm) ** 2 +
-            (dopplerError / gates.dopplerHz) ** 2};
-      }).filter(item => item.delayError <= item.gates.delayKm &&
-        item.dopplerError <= item.gates.dopplerHz)
+          score: gates.shape === 'ellipse' ? (gates.valid ?
+            (covariance[3] * dx * dx - 2 * covariance[1] * dx * dy + covariance[0] * dy * dy) /
+              gates.determinant / gates.maximumNis : Infinity) :
+            (delayError / gates.delayKm) ** 2 + (dopplerError / gates.dopplerHz) ** 2};
+      }).filter(item => finite(item.score) && item.gates.valid !== false &&
+        item.delayError <= item.gates.delayKm && item.dopplerError <= item.gates.dopplerHz &&
+        (item.gates.shape !== 'ellipse' || item.score <= 1))
         .sort((left, right) => left.score - right.score);
       if (diagnostics) diagnostics.candidate_matches =
         (diagnostics.candidate_matches || 0) + candidates.length;
@@ -266,6 +324,10 @@
         continue;
       }
       const selected = candidates[0], prediction = predictionById.get(selected.id);
+      if (selected.gates.shape === 'ellipse') {
+        const contenders = uncertaintyContenders.get(selected.id) || [];
+        contenders.push(selected.score); uncertaintyContenders.set(selected.id, contenders);
+      }
       const prior = result.get(selected.id);
       if (prior && prior.normalized_gate_score <= selected.score) continue;
       result.set(selected.id, {kind, frame_timestamp_ms: frameTimestamp,
@@ -278,8 +340,22 @@
         doppler_residual_hz: point.doppler - (prediction?.doppler ?? point.doppler),
         gate_delay_km: selected.gates.delayKm, gate_doppler_hz: selected.gates.dopplerHz,
         event_time_uncertainty_s: selected.gates.eventTimeUncertaintyS || 0,
+        ...(selected.gates.shape === 'ellipse' ? {association_family: 'uncertainty-ellipse-v1',
+          evaluation_only: true, null_calibrated: false,
+          timing_model: selected.gates.timingModel,
+          gate_covariance: selected.gates.covariance, gate_area_km_hz: selected.gates.areaKmHz} : {}),
         normalized_gate_score: selected.score});
       if (diagnostics) diagnostics.selected_points = (diagnostics.selected_points || 0) + 1;
+    }
+    // Mutual uniqueness: an uncertain aircraft cannot select arbitrarily among
+    // equally plausible radar peaks. Each point was already assigned to at most
+    // one aircraft above; each aircraft retains at most one unambiguous point.
+    for (const [id, scores] of uncertaintyContenders) {
+      scores.sort((a, b) => a - b);
+      if (scores.length > 1 && scores[1] <= scores[0] * 1.15 + .05) {
+        result.delete(id);
+        if (diagnostics) diagnostics.ambiguous_truths = (diagnostics.ambiguous_truths || 0) + 1;
+      }
     }
     return result;
   }
@@ -288,25 +364,36 @@
     const process = ensure(config, 'process');
     const performance = ensure(process, 'performance');
     if (mode === 'automatic') {
-      const needsResident = weakTargetMode(config) !== 'off' || process.bearing?.enable === true ||
-        process.tracker?.initiate?.stationary_clutter?.enable === true ||
-        process.tracker?.track_guided_shadow?.enable === true ||
+      const needsResident = process.bearing?.enable === true ||
+        (process.tracker?.beam_tolerance !== undefined &&
+          ((process.detection?.integration_cpis ?? 1)>1 || process.detection?.track_before_detect?.enable === true)) ||
         process.surveillance_fusion?.mode === 'noise_whitened_beam_bank';
       performance.acceleration = needsResident ? 'gpu-resident' : 'auto';
+      if (performance.acceleration === 'gpu-resident') {
+        const tracker = ensure(process, 'tracker');
+        if (!Number.isInteger(tracker.gpu_capacity)) tracker.gpu_capacity = 256;
+      }
       return config;
     }
     performance.acceleration = 'cpu';
     const detection = ensure(process, 'detection');
-    detection.integration_cpis = 1;
-    detection.integration_motion_bins = 0;
-    if (object(detection.track_before_detect)) detection.track_before_detect.enable = false;
-    if (object(process.bearing)) process.bearing.enable = false;
-    const tracker = ensure(process, 'tracker');
-    if (object(tracker.track_guided_shadow)) {
-      tracker.track_guided_shadow.enable = false;
-      tracker.track_guided_shadow.promote = false;
+    // Generic power integration is portable. Beam-conditioned histories still
+    // require the resident beam identity path and are disabled by this action.
+    if (process.tracker?.beam_tolerance !== undefined) {
+      detection.integration_cpis = 1;
+      detection.integration_motion_bins = 0;
+      if (object(detection.track_before_detect)) {
+        detection.track_before_detect.enable=false;
+        if (detection.track_before_detect.fractional_delay!==undefined)
+          detection.track_before_detect.fractional_delay=false;
+      }
+      const guided=process.tracker.track_guided_shadow;
+      if (object(guided)) for(const key of ['enable','promote','sustain'])
+        if(guided[key]!==undefined)guided[key]=false;
     }
-    if (object(tracker.initiate?.stationary_clutter)) tracker.initiate.stationary_clutter.enable = false;
+    if (object(process.bearing)) process.bearing.enable = false;
+    // Power TBD, stationary suppression and lineage-safe guided recovery are
+    // shared host algorithms; changing hardware does not erase their settings.
     if (process.surveillance_fusion?.mode === 'noise_whitened_beam_bank')
       process.surveillance_fusion.mode = 'coherent_beam_bank';
     return config;

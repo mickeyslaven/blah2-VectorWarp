@@ -27,7 +27,7 @@ def run(binary, requested, clutter):
                 log.seek(0); raise AssertionError(f'{status.snapshot()[-3:]} {log.read()[-4000:]}')
             forced=replay.stop_process(process); log.seek(0); tail=log.read()[-4000:]
             assert not forced and process.returncode==0, tail
-            replay.assert_processor_outputs(sinks); timing=last_json(sinks.payloads['timing']); replay.assert_finite(replay.first_json(sinks.payloads['map'],'map'))
+            replay.assert_processor_outputs(sinks, 'Usrp'); timing=last_json(sinks.payloads['timing']); replay.assert_finite(replay.first_json(sinks.payloads['map'],'map'))
             replay.assert_finite(timing, 'timing')
             acceleration=timing['acceleration']; clutter_status=timing['clutterAcceleration']; assert acceleration['requested']==requested
             if requested=='cpu': assert acceleration['active']=='cpu'

@@ -67,6 +67,8 @@ private:
   SampleTimePosition recordingStartPosition;
   std::vector<std::string> recordingDiscontinuities;
   std::unique_ptr<blah2::PortableClipRecorder> portableClipRecorder;
+  mutable std::mutex clipMutex;
+  blah2::IqClipStatus portableClipUnavailable;
   std::string open_file_locked(const SampleTimePosition* startPosition = nullptr);
   void record_block_locked(const blah2::IqBlock& samples,
     const SampleTimePosition* startPosition);

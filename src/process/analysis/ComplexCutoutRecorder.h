@@ -2,6 +2,7 @@
 #define COMPLEX_CUTOUT_RECORDER_H
 
 #include "data/Map.h"
+#include "NativeProductIdentity.h"
 #include <complex>
 #include <cstdint>
 #include <fstream>
@@ -31,6 +32,11 @@ public:
     const std::vector<Map<std::complex<double>>*>& maps,
     const std::vector<std::complex<double>>& referenceWeights = {},
     std::optional<std::complex<double>> pilotReference = std::nullopt);
+  void appendNative(uint64_t timestamp,
+    const std::vector<const Map<std::complex<double>>*>& maps,
+    const std::vector<std::complex<double>>& referenceWeights,
+    std::optional<std::complex<double>> pilotReference,
+    const NativeProductIdentity* identity = nullptr);
 
 private:
   Config config_;

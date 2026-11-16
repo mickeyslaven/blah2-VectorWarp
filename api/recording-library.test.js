@@ -36,6 +36,16 @@ const projectedStorage = library.canRecord({writeBytesPerSecond: 1024, safetySec
 assert.equal(projectedStorage.projected_write_bytes, 15360);
 assert.equal(projectedStorage.estimated_write_bytes_per_second, 1024);
 assert.ok(projectedStorage.required_free_bytes >= 15360);
+const originalStatfs = fs.statfsSync;
+try {
+  fs.statfsSync = () => { throw new Error('filesystem observation unavailable'); };
+  const unavailable = library.canRecord({writeBytesPerSecond: 1024, safetySeconds: 15});
+  assert.equal(unavailable.allowed, false, 'unknown free space cannot satisfy the recording reserve');
+  assert.equal(unavailable.reason, 'storage-unavailable');
+  assert.equal(unavailable.free_bytes, null);
+} finally {
+  fs.statfsSync = originalStatfs;
+}
 const backgroundLibrary = new RecordingLibrary(() => config, {now: () => now});
 const indexing = await backgroundLibrary.list({limit: 1, waitForIndex: false});
 assert.equal(indexing.indexing, true);

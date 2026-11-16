@@ -52,10 +52,19 @@ const rules = {
   'capture.replay.reference_mode': {type: 'string', choices: ['dedicated', 'array_eigenbeam'], optional: true},
   'capture.replay.surveillance_channels': {type: 'array', optional: true},
   'capture.replay.reference_channels': {type: 'array', optional: true},
+  'capture.replay.resident_snapshot.enabled': {type: 'boolean', optional: true},
+  'capture.replay.resident_snapshot.output_directory': {type: 'string', optional: true},
+  'capture.replay.resident_snapshot.max_frames': {...integer(1, 128), optional: true},
+  'capture.replay.resident_snapshot.max_bytes': {...integer(1, 536870912), optional: true},
+  'capture.replay.resident_snapshot.source_sha256': {type: 'string', optional: true},
+  'capture.replay.resident_snapshot.rf_profile_sha256': {type: 'string', optional: true},
+  'capture.replay.resident_snapshot.rf_profile_file': {type: 'string', optional: true},
   'process.data.cpi': {...numeric(), exclusiveMin: 0},
   'process.data.buffer': numeric(1),
   'process.delay_reference_sample_rate_hz': {...integer(1, 4294967295), optional: true},
   'process.multi_illuminator.enabled': {type: 'boolean', optional: true},
+  'process.multi_illuminator.experimental_fm_reference_quality_filter': {type: 'boolean', optional: true,
+    help: 'Experimental replay-only FM reference sample masking; disabled by default.'},
   'process.multi_illuminator.input_phase_correction': {type: 'string', optional: true,
     choices: ['automatic', 'off'],
     readOnly: 'Automatic phase correction is not available in this processor build.'},
@@ -82,13 +91,42 @@ const rules = {
   'process.detection.doppler_ridge_scrubber.doppler_tolerance_hz': {...numeric(0, 100), optional: true},
   'process.detection.doppler_ridge_scrubber.neighborhood_rows': {...integer(2, 128), optional: true},
   'process.detection.doppler_ridge_scrubber.delay_stride': {...integer(1, 64), optional: true},
+  'process.detection.doppler_ridge_scrubber.shadow_maximum_cpis': {...integer(1, 65535), optional: true},
   'process.detection.integration_cpis': {...integer(1, 2), optional: true},
   'process.detection.integration_motion_bins': {...integer(0, 1), optional: true},
   'process.detection.track_before_detect.enable': {type: 'boolean', optional: true},
+  'process.detection.track_before_detect.fractional_delay': {type: 'boolean', optional: true},
   'process.detection.track_before_detect.max_cpis': {...integer(4, 8), choices: [4,8], optional: true},
   'process.detection.track_before_detect.motion_bins': {...integer(0, 1), optional: true},
   'process.detection.track_before_detect.delay_motion_bins': {...integer(0, 2), optional: true},
   'process.detection.track_before_detect.doppler_motion_bins': {...integer(0, 16), optional: true},
+  'process.detection.temporal_shadow.enabled': {type: 'boolean', optional: true},
+  'process.detection.temporal_shadow.illuminator_id': {type: 'string', optional: true},
+  'process.detection.temporal_shadow.input_statistic': {type: 'string', choices: ['fused','post_clutter_bootstrap'], optional: true},
+  'process.detection.temporal_shadow.bootstrap_covariance': {type: 'string', choices: ['diagonal','shrinkage','robust_shrinkage'], optional: true},
+  'process.detection.temporal_shadow.max_cpis': {...integer(4, 8), choices: [4,8], optional: true},
+  'process.detection.temporal_shadow.delay_motion_bins': {...integer(0, 2), optional: true},
+  'process.detection.temporal_shadow.doppler_motion_bins': {...integer(0, 16), optional: true},
+  'process.detection.temporal_shadow.artifact_path': {type: 'string', optional: true},
+  'process.detection.temporal_shadow.artifact_max_mb': {...integer(64, 1048576), optional: true},
+  'process.detection.live_temporal_shadow.enabled': {type: 'boolean', optional: true},
+  'process.detection.live_temporal_shadow.illuminator_id': {type: 'string', optional: true},
+  'process.detection.live_temporal_shadow.artifact_path': {type: 'string', optional: true},
+  'process.detection.live_temporal_shadow.artifact_max_mb': {...integer(1, 1024), optional: true},
+  'process.detection.live_temporal_shadow.artifact_max_frames': {...integer(1, 128), optional: true},
+  'process.detection.live_temporal_shadow.artifact_only': {type: 'boolean', optional: true},
+  'process.detection.live_temporal_shadow.score_tracks': {type: 'boolean', optional: true},
+  'process.detection.live_temporal_shadow.association_sustain': {type: 'boolean', optional: true},
+  'process.detection.live_temporal_shadow.association_sustain_cpis': {...integer(2, 8), choices: [2,4,8], optional: true},
+  'process.detection.live_temporal_shadow.maximum_candidates': {...integer(1, 4096), optional: true},
+  'process.detection.live_temporal_shadow.minimum_initiation_snr_db': {...numeric(-100, 100), optional: true},
+  'process.detection.live_temporal_shadow.bootstrap_covariance': {type: 'string', choices: ['diagonal','shrinkage','robust_shrinkage'], optional: true},
+  'process.detection.live_temporal_shadow.max_cpis': {...integer(4, 8), choices: [4,8], optional: true},
+  'process.detection.live_temporal_shadow.delay_motion_bins': {...integer(0, 2), optional: true},
+  'process.detection.live_temporal_shadow.doppler_motion_bins': {...integer(0, 16), optional: true},
+  'process.detection.live_temporal_shadow.max_cells': {...integer(1, 524288), optional: true},
+  'process.detection.live_temporal_shadow.max_work_ms': {...integer(1, 150), optional: true},
+  'process.detection.live_temporal_shadow.min_interval_ms': {...integer(4, 10000), optional: true},
   'process.bearing.enable': {type: 'boolean', optional: true},
   'process.bearing.min_consistent': {...integer(2, 100), optional: true},
   'process.bearing.min_peak_separation_db': {...numeric(1, 15), optional: true},
@@ -138,6 +176,7 @@ const rules = {
   'process.tracker.initiate.doppler_ridge_clutter.minimum_delay_separation_km': {...numeric(.001, 1000), optional: true},
   'process.tracker.track_guided_shadow.enable': {type: 'boolean', optional: true},
   'process.tracker.track_guided_shadow.promote': {type: 'boolean', optional: true},
+  'process.tracker.track_guided_shadow.sustain': {type: 'boolean', optional: true},
   'process.tracker.track_guided_shadow.max_tracks': {...integer(1, 65535), optional: true},
   'process.tracker.track_guided_shadow.evidence_path': {type: 'string', optional: true},
   'process.tracker.track_guided_shadow.max_truth_age_s': {...numeric(.1, 60), optional: true},
@@ -202,6 +241,7 @@ const rules = {
   'save.retention.maximum_age_days': {...numeric(0, 3650), optional: true},
   'save.retention.maximum_total_gb': {...numeric(0, 100000), optional: true},
   'save.retention.minimum_free_gb': {...numeric(0, 10000), optional: true},
+  'save.retention.maximum_manual_seconds': {...integer(30, 86400), optional: true},
   'network.tracker_forward.enabled': {type: 'boolean', optional: true},
   'network.tracker_forward.host': {type: 'string', optional: true},
   'network.tracker_forward.port': {...integer(1, 65535), optional: true},
@@ -218,10 +258,19 @@ for (const group of ['ambiguity', 'clutter']) {
       ...(group === 'clutter' ? {optional: true} : {})
     };
 }
-for (const name of ['api','map','detection','track','bearing','manifold','illuminator','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','manifold','illuminator','causal_funnel','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
     {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
-    ['bearing','manifold','illuminator'].includes(name) ? {optional: true} : {})};
+    ['bearing','manifold','illuminator','causal_funnel'].includes(name) ? {optional: true} : {})};
+rules['process.evidence.causal_funnel.enabled'] = {type: 'boolean', optional: true};
+rules['process.evidence.causal_funnel.api_ingest_enabled'] = {type: 'boolean', optional: true};
+rules['process.evidence.causal_funnel.epoch_id'] = {type: 'string', optional: true};
+rules['process.evidence.causal_funnel.path'] = {type: 'string', optional: true};
+rules['process.evidence.causal_funnel.max_candidates'] = {...integer(1, 64), optional: true};
+rules['process.evidence.causal_funnel.max_queue'] = {...integer(1, 1024), optional: true};
+rules['process.evidence.causal_funnel.max_queue_mb'] = {...integer(1, 1024), optional: true};
+rules['process.evidence.causal_funnel.max_file_mb'] = {...integer(1, 1024), optional: true};
+rules['process.evidence.causal_funnel.max_files'] = {...integer(1, 128), optional: true};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

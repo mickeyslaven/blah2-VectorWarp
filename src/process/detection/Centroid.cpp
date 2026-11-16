@@ -30,6 +30,7 @@ std::unique_ptr<Detection> Centroid::process(Detection *x)
   double dopplerMin, dopplerMax;
   bool isCentroid;
   std::vector<double> delay2, doppler2, snr2;
+  std::vector<Detection::Evidence> evidence;
 
   // loop over every detection
   const size_t nDetections = std::min(delay.size(), std::min(doppler.size(), snr.size()));
@@ -73,9 +74,12 @@ std::unique_ptr<Detection> Centroid::process(Detection *x)
       delay2.push_back(delay[i]);
       doppler2.push_back(doppler[i]);
       snr2.push_back(snr[i]);  
+      if (!x->get_evidence().empty()) evidence.push_back(x->get_evidence()[i]);
     }
   }
 
   // create detection
-  return std::make_unique<Detection>(delay2, doppler2, snr2);
+  auto result = std::make_unique<Detection>(delay2, doppler2, snr2);
+  result->set_evidence(std::move(evidence));
+  return result;
 }

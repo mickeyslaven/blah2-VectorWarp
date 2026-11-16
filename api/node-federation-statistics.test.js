@@ -1,8 +1,26 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {compactNodeStatistics, combineNodeStatistics} = require(
+const http = require('node:http');
+const {compactNodeStatistics, combineNodeStatistics, probeJson} = require(
   process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation');
+
+test('large association reads require an explicit bounded allowance', async t => {
+  const body = JSON.stringify({passes: ['x'.repeat(2 * 1024 * 1024)]});
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, {'Content-Type': 'application/json'});
+    response.end(body);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  await assert.rejects(probeJson(origin, '/association', 2500),
+    /response is too large/);
+  const accepted = await probeJson(origin, '/association', 2500, 8 * 1024 * 1024);
+  assert.equal(accepted.value.passes[0].length, 2 * 1024 * 1024);
+  await assert.rejects(probeJson(origin, '/association', 2500, 17 * 1024 * 1024),
+    /byte limit is invalid/);
+});
 
 function node(id, eligible, detected, tracked, pass) {
   return {id, label: id.toUpperCase(), local: id === 'alpha', available: true,
@@ -56,6 +74,20 @@ test('combines aligned node opportunities and deduplicates aircraft passes', () 
   assert.equal(result.system_wide_unique_passes.tracking.yield, 1);
   assert.equal(result.cooperative_tracks.active, 1);
   assert.equal(result.health.status, 'healthy');
+});
+
+test('does not mix retained history with a restarted node awaiting its first pass', () => {
+  const retained = {hex: 'abc123', started_at: 100000, finalized_at: 120000,
+    outcome: 'tracked', eligible_cpis: 20, detected_cpis: 10, tracked_cpis: 5};
+  const restarted = node('beta', 0, 0, 0, retained);
+  restarted.passes = [];
+  const result = combineNodeStatistics([node('alpha', 100, 80, 70, retained), restarted]);
+  assert.equal(result.statistics_window.alignment_pending, true);
+  assert.equal(result.statistics_window.started_at, null);
+  assert.deepEqual(result.channel_opportunities, {eligible: 0, detected: 0, tracked: 0,
+    detection_yield: null, tracking_yield: null, tracked_of_eligible_yield: null});
+  assert.equal(result.system_wide_unique_passes.eligible_adsb_passes, 0);
+  assert.equal(result.system_wide_unique_passes.alignment_pending, true);
 });
 
 test('unique pass yield uses finalized qualification rather than any positive CPI', () => {

@@ -16,7 +16,9 @@ assert.deepEqual([plans['atsc-us-uhf'].candidates[0], plans['atsc-us-uhf'].candi
   [{id: 'RF14', frequency_hz: 473000000}, {id: 'RF36', frequency_hz: 605000000}]);
 
 const kraken = {capture: {device: {type: 'Kraken', channel_count: 5,
-  array_geometry: {x_axis_bearing_deg_true: 80, elements: Array.from({length: 5}, (_, index) =>
+  heimdall:{host:'127.0.0.1',port:5000},
+  array_geometry: {mapping_confirmed:true,geometry_confirmed:true,orientation_confirmed:true,
+    x_axis_bearing_deg_true: 80, elements: Array.from({length: 5}, (_, index) =>
     ({daq_channel: index, position: [index, 0, 0]}))}}}};
 const rspduo = {capture: {device: {type: 'RspDuo'}}};
 assert.equal(receiverCapabilities(kraken).bearing_evidence_evaluation, true);
@@ -25,6 +27,20 @@ assert.equal(receiverCapabilities(kraken).automatic_bearing_safe_selection, fals
 assert.equal(receiverCapabilities(kraken).automatic_survey_execution, false);
 assert.equal(receiverCapabilities(rspduo).spatial_reflection_assessment, 'two-channel-limited');
 assert.equal(receiverCapabilities(rspduo).automatic_bearing_safe_selection, false);
+const hackrf = {capture:{device:{type:'HackRF',serial:['1','2']}}};
+assert.equal(receiverCapabilities(hackrf).coherent_channels,0);
+assert.equal(receiverCapabilities(hackrf).rf_prescreen,false);
+assert.equal(receiverCapabilities(hackrf).automatic_fast_proxy_evaluation,false);
+assert.equal(receiverCapabilities(hackrf).spatial_reflection_assessment,'unavailable');
+for (const type of ['Kraken','Usrp','RspDuo','HackRF']) {
+  const recorded = JSON.parse(JSON.stringify(kraken));
+  recorded.capture.device.type = type;
+  recorded.capture.replay = {state:true,channel_count:5,reference_mode:'array_eigenbeam',
+    reference_channel:0,reference_channels:[0,1,2,3,4],surveillance_channels:[0,1,2,3,4]};
+  assert.equal(receiverCapabilities(recorded).coherent_channels,5);
+  assert.equal(receiverCapabilities(recorded).bearing_evidence_evaluation,true);
+  assert.equal(receiverCapabilities(recorded).managed_retune,'unsupported','Replay never advertises live retuning');
+}
 
 // Each entry is a unique eligible pass: P=persistent, M=matched, U=unmatched.
 function candidateFor(layout = ['PPPMUU', 'PPPMUU', 'PPPMUU']) {

@@ -7,6 +7,7 @@
 #include <limits>
 #include <random>
 #include <time.h>
+#include <rapidjson/document.h>
 
 namespace {
 using Complex = std::complex<double>;
@@ -114,6 +115,76 @@ void correctness() {
   for (const uint32_t rows : {321u, 961u, 1921u}) {
     auto large = fixture(rows);
     checkMap(large, 1700000000123ULL, 2400000, "standard-range production map");
+  }
+  {
+    auto display = fixture(601, 1261);
+    display.data[1][1] = {1e6, 0};
+    display.set_metrics();
+    const auto original = display.data;
+    const auto full = display.to_json_km(1700000000123ULL, 6144000);
+    const auto reduced = display.to_json_presentation_km(
+      1700000000123ULL, 6144000, true);
+    const auto metadata = display.to_json_presentation_km(
+      1700000000124ULL, 6144000, false);
+    rapidjson::Document map, meta;
+    map.Parse(reduced.c_str()); meta.Parse(metadata.c_str());
+    require(!map.HasParseError() && !meta.HasParseError(),
+      "Presentation map is not valid JSON");
+    require(map["presentationStride"].GetUint() == 2 &&
+      map["presentation_only"].GetBool() &&
+      std::string(map["presentation_pooling"].GetString()) == "max" &&
+      map["presentation_precision_db"].GetDouble() == .25 &&
+      map["sourceRows"].GetUint() == 601 &&
+      map["sourceCols"].GetUint() == 1261 &&
+      map["nRows"].GetUint() == 301 && map["nCols"].GetUint() == 631,
+      "Presentation map geometry differs");
+    require(map["data"].Size() == 301 && map["data"][0].Size() == 631 &&
+      map["delay"].Size() == 631 && map["doppler"].Size() == 301,
+      "Presentation map axes and raster differ");
+    require(map["data"][0][0].GetDouble() > 40.0,
+      "Presentation max pooling lost an off-grid peak");
+    require(display.data == original,
+      "Presentation serialization mutated source samples");
+    require(meta["data_omitted"].GetBool() &&
+      meta["nRows"].GetUint() == map["nRows"].GetUint() &&
+      meta["nCols"].GetUint() == map["nCols"].GetUint() &&
+      meta["delay"].Size() == map["delay"].Size() &&
+      meta["doppler"].Size() == map["doppler"].Size(),
+      "Presentation metadata geometry differs from its retained raster");
+    require(reduced.size() * 3 < full.size(),
+      "Presentation map did not materially reduce transport bytes");
+    for (const auto& row : map["data"].GetArray())
+      for (const auto& value : row.GetArray())
+        require(std::abs(value.GetDouble() * 4.0 -
+          std::round(value.GetDouble() * 4.0)) < 1e-9,
+          "Presentation map is not quarter-dB quantized");
+    require(outcome([&] { return display.to_json_presentation_km(
+      1, 6144000, true, 0); }) ==
+      "invalid_argument:Cannot convert an invalid presentation map",
+      "Zero presentation cell budget was accepted");
+    for (uint32_t peak = 0; peak < 4; ++peak) {
+      Map<double> block(2, 2); block.delay = {0, 1}; block.doppler = {0, 1};
+      block.data = {{1, 1}, {1, 1}}; block.data[peak / 2][peak % 2] = 1e6;
+      block.noisePower = 0; block.maxPower = 60;
+      rapidjson::Document pooled;
+      pooled.Parse(block.to_json_presentation_km(1, 6144000, true, 1).c_str());
+      require(!pooled.HasParseError() && pooled["data"][0][0].GetDouble() == 60,
+        "Presentation pooling lost a peak at within-block offset " +
+          std::to_string(peak));
+    }
+    Map<double> edge(3, 3); edge.delay = {0, 1, 2}; edge.doppler = {0, 1, 2};
+    edge.data[2][2] = 1e6; edge.noisePower = 0; edge.maxPower = 60;
+    rapidjson::Document pooledEdge;
+    pooledEdge.Parse(edge.to_json_presentation_km(1, 6144000, true, 4).c_str());
+    require(!pooledEdge.HasParseError() &&
+      pooledEdge["data"][1][1].GetDouble() == 60,
+      "Presentation pooling lost a peak in a partial edge block");
+    auto invalidPresentation = fixture(3, 3);
+    invalidPresentation.noisePower = std::numeric_limits<double>::quiet_NaN();
+    require(outcome([&] { return invalidPresentation.to_json_presentation_km(
+      1, 6144000, true); }) ==
+      "runtime_error:Presentation map contains non-finite metadata",
+      "Presentation map accepted non-finite metadata");
   }
   for (const auto value : extremes) {
     const std::vector<double> delay{-10, 0, value, 245.98765};

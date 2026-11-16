@@ -22,6 +22,20 @@ void compile(const std::string& name,const std::string& source){
 int main(){try{
  if(!glslang_initialize_process())throw std::runtime_error("Shader compiler unavailable");
  unsigned count=0;
+ for(const auto& shader:std::array<std::pair<const char*,const char*>,4>{{
+  {"surveillance-cast",blah2::gpu_resident::surveillanceSource},
+  {"surveillance-subtract",blah2::gpu_resident::subtractSource},
+  {"surveillance-pack",blah2::gpu_resident::surveillancePackSource},
+  {"surveillance-subtract-pack",blah2::gpu_resident::subtractPackSource}}}){
+  compile(shader.first,shader.second);++count;
+ }
+ for(const auto& shader:blah2::gpu_reference::shaderSources()){
+  compile("reference-"+shader.first,shader.second);++count;
+ }
+ for(bool guided:{false,true})
+  for(const auto& shader:blah2::gpu_tracker::shaderSources(guided)){
+   compile("tracker-"+shader.first,shader.second);++count;
+  }
  for(bool replay:{false,true}){
   for(const auto& shader:blah2::gpu_postprocess::shaderSources(replay)){compile(shader.first,shader.second);++count;}
   for(bool coherent:{false,true}){const auto source=blah2::gpu_resident::fusionShader(coherent,replay);

@@ -1,7 +1,9 @@
 #include "Recording.h"
+#include "Sha256.h"
 #include "kraken/HeimdallFrame.h"
 #include <algorithm>
 #include <array>
+#include <condition_variable>
 #include <cerrno>
 #include <cstdio>
 #include <cmath>
@@ -9,10 +11,14 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <deque>
+#include <limits>
+#include <mutex>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <stdexcept>
+#include <thread>
 #include <sys/stat.h>
 #include <unistd.h>
 #if __has_include("ReceiverCohort.h")
@@ -28,6 +34,10 @@
 namespace blah2 {
 namespace {
 constexpr uint32_t maxBlock = 262144;
+// Enough elasticity for ordinary filesystem jitter without allowing a slow or
+// failed disk to consume unbounded RAM. Acquisition never waits for capacity:
+// a full queue fails recording explicitly and leaves radar processing alive.
+constexpr std::size_t maxQueuedRecordingBytes = 64ULL << 20;
 constexpr std::array<uint8_t,8> magic{'B','L','A','H','2','I','Q',0};
 uint32_t u32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1])<<8 | uint32_t(p[2])<<16 | uint32_t(p[3])<<24; }
 uint64_t u64(const uint8_t* p) { return u32(p) | uint64_t(u32(p+4))<<32; }
@@ -81,6 +91,23 @@ void valid(const RecordingMetadata& m) {
 void finite(const IqBlock& block) {
   for(const auto& channel:block) for(auto value:channel)
     if(!std::isfinite(value.real()) || !std::isfinite(value.imag())) fail("Recording contains invalid I/Q samples");
+}
+void finite_slice(const IqBlock& block,size_t offset,size_t count) {
+  for(const auto& channel:block)
+    for(size_t i=offset;i<offset+count;++i) {
+      const auto value=channel[i];
+      if(!std::isfinite(value.real()) || !std::isfinite(value.imag()))
+        fail("Recording contains invalid I/Q samples");
+    }
+}
+bool native_float_iq_is_little_endian() {
+  static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559,
+    "Recording format requires IEEE-754 binary32 samples");
+  static_assert(sizeof(std::complex<float>) == 2*sizeof(float),
+    "Recording fast path requires the standard complex-float representation");
+  const float value=1.0f;
+  constexpr std::array<uint8_t,4> little{{0x00,0x00,0x80,0x3f}};
+  return std::memcmp(&value,little.data(),little.size())==0;
 }
 std::string json_string(const rapidjson::Value& object,const char* name) {
   if(!object.HasMember(name) || !object[name].IsString() || !object[name].GetStringLength())
@@ -251,12 +278,73 @@ void read_native_mchq_sidecar(const std::string& path,
   result.sourceFirstSample=first;
   result.sourceSampleAvailable=true;
 }
+void read_portable_sidecar(const std::string& path,
+    const RecordingMetadata& metadata,uint64_t fileSize,File& file,
+    RecordingProvenance& result) {
+  const std::filesystem::path sidecar(path+".json");
+  if(!std::filesystem::exists(sidecar))return;
+  std::error_code sizeError;
+  const auto size=std::filesystem::file_size(sidecar,sizeError);
+  if(sizeError||!size||size>1048576)fail("Portable clip sidecar is empty or too large");
+  std::ifstream input(sidecar,std::ios::binary);
+  const std::string json(std::istreambuf_iterator<char>(input),{});
+  if(input.bad())fail("Cannot read portable clip sidecar");
+  rapidjson::Document document;document.Parse(json.c_str());
+  if(document.HasParseError()||!document.IsObject())
+    fail("Portable clip sidecar is invalid JSON");
+  const auto unsigned_value=[&](const char* name)->uint64_t{
+    if(!document.HasMember(name)||!document[name].IsUint64())
+      fail(std::string("Portable clip sidecar has invalid ")+name);
+    return document[name].GetUint64();
+  };
+  if(json_string(document,"schema")!="vectorwarp-portable-iq-clip-v1"||
+      json_string(document,"format")!="blah2iq"||
+      json_string(document,"encoding")!="float32-complex-channel-major-blocks"||
+      unsigned_value("channels")!=metadata.channels||
+      unsigned_value("sampleRate")!=metadata.sampleRate||
+      unsigned_value("frequency")!=metadata.frequency||
+      unsigned_value("samplesPerChannel")!=metadata.samples||
+      unsigned_value("dataBytes")!=fileSize)
+    fail("Portable clip sidecar differs from recording metadata");
+  const uint64_t epoch=unsigned_value("epoch"),first=unsigned_value("firstEpochSample");
+  const uint64_t end=unsigned_value("endEpochSample");
+  if(end<=first||end-first!=metadata.samples)
+    fail("Portable clip sidecar sample interval differs from recording");
+  if(result.sourceSampleAvailable&&
+      (result.epoch!=epoch||result.sourceFirstSample!=first))
+    fail("Portable clip sidecar conflicts with recording provenance");
+  const auto expected=json_string(document,"dataSha256");
+  if(expected.size()!=64||expected.find_first_not_of("0123456789abcdef")!=std::string::npos)
+    fail("Portable clip sidecar has invalid dataSha256");
+  // Hash the already-open recording, including its completed header, rather
+  // than reopening a pathname that could now identify a different file.
+  Sha256 digest;std::array<uint8_t,65536> bytes{};
+  file.seek(0);
+  for(uint64_t remaining=fileSize;remaining;) {
+    const auto count=static_cast<std::size_t>(std::min<uint64_t>(remaining,bytes.size()));
+    file.read(bytes.data(),count);digest.update(bytes.data(),count);remaining-=count;
+  }
+  if(file.size()!=fileSize||digest.finish()!=expected)
+    fail("Portable clip sidecar SHA-256 differs from recording");
+  // This authenticates relative sample identity only. Keep all exact-time,
+  // decision-grade and v2-contract qualification flags unchanged.
+  result.epoch=epoch;
+  result.sourceFirstSample=first;
+  result.sourceSampleAvailable=true;
+}
 }
 
 struct RecordingWriter::Impl {
   File file;
   RecordingMetadata metadata;
   bool closed=false;
+  std::mutex mutex;
+  std::condition_variable ready;
+  std::deque<std::vector<uint8_t>> queue;
+  std::size_t queuedBytes=0;
+  bool stopping=false;
+  std::string writeError;
+  std::thread worker;
   Impl(const std::string& path,RecordingMetadata m):file(path,true),metadata(std::move(m)) {
     valid(metadata); metadata.samples=0;
     std::array<uint8_t,64> header{}; std::copy(magic.begin(),magic.end(),header.begin());
@@ -264,6 +352,76 @@ struct RecordingWriter::Impl {
     put32(header.data()+20,metadata.sampleRate); put32(header.data()+24,metadata.frequency);
     put32(header.data()+28,1); // IEEE float32, little endian, channel-major blocks.
     file.write(header.data(),header.size());
+    worker=std::thread([this] {
+      for (;;) {
+        std::vector<uint8_t> payload;
+        {
+          std::unique_lock<std::mutex> lock(mutex);
+          ready.wait(lock,[&] { return stopping || !queue.empty(); });
+          if(queue.empty()) {
+            if(stopping) return;
+            continue;
+          }
+          payload=std::move(queue.front());
+          queue.pop_front();
+        }
+        try { file.write(payload.data(),payload.size()); }
+        catch(const std::exception& error) {
+          std::lock_guard<std::mutex> lock(mutex);
+          writeError=error.what();
+          queuedBytes=0;
+          queue.clear();
+          stopping=true;
+          ready.notify_all();
+          return;
+        }
+        {
+          std::lock_guard<std::mutex> lock(mutex);
+          queuedBytes=queuedBytes>=payload.size() ?
+            queuedBytes-payload.size() : 0;
+        }
+      }
+    });
+  }
+  ~Impl() {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      stopping=true;
+      // Destruction without close() is an unclean recording by contract. Drop
+      // queued blocks instead of making a receiver callback wait for a failed
+      // disk to drain them; the incomplete header keeps the artifact invalid.
+      queue.clear();
+      queuedBytes=0;
+    }
+    ready.notify_all();
+    if(worker.joinable()) worker.join();
+  }
+  void enqueue(std::vector<uint8_t> payload) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if(!writeError.empty()) fail(writeError);
+    if(stopping) fail("Recording writer is stopped");
+    if(payload.size()>maxQueuedRecordingBytes ||
+        queuedBytes>maxQueuedRecordingBytes-payload.size()) {
+      stopping=true;
+      queue.clear();
+      queuedBytes=0;
+      ready.notify_all();
+      fail("Recording disk cannot keep up; bounded write queue is full");
+    }
+    queuedBytes+=payload.size();
+    queue.push_back(std::move(payload));
+    ready.notify_one();
+  }
+  void drain() {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      stopping=true;
+    }
+    ready.notify_all();
+    if(worker.joinable()) worker.join();
+    std::lock_guard<std::mutex> lock(mutex);
+    if(!writeError.empty()) fail(writeError);
+    if(!queue.empty() || queuedBytes) fail("Recording write queue did not drain");
   }
 };
 RecordingWriter::RecordingWriter(const std::string& path,RecordingMetadata m) {
@@ -275,20 +433,52 @@ RecordingWriter::RecordingWriter(const std::string& path,RecordingMetadata m) {
 RecordingWriter::~RecordingWriter()=default; // Unclean shutdown must not mark a file complete.
 uint64_t RecordingWriter::samples() const { return impl_->metadata.samples; }
 void RecordingWriter::append(const IqBlock& block) {
+  if(block.empty()) fail("Invalid recording block dimensions");
+  const size_t count=block.front().size();
+  for(const auto& channel:block)
+    if(channel.size()!=count) fail("Recording channels are not aligned");
+  append_slice(block,0,count);
+}
+void RecordingWriter::append_slice(const IqBlock& block,size_t offset,
+    size_t requestedCount) {
   auto& s=*impl_;
-  if(s.closed || block.size()!=s.metadata.channels || block.front().empty() || block.front().size()>maxBlock)
+  if(s.closed || block.size()!=s.metadata.channels || !requestedCount ||
+      requestedCount>maxBlock || offset>block.front().size() ||
+      requestedCount>block.front().size()-offset)
     fail("Invalid recording block dimensions");
-  const uint32_t count=block.front().size();
-  for(const auto& channel:block) if(channel.size()!=count) fail("Recording channels are not aligned");
-  finite(block);
-  std::array<uint8_t,16> header{}; put32(header.data(),count); put64(header.data()+8,s.metadata.samples);
-  std::vector<uint8_t> payload(size_t(count)*s.metadata.channels*8);
-  auto* p=payload.data();
-  for(const auto& channel:block) for(auto value:channel) { putFloat(p,value.real()); putFloat(p+4,value.imag()); p+=8; }
-  s.file.write(header.data(),header.size()); s.file.write(payload.data(),payload.size()); s.metadata.samples+=count;
+  const uint32_t count=static_cast<uint32_t>(requestedCount);
+  for(const auto& channel:block)
+    if(offset>channel.size() || requestedCount>channel.size()-offset)
+      fail("Recording channels are not aligned");
+  finite_slice(block,offset,requestedCount);
+  const std::size_t payloadBytes=requestedCount*s.metadata.channels*8;
+  std::vector<uint8_t> serialized(16+payloadBytes);
+  put32(serialized.data(),count);
+  put64(serialized.data()+8,s.metadata.samples);
+  auto* payload=serialized.data()+16;
+  if(native_float_iq_is_little_endian()) {
+    for(const auto& channel:block) {
+      const auto bytes=requestedCount*sizeof(std::complex<float>);
+      std::memcpy(payload,channel.data()+offset,bytes);
+      payload+=bytes;
+    }
+  } else {
+    // The file contract is little-endian on every platform. Keep the portable
+    // conversion path for big-endian hosts instead of making the fast path an
+    // x86-only assumption.
+    auto* p=payload;
+    for(const auto& channel:block)
+      for(size_t i=offset;i<offset+requestedCount;++i) {
+        const auto value=channel[i];
+        putFloat(p,value.real()); putFloat(p+4,value.imag()); p+=8;
+      }
+  }
+  s.enqueue(std::move(serialized));
+  s.metadata.samples+=count;
 }
 void RecordingWriter::close() {
   auto& s=*impl_; if(s.closed) return;
+  s.drain();
   if(fsync(s.file.fd)) fail("Cannot flush recording to disk");
   std::array<uint8_t,16> complete{}; put64(complete.data(),s.metadata.samples); put64(complete.data()+8,1);
   s.file.seek(40); s.file.write(complete.data(),complete.size());
@@ -374,6 +564,7 @@ struct RecordingReader::Impl {
     const uint64_t delta=metadata.frequency>options.frequency ? metadata.frequency-options.frequency : options.frequency-metadata.frequency;
     if(delta>(format=="mchq" ? 256U : 0U)) fail("Recording frequency differs from Settings");
     provenance=read_provenance(path,options,metadata);
+    if(format=="blah2") read_portable_sidecar(path,metadata,fileSize,file,provenance);
     if(format=="mchq") {
       provenance.perChannelGainDb.assign(firstMchq.gains.begin(),firstMchq.gains.end());
       read_native_mchq_sidecar(path,metadata,fileSize,provenance);

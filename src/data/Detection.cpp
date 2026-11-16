@@ -78,6 +78,24 @@ std::string Detection::to_json(uint64_t timestamp)
   document.AddMember("delay", arrayDelay, allocator);
   document.AddMember("doppler", arrayDoppler, allocator);
   document.AddMember("snr", arraySnr, allocator);
+  if (!evidence.empty()) {
+    rapidjson::Value support(rapidjson::kArrayType);
+    for (const auto& item : evidence) {
+      rapidjson::Value value(rapidjson::kObjectType), sequences(rapidjson::kArrayType);
+      value.AddMember("kind", "temporal_power", allocator);
+      value.AddMember("epoch_exact", rapidjson::Value(std::to_string(item.epoch).c_str(), allocator), allocator);
+      value.AddMember("newest_sequence_exact", rapidjson::Value(std::to_string(item.newestSequence).c_str(), allocator), allocator);
+      value.AddMember("cpis", item.depth, allocator);
+      value.AddMember("bank", item.bank, allocator);
+      value.AddMember("delay_motion_bins", item.delayMotion, allocator);
+      value.AddMember("doppler_motion_bins", item.dopplerMotion, allocator);
+      for (uint8_t age = 0; age < item.depth; ++age)
+        sequences.PushBack(rapidjson::Value(std::to_string(item.sequences[age]).c_str(), allocator), allocator);
+      value.AddMember("support_sequences_exact", sequences, allocator);
+      support.PushBack(value, allocator);
+    }
+    document.AddMember("evidence", support, allocator);
+  }
   
   rapidjson::StringBuffer strbuf;
   rapidjson::Writer<rapidjson::StringBuffer> writer(strbuf);
@@ -89,6 +107,7 @@ std::string Detection::to_json(uint64_t timestamp)
 
 std::string Detection::to_json_km(uint64_t timestamp, uint32_t fs)
 {
+  if (!evidence.empty()) return delay_bin_to_km(to_json(timestamp), fs);
   const size_t count = get_nDetections();
   if (doppler.size() < count || snr.size() < count)
     throw std::invalid_argument("Cannot convert invalid detections or zero sample rate");
@@ -156,19 +175,29 @@ bool Detection::save(std::string _json, std::string filename)
   rapidjson::Document document;
 
   // create file if it doesn't exist
-  if (FILE *fp = fopen(filename.c_str(), "r"); !fp)
+  if (FILE *fp = fopen(filename.c_str(), "r"); fp)
+  {
+    if (std::fclose(fp) != 0)
+      return false;
+  }
+  else
   {
     if (fp = fopen(filename.c_str(), "w"); !fp)
       return false;
-    fputs("[]", fp);
-    fclose(fp);
+    const bool initialized = std::fputs("[]", fp) >= 0;
+    if (std::fclose(fp) != 0 || !initialized)
+      return false;
   }
 
   // add the document to the file
   if (FILE *fp = fopen(filename.c_str(), "rb+"); fp)
   {
     // check if first is [
-    std::fseek(fp, 0, SEEK_SET);
+    if (std::fseek(fp, 0, SEEK_SET) != 0)
+    {
+      std::fclose(fp);
+      return false;
+    }
     if (getc(fp) != '[')
     {
       std::fclose(fp);
@@ -181,7 +210,11 @@ bool Detection::save(std::string _json, std::string filename)
       isEmpty = true;
 
     // check if last is ]
-    std::fseek(fp, -1, SEEK_END);
+    if (std::fseek(fp, -1, SEEK_END) != 0)
+    {
+      std::fclose(fp);
+      return false;
+    }
     if (getc(fp) != ']')
     {
       std::fclose(fp);
@@ -189,17 +222,21 @@ bool Detection::save(std::string _json, std::string filename)
     }
 
     // replace ] by ,
-    fseek(fp, -1, SEEK_END);
-    if (!isEmpty)
-      fputc(',', fp);
+    if (std::fseek(fp, -1, SEEK_END) != 0 ||
+        (!isEmpty && std::fputc(',', fp) == EOF))
+    {
+      std::fclose(fp);
+      return false;
+    }
 
     // add json element
-    fwrite(_json.c_str(), sizeof(char), _json.length(), fp);
+    const bool wroteJson = std::fwrite(_json.data(), sizeof(char),
+      _json.size(), fp) == _json.size();
 
     // close the array
-    std::fputc(']', fp);
-    fclose(fp);
-    return true;
+    const bool closedArray = wroteJson && std::fputc(']', fp) != EOF;
+    const bool flushed = closedArray && std::fflush(fp) == 0;
+    return std::fclose(fp) == 0 && flushed;
   }
   return false;
 }

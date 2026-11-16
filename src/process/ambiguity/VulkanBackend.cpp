@@ -6,6 +6,9 @@
 #include "GpuDriverStatus.h"
 #include "GpuMemory.h"
 #include "GpuClutterRefinement.h"
+#include "GpuClutterSolver.h"
+#include "GpuClutterProfile.h"
+#include "GpuClutterSubmission.h"
 #include <vulkan/vulkan.h>
 #include <glslang/Include/glslang_c_interface.h>
 #if __has_include(<glslang/Public/resource_limits_c.h>)
@@ -257,10 +260,11 @@ struct Context {
       startupTrace("vkCreateDevice begin");
       check(vkCreateDevice(candidate.physical, &info, nullptr, &device), "device initialization");
       {
+        const auto policy = gpu_memory::allocationPolicy(candidate.info.memoryBytes,
+          std::getenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES"));
         std::lock_guard<std::mutex> lock(allocationsMutex);
-        deviceAllocations.try_emplace(device,
-          gpu_memory::heapBudget(candidate.info.memoryBytes),
-          memoryProperties(candidate.physical), true);
+        deviceAllocations.try_emplace(device, policy.bytes,
+          memoryProperties(candidate.physical), policy.separateHostHeaps);
       }
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);
@@ -674,15 +678,13 @@ constexpr const char* clutterProductsSource = R"glsl(#version 450
 layout(local_size_x=128) in;
 layout(binding=0) readonly buffer Reference { vec2 ref[]; };
 layout(binding=1) readonly buffer Surveillance { vec2 surv[]; };
-layout(binding=2) writeonly buffer Auto { vec2 autocorr[]; };
-layout(binding=3) writeonly buffer Cross { vec2 crosscorr[]; };
+layout(binding=2) writeonly buffer Cross { vec2 crosscorr[]; };
 layout(push_constant) uniform Parameters { uint count; uint samples; uint channels; uint unused; int unused2; } p;
 void main() {
   uint i = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 128;
   if (i >= p.count) return;
   vec2 x = ref[i % p.samples], y = surv[i];
   crosscorr[i] = vec2(y.x*x.x+y.y*x.y, y.y*x.x-y.x*x.y);
-  if (i < p.samples) autocorr[i] = vec2(dot(x,x), 0);
 })glsl";
 constexpr const char* clutterMultiplySource = R"glsl(#version 450
 layout(local_size_x=128) in;
@@ -708,29 +710,22 @@ void main() {
   estimate[i] = filtered[channel * p.fftLength + sampleIndex] / float(p.fftLength);
 })glsl";
 
-constexpr const char* refinementAutoSource = R"glsl(#version 450
-layout(local_size_x=128) in;
-layout(binding=0) readonly buffer Reference { vec2 ref[]; };
-layout(binding=1) writeonly buffer Auto { vec2 autocorr[]; };
-layout(push_constant) uniform Parameters { uint count; uint a; uint b; uint c; int d; } p;
-void main() {
-  uint i = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 128;
-  if (i < p.count) autocorr[i] = vec2(dot(ref[i], ref[i]), 0.0);
-})glsl";
 class ClutterPipeline {
   Context& context_;
   uint32_t samples_, bins_, channels_, length_;
-  std::unique_ptr<Buffer> reference_, surveillance_, estimate_, autocorrelation_, crosscorrelation_;
+  std::unique_ptr<Buffer> reference_, surveillance_, estimate_, crosscorrelation_;
   std::unique_ptr<Buffer> filterReference_, weights_, filtered_;
   std::unique_ptr<Buffer> input_, correlations_, weightUpload_, output_;
-  std::unique_ptr<Plan> referencePlan_, surveillancePlan_, autoPlan_, crossPlan_;
+  std::unique_ptr<Plan> referencePlan_, surveillancePlan_, crossPlan_;
   std::unique_ptr<Plan> filterReferencePlan_, weightPlan_, filteredPlan_;
-  std::unique_ptr<Kernel> products_, multiply_, normalize_, autoProducts_;
+  std::unique_ptr<Kernel> products_, multiply_, normalize_;
   std::unique_ptr<clutter_refinement::BlockedBaseline> baseline_;
+  std::unique_ptr<clutter_refinement::DenseSolver> solver_;
   std::vector<std::complex<double>> initial_, baselineOutput_;
   std::vector<std::complex<float>> residual_;
   bool frameReady_ = false;
-  double smallestPivot_ = 0, largestPivot_ = 0;
+  GpuClutterProfile profile_;
+  ClutterSubmission submission_;
   struct CommandBuffers {
     Context& context;
     VkCommandBuffer handles[3]{};
@@ -746,97 +741,47 @@ class ClutterPipeline {
   // including when recording throws during a smaller-batch startup retry.
   VkCommandBuffer prepare_ = VK_NULL_HANDLE, correlate_ = VK_NULL_HANDLE, finish_ = VK_NULL_HANDLE;
   bool direct_ = false;
-  std::vector<std::complex<double>> first_, lower_, solved_, temporary_;
 
+  void enqueue(VkCommandBuffer command, const char* phase) {
+    submission_.enqueue([&] {
+      VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+      submit.commandBufferCount = 1; submit.pCommandBuffers = &command;
+      check(vkQueueSubmit(context_.queue, 1, &submit, context_.fence), phase);
+    });
+  }
+  void complete(const char* phase) {
+    submission_.complete(
+      [&] { check(vkWaitForFences(context_.device, 1, &context_.fence, VK_TRUE, UINT64_MAX), phase); },
+      [&] { check(vkResetFences(context_.device, 1, &context_.fence), "clutter fence reset"); });
+  }
   void submit(VkCommandBuffer command, const char* phase) {
-    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submit.commandBufferCount = 1; submit.pCommandBuffers = &command;
-    check(vkQueueSubmit(context_.queue, 1, &submit, context_.fence), phase);
-    check(vkWaitForFences(context_.device, 1, &context_.fence, VK_TRUE, UINT64_MAX), phase);
-    check(vkResetFences(context_.device, 1, &context_.fence), "clutter fence reset");
+    enqueue(command, phase);
+    complete(phase);
   }
-  void factorReference() {
-    using Double = std::complex<double>;
-    const auto* values = static_cast<const std::complex<float>*>(correlations_->mapped);
-    auto& first = first_;
-    for (uint32_t i = 0; i < bins_; ++i) first[i] = std::conj(Double(values[i])) / double(samples_);
-    auto& lower = lower_;
-    double& smallestPivot = smallestPivot_;
-    double& largestPivot = largestPivot_;
-    smallestPivot = std::numeric_limits<double>::infinity(); largestPivot = 0;
-    for (uint32_t row = 0; row < bins_; ++row)
-      for (uint32_t column = 0; column <= row; ++column) {
-        Double sum = row >= column ? std::conj(first[row-column]) : first[column-row];
-        for (uint32_t k = 0; k < column; ++k)
-          sum -= lower[size_t(row)*bins_+k] * std::conj(lower[size_t(column)*bins_+k]);
-        if (row == column) {
-          const double scale = std::max(std::abs(first[0]), 1e-30);
-          if (!std::isfinite(sum.real()) || sum.real() <= scale * 1e-12 ||
-              std::abs(sum.imag()) > scale * 1e-5) {
-            std::ostringstream detail;
-            detail << "GPU clutter Cholesky failed; using CPU clutter"
-              << " guard=cholesky row=" << row
-              << " pivot_real_relative=" << sum.real() / scale
-              << " diagonal_imag_relative=" << std::abs(sum.imag()) / scale;
-            throw ClutterRejected(detail.str());
-          }
-          const double pivot = std::sqrt(sum.real());
-          smallestPivot = std::min(smallestPivot, pivot);
-          largestPivot = std::max(largestPivot, pivot);
-          lower[size_t(row)*bins_+column] = pivot;
-        } else {
-          lower[size_t(row)*bins_+column] = sum / lower[size_t(column)*bins_+column];
-        }
-      }
-    if (smallestPivot < largestPivot * 1e-4) {
-      std::ostringstream detail;
-      detail << "GPU clutter correlation is ill-conditioned; using CPU clutter"
-        << " guard=conditioning pivot_ratio=" << smallestPivot / largestPivot;
-      throw ClutterRejected(detail.str());
-    }
+  void reportCompatibility(uint64_t previousAttempts, uint64_t previousFactors) noexcept {
+    const auto attempts = solver_->compatibilityAttempts();
+    if (attempts == previousAttempts || attempts > 8) return;
+    try {
+      std::ostringstream line;
+      line << "GPU_CLUTTER_CHOLESKY_COMPATIBILITY samples=" << samples_
+        << " bins=" << bins_ << " channels=" << channels_
+        << " attempts=" << attempts << " factors=" << solver_->compatibilityFactors()
+        << " factor=" << (solver_->compatibilityFactors() > previousFactors ? "accepted" : "rejected")
+        << " trigger=lapack_failure retry=legacy_fp64 log_limit=8"
+        << " frame_acceptance=requires_solve_residual_guards\n";
+      std::cerr << line.str();
+    } catch (...) { /* Diagnostics must not change frame acceptance. */ }
   }
-  void solveWeights() {
-    using Double = std::complex<double>;
+  void factorReference(const std::vector<std::complex<double>>& covariance) {
+    const auto attempts = solver_->compatibilityAttempts();
+    const auto factors = solver_->compatibilityFactors();
+    try { solver_->factorCovariance(covariance.data(), covariance.size()); }
+    catch (...) { reportCompatibility(attempts, factors); throw; }
+    reportCompatibility(attempts, factors);
+  }
+  const arma::cx_mat& solveWeights() {
     const auto* values = static_cast<const std::complex<float>*>(correlations_->mapped);
-    const auto& first = first_; const auto& lower = lower_;
-    const double smallestPivot = smallestPivot_, largestPivot = largestPivot_;
-    auto& result = solved_;
-    auto& temporary = temporary_;
-    for (uint32_t channel = 0; channel < channels_; ++channel) {
-      const auto* rhs = values + bins_ + size_t(channel) * bins_;
-      for (uint32_t row = 0; row < bins_; ++row) {
-        Double sum = Double(rhs[row]) / double(samples_);
-        for (uint32_t k = 0; k < row; ++k)
-          sum -= lower[size_t(row)*bins_+k] * temporary[k];
-        temporary[row] = sum / lower[size_t(row)*bins_+row];
-      }
-      for (int64_t row = bins_-1; row >= 0; --row) {
-        Double sum = temporary[row];
-        for (uint32_t k = row+1; k < bins_; ++k)
-          sum -= std::conj(lower[size_t(k)*bins_+row]) * result[size_t(channel)*bins_+k];
-        result[size_t(channel)*bins_+row] = sum / lower[size_t(row)*bins_+row];
-      }
-      double residual = 0, rhsPower = 0;
-      for (uint32_t row = 0; row < bins_; ++row) {
-        Double calculated{};
-        for (uint32_t column = 0; column < bins_; ++column) {
-          const Double matrix = row >= column ? std::conj(first[row-column]) : first[column-row];
-          calculated += matrix * result[size_t(channel)*bins_+column];
-        }
-        const Double expected = Double(rhs[row]) / double(samples_);
-        residual += std::norm(calculated-expected); rhsPower += std::norm(expected);
-      }
-      if (residual > std::max(rhsPower * 1e-10, 1e-20)) {
-        std::ostringstream detail;
-        detail << "GPU clutter solve residual is unstable; using CPU clutter"
-          << " guard=solve_residual channel=" << channel
-          << " relative_rms=" << std::sqrt(residual / std::max(rhsPower, 1e-30))
-          << " pivot_ratio=" << smallestPivot / largestPivot
-          << " diagonal_imag_relative=" << std::abs(first[0].imag()) /
-            std::max(std::abs(first[0]), 1e-30);
-        throw ClutterRejected(detail.str());
-      }
-    }
+    return solver_->solve(values);
   }
 public:
   static bool twiddleLut() {
@@ -862,17 +807,20 @@ public:
     const uint64_t n = g.clutterSamples, c = g.channels;
     const uint64_t b = g.clutterBins, l = filterLength(g);
     if (!l) return std::numeric_limits<uint64_t>::max();
-    uint64_t elements = 4*n + 5*n*c + l + 2*l*c + b*c + b*(1+c);
-    // Preflight allowance for the seven plan tables. Batched transforms share
+    uint64_t elements = 3*n + 5*n*c + l + 2*l*c + b*c + b*(1+c);
+    // Preflight allowance for the six plan tables. Batched transforms share
     // their LUTs. Actual tables, scratch and upload allocations are additionally
     // enforced by budgetAllocateMemory; this estimate is not the final guard.
-    if (twiddleLut()) elements += 4*n + 3*l;
+    if (twiddleLut()) elements += 3*n + 3*l;
     return elements * sizeof(std::complex<float>);
   }
   ClutterPipeline(Context& context, const GpuGeometry& g,
       bool allowDirect, bool forceDirect)
     : context_(context), samples_(g.clutterSamples), bins_(g.clutterBins),
-      channels_(g.channels), length_(filterLength(g)), commands_(context) {
+      channels_(g.channels), length_(filterLength(g)),
+      profile_(context.candidate.physical, context.device, context.candidate.queue,
+        context.candidate.properties.limits.timestampPeriod, samples_, bins_, channels_),
+      commands_(context) {
     const uint64_t n = samples_, nc = uint64_t(samples_) * channels_;
     const uint64_t l = length_, lc = uint64_t(length_) * channels_;
     const auto& limit = context.candidate.properties.limits;
@@ -914,7 +862,6 @@ public:
     }
     startupTrace(direct_ ? "clutter direct mapped device memory selected" :
       "clutter persistent staging selected");
-    autocorrelation_ = std::make_unique<Buffer>(context, n*8, device);
     crosscorrelation_ = std::make_unique<Buffer>(context, nc*8, device);
     filterReference_ = std::make_unique<Buffer>(context, l*8, device);
     weights_ = std::make_unique<Buffer>(context, lc*8, device);
@@ -923,22 +870,16 @@ public:
       coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     weightUpload_ = std::make_unique<Buffer>(context, uint64_t(bins_)*channels_*8,
       host, coherent);
-    first_.resize(bins_);
-    lower_.resize(size_t(bins_) * bins_);
-    solved_.resize(size_t(channels_) * bins_);
-    temporary_.resize(bins_);
+    solver_ = std::make_unique<clutter_refinement::DenseSolver>(samples_, bins_, channels_);
     const bool lut = twiddleLut();
     referencePlan_ = std::make_unique<Plan>(context, *reference_, samples_, 1, lut);
     surveillancePlan_ = std::make_unique<Plan>(context, *surveillance_, samples_, channels_, lut);
-    autoPlan_ = std::make_unique<Plan>(context, *autocorrelation_, samples_, 1, lut);
     crossPlan_ = std::make_unique<Plan>(context, *crosscorrelation_, samples_, channels_, lut);
     filterReferencePlan_ = std::make_unique<Plan>(context, *filterReference_, length_, 1, lut);
     weightPlan_ = std::make_unique<Plan>(context, *weights_, length_, channels_, lut);
     filteredPlan_ = std::make_unique<Plan>(context, *filtered_, length_, channels_, lut);
-    autoProducts_ = std::make_unique<Kernel>(context, refinementAutoSource,
-      std::vector<Buffer*>{reference_.get(), autocorrelation_.get()});
     products_ = std::make_unique<Kernel>(context, clutterProductsSource,
-      std::vector<Buffer*>{reference_.get(), surveillance_.get(), autocorrelation_.get(), crosscorrelation_.get()});
+      std::vector<Buffer*>{reference_.get(), surveillance_.get(), crosscorrelation_.get()});
     multiply_ = std::make_unique<Kernel>(context, clutterMultiplySource,
       std::vector<Buffer*>{filterReference_.get(), weights_.get(), filtered_.get()});
     normalize_ = std::make_unique<Kernel>(context, clutterNormalizeSource,
@@ -950,6 +891,7 @@ public:
     prepare_ = commands_.handles[0]; correlate_ = commands_.handles[1]; finish_ = commands_.handles[2];
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     check(vkBeginCommandBuffer(prepare_, &begin), "clutter reference recording");
+    profile_.recordBegin(prepare_, 0);
     VkMemoryBarrier hostWrite{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     hostWrite.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
     hostWrite.dstAccessMask = direct_ ?
@@ -969,16 +911,12 @@ public:
     barrier(prepare_);
     referencePlan_->append(prepare_, -1);
     filterReferencePlan_->append(prepare_, -1); barrier(prepare_);
-    autoProducts_->append(prepare_, {samples_, 0, 0, 0, 0}); barrier(prepare_);
-    autoPlan_->append(prepare_, 1); barrier(prepare_);
-    VkBufferCopy autoCopy{0,0,uint64_t(bins_)*8};
-    vkCmdCopyBuffer(prepare_, autocorrelation_->handle, correlations_->handle, 1, &autoCopy);
     VkMemoryBarrier hostRead{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     hostRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; hostRead.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-    vkCmdPipelineBarrier(prepare_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-      0, 1, &hostRead, 0, nullptr, 0, nullptr);
+    profile_.recordEnd(prepare_, 0);
     check(vkEndCommandBuffer(prepare_), "clutter reference recording");
     check(vkBeginCommandBuffer(correlate_, &begin), "clutter RHS recording");
+    profile_.recordBegin(correlate_, 1);
     vkCmdPipelineBarrier(correlate_, VK_PIPELINE_STAGE_HOST_BIT,
       direct_ ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT,
       0, 1, &hostWrite, 0, nullptr, 0, nullptr);
@@ -988,8 +926,8 @@ public:
     }
     barrier(correlate_);
     surveillancePlan_->append(correlate_, -1); barrier(correlate_);
-    // Products also overwrites the now-disposable auto spectrum. The retained
-    // correlation readback prefix, FP64 first_/lower_, and reference FFT stay intact.
+    // Only the RHS uses FP32 GPU correlation; the covariance is computed from
+    // the same rounded reference in host FP64. Keep the reference FFT intact.
     products_->append(correlate_, {uint32_t(nc), samples_, channels_, 0, 0}); barrier(correlate_);
     crossPlan_->append(correlate_, 1); barrier(correlate_);
     for (uint32_t channel = 0; channel < channels_; ++channel) {
@@ -999,8 +937,10 @@ public:
     }
     vkCmdPipelineBarrier(correlate_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
       0, 1, &hostRead, 0, nullptr, 0, nullptr);
+    profile_.recordEnd(correlate_, 1);
     check(vkEndCommandBuffer(correlate_), "clutter RHS recording");
     check(vkBeginCommandBuffer(finish_, &begin), "clutter finish recording");
+    profile_.recordBegin(finish_, 2);
     hostWrite.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     vkCmdPipelineBarrier(finish_, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
       0, 1, &hostWrite, 0, nullptr, 0, nullptr);
@@ -1025,9 +965,10 @@ public:
       direct_ ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT,
       VK_PIPELINE_STAGE_HOST_BIT,
       0, 1, &hostRead, 0, nullptr, 0, nullptr);
+    profile_.recordEnd(finish_, 2);
     check(vkEndCommandBuffer(finish_), "clutter finish recording");
     baseline_ = std::make_unique<clutter_refinement::BlockedBaseline>(samples_, bins_);
-    const uint64_t hostBytes = uint64_t(baseline_->storageBytes()) +
+    const uint64_t hostBytes = uint64_t(baseline_->storageBytes()) + solver_->storageBytes() +
       uint64_t(channels_) * bins_ * sizeof(std::complex<double>) +
       nc * (sizeof(std::complex<double>) + sizeof(std::complex<float>));
     if (hostBytes > SIZE_MAX)
@@ -1037,9 +978,18 @@ public:
     residual_.resize(size_t(channels_) * samples_);
     if (std::getenv("BLAH2_GPU_DIAGNOSTICS"))
       std::cerr << "GPU clutter CPU workspace bytes=" << hostBytes
-        << " baseline_fft=" << baseline_->fft() << '\n';
+        << " baseline_fft=" << baseline_->fft() << " covariance=host_fp64_blocked\n";
   }
-  void endFrame() { frameReady_ = false; baseline_->invalidate(); }
+  ~ClutterPipeline() {
+    // Normal and numerical-rejection paths are already complete. Device/API
+    // faults may leave work pending; drain before freeing commands or buffers.
+    if (submission_.needsDrain()) vkDeviceWaitIdle(context_.device);
+  }
+  void ensureIdle() const { submission_.ensureIdle(); }
+  void endFrame() {
+    profile_.finish(); frameReady_ = false;
+    baseline_->invalidate(); solver_->invalidate();
+  }
   bool rejectFrame(const std::exception& error, const char* phase,
       uint32_t firstChannel, uint32_t activeChannels) {
     std::cerr << "GPU clutter precision rejection samples=" << samples_
@@ -1050,24 +1000,53 @@ public:
     return false;
   }
   bool beginFrame(const std::complex<float>* reference, size_t count) {
+    ensureIdle();
     endFrame();
     if (!reference || count != samples_)
       throw std::invalid_argument("GPU clutter reference dimensions changed");
+    profile_.beginFrame();
     try {
-      for (size_t i = 0; i < count; ++i)
-        if (!clutter_refinement::finite(reference[i]))
-          throw ClutterRejected("Nonfinite rounded clutter reference");
-      if (direct_) {
-        std::memcpy(reference_->mapped, reference, count*8);
-        reference_->flush(0, reference_->bytes);
-      } else {
-        std::memcpy(input_->mapped, reference, count*8);
-        input_->flush(0, count*8);
+      {
+        auto timing = profile_.scope(GpuClutterProfile::ReferenceCopy);
+        for (size_t i = 0; i < count; ++i)
+          if (!clutter_refinement::finite(reference[i]))
+            throw ClutterRejected("Nonfinite rounded clutter reference");
+        if (direct_) {
+          std::memcpy(reference_->mapped, reference, count*8);
+          reference_->flush(0, reference_->bytes);
+        } else {
+          std::memcpy(input_->mapped, reference, count*8);
+          input_->flush(0, count*8);
+        }
       }
-      submit(prepare_, "clutter reference");
-      correlations_->invalidate(0, correlations_->bytes);
-      factorReference();
-      baseline_->prepare(reference, count);
+      {
+        // The host only reads the original reference and its own FP64 scratch.
+        // GPU prepare owns the uploaded copy and device FFT buffers. Neither
+        // host factorization nor covariance needs the GPU result anymore.
+        auto overlapTiming = profile_.scope(GpuClutterProfile::ReferenceOverlapWall);
+        {
+          auto timing = profile_.scope(GpuClutterProfile::ReferenceEnqueue);
+          enqueue(prepare_, "clutter reference submission");
+        }
+        submission_.overlap([&] {
+          {
+            auto timing = profile_.scope(GpuClutterProfile::BaselinePrepare);
+            baseline_->prepare(reference, count);
+          }
+          const std::vector<std::complex<double>>* covariance;
+          {
+            auto timing = profile_.scope(GpuClutterProfile::Covariance);
+            covariance = &baseline_->covariance();
+          }
+          { auto timing = profile_.scope(GpuClutterProfile::Factor); factorReference(*covariance); }
+        }, [&] {
+          {
+            auto timing = profile_.scope(GpuClutterProfile::ReferenceWaitTail);
+            complete("clutter reference execution");
+          }
+          profile_.collect(0, 0);
+        });
+      }
       frameReady_ = true;
       return true;
     } catch (const ClutterRejected& error) {
@@ -1090,6 +1069,7 @@ public:
   bool process(const std::complex<float>* reference, size_t referenceCount,
       const std::complex<float>* surveillance, size_t surveillanceCount,
       std::complex<float>* output, size_t outputCount, uint32_t firstChannel) {
+    ensureIdle();
     if (!reference || !surveillance || !output || referenceCount != samples_ ||
         !surveillanceCount || surveillanceCount > uint64_t(samples_)*channels_ ||
         surveillanceCount % samples_ || outputCount != surveillanceCount)
@@ -1099,41 +1079,72 @@ public:
     if (!frameReady_) throw std::logic_error("GPU clutter frame is not prepared");
     const uint32_t active = uint32_t(surveillanceCount / samples_);
     try {
-      for (size_t i = 0; i < surveillanceCount; ++i)
-        if (!clutter_refinement::finite(surveillance[i]))
-          throw ClutterRejected("Nonfinite rounded clutter surveillance");
-      uploadSurveillance(surveillance, surveillanceCount);
-      submit(correlate_, "clutter initial correlations");
+      {
+        auto timing = profile_.scope(GpuClutterProfile::InputCopy);
+        for (size_t i = 0; i < surveillanceCount; ++i)
+          if (!clutter_refinement::finite(surveillance[i]))
+            throw ClutterRejected("Nonfinite rounded clutter surveillance");
+        uploadSurveillance(surveillance, surveillanceCount);
+      }
+      {
+        auto timing = profile_.scope(GpuClutterProfile::InitialWait);
+        submit(correlate_, "clutter initial correlations");
+      }
+      profile_.collect(1, 1);
       correlations_->invalidate(0, correlations_->bytes);
-      solveWeights();
-      for (const auto value : solved_)
-        if (!clutter_refinement::finite(value))
-          throw ClutterRejected("Nonfinite initial clutter weights; guard=nonfinite_weights");
-      std::copy(solved_.begin(), solved_.end(), initial_.begin());
+      {
+        auto timing = profile_.scope(GpuClutterProfile::InitialSolve);
+        const auto& solved = solveWeights();
+        std::copy_n(solved.memptr(), solved.n_elem, initial_.begin());
+      }
       // Preserve the dominant coefficients and their linear FIR estimate in
       // FP64. Only the residual correction crosses the FP32 GPU FIR boundary.
-      for (uint32_t channel = 0; channel < active; ++channel)
-        baseline_->estimate(initial_.data() + size_t(channel)*bins_,
-          baselineOutput_.data() + size_t(channel)*samples_);
-      for (uint32_t channel = 0; channel < active; ++channel)
-        baseline_->residual(surveillance + size_t(channel)*samples_,
-          initial_.data() + size_t(channel)*bins_, baselineOutput_.data() + size_t(channel)*samples_,
-          residual_.data() + size_t(channel)*samples_);
-      uploadSurveillance(residual_.data(), surveillanceCount);
-      submit(correlate_, "clutter residual correlations");
-      correlations_->invalidate(0, correlations_->bytes);
-      solveWeights();
-      for (size_t i = 0; i < size_t(active)*bins_; ++i)
-        if (!clutter_refinement::finite(solved_[i]))
-          throw ClutterRejected("Nonfinite correction clutter weights; guard=nonfinite_weights");
-      auto* upload = static_cast<Float*>(weightUpload_->mapped);
-      for (size_t i = 0; i < solved_.size(); ++i) {
-        upload[i] = solved_[i];
-        if (!clutter_refinement::finite(upload[i]))
-          throw ClutterRejected("Nonfinite rounded correction clutter weights");
+      {
+        auto timing = profile_.scope(GpuClutterProfile::Baseline);
+        for (uint32_t channel = 0; channel < active; ++channel)
+          baseline_->estimateResidual(
+            surveillance + size_t(channel)*samples_,
+            initial_.data() + size_t(channel)*bins_,
+            baselineOutput_.data() + size_t(channel)*samples_,
+            residual_.data() + size_t(channel)*samples_);
       }
-      weightUpload_->flush(0, weightUpload_->bytes);
-      submit(finish_, "clutter correction FIR");
+      {
+        // Residual formation is fused into Baseline above. Retain the bounded
+        // stage so existing diagnostic schemas report its separate cost as
+        // approximately zero instead of silently dropping a field.
+        auto timing = profile_.scope(GpuClutterProfile::Residual);
+      }
+      {
+        auto timing = profile_.scope(GpuClutterProfile::ResidualCopy);
+        uploadSurveillance(residual_.data(), surveillanceCount);
+      }
+      {
+        auto timing = profile_.scope(GpuClutterProfile::ResidualWait);
+        submit(correlate_, "clutter residual correlations");
+      }
+      profile_.collect(1, 2);
+      correlations_->invalidate(0, correlations_->bytes);
+      const arma::cx_mat* correctionWeights = nullptr;
+      {
+        auto timing = profile_.scope(GpuClutterProfile::CorrectionSolve);
+        correctionWeights = &solveWeights();
+      }
+      {
+        auto timing = profile_.scope(GpuClutterProfile::WeightCopy);
+        auto* upload = static_cast<Float*>(weightUpload_->mapped);
+        for (size_t i = 0; i < correctionWeights->n_elem; ++i) {
+          upload[i] = (*correctionWeights)[i];
+          if (!clutter_refinement::finite(upload[i]))
+            throw ClutterRejected("Nonfinite rounded correction clutter weights");
+        }
+        weightUpload_->flush(0, weightUpload_->bytes);
+      }
+      {
+        auto timing = profile_.scope(GpuClutterProfile::FinishWait);
+        submit(finish_, "clutter correction FIR");
+      }
+      profile_.collect(2, 3);
+      auto timing = profile_.scope(GpuClutterProfile::Merge);
       Buffer& result = direct_ ? *estimate_ : *output_;
       result.invalidate(0, result.bytes);
       const auto* correction = static_cast<const Float*>(result.mapped);
@@ -1546,6 +1557,7 @@ public:
   void processBuffers(const std::complex<float>* reference, size_t referenceCount,
       const std::complex<float>* surveillance, size_t surveillanceCount,
       std::complex<float>* output, size_t outputCount) override {
+    if (clutter_) clutter_->ensureIdle(); // Ambiguity shares the same queue/fence.
     if (!reference || !surveillance || !output ||
         referenceCount != reference_->bytes / sizeof(*reference) ||
         surveillanceCount != surveillance_->bytes / sizeof(*surveillance) ||
@@ -1617,6 +1629,8 @@ extern "C" std::string blah2_gpu_driver_status(unsigned version) {
   json << "{\"version\":1,\"available\":true,\"qualification\":\"not-run\",\"devices\":[";
   bool first = true;
   for (const auto& item : blah2::enumerate(instance)) {
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceFeatures(item.physical, &features);
     VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
     uint32_t count = 0;
     blah2::check(vkEnumerateDeviceExtensionProperties(item.physical, nullptr, &count, nullptr), "driver extension discovery");
@@ -1641,6 +1655,7 @@ extern "C" std::string blah2_gpu_driver_status(unsigned version) {
       << ",\"driverName\":" << blah2::gpuDiagnosticString(driver.driverName)
       << ",\"driverInfo\":" << blah2::gpuDiagnosticString(driver.driverInfo)
       << ",\"driverVersionRaw\":" << item.properties.driverVersion
+      << ",\"shaderFloat64\":" << (features.shaderFloat64 ? "true" : "false")
       << ",\"mesaVersion\":";
     // Packed Mesa versions are meaningful here only for the identified V3DV
     // driver, not NVIDIA's different encoding or an unknown vendor's driver.

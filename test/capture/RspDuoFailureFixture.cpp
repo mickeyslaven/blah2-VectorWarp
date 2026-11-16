@@ -48,7 +48,7 @@ sdrplay_api_DevParamsT deviceParameters{};
 sdrplay_api_RxChannelParamsT tunerA{}, tunerB{};
 sdrplay_api_DeviceParamsT parameters{&deviceParameters, &tunerA, &tunerB};
 bool nullParameters = false, removeOnInit = false, multipleDevices = false, stopAfterGain = false;
-enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB, ConcurrentPairHandoff, GainEpoch, ScaledCounterInvalidRaw, ScaledFsChangedA, ScaledFsChangedB };
+enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB, ConcurrentPairHandoff, GainEpoch, FifoOverflow, ConcurrentFifoOverflow, ScaledCounterInvalidRaw, ScaledFsChangedA, ScaledFsChangedB };
 CallbackScenario callbackScenario = CallbackScenario::None;
 std::string selectedSerial;
 std::string mockSerial = "mock-only";
@@ -181,6 +181,28 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
       callA(100); gain(sdrplay_api_Tuner_A, 37, 12, 23.5); callB(100);
       callA(102); callB(102); gain(sdrplay_api_Tuner_B, 41, 15, 19.25);
       callA2(104); callB2(104); run_fg = false; break;
+    case CallbackScenario::FifoOverflow:
+      // Capacity is three in the fixture below. The first coherent pair leaves
+      // a retained sub-CPI tail; publishing the second pair must invalidate
+      // the epoch and clear both channels rather than splice across overflow.
+      callA(100); callB(100); callA2(102); callB2(102); break;
+    case CallbackScenario::ConcurrentFifoOverflow: {
+      auto* receiver = static_cast<RspDuo*>(context);
+      callA(100); callB(100); callA2(102);
+      RspDuoTestAccess::reference(*receiver).lock();
+      std::thread overflowing([&] { callB2(102); });
+      const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(2);
+      while (!RspDuoTestAccess::processing(*receiver) &&
+             std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      assert(RspDuoTestAccess::processing(*receiver));
+      callA2(104);
+      std::thread queued([&] { callB2(104); });
+      RspDuoTestAccess::reference(*receiver).unlock();
+      overflowing.join(); queued.join();
+      break;
+    }
     case CallbackScenario::None: break;
   }
   return result("init");
@@ -454,6 +476,8 @@ int main() {
     CallbackScenario::LengthMismatch, CallbackScenario::EpochMismatch, CallbackScenario::ResetAfterPair,
     CallbackScenario::Removed, CallbackScenario::GapAfterPair, CallbackScenario::MalformedA, CallbackScenario::OversizedB,
     CallbackScenario::ConcurrentPairHandoff, CallbackScenario::GainEpoch,
+    CallbackScenario::FifoOverflow,
+    CallbackScenario::ConcurrentFifoOverflow,
     CallbackScenario::ScaledCounterInvalidRaw,
     CallbackScenario::ScaledFsChangedA, CallbackScenario::ScaledFsChangedB}) {
     reset(); callbackScenario = scenario;
@@ -463,7 +487,12 @@ int main() {
       setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "3", 1);
     }
     RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
-    receiver.start(); IqData reference(16), surveillance(16);
+    receiver.start();
+    const bool overflowScenario = scenario == CallbackScenario::FifoOverflow ||
+      scenario == CallbackScenario::ConcurrentFifoOverflow;
+    const uint32_t fifoCapacity = overflowScenario ? 3 : 16;
+    IqData reference(fifoCapacity), surveillance(fifoCapacity);
+    const uint64_t initialEpoch = receiver.processing_epoch();
     bool failed = false; std::string message;
     try { receiver.process(&reference, &surveillance); }
     catch (const std::exception& error) { failed = true; message = error.what(); }
@@ -476,6 +505,8 @@ int main() {
       rapidjson::Document health;
       health.Parse(receiver.health_json().c_str());
       assert(!health["monitoring"].GetBool());
+      if (overflowScenario)
+        assert(receiver.processing_epoch() > initialEpoch);
     }
     if (matched) {
       const auto a = reference.get_data(), b = surveillance.get_data();

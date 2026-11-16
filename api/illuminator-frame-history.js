@@ -9,12 +9,28 @@ class IlluminatorFrameHistory {
     this.frames = new Map(); this.bytes = 0; this.sequence = 0;
   }
   add(frame, bytes = Buffer.byteLength(JSON.stringify(frame))) {
+    const previous = this.latest(frame.id);
+    if (frame?.map?.data_omitted === true) {
+      frame.display_map_json = previous?.display_map_json || previous?.map_json || null;
+      frame.display_map_timestamp = previous?.display_map_timestamp ??
+        previous?.map?.timestamp ?? previous?.timestamp ?? null;
+    } else if (typeof frame?.map_json === 'string') {
+      frame.display_map_json = frame.map_json;
+      frame.display_map_timestamp = frame.map?.timestamp ?? frame.timestamp ?? null;
+    }
+    // A compact frame can outlive the full frame whose map string it retains.
+    // Charge that retained payload to the compact entry so the global byte
+    // bound remains conservative even after the original entry is evicted.
+    const retainedBytes = frame.display_map_json && frame.display_map_json !== frame.map_json ?
+      Buffer.byteLength(frame.display_map_json) : 0;
+    const accountedBytes = bytes + retainedBytes;
     const lane = this.frames.get(frame.id) || [];
     const duplicate = lane.findIndex(item => item.frame.timestamp === frame.timestamp &&
       item.frame.first_input_sample === frame.first_input_sample &&
       item.frame.end_input_sample === frame.end_input_sample);
     if (duplicate >= 0) { this.bytes -= lane[duplicate].bytes; lane.splice(duplicate, 1); }
-    lane.push({frame, bytes, sequence: ++this.sequence}); this.bytes += bytes;
+    lane.push({frame, bytes: accountedBytes, sequence: ++this.sequence});
+    this.bytes += accountedBytes;
     while (lane.length > this.maxFrames) { this.bytes -= lane[0].bytes; lane.shift(); }
     this.frames.set(frame.id, lane);
     while (this.bytes > this.maxBytes) {
@@ -29,6 +45,9 @@ class IlluminatorFrameHistory {
     }
   }
   latest(id) { return this.frames.get(id)?.at(-1)?.frame || null; }
+  clear() {
+    this.frames.clear(); this.bytes = 0; this.sequence = 0;
+  }
   latestCohort(ids) {
     const requested = [...new Set((ids || []).map(String))];
     if (requested.length < 2) return null;

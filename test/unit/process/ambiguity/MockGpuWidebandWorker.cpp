@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
+#include <fcntl.h>
 #include <thread>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -33,4 +35,12 @@ public:
     for(const auto& lane:config_.lanes){blah2::wideband_gpu::LaneOutput out;out.frequencyHz=lane.frequencyHz;out.inputSamplesPerOutput=lane.decimation;out.channels.resize(input.size());for(size_t sample=0;sample<input.front().size();++sample)if((first+sample)%lane.decimation==0){if(!out.hasFirstInputSample){out.hasFirstInputSample=true;out.firstInputSample=first+sample;}for(size_t channel=0;channel<input.size();++channel)out.channels[channel].push_back(input[channel][sample]);}result.push_back(std::move(out));}return result;
   }
 };
-int main(){const char* raw=std::getenv("VW_MOCK_WIDEBAND_FAILURE");const std::string mode=raw?raw:"";if(mode=="startup-hang")std::this_thread::sleep_for(std::chrono::milliseconds(250));if(mode=="startup-crash")_exit(8);if(mode=="partial"||mode.rfind("malformed-",0)==0)return customWorker(mode);return blah2::wideband_gpu::runWorker([](const auto& c,const auto&){return std::make_unique<Mock>(c);});}
+int main(){
+  if(const char* inherited=std::getenv("VW_MOCK_WIDEBAND_INHERITED_FD")){
+    errno=0;
+    if(fcntl(std::atoi(inherited),F_GETFD)!=-1||errno!=EBADF)return 10;
+    if(fcntl(3,F_GETFD)<0||fcntl(4,F_GETFD)<0)return 11;
+  }
+  if(std::getenv("VW_MOCK_WIDEBAND_CLOSED_STD"))
+    for(int fd=0;fd<3;++fd){errno=0;if(fcntl(fd,F_GETFD)!=-1||errno!=EBADF)return 12;}
+  const char* raw=std::getenv("VW_MOCK_WIDEBAND_FAILURE");const std::string mode=raw?raw:"";if(mode=="startup-hang")std::this_thread::sleep_for(std::chrono::milliseconds(250));if(mode=="startup-crash")_exit(8);if(mode=="partial"||mode.rfind("malformed-",0)==0)return customWorker(mode);return blah2::wideband_gpu::runWorker([](const auto& c,const auto&){return std::make_unique<Mock>(c);});}

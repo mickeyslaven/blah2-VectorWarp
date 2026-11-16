@@ -12,6 +12,7 @@
 #include <vector>
 #include <complex>
 #include <mutex>
+#include "FloatCaptureBlocks.h"
 
 class IqData
 {
@@ -24,6 +25,12 @@ private:
 
   /// @brief Pointer to IQ data.
   std::deque<std::complex<double>> *data;
+
+  // Live wideband GPU capture is received as FP32 and consumed as FP32.
+  // Keeping that queue native avoids a lossless-but-expensive FP32->FP64->FP32
+  // round trip. The ordinary DSP/storage representation remains FP64.
+  bool floatCapture = false;
+  std::unique_ptr<FloatCaptureStorage> floatCaptureData;
 
   /// @brief Samples retired because this bounded queue overflowed.
   uint64_t droppedSamples = 0;
@@ -59,6 +66,11 @@ public:
   /// @return Maximum number of samples.
   uint32_t get_n();
 
+  /// @brief Change the producer capacity while preserving all queued samples.
+  /// @warning Caller must hold this object's lock. Shrinking below the current
+  /// queue length is rejected instead of silently retiring samples.
+  void set_capacity_unlocked(uint32_t capacity);
+
   /// @brief Getter for current data length.
   /// @return Number of samples currently in data.
   uint32_t get_length();
@@ -83,6 +95,26 @@ public:
 
   /// @brief Remove and return a block from the front of the queue.
   std::deque<std::complex<double>> drain_front(uint32_t count);
+
+  /// @brief Transfer the FP64 FIFO, or copy/convert native FP32 samples.
+  /// @warning Caller must hold this object's lock.
+  std::deque<std::complex<double>> take_all();
+
+  /// @brief Opt an empty producer FIFO into native FP32 capture storage.
+  /// @details Optionally first-touch bounded warmBlocks before recv begins.
+  /// @warning Must be called before the capture producer starts.
+  void enable_float_capture(uint32_t blockSamples = 0, uint32_t warmBlocks = 0);
+
+  /// @brief Copy/empty the native FP32 FIFO for legacy/diagnostic callers.
+  /// @warning Caller must hold this object's lock and enable_float_capture().
+  std::deque<std::complex<float>> take_all_float();
+
+  /// @brief Transfer completed reusable FP32 blocks without copying samples.
+  /// @details Retains a partial producer block unless needed for minimumSamples.
+  /// @warning Caller holds the producer lock. Returned blocks own their storage.
+  FloatCaptureBlockBatch take_float_blocks(std::size_t minimumSamples = 0);
+
+  FloatCaptureBlockPool::Stats float_capture_pool_stats() const;
 
   /// @brief Discard a processed block without returning or copying samples.
   /// @warning Caller must prevent concurrent mutation.
@@ -124,6 +156,7 @@ public:
   /// @brief Overwrite a complete complex CPI while reusing existing deque storage.
   /// @warning Caller exclusively owns this buffer.
   void assign_complex(const std::complex<double>* samples, uint32_t count);
+
 
   /// @brief Pop the front of the queue.
   /// @return Sample from the front of the queue.

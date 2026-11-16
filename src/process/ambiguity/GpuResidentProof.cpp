@@ -110,9 +110,11 @@ uint64_t validateControl(const Config& c,const Packet& request,const Packet& res
  const uint64_t fields[]={request.requestId,request.frame.logicalId,request.epoch,request.frame.consumedSequence,request.tracker.transaction,request.tracker.generation,request.tracker.consumedSequence,request.tracker.epoch};
  for(size_t i=0;i<8;++i)require(r.u64(32+8*i)==fields[i],"Resident control evidence identity differs");
  uint64_t expectedMask=32;
+ const bool inputReset=request.op==Op::resetInput;
+ if(inputReset)expectedMask|=64;
  const bool duplicate=request.op==Op::commit&&request.phase==Phase::committed;
  uint32_t capture=duplicate?2:0;
- if(c.tracker.enabled){if(request.op==Op::initialize){expectedMask|=2;
+ if(c.tracker.enabled){if(request.op==Op::initialize||inputReset){expectedMask|=2;
  capture=1;}else if(request.op==Op::restore){expectedMask|=13;
  capture=1;}else if(request.op==Op::commit&&!duplicate){expectedMask|=25;
  capture=1;}else if(duplicate)capture=2;}
@@ -120,7 +122,9 @@ uint64_t validateControl(const Config& c,const Packet& request,const Packet& res
  r.zeros(112,16);
  r.zeros(448,8);
  require(r.u32(456)==2,"Resident control CPU proof kind differs");
- r.zeros(480,32);
+ // Reset coverage: reference learner, temporal detector history, and tracker.
+ require(r.u32(480)==(inputReset?(3u|(c.tracker.enabled?4u:0u)):0u),"Resident input reset coverage differs");
+ r.zeros(484,28);
  if(expectedMask&1){require(!r.u32(128)&&r.u32(128+3*4)==c.tracker.capacity&&r.u32(128+58*4)==1,"Resident tracker control status invalid");
  if(request.op==Op::commit){require(r.u64(128+8*4)==request.tracker.transaction&&r.u64(128+10*4)==request.tracker.generation&&r.u64(128+12*4)==request.tracker.consumedSequence&&r.u64(128+14*4)==request.tracker.epoch,"Resident tracker commit GPU token differs");}}else r.zeros(128,256);
  for(size_t i=0;i<4;++i){const double ms=r.f64(384+8*i);
@@ -147,16 +151,17 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(std::memcmp(ready.data+224,device.data+128,32)==0,"Resident selected device UUID differs");
  const auto& g=c.geometry;
  const auto& s=a.referenceStatus;
+ const bool array=c.reference.mode==ReferenceMode::capturedArray;
  const uint32_t refs=uint32_t(c.reference.channels.size()),stride=std::max(1u,g.clutterSamples/c.reference.analysisSamples),obs=1+(g.clutterSamples-1)/stride;
  require(a.frame==p.frame.logicalId&&a.referenceGeneration==p.frame.logicalId&&a.consumed==p.frame.consumedSequence&&a.gpuTimeMask==15&&a.stages==48&&a.batchCapacity&&a.batchCapacity<=g.channels,"Resident Ready proof envelope invalid");
- require(!s[0]&&s[1]<=1&&s[2]==(s[1]?obs:0)&&s[3]==(s[1]?refs*refs:0)&&s[4]==(s[1]?c.reference.powerIterations:0)&&s[5]==g.clutterSamples&&s[6]==g.clutterSamples&&s[7]==1+(g.clutterSamples-1)/32&&s[8]==g.clutterSamples&&s[9]==c.spectrumBins&&s[10]==1,"Resident Ready device coverage invalid");
+ require(!s[0]&&s[1]<=1&&(array||!s[1])&&s[2]==(s[1]?obs:0)&&s[3]==(s[1]?refs*refs:0)&&s[4]==(s[1]?uint64_t(c.reference.powerIterations)*refs:0)&&s[5]==g.clutterSamples&&s[6]==(array?g.clutterSamples:0)&&s[7]==(array?1+(g.clutterSamples-1)/32:0)&&s[8]==g.clutterSamples&&s[9]==c.spectrumBins&&s[10]==1,"Resident Ready device coverage invalid");
  // Parallel covariance derivative retains words11/12 (partial/final cells).
  require(s[11]==(s[1]?refs*refs*(1+(obs-1)/std::max(128u,1+(obs-1)/(65536u/(refs*refs)))):0)&&s[12]==(s[1]?refs*refs:0),"Resident covariance device coverage invalid");
  for(size_t i=13;i<16;++i)require(!s[i],"Resident reference reserved status nonzero");
  require(a.residentStatus[0]==0&&a.residentStatus[1]==g.clutterSamples&&a.residentStatus[2]==c.correlation*g.doppler,"Resident reference packing coverage invalid");
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(c.reference.bandwidthHz/(c.sampleRate/g.clutterSamples)))));
  const bool folded=decimation>=8&&g.clutterSamples%decimation==0;
- require(a.shape==std::array<uint32_t,16>{g.clutterSamples,g.channels,refs,1,c.reference.analysisSamples,c.reference.analysisInterval,c.reference.powerIterations,c.spectrumBins,decimation,uint32_t(folded),folded?c.spectrumBins:g.clutterSamples,stride,obs,1+(g.clutterSamples-1)/32,c.correlation,g.doppler},"Resident reference shape proof differs");
+ require(a.shape==std::array<uint32_t,16>{g.clutterSamples,c.inputChannels,refs,uint32_t(c.reference.mode),c.reference.analysisSamples,c.reference.analysisInterval,c.reference.powerIterations,c.spectrumBins,decimation,uint32_t(folded),folded?c.spectrumBins:g.clutterSamples,stride,obs,1+(g.clutterSamples-1)/32,c.correlation,g.doppler},"Resident reference shape proof differs");
  for(size_t i=3;i<16;++i)require(!a.residentStatus[i],"Resident Ready status includes later work");
  if(p.phase==Phase::referenceReady)return;
  const auto b=preparedProof(prepared);
@@ -177,7 +182,7 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  uint32_t next=0;
  for(uint32_t i=0;i<b.batchCount;++i){const auto& x=b.batches[i];
  const auto active=std::min(b.batchCapacity,g.channels-next);
- require(x.generation==p.frame.logicalId&&x.first==next&&x.active==active&&x.capacity==b.batchCapacity&&!x.nativeStatus[0]&&x.nativeStatus[5]==active*blocks&&x.nativeStatus[6]==active*g.clutterSamples&&x.nativeStatus[7]==active*g.clutterSamples&&x.nativeStatus[8]==2*active&&x.nativeStatus[9]==active&&x.nativeStatus[10]==active*g.clutterSamples&&x.nativeStatus[11]==active,"Resident native batch coverage differs");
+ require(x.generation==p.frame.logicalId&&x.first==next&&x.active==active&&x.capacity==b.batchCapacity&&!x.nativeStatus[0]&&x.nativeStatus[5]==active*blocks&&x.nativeStatus[6]==active*g.clutterSamples&&x.nativeStatus[7]==active*g.clutterSamples&&x.nativeStatus[8]==2*active&&x.nativeStatus[9]==2*active&&x.nativeStatus[10]==active*g.clutterSamples&&x.nativeStatus[11]==active,"Resident native batch coverage differs");
  next+=active;
  require(!x.residentStatus[0]&&x.residentStatus[3]==next*g.clutterSamples&&x.residentStatus[4]==next*(diagnosticResidual?g.clutterSamples:c.correlation*g.doppler)&&x.residentStatus[5]==next*c.correlation*g.doppler,"Resident batch packing coverage differs");}const uint64_t cells=uint64_t(g.doppler)*g.delays;
  require(next==g.channels&&!b.residentStatus[0]&&b.residentStatus[6]==cells*g.channels&&b.residentStatus[7]==cells,"Resident map coverage differs");
@@ -190,15 +195,18 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  for(size_t i=23;i<=26;++i)require(!post[i],"Disabled compaction status nonzero");}
  require(post[28]<=1&&(c.detector.integrationCpis>=2||!post[28]),"Resident postprocess integration readiness differs");
  const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
- require(post[29]==(motion.delay|(motion.doppler<<16u))&&post[30]==c.detector.integrationBeamTolerance&&
+ require(post[29]==track_before_detect::motionEcho(motion)&&post[30]==c.detector.integrationBeamTolerance&&
   post[31]==(c.fusion.mode==FusionMode::noncoherent?0:c.fusion.beams),
   "Resident postprocess spatial integration echo differs");
  if(c.tracker.enabled){const auto& t=b.trackerStatus;
  auto pair=[&](size_t i){return uint64_t(t[i])|(uint64_t(t[i+1])<<32);};
  require(!t[0]&&t[1]<=1&&t[3]==c.tracker.capacity&&t[4]==cells&&pair(8)==p.tracker.transaction&&pair(10)==p.tracker.generation&&pair(12)==p.tracker.consumedSequence&&pair(14)==c.epoch&&pair(16)==p.frame.signalTimestampMs&&pair(52)==p.tracker.generation&&t[19]==post[11],"Resident tracker generation proof differs");
  require(t[54]<=c.tracker.capacity&&t[24]==trackerHeaderWords+trackerRecordWords(c.tracker)*t[54]&&uint64_t(t[33])+t[34]+t[35]+t[36]==t[54]&&t[32]==t[34]+t[35]+t[36]&&!t[58],"Resident tracker prepared snapshot differs");
+ // A tentative track can reach its N-frame deadline on a frame where it also
+ // associates. Removals are therefore bounded by the input population, not
+ // only by the missed subset. The tracker stage enforces the same contract.
  if(t[2]==1){for(size_t i=26;i<=31;++i)require(!t[i],"Resident no-op tracker performed work");
- require(!t[55]&&!t[56]&&!t[57]&&t[54]==t[18],"Resident no-op tracker coverage differs");}else require(t[2]==2&&t[26]==t[18]&&t[27]+t[28]==t[18]&&t[29]<=t[28]&&t[20]==t[18]-t[29]&&t[55]==t[18]&&t[57]==t[19]&&t[56]==(t[19]+127)/128&&t[30]==t[22]&&t[31]==t[23]&&t[23]==t[20]+t[22]&&t[54]==t[23],"Resident tracker executed-work coverage differs");}if(!c.tracker.enabled)preparedReader.zeros(evidence::prepared::trackerPreparedStatus,256);
+ require(!t[55]&&!t[56]&&!t[57]&&t[54]==t[18],"Resident no-op tracker coverage differs");}else require(t[2]==2&&t[26]==t[18]&&t[27]+t[28]==t[18]&&t[29]<=t[18]&&t[20]==t[18]-t[29]&&t[55]==t[18]&&t[57]==t[19]&&t[56]==(t[19]+127)/128&&t[30]==t[22]&&t[31]==t[23]&&t[23]==t[20]+t[22]&&t[54]==t[23],"Resident tracker executed-work coverage differs");}if(!c.tracker.enabled)preparedReader.zeros(evidence::prepared::trackerPreparedStatus,256);
  const uint64_t expectedTimes=135ULL|(c.detector.enabled?(15ULL<<3):0)|(c.tracker.enabled?(63ULL<<8):0);
  require(b.gpuTimeMask==expectedTimes,"Resident stage timing mask differs");
  for(size_t i=0;i<b.gpuMs.size();++i)if(!(expectedTimes&(1ULL<<i)))require(b.gpuMs[i]==0,"Resident disabled stage time is nonzero");

@@ -9,6 +9,7 @@ struct PostprocessConfig {
  bool interpolateDelay=true,interpolateDoppler=true;
  uint32_t integrationCpis=1;
  uint32_t integrationDelayMotionBins=0,integrationDopplerMotionBins=0;
+ double integrationDelayDriftPerHz=0; // Explicit opt-in; zero is exact legacy.
  uint32_t integrationBeamTolerance=UINT32_MAX,beamCount=0;
  uint32_t bearingExclusionBins=0;
  uint32_t bearingMethod=0,bearingReferenceAnchor=0,bearingScanBeams=0,bearingCandidatePeaks=3;
@@ -85,6 +86,9 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
+ track_before_detect::validateDelayDrift(c.integrationDelayDriftPerHz,c.dopplerAxis);
+ if(c.integrationDelayDriftPerHz!=0&&!tbd)
+  throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED fractional delay requires TBD");
  if(tbd&&l.cells>UINT32_MAX/128u)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED TBD workgroup count");
  if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
@@ -151,7 +155,7 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(!finiteD(value.x)||!finiteD(value.y)){reject(201u);return;}
  uint beam=uint(value.y);bool validBeam=m[75]==0u?value.y==0.0LF:
   (value.y>=0.0LF&&value.y<double(m[75])&&double(beam)==value.y);
- if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76]|(m[93]<<16u);m[30]=m[77];m[31]=m[75];}
+ if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76]|(m[93]<<16u)|(readD(94u)!=0.0LF?0x40000000u:0u);m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
  precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
  if(m[78]!=0u){uint historyAt=(m[79]%m[74])*m[34]+i;history[historyAt]=current;
@@ -176,10 +180,28 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
 }
 )glsl";
 const char* tbdBody=R"glsl(
+int fractionalDelayOffset(double scale,uint row,uint olderRow,uint age){
+ if(scale==0.0LF)return 0;
+ precise double meanHz=0.5LF*dopplerAt(row)+0.5LF*dopplerAt(olderRow);
+ precise double rate=scale*meanHz;
+ precise double displacement=rate*double(age);
+ int fixedPoint=int(floor(abs(displacement)*65536.0LF+0.5LF));
+ int nearest=(fixedPoint+32768)/65536;
+ return displacement<0.0LF?-nearest:nearest;
+}
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
 shared double pathBest2[64],pathBest4[64],pathBest8[64];
 void main(){uint lane=gl_LocalInvocationID.x;
+ // Setup-only, on this same device: preserve the original precise FP64/Q16
+ // operations, including ties and subnormal handling, without host rounding.
+ if(p.a==3u){uint at=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*64u;
+  if(at>=p.count/2u)return;
+  uint width=2u*m[93]+1u,age=at%m[74],path=at/m[74],row=path/width;
+  int dr=int(path%width)-int(m[93]),rr=int(row)-dr*int(age);
+  int offset=rr<0||rr>=int(m[32])?0:fractionalDelayOffset(readD(94u),row,uint(rr),age);
+  m[m[35]+at]=uint(offset);return;
+ }
  uint groupCell=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x;
  // The trajectory phase needs one workgroup per cell.  The initialize/select
  // phases need only one invocation per cell; mapping those phases linearly
@@ -204,8 +226,11 @@ void main(){uint lane=gl_LocalInvocationID.x;
   double best2=-1.0LF,best4=-1.0LF,best8=-1.0LF;
   if(path<total){int dr=int(path/delayWidth)-int(m[93]),dc=int(path%delayWidth)-int(m[76]);
    precise double sum=0.0LF;bool compatible=true;
-   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
-    if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
+   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age);
+    if(rr<0||rr>=int(m[32]))break;
+    int offset=m[35]==0u?0:int(m[m[35]+(row*(2u*m[93]+1u)+path/delayWidth)*m[74]+age]);
+    int cc=int(column)-dc*int(age)-offset;
+    if(cc<0||cc>=int(m[33]))break;
     uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
     double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
     if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
@@ -292,7 +317,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;if(p.b!=0u){s[m[39]+i]
  train=train/double(n);uint alphaIndex=p.a==0u?0u:p.a-1u;precise double threshold=readD(at+6u+2u*alphaIndex)*train;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
  if(p.a==0u&&m[74]==2u&&m[28]==0u)return;
- if(cut>threshold){uint previous=atomicOr(s[m[39]+i],1u);if((previous&1u)==0u)atomicAdd(m[6],1u);
+ if(cut>threshold){uint previous=atomicOr(s[m[39]+i],1u|(p.a==0u?(m[74]==2u?8u:0u):(1u<<(p.a+2u))));if((previous&1u)==0u)atomicAdd(m[6],1u);
   uint record=m[42]+6u*i;writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,readS(m[38]+2u*i));}
 }
 )glsl";
@@ -537,10 +562,16 @@ public:
    throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED scratch/staging binding");
   const uint32_t doppler=96,delay=doppler+2*rows,windows=(delay+columns+1)&~1u,windowWords=tbd?14u:8u,
    rowBounds=windows+windowWords*columns,colBounds=rowBounds+2*rows;
-  std::vector<uint32_t> words(colBounds+2*columns,0);
+  const uint32_t offsetWords=tbd?track_before_detect::fractionalDelayTableWords(rows,
+   config.integrationCpis,config.integrationDopplerMotionBins,config.integrationDelayDriftPerHz):0;
+  const uint32_t offsetBase=colBounds+2*columns;
+  if(uint64_t(offsetBase+offsetWords)*4>context.candidate.properties.limits.maxStorageBufferRange)
+   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED metadata storage range");
+  std::vector<uint32_t> words(offsetBase+offsetWords,0);
   words[32]=rows;
   words[33]=columns;
   words[34]=layout_.cells;
+  words[35]=offsetWords?offsetBase:0;
   words[36]=layout_.levels;
   words[37]=layout_.powers;
   words[38]=layout_.snr;
@@ -580,6 +611,7 @@ public:
   words[91]=layout_.metricPartials;
   words[92]=layout_.metricPartialCount;
   words[93]=config.integrationDopplerMotionBins;
+  putD(words.data(),94,config.integrationDelayDriftPerHz);
   std::memcpy(words.data()+90,&config.bearingDiagonalLoading,4);
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
@@ -647,6 +679,22 @@ public:
   std::vector<Buffer*> bindings{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),bankBinding,mapBinding,weightBinding,angleHistory_.get()};
   if(replayStatistics_)bindings.push_back(replayStatistics_.get());
   for(const auto& source:shaderSources(config.replaySnapshot))kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),bindings));
+  if(offsetWords){
+   gpu_reference::CommandOwner command(context);command.allocate();
+   VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+   check(vkBeginCommandBuffer(command.command,&begin),"fractional offsets recording");
+   VkMemoryBarrier upload{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+   upload.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;upload.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+   vkCmdPipelineBarrier(command.command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+    0,1,&upload,0,nullptr,0,nullptr);
+   // Kernel's generic dispatcher counts 128 lanes; TBD uses 64 lanes.
+   kernels_[10]->append(command.command,{offsetWords*2u,3,0,0,0});barrier(command.command);
+   check(vkEndCommandBuffer(command.command),"fractional offsets recording end");
+   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&command.command;
+   check(vkQueueSubmit(context.queue,1,&submit,context.fence),"fractional offsets submit");
+   check(vkWaitForFences(context.device,1,&context.fence,VK_TRUE,UINT64_MAX),"fractional offsets fence");
+   check(vkResetFences(context.device,1,&context.fence),"fractional offsets fence reset");
+  }
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
@@ -655,6 +703,24 @@ public:
  Buffer& angleHistoryBuffer(){return *angleHistory_;}
  Buffer* temporalBanksBuffer(){return tbdBanks_.get();}
  Buffer* replayStatisticsBuffer(){return replayStatistics_.get();}
+ // Called only at a fenced idle boundary. Retain immutable axes, kernels and
+ // plans, but no integration/TBD/angle history may bridge an input gap.
+ void appendInputReset(VkCommandBuffer command){
+  vkCmdFillBuffer(command,metadata_->handle,0,statusWords*4,0);
+  vkCmdFillBuffer(command,metadata_->handle,64*4,4*4,0);
+  vkCmdFillBuffer(command,metadata_->handle,79*4,4,0);
+  // Repeated 0x7ff80000 words form a quiet FP64 NaN: the cold-history sentinel.
+  vkCmdFillBuffer(command,integration_->handle,0,integration_->bytes,0x7ff80000u);
+  for(Buffer* buffer:{currentPower_.get(),angleHistory_.get(),tbdBanks_.get(),replayStatistics_.get()})
+   if(buffer)vkCmdFillBuffer(command,buffer->handle,0,buffer->bytes,0);
+  barrier(command);hostRead(command);
+ }
+ void completeInputReset(){
+  metadata_->invalidate(0,metadata_->bytes);
+  const auto* words=static_cast<const uint32_t*>(metadata_->mapped);
+  if(words[0]||words[79])throw std::runtime_error("Resident temporal history reset not acknowledged");
+  evidenceStatus_={};
+ }
  void append(VkCommandBuffer command){
   const bool tbd=config_.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):0;
@@ -706,7 +772,8 @@ public:
   std::memcpy(s.data(),metadata_->mapped,sizeof(s));
   evidenceStatus_=s;
   if(s[error])throw ClutterRejected("GPU postprocess numeric rejection code="+std::to_string(s[error]));
-  const uint32_t motionEcho=config_.integrationDelayMotionBins|(config_.integrationDopplerMotionBins<<16u);
+  const uint32_t motionEcho=track_before_detect::motionEcho({config_.integrationDelayMotionBins,
+    config_.integrationDopplerMotionBins,config_.integrationDelayDriftPerHz!=0});
   if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=motionEcho||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
@@ -812,12 +879,14 @@ public:
   <<" device_cfar_diagnostic_records="<<s[cfarDiagnosticRecords]<<" device_centroid_diagnostic_records="<<s[centroidDiagnosticRecords]
   <<" device_compact_tile_counts="<<s[compactTileCounts]<<" device_compact_prefix_tiles="<<s[compactPrefixTiles]
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
-  <<" integration_cpis="<<s[27]<<" delay_motion_bins="<<(s[29]&0xffffu)<<" doppler_motion_bins="<<(s[29]>>16u)<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
+  <<" integration_cpis="<<s[27]<<" delay_motion_bins="<<(s[29]&0xffffu)<<" doppler_motion_bins="<<((s[29]>>16u)&31u)<<" fractional_delay="<<bool(s[29]&track_before_detect::fractionalDelayFlag)<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
   <<" track_before_detect="<<(config_.integrationCpis>2)<<" tbd_banks="<<(config_.integrationCpis>2?track_before_detect::bankCount(config_.integrationCpis):0)
   <<" joint_angle_tbd="<<(config_.integrationCpis>2&&config_.integrationBeamTolerance!=UINT32_MAX)
   <<" bearing_manifold="<<(config_.bearingManifoldResponses.empty()?"ideal":"measured")
   <<" bearing_exclusion_bins="<<config_.bearingExclusionBins
-  <<" coherent_refined_candidates="<<s[refinedCandidates]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
+  <<" coherent_refined_candidates="<<s[refinedCandidates]<<" scratch_bytes="<<layout_.bytes
+  <<" fractional_offset_table_bytes="<<(config_.integrationCpis>2?uint64_t(track_before_detect::fractionalDelayTableWords(rows_,config_.integrationCpis,config_.integrationDopplerMotionBins,config_.integrationDelayDriftPerHz))*4:0)
+  <<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);
   context_.diagnostics.stream()<<" cpu_map_calls=0 cpu_cfar_calls=0 cpu_centroid_calls=0 cpu_interpolation_calls=0 cpu_conversion_calls=0\n";
  }

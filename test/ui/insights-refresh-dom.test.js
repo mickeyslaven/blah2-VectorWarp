@@ -14,7 +14,7 @@ let failRequests = false;
 let now = 10000;
 const config = {process: {data: {cpi: 1}, detection: {enable: true}}};
 const context = vm.createContext({
-  window: dom.window, document: dom.window.document, URL, console,
+  window: dom.window, document: dom.window.document, URL, URLSearchParams, console,
   Date: class extends Date { static now() { return now; } },
   Plotly: {react: async () => {}},
   sessionStorage: {getItem: () => null, setItem: () => {}},
@@ -32,8 +32,16 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
   {filename: 'insights.js'});
 
 (async () => {
+  failRequests = true;
   await refresh();
   const root = dom.window.document.getElementById('view-root');
+  assert.match(root.textContent, /cannot reach its live data/);
+  assert.equal(root.getAttribute('aria-busy'), 'false',
+    'Initial-load failure releases the busy state so its error is accessible');
+  assert.equal(root.dataset.loading, 'false');
+  failRequests = false;
+  now += 2000;
+  await refresh();
   const table = root.querySelector('.data-table-wrap');
   assert.ok(table, 'initial detection table rendered');
   table.focus();

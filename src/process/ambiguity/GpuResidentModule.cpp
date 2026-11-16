@@ -1,4 +1,4 @@
-// Adjacent resident ABI12 module. Older cohorts are separate targets.
+// Adjacent resident ABI15 module. Older cohorts are separate targets.
 #include "GpuResidentWire.h"
 #include "GpuResidentHash.h"
 #include "GpuResidentEvidenceLayout.h"
@@ -31,6 +31,8 @@ static resident::Hash moduleImageHash(){
 static ResidentFrameConfig privateConfig(const resident::Config& c){
  ResidentFrameConfig v;
  v.geometry=c.geometry;
+ v.inputChannels=c.inputChannels;
+ v.surveillanceChannels=c.surveillanceChannels;
  v.correlation=c.correlation;
  v.sampleRate=c.sampleRate;
  v.middle=c.middle;
@@ -41,7 +43,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
   c.fusion.manifoldResponses,c.fusion.directResponse};
  v.stages=c.stages();
  const auto& r=c.reference;
- v.reference={ReferenceMode::capturedArray,r.channels,r.analysisSamples,r.analysisInterval,r.powerIterations,r.covarianceSmoothing,r.diagonalLoading,r.bandwidthHz,r.centreHz,c.epoch};
+ v.reference={ReferenceMode(uint32_t(r.mode)),r.channels,r.analysisSamples,r.analysisInterval,r.powerIterations,r.covarianceSmoothing,r.diagonalLoading,r.bandwidthHz,r.centreHz,c.epoch};
  const auto& d=c.detector;
  auto& p=v.postprocess;
  p.enabled=true;
@@ -61,6 +63,8 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
  p.integrationDelayMotionBins=motion.delay;
  p.integrationDopplerMotionBins=motion.doppler;
+ if(motion.fractionalDelay)p.integrationDelayDriftPerHz=
+  track_before_detect::delayDriftPerHz(c.geometry.clutterSamples,c.fusion.frequencyHz);
  p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
  if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);
@@ -83,7 +87,9 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
   t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
   t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.minInitiationSnrDb,t.stationaryClutter,
   t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,
-  t.trackGuidedShadow,t.trackGuidedPromote,t.trackGuidedShadowMaxTracks,c.epoch};
+  t.trackGuidedShadow,t.trackGuidedPromote,t.trackGuidedSustain,
+  t.normalizedInnovationGate,t.trackGuidedShadowMaxTracks,c.epoch,
+  bool(c.presence&resident::bit(resident::Section::causalTrace))};
  return v;
 }
 class ResidentModule final:public resident::Backend {
@@ -243,8 +249,8 @@ class ResidentModule final:public resident::Backend {
  w.u64(re::ready::times,15);
  times(w,re::ready::times+16,stage.evidenceTimes(),0,3);
  w.f64(re::ready::times+40,pipeline_->work_->timestamps->observed(0));
- const auto shape=gpu_reference::validate(private_.reference,config_.geometry.clutterSamples,config_.geometry.channels,config_.sampleRate);
- const uint32_t v[]={config_.geometry.clutterSamples,config_.geometry.channels,uint32_t(config_.reference.channels.size()),1,config_.reference.analysisSamples,config_.reference.analysisInterval,config_.reference.powerIterations,shape.bins,shape.decimation,shape.folded?1u:0u,shape.transform,shape.stride,shape.observations,shape.chunks,config_.correlation,config_.geometry.doppler};
+ const auto shape=gpu_reference::validate(private_.reference,config_.geometry.clutterSamples,config_.inputChannels,config_.sampleRate);
+ const uint32_t v[]={config_.geometry.clutterSamples,config_.inputChannels,uint32_t(config_.reference.channels.size()),uint32_t(config_.reference.mode),config_.reference.analysisSamples,config_.reference.analysisInterval,config_.reference.powerIterations,shape.bins,shape.decimation,shape.folded?1u:0u,shape.transform,shape.stride,shape.observations,shape.chunks,config_.correlation,config_.geometry.doppler};
  for(size_t i=0;i<16;++i)w.u32(re::ready::shape+4*i,v[i]);}
  void hostEvidence(Bytes bytes){rw::Writer w{bytes};
  pipeline_->hostTiming_.exportData([&](uint64_t generation,uint64_t begin,uint64_t end,const auto& entries,uint32_t n,const auto& submissions,uint32_t ns,const auto& contexts,uint32_t nc,bool configured){
@@ -330,6 +336,7 @@ class ResidentModule final:public resident::Backend {
   w.u32(468,committedSlot_);
   w.u32(472,phase==resident::Phase::committed?config_.stages():0);
   w.u32(476,capture);
+  if(p.op==resident::Op::resetInput)w.u32(480,3u|(config_.tracker.enabled?4u:0u));
  }
 public:
  ResidentModule(std::shared_ptr<Instance> instance,Candidate device,const resident::Config& c,const resident::Mapping& m):config_(c),map_(m),private_(privateConfig(c)),imageHash_(moduleImageHash()),configHash_(rw::configHash(c)),pipeline_(std::make_unique<ResidentFramePipeline>(std::move(instance),std::move(device),private_)){pipeline_->context_.releaseEvidence=&exit_;
@@ -395,6 +402,9 @@ public:
   out.trackerTimestamp=p.frame.signalTimestampMs;
   out.consumedInputSequence=p.frame.consumedSequence;}
   if(!pipeline_->finishResidentRadar(out)){return false;}
+  if(config_.presence&resident::bit(Section::causalTrace)){
+   pipeline_->tracker_->copyCausalTrace(pointer<uint32_t>(Section::causalTrace),count<uint32_t>(Section::causalTrace));
+  }
    token_={trackerResult_.token.epoch,trackerResult_.token.transaction,trackerResult_.token.generation,trackerResult_.token.consumedSequence};
    rw::Writer w{map_.bytes(Section::metrics)};
    w.zero();
@@ -474,14 +484,28 @@ public:
   ++snapshotCount_;snapshotGeneration_=pipeline_->generation_;
   control(p,resident::Phase::settled);
  }
+ void resetInput(const Packet& p)override{rw::require(!ready_&&!prepared_,"Resident module input reset while pending");
+  pipeline_->resetInput();
+  reference_=pipeline_->exportReferenceCheckpoint();
+  rw::require(!reference_.frames&&!reference_.updates&&!reference_.covarianceValid,
+   "Resident reference input reset not acknowledged");
+  referenceCheckpoint(p);metrics_={};trackerResult_={};token_={};committed_=false;
+  committedSlot_=0;preparedSlot_=1;outputPresence_=resident::outputPresence(config_.presence,0);
+  if(config_.tracker.enabled){pipeline_->copyTrackerCommitted({pointer<uint32_t>(Section::tracker0),count<uint32_t>(Section::tracker0),
+   config_.tracker.trackGuidedShadow?pointer<uint32_t>(Section::guidedRecoveries):nullptr,
+   config_.tracker.trackGuidedShadow?count<uint32_t>(Section::guidedRecoveries):0,&trackerResult_});
+   rw::require(trackerResult_.checkpointWords==resident::trackerHeaderWords&&
+    !rw::Reader{map_.read(Section::tracker0)}.u64(16),"Resident tracker input reset not acknowledged");}
+  control(p,resident::Phase::idle,64|(config_.tracker.enabled?2:0),config_.tracker.enabled?1:0);
+ }
  void restore(const Packet& p)override{rw::require(!ready_&&!prepared_,"Resident module restore while pending");
  rw::Reader r{map_.read(Section::referenceCheckpoint)};
- rw::require(r.u32(0)==1&&r.u32(4)==256&&r.u64(8)==config_.epoch&&r.u64(24)==config_.geometry.clutterSamples&&r.u64(32)==config_.geometry.channels&&r.u64(56)<=8,"Resident reference checkpoint envelope mismatch");
+ rw::require(r.u32(0)==1&&r.u32(4)==256&&r.u64(8)==config_.epoch&&r.u64(24)==config_.geometry.clutterSamples&&r.u64(32)==config_.inputChannels&&r.u64(56)<=8,"Resident reference checkpoint envelope mismatch");
  r.zeros(216,40);
  ReferenceCheckpoint cp;
  cp.config=private_.reference;
  cp.samples=config_.geometry.clutterSamples;
- cp.channels=config_.geometry.channels;
+ cp.channels=config_.inputChannels;
  cp.sampleRate=config_.sampleRate;
  cp.frames=r.u64(40);
  cp.updates=r.u64(48);
@@ -510,7 +534,7 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI12 mismatch");}
+ if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI15 mismatch");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

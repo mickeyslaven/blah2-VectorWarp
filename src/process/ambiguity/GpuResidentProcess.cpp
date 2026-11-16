@@ -122,7 +122,9 @@ class Process final:public Session {
  OutputViews outputs(const Packet& p){validateEvidence(config_,p,map_.read(Section::readyEvidence),map_.read(Section::preparedEvidence),map_.read(Section::device));
  auto v=views(map_,config_,p);
  const auto cp=referenceState(v.referenceCheckpoint);
- require(cp.epoch==config_.epoch&&cp.logicalFrame==p.frame.logicalId&&cp.samples==config_.geometry.clutterSamples&&cp.channels==config_.geometry.channels&&cp.weightCount==config_.reference.channels.size(),"Resident acknowledged reference state differs");
+ const bool array=config_.reference.mode==ReferenceMode::capturedArray;
+ require(cp.epoch==config_.epoch&&cp.logicalFrame==p.frame.logicalId&&cp.samples==config_.geometry.clutterSamples&&cp.channels==config_.inputChannels&&cp.weightCount==(array?config_.reference.channels.size():0),"Resident acknowledged reference state differs");
+ require(array||(!cp.frames&&!cp.updates&&cp.coherentFraction==0&&cp.coherentGainDb==0&&cp.scale==0),"Resident dedicated reference state is not inert");
  for(size_t i=cp.weightCount;i<cp.weights.size();++i)require(cp.weights[i]==std::complex<double>{},"Resident unused reference weight nonzero");
  if(p.phase==Phase::prepared){const auto proof=preparedProof(v.preparedEvidence);
  require(v.cfarCount==proof.postprocessStatus[6]&&v.centroidCount==proof.postprocessStatus[8]&&v.detectionCount==proof.postprocessStatus[11],"Resident metrics/device counts differ");
@@ -205,6 +207,15 @@ public:
   independent(reference.data,reference.size,1);
   independent(tracker.data,tracker.size,4);
   guarded([&]{auto r=map_.bytes(Section::referenceCheckpoint);std::memcpy(r.data,reference.data,256);auto p=request(Op::restore);p.frame={};p.tracker={};p.restoreTrackerSlot=0;p.diagnosticPresence=0;if(config_.tracker.enabled){const size_t recordWords=trackerRecordWords(config_.tracker);auto b=map_.bytes(Section::tracker0);require(tracker.data&&tracker.size>=trackerHeaderWords&&tracker.size<=b.size/4&&(tracker.size-trackerHeaderWords)%recordWords==0,"Resident restore checkpoint shape");wire::Reader bank{{reinterpret_cast<const uint8_t*>(tracker.data),tracker.size*4}};require(bank.u64(16)<=config_.tracker.capacity&&tracker.size==trackerHeaderWords+recordWords*bank.u64(16),"Resident restore checkpoint count differs");std::memset(b.data,0,b.size);std::memcpy(b.data,tracker.data,tracker.size*4);p.tracker.generation=bank.u64(48);}else require(!tracker.data&&!tracker.size,"Disabled tracker restore input");deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);transport::sendPacket(child_->fd(),p);response(p,Op::restored,Phase::idle);phase_=Phase::idle;haveFrame_=false;lastLogical_=lastConsumed_=0;token_={};});}
+ void resetInput()override{inactive();
+  guarded([&]{auto p=request(Op::resetInput);p.frame={};p.tracker={};p.diagnosticPresence=0;
+   deadline_=Clock::now()+std::chrono::milliseconds(options_.frameMs);
+   transport::sendPacket(child_->fd(),p);const auto reply=response(p,Op::inputReset,Phase::idle);
+   require(wire::same(reply.tracker,{}),"Resident input reset returned a stale token");
+   phase_=Phase::idle;active_={};token_={};rawIqHash_={};
+   // Keep haveFrame_/last IDs and snapshot bounds: a gap cannot replay a token.
+  });
+ }
  void stop()noexcept override{phase_=Phase::poisoned;
  if(child_)child_->stop();
  child_.reset();
@@ -228,7 +239,7 @@ int runWorker(Factory create){
   // size and fixed setup prefix have been checked. The complete table is then
   // compared with the locally derived layout, including all unused bytes.
   struct stat info{};
-  require(fstat(4,&info)==0&&info.st_size>=1280+configBytes&&uint64_t(info.st_size)<=sharedLimit,"Resident shared descriptor size invalid");
+  require(fstat(4,&info)==0&&info.st_size>=1280+configBytes&&uint64_t(info.st_size)<=replaySharedLimit,"Resident shared descriptor size invalid");
 #ifndef __APPLE__
   const int seals=fcntl(4,F_GET_SEALS);
   require(seals>=0&&(seals&(F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL))==(F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL),"Resident memory descriptor is not size sealed");
@@ -292,6 +303,13 @@ int runWorker(Factory create){
    completed=false;
    lastLogical=lastConsumed=0;
    reply(p,Op::restored,Phase::idle);
+   continue;}
+   if(p.op==Op::resetInput){require(phase==Phase::idle||phase==Phase::settled,"Resident input reset while frame owned");
+   require(!p.frame.logicalId&&!p.frame.consumedSequence&&!p.frame.signalTimestampMs&&wire::same(p.tracker,{})&&!p.diagnosticPresence,"Resident input reset contains frame token");
+   backend->resetInput(p);
+   frame={};token={};frameDiagnostics=0;
+   // Preserve completed/last IDs across a capture gap, unlike checkpoint restore.
+   reply(p,Op::inputReset,Phase::idle);
    continue;}
    if(p.op==Op::begin){require((phase==Phase::idle||phase==Phase::settled)&&p.frame.logicalId&&(!completed||(p.frame.logicalId>lastLogical&&p.frame.consumedSequence>lastConsumed))&&wire::same(p.tracker,{}),"Resident Begin frame/state invalid");
    frame=p.frame;

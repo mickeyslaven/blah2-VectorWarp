@@ -18,7 +18,8 @@ void rest() { std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
 void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
     const std::vector<IqData*>& buffers,uint32_t frameSamples,bool loop,
     const std::atomic<bool>& stopped,const Progress& publish,
-    const std::function<bool()>& consumerBusy,const Control& control) {
+    const std::function<bool()>& consumerBusy,const Control& control,
+    bool awaitControlsAtEof) {
   if(!frameSamples || buffers.size()!=options.channels) throw std::invalid_argument("Invalid playback channel/frame configuration");
   for(auto* buffer:buffers) if(!buffer || buffer->get_n()<frameSamples)
     throw std::invalid_argument("Playback buffer must hold at least one radar frame");
@@ -27,21 +28,32 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
   progress.total=reader.metadata().samples; progress.sampleRate=reader.metadata().sampleRate;
   progress.provenance=reader.provenance(); publish(progress);
   if(progress.total<frameSamples) throw std::runtime_error("Recording is shorter than one processing frame; reduce the frame interval");
+  // Consumed revisions belong to the player, not one pass through the file.
+  // Otherwise a seek would be reapplied after every automatic rewind.
+  uint64_t controlRevision=0;
+  auto start=Clock::now(); IqBlock block;
+  progress.controlsAvailable=true;
+  progress.state="playing"; publish(progress);
+  const auto applyCommand = [&](const ReplayCommand& command) {
+    controlRevision=command.revision;
+    reader.seek(std::min(command.seekSample,progress.total));
+    { Locks locks(buffers); for(auto* buffer:buffers)buffer->clear(); }
+    // Let the already claimed old-generation CPI finish before publishing the
+    // new epoch. Queues are empty, so no new old-generation CPI can start.
+    while(consumerBusy() && !stopped.load()) rest();
+    progress.samples=std::min(command.seekSample,progress.total);
+    progress.trailingSamples=0;
+    ++progress.generation; progress.state=command.paused?"paused":"playing";publish(progress);
+    start=Clock::now()-std::chrono::duration_cast<Clock::duration>(
+      std::chrono::duration<double>(double(progress.samples)/progress.sampleRate));
+  };
   do {
-    progress.state="playing"; progress.samples=0; progress.trailingSamples=0; publish(progress);
-    auto start=Clock::now(); IqBlock block; uint64_t controlRevision=0;
     while(!stopped.load() && reader.read(block)) {
       size_t offset=0;
       while(offset<block.front().size() && !stopped.load()) {
         auto command=control();
         if(command.revision!=controlRevision) {
-          controlRevision=command.revision;
-          reader.seek(std::min(command.seekSample,progress.total));
-          { Locks locks(buffers); for(auto* buffer:buffers)buffer->clear(); }
-          progress.samples=std::min(command.seekSample,progress.total);
-          ++progress.generation; progress.state=command.paused?"paused":"playing";publish(progress);
-          start=Clock::now()-std::chrono::duration_cast<Clock::duration>(
-            std::chrono::duration<double>(double(progress.samples)/progress.sampleRate));
+          applyCommand(command);
           block.clear(); break;
         }
         if(command.paused) {
@@ -85,9 +97,25 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
       if(!drained) rest();
     }
     if(stopped.load()) break;
-    if(!loop) { progress.state="complete"; publish(progress); return; }
-    ++progress.loops; ++progress.generation; reader.rewind();
+    if(!loop) {
+      // Production remains an idle, cancellable player at EOF, so accepted
+      // seek/restart commands always have a consumer. Standalone bounded
+      // callers may return, and explicitly advertise unavailable controls.
+      progress.controlsAvailable=awaitControlsAtEof;
+      progress.state="complete"; publish(progress);
+      if(!awaitControlsAtEof) return;
+      while(!stopped.load()) {
+        const auto command=control();
+        if(command.revision!=controlRevision) { applyCommand(command); break; }
+        rest();
+      }
+    } else {
+      ++progress.loops; ++progress.generation; reader.rewind();
+      progress.samples=0; progress.trailingSamples=0;
+      progress.state="playing"; start=Clock::now(); publish(progress);
+    }
   } while(!stopped.load());
+  progress.controlsAvailable=false;
   progress.state="stopped"; publish(progress);
 }
 }

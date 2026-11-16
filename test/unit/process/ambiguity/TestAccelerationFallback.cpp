@@ -1,11 +1,10 @@
 #include "process/ambiguity/Acceleration.h"
-#include <chrono>
+#include "process/analysis/StartupIq.h"
 #include <cmath>
 #include <memory>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
-#include <thread>
 #include <vector>
 #include <algorithm>
 
@@ -26,7 +25,6 @@ struct Backend : blah2::GpuBackend {
     ++state->calls;
     if (state->fault == "throw" || (state->fault == "later" && state->calls > 3))
       throw std::runtime_error("GPU device lost; using CPU");
-    if (state->fault == "slow") std::this_thread::sleep_for(std::chrono::milliseconds(5));
     output = state->output;
     if (state->fault == "wrong") for (auto& item : output) item *= 2;
     if (state->fault == "nan") output[0] = {std::numeric_limits<float>::quiet_NaN(), 0};
@@ -163,9 +161,75 @@ void testPackedFrames() {
   }
   std::cout << "PASS packed shared frames: channels=1/4/8, positive/zero/negative offset\n";
 }
+void testStartupPreparation() {
+  constexpr unsigned samples = 4800;
+  Ambiguity cpu(-5, 20, -100, 100, 48000, samples, true);
+  IqData reference(samples), input(samples);
+  const unsigned doppler = cpu.get_n_doppler_bins(), delays = cpu.get_n_delay_bins();
+  for (bool borrowed : {false, true})
+  for (const std::string fault : {"", "wrong", "throw"}) {
+    auto state = std::make_shared<State>(); state->fault = fault;
+    const auto factory = [state](const blah2::GpuGeometry&, const std::string&)
+        -> std::unique_ptr<blah2::GpuBackend> { return std::make_unique<Backend>(state); };
+    blah2::Acceleration acceleration("gpu", {cpu.get_nfft(), doppler, delays, 1, -5},
+      cpu.get_n_corr(), 48000, 0, "auto", factory);
+    unsigned calls = 0;
+    bool producerStarted = false;
+    const auto process = [&] {
+      const auto cpuRun = [&] { ++calls; cpu.process(reference.view_data(), &input); };
+      if (borrowed) {
+        const std::vector<Complex> ref(reference.view_data().begin(), reference.view_data().end());
+        const std::vector<Complex> surv(input.view_data().begin(), input.view_data().end());
+        acceleration.processBorrowed(ref.data(), {surv.data()}, samples, 0, {&cpu}, cpuRun);
+      } else {
+        acceleration.process(reference.view_data(), {&input}, {&cpu}, cpuRun);
+      }
+    };
+    acceleration.prepareStartup([&](unsigned frame) {
+      check(!producerStarted, "Producer admitted during startup qualification");
+      blah2::startup::fillIq({&reference, &input}, samples, frame);
+      const auto raw = input.get_data();
+      cpu.process(reference.view_data(), &input);
+      state->output.resize(size_t(doppler) * delays);
+      for (unsigned d = 0; d < doppler; ++d) for (unsigned r = 0; r < delays; ++r)
+        state->output[r * doppler + (d + doppler / 2 + 1) % doppler] =
+          cpu.result()->data[d][r];
+      input.replace(std::deque<Complex>(raw));
+      process();
+    });
+    check(!acceleration.startupPending(), "Startup returned while qualification pending");
+    check(calls == (fault.empty() ? 3u : 1u), "Startup bypassed CPU numerical checks");
+    check(acceleration.status().active == (fault.empty() ? "vulkan" : "cpu"),
+      "Startup numerical failure did not preserve CPU fallback");
+    acceleration.prepareStartup([&](unsigned) {
+      throw std::runtime_error("Completed startup qualification was repeated");
+    });
+    producerStarted = true;
+    if (fault.empty()) {
+      blah2::startup::fillIq({&reference, &input}, samples, 2);
+      process();
+      check(calls == 3, "First admitted frame repeated startup CPU qualification");
+    }
+  }
+  auto state = std::make_shared<State>();
+  blah2::Acceleration stuck("gpu", {cpu.get_nfft(), doppler, delays, 1, -5},
+    cpu.get_n_corr(), 48000, 0, "auto",
+    [state](const blah2::GpuGeometry&, const std::string&) {
+      return std::make_unique<Backend>(state);
+    });
+  unsigned attempts = 0;
+  bool rejected = false;
+  try { stuck.prepareStartup([&](unsigned) { ++attempts; }); }
+  catch (const std::runtime_error&) { rejected = true; }
+  check(rejected && attempts == blah2::Acceleration::TotalQualificationFrames &&
+    stuck.startupPending(), "Stalled startup did not fail closed at its bound");
+  std::cout << "PASS pre-capture qualification, fallback, steady admission and bound\n";
+}
+
 int main(int argc, char**) {
   try {
     testPackedFrames();
+    testStartupPreparation();
     for (const std::string mode : {"cpu", "auto", "gpu"}) {
       bool rejected = false;
       try {
@@ -175,7 +239,7 @@ int main(int argc, char**) {
       }
       check(rejected, "Acceleration accepted a signed delay outside its correlation block");
     }
-    for (const std::string fault : {"throw", "wrong", "nan", "shape", "later", "slow", "init", "cpu", "missing"}) {
+    for (const std::string fault : {"throw", "wrong", "nan", "shape", "later", "init", "cpu", "missing"}) {
       if (fault == "missing" && argc == 1) continue; // Explicit no-driver run only.
       constexpr unsigned samples = 4800;
       Ambiguity cpu(-5, 20, -100, 100, 48000, samples, true);
@@ -198,9 +262,11 @@ int main(int argc, char**) {
         if (state->fault == "cpu") throw std::runtime_error("CPU mode called GPU factory");
         return std::make_unique<Backend>(state);
       };
-      const std::string mode = fault == "cpu" ? "cpu" : fault == "slow" ? "auto" : "gpu";
+      const std::string mode = fault == "cpu" ? "cpu" : "gpu";
       blah2::Acceleration acceleration(mode, {cpu.get_nfft(), doppler, delays, 1, -5},
         cpu.get_n_corr(), 48000, 0, "auto", fault == "missing" ? blah2::Acceleration::BackendFactory{} : factory);
+      if (fault != "init" && fault != "cpu" && fault != "missing")
+        check(acceleration.status().device == "test", "Portable telemetry lost exact device ID");
       unsigned calls = 0;
       for (unsigned frame = 0; frame < 5; ++frame) {
         input.replace(std::deque<Complex>(raw));
@@ -212,7 +278,7 @@ int main(int argc, char**) {
       check(acceleration.status().active == "cpu", "Fault was not recovered on CPU");
       check(fault == "cpu" || acceleration.status().state == "fallback", "Fallback reason is absent");
       if (fault != "init" && fault != "cpu" && fault != "missing")
-        check(state->calls <= (fault == "later" ? 4u : fault == "slow" ? 3u : 1u), "Failed GPU was retried");
+        check(state->calls <= (fault == "later" ? 4u : 1u), "Failed GPU was retried");
       std::cout << "PASS fallback=" << fault << '\n';
     }
     bool rejected = false;
@@ -220,9 +286,8 @@ int main(int argc, char**) {
     catch (const std::invalid_argument&) { rejected = true; }
     check(rejected, "Unknown acceleration setting accepted");
 
-    // Deterministic clock: qualification sees GPU=1 ms, CPU=10 ms. Five fast
-    // frames pass their window; the following five slow frames make AUTO
-    // select CPU only for future frames without rerunning one.
+    // Deterministic clock: correct GPU=20 ms, CPU=1 ms at startup. AUTO must
+    // retain the qualified GPU, preserving both timing measurements as facts.
     constexpr unsigned samples = 4800;
     Ambiguity cpu(-5, 20, -100, 100, 48000, samples, true);
     IqData input(samples);
@@ -242,9 +307,11 @@ int main(int argc, char**) {
     for (unsigned d = 0; d < doppler; ++d)
       for (unsigned r = 0; r < delays; ++r)
         state->output[r * doppler + (d + doppler / 2 + 1) % doppler] = expected[d][r];
-    std::vector<double> ticks{0,1,2,12, 100,101,102,112, 200,201,202,212,
-      300,301,305, 400,401,405, 500,501,505, 600,601,605, 700,701,705,
-      800,801,820, 900,901,920, 1000,1001,1020, 1100,1101,1120, 1200,1201,1220};
+    std::vector<double> ticks{0,20,21,22, 100,120,121,122, 200,220,221,222};
+    for (unsigned frame = 0; frame < 10; ++frame) {
+      ticks.push_back(300 + frame * 100);
+      ticks.push_back(320 + frame * 100);
+    }
     size_t tick = 0;
     auto clock = [&] { return ticks.at(tick++); };
     auto factory = [state](const blah2::GpuGeometry&, const std::string&)
@@ -258,14 +325,17 @@ int main(int argc, char**) {
       input.replace(std::deque<Complex>(raw));
       sustained.process(reference, {&input}, {&cpu}, [&] { ++cpuCalls; cpu.process(reference, &input); });
       check(cpu.result()->data == (frame < 3 ? expected : gpuExpected),
-        "Sustained GPU guard changed the valid result");
+        "Accepted GPU path changed the valid result");
       check(input.get_length() == samples - cpu.get_n_corr() * doppler,
-        "Sustained GPU guard consumed input twice");
+        "Accepted GPU path consumed input twice");
     }
-    check(cpuCalls == 3 && state->calls == 13, "Sustained GPU guard reran an accepted frame");
-    check(sustained.status().active == "cpu" && sustained.status().state == "fallback" &&
-      sustained.status().reason == "CPU was faster than sustained GPU processing",
-      "Sustained GPU guard did not choose CPU for future frames");
+    check(cpuCalls == 3 && state->calls == 13, "Accepted GPU path reran a frame on CPU");
+    check(sustained.status().active == "vulkan" && sustained.status().state == "ready" &&
+      sustained.status().reason.empty(),
+      "Whole-call latency overrode the like-for-like startup qualification");
+    check(tick == ticks.size(), "Accepted GPU timing fixture was not fully consumed");
+    check(sustained.status().gpuMs > sustained.status().cpuMs,
+      "Slower-but-correct GPU timing evidence was not preserved");
 
     // Several successful windows stay bounded and do not create a cumulative
     // speed decision after the qualifying CPU measurements.
@@ -319,12 +389,50 @@ int main(int argc, char**) {
       "Forced GPU was changed by the sustained AUTO guard");
 
     // An ambiguity-only numerical rejection must not discard a healthy clutter
-    // accelerator in the same worker. Each stage owns its performance/correctness
+    // accelerator in the same worker. Each stage owns its correctness
     // fallback; only a worker exception disables both.
     Ambiguity independentCpu(-5,20,-100,100,48000,samples,true);
     const blah2::GpuGeometry combinedGeometry{independentCpu.get_nfft(),
       independentCpu.get_n_doppler_bins(),independentCpu.get_n_delay_bins(),1,-5,
       samples,1,0};
+
+    // Full clutter/FIR + composed ambiguity qualification remains selected
+    // even when the deterministic GPU measurement exceeds the CPU oracle.
+    auto hybridState=std::make_shared<State>();
+    hybridState->output=state->output;
+    auto hybridFactory=[hybridState](const blah2::GpuGeometry& geometry,const std::string&)
+      ->std::unique_ptr<blah2::GpuBackend>{return std::make_unique<CombinedBackend>(geometry,hybridState);};
+    constexpr unsigned hybridSteadyFrames=12;
+    double hybridTick=0;
+    auto hybridClock=[&]{return ++hybridTick;};
+    blah2::Acceleration hybrid("auto",combinedGeometry,independentCpu.get_n_corr(),
+      48000,0,"auto",hybridFactory,hybridClock);
+    IqData hybridReference(samples),hybridInput(samples);
+    unsigned hybridClutterCpu=0,hybridAmbiguityCpu=0;
+    const auto runHybrid=[&]{
+      hybridReference.replace(std::deque<Complex>(reference));
+      hybridInput.replace(std::deque<Complex>(raw));
+      check(hybrid.processClutter(hybridReference,{&hybridInput},[&]{
+        ++hybridClutterCpu; return true;
+      }),"Hybrid clutter frame failed");
+      hybrid.process(reference,{&hybridInput},{&independentCpu},[&]{
+        ++hybridAmbiguityCpu; independentCpu.process(reference,&hybridInput);
+      });
+    };
+    constexpr unsigned hybridQualification=blah2::Acceleration::TotalQualificationFrames;
+    for(unsigned frame=0;frame<hybridQualification;++frame) runHybrid();
+    check(hybrid.clutterStatus().active=="vulkan" &&
+      hybrid.clutterStatus().state=="ready" &&
+      hybrid.clutterStatus().gpuMs>hybrid.clutterStatus().cpuMs &&
+      hybrid.status().active=="vulkan" && hybrid.status().state=="ready",
+      "AUTO rejected slower-but-correct GPU clutter or ambiguity");
+    for(unsigned frame=0;frame<hybridSteadyFrames;++frame) runHybrid();
+    check(hybridClutterCpu==hybridQualification && hybridAmbiguityCpu==hybridQualification &&
+      hybridState->calls==hybridQualification+hybridSteadyFrames &&
+      hybridState->clutterCalls==hybridQualification+hybridSteadyFrames &&
+      hybrid.status().active=="vulkan" && hybrid.clutterStatus().active=="vulkan",
+      "Slow qualified GPU stages reran steady work on CPU");
+
     auto combinedState=std::make_shared<State>();
     combinedState->output=state->output; combinedState->fault="wrong";
     auto combinedFactory=[combinedState](const blah2::GpuGeometry& geometry,const std::string&)
@@ -401,7 +509,7 @@ int main(int argc, char**) {
           check(independentInput.get_length()==samples-independentCpu.get_n_corr()*doppler,
             "Combined lifetime frame consumed input twice");
         };
-        for(unsigned frame=0;frame<blah2::Acceleration::TotalQualificationFrames;++frame){
+        accepted.prepareStartup([&](unsigned frame){
           if(fault=="wrong" && frame==blah2::Acceleration::ClutterQualificationFrames)
             acceptedState->fault=fault;
           runFrame();
@@ -409,8 +517,8 @@ int main(int argc, char**) {
             "A startup frame skipped its independent CPU qualification");
           check(independentCpu.result()->data==expected,
             "CPU did not own the startup qualification result");
-          if(fault=="wrong" && frame==blah2::Acceleration::ClutterQualificationFrames) break;
-        }
+        });
+        check(!accepted.startupPending(), "Combined startup returned before all checks settled");
         if(fault=="wrong"){
           check(accepted.clutterStatus().state=="fallback" &&
             accepted.clutterStatus().reason==
@@ -439,6 +547,12 @@ int main(int argc, char**) {
           runFrame();
           check(accepted.clutterStatus().state=="fallback",
             "Post-qualification GPU fault was not recovered");
+          check(accepted.clutterStatus().gpuExecutionBackend ==
+              (accepted.clutterTiming().gpuExecuted ? "vulkan" : ""),
+            "Clutter CPU retry lost completed GPU identity");
+          check(accepted.status().gpuExecutionBackend ==
+              (accepted.ambiguityGpuExecuted() ? "vulkan" : ""),
+            "Ambiguity CPU retry lost completed GPU identity");
           const bool clutterFault=fault.find("clutter-")==0;
           check(acceptedClutterCpu==blah2::Acceleration::TotalQualificationFrames+(clutterFault?1:0),
             "Post-qualification clutter CPU fallback call count changed");
@@ -449,6 +563,11 @@ int main(int argc, char**) {
             "Post-qualification fault did not preserve the recovered map");
           const unsigned gpuCalls=acceptedState->calls, clutterCalls=acceptedState->clutterCalls;
           runFrame();
+          check(accepted.clutterStatus().gpuExecutionBackend.empty(),
+            "CPU-only next frame retained stale clutter GPU execution identity");
+          check(accepted.status().gpuExecutionBackend ==
+              (accepted.ambiguityGpuExecuted() ? "vulkan" : ""),
+            "CPU-only next frame retained stale ambiguity GPU execution identity");
           check(acceptedState->clutterCalls==clutterCalls &&
             (fault=="clutter-reject"?acceptedState->calls==gpuCalls+1:acceptedState->calls==gpuCalls),
             "Failed GPU stage was retried after steady-state fallback");

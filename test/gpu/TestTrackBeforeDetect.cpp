@@ -17,6 +17,13 @@ bool close(double left, double right, double tolerance = 1e-10) {
 
 int main() try {
   using namespace track_before_detect;
+  check(fractionalDelayTableWords(17,8,16,-.566)==17*33*8&&
+    fractionalDelayTableWords(17,4,4,0)==0&&
+    fractionalDelayTableWords(65535,8,16,-1)==65535*33*8,
+    "Fractional table bounds or disabled allocation changed");
+  for(uint32_t depth:{0u,1u,2u,9u}){bool rejected=false;
+    try{fractionalDelayTableWords(17,depth,4,-.566);}catch(const std::invalid_argument&){rejected=true;}
+    check(rejected,"Invalid table depth admitted");}
   check(bankCount(4) == 2 && bankCount(8) == 3, "Unexpected multi-timescale bank count");
   check(detectorPassCount(4) == 3 && detectorPassCount(8) == 4,
     "Conventional detector pass is not retained");
@@ -36,8 +43,41 @@ int main() try {
     "Disabled angle consistency retained a production-size GPU allocation");
   check(angleHistoryWords(307111, 8, 1) == 2456888,
     "Enabled angle consistency history dimensions changed");
-  check(close(passPfa(.001, 8, 1, 4, 0), .001) &&
-      close(passPfa(.001, 8, 1, 4, 1), .001 / 81),
+  const auto fractional=encodeMotionBins(2,4,true);
+  check(decodeMotionBins(fractional).fractionalDelay&&
+    trialCount(8,fractional)==trialCount(8,encodeMotionBins(2,4)),
+    "Fractional paths added trials or lost mode identity");
+  check(decodeMotionBins(0).delay==0&&decodeMotionBins(1).doppler==1&&
+    decodeMotionBins(2).delay==2,"Legacy integer encoding changed");
+  const int expected[]={0,1,1,2,2,3,3,4};
+  for(uint32_t age=0;age<8;++age)for(int sign:{-1,1}){
+    check(delayPathColumn(20,0,age,-.566,-sign,-sign)==20-sign*expected[age],
+      "Fractional 0.566 trajectory or signed rounding differs");
+    for(int residual=-2;residual<=2;++residual)
+      check(delayPathColumn(20,residual,age,0,100,100)==20-residual*int(age),
+        "Disabled fractional motion changed integer coordinates");
+  }
+  check(delayPathColumn(20,0,1,-.5,-1,-1)==19&&
+    delayPathColumn(20,0,1,-.5,1,1)==21,"Nearest-cell tie policy differs");
+  // 1001 consumed samples, versus 3*333 retained samples: only the former is
+  // the actual inter-CPI stride, and this case crosses a nearest-cell boundary.
+  check(delayPathColumn(20,0,1,delayDriftPerHz(1001,2000),-1,-1)==19&&
+    delayPathColumn(20,0,1,delayDriftPerHz(999,2000),-1,-1)==20,
+    "Correlation tail was incorrectly removed from inter-CPI motion");
+  // The two Doppler endpoints account for the existing acceleration path.
+  check(delayPathColumn(20,0,4,-.25,4,0)==22,
+    "Doppler-changing path did not integrate its endpoint rates");
+  std::vector<std::vector<double>> histories(8,std::vector<double>(9,1));
+  for(uint32_t depth:{2u,4u,8u}){
+    check(pathMean(histories,9,{0},0,4,depth,0,0)==1,
+      "Constant power gain changed with depth");
+    check(pathMean(histories,9,{-1},0,0,depth,0,0,-.566)==-1,
+      "Incomplete edge path was clipped or renormalized");
+  }
+  histories[3][4]=std::numeric_limits<double>::quiet_NaN();
+  check(pathMean(histories,9,{0},0,4,8,0,0)==-1,"Nonfinite path admitted");
+  check(close(passPfa(.001, 8, 1, 4, 0), .0005) &&
+      close(passPfa(.001, 8, 1, 4, 1), .001 / 162),
     "Conventional and motion-bank PFA separation changed");
   const uint32_t training = 12;
   const double alphaOne = 7.0;

@@ -65,6 +65,15 @@ struct PortableClipRecorder::Job {
   std::vector<std::shared_ptr<Block>> blocks;
 };
 
+bool PortableClipRecorder::supports_retention(uint32_t channels,
+    uint32_t sampleRate, double seconds) noexcept {
+  if (!channels || !sampleRate || !std::isfinite(seconds) || seconds < 0)
+    return false;
+  const long double bytes = static_cast<long double>(channels) * sampleRate *
+    seconds * sizeof(std::complex<float>);
+  return bytes <= static_cast<long double>(MAXIMUM_RING_BYTES);
+}
+
 PortableClipRecorder::PortableClipRecorder(std::string directory,
     std::string receiver, uint32_t channels, uint32_t sampleRate,
     uint32_t frequency, Options options)
@@ -77,6 +86,7 @@ PortableClipRecorder::PortableClipRecorder(std::string directory,
       this->options.ringSeconds < 0 || this->options.maximumClipSeconds <= 0 ||
       this->options.ringSeconds > this->options.maximumClipSeconds ||
       this->options.maximumClipSeconds > 10.0 ||
+      !supports_retention(channels, sampleRate, this->options.ringSeconds) ||
       !this->options.maximumWriterJobs)
     throw std::invalid_argument("Invalid portable clip recorder bounds");
   const long double retained = std::ceil(
@@ -126,8 +136,7 @@ bool PortableClipRecorder::ingest(IqBlock samples, uint64_t epoch,
   const std::size_t count = samples.front().size();
   if (!count || std::any_of(samples.begin(), samples.end(),
       [&](const auto& channel) { return channel.size() != count; })) return false;
-  std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
-  if (!lock.owns_lock()) return false;
+  std::unique_lock<std::mutex> lock(mutex);
   const int64_t receipt = receiptNanoseconds ? receiptNanoseconds : now_nanoseconds();
   uint64_t first = positionAvailable ? firstSample : nextSample;
   if (!haveEpoch || (positionAvailable && (epoch != streamEpoch || first != nextSample))) {
@@ -258,7 +267,7 @@ void PortableClipRecorder::writer_loop() {
   }
 }
 
-IqClipStatus PortableClipRecorder::write_job(const Job& job) {
+IqClipStatus PortableClipRecorder::write_job(Job& job) {
   if (options.beforeWrite) options.beforeWrite();
   std::filesystem::create_directories(directory);
   const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -269,17 +278,26 @@ IqClipStatus PortableClipRecorder::write_job(const Job& job) {
   const std::string partial=file+".partial", metadataPartial=file+".json.partial";
   RecordingWriter output(partial, {channels, sampleRate, frequency, 0, "blah2"});
   uint64_t written = 0;
-  for (const auto& block : job.blocks) {
-    const uint64_t begin = std::max(job.first, block->first);
-    const uint64_t finish = std::min(job.end, block->first + block->count);
-    if (finish <= begin) continue;
-    const std::size_t offset = static_cast<std::size_t>(begin - block->first);
-    const std::size_t count = static_cast<std::size_t>(finish - begin);
-    IqBlock slice(channels);
-    for (uint32_t channel = 0; channel < channels; ++channel)
-      slice[channel].assign(block->samples[channel].begin() + offset,
-        block->samples[channel].begin() + offset + count);
-    output.append(slice); written += count;
+  try {
+    for (auto& block : job.blocks) {
+      const uint64_t begin = std::max(job.first, block->first);
+      const uint64_t finish = std::min(job.end, block->first + block->count);
+      if (finish > begin) {
+        const std::size_t offset = static_cast<std::size_t>(begin - block->first);
+        const std::size_t count = static_cast<std::size_t>(finish - begin);
+        output.append_slice(block->samples, offset, count); written += count;
+      }
+      // Once the final slice from this block is durable in the writer's file
+      // stream, the recorder no longer needs to pin it while close/fsync and
+      // final-file integrity verification run. The live ring may still own it.
+      block.reset();
+    }
+    job.blocks.clear();
+  } catch (...) {
+    // A failed write must not retain the remaining clip window through error
+    // publication or recorder shutdown.
+    job.blocks.clear();
+    throw;
   }
   if (!written) throw std::runtime_error("IQ clip contains no writable samples");
   output.close();

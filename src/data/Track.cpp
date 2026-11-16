@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <algorithm>
+#include <utility>
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
@@ -45,9 +46,17 @@ void Track::set_current(uint64_t index, Detection smoothed)
 {
   current.at(index) = smoothed;
   associated.at(index).push_back(smoothed);
+  associatedState.at(index).push_back(get_state(index));
   ++nAssociated.at(index);
   if (associated.at(index).size() > MAX_STATE_HISTORY)
     associated.at(index).erase(associated.at(index).begin());
+  if (associatedState.at(index).size() > MAX_STATE_HISTORY)
+    associatedState.at(index).erase(associatedState.at(index).begin());
+}
+
+void Track::set_predicted_current(uint64_t index, Detection predicted)
+{
+  current.at(index) = std::move(predicted);
 }
 
 void Track::set_acceleration(uint64_t index, double _acceleration)
@@ -113,6 +122,11 @@ uint64_t Track::get_nAssociated(uint64_t index)
   return nAssociated.at(index);
 }
 
+uint64_t Track::get_nUpdates(uint64_t index) const
+{
+  return state.at(index).size();
+}
+
 uint64_t Track::add(Detection initial)
 {
   id.push_back(uint2hex(iNext));
@@ -125,8 +139,10 @@ uint64_t Track::add(Detection initial)
   std::vector<Detection> _associated;
   _associated.push_back(initial);
   associated.push_back(_associated);
+  associatedState.push_back({STATE_TENTATIVE});
   nAssociated.push_back(1);
   nInactive.push_back(0);
+  missedSeconds.push_back(0);
   iNext++;
   if (iNext >= MAX_INDEX)
   {
@@ -139,13 +155,19 @@ void Track::promote(uint64_t index, uint32_t m, uint32_t n)
 {
   if (n == 0 || n > MAX_STATE_HISTORY || m == 0 || m > n)
     throw std::invalid_argument("Track promotion requires 1 <= M <= N <= 255");
-  if (state.at(index).size() >= n)
+  if (state.at(index).size() >= m)
   {
     uint32_t _m = 0;
-    for (size_t i = state.at(index).size()-n; i < state.at(index).size(); i++) 
+    const size_t historySize = state.at(index).size();
+    const size_t first = historySize > n ? historySize - n : 0;
+    for (size_t i = first; i < historySize; i++)
     {
       if (state.at(index).at(i) == STATE_ACTIVE || 
-        state.at(index).at(i) == STATE_ASSOCIATED)
+        state.at(index).at(i) == STATE_ASSOCIATED ||
+        // The first state is the measured seed despite its unpublished state.
+        // Tentative tracks expire within N<=255 updates, before it can roll
+        // out of the retained history; later TENTATIVE entries are misses.
+        i == 0)
       {
         _m++;
       }
@@ -155,6 +177,8 @@ void Track::promote(uint64_t index, uint32_t m, uint32_t n)
     if (_m >= m)
     {
       state.at(index).at(state.at(index).size()-1) = STATE_ACTIVE;
+      if (!associatedState.at(index).empty())
+        associatedState.at(index).back() = STATE_ACTIVE;
     }
   }
 }
@@ -197,7 +221,13 @@ void Track::remove(uint64_t index)
   } else {
     throw std::out_of_range("Index out of bounds for 'associated' vector");
   }
+  if (index < associatedState.size()) {
+    associatedState.erase(associatedState.begin() + index);
+  } else {
+    throw std::out_of_range("Index out of bounds for 'associatedState' vector");
+  }
   nInactive.erase(nInactive.begin() + index);
+  missedSeconds.erase(missedSeconds.begin() + index);
   nAssociated.erase(nAssociated.begin() + index);
 }
 
@@ -233,16 +263,17 @@ std::string Track::to_json(uint64_t timestamp)
       rapidjson::Value associatedDoppler(rapidjson::kArrayType);
       rapidjson::Value associatedState(rapidjson::kArrayType);
       const size_t count = std::min({MAX_DISPLAY_HISTORY,
-        associated.at(i).size(), state.at(i).size()});
+        associated.at(i).size(), this->associatedState.at(i).size()});
       for (size_t offset = 0; offset < count; ++offset)
       {
         const size_t j = associated.at(i).size() - count + offset;
-        const size_t stateIndex = state.at(i).size() - count + offset;
+        const size_t stateIndex = this->associatedState.at(i).size() - count + offset;
         associatedDelay.PushBack(associated.at(i).at(j).get_delay().at(0), 
           document.GetAllocator());
         associatedDoppler.PushBack(associated.at(i).at(j).get_doppler().at(0), 
           document.GetAllocator());
-        associatedState.PushBack(rapidjson::Value(state.at(i).at(stateIndex).c_str(),
+        associatedState.PushBack(rapidjson::Value(
+          this->associatedState.at(i).at(stateIndex).c_str(),
           document.GetAllocator()).Move(), document.GetAllocator());
       }
       object1.AddMember("associated_delay", 

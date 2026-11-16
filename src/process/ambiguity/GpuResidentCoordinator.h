@@ -1,6 +1,8 @@
 #pragma once
 #include "GpuResidentBackend.h"
 #include "GpuResidentProof.h"
+#include "GpuResidentQualification.h"
+#include "GpuResidentInput.h"
 #include "GpuResultJson.private.h"
 #include "Acceleration.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
@@ -11,8 +13,7 @@ namespace blah2::resident {
 // startup oracles only; no accepted steady frame can invoke them.
 class Coordinator {
  std::unique_ptr<Session> session_;
- uint32_t checks_=0;
- bool refChecked_=false,filteredChecked_=false,mapChecked_=false,productChecked_=false;
+ Qualification qualification_{Acceleration::TotalQualificationFrames};
  const std::complex<double>* canonical_=nullptr;
  OutputViews ready_{},prepared_{};
  AccelerationStatus status_;
@@ -73,7 +74,8 @@ class Coordinator {
   return cpuDetectorComparable()&&
    config().detector.integrationBeamTolerance==UINT32_MAX&&
    config().tracker.initiationMode==TrackerInitiationMode::hypothesisBank&&
-   !config().tracker.stationaryClutter&&!config().tracker.trackGuidedPromote;
+   !config().tracker.stationaryClutter&&!config().tracker.trackGuidedPromote&&
+   !config().tracker.trackGuidedSustain&&!config().tracker.normalizedInnovationGate;
  }
 public:
  explicit Coordinator(Config c,GpuProcessOptions options={}):session_(createProcess(c,options)){status_.requested="gpu-resident";
@@ -82,9 +84,10 @@ public:
  status_.state="checking";
  status_.reason="Strict startup CPU oracle; failures stop this route";}
  const Config& config()const{return session_->config();}
- bool qualifying()const{return checks_<Acceleration::TotalQualificationFrames;}
+ bool qualifying()const{return qualification_.pending();}
+ uint32_t qualificationChecks()const{return qualification_.completed();}
  const AccelerationStatus& status()const{return status_;}
- void begin(const std::vector<std::unique_ptr<IqData>>& capture,Frame frame){sessionCall([&]{clearBorrowed();wire::require(capture.size()==config().geometry.channels,"Resident capture channel count differs");auto input=session_->input();canonical_=input.data;size_t offset=0;for(const auto& channel:capture){const auto& samples=channel->view_data();wire::require(samples.size()==config().geometry.clutterSamples,"Resident captured CPI size differs");std::copy(samples.begin(),samples.end(),input.data+offset);offset+=samples.size();}wire::require(offset==input.size,"Resident canonical input shape differs");refChecked_=filteredChecked_=mapChecked_=productChecked_=false;uint64_t diagnostics=qualifying()?(bit(Section::fullReference)|bit(Section::filtered)):0;if(config().presence&bit(Section::detectionCells))diagnostics|=bit(Section::detectionCells);session_->begin(frame,diagnostics);ready_=session_->receiveReferenceReady();wire::require(ready_.referenceCheckpoint.size==referenceCheckpoint_.size(),"Resident acknowledged reference checkpoint shape");std::memcpy(referenceCheckpoint_.data(),ready_.referenceCheckpoint.data,referenceCheckpoint_.size());haveReferenceCheckpoint_=true;ready_.referenceCheckpoint={referenceCheckpoint_.data(),referenceCheckpoint_.size()};});}
+ void begin(const std::vector<std::unique_ptr<IqData>>& capture,Frame frame){sessionCall([&]{clearBorrowed();auto input=session_->input();copyCanonicalInput(config(),input,capture,[](const auto& channel)->const auto&{wire::require(bool(channel),"Resident captured channel absent");return channel->view_data();});canonical_=input.data;qualification_.begin();uint64_t diagnostics=qualifying()?(bit(Section::fullReference)|bit(Section::filtered)):0;if(config().presence&bit(Section::detectionCells))diagnostics|=bit(Section::detectionCells);session_->begin(frame,diagnostics);ready_=session_->receiveReferenceReady();wire::require(ready_.referenceCheckpoint.size==referenceCheckpoint_.size(),"Resident acknowledged reference checkpoint shape");std::memcpy(referenceCheckpoint_.data(),ready_.referenceCheckpoint.data,referenceCheckpoint_.size());haveReferenceCheckpoint_=true;ready_.referenceCheckpoint={referenceCheckpoint_.data(),referenceCheckpoint_.size()};});}
  const OutputViews& receivePrepared(){sessionCall([&]{if(!prepared_.preparedEvidence.data)prepared_=session_->receivePrepared();});
  return prepared_;}
  void checkReference(const IqData& reference,const ArrayReferenceSynthesizer::Metrics& metrics){oracle();
@@ -94,7 +97,7 @@ public:
  wire::require(finite(value)&&finite(expected)&&std::abs(value-expected)<1e-12,"Resident reference oracle rejected frame");}const auto cp=referenceState(ready_.referenceCheckpoint);
  wire::require(cp.updates==metrics.updates&&cp.weightCount==metrics.weights.size()&&std::abs(cp.coherentFraction-metrics.coherentFraction)<=1e-12&&std::abs(cp.coherentGainDb-metrics.coherentGainDb)<=1e-10,"Resident reference state oracle rejected frame");
  for(size_t c=0;c<metrics.weights.size();++c)wire::require(std::abs(cp.weights[c]-metrics.weights[c])<=1e-12,"Resident reference weight oracle rejected frame");
- refChecked_=true;}
+ qualification_.checked(Qualification::reference);}
  void checkFiltered(const std::vector<IqData*>& cpu){oracle();
  const auto& out=receivePrepared();
  const size_t n=config().geometry.clutterSamples;
@@ -105,14 +108,14 @@ public:
  for(size_t i=0;i<n;++i){const auto actual=out.filtered.data[c*n+i];
  wire::require(finite(actual)&&finite(expected[i]),"Resident sample oracle nonfinite");
  const double delta=std::norm(actual-expected[i]);
- const double original=std::norm(std::complex<float>(canonical_[c*n+i]));
+ const double original=std::norm(std::complex<float>(canonical_[config().surveillanceChannels[c]*n+i]));
  error+=delta;
  filtered+=std::norm(expected[i]);
  input+=original;
  maxError=std::max(maxError,delta);
  maxFiltered=std::max(maxFiltered,std::norm(expected[i]));
  maxInput=std::max(maxInput,original);}const double filteredFloor=std::max(filtered,input*1e-8),peakFloor=std::max(maxFiltered,maxInput*1e-8);
- wire::require(std::isfinite(error)&&std::isfinite(filtered)&&std::isfinite(input)&&error<=std::max(input*1e-8,1e-20)&&error<=std::max(filteredFloor*1e-8,1e-20)&&maxError<=std::max(maxInput*1e-8,1e-20)&&maxError<=std::max(peakFloor*1e-8,1e-20),"Resident clutter sample oracle rejected frame");}filteredChecked_=true;}
+ wire::require(std::isfinite(error)&&std::isfinite(filtered)&&std::isfinite(input)&&error<=std::max(input*1e-8,1e-20)&&error<=std::max(filteredFloor*1e-8,1e-20)&&maxError<=std::max(maxInput*1e-8,1e-20)&&maxError<=std::max(peakFloor*1e-8,1e-20),"Resident clutter sample oracle rejected frame");}qualification_.checked(Qualification::filtered);}
  void checkMaps(const std::vector<Ambiguity*>& cpu){oracle();
  const auto& out=receivePrepared();
  const auto& g=config().geometry;
@@ -128,13 +131,13 @@ public:
  signal+=std::norm(expected);
  peak=std::max(peak,std::norm(expected));
  maxError=std::max(maxError,delta);}}
- wire::require(std::isfinite(error)&&std::isfinite(signal)&&error<=std::max(signal*1e-8,1e-20)&&maxError<=std::max(peak*1e-8,1e-20),"Resident composed map oracle rejected frame");}mapChecked_=true;}
+ wire::require(std::isfinite(error)&&std::isfinite(signal)&&error<=std::max(signal*1e-8,1e-20)&&maxError<=std::max(peak*1e-8,1e-20),"Resident composed map oracle rejected frame");}qualification_.checked(Qualification::maps);}
  struct Publication {std::string spectrum,map,detections,tracks,bearing,manifoldEvidence;};
  Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={},
   bool publishManifoldEvidence=false,
   const resident::BearingConfig& evidenceBearing={},
   gpu_result_json::View<double> actualGainDb={}){const auto& v=receivePrepared();
- if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle not completed");
+ qualification_.requireNumeric();
  namespace json=gpu_result_json;
  Publication result;
  result.spectrum=json::spectrum({timestamp,{v.frequencies.data,v.frequencies.size},{v.spectrumDb.data,v.spectrumDb.size}});
@@ -200,15 +203,42 @@ public:
   if(config().tracker.enabled&&cpuTrackerComparable())
    compareJson(cpuTracks,resident.tracks,
     "Resident tracker startup oracle rejected frame");
-  productChecked_=true;
+  qualification_.checked(Qualification::products);
+ }
+ // Lane consumers use only the numerically qualified complex CAFs; fusion,
+ // temporal evidence, CFAR and tracking are the identical host contract.
+ void checkFrontendProducts(){oracle();
+  wire::require(!config().detector.enabled&&!config().tracker.enabled,
+   "Frontend qualification cannot bypass resident detector/tracker products");
+  qualification_.requireNumeric();
+  qualification_.checked(Qualification::products);
  }
  void commit(){wire::require(prepared_.preparedEvidence.data,"Resident commit missing prepared frame");
- if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_&&productChecked_,"Resident startup oracle missing before commit");
+ qualification_.requireComplete();
  sessionCall([&]{session_->commit(prepared_.trackerToken);});}
  void published(){sessionCall([&]{session_->published();});
- if(qualifying()){++checks_;
+ if(qualifying()){qualification_.published();
  if(!qualifying()){status_.state="ready";
  status_.reason="GPU-resident stages qualified; no steady CPU DSP oracle";}}}
+ template<class Prepare,class ResetCpu>
+ void prepareStartup(Prepare&& prepare,ResetCpu&& resetCpu){
+  try{
+   qualification_.prepareStartup(prepare,
+    [&]{sessionCall([&]{session_->published();});},
+    [&]{resetInput();resetCpu();});
+   status_.state="ready";
+   status_.reason="GPU-resident stages qualified before capture; synthetic state reset";
+  }catch(...){
+   stop();status_.state="failed";
+   status_.reason="Pre-capture resident qualification or adaptive-state reset failed";
+   throw;
+  }
+ }
+ std::vector<uint8_t> snapshot(){return sessionCall([&]{return session_->snapshot();});}
+ void resetInput(){sessionCall([&]{session_->resetInput();});
+  clearBorrowed();qualification_.resetInput();
+  referenceCheckpoint_={};haveReferenceCheckpoint_=false;
+ }
  const OutputViews& prepared()const{return prepared_;}
  // The acknowledged reference state survives any later radar/control failure.
  // Tracker views are borrowed only: after failure none is exposed or retried.

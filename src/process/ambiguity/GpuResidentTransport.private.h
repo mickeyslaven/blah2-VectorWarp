@@ -133,13 +133,24 @@ public:
 #endif
       std::string executable = options_.executable.empty() ? gpuSiblingPath("blah2-gpu-worker") : options_.executable;
       char* argv[] = {executable.data(), options_.argument.empty() ? nullptr : options_.argument.data(), nullptr};
+      // Per-child environment, never a process-wide setenv race between lanes.
+      std::vector<std::string> childEnvironment;
+      for (char** item = environ; *item; ++item)
+        if (std::string(*item).rfind("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=", 0) != 0)
+          childEnvironment.emplace_back(*item);
+      if (options_.allocationLimitBytes)
+        childEnvironment.push_back("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=" +
+          std::to_string(options_.allocationLimitBytes));
+      std::vector<char*> childEnvironmentPointers;
+      for (auto& item : childEnvironment) childEnvironmentPointers.push_back(item.data());
+      childEnvironmentPointers.push_back(nullptr);
       const int error = posix_spawn(&process_, executable.c_str(), &actions,
 #ifdef __APPLE__
         &attributes,
 #else
         nullptr,
 #endif
-        argv, environ);
+        argv, childEnvironmentPointers.data());
       if (error) { process_ = -1;
       throw std::runtime_error("GPU worker is unavailable"); }
       close(childSocket);

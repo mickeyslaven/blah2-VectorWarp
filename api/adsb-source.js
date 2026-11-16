@@ -351,6 +351,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const fusionAtMs = Number.isFinite(targetAtMs) ? targetAtMs : now();
     const data = fuseAircraftData(healthy, {nowMs: fusionAtMs,
       maxPositionAgeSeconds: geometry.maxAge, metadataCache: aircraftMetadataCache,
+      ...(geometry.uncertaintyPolicy ?
+        {maxObservationOffsetSeconds: geometry.uncertaintyPolicy.maxProjectionS} : {}),
       ...fusionOptions});
     fusionState = {...data.vectorwarp_fusion, fused_at: fusionAtMs,
       healthy_sources: healthy.length, failed_sources: failed};

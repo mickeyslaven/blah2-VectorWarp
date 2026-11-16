@@ -8,6 +8,8 @@ const os = require('os');
 const path = require('path');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
+const {EvidenceStatistics} = require('./evidence-statistics');
+const {laneConfig, statisticsFilename} = require('./multi-illuminator-evidence');
 let stderr = '';
 
 async function reservePorts(count) {
@@ -27,7 +29,8 @@ function request(port, route) {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', chunk => { body += chunk; });
-      response.on('end', () => resolve({status: response.statusCode, body}));
+      response.on('end', () => resolve({status: response.statusCode,
+        headers: response.headers, body}));
     });
     req.on('error', reject);
   });
@@ -100,14 +103,53 @@ async function send(port, chunks) {
     Object.keys(config.network.ports).forEach((name, index) => { config.network.ports[name] = ports[index]; });
     config.network.ip = '127.0.0.1';
     fs.writeFileSync(configPath, yaml.dump(config));
+    const statisticsPath = path.join(directory, 'statistics.json');
+    const illuminator = config.process.multi_illuminator.illuminators[0];
+    const seededAt = Date.now() - 5000;
+    const operationalEvidence = new EvidenceStatistics(laneConfig(config, illuminator), {}, {
+      filename: statisticsFilename(statisticsPath, illuminator.id, 'provisional'),
+      timingPolicy: 'provisional', now: () => seededAt,
+      setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+    for (let index = 0; index < 3; index += 1) {
+      const timestamp = seededAt + index * 500;
+      operationalEvidence.observe('abc123', {flight: 'OPERATIONAL',
+        delay: operationalEvidence.limits.detectionMinDelayKm + 10 * operationalEvidence.limits.kmPerBin,
+        doppler: 100, timestamp: timestamp / 1000,
+        provenance: {observation_time_offset_s: 0, projection_model: 'identity'}},
+      timestamp, null, null);
+    }
+    operationalEvidence.finish('abc123');
+    assert.equal(operationalEvidence.associationPasses().length, 1);
+    operationalEvidence.close();
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), configPath], {
       env: {...process.env, BLAH2_RECEIVER_TYPES: 'Kraken',
+        BLAH2_STATISTICS_PATH: statisticsPath,
+        BLAH2_PROVISIONAL_STATISTICS_PATH: path.join(directory, 'statistics-provisional.json'),
         BLAH2_OPRS_EVENTS_PATH: path.join(directory, 'oprs.ndjson')},
       stdio: ['ignore', 'ignore', 'pipe']
     });
     child.stderr.on('data', chunk => { stderr += chunk; });
     const apiPort = config.network.ports.api;
     await waitFor(apiPort, '/api/system/status', response => response.status === 200);
+    for (const query of ['', '?timing=provisional']) {
+      const statistics = JSON.parse((await request(apiPort, `/api/statistics${query}`)).body);
+      assert.equal(statistics.timing_policy, 'provisional',
+        'Ordinary SDR statistics must use the same operational lane as association history');
+      assert.equal(statistics.overall_association_statistics.eligible_adsb_passes, 1);
+      assert.equal(statistics.overall_association_statistics.unique_aircraft_passes.eligible_adsb_passes, 1);
+    }
+    const exactStatistics = JSON.parse((await request(apiPort, '/api/statistics?timing=exact')).body);
+    assert.equal(exactStatistics.timing_policy, 'exact');
+    assert.equal(exactStatistics.overall_association_statistics.eligible_adsb_passes, 0,
+      'Explicit exact evidence must not borrow operational pass counts');
+    const selectedStatistics = JSON.parse((await request(apiPort,
+      '/api/statistics?illuminator=fm-90.5')).body);
+    assert.equal(selectedStatistics.timing_policy, 'provisional');
+    assert.equal(selectedStatistics.windows.lifetime.eligible_passes, 1);
+    const associationHistory = JSON.parse((await request(apiPort, '/api/association/passes')).body);
+    assert.equal(associationHistory.timing_policy, 'provisional');
+    assert.equal(associationHistory.passes.length, 1);
+    assert.equal((await request(apiPort, '/api/statistics?illuminator=missing')).status, 404);
 
     const nativeTrack = {timestamp: 1, data: [{id: 'primary-units', state: 'ACTIVE',
       n: 5, delay: 10, doppler: 20}]};
@@ -169,6 +211,17 @@ async function send(port, chunks) {
     const illuminatorFrame = {schema: 'vectorwarp-multi-illuminator-frame-v1',
       id: 'fm-90.5', frequency_hz: 90500000, sample_rate_hz: 300000,
       first_input_sample: 0, end_input_sample: 1199999, timestamp: 10,
+      trackerDiagnostics: {schema: 'vectorwarp-cpu-tracker-frame-diagnostics-v1',
+        truth_blind: true, scope: 'single-illuminator-single-frame',
+        pair_semantics: 'exclusive-ordered-candidate-track-pair-rejections',
+        no_op: false, detections: 7, tracks_before: 2, tracks_after: 3,
+        candidate_track_pairs: 14, pair_already_claimed: 1,
+        pair_delay_rejected: 6, pair_doppler_rejected: 4, pair_in_gate: 3,
+        associations: 2, misses: 0, promotions: 1, tentative_expired: 0,
+        inactivity_deleted: 0, birth_candidates: 5, birth_snr_rejected: 4,
+        initiated: 1},
+      temporalShadow: {active: true, banks: [{name: 'motion8',
+        map: {stream: 'nested-experiment-map'}}]},
       map: {stream: 'fm-map', timestamp: 10},
       detections: {stream: 'fm-detection', timestamp: 10},
       tracks: {stream: 'fm-track', timestamp: 10}};
@@ -180,6 +233,9 @@ async function send(port, chunks) {
     })).body);
     assert.equal(illuminators.primary, 'fm-90.5');
     assert.equal(illuminators.illuminators[0].frequency_hz, 90500000);
+    assert.deepEqual(illuminators.illuminators[0].tracker_diagnostics,
+      illuminatorFrame.trackerDiagnostics,
+      'Native radar-only tracker counters survive the frame stream and status route');
     const laneScorecard = JSON.parse((await request(apiPort,
       '/api/live-scorecard?illuminator=fm-90.5')).body);
     assert.equal(laneScorecard.scope, 'single-illuminator');
@@ -195,10 +251,29 @@ async function send(port, chunks) {
     assert.equal(coverage.identity.illuminator, 'fm-90.5');
     assert.equal((await request(apiPort,
       '/api/live-scorecard?illuminator=unknown')).status, 404);
-    assert.equal(JSON.parse((await request(apiPort,
-      '/api/detection?illuminator=fm-90.5')).body).stream, 'fm-detection');
-    assert.equal(JSON.parse((await request(apiPort,
-      '/api/tracker?illuminator=fm-90.5')).body).stream, 'fm-track');
+    const detectionResponse = await request(apiPort,
+      '/api/detection?illuminator=fm-90.5');
+    const trackerResponse = await request(apiPort,
+      '/api/tracker?illuminator=fm-90.5');
+    assert.match(detectionResponse.headers['content-type'], /^application\/json\b/);
+    assert.match(trackerResponse.headers['content-type'], /^application\/json\b/);
+    assert.equal(JSON.parse(detectionResponse.body).stream, 'fm-detection');
+    assert.equal(JSON.parse(trackerResponse.body).stream, 'fm-track');
+
+    // A generic HTTP health probe must not permanently poison the legacy
+    // listeners when the primary products are derived from the authoritative
+    // multi-illuminator frame instead of separate legacy connections.
+    await Promise.all(['map', 'detection', 'track'].map(async name => {
+      const socket = await connect(config.network.ports[name]);
+      socket.on('error', () => {});
+      socket.write('GET / HTTP/1.0\r\n\r\n');
+      await new Promise(resolve => socket.once('close', resolve));
+    }));
+    await waitFor(apiPort, '/api/system/status', response => {
+      try { return JSON.parse(response.body).errors.some(error =>
+        /(?:map|detection|track) connection/.test(error)); }
+      catch (_) { return false; }
+    });
     const nextIlluminatorFrame = {...illuminatorFrame, timestamp: 11,
       first_input_sample: 1200000, end_input_sample: 2399999,
       map: {stream: 'fm-map-next', timestamp: 11},
@@ -206,6 +281,14 @@ async function send(port, chunks) {
       tracks: {stream: 'fm-track-next', timestamp: 11}};
     await send(config.network.ports.illuminator,
       [Buffer.from(JSON.stringify(nextIlluminatorFrame))]);
+    const recoveredFromLegacyProbe = JSON.parse((await waitFor(apiPort,
+      '/api/system/status', response => {
+        try { return !JSON.parse(response.body).errors.some(error =>
+          /(?:map|detection|track) connection/.test(error)); }
+        catch (_) { return false; }
+      })).body);
+    assert.ok(!recoveredFromLegacyProbe.errors.some(error =>
+      /(?:map|detection|track) connection/.test(error)));
     assert.equal(JSON.parse((await request(apiPort,
       '/api/map?illuminator=fm-90.5')).body).stream, 'fm-map-next');
     assert.equal(JSON.parse((await request(apiPort,
@@ -213,6 +296,17 @@ async function send(port, chunks) {
       'fm-map', 'an exact lane timestamp must not mix adjacent products');
     assert.equal((await request(apiPort,
       '/api/map?illuminator=fm-90.5&frame_timestamp=9')).status, 404);
+    const restartedIlluminatorFrame = {...illuminatorFrame, timestamp: 12,
+      map: {stream: 'fm-map-restarted', timestamp: 12},
+      detections: {stream: 'fm-detection-restarted', timestamp: 12},
+      tracks: {stream: 'fm-track-restarted', timestamp: 12}};
+    await send(config.network.ports.illuminator,
+      [Buffer.from(JSON.stringify(restartedIlluminatorFrame))]);
+    assert.equal(JSON.parse((await request(apiPort,
+      '/api/map?illuminator=fm-90.5')).body).stream, 'fm-map-restarted');
+    assert.equal((await request(apiPort,
+      '/api/map?illuminator=fm-90.5&frame_timestamp=11')).status, 404,
+    'a regressed process-local sample counter starts a clean producer session');
     assert.equal((await request(apiPort,
       '/api/tracker?illuminator=unknown')).status, 404);
 

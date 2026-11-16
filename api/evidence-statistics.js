@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const {validateTruthWindow} = require('./capture-admission');
 const {TrackPopulationStatistics} = require('./track-population-statistics');
+const truthUncertainty = require('./truth-uncertainty');
 const {effectiveDelayConfig, associationGates, assignments} =
   require('../html/js/config_profiles');
 
@@ -51,6 +52,9 @@ const MAX_CPI_AUDIT = 16;
 const TIMING_RETENTION_MS = 10 * 60 * 1000;
 const PASS_GAP_MS = 120000;
 const DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S = 1;
+// Version the eligibility semantics separately from receiver configuration so
+// previously finalized exposure is never reinterpreted under a new detector mask.
+const DETECTOR_ELIGIBILITY_VERSION = 2;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
 const SLANT_RANGE_EDGES_KM = Object.freeze([0, 10, 20, 30, 40, 50, 75, 100, 150, 250, 500]);
@@ -70,6 +74,106 @@ const parse = value => {
   try { return JSON.parse(value); } catch (_) { return null; }
 };
 const ratio = (numerator, denominator) => denominator ? numerator / denominator : null;
+const percent = (numerator, denominator) => denominator ?
+  100 * numerator / denominator : null;
+
+function cpiExposure({eligibleFrames = 0, detectedFrames = 0, trackedFrames = 0},
+  cpiSeconds = .5, {complete = true, excludedArchivedPasses = 0} = {}) {
+  const eligible = Math.max(0, Number(eligibleFrames) || 0);
+  const detected = Math.max(0, Number(detectedFrames) || 0);
+  const tracked = Math.max(0, Number(trackedFrames) || 0);
+  const missed = Math.max(0, eligible - detected);
+  const untracked = Math.max(0, eligible - tracked);
+  return {cpi_seconds: cpiSeconds,
+    eligible_cpis: eligible, detected_cpis: detected,
+    missed_detection_cpis: missed, operationally_tracked_cpis: tracked,
+    operationally_untracked_cpis: untracked,
+    eligible_seconds: eligible * cpiSeconds,
+    detected_seconds: detected * cpiSeconds,
+    missed_detection_seconds: missed * cpiSeconds,
+    operationally_tracked_seconds: tracked * cpiSeconds,
+    operationally_untracked_seconds: untracked * cpiSeconds,
+    detection_fraction: ratio(detected, eligible),
+    missed_detection_fraction: ratio(missed, eligible),
+    operational_track_fraction: ratio(tracked, eligible),
+    operationally_untracked_fraction: ratio(untracked, eligible),
+    detected_percent: percent(detected, eligible),
+    missed_detection_percent: percent(missed, eligible),
+    operationally_tracked_percent: percent(tracked, eligible),
+    operationally_untracked_percent: percent(untracked, eligible),
+    counter_invariants_valid: detected <= eligible && tracked <= eligible,
+    complete, excluded_archived_passes: excludedArchivedPasses,
+    denominator_semantics: 'detector-searchable CPI with fresh valid evaluation-only ADS-B truth'};
+}
+
+function observeQualityCpi(pass, detected, tracked) {
+  const quality = pass.qualityCpi ||= {observed: 0,
+    preexistingEligibleCpis: Math.max(0, (pass.eligibleFrames || 0) - 1),
+    detectedAndTracked: 0, detectedNotTracked: 0, trackedWithoutDetection: 0,
+    currentDetectedRun: 0, longestDetectedRun: 0,
+    currentMissRun: 0, longestMissRun: 0,
+    currentTrackedRun: 0, longestTrackedRun: 0,
+    currentUntrackedRun: 0, longestUntrackedRun: 0,
+    detectionReacquisitions: 0, trackReacquisitions: 0,
+    priorDetected: null, priorTracked: null};
+  quality.observed += 1;
+  if (detected && tracked) quality.detectedAndTracked += 1;
+  else if (detected) quality.detectedNotTracked += 1;
+  else if (tracked) quality.trackedWithoutDetection += 1;
+  if (detected) {
+    quality.currentDetectedRun += 1; quality.currentMissRun = 0;
+    quality.longestDetectedRun = Math.max(quality.longestDetectedRun,
+      quality.currentDetectedRun);
+    if (quality.priorDetected === false) quality.detectionReacquisitions += 1;
+  } else {
+    quality.currentMissRun += 1; quality.currentDetectedRun = 0;
+    quality.longestMissRun = Math.max(quality.longestMissRun, quality.currentMissRun);
+  }
+  if (tracked) {
+    quality.currentTrackedRun += 1; quality.currentUntrackedRun = 0;
+    quality.longestTrackedRun = Math.max(quality.longestTrackedRun,
+      quality.currentTrackedRun);
+    if (quality.priorTracked === false) quality.trackReacquisitions += 1;
+  } else {
+    quality.currentUntrackedRun += 1; quality.currentTrackedRun = 0;
+    quality.longestUntrackedRun = Math.max(quality.longestUntrackedRun,
+      quality.currentUntrackedRun);
+  }
+  quality.priorDetected = detected; quality.priorTracked = tracked;
+}
+
+function qualityCpiSummary(pass, cpiSeconds = .5) {
+  const quality = pass.qualityCpi || {};
+  const observed = quality.observed || 0;
+  return {observed_cpis: observed,
+    complete_for_pass: (quality.preexistingEligibleCpis || 0) === 0 &&
+      observed === (pass.eligibleFrames || 0),
+    preexisting_uninstrumented_eligible_cpis: quality.preexistingEligibleCpis || 0,
+    detected_and_operationally_tracked_cpis: quality.detectedAndTracked || 0,
+    detected_but_not_operationally_tracked_cpis: quality.detectedNotTracked || 0,
+    operationally_tracked_without_current_detection_cpis:
+      quality.trackedWithoutDetection || 0,
+    longest_consecutive_detected_cpis: quality.longestDetectedRun || 0,
+    longest_consecutive_missed_detection_cpis: quality.longestMissRun || 0,
+    longest_consecutive_operationally_tracked_cpis: quality.longestTrackedRun || 0,
+    longest_consecutive_operationally_untracked_cpis: quality.longestUntrackedRun || 0,
+    longest_detected_seconds: (quality.longestDetectedRun || 0) * cpiSeconds,
+    longest_missed_detection_seconds: (quality.longestMissRun || 0) * cpiSeconds,
+    longest_operationally_tracked_seconds: (quality.longestTrackedRun || 0) * cpiSeconds,
+    longest_operationally_untracked_seconds: (quality.longestUntrackedRun || 0) * cpiSeconds,
+    detection_reacquisitions: quality.detectionReacquisitions || 0,
+    operational_track_reacquisitions: quality.trackReacquisitions || 0,
+    latency_origin: finite(pass.firstEligibleAt) ? 'first_eligible_cpi' : 'legacy_pass_start',
+    first_detection_latency_seconds: finite(pass.firstDetectionAt) ?
+      Math.max(0, pass.firstDetectionAt -
+        (finite(pass.firstEligibleAt) ? pass.firstEligibleAt : pass.startedAt)) / 1000 : null,
+    first_operational_track_latency_seconds: finite(pass.firstTrackAt) ?
+      Math.max(0, pass.firstTrackAt -
+        (finite(pass.firstEligibleAt) ? pass.firstEligibleAt : pass.startedAt)) / 1000 : null,
+    detection_to_operational_track_latency_seconds:
+      finite(pass.firstDetectionAt) && finite(pass.firstTrackAt) ?
+        Math.max(0, pass.firstTrackAt - pass.firstDetectionAt) / 1000 : null};
+}
 
 function provisionalTimingFrame(value,
   source = 'radar_host_arrival_estimate') {
@@ -145,6 +249,8 @@ function limits(config) {
     delayMaxKm: ambiguity.delayMax * kmPerBin,
     detectionMinDelayBin: detection.minDelay,
     detectionMinDelayKm: detection.minDelay * kmPerBin,
+    detectionMinAbsDopplerHz: finite(detection.minDoppler) ?
+      Math.max(0, detection.minDoppler) : 0,
     dopplerMinHz: ambiguity.dopplerMin, dopplerMaxHz: ambiguity.dopplerMax,
     clutterMaxBin: finite(clutter.delayMax) ? clutter.delayMax : null,
     clutterMaxKm: finite(clutter.delayMax) ? clutter.delayMax * kmPerBin : null,
@@ -155,7 +261,8 @@ function limits(config) {
     trackerInitiateN: Math.max(1, trackerInitiate.N ?? 6),
     trackerInitiateMinSnrDb: finite(trackerInitiate.min_snr_db) ?
       trackerInitiate.min_snr_db : -Infinity,
-    provisionalTimeUncertaintyS};
+    provisionalTimeUncertaintyS,
+    truthUncertaintyPolicy: truthUncertainty.policy(config.truth?.adsb?.uncertainty_association)};
 }
 
 function siteCoordinates(site = {}) {
@@ -174,7 +281,8 @@ function scientificDevice(device = {}) {
 }
 
 function siteKey(config) {
-  const relevant = {frequency: config.capture?.fc, sampleRate: config.capture?.fs,
+  const relevant = {detectorEligibilityVersion: DETECTOR_ELIGIBILITY_VERSION,
+    frequency: config.capture?.fc, sampleRate: config.capture?.fs,
     receiver: siteCoordinates(config.location?.rx),
     transmitter: siteCoordinates(config.location?.tx),
     device: scientificDevice(config.capture?.device),
@@ -191,7 +299,9 @@ function siteKey(config) {
       delayTolerance: config.truth?.adsb?.delay_tolerance,
       dopplerTolerance: config.truth?.adsb?.doppler_tolerance,
       provisionalEventTimeUncertaintyS:
-        config.truth?.adsb?.provisional_event_time_uncertainty_s}};
+        config.truth?.adsb?.provisional_event_time_uncertainty_s,
+      ...(config.truth?.adsb?.uncertainty_association?.enable === true ?
+        {uncertaintyAssociation: truthUncertainty.policy(config.truth.adsb.uncertainty_association)} : {})}};
   return crypto.createHash('sha256').update(JSON.stringify(relevant)).digest('hex');
 }
 
@@ -207,20 +317,25 @@ function receiverEpoch(config) {
 }
 
 function evaluationContract(span, timingPolicy = 'exact') {
-  return {schema: 'vectorwarp-live-aircraft-scorecard-v1', delay_min: span?.delayMinBin,
+  return {schema: 'vectorwarp-live-aircraft-scorecard-v2',
+    detector_eligibility_version: DETECTOR_ELIGIBILITY_VERSION, delay_min: span?.delayMinBin,
     delay_max: span?.delayMaxBin, doppler_min: span?.dopplerMinHz,
     doppler_max: span?.dopplerMaxHz, timing_trigger: 'native-only-v2',
     exact_timing_required: timingPolicy === 'exact', timing_policy: timingPolicy,
-    timing_skew_ms: 100, truth_offset_s: 1,
+    timing_skew_ms: 100, truth_offset_s: span?.truthUncertaintyPolicy?.maxProjectionS ?? 1,
+    ...(span?.truthUncertaintyPolicy ? {association_family: 'uncertainty-ellipse-v1',
+      uncertainty_policy: span.truthUncertaintyPolicy, null_calibrated: false} : {}),
     provisional_event_time_uncertainty_s: timingPolicy === 'provisional' ?
       span?.provisionalTimeUncertaintyS : 0,
     source_disagreement_km: .5, required_cpis: 3, stable_track_associations: 3,
     eligibility_delay_floor_km: span?.detectionMinDelayKm,
+    eligibility_min_absolute_doppler_hz: span?.detectionMinAbsDopplerHz,
     eligibility_semantics: 'detector-searchable-delay-doppler'};
 }
 
 function siteDescriptor(config) {
-  return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
+  return {detector_eligibility_version: DETECTOR_ELIGIBILITY_VERSION,
+    frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
     delay_reference_sample_rate_hz: config.process?.delay_reference_sample_rate_hz ?? null,
     receiver: config.location?.rx || null, transmitter: config.location?.tx || null,
     ambiguity: config.process?.ambiguity || null, clutter: config.process?.clutter || null,
@@ -239,7 +354,7 @@ function emptyPass(hex, flight, at, key) {
     startedAt: at, lastAt: at,
     frames: 0, physicalEligibleFrames: 0, detectorEligibleFrames: 0, eligibleFrames: 0,
     detectedFrames: 0, trackedFrames: 0, belowFloorFrames: 0,
-    aboveDelayFrames: 0, outsideDopplerFrames: 0, staleTruthFrames: 0,
+    aboveDelayFrames: 0, outsideDopplerFrames: 0, dopplerNotchFrames: 0, staleTruthFrames: 0,
     missingTimingFrames: 0,
     clutterCancelledFrames: 0, outsideClutterFrames: 0, minDelayKm: null, maxDelayKm: null,
     minDopplerHz: null, maxDopplerHz: null, minAltitudeGeomFt: null,
@@ -251,8 +366,16 @@ function emptyPass(hex, flight, at, key) {
     maxAbsDelayRateKmS: null,
     maxAbsDopplerRateHzS: null, azimuthSectors45: Array(8).fill(0),
     firstTruth: null, lastTruth: null, truthHistory: [], cpiAudit: [],
+    firstEligibleAt: null, lastEligibleAt: null,
     firstDetectionAt: null, firstTrackAt: null,
     detectionTimestamps: [], trackTimestamps: [], sampledBuckets: [],
+    qualityCpi: {observed: 0, preexistingEligibleCpis: 0,
+      detectedAndTracked: 0, detectedNotTracked: 0, trackedWithoutDetection: 0,
+      currentDetectedRun: 0, longestDetectedRun: 0, currentMissRun: 0,
+      longestMissRun: 0, currentTrackedRun: 0, longestTrackedRun: 0,
+      currentUntrackedRun: 0, longestUntrackedRun: 0,
+      detectionReacquisitions: 0, trackReacquisitions: 0,
+      priorDetected: null, priorTracked: null},
     delayBands: {}, slantRangeBands: {}, elevationBands: {}, azimuthBands: {},
     azimuthElevationBands: {}, geometryBands: {}};
 }
@@ -496,6 +619,14 @@ function accumulateRollup(state, key, old) {
   const detectorEligible = (old.detectorEligibleFrames ?? old.physicalEligibleFrames) >= 3;
   if (old.siteKey !== key) return;
   state.rollup.passes += 1;
+  state.rollup.eligibleCpis = (state.rollup.eligibleCpis || 0) +
+    Math.max(0, Number(old.eligibleFrames) || 0);
+  state.rollup.detectedCpis = (state.rollup.detectedCpis || 0) +
+    Math.max(0, Number(old.detectedFrames) || 0);
+  state.rollup.trackedCpis = (state.rollup.trackedCpis || 0) +
+    Math.max(0, Number(old.trackedFrames) || 0);
+  state.rollup.dopplerNotchFrames = (state.rollup.dopplerNotchFrames || 0) +
+    (old.dopplerNotchFrames || 0);
   if (mapEligible) state.rollup.mapEligible = (state.rollup.mapEligible || 0) + 1;
   if (detectorEligible) state.rollup.detectorEligible =
     (state.rollup.detectorEligible || 0) + 1;
@@ -701,15 +832,21 @@ function truthSnapshot(prediction, timestamp) {
     delay_definition: prediction.delay_definition || 'excess_bistatic_path_km',
     delay_rate_km_s: prediction.delay_rate_km_s,
     doppler_rate_hz_s: prediction.doppler_rate_hz_s,
+    ...(prediction.truth_uncertainty ? {truth_uncertainty: prediction.truth_uncertainty} : {}),
     provenance: prediction.provenance && typeof prediction.provenance === 'object' ?
       {...prediction.provenance} : null};
 }
 
-function truthIntegrity(prediction) {
+function truthIntegrity(prediction, uncertaintyPolicy = null) {
   const provenance = prediction?.provenance;
   if (!provenance || typeof provenance !== 'object') return {valid: false, reason: 'missing-provenance'};
   const offset = provenance.observation_time_offset_s;
-  if (!finite(offset) || Math.abs(offset) > 1) return {valid: false, reason: 'stale-observation'};
+  if (!finite(offset) || Math.abs(offset) > (uncertaintyPolicy?.maxProjectionS ?? 1))
+    return {valid: false, reason: 'stale-observation'};
+  if (uncertaintyPolicy && prediction.truth_uncertainty?.valid !== true)
+    return {valid: false, reason: prediction.truth_uncertainty?.reason || 'truth-uncertainty-unavailable'};
+  if (uncertaintyPolicy && provenance.disagreement === true)
+    return {valid: false, reason: 'source-disagreement'};
   if (!['identity', 'constant_velocity_ground_track'].includes(provenance.projection_model))
     return {valid: false, reason: 'invalid-projection'};
   const disagreement = provenance.maximum_pairwise_projected_disagreement_km;
@@ -804,10 +941,7 @@ class EvidenceStatistics {
     this.timingPolicy = timingPolicy;
     this.fs = fileSystem;
     this.now = now;
-    const recorderPath = config.process?.bearing?.manifold_recorder?.path;
-    this.filename = filename || process.env.BLAH2_STATISTICS_PATH ||
-      path.join(recorderPath ? path.dirname(recorderPath) : '/var/lib/vectorwarp-api',
-        'evidence-statistics.json');
+    this.filename = filename || defaultEvidenceStatisticsPath(config);
     this.key = siteKey(config);
     this.configEpoch = configEpoch(config);
     this.receiverEpoch = receiverEpoch(config);
@@ -818,7 +952,9 @@ class EvidenceStatistics {
         passes: 0, eligible: 0,
         detected: 0, tracked: 0, missed: 0, outOfConfig: 0,
         mapEligible: 0, detectorEligible: 0, truthUnusable: 0,
-        eligibleNoRadar: 0, detectedNotTracked: 0, trackingFailureClasses: {}},
+        eligibleNoRadar: 0, detectedNotTracked: 0, trackingFailureClasses: {},
+        eligibleCpis: 0, detectedCpis: 0, trackedCpis: 0,
+        cpiExposureIncompleteArchivedPasses: 0},
       radarCoverage: {schema: 'vectorwarp-radar-coverage-accumulator-v1', buckets: {}},
       captureAdmission: {checked: 0, admitted: 0, quarantined: 0,
         missingAfterAdmission: 0, reasons: {}}, error: null};
@@ -896,7 +1032,8 @@ class EvidenceStatistics {
           !value.active || typeof value.active !== 'object') throw new Error('Statistics file has an invalid schema');
       this.state = {...this.state, ...value, schema: this.state.schema,
         eligibilityEvents: Array.isArray(value.eligibilityEvents) ? value.eligibilityEvents : [],
-        sites: {...(value.sites || {}), [this.key]: siteDescriptor(this.config)}, error: null};
+        sites: {...(value.sites || {}),
+          [this.key]: {...value.sites?.[this.key], ...siteDescriptor(this.config)}}, error: null};
       this.state.captureAdmission ||= {checked: 0, admitted: 0, quarantined: 0,
         missingAfterAdmission: 0, reasons: {}};
       this.state.associationDiagnostics ||= {detection: {}, tracker: {}};
@@ -920,11 +1057,32 @@ class EvidenceStatistics {
       for (const pass of Object.values(this.state.active)) compactActivePass(pass);
       for (const event of this.state.eligibilityEvents) compactEligibilityEvent(event);
       this.trimEligibilityEvents();
-      if (this.state.rollup?.siteKey !== this.key) this.state.rollup = {
-        siteKey: this.key, passes: 0, eligible: 0, detected: 0, tracked: 0,
-        missed: 0, outOfConfig: 0, mapEligible: 0, detectorEligible: 0, truthUnusable: 0,
-        eligibleNoRadar: 0, detectedNotTracked: 0, trackingFailureClasses: {}};
+      if (this.state.rollup?.siteKey !== this.key) {
+        // A contract/configuration rollover starts a new cohort, not a rewrite
+        // of archived pass counts (including those already compacted to rollup).
+        if (this.state.rollup?.siteKey) {
+          const previous = this.state.sites[this.state.rollup.siteKey] ||= {};
+          previous.finalized_rollup = this.state.rollup;
+        }
+        this.state.rollup = {
+          siteKey: this.key, passes: 0, eligible: 0, detected: 0, tracked: 0,
+          missed: 0, outOfConfig: 0, mapEligible: 0, detectorEligible: 0, truthUnusable: 0,
+          eligibleNoRadar: 0, detectedNotTracked: 0, trackingFailureClasses: {},
+          eligibleCpis: 0, detectedCpis: 0, trackedCpis: 0,
+          cpiExposureIncompleteArchivedPasses: 0};
+      }
       this.state.rollup.trackingFailureClasses ||= {};
+      const hasArchivedCpiExposure = ['eligibleCpis', 'detectedCpis', 'trackedCpis']
+        .every(field => finite(this.state.rollup[field]));
+      if (!hasArchivedCpiExposure) {
+        this.state.rollup.cpiExposureIncompleteArchivedPasses =
+          Math.max(this.state.rollup.cpiExposureIncompleteArchivedPasses || 0,
+            this.state.rollup.passes || 0);
+        this.state.rollup.eligibleCpis ||= 0;
+        this.state.rollup.detectedCpis ||= 0;
+        this.state.rollup.trackedCpis ||= 0;
+      }
+      this.state.rollup.cpiExposureIncompleteArchivedPasses ||= 0;
       for (const pass of this.state.passes) compactFinalizedPass(pass);
       while (this.state.passes.length > MAX_PASSES)
         accumulateRollup(this.state, this.key, this.state.passes.shift());
@@ -1018,16 +1176,24 @@ class EvidenceStatistics {
         [normalizeHex(rawHex), prediction]).filter(([hex, prediction]) => hex &&
           finite(prediction?.delay) && finite(prediction?.doppler));
       const timing = timingAt(this.recentTiming, timestamp);
+      const uncertaintyPolicy = this.limits.truthUncertaintyPolicy;
       const timingUncertaintyS = this.timingPolicy === 'provisional' &&
         timing?.exact_event_time === false ? timing.event_time_uncertainty_s : 0;
+      const eligiblePredictions = uncertaintyPolicy ? valid.filter(([, prediction]) =>
+        truthIntegrity(prediction, uncertaintyPolicy).valid) : valid;
+      // Preserve the existing operational/provisional frame-alignment contract
+      // for every SDR without introducing a new receiver prerequisite.
+      const timingContext = frameTimestamp => ({declared: finite(timingUncertaintyS),
+      model: timing?.exact_event_time === true ? 'exact' : 'existing-operational-provisional',
+      frameOffsetS: finite(frameTimestamp) ? (frameTimestamp - timestamp) / 1000 : NaN});
       const detectionDiagnostics = {}, trackerDiagnostics = {};
-      const detected = assignments(detectionCells, valid, prediction =>
+      const detected = assignments(detectionCells, eligiblePredictions, prediction =>
         associationGates(this.limits, prediction, timestamp, 'detection',
-          timingUncertaintyS),
+          timingUncertaintyS, timingContext(detectionTimestamp)),
       'detection', detectionTimestamp, detectionDiagnostics);
-      const tracked = assignments(trackerCells, valid, prediction =>
+      const tracked = assignments(trackerCells, eligiblePredictions, prediction =>
         associationGates(this.limits, prediction, timestamp, 'tracker',
-          timingUncertaintyS),
+          timingUncertaintyS, timingContext(trackerTimestamp)),
       'tracker', trackerTimestamp, trackerDiagnostics);
       for (const [hex, association] of tracked)
         this.trackPopulation.associate(association, hex);
@@ -1039,7 +1205,8 @@ class EvidenceStatistics {
       for (const [hex, prediction] of valid) {
         this.observe(hex, prediction, timestamp,
           detected.get(hex) || null, tracked.get(hex) || null,
-          timing);
+          timing, uncertaintyPolicy ? associationGates(this.limits, prediction, timestamp,
+            'detection', timingUncertaintyS, timingContext(timestamp)) : null);
       }
       this.emitUnmatchedMotionCapture(timestamp);
       this.expire(timestamp);
@@ -1112,7 +1279,8 @@ class EvidenceStatistics {
     } catch (error) { this.state.error = error.message; }
   }
 
-  observe(hex, prediction, timestamp, detectedAssociation, trackedAssociation, timing = null) {
+  observe(hex, prediction, timestamp, detectedAssociation, trackedAssociation, timing = null,
+    uncertaintyAdmission = null) {
     let pass = this.state.active[hex];
     if (pass && (timestamp - pass.lastAt > PASS_GAP_MS || pass.siteKey !== this.key)) {
       this.finish(hex); pass = null;
@@ -1134,21 +1302,27 @@ class EvidenceStatistics {
     const aboveFloor = delayBin >= this.limits.detectionMinDelayBin;
     const dopplerInMap = doppler >= this.limits.dopplerMinHz && doppler <= this.limits.dopplerMaxHz;
     const physical = delayInMap && dopplerInMap;
-    const detectorEligible = physical && aboveFloor;
+    const outsideNotch = Math.abs(doppler) >= this.limits.detectionMinAbsDopplerHz;
+    const notchExcluded = physical && aboveFloor && !outsideNotch;
+    const detectorEligible = physical && aboveFloor && outsideNotch;
     if (physical) pass.physicalEligibleFrames += 1;
     if (detectorEligible) pass.detectorEligibleFrames = (pass.detectorEligibleFrames || 0) + 1;
     if (!aboveFloor) pass.belowFloorFrames += 1;
     if (!delayInMap && delayBin > this.limits.delayMaxBin) pass.aboveDelayFrames += 1;
     if (!dopplerInMap) pass.outsideDopplerFrames += 1;
+    if (notchExcluded) pass.dopplerNotchFrames = (pass.dopplerNotchFrames || 0) + 1;
     if (this.limits.clutterMaxBin !== null && delayBin <= this.limits.clutterMaxBin)
       pass.clutterCancelledFrames += 1;
     else if (physical) pass.outsideClutterFrames += 1;
-    const integrity = truthIntegrity(prediction);
+    let integrity = truthIntegrity(prediction, this.limits.truthUncertaintyPolicy);
+    if (this.limits.truthUncertaintyPolicy && uncertaintyAdmission?.valid !== true)
+      integrity = {valid: false, reason: uncertaintyAdmission?.reason || 'uncertainty-admission-unavailable'};
     const age = finite(prediction.timestamp) ? Math.max(0, timestamp / 1000 - prediction.timestamp) : Infinity;
     pass.cpiAudit ||= [];
     pass.cpiAudit.push({timestamp_ms: timestamp, timing, truth_valid: integrity.valid,
       truth_reason: integrity.reason, predicted_delay_km: delay, predicted_doppler_hz: doppler,
       map_eligible: physical, detector_eligible: detectorEligible,
+      detection_doppler_notch_excluded: notchExcluded,
       physical_eligible: physical, detected: Boolean(detectedAssociation),
       stable_tracked: Boolean(trackedAssociation)});
     pass.cpiAudit.sort((left, right) => left.timestamp_ms - right.timestamp_ms);
@@ -1183,6 +1357,11 @@ class EvidenceStatistics {
     if (!detectorEligible || age > this.limits.maxTruthAgeS || !integrity.valid ||
         (this.exactTimingRequired && !timing)) return;
     pass.eligibleFrames += 1;
+    pass.firstEligibleAt = finite(pass.firstEligibleAt) ?
+      Math.min(pass.firstEligibleAt, timestamp) : timestamp;
+    pass.lastEligibleAt = finite(pass.lastEligibleAt) ?
+      Math.max(pass.lastEligibleAt, timestamp) : timestamp;
+    observeQualityCpi(pass, Boolean(detectedAssociation), Boolean(trackedAssociation));
     const bandDescriptor = delayBand(this.limits, delay);
     if (bandDescriptor) {
       pass.delayBands ||= {};
@@ -1521,6 +1700,23 @@ class EvidenceStatistics {
     const eligibleCount = eligible.length + base.eligible;
     const detectedCount = detected.length + base.detected;
     const trackedCount = tracked.length + base.tracked;
+    const retainedCpiCounts = observed.reduce((totals, pass) => {
+      totals.eligibleFrames += Math.max(0, Number(pass.eligibleFrames) || 0);
+      totals.detectedFrames += Math.max(0, Number(pass.detectedFrames) || 0);
+      totals.trackedFrames += Math.max(0, Number(pass.trackedFrames) || 0);
+      return totals;
+    }, {eligibleFrames: 0, detectedFrames: 0, trackedFrames: 0});
+    const archivedCpiCounts = duration === Infinity && minimumStartedAt === -Infinity ? {
+      eligibleFrames: base.eligibleCpis || 0, detectedFrames: base.detectedCpis || 0,
+      trackedFrames: base.trackedCpis || 0} :
+      {eligibleFrames: 0, detectedFrames: 0, trackedFrames: 0};
+    const exposure = cpiExposure({
+      eligibleFrames: retainedCpiCounts.eligibleFrames + archivedCpiCounts.eligibleFrames,
+      detectedFrames: retainedCpiCounts.detectedFrames + archivedCpiCounts.detectedFrames,
+      trackedFrames: retainedCpiCounts.trackedFrames + archivedCpiCounts.trackedFrames},
+    this.limits?.cpiSeconds || .5, {
+      complete: !(base.cpiExposureIncompleteArchivedPasses > 0),
+      excludedArchivedPasses: base.cpiExposureIncompleteArchivedPasses || 0});
     const liveEligible = observed.filter(pass => pass.eligibleFrames >= 3);
     const liveDetected = liveEligible.filter(pass => pass.detectedFrames >= 3);
     const liveTracked = liveEligible.filter(pass => pass.trackedFrames >= 3);
@@ -1547,10 +1743,13 @@ class EvidenceStatistics {
       detection_yield: ratio(detectedCount, eligibleCount),
       tracking_yield: ratio(trackedCount, eligibleCount),
       denominator_semantics: 'finalized passes with >=3 detector-searchable, fresh-truth CPIs',
+      cpi_exposure: exposure,
       live_to_date: {eligible_passes: liveEligible.length,
         detected_passes: liveDetected.length, tracked_passes: liveTracked.length,
         detection_yield: ratio(liveDetected.length, liveEligible.length),
         tracking_yield: ratio(liveTracked.length, liveEligible.length),
+        cpi_exposure: cpiExposure(retainedCpiCounts,
+          this.limits?.cpiSeconds || .5),
         delay_strata: liveStrata('excess_bistatic_path_km', delayBandEdges(this.limits),
           'delayBands'),
         receiver_slant_range_strata: liveStrata('receiver_to_aircraft_3d_slant_range_km',
@@ -1584,6 +1783,8 @@ class EvidenceStatistics {
         below_detection_floor: observed.reduce((sum, pass) => sum + pass.belowFloorFrames, 0),
         above_delay_ceiling: observed.reduce((sum, pass) => sum + pass.aboveDelayFrames, 0),
         outside_doppler_span: observed.reduce((sum, pass) => sum + pass.outsideDopplerFrames, 0),
+        inside_detection_doppler_notch: observed.reduce((sum, pass) =>
+          sum + (pass.dopplerNotchFrames || 0), base.dopplerNotchFrames || 0),
         stale_truth: observed.reduce((sum, pass) => sum + pass.staleTruthFrames, 0),
         missing_exact_timing: observed.reduce((sum, pass) => sum + (pass.missingTimingFrames || 0), 0),
         beyond_clutter_cancellation: observed.reduce((sum, pass) =>
@@ -1595,6 +1796,7 @@ class EvidenceStatistics {
     const timestamp = this.now();
     const live = this.latest.bearing?.data || [];
     return {schema: this.state.schema, site_key: this.key, updated_at: this.state.updatedAt,
+      timing_policy: this.timingPolicy,
       collecting: this.config.truth?.adsb?.enabled === true && Boolean(this.limits),
       error: this.state.error, limits: this.limits,
       eligibility_event_count: this.state.eligibilityEvents.length,
@@ -1623,6 +1825,8 @@ class EvidenceStatistics {
             pass.eligibleFrames >= 3 ? 'provisional_miss' : 'collecting',
         eligible_cpis: pass.eligibleFrames, detected_cpis: pass.detectedFrames,
         tracked_cpis: pass.trackedFrames,
+        cpi_exposure: cpiExposure(pass, this.limits?.cpiSeconds || .5),
+        track_quality: qualityCpiSummary(pass, this.limits?.cpiSeconds || .5),
         last_truth: pass.lastTruth ? {delay_km: pass.lastTruth.delay_km,
           doppler_hz: pass.lastTruth.doppler_hz,
           bearing_deg_true: pass.lastTruth.bearing_deg_true,
@@ -1635,6 +1839,8 @@ class EvidenceStatistics {
         flight: pass.flight, started_at: pass.startedAt, finalized_at: pass.lastAt,
         outcome: eligibilityOutcome(pass), eligible_cpis: pass.eligibleFrames,
         detected_cpis: pass.detectedFrames, tracked_cpis: pass.trackedFrames,
+        cpi_exposure: cpiExposure(pass, this.limits?.cpiSeconds || .5),
+        track_quality: qualityCpiSummary(pass, this.limits?.cpiSeconds || .5),
         tracking_failure_class: pass.trackingFailureClass ||
           (pass.detectedFrames >= 3 && pass.trackedFrames < 3 ?
             'unclassified_retained_legacy' : null),
@@ -1729,6 +1935,8 @@ class EvidenceStatistics {
       started_at: pass.startedAt, finalized_at: pass.lastAt,
       eligible_cpis: pass.eligibleFrames, detected_cpis: pass.detectedFrames,
       tracked_cpis: pass.trackedFrames,
+      cpi_exposure: cpiExposure(pass, this.limits?.cpiSeconds || .5),
+      track_quality: qualityCpiSummary(pass, this.limits?.cpiSeconds || .5),
       detected: pass.detectedFrames >= 3, tracked: pass.trackedFrames >= 3,
       delay_bands: Object.fromEntries(Object.entries(pass.delayBands || {})
         .filter(([, band]) => (band.eligibleFrames || 0) >= 3)
@@ -1797,6 +2005,22 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
   return new EvidenceStatistics(config, adsbSource, dependencies);
 }
 
+function defaultEvidenceStatisticsPath(config, environment = process.env) {
+  if (environment.BLAH2_STATISTICS_PATH) return environment.BLAH2_STATISTICS_PATH;
+  const recorderPath = config.process?.bearing?.manifold_recorder?.path;
+  if (recorderPath) return path.join(path.dirname(recorderPath), 'evidence-statistics.json');
+  if (environment.VECTORWARP_MACOS_STATE)
+    return path.join(environment.VECTORWARP_MACOS_STATE, 'evidence-statistics.json');
+  return '/var/lib/vectorwarp-api/evidence-statistics.json';
+}
+
+function defaultProvisionalEvidenceStatisticsPath(config, environment = process.env) {
+  if (environment.BLAH2_PROVISIONAL_STATISTICS_PATH)
+    return environment.BLAH2_PROVISIONAL_STATISTICS_PATH;
+  const exact = path.parse(defaultEvidenceStatisticsPath(config, environment));
+  return path.join(exact.dir, `${exact.name}-provisional${exact.ext}`);
+}
+
 // Exactly one lane owns operational side effects. It uses qualified exact
 // timing (and zero expansion) when present, otherwise configured provisional
 // uncertainty. The parallel exact scorecard never creates a duplicate capture.
@@ -1818,4 +2042,6 @@ module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_S
   radarCoverageFromAccumulator, rememberRadarCoverage,
   primaryGeometryBand, standardizedComparison,
   siteKey, siteDescriptor, EvidenceStatistics,
-  provisionalTimingFrame, createEvidenceStatistics, createEvidenceStatisticsLanes};
+  provisionalTimingFrame, defaultEvidenceStatisticsPath,
+  defaultProvisionalEvidenceStatisticsPath,
+  createEvidenceStatistics, createEvidenceStatisticsLanes};

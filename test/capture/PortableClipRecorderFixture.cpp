@@ -31,10 +31,8 @@ blah2::IqClipStatus wait(blah2::PortableClipRecorder& recorder) {
 
 bool ingest_when_available(blah2::PortableClipRecorder& recorder,
     unsigned first, unsigned count, uint64_t epoch, int64_t receiptNanoseconds) {
-  // Ingest is intentionally non-blocking so optional recording can never stall
-  // a receiver callback.  The writer thread can briefly own the mutex while it
-  // starts, so retry the unchanged synthetic block instead of making this
-  // fixture depend on thread scheduling.
+  // Ingest waits only for the recorder's short state transition. File writes
+  // stay outside this mutex, so a good receiver block is never discarded.
   for (unsigned attempt = 0; attempt < 200; ++attempt) {
     if (recorder.ingest(block(first, count), epoch, first, true,
         receiptNanoseconds)) return true;
@@ -50,6 +48,20 @@ int main() {
   std::filesystem::remove_all(directory);
   std::filesystem::create_directories(directory);
   try {
+    // Ten-second late claims are available only when the bounded float-IQ ring
+    // fits the fixed admission budget; never let a high-rate portable radio
+    // silently pin multiple GiB of RAM.
+    assert(blah2::PortableClipRecorder::supports_retention(2, 2000000, 10.0));
+    assert(!blah2::PortableClipRecorder::supports_retention(2, 20000000, 10.0));
+    assert(!blah2::PortableClipRecorder::supports_retention(2, 30000000, 10.0));
+    blah2::PortableClipRecorder::Options rejectedOptions;
+    rejectedOptions.ringSeconds = 10.0; rejectedOptions.maximumClipSeconds = 10.0;
+    bool rejected = false;
+    try { blah2::PortableClipRecorder rejectedRecorder(directory.string(), "HackRF", 2,
+      20000000, 204640000, rejectedOptions); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected);
+
     blah2::PortableClipRecorder::Options options;
     options.ringSeconds = 0.3;
     options.maximumClipSeconds = 0.5;

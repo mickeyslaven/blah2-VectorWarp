@@ -140,26 +140,49 @@ void normalizeWeights(inout dvec2 w[8],uint count){
  if(!finiteD(lengthValue)||!(lengthValue>0.0LF)){reject(112u);return;}
  for(uint c=0u;c<count;++c)w[c]=w[c]/lengthValue;
 }
+double beamPower(dvec2 w[8],uint count,double loading){
+ precise dvec2 value=dvec2(0.0LF);
+ for(uint left=0u;left<count;++left){precise dvec2 projected=dvec2(0.0LF);
+  for(uint right=0u;right<count;++right)projected=projected+multiplyZ(readZ(192u+4u*(left*count+right)),w[right]);
+  value=value+multiplyZ(conjZ(w[left]),projected);
+ }
+ return max(0.0LF,value.x-loading);
+}
 void main(){
  if(indexOf()!=0u||m[1]==0u)return;uint count=m[18];bool retained=m[68]==count;
  precise double trace=0.0LF;for(uint c=0u;c<count;++c)trace=trace+readZ(192u+4u*(c*count+c)).x;
  precise double loading=readD(450u)*trace/double(count);
  if(!finiteD(trace)||trace<0.0LF||!finiteD(loading)||loading<0.0LF){reject(113u);return;}
  for(uint c=0u;c<count;++c){uint at=192u+4u*(c*count+c);dvec2 value=readZ(at);value.x=value.x+loading;writeZ(at,value);}
- precise dvec2 w[8],old[8],next[8];
- for(uint c=0u;c<count;++c){old[c]=readZ(72u+4u*c);w[c]=retained?old[c]:dvec2(1.0LF/sqrt(double(count)),0.0LF);}
- uint completed=0u;for(uint iteration=0u;iteration<m[22];++iteration){
-  for(uint left=0u;left<count;++left){precise dvec2 value=dvec2(0.0LF);
-   for(uint right=0u;right<count;++right)value=value+multiplyZ(readZ(192u+4u*(left*count+right)),w[right]);next[left]=value;}
-  normalizeWeights(next,count);for(uint c=0u;c<count;++c)w[c]=next[c];++completed;
+ precise dvec2 w[8],old[8],next[8],candidate[8];
+ for(uint c=0u;c<count;++c)old[c]=readZ(72u+4u*c);
+ // Every basis seed participates, including modes outside the largest
+ // diagonal's covariance block. Count every iteration in coverage evidence.
+ uint completed=0u;double bestPower=-1.0LF;
+ for(uint seed=0u;seed<count;++seed){
+  for(uint c=0u;c<count;++c)candidate[c]=dvec2(c==seed?1.0LF:0.0LF,0.0LF);
+  for(uint iteration=0u;iteration<m[22];++iteration){
+   for(uint left=0u;left<count;++left){precise dvec2 value=dvec2(0.0LF);
+    for(uint right=0u;right<count;++right)value=value+multiplyZ(readZ(192u+4u*(left*count+right)),candidate[right]);next[left]=value;}
+   normalizeWeights(next,count);for(uint c=0u;c<count;++c)candidate[c]=next[c];++completed;
+  }
+  double power=beamPower(candidate,count,loading);
+  if(bestPower<0.0LF||power>bestPower*(1.0LF+1e-12LF)){
+   bestPower=power;for(uint c=0u;c<count;++c)w[c]=candidate[c];
+  }
  }
- if(retained){
-  precise dvec2 alignment=dvec2(0.0LF);for(uint c=0u;c<count;++c)alignment=alignment+multiplyZ(conjZ(old[c]),w[c]);
+ precise dvec2 alignment=dvec2(0.0LF);
+ if(retained)for(uint c=0u;c<count;++c)alignment=alignment+multiplyZ(conjZ(old[c]),w[c]);
+ if(magnitudeZ(alignment)<=1e-12LF)
+  for(uint c=0u;c<count;++c)if(magnitudeZ(w[c])>1e-12LF){alignment=w[c];break;}
   double amplitude=magnitudeZ(alignment);
   if(!finiteZ(alignment)||!finiteD(amplitude)){reject(114u);return;}
-  if(amplitude>1e-12LF){dvec2 phase=conjZ(alignment)/amplitude;for(uint c=0u;c<count;++c)w[c]=multiplyZ(w[c],phase);}
+  if(amplitude>0.0LF){dvec2 phase=conjZ(alignment)/amplitude;for(uint c=0u;c<count;++c)w[c]=multiplyZ(w[c],phase);}
+ if(retained){
   double smoothing=readD(448u);
-  for(uint c=0u;c<count;++c)w[c]=smoothing*old[c]+(1.0LF-smoothing)*w[c];normalizeWeights(w,count);
+  for(uint c=0u;c<count;++c)next[c]=smoothing*old[c]+(1.0LF-smoothing)*w[c];normalizeWeights(next,count);
+  if(beamPower(next,count,loading)>=0.5LF*beamPower(w,count,loading))
+   for(uint c=0u;c<count;++c)w[c]=next[c];
  }
  precise dvec2 projected[8];
  for(uint left=0u;left<count;++left){precise dvec2 value=dvec2(0.0LF);for(uint right=0u;right<count;++right)value=value+multiplyZ(readZ(192u+4u*(left*count+right)),w[right]);projected[left]=value;}
@@ -215,15 +238,25 @@ void main(){
  }
  if(lane!=0u)return;
  if(!finiteD(inputPower)||inputPower<0.0LF||!finiteD(outputPower)||outputPower<0.0LF){reject(108u);return;}
- double divisor=max(outputPower,1e-30LF);
- if(!finiteD(divisor)||!(divisor>0.0LF)){reject(108u);return;}
- double scale=sqrt(inputPower/divisor);if(!finiteD(scale))reject(108u);
- writeD(108u,scale);writeD(110u,inputPower);writeD(112u,outputPower);
+ // Keep coherent array gain; this stage is an energy gate, not per-CPI AGC.
+ m[114]=0u;
+ if(inputPower>0.0LF&&outputPower<0.25LF*inputPower){
+  uint strongest=0u;double strongestPower=-1.0LF;
+  for(uint c=0u;c<m[18];++c){precise double power=0.0LF;
+   for(uint n=0u;n<m[16];++n)power=power+normZ(raw[m[32+c]*m[16]+n]);
+   if(!finiteD(power)){reject(108u);return;}
+   if(power>strongestPower){strongest=c;strongestPower=power;}
+  }
+  for(uint c=0u;c<m[18];++c)writeZ(72u+4u*c,dvec2(c==strongest?1.0LF:0.0LF,0.0LF));
+  m[114]=strongest+1u;writeD(104u,0.0LF);writeD(106u,0.0LF);m[64]=0u;m[65]=0u;
+ }else if(inputPower==0.0LF){writeD(104u,0.0LF);writeD(106u,0.0LF);m[64]=0u;m[65]=0u;}
+ writeD(108u,1.0LF);writeD(110u,inputPower);writeD(112u,outputPower);
 }
 )glsl";
 const char* normalizeBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[16]||m[19]!=1u)return;
- precise dvec2 value=ref[i]*readD(108u);if(!finiteZ(value))reject(109u);ref[i]=value;
+ precise dvec2 value=m[114]!=0u?raw[m[32u+m[114]-1u]*m[16]+i]:ref[i];
+ if(!finiteZ(value))reject(109u);ref[i]=value;
  if((i&127u)==0u)atomicAdd(m[6],min(128u,m[16]-i));}
 )glsl";
 const char* spectrumBody=R"glsl(
@@ -468,7 +501,7 @@ public:
   const uint32_t refs=uint32_t(config_.referenceChannels.size());
   if(s[analyzed]>1||(!array&&s[analyzed])||s[observations]!=(s[analyzed]?shape_.observations:0)||s[pairs]!=(s[analyzed]?refs*refs:0)||
    s[11]!=(s[analyzed]?covariance_.partials:0)||s[12]!=(s[analyzed]?refs*refs:0)||
-   s[iterations]!=(s[analyzed]?config_.powerIterations:0)||s[referenceSamples]!=samples_||s[scaledSamples]!=(array?samples_:0)||
+   s[iterations]!=(s[analyzed]?uint64_t(config_.powerIterations)*refs:0)||s[referenceSamples]!=samples_||s[scaledSamples]!=(array?samples_:0)||
    s[chunks]!=(array?shape_.chunks:0)||s[foldTerms]!=samples_||s[bins]!=shape_.bins||s[commits]!=(committedState?1u:0u))
    throw std::runtime_error("GPU reference/spectrum coverage mismatch");
   return s;

@@ -37,9 +37,8 @@ Map<T>::Map(uint32_t _nRows, uint32_t _nCols)
 }
 
 template <class T>
-void Map<T>::set_row(uint32_t i, std::vector<T> row)
+void Map<T>::set_row(uint32_t i, const std::vector<T>& row)
 {
-  //data[i].swap(row);
   for (uint32_t j = 0; j < nCols; j++)
   {
     data[i][j] = row[j];
@@ -47,7 +46,7 @@ void Map<T>::set_row(uint32_t i, std::vector<T> row)
 }
 
 template <class T>
-void Map<T>::set_col(uint32_t i, std::vector<T> col)
+void Map<T>::set_col(uint32_t i, const std::vector<T>& col)
 {
   for (uint32_t j = 0; j < nRows; j++)
   {
@@ -229,6 +228,109 @@ std::string Map<T>::to_json_km(uint64_t timestamp, uint32_t fs)
 }
 
 template <class T>
+std::string Map<T>::to_json_metadata_km(uint64_t timestamp, uint32_t fs)
+{
+  if (!fs || doppler.size() < nRows)
+    throw std::invalid_argument("Cannot convert an invalid radar map or zero sample rate");
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.SetMaxDecimalPlaces(2);
+  writer.StartObject();
+  writer.Key("timestamp"); writer.Uint64(timestamp);
+  writer.Key("nRows"); writer.Uint(nRows);
+  writer.Key("nCols"); writer.Uint(nCols);
+  writer.Key("noisePower"); writer.Double(noisePower);
+  writer.Key("maxPower"); writer.Double(maxPower);
+  writer.Key("data_omitted"); writer.Bool(true);
+  writer.Key("delay"); writer.StartArray();
+  for (const auto value : delay)
+    writer.Double(value * (Constants::c / static_cast<double>(fs)) / 1000.0);
+  writer.EndArray();
+  writer.Key("doppler"); writer.StartArray();
+  for (uint32_t i = 0; i < nRows; ++i) writer.Double(doppler[i]);
+  writer.EndArray();
+  writer.EndObject();
+  return std::string(buffer.GetString(), buffer.GetSize());
+}
+
+template <class T>
+std::string Map<T>::to_json_presentation_km(uint64_t timestamp, uint32_t fs,
+  bool includeData, uint32_t maximumCells)
+{
+  if (!fs || !maximumCells || delay.size() < nCols || doppler.size() < nRows)
+    throw std::invalid_argument("Cannot convert an invalid presentation map");
+  if (!std::isfinite(noisePower) || !std::isfinite(maxPower) ||
+      std::any_of(delay.begin(), delay.begin() + nCols,
+        [](const auto value) { return !std::isfinite(double(value)); }) ||
+      std::any_of(doppler.begin(), doppler.begin() + nRows,
+        [](const auto value) { return !std::isfinite(double(value)); }))
+    throw std::runtime_error("Presentation map contains non-finite metadata");
+  uint32_t stride = 1;
+  const auto extent = [](uint32_t count, uint32_t step) {
+    return 1u + (count - 1u) / step;
+  };
+  while (uint64_t(extent(nRows, stride)) * extent(nCols, stride) >
+      maximumCells)
+    ++stride;
+  const uint32_t rows = extent(nRows, stride);
+  const uint32_t cols = extent(nCols, stride);
+  const size_t capacity = rows <=
+      ((std::numeric_limits<size_t>::max() - 1024) / 8) / cols ?
+    size_t(rows) * cols * 8 + 1024 : 1024;
+  rapidjson::StringBuffer buffer(nullptr, capacity);
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.SetMaxDecimalPlaces(2);
+  writer.StartObject();
+  writer.Key("timestamp"); writer.Uint64(timestamp);
+  writer.Key("nRows"); writer.Uint(rows);
+  writer.Key("nCols"); writer.Uint(cols);
+  writer.Key("sourceRows"); writer.Uint(nRows);
+  writer.Key("sourceCols"); writer.Uint(nCols);
+  writer.Key("presentationStride"); writer.Uint(stride);
+  writer.Key("presentation_only"); writer.Bool(true);
+  writer.Key("presentation_pooling"); writer.String("max");
+  writer.Key("presentation_precision_db"); writer.Double(0.25);
+  writer.Key("noisePower"); writer.Double(noisePower);
+  writer.Key("maxPower"); writer.Double(maxPower);
+  if (!includeData) {
+    writer.Key("data_omitted"); writer.Bool(true);
+  }
+  writer.Key("delay"); writer.StartArray();
+  for (uint32_t column = 0; column < nCols; column += stride) {
+    const uint32_t end = std::min<uint32_t>(column + stride, nCols);
+    const double centre = (double(delay[column]) + delay[end - 1]) / 2.0;
+    writer.Double(centre * (Constants::c / static_cast<double>(fs)) / 1000.0);
+  }
+  writer.EndArray();
+  writer.Key("doppler"); writer.StartArray();
+  for (uint32_t row = 0; row < nRows; row += stride) {
+    const uint32_t end = std::min<uint32_t>(row + stride, nRows);
+    writer.Double((doppler[row] + doppler[end - 1]) / 2.0);
+  }
+  writer.EndArray();
+  if (includeData) {
+    writer.Key("data"); writer.StartArray();
+    for (uint32_t row = 0; row < nRows; row += stride) {
+      writer.StartArray();
+      for (uint32_t column = 0; column < nCols; column += stride) {
+        const uint32_t rowEnd = std::min<uint32_t>(row + stride, nRows);
+        const uint32_t columnEnd = std::min<uint32_t>(column + stride, nCols);
+        double peak = -std::numeric_limits<double>::infinity();
+        for (uint32_t sourceRow = row; sourceRow < rowEnd; ++sourceRow)
+          for (uint32_t sourceColumn = column; sourceColumn < columnEnd; ++sourceColumn)
+            peak = std::max(peak,
+              mapLevel(data[sourceRow][sourceColumn]) - noisePower);
+        writer.Double(std::round(peak * 4.0) / 4.0);
+      }
+      writer.EndArray();
+    }
+    writer.EndArray();
+  }
+  writer.EndObject();
+  return std::string(buffer.GetString(), buffer.GetSize());
+}
+
+template <class T>
 std::string Map<T>::delay_bin_to_km(std::string json, uint32_t fs)
 {
   rapidjson::Document document;
@@ -283,19 +385,29 @@ bool Map<T>::save(std::string _json, std::string filename)
   rapidjson::Document document;
 
   // create file if it doesn't exist
-  if (FILE *fp = fopen(filename.c_str(), "r"); !fp)
+  if (FILE *fp = fopen(filename.c_str(), "r"); fp)
+  {
+    if (std::fclose(fp) != 0)
+      return false;
+  }
+  else
   {
     if (fp = fopen(filename.c_str(), "w"); !fp)
       return false;
-    fputs("[]", fp);
-    fclose(fp);
+    const bool initialized = std::fputs("[]", fp) >= 0;
+    if (std::fclose(fp) != 0 || !initialized)
+      return false;
   }
 
   // add the document to the file
   if (FILE *fp = fopen(filename.c_str(), "rb+"); fp)
   {
     // check if first is [
-    std::fseek(fp, 0, SEEK_SET);
+    if (std::fseek(fp, 0, SEEK_SET) != 0)
+    {
+      std::fclose(fp);
+      return false;
+    }
     if (getc(fp) != '[')
     {
       std::fclose(fp);
@@ -308,7 +420,11 @@ bool Map<T>::save(std::string _json, std::string filename)
       isEmpty = true;
 
     // check if last is ]
-    std::fseek(fp, -1, SEEK_END);
+    if (std::fseek(fp, -1, SEEK_END) != 0)
+    {
+      std::fclose(fp);
+      return false;
+    }
     if (getc(fp) != ']')
     {
       std::fclose(fp);
@@ -316,17 +432,21 @@ bool Map<T>::save(std::string _json, std::string filename)
     }
 
     // replace ] by ,
-    fseek(fp, -1, SEEK_END);
-    if (!isEmpty)
-      fputc(',', fp);
+    if (std::fseek(fp, -1, SEEK_END) != 0 ||
+        (!isEmpty && std::fputc(',', fp) == EOF))
+    {
+      std::fclose(fp);
+      return false;
+    }
 
     // add json element
-    fwrite(_json.c_str(), sizeof(char), _json.length(), fp);
+    const bool wroteJson = std::fwrite(_json.data(), sizeof(char),
+      _json.size(), fp) == _json.size();
 
     // close the array
-    std::fputc(']', fp);
-    fclose(fp);
-    return true;
+    const bool closedArray = wroteJson && std::fputc(']', fp) != EOF;
+    const bool flushed = closedArray && std::fflush(fp) == 0;
+    return std::fclose(fp) == 0 && flushed;
   }
   return false;
 }

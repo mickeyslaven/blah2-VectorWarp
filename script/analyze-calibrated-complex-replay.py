@@ -80,12 +80,59 @@ def best_beam(cutout, config, delay, doppler):
 def best_beam_at(cutout, config, row, column):
     samples = [complex(*channel[row][column]) for channel in cutout["channels"]]
     reference = [complex(*value) for value in cutout["reference_weights"]]
-    candidates = [sum(weight * sample for weight, sample in zip(weights, samples))
-                  for weights in calibrated_weights(config, reference)]
+    retained = applied_fusion_weights(cutout, config)
+    weights = retained if retained is not None else calibrated_weights(config, reference)
+    candidates = [sum(weight * sample for weight, sample in zip(beam, samples))
+                  for beam in weights]
     beam = max(range(len(candidates)), key=lambda index: abs(candidates[index]) ** 2)
     return {"row": row, "column": column, "delay_km": cutout["delay_km"][column],
             "doppler_hz": cutout["doppler_hz"][row], "beam": beam,
             "value": candidates[beam]}
+
+
+def applied_fusion_weights(cutout, config):
+    """Only explicit native multiply-and-sum weights establish applied fusion.
+
+    Reference eigenweights alone do not encode the residual-noise diagonal
+    scaling used by noise_whitened_beam_bank. Never silently call that forensic
+    reconstruction the production statistic. Malformed retained weights fail.
+    """
+    state = cutout.get("fusion_state")
+    if state is None:
+        return None
+    fusion = config["process"]["surveillance_fusion"]
+    if (not isinstance(state, dict) or state.get("schema") != "vectorwarp-fusion-weights-v1" or
+            state.get("mode") != fusion["mode"] or
+            state.get("convention") != "multiply_then_sum" or
+            state.get("source") != "native_committed" or
+            not isinstance(state.get("weights"), list) or
+            len(state["weights"]) != fusion["beams"]):
+        raise ValueError("applied fusion-weight provenance is invalid")
+    output = []
+    for beam in state["weights"]:
+        if not isinstance(beam, list) or len(beam) != len(cutout["channels"]):
+            raise ValueError("applied fusion-weight shape is invalid")
+        row = []
+        for item in beam:
+            if (not isinstance(item, list) or len(item) != 2 or
+                    any(type(v) not in (int, float) or not math.isfinite(v) for v in item)):
+                raise ValueError("applied fusion-weight value is invalid")
+            row.append(complex(*item))
+        output.append(row)
+    return output
+
+
+def fusion_provenance(cutouts, config, require_production=False):
+    mode = config["process"]["surveillance_fusion"].get("mode", "coherent_beam_bank")
+    retained = bool(cutouts) and all(applied_fusion_weights(frame, config) is not None
+                                   for frame in cutouts)
+    equivalent = retained and mode in ("coherent_beam_bank", "noise_whitened_beam_bank")
+    if require_production and not equivalent:
+        raise ValueError("production comparison requires native applied fusion weights for every CPI")
+    return {"production_equivalent": equivalent, "configured_fusion_mode": mode,
+            "statistic": "native_applied_fusion_power" if equivalent else
+                         "forensic_unwhitened_coherent_reconstruction",
+            "missing_applied_weight_provenance": not retained}
 
 
 def p99(values):
@@ -118,10 +165,39 @@ def gamma_cfar_alpha(pfa, training_cells, cpis):
     return high
 
 
+def fractional_delay_scale(config):
+    """Return production delay-bin drift per Hz for one consumed CPI."""
+    sample_rate = config["capture"]["fs"]
+    carrier = config["capture"]["fc"]
+    cpi = config["process"]["data"]["cpi"]
+    if (not isinstance(sample_rate, (int, float)) or sample_rate <= 0 or
+            not isinstance(carrier, (int, float)) or carrier <= 0 or
+            not isinstance(cpi, (int, float)) or cpi <= 0):
+        raise ValueError("fractional_delay replay geometry is invalid")
+    # blah2 constructs each consumed CPI as uint32_t(fs * cpi). Mirror that
+    # contract instead of inferring motion from wall-clock timestamps.
+    cpi_samples = int(sample_rate * cpi)
+    if cpi_samples <= 0:
+        raise ValueError("fractional_delay replay CPI has no samples")
+    return -cpi_samples / carrier
+
+
+def delay_path_column(column, residual, age, scale, newest_doppler, older_doppler):
+    """Mirror the resident Q16 nearest-coordinate fractional-delay rule."""
+    displacement = scale * .5 * (newest_doppler + older_doppler) * age
+    fixed = math.floor(abs(displacement) * 65536 + .5)
+    nearest = (fixed + 32768) // 65536
+    offset = -nearest if displacement < 0 else nearest
+    return column - residual * age - offset
+
+
 def tbd_cfar_evidence(cutouts, config, delay, doppler):
-    """Recreate the resident fixed/moving-path CFAR decision on a wide cutout."""
+    """Inspect fixed/moving-path evidence; production identity is explicit."""
+    provenance = fusion_provenance(cutouts, config)
     detection = config["process"]["detection"]
     tbd = detection["track_before_detect"]
+    fractional = tbd.get("fractional_delay", False)
+    delay_scale = fractional_delay_scale(config) if fractional else 0
     maximum = tbd.get("max_cpis", 8)
     lengths = [value for value in (2, 4, 8) if value <= maximum]
     delay_motion = tbd.get("delay_motion_bins", tbd.get("motion_bins", 1))
@@ -147,8 +223,16 @@ def tbd_cfar_evidence(cutouts, config, delay, doppler):
                 for column in range(columns):
                     path_values = []
                     for dr, dc in trajectories:
-                        cells = [(row - dr * age, column - dc * age)
-                                 for age in range(length)]
+                        cells = []
+                        for age in range(length):
+                            older_row = row - dr * age
+                            if not 0 <= older_row < rows:
+                                cells.append((older_row, -1))
+                                continue
+                            older_column = delay_path_column(column, dc, age,
+                                delay_scale, cutouts[0]["doppler_hz"][row],
+                                cutouts[0]["doppler_hz"][older_row])
+                            cells.append((older_row, older_column))
                         if all(0 <= rr < rows and 0 <= cc < columns for rr, cc in cells):
                             path_values.append(sum(powers[end - age][rr][cc]
                                 for age, (rr, cc) in enumerate(cells)) / length)
@@ -173,7 +257,9 @@ def tbd_cfar_evidence(cutouts, config, delay, doppler):
                     "alpha": alpha, "training_cells": len(training_columns)}
             if best[length] is None or item["margin_db"] > best[length]["margin_db"]:
                 best[length] = item
-    return {"motion_trials": trials, "effective_pfa_per_integrated_pass": effective_pfa,
+    return {**provenance, "motion_trials": trials, "effective_pfa_per_integrated_pass": effective_pfa,
+            "fractional_delay": fractional,
+            "delay_drift_bins_per_hz_per_cpi": delay_scale,
             "selected_delay_km": cutouts[0]["delay_km"][target_column],
             "selected_doppler_hz": cutouts[0]["doppler_hz"][target_row],
             "best_by_cpis": {str(length): best[length] for length in lengths}}
@@ -207,6 +293,7 @@ def integrated_cell_evidence(cutouts, config, delay, doppler, guard=1):
     def margin(value, control):
         return 10 * math.log10(max(value, 1e-300) / max(control, 1e-300))
     return {
+        **fusion_provenance(cutouts, config),
         "frames": len(cutouts), "control_paths": len(controls),
         "selected_delay_km": cutouts[0]["delay_km"][center_column],
         "selected_doppler_hz": cutouts[0]["doppler_hz"][center_row],
@@ -237,16 +324,36 @@ def nearby_detections(detections, truth, delay_gate, doppler_gate):
 
 def track_evidence(tracks, truth, sample_rate, delay_gate, doppler_gate):
     evidence = {}
-    for document in tracks:
+    instances = {}
+    for frame, document in enumerate(tracks):
+        for item in evidence.values():
+            item["active"] = False
         for track in document.get("data", []):
-            item = evidence.setdefault(track["id"], {"near_samples": 0, "active": False})
-            item["active"] = item["active"] or track.get("state") == "ACTIVE"
-            for delay_bin, doppler in zip(track.get("associated_delay", []),
-                                           track.get("associated_doppler", [])):
-                delay = delay_bin * C / sample_rate / 1000
-                if (abs(delay - truth["delay"]) <= delay_gate and
-                        abs(doppler - truth["doppler"]) <= doppler_gate):
-                    item["near_samples"] += 1
+            track_id = track["id"]
+            prior = instances.get(track_id)
+            generation = 0 if prior is None else prior[0] + (prior[1] + 1 != frame)
+            instances[track_id] = (generation, frame)
+            key = track_id if generation == 0 else f"{track_id}:{generation}"
+            item = evidence.setdefault(key, {"near_samples": 0, "active": False})
+            item["active"] = track.get("state") == "ACTIVE"
+            delays = track.get("associated_delay", [])
+            dopplers = track.get("associated_doppler", [])
+            states = track.get("associated_state", [])
+            measured = track.get("associated_measured")
+            if not delays or len(delays) != len(dopplers) or len(delays) != len(states):
+                continue
+            if isinstance(track.get("measured"), bool):
+                is_measured = track["measured"]
+            elif isinstance(measured, list) and len(measured) == len(delays):
+                is_measured = measured[-1] is True
+            else:
+                is_measured = states[-1] in ("ASSOCIATED", "ACTIVE")
+            if not is_measured or states[-1] not in ("ASSOCIATED", "ACTIVE"):
+                continue
+            delay = delays[-1] * C / sample_rate / 1000
+            if (abs(delay - truth["delay"]) <= delay_gate and
+                    abs(dopplers[-1] - truth["doppler"]) <= doppler_gate):
+                item["near_samples"] += 1
     return evidence
 
 
@@ -298,7 +405,10 @@ def analyze(replay, config, truth, delay_gate=.5, doppler_gate=25,
         "applied_delay_bias_km": delay_bias,
         "applied_doppler_bias_hz": doppler_bias,
         "calibrated_cell_evidence": cell_evidence,
-        "resident_tbd_cfar_evidence": tbd_evidence,
+        "resident_tbd_cfar_evidence": tbd_evidence if tbd_evidence and
+            tbd_evidence["production_equivalent"] else None,
+        "forensic_tbd_cfar_evidence": tbd_evidence if tbd_evidence and
+            not tbd_evidence["production_equivalent"] else None,
         "phase_coherence_uncompensated": coherence(trace, config["process"]["data"]["cpi"], 0),
         "phase_coherence_negative": coherence(trace, config["process"]["data"]["cpi"], -1),
         "phase_coherence_positive": coherence(trace, config["process"]["data"]["cpi"], 1),

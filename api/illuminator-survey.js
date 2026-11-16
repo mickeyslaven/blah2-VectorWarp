@@ -1,4 +1,5 @@
 'use strict';
+const {processingCapabilities} = require('./processing-capabilities');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const count = value => Number.isSafeInteger(value) && value >= 0;
@@ -53,30 +54,17 @@ function bandPlans() {
   }]));
 }
 
-function receiverChannels(config) {
-  const device = config?.capture?.device || {};
-  if (device.type === 'Kraken') return device.channel_count;
-  if (device.type === 'RspDuo') return 2;
-  if (device.type === 'Usrp') return Array.isArray(device.antenna) ? device.antenna.length : 2;
-  if (device.type === 'HackRF') return Array.isArray(device.serial) ? device.serial.length : 2;
-  return 0;
-}
-
 function receiverCapabilities(config) {
   const type = config?.capture?.device?.type || 'Unknown';
-  const channels = receiverChannels(config);
-  const kraken = type === 'Kraken';
-  const coherent = kraken || ['RspDuo', 'Usrp', 'HackRF'].includes(type);
-  const geometry = config?.capture?.device?.array_geometry;
-  const positioned = Array.isArray(geometry?.elements) && geometry.elements.length >= channels &&
-    geometry.elements.every(element => Array.isArray(element.position) &&
-      element.position.length === 3 && element.position.every(finite));
-  const spatial = coherent && channels >= 3 && positioned &&
-    finite(geometry?.x_axis_bearing_deg_true);
+  const topology = processingCapabilities(config || {});
+  const channels = topology.channelCount, coherent = topology.coherent;
+  const recorded = config?.capture?.replay?.state === true;
+  const spatial = coherent && channels >= 3 && topology.surveillanceGeometry &&
+    topology.confirmedGeometry;
   return {receiver_type: type, coherent_channels: coherent ? channels : 0,
     standards: ['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0', 'DVB-T/T2',
       'ISDB-T', 'DTMB', 'CUSTOM'],
-    managed_retune: kraken ? 'suite-v2-readback-and-calibration' :
+    managed_retune: recorded ? 'unsupported' : topology.liveMchq ? 'suite-v2-readback-and-calibration' :
       coherent ? 'processor-owned-restart' : 'unsupported',
     rf_prescreen: coherent,
     spatial_reflection_assessment: spatial ? 'multi-element' :

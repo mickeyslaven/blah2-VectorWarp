@@ -24,7 +24,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         }
         actual = set(re.findall(r'distro: ([\w.]+), format: \w+, arch: (\w+)', workflow))
         self.assertEqual(expected, actual)
-        self.assertEqual(workflow.count('script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test'), 6)
+        self.assertEqual(workflow.count('script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test'), 3)
         self.assertIn('script/test-package-upgrade.sh --previous', workflow)
         self.assertIn('script/test-installed-package.sh --package', workflow)
         self.assertIn('--dragonos-uhd-fixture', workflow)
@@ -45,7 +45,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/release-packages.yml').read_text()
         containerfile = (ROOT / 'test/packaging/Containerfile.service-deb').read_text()
         retry = (ROOT / 'test/packaging/apt-install-with-retry.sh').read_text()
-        self.assertEqual(workflow.count('test/packaging/apt-install-with-retry.sh'), 2)
+        self.assertEqual(workflow.count('test/packaging/apt-install-with-retry.sh'), 1)
         self.assertIn('/usr/local/bin/apt-install-with-retry', containerfile)
         self.assertIn('while [ "$attempt" -le 3 ]', retry)
         self.assertIn('APT::Update::Error-Mode=any', retry)
@@ -96,7 +96,9 @@ exit 0
         for line in (ROOT / 'vm-lab/release-matrix.tsv').read_text().splitlines():
             if line and not line.startswith('#'):
                 rows.append(line.split('\t'))
-        targets = {row[6] for row in rows}
+        self.assertTrue(rows)
+        self.assertTrue(all(len(row) == 5 for row in rows))
+        targets = {row[4] for row in rows}
         self.assertTrue({
             'ubuntu22.04/amd64', 'ubuntu22.04/arm64',
             'ubuntu24.04/amd64', 'ubuntu24.04/arm64',
@@ -107,9 +109,10 @@ exit 0
         names = {row[0] for row in rows}
         self.assertTrue({'dragonos-focalx-r37.1', 'dragonos-noble-r9',
                          'dragonos-resolute-r1'}.issubset(names))
-        m2 = [row for row in rows if row[1] == 'm2' and row[2] != 'host']
-        self.assertTrue(m2)
-        self.assertTrue(all(row[7:9] == ['2048', 'lima-serial'] for row in m2))
+        self.assertTrue(all(row[1] in {'ubuntu', 'debian', 'fedora', 'dragonos'}
+                            for row in rows))
+        self.assertEqual((ROOT / 'vm-lab/release-matrix.tsv').read_text().splitlines()[0],
+                         '# target\tos\tversion\tarch\tpackage_target')
 
     def test_macos_has_clean_installs_on_both_runners_and_upgrade(self):
         macos = (ROOT / '.github/workflows/macos.yml').read_text()
@@ -131,6 +134,18 @@ exit 0
         self.assertIn('-DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"', build)
         self.assertIn("-name 'test*'", build)
         self.assertIn('release artifact must not contain test executables', package)
+
+    def test_public_build_entrypoints_require_unified_receiver_artifact(self):
+        native = (ROOT / 'script/build-native.sh').read_text()
+        macos = (ROOT / 'script/build-macos.sh').read_text()
+        for script in (native, macos):
+            self.assertIn('VECTORWARP_INTERNAL_ADAPTER_FIXTURE', script)
+            self.assertIn('receiver-subset builds are internal adapter fixtures; use --backend all',
+                          script)
+        package = (ROOT / 'script/package-native.sh').read_text()
+        self.assertIn("[[ $backend == all ]] || die 'published packages require all receiver support in one build'",
+                      package)
+        self.assertIn('local_build_receivers == RspDuo', package)
 
 
 if __name__ == '__main__':

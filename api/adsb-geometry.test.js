@@ -69,3 +69,4 @@ assert.ok(Number.isFinite(mlatResult.delay) && Number.isFinite(mlatResult.dopple
 assert.equal(mlatResult.position_source, 'MLAT');
 assert.equal(mlatResult.position.altitude_source, 'BAROMETRIC_FALLBACK');
 console.log('ADS-B WGS84 geometry, units, PR #5 timing/duplicates, ordering, eviction and reset tests passed.');
+require('./truth-uncertainty.test');

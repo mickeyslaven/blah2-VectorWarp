@@ -18,12 +18,14 @@ import tempfile
 import threading
 import time
 import math
+import hashlib
 
 
 HOST = "127.0.0.1"
-PORT_NAMES = ("map", "detection", "track", "timestamp", "timing", "iqdata")
+PORT_NAMES = ("map", "detection", "track", "illuminator", "timestamp", "timing", "iqdata")
 RSP_TYPES = ("RspDuo", "Usrp", "HackRF")
 STATUS_LOCK = threading.Lock()
+MAX_RETAINED_OUTPUT = 8 << 20
 
 
 def free_listener():
@@ -40,7 +42,12 @@ class SinkGroup:
     def __init__(self):
         self.listeners = {name: free_listener() for name in PORT_NAMES}
         self.bytes = {name: 0 for name in PORT_NAMES}
-        self.payloads = {name: bytearray() for name in ("map", "timestamp", "timing")}
+        # Retain bounded copies of every mathematical product. Receiver parity
+        # must cover detections and tracker evolution, not merely prove that a
+        # processor emitted one finite map.
+        self.payloads = {name: bytearray() for name in
+                         ("map", "detection", "track", "illuminator", "timestamp", "timing")}
+        self.truncated = set()
         self.stop = threading.Event()
         self.threads = [threading.Thread(target=self._serve, args=(name, sock), daemon=True)
                         for name, sock in self.listeners.items()]
@@ -69,8 +76,12 @@ class SinkGroup:
                     if not block:
                         break
                     self.bytes[name] += len(block)
-                    if name in self.payloads and len(self.payloads[name]) < 1 << 20:
-                        self.payloads[name].extend(block[:(1 << 20) - len(self.payloads[name])])
+                    if name in self.payloads:
+                        remaining = MAX_RETAINED_OUTPUT - len(self.payloads[name])
+                        if len(block) > remaining:
+                            self.truncated.add(name)
+                        if remaining > 0:
+                            self.payloads[name].extend(block[:remaining])
 
     def ports(self):
         return {name: listener.getsockname()[1] for name, listener in self.listeners.items()}
@@ -172,7 +183,68 @@ def write_blah2iq(path, channels, sample_rate, frequency, frames=3, frame_sample
                 stream.write(pattern[:tail * 8])
 
 
-def config(receiver, channels, recording, api_port, sink_ports, loop=False, mismatch=False):
+def write_target_blah2iq(path, sample_rate, frequency, frames=6,
+                         frame_samples=None, delay_samples=8, doppler_hz=100,
+                         stationary_clutter=0.0):
+    """Deterministic reference, optional direct clutter, moving echo, absent tail."""
+    frame_samples = int(sample_rate * .02) if frame_samples is None else frame_samples
+    samples = frames * frame_samples
+    header = bytearray(64)
+    header[:8] = b"BLAH2IQ\0"
+    struct.pack_into("<IIIIII", header, 8, 1, 64, 2, sample_rate, frequency, 1)
+    struct.pack_into("<Q", header, 40, samples)
+    struct.pack_into("<Q", header, 48, 1)
+    state = 0x6D2B79F5
+    reference = []
+    for _ in range(samples):
+        state = (1664525 * state + 1013904223) & 0xffffffff
+        real = ((state >> 8) / 8388608.0) - 1.0
+        state = (1664525 * state + 1013904223) & 0xffffffff
+        imag = ((state >> 8) / 8388608.0) - 1.0
+        reference.append(complex(real, imag))
+    surveillance = []
+    target_samples = 4 * frame_samples
+    angular_step = 2 * math.pi * doppler_hz / sample_rate
+    for index in range(samples):
+        state = (1664525 * state + 1013904223) & 0xffffffff
+        noise_real = .01 * (((state >> 8) / 8388608.0) - 1.0)
+        state = (1664525 * state + 1013904223) & 0xffffffff
+        noise_imag = .01 * (((state >> 8) / 8388608.0) - 1.0)
+        value = complex(noise_real, noise_imag) + stationary_clutter * reference[index]
+        if delay_samples <= index < target_samples:
+            phase = angular_step * index
+            value += .8 * reference[index - delay_samples] * complex(
+                math.cos(phase), math.sin(phase))
+        surveillance.append(value)
+    with path.open("wb") as stream:
+        stream.write(header)
+        for position in range(0, samples, 262144):
+            count = min(262144, samples - position)
+            stream.write(struct.pack("<IIQ", count, 0, position))
+            for channel in (reference, surveillance):
+                block = bytearray()
+                for value in channel[position:position + count]:
+                    block.extend(struct.pack("<ff", value.real, value.imag))
+                stream.write(block)
+
+
+def write_portable_lineage(path, channels, sample_rate, frequency, samples,
+                           epoch=7, first_sample=1000):
+    data = path.read_bytes()
+    metadata = {
+        "schema": "vectorwarp-portable-iq-clip-v1", "format": "blah2iq",
+        "encoding": "float32-complex-channel-major-blocks", "channels": channels,
+        "sampleRate": sample_rate, "frequency": frequency,
+        "samplesPerChannel": samples, "epoch": epoch,
+        "firstEpochSample": first_sample,
+        "endEpochSample": first_sample + samples, "dataBytes": len(data),
+        "dataSha256": hashlib.sha256(data).hexdigest(),
+    }
+    Path(str(path) + ".json").write_text(json.dumps(metadata, separators=(",", ":")))
+
+
+def config(receiver, channels, recording, api_port, sink_ports, loop=False, mismatch=False,
+           temporal_lane=False):
     sample_rate = 2400000 if receiver == "Kraken" else 2000000
     frequency = 204640000
     file_channels = channels - 1 if mismatch else channels
@@ -199,11 +271,28 @@ def config(receiver, channels, recording, api_port, sink_ports, loop=False, mism
         # Isolate replay ingress from clutter rank behaviour in this harness.
         "clutter": {"enable": False, "delayMin": -4, "delayMax": 59},
         "detection": {"enable": True, "pfa": .01, "nGuard": 2, "nTrain": 6,
-                      "minDelay": 1, "minDoppler": 1, "nCentroid": 1},
-        "tracker": {"enable": False, "initiate": {"M": 1, "N": 1, "maxAcc": 1}, "delete": 1},
+                      "minDelay": 1, "minDoppler": 1, "nCentroid": 1,
+                      "integration_cpis": 1, "integration_motion_bins": 0},
+        "tracker": {"enable": True, "initiate": {"M": 1, "N": 1, "maxAcc": 1}, "delete": 1},
     }
     if receiver == "Kraken":
         process["reference_synthesis"] = {"mode": "dedicated", "channels": [0]}
+    if temporal_lane:
+        # The target is at lane delay 8 (80 capture samples / decimation 10).
+        # Cancel only the stationary direct-path neighborhood, leaving the
+        # injected target outside the explicit half-open cancellation span.
+        process["clutter"].update(enable=True, delayMin=-1, delayMax=3)
+        process["multi_illuminator"] = {
+            "enabled": True, "input_phase_correction": "off",
+            "illuminators": [{"enabled": True, "id": "parity-lane",
+                "standard": "CUSTOM", "frequency_hz": frequency,
+                "occupied_bandwidth_hz": 100000,
+                "output_sample_rate_hz": 200000, "filter_taps_per_phase": 16,
+                "input_role_mode": "manual", "reference_channel": 0,
+                "surveillance_channels": [1]}],
+        }
+        process["detection"]["integration_cpis"] = 2
+        process["detection"]["integration_motion_bins"] = 1
     return {
         "capture": {"fs": sample_rate, "fc": frequency, "device": device,
                     "replay": {"state": True, "loop": loop, "file": str(recording),
@@ -254,6 +343,24 @@ def first_json(payload, name):
     return value
 
 
+def json_values(payload, name):
+    text = bytes(payload).decode()
+    decoder = json.JSONDecoder()
+    values = []
+    position = 0
+    while position < len(text):
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position == len(text):
+            break
+        try:
+            value, position = decoder.raw_decode(text, position)
+        except json.JSONDecodeError as error:
+            raise AssertionError(f"{name} output is not concatenated JSON: {error}") from error
+        values.append(value)
+    return values
+
+
 def assert_finite(value, name="map"):
     if isinstance(value, dict):
         for key, item in value.items():
@@ -273,7 +380,128 @@ def assert_finite_numbers(value, name="map.data"):
         raise AssertionError(f"{name} is not a finite numeric map value")
 
 
-def assert_processor_outputs(sinks, receiver):
+def canonical_product(value, *, drop_track_ids=False):
+    """Remove provenance only; retain every value that can change radar math."""
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if key in ("timestamp", "eventTime") or (drop_track_ids and key == "id"):
+                continue
+            result[key] = canonical_product(item, drop_track_ids=drop_track_ids)
+        return result
+    if isinstance(value, list):
+        return [canonical_product(item, drop_track_ids=drop_track_ids) for item in value]
+    return value
+
+
+def product_fingerprint(payload, name, *, drop_track_ids=False):
+    values = json_values(payload, name)
+    if not values:
+        raise AssertionError(f"processor did not produce {name} output")
+    if name == "detection" and not any(
+            isinstance(value, dict) and value.get("delay") for value in values):
+        raise AssertionError("receiver parity fixture produced no detections")
+    if name == "track" and not any(
+            isinstance(value, dict) and value.get("n", 0) > 0 for value in values):
+        raise AssertionError("receiver parity fixture exercised no tracker state")
+    canonical = [canonical_product(value, drop_track_ids=drop_track_ids)
+                 for value in values]
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"),
+                         allow_nan=False).encode()
+    return hashlib.sha256(encoded).hexdigest(), len(values)
+
+
+def assert_target_trace(sinks):
+    detections = json_values(sinks.payloads["detection"], "detection")
+    expected = False
+    for frame in detections[:4]:
+        if not isinstance(frame, dict):
+            continue
+        for delay, doppler in zip(frame.get("delay", []), frame.get("doppler", [])):
+            if 1.0 <= delay <= 1.5 and 50 <= abs(doppler) <= 150:
+                expected = True
+                break
+    if not expected:
+        raise AssertionError("known delayed/Doppler echo was not detected")
+    tracks = json_values(sinks.payloads["track"], "track")
+    if not any(isinstance(track, dict) and track.get("n", 0) >= 2
+               for frame in tracks if isinstance(frame, dict)
+               for track in frame.get("data", [])):
+        raise AssertionError("known echo did not produce a multi-update track")
+
+
+def canonical_temporal_trace(payload):
+    values = json_values(payload, "illuminator")
+    if not values:
+        raise AssertionError("temporal parity fixture produced no lane frames")
+    result = []
+    for frame in values:
+        integration = frame.get("detector_integration") if isinstance(frame, dict) else None
+        if not isinstance(integration, dict):
+            raise AssertionError("lane frame lacks detector integration lineage")
+        result.append({
+            "first_input_sample": frame.get("first_input_sample"),
+            "end_input_sample": frame.get("end_input_sample"),
+            "capture_sample_position_available":
+                frame.get("capture_sample_position_available"),
+            "capture_epoch": frame.get("capture_epoch"),
+            "capture_first_input_sample": frame.get("capture_first_input_sample"),
+            "capture_end_input_sample": frame.get("capture_end_input_sample"),
+            "integration": integration,
+            "map": canonical_product(frame.get("map")),
+            "detections": canonical_product(frame.get("detections")),
+            "tracks": canonical_product(frame.get("tracks")),
+        })
+    if result[0]["capture_sample_position_available"] is not True:
+        raise AssertionError("portable lineage was not admitted")
+    if result[0]["integration"].get("available_cpis") != 1 or \
+            result[0]["integration"].get("ready") is not False:
+        raise AssertionError("two-CPI temporal lane skipped warmup")
+    ready = [frame for frame in result if frame["integration"].get("ready") is True]
+    if not ready or ready[0]["integration"].get("support_sequences") != [2, 1]:
+        raise AssertionError("two-CPI temporal lane lost exact support lineage")
+    if not any(frame["detections"].get("delay") for frame in ready):
+        raise AssertionError("temporal lane produced no integrated target detection")
+    if not any(track.get("n", 0) >= 2 for frame in ready
+               for track in frame["tracks"].get("data", [])):
+        raise AssertionError("temporal lane produced no multi-update track")
+    return result
+
+
+def assert_temporal_loop_reset(trace):
+    initial_epoch = trace[0]["integration"].get("history_epoch")
+    reset_index = next((index for index, frame in enumerate(trace[1:], 1)
+                        if frame["integration"].get("sequence") == 1 and
+                        frame["integration"].get("history_epoch") != initial_epoch), None)
+    if reset_index is None:
+        raise AssertionError("replay loop did not reset temporal history epoch/sequence")
+    reset = trace[reset_index]
+    if reset["integration"].get("available_cpis") != 1 or \
+            reset["integration"].get("ready") is not False:
+        raise AssertionError("replay loop admitted stale temporal support during warmup")
+    tracks = reset["tracks"] if isinstance(reset["tracks"], dict) else {}
+    if tracks.get("data") or tracks.get("n", 0) or tracks.get("nActive", 0):
+        raise AssertionError("replay loop retained a track from the prior history epoch")
+    fresh = next((frame for frame in trace[reset_index + 1:]
+                  if frame["integration"].get("history_epoch") ==
+                  reset["integration"].get("history_epoch") and
+                  frame["integration"].get("ready") is True), None)
+    if fresh is None or fresh["integration"].get("support_sequences") != [2, 1]:
+        raise AssertionError("replay loop did not rebuild exact fresh temporal support")
+
+
+def assert_temporal_processor_outputs(sinks, minimum_cpis):
+    if not all(sinks.bytes[name] for name in ("illuminator", "timestamp", "timing")):
+        raise AssertionError("temporal processor did not produce lane, timestamp and timing output")
+    timing_frames = json_values(sinks.payloads["timing"], "timing")
+    completed_cpis = max((item.get("nCpi", 0) for item in timing_frames
+                          if isinstance(item, dict)), default=0)
+    if completed_cpis < minimum_cpis:
+        raise AssertionError(
+            f"temporal replay completed after {completed_cpis} CPIs; expected {minimum_cpis}")
+
+
+def assert_processor_outputs(sinks, receiver, minimum_cpis=1):
     if not all(sinks.bytes[name] for name in ("map", "timestamp", "timing")):
         raise AssertionError("processor did not produce map, timestamp and timing output")
     map_json = first_json(sinks.payloads["map"], "map")
@@ -284,6 +512,12 @@ def assert_processor_outputs(sinks, receiver):
     timing_json = first_json(sinks.payloads["timing"], "timing")
     if not isinstance(timing_json, dict) or timing_json.get("nCpi", 0) < 1:
         raise AssertionError("timing output has no completed CPI")
+    timing_frames = json_values(sinks.payloads["timing"], "timing")
+    completed_cpis = max((item.get("nCpi", 0) for item in timing_frames
+                          if isinstance(item, dict)), default=0)
+    if completed_cpis < minimum_cpis:
+        raise AssertionError(
+            f"replay completed after {completed_cpis} processed CPIs; expected at least {minimum_cpis}")
     for key in ("acceleration", "clutterAcceleration"):
         backend = timing_json.get(key)
         if not isinstance(backend, dict) or backend.get("active") not in ("cpu", "vulkan"):
@@ -324,15 +558,32 @@ def assert_processor_outputs(sinks, receiver):
         raise AssertionError("timestamp output has no non-negative integer timestamp")
 
 
-def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, cpi=.02, clutter=False):
+def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, cpi=.02,
+             clutter=False, recording_frames=3, recording_frame_samples=None,
+             minimum_cpis=1, target_fixture=False, temporal_lane=False):
     loop = kind == "loop"
     with tempfile.TemporaryDirectory(prefix="vectorwarp-replay-") as temporary:
         root = Path(temporary)
         recording = root / "input.blah2iq"
         sample_rate = sample_rate or (2400000 if receiver == "Kraken" else 2000000)
         if kind != "missing":
-            write_blah2iq(recording, channels, sample_rate, 204640000,
-                          frame_samples=int(sample_rate * cpi))
+            if target_fixture:
+                if channels != 2:
+                    raise AssertionError("target replay fixture requires exactly two channels")
+                write_target_blah2iq(recording, sample_rate, 204640000,
+                                     frames=recording_frames,
+                                     frame_samples=(recording_frame_samples or
+                                                    int(sample_rate * cpi)),
+                                     delay_samples=80 if temporal_lane else 8,
+                                     stationary_clutter=.25 if clutter else 0.0)
+            else:
+                write_blah2iq(recording, channels, sample_rate, 204640000,
+                              frames=recording_frames,
+                              frame_samples=(recording_frame_samples or
+                                             int(sample_rate * cpi)))
+            if temporal_lane:
+                write_portable_lineage(recording, channels, sample_rate, 204640000,
+                    recording_frames * (recording_frame_samples or int(sample_rate * cpi)))
         status = StatusServer()
         sinks = SinkGroup()
         process = None
@@ -340,7 +591,7 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
             status.start()
             sinks.start()
             payload = config(receiver, channels, recording, status.port, sinks.ports(), loop,
-                             mismatch=kind == "mismatch")
+                             mismatch=kind == "mismatch", temporal_lane=temporal_lane)
             payload["capture"]["fs"] = sample_rate
             payload["process"]["data"]["cpi"] = cpi
             payload["process"]["clutter"]["enable"] = clutter
@@ -371,6 +622,9 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
             if forced or process.returncode != 0:
                 raise AssertionError(f"{receiver}/{channels} did not stop cleanly (returncode={process.returncode}): {output[-16000:]}")
             states = status.snapshot()
+            if sinks.truncated:
+                raise AssertionError(
+                    f"bounded output retention overflowed for {sorted(sinks.truncated)}")
             if not states or states[-1].get("captureStopped") is not True:
                 raise AssertionError(f"{receiver}/{channels} did not publish final stopped-capture status")
             final = states[-1]
@@ -381,9 +635,12 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
                     raise AssertionError(f"{receiver}/{channels} has invalid final {field}: {values}")
             if any(final["captureDroppedSamples"]):
                 raise AssertionError(f"{receiver}/{channels} lost samples during lossless replay")
-            final_state = "complete" if kind == "complete" else "stopped" if loop else "error"
-            if final.get("state") != final_state or (final_state == "error" and not final.get("error")):
-                raise AssertionError(f"{receiver}/{channels} final capture state/error was not preserved: {final}")
+            expected_state = "complete" if kind == "complete" else "stopped" if loop else "error"
+            state_evidence = next((item for item in reversed(states)
+                                   if item.get("state") == expected_state), None)
+            if state_evidence is None or (expected_state == "error" and
+                                          not state_evidence.get("error")):
+                raise AssertionError(f"{receiver}/{channels} terminal state/error was not preserved: {states[-3:]}")
             if "Setting up device" in output:
                 raise AssertionError(f"{receiver}/{channels} attempted hardware setup: {output}")
             if kind in ("complete", "loop"):
@@ -392,11 +649,33 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
                                      any(item.get("state") == "complete" for item in states))
                 if not progress_observed:
                     raise AssertionError(f"{receiver}/{channels} never reported {required_state}")
-                assert_processor_outputs(sinks, receiver)
+                if temporal_lane:
+                    assert_temporal_processor_outputs(sinks, minimum_cpis)
+                else:
+                    assert_processor_outputs(sinks, receiver, minimum_cpis)
+            product_fingerprints = None
+            product_frames = None
+            if kind == "complete":
+                if target_fixture and not temporal_lane:
+                    assert_target_trace(sinks)
+                if not temporal_lane:
+                    products = {
+                        "map": product_fingerprint(sinks.payloads["map"], "map"),
+                        "detection": product_fingerprint(
+                            sinks.payloads["detection"], "detection"),
+                        "track": product_fingerprint(
+                            sinks.payloads["track"], "track"),
+                    }
+                    product_fingerprints = {name: value[0] for name, value in products.items()}
+                    product_frames = {name: value[1] for name, value in products.items()}
             return {"case": f"{receiver}-{channels}-{kind}", "ok": True,
                     "sample_rate": sample_rate, "cpi_seconds": cpi, "clutter": clutter,
                     "states": sorted({item.get("state") for item in states}),
-                    "output_bytes": sum(sinks.bytes.values())}
+                    "output_bytes": sum(sinks.bytes.values()),
+                    "product_fingerprints": product_fingerprints,
+                    "product_frames": product_frames,
+                    "temporal_trace": canonical_temporal_trace(
+                        sinks.payloads["illuminator"]) if temporal_lane else None}
         except BaseException as error:
             diagnostics = ""
             if process is not None:
@@ -435,6 +714,35 @@ def invalid_startup_case(binary, field):
         return {"case": f"invalid-{field}", "ok": True, "output_bytes": 0}
 
 
+def invalid_multi_clutter_case(binary, receiver):
+    """All receiver labels refuse an impossible multi-lane setting before IQ."""
+    with tempfile.TemporaryDirectory(prefix="vectorwarp-invalid-multi-") as temporary:
+        root = Path(temporary)
+        recording = root / "target.blah2iq"
+        write_target_blah2iq(recording, 2000000, 204640000, frames=1,
+                            delay_samples=80, stationary_clutter=.25)
+        status, sinks = StatusServer(), SinkGroup()
+        try:
+            status.start()
+            sinks.start()
+            payload = config(receiver, 2, recording, status.port, sinks.ports(), temporal_lane=True)
+            payload["capture"]["fs"] = 2000000
+            payload["process"]["clutter"]["enable"] = False
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(payload))
+            result = subprocess.run([str(binary), "-c", str(config_path)], cwd=root,
+                                    capture_output=True, text=True, timeout=15, check=False)
+            output = result.stdout + result.stderr
+            if result.returncode != 1 or "Multi-illuminator mode requires clutter, detection, and tracking" not in output:
+                raise AssertionError(f"{receiver}: disabled multi-lane clutter was not refused: {output[-4000:]}")
+            if "Setting up device" in output or any(sinks.bytes.values()):
+                raise AssertionError(f"{receiver}: invalid multi-lane configuration admitted IQ/products")
+            return {"case": "invalid-multi-clutter", "receiver": receiver, "ok": True}
+        finally:
+            sinks.close()
+            status.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -443,9 +751,44 @@ def main():
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("--binary must be an executable processor path")
     results = [invalid_startup_case(binary, field) for field in ("fs", "fc", "api-port")]
-    for receiver in RSP_TYPES:
-        results.append(run_case(binary, receiver, 2))
-    for channels in range(2, 9):
+    results.extend(invalid_multi_clutter_case(binary, receiver) for receiver in (*RSP_TYPES, "Kraken"))
+    parity = [run_case(binary, receiver, 2, sample_rate=2000000,
+                       recording_frames=6, minimum_cpis=6, target_fixture=True)
+              for receiver in (*RSP_TYPES, "Kraken")]
+    for product in ("map", "detection", "track"):
+        fingerprints = {item["product_fingerprints"][product] for item in parity}
+        frame_counts = {item["product_frames"][product] for item in parity}
+        if len(fingerprints) != 1 or len(frame_counts) != 1:
+            raise AssertionError(
+                f"receiver identities changed common {product} evolution: {parity}")
+        if frame_counts != {6}:
+            raise AssertionError(
+                f"receiver parity emitted {product} frames {frame_counts}; expected exactly six")
+    results.extend(parity)
+    temporal = [run_case(binary, receiver, 2, sample_rate=2000000,
+                         recording_frames=6, minimum_cpis=6,
+                         target_fixture=True, temporal_lane=True, clutter=True)
+                for receiver in (*RSP_TYPES, "Kraken")]
+    temporal_fingerprints = {hashlib.sha256(json.dumps(
+        item["temporal_trace"], sort_keys=True, separators=(",", ":"),
+        allow_nan=False).encode()).hexdigest() for item in temporal}
+    if len(temporal_fingerprints) != 1:
+        raise AssertionError(f"receiver identities changed temporal lineage/math: {temporal}")
+    results.extend(temporal)
+    temporal_loops = [run_case(binary, receiver, 2, "loop", sample_rate=2000000,
+                               recording_frames=6, minimum_cpis=6,
+                               target_fixture=True, temporal_lane=True, clutter=True)
+                      for receiver in (*RSP_TYPES, "Kraken")]
+    for item in temporal_loops:
+        assert_temporal_loop_reset(item["temporal_trace"])
+    loop_fingerprints = {hashlib.sha256(json.dumps(
+        item["temporal_trace"], sort_keys=True, separators=(",", ":"),
+        allow_nan=False).encode()).hexdigest() for item in temporal_loops}
+    if len(loop_fingerprints) != 1:
+        raise AssertionError(
+            f"receiver identities changed temporal reset/track identity: {temporal_loops}")
+    results.extend(temporal_loops)
+    for channels in range(3, 9):
         results.append(run_case(binary, "Kraken", channels))
     results.append(run_case(binary, "RspDuo", 2, "loop"))
     results.append(run_case(binary, "RspDuo", 2, "missing"))
@@ -454,6 +797,11 @@ def main():
     # valid 6-MS/s headers and matching samples, without opening any SDR.
     results.append(run_case(binary, "Usrp", 2, sample_rate=6000000, cpi=.2, clutter=True))
     results.append(run_case(binary, "HackRF", 2, sample_rate=6000000, clutter=True))
+    # A finite replay ending halfway through its third CPI must process both
+    # complete CPIs before ReplayPlayer reports completion and discards only
+    # the final sub-CPI tail.
+    results.append(run_case(binary, "Usrp", 2, recording_frames=5,
+                            recording_frame_samples=20000, minimum_cpis=2))
     print(json.dumps({"acceptance": "offline processor replay", "cases": results,
                       "count": len(results)}, separators=(",", ":")))
 

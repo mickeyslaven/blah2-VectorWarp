@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <sstream>
 #include <iomanip>
@@ -24,6 +25,7 @@
 #endif
 
 namespace {
+constexpr double PORTABLE_LATE_CLAIM_RING_SECONDS = 10.0;
 std::string decimal(uint64_t value) { return std::to_string(value); }
 std::string fnv1a64(const std::string& value) {
   uint64_t hash=1469598103934665603ULL;
@@ -66,19 +68,41 @@ Source::Source(std::string _type, uint32_t _fc, uint32_t _fs,
 
 void Source::configure_portable_clips(double preSeconds,
     double maximumClipSeconds) {
+  if (!std::isfinite(preSeconds) || !std::isfinite(maximumClipSeconds) ||
+      preSeconds < 0 || maximumClipSeconds <= 0 || maximumClipSeconds >
+      PORTABLE_LATE_CLAIM_RING_SECONDS)
+    throw std::invalid_argument("Invalid portable clip retention bounds");
+  if (!blah2::PortableClipRecorder::supports_retention(recordingChannels, fs,
+      PORTABLE_LATE_CLAIM_RING_SECONDS)) {
+    std::lock_guard<std::mutex> lock(clipMutex);
+    portableClipRecorder.reset();
+    portableClipUnavailable = {0, true, {},
+      "Automatic IQ clips unavailable: bounded 10-second retention exceeds the portable receiver memory limit", 0};
+    return;
+  }
   blah2::PortableClipRecorder::Options options;
-  options.ringSeconds = preSeconds;
-  options.maximumClipSeconds = maximumClipSeconds;
-  portableClipRecorder = std::make_unique<blah2::PortableClipRecorder>(path,
+  // The API's late-claim allowance is receiver-independent. Keep every
+  // portable backend's bounded ring equal to Kraken's ten-second contract,
+  // rather than silently reducing it to the configured pre-roll.
+  options.ringSeconds = PORTABLE_LATE_CLAIM_RING_SECONDS;
+  options.maximumClipSeconds = PORTABLE_LATE_CLAIM_RING_SECONDS;
+  auto recorder = std::make_unique<blah2::PortableClipRecorder>(path,
     type, recordingChannels, fs, fc, std::move(options));
+  std::lock_guard<std::mutex> lock(clipMutex);
+  portableClipRecorder = std::move(recorder);
+  portableClipUnavailable = {};
 }
 
 void Source::request_clip(const blah2::IqClipRequest& request) {
+  std::lock_guard<std::mutex> lock(clipMutex);
   if (portableClipRecorder) portableClipRecorder->request(request);
+  else if (portableClipUnavailable.error.size())
+    portableClipUnavailable = {request.revision, true, {}, portableClipUnavailable.error, 0};
 }
 
 blah2::IqClipStatus Source::clip_status() const {
-  return portableClipRecorder ? portableClipRecorder->status() : blah2::IqClipStatus{};
+  std::lock_guard<std::mutex> lock(clipMutex);
+  return portableClipRecorder ? portableClipRecorder->status() : portableClipUnavailable;
 }
 
 void Source::process(const std::vector<IqData *>& buffers)

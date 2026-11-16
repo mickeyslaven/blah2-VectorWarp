@@ -105,6 +105,7 @@ struct WienerHopf::Impl {
   };
   int32_t delayMin;
   uint32_t samples, taps, correlationLength, filterLength, lanes;
+  double relativeDiagonalLoading;
   bool sharedReferenceWorkspace;
   bool blockedCorrelation, blockedFilter;
   bool viewReady = false;
@@ -134,8 +135,13 @@ struct WienerHopf::Impl {
   uint64_t gpuCorrelationFrame = 0;
 #endif
 
-  Impl(int32_t first, int32_t last, uint32_t count, bool sharedReference)
-      : delayMin(first), samples(count), sharedReferenceWorkspace(sharedReference) {
+  Impl(int32_t first, int32_t last, uint32_t count, bool sharedReference,
+       double loading)
+      : delayMin(first), samples(count), relativeDiagonalLoading(loading),
+        sharedReferenceWorkspace(sharedReference) {
+    if (!std::isfinite(relativeDiagonalLoading) || relativeDiagonalLoading < 0 ||
+        relativeDiagonalLoading > 1)
+      throw std::invalid_argument("Clutter relative diagonal loading must be finite in [0,1]");
     if (const char* path = std::getenv("VECTORWARP_BENCH_CONTIGUOUS_LOG")) {
       contiguousLog.open(path, std::ios::app);
       if (!contiguousLog) throw std::runtime_error("Contiguous CPI timing log open failed");
@@ -314,6 +320,7 @@ struct WienerHopf::Impl {
     const auto inputStarted = std::chrono::steady_clock::now();
     load(x.get(), y.get());
     const auto inputFinished = std::chrono::steady_clock::now();
+    const auto diagnosticCorrelationStarted = inputFinished;
 #ifdef VECTORWARP_MIXED_FIR_BENCH
 #ifdef VECTORWARP_GPU_BLOCKED_FULL_BENCH
     if (gpu && !gpuCorrelation) gpu->reference(x.get());
@@ -379,6 +386,7 @@ struct WienerHopf::Impl {
     // blocked FFT reduction can leave a small imaginary rounding residue at
     // raw ADC amplitudes; it must not become an imaginary matrix diagonal.
     a[0] = Complex(a[0].real(), 0);
+    const auto diagnosticCorrelationFinished = std::chrono::steady_clock::now();
 #ifdef VECTORWARP_MIXED_FIR_BENCH
 #ifdef VECTORWARP_GPU_BLOCKED_FULL_BENCH
     if (gpu && gpuCorrelation) gpu->reference(x.get());
@@ -390,12 +398,22 @@ struct WienerHopf::Impl {
     matrix = arma::toeplitz(a);
     for (uint32_t row = 0; row < taps; ++row)
       for (uint32_t col = 0; col < row; ++col) matrix(row,col) = std::conj(matrix(row,col));
+    if (relativeDiagonalLoading) {
+      const double scale = a[0].real();
+      const double loading = relativeDiagonalLoading * scale;
+      if (!std::isfinite(scale) || scale < 0 || !std::isfinite(loading)) {
+        std::cerr << "Invalid covariance scale, skip clutter filter\n";
+        return false;
+      }
+      matrix.diag() += loading;
+    }
     if (!arma::chol(matrix, matrix)) {
       std::cerr << "Chol decomposition failed, skip clutter filter\n"; return false;
     }
     if (!arma::solve(weights, arma::trimatu(matrix), arma::solve(arma::trimatl(arma::trans(matrix)), b))) {
       std::cerr << "Solve failed, skip clutter filter\n"; return false;
     }
+    const auto diagnosticSolveFinished = std::chrono::steady_clock::now();
 #ifdef VECTORWARP_GPU_BLOCKED_FULL_BENCH
     solveMs = std::chrono::duration<double,std::milli>(
       std::chrono::steady_clock::now()-solveStarted).count();
@@ -419,6 +437,7 @@ struct WienerHopf::Impl {
     }
 #endif
     uint32_t gpuSamples = 0;
+    const auto diagnosticFilterStarted = std::chrono::steady_clock::now();
 #ifdef VECTORWARP_MIXED_FIR_BENCH
     if (gpu) gpuSamples = gpu->start(x.get(), weights.memptr());
     if (gpuCompletion) gpuCompletion->start([this] { gpu->finish(y.get()); });
@@ -495,6 +514,7 @@ struct WienerHopf::Impl {
     }
 #endif
     const auto publishStarted = std::chrono::steady_clock::now();
+    const auto diagnosticFilterFinished = publishStarted;
     if (!borrowOutput) surveillance->assign_complex(y.get(), samples);
     else { ++generation; viewReady = true; }
     if (contiguousLog) {
@@ -505,6 +525,21 @@ struct WienerHopf::Impl {
         << ",\"input_copy_ms\":" << ms(inputStarted,inputFinished)
         << ",\"publish_copy_ms\":" << ms(publishStarted,publishFinished)
         << "}\n" << std::flush;
+    }
+    if (std::getenv("VECTORWARP_CLUTTER_TIMING")) {
+      static std::mutex diagnosticMutex;
+      const auto millis = [](auto first, auto last) {
+        return std::chrono::duration<double, std::milli>(last - first).count();
+      };
+      std::lock_guard<std::mutex> lock(diagnosticMutex);
+      std::cerr << "[ClutterTiming] samples=" << samples << " taps=" << taps
+        << " input_ms=" << millis(inputStarted, inputFinished)
+        << " correlation_ms=" << millis(diagnosticCorrelationStarted,
+             diagnosticCorrelationFinished)
+        << " solve_ms=" << millis(diagnosticCorrelationFinished,
+             diagnosticSolveFinished)
+        << " filter_ms=" << millis(diagnosticFilterStarted,
+             diagnosticFilterFinished) << '\n';
     }
     return true;
   }
@@ -546,9 +581,12 @@ struct WienerHopf::Impl {
   }
 };
 WienerHopf::PreparedReference::PreparedReference(int32_t first, int32_t last,
-                                                 uint32_t count)
-  : delayMin_(first), samples_(count)
+                                                 uint32_t count, double loading)
+  : delayMin_(first), samples_(count), relativeDiagonalLoading_(loading)
 {
+  if (!std::isfinite(relativeDiagonalLoading_) || relativeDiagonalLoading_ < 0 ||
+      relativeDiagonalLoading_ > 1)
+    throw std::invalid_argument("Clutter relative diagonal loading must be finite in [0,1]");
   const int64_t width = int64_t(last) - first;
   if (!count || width <= 0 || uint64_t(width) > count)
     throw std::invalid_argument("Clutter filter needs a non-empty half-open delay range no longer than the CPI");
@@ -603,13 +641,33 @@ bool WienerHopf::PreparedReference::prepare(const IqData& reference)
   for (uint32_t row = 0; row < taps_; ++row)
     for (uint32_t col = 0; col < row; ++col)
       cholesky_(row, col) = std::conj(cholesky_(row, col));
+  if (relativeDiagonalLoading_) {
+    const double scale = correlation_[0].real();
+    const double loading = relativeDiagonalLoading_ * scale;
+    if (!std::isfinite(scale) || scale < 0 || !std::isfinite(loading)) {
+      std::cerr << "Invalid covariance scale, skip clutter filter\n";
+      return false;
+    }
+    cholesky_.diag() += loading;
+  }
   valid_ = arma::chol(cholesky_, cholesky_);
   if (!valid_) std::cerr << "Chol decomposition failed, skip clutter filter\n";
   return valid_;
 }
 
-WienerHopf::WienerHopf(int32_t first, int32_t last, uint32_t samples, Workspace workspace)
-  : impl_(std::make_unique<Impl>(first, last, samples, workspace == Workspace::SharedReference)) {}
+WienerHopf::WienerHopf(int32_t first, int32_t last, uint32_t samples, Workspace workspace,
+                       double loading)
+  : impl_(std::make_unique<Impl>(first, last, samples,
+      workspace == Workspace::SharedReference, loading)) {}
+double WienerHopf::PreparedReference::cholesky_diagonal_ratio() const {
+  if (!valid_) return std::numeric_limits<double>::quiet_NaN();
+  double smallest = std::numeric_limits<double>::infinity(), largest = 0;
+  for (uint32_t i = 0; i < taps_; ++i) {
+    const double value = std::abs(cholesky_(i, i));
+    smallest = std::min(smallest, value); largest = std::max(largest, value);
+  }
+  return largest > 0 ? smallest / largest : std::numeric_limits<double>::quiet_NaN();
+}
 WienerHopf::~WienerHopf() = default;
 uint32_t WienerHopf::filter_fft_length() const { return impl_->filterLength; }
 bool WienerHopf::process(IqData* x, IqData* y, bool borrowOutput) { return impl_->process(x,y,borrowOutput); }
@@ -618,8 +676,9 @@ bool WienerHopf::process_float(const std::complex<float>* reference,
 { return impl_->process_float(reference, surveillance, samples); }
 bool WienerHopf::process(const PreparedReference& reference, IqData* surveillance) {
   if (reference.delayMin_ != impl_->delayMin || reference.taps_ != impl_->taps ||
-      reference.samples_ != impl_->samples)
-    throw std::invalid_argument("Clutter surveillance or prepared reference geometry does not match");
+      reference.samples_ != impl_->samples ||
+      reference.relativeDiagonalLoading_ != impl_->relativeDiagonalLoading)
+    throw std::invalid_argument("Clutter surveillance or prepared reference geometry/loading does not match");
   if (!surveillance || surveillance->get_length() < impl_->samples)
     throw std::invalid_argument("Clutter input length differs from CPI");
   if (!reference.valid_) return false;

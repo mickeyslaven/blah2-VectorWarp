@@ -8,6 +8,7 @@ const {classifyAdsbSource} = require('./adsb-discovery');
 const {recordErrors} = require('../html/js/kraken_geometry');
 const {evaluateKrakenArray} = require('./kraken-array');
 const {effectiveDelayConfig} = require('../html/js/config_profiles');
+const {processingCapabilities} = require('./processing-capabilities');
 
 const KRAKEN_MAX_CHANNELS = 8;
 const UINT32_MAX = 4294967295;
@@ -57,7 +58,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'SDRplay RSPduo',
     description: 'Two coherent tuners in dual-tuner mode',
-    features: {},
+    features: {residentIntegration: true},
     sampleRate: 2000000,
     device: {
       type: 'RspDuo', agcSetPoint: -20, bandwidthNumber: 5,
@@ -71,7 +72,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'Ettus USRP',
     description: 'Two coherent receive channels through UHD',
-    features: {},
+    features: {residentIntegration: true},
     sampleRate: 2000000,
     device: {
       type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
@@ -84,7 +85,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'Dual HackRF',
     description: 'Two synchronized HackRF receivers',
-    features: {},
+    features: {residentIntegration: true},
     sampleRate: 2000000,
     device: {
       type: 'HackRF',
@@ -261,7 +262,13 @@ function validateConfig(config, baseline = null, options = {}) {
     requireObject(capture.aircraft_clips, 'capture.aircraft_clips');
   const device = requireObject(capture.device, 'capture.device');
   const replay = requireObject(capture.replay, 'capture.replay');
+  const residentSnapshot = replay.resident_snapshot === undefined ? null :
+    requireObject(replay.resident_snapshot, 'capture.replay.resident_snapshot');
   const processConfig = requireObject(root.process, 'process');
+  const evidence = processConfig.evidence === undefined ? null :
+    requireObject(processConfig.evidence, 'process.evidence');
+  const causalFunnel = evidence?.causal_funnel === undefined ? null :
+    requireObject(evidence.causal_funnel, 'process.evidence.causal_funnel');
   const data = requireObject(processConfig.data, 'process.data');
   const multiIlluminator = processConfig.multi_illuminator === undefined ? null :
     requireObject(processConfig.multi_illuminator, 'process.multi_illuminator');
@@ -282,6 +289,27 @@ function validateConfig(config, baseline = null, options = {}) {
   const receiver = requireObject(location.rx, 'location.rx');
   const transmitter = requireObject(location.tx, 'location.tx');
   const save = requireObject(root.save, 'save');
+
+  if (causalFunnel) {
+    boolean(causalFunnel.enabled, 'process.evidence.causal_funnel.enabled');
+    if (causalFunnel.api_ingest_enabled !== undefined)
+      boolean(causalFunnel.api_ingest_enabled,
+        'process.evidence.causal_funnel.api_ingest_enabled');
+    if (typeof causalFunnel.epoch_id !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]{7,63}$/.test(causalFunnel.epoch_id))
+      errors.push('process.evidence.causal_funnel.epoch_id must be an 8–64 character safe immutable epoch ID');
+    string(causalFunnel.path, 'process.evidence.causal_funnel.path');
+    if (typeof causalFunnel.path === 'string' && !path.isAbsolute(causalFunnel.path))
+      errors.push('process.evidence.causal_funnel.path must be absolute');
+    number(causalFunnel.max_candidates, 'process.evidence.causal_funnel.max_candidates', {integer: true, min: 1, max: 64});
+    number(causalFunnel.max_queue, 'process.evidence.causal_funnel.max_queue', {integer: true, min: 1, max: 1024});
+    number(causalFunnel.max_queue_mb, 'process.evidence.causal_funnel.max_queue_mb', {integer: true, min: 1, max: 1024});
+    number(causalFunnel.max_file_mb, 'process.evidence.causal_funnel.max_file_mb', {integer: true, min: 1, max: 1024});
+    number(causalFunnel.max_files, 'process.evidence.causal_funnel.max_files', {integer: true, min: 1, max: 128});
+    if (causalFunnel.enabled === true &&
+        (!Number.isInteger(ports.causal_funnel) || ports.causal_funnel < 1 || ports.causal_funnel > 65535))
+      errors.push('network.ports.causal_funnel is required when the causal funnel is enabled');
+  }
 
   number(capture.fs, 'capture.fs', {integer: true, min: 1, max: UINT32_MAX});
   number(capture.fc, 'capture.fc', {integer: true, min: 1, max: UINT32_MAX});
@@ -413,8 +441,50 @@ function validateConfig(config, baseline = null, options = {}) {
         if (channel >= replay.channel_count)
           errors.push('capture.replay channel roles must be inside channel_count');
       });
+  if (replay.reference_mode === 'dedicated' &&
+      replay.reference_channels !== undefined &&
+      (replayReferences.length !== 1 ||
+       (replay.reference_channel !== undefined && replayReferences[0] !== replay.reference_channel)))
+    errors.push('capture.replay dedicated reference_channel and reference_channels must identify the same single channel');
+  if (new Set(replaySurveillance).size !== replaySurveillance.length)
+    errors.push('capture.replay.surveillance_channels must be unique');
+  if (new Set(replayReferences).size !== replayReferences.length)
+    errors.push('capture.replay.reference_channels must be unique');
   if (replay.format === 'usrp-blocks' && replay.legacy_block_samples === undefined)
     errors.push('capture.replay.legacy_block_samples is required for usrp-blocks replay');
+  if (residentSnapshot) {
+    boolean(residentSnapshot.enabled, 'capture.replay.resident_snapshot.enabled');
+    if (residentSnapshot.enabled === true) {
+      string(residentSnapshot.output_directory,
+        'capture.replay.resident_snapshot.output_directory');
+      if (typeof residentSnapshot.output_directory === 'string' &&
+          !path.isAbsolute(residentSnapshot.output_directory))
+        errors.push('capture.replay.resident_snapshot.output_directory must be a full absolute path');
+      number(residentSnapshot.max_frames, 'capture.replay.resident_snapshot.max_frames',
+        {integer: true, min: 1, max: 128});
+      number(residentSnapshot.max_bytes, 'capture.replay.resident_snapshot.max_bytes',
+        {integer: true, min: 1, max: 268435456});
+      for (const field of ['source_sha256', 'rf_profile_sha256']) {
+        string(residentSnapshot[field], `capture.replay.resident_snapshot.${field}`);
+        if (typeof residentSnapshot[field] === 'string' &&
+            !/^[0-9a-fA-F]{64}$/.test(residentSnapshot[field]))
+          errors.push(`capture.replay.resident_snapshot.${field} must contain exactly 64 hexadecimal characters`);
+      }
+      string(residentSnapshot.rf_profile_file,
+        'capture.replay.resident_snapshot.rf_profile_file');
+      if (typeof residentSnapshot.rf_profile_file === 'string' &&
+          !path.isAbsolute(residentSnapshot.rf_profile_file))
+        errors.push('capture.replay.resident_snapshot.rf_profile_file must be a full absolute path');
+      if (replay.state !== true)
+        errors.push('resident snapshot export is restricted to offline replay');
+      if (processConfig.performance?.acceleration !== 'gpu-resident')
+        errors.push('resident snapshot export requires gpu-resident acceleration');
+      if (multiIlluminator?.enabled === true)
+        errors.push('resident snapshot export requires single-lane processing');
+      if (processingCapabilities(root).referenceMode !== 'array_eigenbeam')
+        errors.push('resident snapshot export currently requires array_eigenbeam reference synthesis');
+    }
+  }
 
   if (device.type === 'Kraken') {
     const inferredChannelCount = device.channel_count ??
@@ -423,28 +493,30 @@ function validateConfig(config, baseline = null, options = {}) {
       device.channel_count === undefined ? 'capture.device.gain channel count' :
         'capture.device.channel_count', {integer: true, min: 2,
           max: KRAKEN_MAX_CHANNELS});
-    const referenceChannel = number(device.reference_channel,
-      'capture.device.reference_channel', {integer: true, min: 0});
-    const surveillance = integerArray(device.surveillance_channels,
-      'capture.device.surveillance_channels');
-    const synthesis = requireObject(processConfig.reference_synthesis,
-      'process.reference_synthesis');
-    if (!['dedicated', 'array_eigenbeam'].includes(synthesis.mode))
-      errors.push('process.reference_synthesis.mode must be dedicated or array_eigenbeam');
-    const referenceChannels = synthesis.channels === undefined ? [] :
-      integerArray(synthesis.channels, 'process.reference_synthesis.channels');
-    if (channelCount !== null) {
-      if (referenceChannel !== null && referenceChannel >= channelCount)
-        errors.push('capture.device.reference_channel is outside channel_count');
-      [...surveillance, ...referenceChannels].forEach(channel => {
-        if (Number.isInteger(channel) && channel >= channelCount)
-          errors.push(`capture.device.channel_count: input ${channel} is outside the configured channel count`);
-      });
-      if (synthesis.mode === 'dedicated' &&
-          surveillance.includes(referenceChannel))
-        errors.push('capture.device.reference_channel cannot also be a surveillance channel in dedicated mode');
-      if (synthesis.mode === 'array_eigenbeam' && referenceChannels.length === 1)
-        errors.push('process.reference_synthesis.channels requires at least two reference channels in array_eigenbeam mode');
+    if (!(replay.state === true && Number.isInteger(replay.channel_count))) {
+      const referenceChannel = number(device.reference_channel,
+        'capture.device.reference_channel', {integer: true, min: 0});
+      const surveillance = integerArray(device.surveillance_channels,
+        'capture.device.surveillance_channels');
+      const synthesis = requireObject(processConfig.reference_synthesis,
+        'process.reference_synthesis');
+      if (!['dedicated', 'array_eigenbeam'].includes(synthesis.mode))
+        errors.push('process.reference_synthesis.mode must be dedicated or array_eigenbeam');
+      const referenceChannels = synthesis.channels === undefined ? [] :
+        integerArray(synthesis.channels, 'process.reference_synthesis.channels');
+      if (channelCount !== null) {
+        if (referenceChannel !== null && referenceChannel >= channelCount)
+          errors.push('capture.device.reference_channel is outside channel_count');
+        [...surveillance, ...referenceChannels].forEach(channel => {
+          if (Number.isInteger(channel) && channel >= channelCount)
+            errors.push(`capture.device.channel_count: input ${channel} is outside the configured channel count`);
+        });
+        if (synthesis.mode === 'dedicated' &&
+            surveillance.includes(referenceChannel))
+          errors.push('capture.device.reference_channel cannot also be a surveillance channel in dedicated mode');
+        if (synthesis.mode === 'array_eigenbeam' && referenceChannels.length === 1)
+          errors.push('process.reference_synthesis.channels requires at least two reference channels in array_eigenbeam mode');
+      }
     }
     if (capture.fs !== 2400000)
       errors.push('KrakenSDR Suite V2 requires capture.fs to be 2400000');
@@ -590,6 +662,10 @@ function validateConfig(config, baseline = null, options = {}) {
   } catch (error) { errors.push(`process.delay_reference_sample_rate_hz: ${error.message}`); }
   if (multiIlluminator) {
     boolean(multiIlluminator.enabled, 'process.multi_illuminator.enabled');
+    if (multiIlluminator.enabled === true)
+      for (const [name, stage] of [['clutter', clutter], ['detection', detection], ['tracker', tracker]])
+        if (stage.enable !== true)
+          errors.push(`process.${name}.enable must be true: multi-illuminator mode requires clutter, detection, and tracking`);
     if (multiIlluminator.input_phase_correction !== undefined)
       oneOf(multiIlluminator.input_phase_correction,
         'process.multi_illuminator.input_phase_correction', ['automatic', 'off']);
@@ -618,7 +694,8 @@ function validateConfig(config, baseline = null, options = {}) {
         const allowed = new Set(['id', 'enabled', 'standard', 'frequency_hz',
           'occupied_bandwidth_hz', 'output_sample_rate_hz',
           'filter_taps_per_phase', 'atsc_reference_mode', 'input_role_mode', 'reference_channel',
-          'surveillance_channels', 'transmitter']);
+          'surveillance_channels', 'transmitter', 'tracker_min_snr_db',
+          'transmitter_location', 'detection_manifold_file', 'bearing_manifold_file']);
         Object.keys(illuminator).forEach(key => {
           if (!allowed.has(key)) errors.push(`${field}.${key} is not supported`);
         });
@@ -630,7 +707,26 @@ function validateConfig(config, baseline = null, options = {}) {
           errors.push('process.multi_illuminator illuminator IDs must be unique');
         ids.add(illuminator.id);
         boolean(illuminator.enabled, `${field}.enabled`);
+        if (illuminator.transmitter_location !== undefined) {
+          const site = requireObject(illuminator.transmitter_location, `${field}.transmitter_location`);
+          number(site.latitude, `${field}.transmitter_location.latitude`, {min: -90, max: 90});
+          number(site.longitude, `${field}.transmitter_location.longitude`, {min: -180, max: 180});
+          number(site.altitude, `${field}.transmitter_location.altitude`);
+        }
+        for (const key of ['detection_manifold_file', 'bearing_manifold_file'])
+          if (illuminator[key] !== undefined &&
+              (typeof illuminator[key] !== 'string' || !illuminator[key].trim()))
+            errors.push(`${field}.${key} must be a non-empty path`);
+        if (illuminator.detection_manifold_file !== undefined || illuminator.bearing_manifold_file !== undefined) {
+          if ((processConfig.surveillance_fusion?.mode ?? 'noncoherent') === 'noncoherent')
+            errors.push(`${field} manifold files require coherent geometry`);
+          if (processConfig.bearing?.reference_anchor === 'fixed_site_projected')
+            errors.push('fixed_site_projected requires ideal lane-bound geometry, no measured manifold');
+        }
         if (illuminator.enabled === true) enabled += 1;
+        if (illuminator.tracker_min_snr_db !== undefined)
+          number(illuminator.tracker_min_snr_db, `${field}.tracker_min_snr_db`,
+            {min: -100, max: 100});
         oneOf(illuminator.standard, `${field}.standard`,
           ['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0',
             'DVB-T/T2', 'ISDB-T', 'DTMB', 'CUSTOM']);
@@ -643,9 +739,6 @@ function validateConfig(config, baseline = null, options = {}) {
           if (illuminator.standard === 'ATSC-3.0' &&
               illuminator.atsc_reference_mode === 'pilot_aided')
             errors.push(`${field}.atsc_reference_mode pilot_aided requires standard ATSC 1.0`);
-          if (multiIlluminator.enabled === true && illuminator.enabled === true &&
-              illuminator.atsc_reference_mode === 'pilot_aided')
-            errors.push(`${field}.atsc_reference_mode pilot_aided is not available in this processor build`);
         }
         const laneReference = illuminator.reference_channel === undefined ? null :
           number(illuminator.reference_channel, `${field}.reference_channel`,
@@ -836,15 +929,17 @@ function validateConfig(config, baseline = null, options = {}) {
     errors.push('process.clutter.delayMax: filter FFT exceeds the processor limit');
   // Once the physical receiver is bypassed, validate processing against the
   // recording's channel topology rather than the machine's installed SDR.
-  const processingDevice = replay.state === true && Number.isInteger(replay.channel_count) ?
-    {...device, type: replay.channel_count > 2 || replay.reference_mode === 'array_eigenbeam' ?
-        'Kraken' : device.type,
-      channel_count: replay.channel_count,
-      reference_channel: replay.reference_channel ?? 0,
-      surveillance_channels: replaySurveillance,
-      array_geometry: device.array_geometry} : device;
-  const channels = processingDevice.type === 'Kraken' ? processingDevice.channel_count : 2;
-  const paths = processingDevice.type === 'Kraken' ? processingDevice.surveillance_channels?.length : 1;
+  const capabilities = processingCapabilities(root);
+  if (!capabilities.validTopology)
+    errors.push('capture channel roles must be unique, in range, and identify one disjoint dedicated reference or a valid array reference');
+  const processingDevice = {...device, channel_count: capabilities.channelCount,
+    reference_channel: capabilities.referenceChannel,
+    surveillance_channels: capabilities.surveillanceChannels};
+  const channels = capabilities.channelCount;
+  const paths = capabilities.surveillanceChannels.length;
+  if (capabilities.referenceMode === 'array_eigenbeam' &&
+      !capabilities.coherent)
+    errors.push('array_eigenbeam reference synthesis requires a coherent multi-channel capture or qualified replay');
   // Lower-bound estimate only: FFT plans, allocator overhead and other services
   // need additional memory. Deployment-specific budgets may be set by the host.
   const estimatedBytes = 16 * (channels * cpiSamples * buffer +
@@ -884,6 +979,10 @@ function validateConfig(config, baseline = null, options = {}) {
     number(scrubber.delay_stride,
       'process.detection.doppler_ridge_scrubber.delay_stride',
       {integer: true, min: 1, max: 64});
+    if (scrubber.shadow_maximum_cpis !== undefined)
+      number(scrubber.shadow_maximum_cpis,
+        'process.detection.doppler_ridge_scrubber.shadow_maximum_cpis',
+        {integer: true, min: 1, max: 65535});
   }
   if (detection.integration_cpis !== undefined)
     number(detection.integration_cpis, 'process.detection.integration_cpis',
@@ -897,6 +996,11 @@ function validateConfig(config, baseline = null, options = {}) {
       'process.detection.track_before_detect');
     boolean(trackBeforeDetect.enable,
       'process.detection.track_before_detect.enable');
+    if (trackBeforeDetect.fractional_delay !== undefined)
+      boolean(trackBeforeDetect.fractional_delay,
+        'process.detection.track_before_detect.fractional_delay');
+    if (trackBeforeDetect.fractional_delay === true && trackBeforeDetect.enable !== true)
+      errors.push('process.detection.track_before_detect.fractional_delay requires enabled track-before-detect');
     number(trackBeforeDetect.max_cpis,
       'process.detection.track_before_detect.max_cpis',
       {integer: true, min: 4, max: 8});
@@ -914,6 +1018,124 @@ function validateConfig(config, baseline = null, options = {}) {
       number(trackBeforeDetect.doppler_motion_bins,
         'process.detection.track_before_detect.doppler_motion_bins',
         {integer: true, min: 0, max: 16});
+  }
+  if (detection.live_temporal_shadow !== undefined) {
+    const shadow = requireObject(detection.live_temporal_shadow,
+      'process.detection.live_temporal_shadow');
+    boolean(shadow.enabled, 'process.detection.live_temporal_shadow.enabled');
+    const prefix = 'process.detection.live_temporal_shadow';
+    if (shadow.artifact_path !== undefined &&
+        (typeof shadow.artifact_path !== 'string' || shadow.artifact_path.length > 4096 ||
+         shadow.artifact_path.includes('\0') ||
+         (shadow.artifact_path !== '' && !path.isAbsolute(shadow.artifact_path))))
+      errors.push(`${prefix}.artifact_path must be empty or an absolute path without NUL of at most 4096 characters`);
+    if (shadow.artifact_only !== undefined)
+      boolean(shadow.artifact_only, `${prefix}.artifact_only`);
+    if (shadow.score_tracks !== undefined)
+      boolean(shadow.score_tracks, `${prefix}.score_tracks`);
+    if (shadow.association_sustain !== undefined)
+      boolean(shadow.association_sustain, `${prefix}.association_sustain`);
+    if (shadow.association_sustain_cpis !== undefined)
+      number(shadow.association_sustain_cpis,
+        `${prefix}.association_sustain_cpis`, {integer: true, min: 2, max: 8});
+    if (shadow.artifact_only === true &&
+        (shadow.enabled !== true || typeof shadow.artifact_path !== 'string' ||
+         shadow.artifact_path.length === 0))
+      errors.push(`${prefix}.artifact_only requires enabled artifact output`);
+    if (shadow.illuminator_id !== undefined &&
+        (typeof shadow.illuminator_id !== 'string' || shadow.illuminator_id.length > 64 ||
+         (shadow.illuminator_id !== '' && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(shadow.illuminator_id))))
+      errors.push(`${prefix}.illuminator_id must be an illuminator ID or empty`);
+    if (shadow.bootstrap_covariance !== undefined &&
+        !['diagonal', 'shrinkage', 'robust_shrinkage'].includes(shadow.bootstrap_covariance))
+      errors.push(`${prefix}.bootstrap_covariance must be diagonal, shrinkage, or robust_shrinkage`);
+    for (const [key, minimum, maximum] of [
+      ['max_cpis', 4, 8], ['delay_motion_bins', 0, 2],
+      ['doppler_motion_bins', 0, 16], ['max_cells', 1, 524288],
+      ['max_work_ms', 1, 150], ['min_interval_ms', 4, 10000],
+      ['maximum_candidates', 1, 4096],
+      ['artifact_max_mb', 1, 1024], ['artifact_max_frames', 1, 128]])
+      if (shadow[key] !== undefined)
+        number(shadow[key], `${prefix}.${key}`, {integer: true, min: minimum, max: maximum});
+    if (shadow.minimum_initiation_snr_db !== undefined)
+      number(shadow.minimum_initiation_snr_db,
+        `${prefix}.minimum_initiation_snr_db`, {min: -100, max: 100});
+    if (shadow.max_cpis !== undefined && ![4, 8].includes(shadow.max_cpis))
+      errors.push(`${prefix}.max_cpis must be 4 or 8`);
+    if (shadow.association_sustain_cpis !== undefined &&
+        ![2, 4, 8].includes(shadow.association_sustain_cpis))
+      errors.push(`${prefix}.association_sustain_cpis must be 2, 4, or 8`);
+    if ((shadow.min_interval_ms ?? 100) < 2 * (shadow.max_work_ms ?? 20))
+      errors.push(`${prefix}.min_interval_ms must be at least twice max_work_ms`);
+    if (shadow.enabled === true && replay.state === true)
+      errors.push(`${prefix} requires live capture; use temporal_shadow for replay`);
+    if (shadow.enabled === true && multiIlluminator?.enabled === true &&
+        (!Array.isArray(multiIlluminator.illuminators) ||
+         multiIlluminator.illuminators.filter(lane =>
+           lane?.enabled === true && lane.id === shadow.illuminator_id).length !== 1))
+      errors.push(`${prefix}.illuminator_id must match exactly one enabled lane`);
+    if (shadow.enabled === true && multiIlluminator?.enabled !== true && shadow.illuminator_id)
+      errors.push(`${prefix}.illuminator_id requires multi-illuminator mode`);
+    if (shadow.enabled === true && clutter.enable !== true)
+      errors.push(`${prefix} requires enabled post-clutter processing`);
+    if (shadow.association_sustain === true &&
+        (shadow.enabled !== true || shadow.score_tracks !== true ||
+         (shadow.max_cpis ?? 8) < (shadow.association_sustain_cpis ?? 4)))
+      errors.push(`${prefix}.association_sustain requires its selected 2/4/8-CPI scoring bank`);
+  }
+  if (detection.temporal_shadow !== undefined) {
+    const temporalShadow = requireObject(detection.temporal_shadow,
+      'process.detection.temporal_shadow');
+    boolean(temporalShadow.enabled,
+      'process.detection.temporal_shadow.enabled');
+    if (temporalShadow.illuminator_id !== undefined &&
+        (typeof temporalShadow.illuminator_id !== 'string' ||
+         temporalShadow.illuminator_id.length === 0 ||
+         temporalShadow.illuminator_id.length > 128))
+      errors.push('process.detection.temporal_shadow.illuminator_id must be a non-empty string of at most 128 characters');
+    if (temporalShadow.input_statistic !== undefined &&
+        !['fused', 'post_clutter_bootstrap'].includes(temporalShadow.input_statistic))
+      errors.push('process.detection.temporal_shadow.input_statistic must be fused or post_clutter_bootstrap');
+    if (temporalShadow.bootstrap_covariance !== undefined &&
+        !['diagonal', 'shrinkage', 'robust_shrinkage'].includes(temporalShadow.bootstrap_covariance))
+      errors.push('process.detection.temporal_shadow.bootstrap_covariance must be diagonal, shrinkage, or robust_shrinkage');
+    number(temporalShadow.max_cpis,
+      'process.detection.temporal_shadow.max_cpis',
+      {integer: true, min: 4, max: 8});
+    if (Number.isInteger(temporalShadow.max_cpis) &&
+        ![4, 8].includes(temporalShadow.max_cpis))
+      errors.push('process.detection.temporal_shadow.max_cpis must be 4 or 8');
+    number(temporalShadow.delay_motion_bins,
+      'process.detection.temporal_shadow.delay_motion_bins',
+      {integer: true, min: 0, max: 2});
+    number(temporalShadow.doppler_motion_bins,
+      'process.detection.temporal_shadow.doppler_motion_bins',
+      {integer: true, min: 0, max: 16});
+    if (temporalShadow.artifact_path !== undefined &&
+        (typeof temporalShadow.artifact_path !== 'string' ||
+         temporalShadow.artifact_path.length > 4096 ||
+         temporalShadow.artifact_path.includes('\0')))
+      errors.push('process.detection.temporal_shadow.artifact_path must be a string of at most 4096 characters without NUL');
+    number(temporalShadow.artifact_max_mb,
+      'process.detection.temporal_shadow.artifact_max_mb',
+      {integer: true, min: 64, max: 1048576});
+    if (temporalShadow.enabled === true &&
+        (typeof temporalShadow.illuminator_id !== 'string' ||
+         temporalShadow.illuminator_id.length === 0))
+      errors.push('process.detection.temporal_shadow.illuminator_id is required when enabled');
+    if (temporalShadow.enabled === true &&
+        (typeof temporalShadow.artifact_path !== 'string' ||
+         temporalShadow.artifact_path.length === 0))
+      errors.push('process.detection.temporal_shadow.artifact_path is required when enabled');
+    if (temporalShadow.enabled === true && multiIlluminator?.enabled !== true)
+      errors.push('process.detection.temporal_shadow requires process.multi_illuminator.enabled');
+    if (temporalShadow.enabled === true && replay.state !== true)
+      errors.push('process.detection.temporal_shadow is restricted to offline replay');
+    if (temporalShadow.enabled === true &&
+        (!Array.isArray(multiIlluminator?.illuminators) ||
+         multiIlluminator.illuminators.filter(lane =>
+           lane?.enabled === true && lane.id === temporalShadow.illuminator_id).length !== 1))
+      errors.push('process.detection.temporal_shadow.illuminator_id must match exactly one enabled lane');
   }
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
@@ -952,7 +1174,7 @@ function validateConfig(config, baseline = null, options = {}) {
     if (stationaryClutter.persistence_cpis !== undefined)
       number(stationaryClutter.persistence_cpis,
         'process.tracker.initiate.stationary_clutter.persistence_cpis',
-        {integer: true, min: 1, max: 65535});
+        {integer: true, min: 2, max: 65535});
     if (stationaryClutter.max_doppler_hz !== undefined)
       number(stationaryClutter.max_doppler_hz,
         'process.tracker.initiate.stationary_clutter.max_doppler_hz',
@@ -984,19 +1206,38 @@ function validateConfig(config, baseline = null, options = {}) {
   if (tracker.beam_tolerance !== undefined)
     number(tracker.beam_tolerance, 'process.tracker.beam_tolerance',
       {integer: true, min: 0, max: 180});
-  if (processConfig.performance !== undefined) {
-    const performance = requireObject(processConfig.performance,
-      'process.performance');
+  {
+    // Omitting the optional performance block selects native AUTO, not an
+    // exemption from validation of resident-only tracker features.
+    const performance = processConfig.performance === undefined ? {} :
+      requireObject(processConfig.performance, 'process.performance');
     if (performance.acceleration === 'gpu-resident') {
-      if (tracker.enable && tracker.gpu_capacity === undefined)
+      if (tracker.enable && tracker.gpu_capacity === undefined &&
+          (processConfig.surveillance_fusion?.mode ?? 'noncoherent') !== 'noncoherent')
         errors.push('process.tracker.gpu_capacity is required for gpu-resident tracking');
       if (tracker.enable && !detection.enable)
         errors.push('gpu-resident tracking requires process.detection.enable');
-      if (!clutter.enable || processConfig.reference_synthesis?.mode !== 'array_eigenbeam')
-        errors.push('gpu-resident requires clutter and array_eigenbeam reference synthesis');
+      const residentReferenceMode = capabilities.referenceMode;
+      const identityChannels = Array.from({length: capabilities.channelCount},
+        (_, channel) => channel);
+      const residentReferenceValid = residentReferenceMode === 'array_eigenbeam' ?
+        capabilities.coherent &&
+          capabilities.referenceChannels.length === capabilities.channelCount &&
+          capabilities.surveillanceChannels.length === capabilities.channelCount &&
+          capabilities.referenceChannels.every((channel, index) =>
+            channel === identityChannels[index]) &&
+          capabilities.surveillanceChannels.every((channel, index) =>
+            channel === identityChannels[index]) :
+        residentReferenceMode === 'dedicated' &&
+          capabilities.referenceChannels.length === 1 &&
+          capabilities.surveillanceChannels.length >= 1 &&
+          !capabilities.surveillanceChannels.includes(
+            capabilities.referenceChannels[0]);
+      if (!clutter.enable || !residentReferenceValid)
+        errors.push('gpu-resident requires clutter and a valid array or dedicated-reference capture topology');
     }
-    if (stationaryClutter?.enable && performance.acceleration !== 'gpu-resident')
-      errors.push('persistent stationary-clutter initiation filtering requires gpu-resident acceleration');
+    if (stationaryClutter?.enable && tracker.enable !== true)
+      errors.push('persistent stationary-clutter initiation filtering requires enabled tracking');
     let trackGuidedShadow = null;
     if (tracker.track_guided_shadow !== undefined) {
       trackGuidedShadow = requireObject(tracker.track_guided_shadow,
@@ -1006,6 +1247,9 @@ function validateConfig(config, baseline = null, options = {}) {
       if (trackGuidedShadow.promote !== undefined)
         boolean(trackGuidedShadow.promote,
           'process.tracker.track_guided_shadow.promote');
+      if (trackGuidedShadow.sustain !== undefined)
+        boolean(trackGuidedShadow.sustain,
+          'process.tracker.track_guided_shadow.sustain');
       number(trackGuidedShadow.max_tracks,
         'process.tracker.track_guided_shadow.max_tracks',
         {integer: true, min: 1, max: 65535});
@@ -1025,18 +1269,16 @@ function validateConfig(config, baseline = null, options = {}) {
         errors.push('track-guided shadow requires enabled tracking and track-before-detect');
       if (trackGuidedShadow.promote === true && trackGuidedShadow.enable !== true)
         errors.push('track-guided recovery promotion requires the shadow evaluator');
+      if (trackGuidedShadow.sustain === true && trackGuidedShadow.enable !== true)
+        errors.push('track-guided recovery sustain requires the shadow evaluator');
+      if (trackGuidedShadow.promote === true &&
+          tracker.initiate?.N < 2 * tracker.initiate?.M - 1)
+        errors.push('experimental disjoint guided confirmation requires N >= 2*M-1; ordinary M-of-N is unchanged with promotion off');
       if (trackGuidedShadow.enable === true &&
           Number.isInteger(tracker.gpu_capacity) &&
           trackGuidedShadow.max_tracks > tracker.gpu_capacity)
         errors.push('process.tracker.track_guided_shadow.max_tracks cannot exceed gpu_capacity');
     }
-    if (trackGuidedShadow?.enable && performance.acceleration !== 'gpu-resident')
-      errors.push('track-guided shadow requires gpu-resident acceleration');
-    if ((detection.integration_cpis ?? 1) > 1 &&
-        performance.acceleration !== 'gpu-resident')
-      errors.push('multi-CPI detection requires gpu-resident acceleration');
-    if (trackBeforeDetect?.enable && performance.acceleration !== 'gpu-resident')
-      errors.push('track-before-detect requires gpu-resident acceleration');
     if (performance.surveillance_workers !== undefined) number(performance.surveillance_workers,
       'process.performance.surveillance_workers',
       {integer: true, min: 0, max: KRAKEN_MAX_CHANNELS});
@@ -1106,9 +1348,9 @@ function validateConfig(config, baseline = null, options = {}) {
           errors.push('enabled detection manifold automation requires an absolute corpus path');
         if (!['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
           errors.push('detection manifold automation requires coherent surveillance fusion');
-        if (processingDevice.type !== 'Kraken' || processConfig.detection?.enable !== true ||
+        if (!capabilities.coherentSurveillance || !capabilities.appliedGainMetadata || processConfig.detection?.enable !== true ||
             root.truth?.adsb?.enabled !== true)
-          errors.push('detection manifold automation requires Kraken coherent detection and ADS-B truth');
+          errors.push('detection manifold automation requires coherent detection, applied gain metadata, and ADS-B truth');
       }
     }
     if (fusion.manifold_file !== undefined) {
@@ -1127,8 +1369,12 @@ function validateConfig(config, baseline = null, options = {}) {
     }
     if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
       const label = fusion.mode;
-      if (processingDevice.type !== 'Kraken')
-        errors.push(`${label} surveillance fusion requires a Kraken receiver`);
+      if (!capabilities.coherentSurveillance)
+        errors.push(`${label} surveillance fusion requires at least two coherent surveillance channels with a matching array reference`);
+      if (!capabilities.surveillanceGeometry)
+        errors.push(`${label} surveillance fusion requires complete nonzero array geometry and orientation`);
+      if (!capabilities.confirmedGeometry)
+        errors.push(`${label} surveillance fusion requires confirmed channel mapping, geometry, and orientation`);
       if (!isObject(processingDevice.array_geometry) || !Array.isArray(processingDevice.array_geometry.elements))
         errors.push(`${label} surveillance fusion requires capture.device.array_geometry.elements`);
       const geometryChannels = new Set((processingDevice.array_geometry?.elements || [])
@@ -1174,7 +1420,8 @@ function validateConfig(config, baseline = null, options = {}) {
       if (fusion.mode === 'noise_whitened_beam_bank' &&
           processConfig.performance?.acceleration !== 'gpu-resident')
         errors.push('noise_whitened_beam_bank fusion requires gpu-resident acceleration');
-      const reference = processConfig.reference_synthesis;
+      const reference = {mode: capabilities.referenceMode,
+        channels: capabilities.referenceChannels};
       const surveillance = processingDevice.surveillance_channels || [];
       if (reference?.mode !== 'array_eigenbeam' ||
           !Array.isArray(reference.channels) ||
@@ -1189,11 +1436,8 @@ function validateConfig(config, baseline = null, options = {}) {
       (detection.integration_cpis ?? 1) !== 2)
     errors.push('integration_motion_bins requires integration_cpis: 2');
   if (trackBeforeDetect?.enable) {
-    const fusion = processConfig.surveillance_fusion;
     if (!detection.enable)
       errors.push('track-before-detect requires process.detection.enable');
-    if (!fusion || fusion.mode === 'noncoherent')
-      errors.push('track-before-detect candidate refinement requires coherent surveillance fusion');
   }
   if (tracker.beam_tolerance !== undefined) {
     const fusion = processConfig.surveillance_fusion;
@@ -1202,6 +1446,9 @@ function validateConfig(config, baseline = null, options = {}) {
     else if (Number.isFinite(fusion.beams) &&
         tracker.beam_tolerance > Math.floor(fusion.beams / 2))
       errors.push('tracker beam_tolerance cannot exceed half the beam count');
+    if (((detection.integration_cpis ?? 1) > 1 || trackBeforeDetect?.enable) &&
+        processConfig.performance?.acceleration !== 'gpu-resident')
+      errors.push('beam-conditioned temporal integration requires gpu-resident acceleration');
   }
   if (trackerPublication) {
     oneOf(trackerPublication.mode, 'process.tracker.publication.mode',
@@ -1241,11 +1488,12 @@ function validateConfig(config, baseline = null, options = {}) {
     if (bearing.reference_anchor === 'fixed_site_projected') {
       const allFive = values => Array.isArray(values) && values.length === 5 &&
         values.every((channel, index) => channel === index);
-      const reference = processConfig.reference_synthesis;
+      const reference = {mode: capabilities.referenceMode,
+        channels: capabilities.referenceChannels};
       const fusion = processConfig.surveillance_fusion;
       if (replay.state !== true || replay.format !== 'blah2')
         errors.push('fixed_site_projected is experimental and requires explicit native blah2 replay');
-      if (processingDevice.type !== 'Kraken' || processingDevice.channel_count !== 5 ||
+      if (processingDevice.channel_count !== 5 ||
           !allFive(processingDevice.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
           !allFive(reference?.channels) || clutter.enable !== true ||
           processConfig.performance?.acceleration !== 'gpu-resident' ||
@@ -1310,9 +1558,13 @@ function validateConfig(config, baseline = null, options = {}) {
       if ([true, 'on', 'auto'].includes(shadow.enabled)) {
         const geometry = processingDevice.array_geometry;
         const referenceChannels = processConfig.reference_synthesis?.channels;
-        if (processingDevice.type !== 'Kraken' || processConfig.reference_synthesis?.mode !== 'array_eigenbeam' ||
+        if (!capabilities.coherent || processConfig.reference_synthesis?.mode !== 'array_eigenbeam' ||
             !Array.isArray(referenceChannels) || referenceChannels.length < 2)
-          errors.push('frequency-resolved shadow requires multi-channel Kraken array reference synthesis');
+          errors.push('frequency-resolved shadow requires multi-channel coherent array reference synthesis');
+        if (!capabilities.referenceGeometry)
+          errors.push('frequency-resolved shadow requires complete reference-channel geometry');
+        if (!capabilities.liveMchq)
+          errors.push('frequency-resolved shadow requires a live MCHQ capture endpoint');
         if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
             geometry?.orientation_confirmed !== true || !Number.isFinite(geometry.x_axis_bearing_deg_true))
           errors.push('frequency-resolved shadow requires confirmed mapping, geometry, and orientation');
@@ -1338,9 +1590,11 @@ function validateConfig(config, baseline = null, options = {}) {
       number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
       number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
       if (recorder.enabled === true || recorder.enabled === 'on') {
-        if (processingDevice.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
+        if (!capabilities.coherentSurveillance || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
               processConfig.surveillance_fusion?.mode) || !detection.enable)
-          errors.push('manifold recording requires Kraken coherent detection');
+          errors.push('manifold recording requires multi-channel coherent detection');
+        if (!capabilities.appliedGainMetadata)
+          errors.push('manifold recording requires per-channel applied gain metadata');
         if (!root.truth?.adsb?.enabled)
           errors.push('manifold recording requires ADS-B truth');
         if (!Number.isInteger(ports.manifold) || ports.manifold < 1 || ports.manifold > 65535)
@@ -1374,7 +1628,9 @@ function validateConfig(config, baseline = null, options = {}) {
         errors.push('bearing output requires confirmed mapping, geometry, and orientation');
     }
   }
-  if (device.type === 'Usrp' || device.type === 'RspDuo') {
+  if (!(replay.state === true && Number.isInteger(replay.channel_count)) &&
+      (device.type === 'Usrp' || device.type === 'RspDuo' ||
+       device.type === 'HackRF')) {
     // Coherent paired receivers use the same processing-topology contract as
     // Kraken even though they do not expose an array channel-count control.
     // In dedicated mode this single channel is the native reference input and
@@ -1409,39 +1665,21 @@ function validateConfig(config, baseline = null, options = {}) {
   if (multiIlluminator?.doppler_window !== undefined &&
       multiIlluminator.doppler_window !== 'rectangular')
     errors.push('process.multi_illuminator.doppler_window is not available in this processor build');
-  if (detection.doppler_ridge_scrubber?.mode &&
-      detection.doppler_ridge_scrubber.mode !== 'off')
-    errors.push('process.detection.doppler_ridge_scrubber.mode is not available in this processor build');
-  if (initiate.doppler_ridge_clutter?.enable === true)
-    errors.push('process.tracker.initiate.doppler_ridge_clutter.enable is not available in this processor build');
   if (multiIlluminator?.enabled === true) {
     const fusion = processConfig.surveillance_fusion;
     const bearing = processConfig.bearing;
-    const stationary = initiate.stationary_clutter;
-    const guided = tracker.track_guided_shadow;
     const unsupported = [];
-    if ((fusion?.mode ?? 'noncoherent') !== 'noncoherent')
-      unsupported.push('process.surveillance_fusion.mode');
+    if ((fusion?.mode ?? 'noncoherent') !== 'noncoherent') {
+      for (const lane of multiIlluminator.illuminators ?? []) {
+        if (lane?.enabled !== true) continue;
+        if (!isObject(lane.transmitter_location))
+          errors.push(`coherent illuminator ${lane.id} requires explicit transmitter_location`);
+        if (lane.reference_channel !== undefined || lane.surveillance_channels !== undefined)
+          errors.push(`coherent illuminator ${lane.id} requires matching array-reference/surveillance topology, not dedicated role overrides`);
+      }
+    }
     if (fusion?.detection_manifold_automation?.enabled === true)
       unsupported.push('process.surveillance_fusion.detection_manifold_automation.enabled');
-    if ((detection.integration_cpis ?? 1) !== 1)
-      unsupported.push('process.detection.integration_cpis');
-    if ((detection.integration_motion_bins ?? 0) !== 0)
-      unsupported.push('process.detection.integration_motion_bins');
-    if (trackBeforeDetect?.enable === true)
-      unsupported.push('process.detection.track_before_detect.enable');
-    if (tracker.beam_tolerance !== undefined)
-      unsupported.push('process.tracker.beam_tolerance');
-    if (tracker.gpu_capacity !== undefined)
-      unsupported.push('process.tracker.gpu_capacity');
-    if (stationary?.enable === true)
-      unsupported.push('process.tracker.initiate.stationary_clutter.enable');
-    if (guided?.enable === true)
-      unsupported.push('process.tracker.track_guided_shadow.enable');
-    if (guided?.promote === true)
-      unsupported.push('process.tracker.track_guided_shadow.promote');
-    if (bearing?.enable === true)
-      unsupported.push('process.bearing.enable');
     if ([true, 'on', 'auto'].includes(
       bearing?.frequency_resolved_shadow?.enabled))
       unsupported.push('process.bearing.frequency_resolved_shadow.enabled');
@@ -1450,6 +1688,14 @@ function validateConfig(config, baseline = null, options = {}) {
     unsupported.forEach(field => errors.push(
       `${field} is not supported in multi-illuminator mode`));
   }
+  if (multiIlluminator?.experimental_fm_reference_quality_filter !== undefined)
+    boolean(multiIlluminator.experimental_fm_reference_quality_filter,
+      'process.multi_illuminator.experimental_fm_reference_quality_filter');
+  if (multiIlluminator?.experimental_fm_reference_quality_filter === true &&
+      (capture.replay?.state !== true || multiIlluminator.enabled !== true ||
+       !Array.isArray(multiIlluminator.illuminators) ||
+       !multiIlluminator.illuminators.some(lane => lane?.enabled === true && lane.standard === 'FM')))
+    errors.push('experimental FM reference quality filtering requires multi-illuminator replay with an enabled FM lane');
 
   string(network.ip, 'network.ip');
   if (typeof network.ip === 'string' && net.isIP(network.ip) !== 4)
@@ -1555,6 +1801,12 @@ function validateConfig(config, baseline = null, options = {}) {
   if (adsb.provisional_event_time_uncertainty_s !== undefined)
     number(adsb.provisional_event_time_uncertainty_s,
       'truth.adsb.provisional_event_time_uncertainty_s', {min: 0, max: 5});
+  if (adsb.uncertainty_association !== undefined) {
+    const uncertainty = requireObject(adsb.uncertainty_association, 'truth.adsb.uncertainty_association');
+    boolean(uncertainty.enable, 'truth.adsb.uncertainty_association.enable');
+    try { require('./truth-uncertainty').policy(uncertainty); }
+    catch (error) { errors.push(error.message); }
+  }
   if (adsb.delay_tolerance !== undefined) number(adsb.delay_tolerance,
     'truth.adsb.delay_tolerance', {min: 0, max: 1000});
   if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,
@@ -1637,7 +1889,17 @@ function writeConfigAtomically(filename, config) {
     const previous = fs.existsSync(filename) ? fs.statSync(filename) : null;
     fs.writeFileSync(temporary, output, {mode: previous ? previous.mode & 0o777 : 0o640, flag: 'wx'});
     if (previous) {
-      fs.chownSync(temporary, previous.uid, previous.gid);
+      try {
+        fs.chownSync(temporary, previous.uid, previous.gid);
+      } catch (error) {
+        const currentUid = typeof process.getuid === 'function' ? process.getuid() : null;
+        // A service in the config's shared group may replace a root-owned,
+        // group-writable file, but cannot assume root ownership. Retain that
+        // group while keeping the temporary file owned by the service account.
+        if (error?.code !== 'EPERM' || currentUid === null || previous.uid === currentUid)
+          throw error;
+        fs.chownSync(temporary, currentUid, previous.gid);
+      }
       fs.chmodSync(temporary, previous.mode & 0o777);
     }
     const descriptor = fs.openSync(temporary, 'r');

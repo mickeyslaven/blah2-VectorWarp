@@ -15,7 +15,7 @@
   emptySummary.className = 'fusion-empty-summary';
   emptySummary.hidden = true;
   fusionRoot.append(emptySummary);
-  let context = null, timer = null, fusionSelected = true;
+  let context = null, timer = null, fusionSelected = true, updateInFlight = false;
   let selectedTargetId = null, lastDiagnosticResult = null, lastDiagnosticTracks = [];
   let lastCooperativeResult = null;
   const fusedHistory = new Map();
@@ -24,9 +24,8 @@
   const adsbCoastMilliseconds = 20000;
   const adsbTrailMilliseconds = 60000;
   const adsbTrailMaximumPoints = 60;
-  const palette = ['#35cfe0','#69df7c','#e358c5','#ffb14a','#8f7cff'];
-  const diagnosticsKey = 'vectorwarp-fusion-details-open';
-  const finite = value => Number.isFinite(Number(value));
+  const diagnosticsKey = 'vectorwarp-fusion-details-open-v2';
+  const finite = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
   const text = value => String(value ?? '').replace(/[&<>"']/g, character =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[character]));
   function setDiagnosticsOpen(open, persist = true) {
@@ -44,8 +43,8 @@
   let detailsOpen = detailsParam === 'closed' ? false : detailsParam === 'open' ? true : null;
   if (detailsOpen === null) try {
     const saved = localStorage.getItem(diagnosticsKey);
-    detailsOpen = saved === null ? true : saved === 'true';
-  } catch (_) { detailsOpen = true; }
+    detailsOpen = saved === null ? false : saved === 'true';
+  } catch (_) { detailsOpen = false; }
   setDiagnosticsOpen(detailsOpen, false);
   diagnosticsToggle?.addEventListener('click', () =>
     setDiagnosticsOpen(fusionRoot.classList.contains('diagnostics-collapsed')));
@@ -66,8 +65,8 @@
     return ids.size;
   }
   function siteLabels(items) {
-    const sites=[];return items.map(item=>{let index=sites.indexOf(item.transmitter_site);
-      if(index<0){sites.push(item.transmitter_site);index=sites.length-1;}return `Site ${index+1}`;});
+    return model?.transmitterSiteLabels ? model.transmitterSiteLabels(items) :
+      items.map((_, index) => `Site ${index + 1}`);
   }
   function desired() {
     return fusionSelected && context?.enabled && independentSites(context.illuminators) > 1;
@@ -79,42 +78,103 @@
     if (fusion) { window.stopVectorWarpChannelRadar?.(); update(); timer ||= setInterval(update, 1000); }
     else { clearInterval(timer); timer = null; window.startVectorWarpChannelRadar?.(); Plotly.Plots.resize('data'); }
   }
+  const model = window.vectorwarpFusionAircraft;
+  let displayedAircraft = [], lastSelectedAnnouncement = '';
+  const diagnosticsEnabled = new URLSearchParams(location.search).get('fusion_diagnostics') === '1';
+  const legend = document.createElement('div');
+  legend.className = 'fusion-aircraft-key';
+  legend.innerHTML = '<span class="fusion-altitude-key"><b>Altitude</b><i></i><small>Ground</small><small>40k+ ft</small></span>' +
+    '<span class="fusion-evidence-key detected"><i></i>Detected</span>' +
+    '<span class="fusion-evidence-key tracked"><i></i>Radar tracked</span>' +
+    '<span class="fusion-evidence-key fused"><i></i>Independent radar position</span>';
+  scopeStatus.after(legend);
+  const diagnosticControl = document.createElement('label');
+  diagnosticControl.className = 'fusion-diagnostic-control';
+  diagnosticControl.innerHTML = '<input type="checkbox" id="fusion-hypotheses"> Show diagnostic hypotheses';
+  legend.append(diagnosticControl);
+  const hypothesesToggle = diagnosticControl.querySelector('input');
+  hypothesesToggle.checked = diagnosticsEnabled;
+  hypothesesToggle.addEventListener('change', () => update());
+  const announcement = document.createElement('p');
+  announcement.className = 'fusion-sr-only';
+  announcement.setAttribute('role', 'status');
+  announcement.setAttribute('aria-live', 'polite');
+  announcement.setAttribute('aria-atomic', 'true');
+  fusionRoot.append(announcement);
+  scopeStatus.setAttribute('aria-live', 'polite');
+  scopeStatus.setAttribute('aria-atomic', 'true');
+  diagnostics.removeAttribute('aria-live');
+  diagnostics.setAttribute('aria-label', 'Aircraft inspector');
+  glanceBoard.setAttribute('aria-label', 'Aircraft in scope');
+  function setHtml(element, html) {
+    if (element.innerHTML !== html) element.innerHTML = html;
+  }
+  function supportText(value) {
+    const channels = value.channels || [];
+    return channels.length ? `${channels.length > 1 ? window.VectorWarpVisualSemantics.labels.multiChannel : 'Channel support'} · ${channels.join(', ')}` : 'No channel support reported';
+  }
+  function recordDescription(value) {
+    return `${model.sourceLabel(value.source)} · ${model.stateLabel(value.state)}${value.coasting ? ' · ADS-B coasting' : ''}`;
+  }
+  function selectAircraft(id) {
+    selectedTargetId = id;
+    renderAircraftList();
+    diagnostic(lastDiagnosticResult || {}, lastDiagnosticTracks, lastCooperativeResult);
+  }
+  glanceBoard.addEventListener('click', event => {
+    const button = event.target.closest('button[data-aircraft-id]');
+    if (button) selectAircraft(button.dataset.aircraftId);
+  });
+  function renderAircraftList() {
+    const nearest = [...displayedAircraft].sort((a,b) => Math.hypot(...a.point) - Math.hypot(...b.point));
+    const distanceView = document.body.classList.contains('distance-view');
+    const limit = 4;
+    const selected = nearest.find(value => value.id === selectedTargetId);
+    const shown = (distanceView ? nearest : [selected, ...nearest.filter(value => value !== selected)].filter(Boolean)).slice(0, limit);
+    const focusedId = glanceBoard.contains(document.activeElement) ? document.activeElement.dataset.aircraftId : null;
+    glanceBoard.hidden = false;
+    setHtml(glanceBoard, `<header><strong>Nearest aircraft</strong><span>${shown.length} of ${displayedAircraft.length}</span></header><div>` +
+      shown.map(value => { const support = supportText(value); const channels = value.channels?.length || 0;
+        const evidence = value.source === 'radar' ? 'fused' : value.state;
+        const label = value.source === 'radar' ? model.sourceLabel(value.source) : model.stateLabel(value.state);
+        return `<button type="button" data-aircraft-id="${text(value.id)}" aria-label="${text(`${value.name}, ${Math.hypot(...value.point).toFixed(1)} kilometres, ${recordDescription(value)}, ${support}`)}" aria-pressed="${value.id === selectedTargetId}" class="fusion-aircraft-row"><strong>${text(value.name)}</strong><b>${Math.hypot(...value.point).toFixed(1)} km</b><span class="fusion-evidence-key ${evidence}">${evidence === 'adsb' ? '' : '<i aria-hidden="true"></i>'}${text(`${label}${value.coasting ? ' · coasting' : ''}`)}</span>${channels ? `<small title="${text(support)}">${channels} channel${channels === 1 ? '' : 's'}</small>` : ''}</button>`; }).join('') +
+      (shown.length ? '' : '<p>No aircraft positions available.</p>') + '</div>');
+    if (focusedId) [...glanceBoard.querySelectorAll('button')].find(button => button.dataset.aircraftId === focusedId)?.focus({preventScroll:true});
+  }
   function diagnostic(result, tracks, cooperative = lastCooperativeResult) {
-    lastDiagnosticResult=result;lastDiagnosticTracks=tracks;lastCooperativeResult=cooperative;
-    const selected = tracks.find(item=>item.id===selectedTargetId)||tracks[0];
-    if(selected)selectedTargetId=selected.id;
+    lastDiagnosticResult = result; lastDiagnosticTracks = tracks; lastCooperativeResult = cooperative;
+    const selected = displayedAircraft.find(item => item.id === selectedTargetId) || displayedAircraft[0];
+    if (selected) selectedTargetId = selected.id;
     const channels = context?.illuminators || [];
-    const labels=siteLabels(channels);
-    const match=selected&&!selected.diagnostic_only?(result.validation?.matches||[])
-      .find(item=>item.candidate_id===selected.id):null;
-    const supportSelected=String(selected?.state||'').startsWith('SUPPORT_');
-    const title=supportSelected?`Cross-frequency support ${selected.id}`:selected?.diagnostic_only?`Ambiguous radar hypothesis ${selected.id}`:
-      selected?`Confirmed radar track ${selected.id}`:'Fusion status';
-    const fresh=result?.available===true||result?.map_support?.available===true;
-    const badge=match?'ADS-B PROXIMITY MATCH':supportSelected?'DIAGNOSTIC SUPPORT':selected?.diagnostic_only?'DIAGNOSTIC ONLY':
-      selected?'CONFIRMED RADAR':fresh?'LIVE · NO CONFIRMED TRACKS':'WAITING FOR FRESH DATA';
-    const badgeClass=match?'adsb':selected?.diagnostic_only?'diagnostic':selected?'confirmed':'neutral';
-    const cooperativeTracks = Array.isArray(cooperative?.tracks) ? cooperative.tracks : [];
-    const contributingNodes = new Set(cooperativeTracks.flatMap(item =>
-      item.recent_supporting_nodes || item.contributing_nodes || []));
-    const configuredNodes = context?.nodes?.length || 1;
-    diagnostics.innerHTML = `<h2>${text(title)}</h2>`+
-      `<span class="fusion-status ${text(badgeClass)}">${text(badge)}</span>`+
-      (match?`<div class="fusion-metric"><span>ADS-B aircraft</span><strong>${text(match.adsb_flight||match.adsb_hex||'Matched')}</strong></div>`+
-        `<div class="fusion-metric"><span>Proximity</span><strong>${Number(match.error_km).toFixed(2)} km</strong></div>`+
-        `<div class="fusion-metric"><span>Match time</span><strong>${finite(result.validation?.timestamp)?new Date(Number(result.validation.timestamp)).toLocaleTimeString():'Current cohort'}</strong></div>`:'')+
-      `<div class="fusion-metric"><span>Independent sites</span><strong>${finite(result.map_support?.generation?.independent_transmitter_sites ?? result.independent_transmitter_sites) ? Number(result.map_support?.generation?.independent_transmitter_sites ?? result.independent_transmitter_sites) : independentSites(channels)}</strong></div>`+
-      `<div class="fusion-metric"><span>Channels</span><strong>${channels.length}</strong></div>`+
-      `<div class="fusion-metric"><span>Radar nodes</span><strong>${configuredNodes} connected · ${contributingNodes.size} contributing now</strong></div>`+
-      `<div class="fusion-metric"><span>Cooperative hypotheses</span><strong>${cooperativeTracks.length}</strong></div>`+
-      `<div class="fusion-metric"><span>Supporting CPIs</span><strong>${finite(selected?.supporting_cpis ?? selected?.supporting_frames) ? Number(selected?.supporting_cpis ?? selected?.supporting_frames) : 0}</strong></div>`+
-      channels.map((item,index)=>`<div class="fusion-channel" style="border-left:4px solid ${palette[index%palette.length]}"><strong>${text(item.id)}${item.nodeLabel ? ` (${text(item.nodeLabel)})` : ''}</strong><small>${finite(item.frequency_hz) ? (Number(item.frequency_hz)/1e6).toFixed(1) : '—'} MHz · ${text(labels[index])} · configured</small></div>`).join('');
+    const labels = siteLabels(channels);
+    const fresh = result?.available === true || result?.map_support?.available === true;
+    const diagnosticTracks = tracks.filter(item => item.diagnostic_only || item.operational_position === false || String(item.state).startsWith('SUPPORT_') || item.state === 'PERSISTENT_AMBIGUOUS');
+    const title = selected ? selected.name : 'Aircraft inspector';
+    const metrics = selected ? [
+      ['Position source', model.sourceLabel(selected.source)],
+      ['Radar evidence', model.stateLabel(selected.state)],
+      ['Supporting channels', supportText(selected)],
+      ['Receiver range', `${Math.hypot(...selected.point).toFixed(1)} km`],
+      ...(selected.coasting ? [['Position freshness', `ADS-B coasting · ${selected.ageSeconds.toFixed(0)} s`]] : []),
+      ...(selected.match ? [['Identity association', 'Held-out ADS-B proximity match']] : []),
+      ...(selected.radar?.uncertainty ? [['Position uncertainty', `Horizontal σ ${finite(selected.radar.uncertainty.horizontal_sigma_km) ? Number(selected.radar.uncertainty.horizontal_sigma_km).toFixed(2) + ' km' : 'not reported'} · estimated`]] : [])
+    ] : [];
+    setHtml(diagnostics, `<h2>${text(title)}</h2><span class="fusion-status ${selected ? selected.source : 'neutral'}">${text(selected ? recordDescription(selected) : fresh ? 'Live · no aircraft positions' : 'Waiting for fresh radar data')}</span>` +
+      metrics.map(([label,value]) => `<div class="fusion-metric"><span>${text(label)}</span><strong>${text(value)}</strong></div>`).join('') +
+      `<div class="fusion-metric"><span>Configured sites / channels</span><strong>${independentSites(channels)} / ${channels.length}</strong></div>` +
+      `<div class="fusion-metric"><span>Diagnostic hypotheses</span><strong>${diagnosticTracks.length} · ${hypothesesToggle.checked ? 'shown' : 'hidden'}</strong></div>` +
+      (hypothesesToggle.checked ? diagnosticTracks.map(item => `<div class="fusion-channel"><strong>${text(item.id)}</strong><small>Diagnostic only · ${text(item.state)} · ${Number(item.supporting_cpis || item.supporting_frames || 0)} supporting CPIs</small></div>`).join('') : '') +
+      `<details class="fusion-channel-details"><summary>Channels · ${channels.length}</summary><div>` +
+      channels.map((item,index) => `<div class="fusion-channel"><strong>${text(item.id)}</strong><small>${finite(item.frequency_hz) ? (Number(item.frequency_hz)/1e6).toFixed(1) : '—'} MHz · ${text(labels[index])}</small></div>`).join('') + '</div></details>');
+    const message = selected ? `${selected.name}. ${recordDescription(selected)}. ${supportText(selected)}.` : 'No aircraft positions available.';
+    if (message !== lastSelectedAnnouncement) { announcement.textContent = message; lastSelectedAnnouncement = message; }
   }
   async function update() {
-    if (fusionRoot.hidden) return;
+    if (fusionRoot.hidden || updateInFlight) return;
+    updateInFlight = true;
     try {
       const [result, config, cooperative, adsbData, associationData] = await Promise.all([
-        fetchRadarJson(liveApiUrl('/api/tracker/fused')),
+        fetchRadarJson(liveApiUrl('/api/tracker/fused')).catch(() => ({available:false})),
         getRadarRuntimeConfig(),
         fetchRadarJson(liveApiUrl('/api/federation/cooperative')).catch(() => null),
         fetchRadarJson(liveApiUrl('/api/adsb')).catch(() => null),
@@ -126,12 +186,11 @@
       if (unavailable) fusedHistory.clear();
       const mapTracks = (mapFresh?result?.map_support?.tracks||[]:[]).filter(item=>
         item.state==='PERSISTENT_AMBIGUOUS' && item.misses===0);
-      const fusedTracks = (fusedFresh?result?.tracks||[]:[]).filter(item=>item.state==='FUSED_ACTIVE');
-      const matchById=new Map((result.validation?.held_out_truth===true?result.validation?.matches||[]:[])
-        .filter(item=>item.candidate_id).map(item=>[item.candidate_id,item]));
+      const fusedTracks = model.operationalTracks(result, receiver);
       const supportTracks = (result?.cross_frequency_support?.tracks || []).filter(item =>
         ['SUPPORT_ACTIVE','SUPPORT_COASTING'].includes(item.state) && Number(item.misses || 0) <= 2);
-      const tracks = [...fusedTracks,...mapTracks,...supportTracks];
+      const envelopeCandidates = (result.position_candidates || []).filter(item => item.operational_position === false);
+      const tracks = [...fusedTracks,...mapTracks,...supportTracks,...envelopeCandidates];
       const associationByHex=new Map((associationData?.associations||[])
         .filter(item=>item?.hex).map(item=>[String(item.hex).trim().toLowerCase(),item]));
       const nowMilliseconds=Date.now(),currentAdsbKeys=new Set();
@@ -147,6 +206,8 @@
         const ageMilliseconds=nowMilliseconds-entry.lastSeen;
         if(ageMilliseconds>adsbCoastMilliseconds){adsbHistory.delete(key);continue;}
         const ageSeconds=Math.max(0,ageMilliseconds/1000),point=[...entry.point];
+        // A missing current association must not preserve a stale radar badge.
+        entry.association = associationByHex.get(key) || null;
         if(ageSeconds>0&&finite(entry.item.gs)&&finite(entry.item.track)){
           const speedKilometresPerSecond=Number(entry.item.gs)*1.852/3600;
           const headingRadians=Number(entry.item.track)*Math.PI/180;
@@ -174,15 +235,8 @@
         }
       }
       for(const key of adsbTrailHistory.keys())if(!adsbHistory.has(key))adsbTrailHistory.delete(key);
-      const liveAdsbAircraft=adsbAircraft.filter(value=>!value.coasting);
-      const coastingAdsbAircraft=adsbAircraft.filter(value=>value.coasting);
-      const trackedAdsbAircraft=liveAdsbAircraft.filter(value=>value.association?.tracked===true);
-      const detectedAdsbAircraft=liveAdsbAircraft.filter(value=>value.association?.detected===true&&
-        value.association?.tracked!==true);
-      const plainAdsbAircraft=liveAdsbAircraft.filter(value=>value.association?.detected!==true);
       const mapPoints = mapTracks.map(item=>local(item.position_hypothesis,receiver)).filter(Boolean);
-      const trackPoints = fusedTracks.map(item => finite(item.local_east_km) ?
-        [Number(item.local_east_km),Number(item.local_north_km)] : local(item.position_hypothesis || item,receiver));
+      const trackPoints = fusedTracks.map(item => model.radarPoint(item,receiver));
       const activeIds=new Set(fusedTracks.map(item=>item.id));
       for(const id of fusedHistory.keys()) if(!activeIds.has(id)) fusedHistory.delete(id);
       fusedTracks.forEach((item,index)=>{const point=trackPoints[index];if(!point)return;
@@ -198,134 +252,118 @@
           history.push({point,stamp});
         }
         fusedHistory.set(item.id,history.slice(-20));});
-      // Instantaneous nonlinear roots can switch branches from one CPI to the
-      // next.  They are evidence, not tracks, and drawing them makes stationary
-      // ambiguity look like a jumping aircraft.  Display only temporally held,
-      // alpha-beta-smoothed ambiguous branches and operational fused tracks.
-      const ambiguous=mapPoints;
+      const ambiguous = hypothesesToggle.checked ? mapPoints : [];
+      const envelopeContours = hypothesesToggle.checked ? envelopeCandidates.map(item => ({item,
+        points:(item.position_envelope?.vertices || []).map(vertex=>model.radarPoint(vertex,receiver)).filter(Boolean)})) : [];
       const distanceView = document.body.classList.contains('distance-view');
-      if(distanceView){
-        const compass=bearing=>['N','NE','E','SE','S','SW','W','NW'][Math.round(bearing/45)%8];
-        const nearest=[...adsbAircraft].sort((left,right)=>Math.hypot(...left.point)-Math.hypot(...right.point)).slice(0,4);
-        glanceBoard.hidden=false;
-        glanceBoard.innerHTML=`<header><strong>NEAREST AIRCRAFT</strong><span>${adsbAircraft.length} IN SCOPE</span></header><div>`+
-          nearest.map(value=>{const range=Math.hypot(...value.point),bearing=(Math.atan2(value.point[0],value.point[1])*180/Math.PI+360)%360;
-            const tracked=value.association?.tracked===true,detected=value.association?.detected===true;
-            const state=tracked?'tracked':detected?'detected':'adsb';
-            const label=tracked?'RADAR TRACKED':detected?'RADAR DETECTED':value.coasting?'ADS-B COAST':'ADS-B';
-            const name=text(String(value.item.flight||value.item.hex||'AIRCRAFT').trim());
-            return `<article class="${state}"><i style="--bearing:${bearing.toFixed(0)}deg">▲</i><strong>${name}</strong><b>${range.toFixed(1)} km</b><small>${label} · ${compass(bearing)}</small></article>`;}).join('')+
-          `</div>`;
-      }else glanceBoard.hidden=true;
-      const trailAircraft=adsbAircraft.filter(value=>value.trail.length>1);
-      const adsbTrailTraces=trailAircraft.flatMap(value=>{
-        const tracked=value.association?.tracked===true,detected=value.association?.detected===true;
-        const coastFraction=value.coasting?Math.max(.18,1-value.ageSeconds/(adsbCoastMilliseconds/1000)):1;
-        const color=tracked?`rgba(255,135,84,${(.78*coastFraction).toFixed(3)})`:
-          detected?`rgba(255,135,84,${(.48*coastFraction).toFixed(3)})`:
-            `rgba(77,212,176,${(.22*coastFraction).toFixed(3)})`;
-        const trace={type:'scattergl',mode:'lines',x:value.trail.map(sample=>sample.point[0]),
-          y:value.trail.map(sample=>sample.point[1]),name:`${String(value.item.flight||value.item.hex||'ADS-B').trim()} trail`,
-          showlegend:false,hoverinfo:'skip',line:{color,width:distanceView?(tracked?9:detected?6:4):(tracked?5:detected?3:2),
-            dash:'solid'}};
-        if(!tracked&&!detected)return [trace];
-        const glowColor=`rgba(255,135,84,${((tracked?.16:.10)*coastFraction).toFixed(3)})`;
-        return [{...trace,name:`${trace.name} glow`,line:{color:glowColor,
-          width:distanceView?(tracked?22:16):(tracked?13:9),dash:'solid'}},trace];
-      });
-      window.vectorwarpFusionTrailStatus={updatedAt:nowMilliseconds,
-        aircraft:adsbAircraft.length,trails:trailAircraft.length,
-        trailPoints:[...adsbTrailHistory.values()].reduce((total,trail)=>total+trail.length,0)};
-      const geographicTraces = [{type:'scattergl',mode:'markers',x:[0],y:[0],name:'Receiver',
-        hovertemplate:'Radar receiver<extra></extra>',marker:{size:13,color:'#f3eee9',line:{width:4,color:'#ff7a45'},symbol:'circle'}},
-      ...adsbTrailTraces,
-      {type:'scattergl',mode:'markers+text',x:plainAdsbAircraft.map(value=>value.point[0]),y:plainAdsbAircraft.map(value=>value.point[1]),
-        customdata:plainAdsbAircraft.map(value=>value.item.hex||''),text:plainAdsbAircraft.map(value=>String(value.item.flight||value.item.hex||'').trim()),
-        textposition:'top center',textfont:{size:distanceView?20:11,color:'rgba(77,212,176,.95)'},name:'ADS-B aircraft',
-        hovertemplate:'%{text}<br>ADS-B %{customdata}<extra></extra>',marker:{size:distanceView?22:12,color:'#4dd4b0',line:{width:distanceView?4:2,color:'#b8ffe9'},symbol:'triangle-up'}},
-      {type:'scattergl',mode:'markers+text',x:detectedAdsbAircraft.map(value=>value.point[0]),y:detectedAdsbAircraft.map(value=>value.point[1]),
-        customdata:detectedAdsbAircraft.map(value=>[value.item.hex||'',(value.association?.channels||[]).join(', ')]),
-        text:detectedAdsbAircraft.map(value=>String(value.item.flight||value.item.hex||'').trim()),textposition:'top center',
-        textfont:{size:distanceView?21:12,color:'#ffb18f'},name:'Radar detected ADS-B',
-        hovertemplate:'%{text}<br>Radar detection · %{customdata[1]}<br>ADS-B %{customdata[0]}<extra></extra>',
-        marker:{size:distanceView?29:16,color:'#4dd4b0',line:{width:distanceView?7:4,color:'#ff8754'},symbol:'triangle-up'}},
-      {type:'scattergl',mode:'markers+text',x:trackedAdsbAircraft.map(value=>value.point[0]),y:trackedAdsbAircraft.map(value=>value.point[1]),
-        customdata:trackedAdsbAircraft.map(value=>[value.item.hex||'',(value.association?.channels||[]).join(', ')]),
-        text:trackedAdsbAircraft.map(value=>String(value.item.flight||value.item.hex||'').trim()),textposition:'top center',
-        textfont:{size:distanceView?23:13,color:'#ffb18f'},name:'Radar tracked ADS-B',
-        hovertemplate:'%{text}<br>Radar track · %{customdata[1]}<br>ADS-B %{customdata[0]}<extra></extra>',
-        marker:{size:distanceView?34:19,color:'#ff8754',line:{width:distanceView?6:3,color:'#b8ffe9'},symbol:'diamond'}},
-      {type:'scattergl',mode:'markers+text',x:coastingAdsbAircraft.map(value=>value.point[0]),y:coastingAdsbAircraft.map(value=>value.point[1]),
-        customdata:coastingAdsbAircraft.map(value=>[value.item.hex||'',value.ageSeconds.toFixed(0),
-          value.association?.tracked===true?'radar tracked':value.association?.detected===true?'radar detected':'ADS-B only']),
-        text:coastingAdsbAircraft.map(value=>String(value.item.flight||value.item.hex||'').trim()),
-        textposition:'top center',textfont:{size:distanceView?18:11,color:'rgba(77,212,176,.62)'},name:'ADS-B coast',
-        hovertemplate:'%{text}<br>%{customdata[2]} · coasting %{customdata[1]} s<br>ADS-B %{customdata[0]}<extra></extra>',
-        marker:{size:coastingAdsbAircraft.map(value=>distanceView?(value.association?.tracked===true?28:21):(value.association?.tracked===true?16:12)),
-          color:coastingAdsbAircraft.map(value=>value.association?.tracked===true?'rgba(255,135,84,.22)':'rgba(77,212,176,.14)'),
-          line:{width:2,color:'rgba(184,255,233,.62)'},symbol:'triangle-up-open'}},
-      {type:'scattergl',mode:'markers',x:ambiguous.map(p=>p[0]),y:ambiguous.map(p=>p[1]),
-        customdata:mapTracks.map(item=>item.id),name:'Ambiguous hypothesis',
-        hovertemplate:'Ambiguous hypothesis %{customdata}<br>Diagnostic only · not a track<extra></extra>',
-        marker:{size:distanceView?19:11,color:'#ffcf5a',line:{width:distanceView?4:2,color:'#ffcf5a'},symbol:'circle-open'}},
-      ...fusedTracks.map(item=>{const history=fusedHistory.get(item.id)||[],match=matchById.get(item.id);return {type:'scattergl',
-        mode:history.length>1?'lines+markers+text':'markers+text',x:history.map(p=>p.point[0]),y:history.map(p=>p.point[1]),
-        customdata:history.map(()=>item.id),name:match?`ADS-B match · ${match.adsb_flight||match.adsb_hex||item.id}`:`Fused track ${item.id}`,
-        text:history.map((_,index)=>index===history.length-1?String(match?.adsb_flight||match?.adsb_hex||item.id):''),
-        textposition:'top center',textfont:{size:distanceView?24:14,color:'#ffd2bf'},
-        hovertext:history.map(()=>match?`${item.id} · ${item.state}<br>ADS-B proximity match ${match.adsb_flight||match.adsb_hex} · ${Number(match.error_km).toFixed(2)} km`:`${item.id} · ${item.state}`),
-        hovertemplate:'%{hovertext}<extra></extra>',line:{color:'#ff7a45',width:distanceView?10:6},
-        marker:{size:distanceView?(match?40:33):(match?22:18),color:'#ff7a45',line:{width:distanceView?(match?8:6):(match?5:3),color:match?'#ffffff':'#ffd2bf'},symbol:match?'star':'diamond'}};})];
-      const traces = geographicTraces;
-      const maximum = Math.max(60,...ambiguous.flatMap(p=>p.map(Math.abs)),...trackPoints.filter(Boolean).flatMap(p=>p.map(Math.abs)))*1.1;
+      displayedAircraft = model.aircraft(adsbAircraft, result, receiver, fusedHistory);
+      if (!displayedAircraft.some(value => value.id === selectedTargetId)) selectedTargetId = displayedAircraft[0]?.id || null;
+      renderAircraftList();
+      const trailAircraft = displayedAircraft.filter(value => value.trail.length > 1);
+      window.vectorwarpFusionTrailStatus = {updatedAt: nowMilliseconds,
+        aircraft: displayedAircraft.length, trails: trailAircraft.length,
+        trailPoints: trailAircraft.reduce((total,value) => total + value.trail.length, 0)};
+      // Trails and labels have no markers. One canonical map glyph per aircraft.
+      const traces = [{type:'scatter', mode:'markers', x:[0], y:[0], name:'Receiver',
+        meta:{kind:'receiver'}, showlegend:false, hovertemplate:'Radar receiver<extra></extra>',
+        marker:{size:9,color:'#f3eee9',symbol:'cross'}},
+        ...trailAircraft.map(value => ({type:'scatter', mode:'lines',
+          x:value.trail.map(sample=>sample.point[0]), y:value.trail.map(sample=>sample.point[1]),
+          meta:{kind:'aircraft-trail',aircraftId:value.id}, showlegend:false, hoverinfo:'skip',
+          line:{color:model.positionColor(value),width:distanceView?3:1.5}, opacity:.35})),
+        ...displayedAircraft.map(value => ({type:'scatter', mode:'text',
+          x:[value.point[0]], y:[value.point[1]], customdata:[value.id],
+          meta:{kind:'aircraft',aircraftId:value.id,positionSource:value.source,evidenceState:value.state},
+          name:value.name, text:[value.id===selectedTargetId || value.source==='radar' ? text(value.name) : ''], textposition:'top center',
+          textfont:{size:distanceView?24:11,color:value.id===selectedTargetId?window.VectorWarpVisualSemantics.colors.selected:model.positionColor(value)},
+          hovertext:[text(value.name)+'<br>'+text(recordDescription(value))+'<br>'+text(supportText(value))],
+          hovertemplate:'%{hovertext}<extra></extra>', showlegend:false})),
+        ...(hypothesesToggle.checked ? [{type:'scatter',mode:'markers',x:ambiguous.map(p=>p[0]),y:ambiguous.map(p=>p[1]),
+          meta:{kind:'diagnostic'}, name:'Diagnostic hypotheses',showlegend:false,
+          hovertemplate:'Diagnostic hypothesis · not an aircraft position<extra></extra>',
+          marker:{size:8,color:'#aaa',symbol:'x'}}] : []),
+        ...envelopeContours.map(({item,points})=>({type:'scatter',mode:'lines',
+          x:points.map(p=>p[0]),y:points.map(p=>p[1]),meta:{kind:'diagnostic-envelope'},
+          showlegend:false,line:{color:'#aaa',width:2,dash:'dot'},
+          hovertemplate:text(`Diagnostic envelope · ${item.state}`)+'<extra></extra>'}))];
+      // A stale/distant point must not crush the useful local operating area
+      // into the centre of the plot. Frame the 90th-percentile coordinate
+      // extent and cap the default scope; every aircraft remains available in
+      // the list and by hover when it enters the visible area.
+      const coordinateExtents = [...displayedAircraft.map(value=>value.point), ...ambiguous,
+        ...envelopeContours.flatMap(value=>value.points), ...trackPoints.filter(Boolean)]
+        .flatMap(point=>point.map(Math.abs)).filter(Number.isFinite).sort((a,b)=>a-b);
+      const robustExtent = coordinateExtents.length ?
+        coordinateExtents[Math.floor((coordinateExtents.length - 1) * .9)] : 60;
+      const maximum = Math.min(70, Math.max(60, robustExtent * 1.1));
+      const glyphSize = maximum * 2 * (distanceView ? 28 : 18) / Math.max(250, Math.min(fusionPlot.clientWidth, fusionPlot.clientHeight) - 100);
+      for (const trace of traces) if (trace.meta?.kind === 'aircraft') trace.y[0] += glyphSize * .65;
+      const images = displayedAircraft.map(value => ({name:value.id,
+        source:'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(model.glyphMarkup(value,window.VectorWarpVisualSemantics.aircraftSvgMarkup(value.item,model.positionColor(value)))),
+        xref:'x',yref:'y',x:value.point[0],y:value.point[1],sizex:glyphSize,sizey:glyphSize,
+        xanchor:'center',yanchor:'middle',layer:'above',opacity:value.coasting?.55:1}));
       const shapes = [20,40,60,80].filter(r=>r<maximum*1.2).map(r=>({type:'circle',x0:-r,y0:-r,x1:r,y1:r,
         line:{color:'rgba(220,210,205,.22)',width:1}}));
       shapes.push({type:'line',x0:-maximum,y0:0,x1:maximum,y1:0,line:{color:'rgba(220,210,205,.25)'}},
         {type:'line',x0:0,y0:-maximum,x1:0,y1:maximum,line:{color:'rgba(220,210,205,.25)'}});
-      const fusionSummary = `${context?.nodes?.length || 1} nodes · ${context?.illuminators?.length || 1} channels · ${Array.isArray(cooperative?.tracks) ? cooperative.tracks.length : 0} cooperative hypotheses`;
-      if(distanceView&&!unavailable){
-        const detectedCount=detectedAdsbAircraft.length+trackedAdsbAircraft.length;
-        scopeStatus.innerHTML=`<span class="fusion-glance-metric adsb"><i></i><strong>${liveAdsbAircraft.length}</strong><small>ADS-B</small></span>`+
-          `<span class="fusion-glance-metric detected"><i></i><strong>${detectedCount}</strong><small>RADAR<br>DETECTED</small></span>`+
-          `<span class="fusion-glance-metric tracked"><i></i><strong>${trackedAdsbAircraft.length}</strong><small>RADAR<br>TRACKED</small></span>`+
-          `<span class="fusion-glance-metric fused"><i></i><strong>${fusedTracks.length}</strong><small>MULTI-SITE<br>FUSED</small></span>`;
-      }else scopeStatus.textContent=unavailable?(result?.map_support?.reason||result?.reason||'Waiting for fresh aligned radar evidence'):
-        !fusedTracks.length?`Live · ${liveAdsbAircraft.length} ADS-B · ${detectedAdsbAircraft.length+trackedAdsbAircraft.length} radar detected · ${trackedAdsbAircraft.length} radar tracked${coastingAdsbAircraft.length?` · ${coastingAdsbAircraft.length} coasting`:''} · ${fusionSummary} · no confirmed fused tracks${supportTracks.length?` · ${supportTracks.length} diagnostic cross-frequency support`:''}`:
-          `Live · ${liveAdsbAircraft.length} ADS-B · ${detectedAdsbAircraft.length+trackedAdsbAircraft.length} radar detected · ${trackedAdsbAircraft.length} radar tracked${coastingAdsbAircraft.length?` · ${coastingAdsbAircraft.length} coasting`:''} · ${fusionSummary} · ${fusedTracks.length} confirmed fused ${fusedTracks.length===1?'track':'tracks'}`;
-      scopeStatus.hidden=!scopeStatus.textContent;
-      const emptyMode=!unavailable&&!fusedTracks.length&&!ambiguous.length&&!adsbAircraft.length;
-      fusionRoot.classList.remove('fusion-support-mode');
+      // Match the four visible glyph categories: a solved radar position owns
+      // its orange ring and is not counted again as an ADS-B-position track.
+      const counts = {adsb:displayedAircraft.filter(value=>value.source==='adsb'&&value.state==='adsb').length,
+        detected:displayedAircraft.filter(value=>value.source==='adsb'&&value.state==='detected').length,
+        tracked:displayedAircraft.filter(value=>value.source==='adsb'&&value.state==='tracked').length,
+        radar:displayedAircraft.filter(value=>value.source==='radar').length};
+      const countLabels = [['adsb','ADS-B only'],['detected','Radar detected'],['tracked','Radar tracked'],['radar','Independent radar positions']];
+      const summary = countLabels.map(([key,label])=>`${counts[key]} ${label}`).join(' · ');
+      const radarStatus = unavailable ? 'Radar data unavailable' : 'Live';
+      if (distanceView) setHtml(scopeStatus, countLabels.map(([key,label])=>
+        `<span class="fusion-glance-metric ${key}"><strong>${counts[key]}</strong><small class="fusion-evidence-key ${key === 'radar' ? 'fused' : key}">${key === 'adsb' ? '' : '<i aria-hidden="true"></i>'}${label}</small></span>`).join('') +
+        (unavailable ? '<span class="fusion-data-warning">Radar data unavailable</span>' : ''));
+      else if(scopeStatus.textContent !== `${radarStatus} · ${summary}`) scopeStatus.textContent = `${radarStatus} · ${summary}`;
+      scopeStatus.hidden = false;
+      const emptyMode = !displayedAircraft.length;
       fusionRoot.classList.toggle('fusion-empty',emptyMode);
-      emptySummary.hidden=!emptyMode;
-      if(emptyMode){const cooperativeTracks=Array.isArray(cooperative?.tracks)?cooperative.tracks:[];
-        const activeCooperative=cooperativeTracks.filter(item=>item.state==='COOPERATIVE_ACTIVE').length;
-        emptySummary.innerHTML=`<article><strong>${context?.nodes?.length||1}</strong><span>Radar nodes</span></article>`+
-          `<article><strong>${context?.illuminators?.length||1}</strong><span>Channels</span></article>`+
-          `<article><strong>${independentSites(context?.illuminators||[])}</strong><span>Independent transmitter sites</span></article>`+
-          `<article><strong>${activeCooperative}</strong><span>Active cooperative tracks</span></article>`+
-          `<p>Geographic fusion needs three independent transmitter sites. Cross-frequency support appears here automatically whenever it qualifies.</p>`;}
+      emptySummary.hidden = true;
+      fusionPlot.setAttribute('role','img');
+      fusionPlot.setAttribute('aria-label',`Aircraft scope. ${radarStatus}. ${summary}. Select an aircraft in the list for position source and channel support.`);
       const axisFont={titlefont:{size:distanceView?19:12},tickfont:{size:distanceView?16:10}};
+      const plotMargins={l:distanceView?20:58,r:distanceView?20:24,t:distanceView?16:48,b:distanceView?20:52};
+      const innerWidth=Math.max(1,fusionPlot.clientWidth-plotMargins.l-plotMargins.r);
+      const innerHeight=Math.max(1,fusionPlot.clientHeight-plotMargins.t-plotMargins.b);
+      const xDomainWidth=Math.min(1,innerHeight/innerWidth);
+      const xDomain=[(1-xDomainWidth)/2,(1+xDomainWidth)/2];
       const layout={title:{text:distanceView?'':'VectorWarp Fusion View',x:.03,font:{size:17}},
-          xaxis:{title:distanceView?'':'East / west of receiver (km)',range:[-maximum,maximum],scaleanchor:'y',gridcolor:'rgba(0,0,0,0)',zeroline:false,showticklabels:!distanceView,...axisFont},
-          yaxis:{title:distanceView?'':'North / south of receiver (km)',range:[-maximum,maximum],gridcolor:'rgba(0,0,0,0)',zeroline:false,showticklabels:!distanceView,...axisFont},shapes};
+          xaxis:{title:distanceView?'':'East / west of receiver (km)',range:[-maximum,maximum],domain:xDomain,scaleanchor:'y',gridcolor:'rgba(0,0,0,0)',zeroline:false,showticklabels:!distanceView,...axisFont},
+          yaxis:{title:distanceView?'':'North / south of receiver (km)',range:[-maximum,maximum],gridcolor:'rgba(0,0,0,0)',zeroline:false,showticklabels:!distanceView,...axisFont},shapes,images};
       const orientationAnnotations=[
         {x:0,y:maximum*.96,text:'N',xanchor:'center',yanchor:'top'},
         {x:maximum*.96,y:0,text:'E',xanchor:'right',yanchor:'middle'},
         {x:0,y:-maximum*.96,text:'S',xanchor:'center',yanchor:'bottom'},
         {x:-maximum*.96,y:0,text:'W',xanchor:'left',yanchor:'middle'},
-        ...[20,40,60].filter(radius=>radius<maximum).map(radius=>({x:radius*.71,y:radius*.71,text:`${radius} km`,xanchor:'left',yanchor:'bottom'}))
-      ].map(item=>({xref:'x',yref:'y',showarrow:false,font:{size:distanceView?24:11,color:'rgba(243,238,233,.78)'},...item}));
+        ...[20,40,60].filter(radius=>radius<=maximum).map(radius=>({x:radius*.71,y:radius*.71,text:`${radius} km`,xanchor:'left',yanchor:'bottom'}))
+      ].map(item=>({xref:'x',yref:'y',showarrow:false,font:{size:distanceView?28:11,color:'rgba(243,238,233,.78)'},...item}));
       const annotations=[...orientationAnnotations,...(emptyMode?[{xref:'paper',yref:'paper',x:.5,y:.58,showarrow:false,align:'center',
-        text:`<b>No confirmed fused tracks</b><br><span style="color:#ac9e94">${independentSites(context?.illuminators||[])} independent sites · geographic localization requires more qualified geometry</span>`,
+        text:'<b>No aircraft positions available</b>',
         font:{size:distanceView?21:15,color:'#f3eee9'}}]:[])];
-      await Plotly.react('fusion-scope',unavailable?[]:traces,{uirevision:'vectorwarp-fusion-view',paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#f3eee9',size:distanceView?20:12},margin:{l:distanceView?20:58,r:distanceView?20:24,t:distanceView?16:48,b:distanceView?20:52},...layout,annotations,showlegend:!distanceView&&!unavailable,legend:{x:.02,y:.98,font:{size:12}}},{responsive:true,displayModeBar:false});
+      await Plotly.react('fusion-scope',traces,{uirevision:'vectorwarp-fusion-view',transition:{duration:0},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#f3eee9',size:distanceView?24:12},margin:plotMargins,...layout,annotations,showlegend:false},{responsive:true,displayModeBar:false});
+      fusionPlot.querySelectorAll('.imagelayer image').forEach((image,index)=>{
+        const value=displayedAircraft[index]; if(!value)return;
+        image.style.pointerEvents='all';image.style.cursor='pointer';
+        image.dataset.aircraftId=value.id;
+        image.onclick=()=>selectAircraft(value.id);
+      });
       if(fusionPlot?.on&&!fusionPlot.dataset.targetClickInstalled){
         fusionPlot.dataset.targetClickInstalled='true';
         fusionPlot.on('plotly_click',event=>{const id=event?.points?.[0]?.customdata;
-          if(id){selectedTargetId=id;diagnostic(lastDiagnosticResult||{},lastDiagnosticTracks,lastCooperativeResult);}});
+          if(id)selectAircraft(id);});
       }
       diagnostic(result,tracks,cooperative);
-    } catch (error) { fusedHistory.clear(); scopeStatus.hidden=false;scopeStatus.textContent='Fusion data unavailable · retrying'; await Plotly.react('fusion-scope',[],{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#f3eee9'},annotations:[]},{responsive:true,displayModeBar:false}); diagnostics.innerHTML=`<h2>Fusion diagnostics</h2><span class="fusion-status neutral">WAITING FOR FRESH DATA</span><p>${text(error.message)}</p>`; }
+    } catch (error) {
+      fusedHistory.clear(); displayedAircraft=[]; renderAircraftList();
+      scopeStatus.hidden=false;
+      if(scopeStatus.textContent!=='Fusion data unavailable · retrying')scopeStatus.textContent='Fusion data unavailable · retrying';
+      await Plotly.react('fusion-scope',[],{images:[],paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#f3eee9'},annotations:[]},{responsive:true,displayModeBar:false});
+      setHtml(diagnostics,`<h2>Aircraft inspector</h2><span class="fusion-status neutral" title="${text(error.message)}">Waiting for fresh data</span>`);
+    } finally { updateInFlight=false; }
   }
   const fusionPlot=document.getElementById('fusion-scope');
   function installSelector(value) {

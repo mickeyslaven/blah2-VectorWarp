@@ -30,7 +30,11 @@ struct PublicationContext
   double channelizerMs = 0;
   bool inputDiscontinuity = false;
   bool gpuQualificationFrame = false;
+  bool widebandGpuExecuted = false;
+  bool widebandCpuExecuted = false;
   AccelerationStatus acceleration;
+  bool publishFullMap = false;
+  std::vector<double> inputGainDb;
 };
 
 template <typename Payload>
@@ -67,13 +71,15 @@ public:
     uint64_t captureEpoch, uint64_t captureFirst, uint64_t captureEnd,
     std::vector<uint64_t> backlog, std::vector<uint64_t> dropped,
     double channelizerMs, bool gpuQualificationFrame = false,
-    AccelerationStatus acceleration = {})
+    bool widebandGpuExecuted = false, bool widebandCpuExecuted = false,
+    AccelerationStatus acceleration = {}, bool publishFullMap = false)
   {
     PublicationContext result{timestampMs, std::move(eventTime),
       samplePositionAvailable, captureEpoch, captureFirst, captureEnd,
       std::move(backlog), std::move(dropped), channelizerMs,
       nextInputDiscontinuity_, gpuQualificationFrame,
-      std::move(acceleration)};
+      widebandGpuExecuted, widebandCpuExecuted,
+      std::move(acceleration), publishFullMap};
     nextInputDiscontinuity_ = false;
     return result;
   }
@@ -93,6 +99,11 @@ public:
   }
 
   void input_epoch_reset() { nextInputDiscontinuity_ = true; }
+
+  void startup_fallback(std::string reason) {
+    runtimeFallback_ = true;
+    fallbackReason_ = std::move(reason);
+  }
 
   template <typename ResetRadar>
   void qualification_fallback(std::string reason, ResetRadar resetRadar)

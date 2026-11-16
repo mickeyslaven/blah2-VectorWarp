@@ -6,6 +6,7 @@
 #include "data/Detection.h"
 #include "data/Track.h"
 #include "data/meta/Constants.h"
+#include "process/tracker/CausalTraceJson.h"
 #include <complex>
 #include <vector>
 #include <deque>
@@ -161,7 +162,21 @@ void trackCases(){
  constexpr size_t base=32;real(base,500);real(base+2,-500);real(base+4,1);real(base+6,0);pair(base+8,501);bank[base+12]=0;bank[base+13]=1u|(100u<<8)|(1u<<16)|(100u<<24);bank[base+14]=2;bank[base+15]=0;
  for(uint32_t value=401;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity);real(at,value);real(at+2,-double(value));real(at+4,1);bank[at+6]=value==500?2:1;}
  auto raw=[&]{return View<uint32_t>{bank.data(),bank.size()};};same(trackerCheckpoint(UINT64_MAX,raw(),binding),cpu.to_json(UINT64_MAX));
- auto spatial=binding;spatial.beamCount=12;bank[base+16+8*(500%historyCapacity)+7]=12;same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));bank[base+16+8*(500%historyCapacity)+7]=13;rejects([&]{trackerCheckpoint(0,raw(),spatial);});bank[base+16+8*(500%historyCapacity)+7]=0;
+ // V3 adds private hit/source/support metadata, not new public state names or IDs.
+ bank[0]=3;bank[base+12]=0xc0000000u;
+ for(uint32_t value=401;value<=500;++value)bank[base+16+8*(value%historyCapacity)+6]|=4u|(1u<<4u);
+ auto v2=[&](const std::string&json,bool measured,const char*source){rapidjson::Document value;value.Parse(json.c_str());
+  check(!value.HasParseError()&&value["data"].Size()==1&&value["data"][0]["measured"].GetBool()==measured&&
+   std::string(value["data"][0]["source"].GetString())==source&&value["data"][0]["associated_measured"].Size()==100,
+   "V2 measurement provenance differs");};
+ const auto ordinaryV3Json=trackerCheckpoint(UINT64_MAX,raw(),binding);
+ v2(ordinaryV3Json,true,"detector");
+ const size_t newestState=base+16+8*(500%historyCapacity)+6;
+ const uint32_t measuredState=bank[newestState];bank[newestState]=8;
+ rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[newestState]=7;
+ rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[newestState]=4u|(1u<<4u);
+ trackerCheckpoint(0,raw(),binding);bank[newestState]=measuredState;
+ auto spatial=binding;spatial.beamCount=12;bank[base+16+8*(500%historyCapacity)+7]=12;v2(trackerCheckpoint(UINT64_MAX,raw(),spatial),true,"detector");bank[base+16+8*(500%historyCapacity)+7]=13;rejects([&]{trackerCheckpoint(0,raw(),spatial);});bank[base+16+8*(500%historyCapacity)+7]=0;
  const uint32_t packedSpatial=12u|(48u<<9u)|(4u<<20u);
  bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
  rapidjson::Document bearing;bearing.Parse(bearingCheckpoint(7,raw(),spatial,{true,12,4,2,80,30}).c_str());
@@ -210,12 +225,12 @@ void trackCases(){
   !strict["data"][0]["resolved"].GetBool(),"Bearing confidence threshold differs");
  auto multi=spatial;multi.scanBeamCount=60;auto packed=[](uint32_t a,uint32_t b,uint32_t c,uint32_t rb,uint32_t rc){return 0x80000000u|a|(b<<7u)|(c<<14u)|(rb<<21u)|(rc<<26u);};
  bank[base+16+8*(500%historyCapacity)+7]=packed(10,0,0,0,0);
- same(trackerCheckpoint(UINT64_MAX,raw(),multi),cpu.to_json(UINT64_MAX));
+ v2(trackerCheckpoint(UINT64_MAX,raw(),multi),true,"detector");
  rapidjson::Document primaryOnly;primaryOnly.Parse(bearingCheckpoint(10,raw(),multi,{true,12,5,2,80,30,1,1,60}).c_str());
  check(!primaryOnly.HasParseError()&&primaryOnly["data"].Size()==1,
   "Primary-only multi-lobe bearing evidence was rejected");
  bank[base+16+8*(500%historyCapacity)+7]=packed(10,30,0,25,0);
- same(trackerCheckpoint(UINT64_MAX,raw(),multi),cpu.to_json(UINT64_MAX));
+ v2(trackerCheckpoint(UINT64_MAX,raw(),multi),true,"detector");
  rejects([&]{bank[base+16+8*(500%historyCapacity)+7]=packed(0,30,50,25,10);trackerCheckpoint(0,raw(),multi);});
  rejects([&]{bank[base+16+8*(500%historyCapacity)+7]=packed(10,61,0,25,0);bearingCheckpoint(0,raw(),multi,{true,12,5,2,80,30,1,1,60});});
  bank[base+16+8*(498%historyCapacity)+7]=packed(10,30,50,25,10);
@@ -237,17 +252,70 @@ void trackCases(){
   "Motion-constrained multi-hypothesis bearing path differs");
  bank[base+16+8*(498%historyCapacity)+7]=0;bank[base+16+8*(499%historyCapacity)+7]=0;
  bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
- same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));
+ v2(trackerCheckpoint(UINT64_MAX,raw(),spatial),true,"detector");
  bank[base+16+8*(500%historyCapacity)+7]=0;
  rejects([&]{auto wrong=binding;++wrong.generation;trackerCheckpoint(0,raw(),wrong);});rejects([&]{auto v=raw();--v.count;trackerCheckpoint(0,v,binding);});
+ const size_t newest=base+16+8*(500%historyCapacity),priorState=bank[newest+6];
+ std::vector<uint32_t> priorStates;priorStates.reserve(100);
+ for(uint32_t value=401;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity)+6;
+  priorStates.push_back(bank[at]);bank[at]=(bank[at]&3u)|8u|(2u<<4u);}
+ v2(trackerCheckpoint(UINT64_MAX,raw(),spatial),false,"guided");
+ rapidjson::Document guidedBearing;guidedBearing.Parse(bearingCheckpoint(12,raw(),spatial,{true,12,4,2,80,30,3}).c_str());
+ check(!guidedBearing.HasParseError()&&guidedBearing["data"].Empty(),
+  "Guided prediction was counted as independent bearing evidence");
+ for(uint32_t value=401;value<=500;++value)bank[base+16+8*(value%historyCapacity)+6]=priorStates[value-401];
+ bank[newest+6]=(priorState&3u)|12u;rejects([&]{trackerCheckpoint(0,raw(),binding);});
+ bank[newest+6]=3u|8u;rejects([&]{trackerCheckpoint(0,raw(),binding);});
+ bank[newest+6]=priorState;
  bank[base+15]=1;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+15]=0;bank[base+13]^=1u<<16;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+13]^=1u<<16;
  pair(20,0);rejects([&]{trackerCheckpoint(0,raw(),binding);});pair(20,1);
  bank[base+12]=65534;rapidjson::Document wrapped;wrapped.Parse(trackerCheckpoint(0,raw(),binding).c_str());check(std::string(wrapped["data"][0]["id"].GetString())=="FFFE","GPU ID copy/hex differs");
  bank[base+12]=0x8000fffeu;wrapped.Parse(trackerCheckpoint(0,raw(),binding).c_str());check(!wrapped.HasParseError()&&std::string(wrapped["data"][0]["id"].GetString())=="FFFE","GPU acceleration latch leaked into public ID");
  bank[base+12]=0x00010000u;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+12]=0;
+ bank[0]=2;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[0]=3;
+ // Experimental v4 has a distinct credit bit and support encoding. Neither
+ // independent credit nor a guided prediction may masquerade as measurement.
+ for(uint32_t value=401;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity)+6;
+  bank[at]=(bank[at]&15u)|((bank[at]>>4u)<<5u);}
+ bank[0]=4;bank[26]=500;bank[base+12]=0xc0000000u;
+ bank[newestState]=2u|8u|16u|(2u<<5u);
+ v2(trackerCheckpoint(UINT64_MAX,raw(),binding),false,"guided");
+ bank[newestState]=2u|4u|(8u<<5u);
+ v2(trackerCheckpoint(UINT64_MAX,raw(),binding),true,"detector");
+ bank[newestState]=3u;bank[base+14]=3;pair(20,0);pair(22,1);
+ v2(trackerCheckpoint(UINT64_MAX,raw(),binding),false,"prediction");
+ bank[newestState]=3u|16u;rejects([&]{trackerCheckpoint(0,raw(),binding);});
+ bank[newestState]=2u|8u|(4u<<5u);rejects([&]{trackerCheckpoint(0,raw(),binding);});
+ bank[newestState]=2u|4u|16u|(8u<<5u);bank[base+14]=2;pair(20,1);pair(22,0);
+ v2(trackerCheckpoint(UINT64_MAX,raw(),binding),true,"detector");
+ same(trackerCheckpoint(UINT64_MAX,raw(),binding),ordinaryV3Json);
  Track tentative;tentative.add(Detection(1,1,1));same(tracks({0,1,1,0,0,0,{}}),tentative.to_json(0));Track empty;same(tracks({0,0,0,0,0,0,{}}),empty.to_json(0));
  rejects([&]{tracks({0,1,0,1,0,0,{}});});auto bad=row;bad.state=0;rejects([&]{tracks({0,1,0,0,1,0,{&bad,1}});});bad=row;bad.history.state.count-=1;rejects([&]{tracks({0,1,0,0,1,0,{&bad,1}});});
  std::cout<<"PASS serializer-track gpu_selected_slice=100 raw_checkpoint=1 binding_rejects=1 legacy_ids=1 uint64_counts=1 tentative_omitted=1\n";
 }
 }
-int main()try{spectrumCases();mapCases();detectionCases();trackCases();std::cout<<"COMPLETE GPU-result JSON CPU compatibility groups=4 candidate_dsp_math=0 gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL GPU-result JSON: "<<e.what()<<'\n';return 1;}
+int main()try{spectrumCases();mapCases();detectionCases();trackCases();
+ namespace trace=blah2::causal_trace;std::array<uint32_t,trace::words> t{};t[0]=1;t[1]=1;
+ const uint64_t times[]={UINT64_C(9007199254740993),17,UINT64_C(1794521720793),8};
+ std::memcpy(t.data()+4,times,sizeof(times));auto*r=t.data()+trace::headerWords;
+ r[1]=8;r[5]=3|(2<<8);r[26]=65534;r[27]=2;double sample[]={1,-226.05,5.22};std::memcpy(r+6,sample,sizeof(sample));
+ const std::string configHash(64,'a'),moduleHash(64,'b');
+ auto encoded=trace::json(t.data(),t.size(),.125,UINT64_C(9007199254740993),64,{true,3,10,20},false,3,configHash,moduleHash);
+ rapidjson::Document d;d.Parse(encoded.c_str());check(!d.HasParseError(),"causal JSON invalid");
+ check(std::string(d["event_time_ns"].GetString())=="1794521720793000000"&&
+  std::string(d["sequence"].GetString())=="9007199254740993"&&
+  d["candidates"][0]["bearing_candidates_deg"].Empty()&&
+  std::string(d["producer"]["config_fingerprint"].GetString())==configHash&&
+  std::string(d["producer"]["build_id"].GetString())==moduleHash&&
+  std::string(d["transport_dropped"].GetString())=="3"&&
+  d["candidates"][0]["confirmation_credit"].GetBool()&&
+  std::string(d["candidates"][0]["spawned_first_track_id"].GetString())=="t65534"&&
+  d["candidates"][0]["spawned_track_count"].GetUint()==2,"causal exact time or unknown bearing corrupted");
+ rejects([&]{trace::json(t.data(),t.size(),1,1,64,{},false,0,"invalid",moduleHash);});
+ if(const char* path=std::getenv("CAUSAL_FIXTURE_PATH")){std::ofstream f(path);f<<encoded<<'\n';check(bool(f),"causal fixture write");}
+ t[1]=100;t[2]=100;for(uint32_t i=0;i<64;++i){auto*q=t.data()+trace::headerWords+i*trace::recordWords;
+  std::memcpy(q,r,trace::recordWords*4);q[0]=i;}
+ d.Parse(trace::json(t.data(),t.size(),.125,1,7).c_str());
+ check(d["candidates"].Size()==7&&d["coverage"]["truncated"].GetBool(),"causal prefix bound");
+ t[8]=UINT32_MAX;t[9]=UINT32_MAX;rejects([&]{trace::json(t.data(),t.size(),1,1,64);});
+ std::cout<<"COMPLETE GPU-result JSON CPU compatibility groups=5 exact_causal_time=1 bounded_prefix=1 candidate_dsp_math=0 gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL GPU-result JSON: "<<e.what()<<'\n';return 1;}
