@@ -87,8 +87,15 @@ Since v0.1.38, the next release adds:
 
 - One unified all-receiver build for KrakenSDR, USRP/UHD, dual HackRF, and the
   local SDRplay adapter kit; choose the connected receiver in Settings.
-- Accelerated multi-illuminator and wider GPU channelization paths, with
-  capability reporting and CPU fallback where GPU work is unavailable.
+- Wideband captures can be channelized into independent, phase-preserving FM
+  and HDTV (ATSC) station lanes for parallel radar processing.
+- GPU acceleration now covers both narrow FM and wide HDTV channelization,
+  with shared FFT/filter work and an automatic qualified CPU fallback.
+- Each station lane retains its own tuning, filter, transmitter geometry,
+  recording metadata, detections, and tracks.
+- Per-node capability reporting identifies receiver type, channel count,
+  broadcast standards, and available radar resources so the portal selects
+  each node's supported views.
 - More resilient receiver timing, calibration telemetry, browser reconnects,
   and preservation of bearing evidence across acquisition changes.
 - Package upgrades that preserve the existing VectorWarp configuration, plus
