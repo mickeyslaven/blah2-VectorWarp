@@ -187,8 +187,10 @@ class BundledKraken(unittest.TestCase):
         self.assertIn('Type=notify', unit)
         self.assertIn('@PREFIX@/current/share/heimdall/service.py', unit)
         package = (ROOT / 'script/package-native.sh').read_text()
+        required = json.loads((ROOT / 'packaging/artifact-plan.json').read_text())['required']['package']
         for item in ('bin/heimdall', 'share/heimdall/build.json', 'share/heimdall/sbom.cdx.json'):
-            self.assertIn(item, package)
+            self.assertIn(item, required)
+        self.assertIn('script/artifact-plan.py" validate "$ARTIFACT" --level package', package)
         self.assertIn('--node /opt/vectorwarp/runtime/node/bin/node', package)
         self.assertIn('run rm -f "$STAGE/opt/vectorwarp/current/bin/heimdall"', package)
         self.assertIn('"$STAGE/opt/vectorwarp/current/share/heimdall"', package)

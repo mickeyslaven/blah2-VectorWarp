@@ -56,6 +56,35 @@ def condition(expression, event, ref="refs/heads/main", **inputs):
 
 
 class WorkflowContracts(unittest.TestCase):
+    def test_setup_node_receives_reviewed_version_from_executable_step_output(self):
+        expected = subprocess.check_output(
+            ["python3", str(ROOT / "script/artifact-plan.py"), "pin", "node"], text=True).strip()
+        with tempfile.TemporaryDirectory(prefix="vectorwarp-node-workflow-") as directory:
+            workspace = Path(directory)
+            (workspace / "script").symlink_to(ROOT / "script", target_is_directory=True)
+            (workspace / "vectorwarp").symlink_to(ROOT, target_is_directory=True)
+            for path in sorted(WORKFLOWS.glob("*.yml")):
+                for name, job in workflow(path.name)["jobs"].items():
+                    preceding = {}
+                    for step in job.get("steps", []):
+                        if step.get("uses", "").startswith("actions/setup-node@"):
+                            with self.subTest(workflow=path.name, job=name):
+                                self.assertNotIn("node-version-file", step["with"])
+                                reference = re.fullmatch(
+                                    r"\$\{\{ steps\.([\w-]+)\.outputs\.([\w-]+) \}\}",
+                                    step["with"]["node-version"])
+                                self.assertIsNotNone(reference)
+                                producer, key = reference.groups()
+                                output = workspace / "step output"
+                                output.write_text("")
+                                subprocess.run(["bash", "-euo", "pipefail", "-c", preceding[producer]["run"]],
+                                               cwd=workspace, env={**os.environ, "GITHUB_OUTPUT": str(output)},
+                                               check=True, capture_output=True, text=True, timeout=10)
+                                self.assertEqual(dict(line.split("=", 1) for line in
+                                                      output.read_text().splitlines())[key], expected)
+                        if "id" in step:
+                            preceding[step["id"]] = step
+
     def test_all_yaml_actions_reusable_jobs_and_shell_blocks(self):
         reusable_keys = {"name", "uses", "with", "secrets", "strategy", "needs",
                          "if", "concurrency", "permissions"}

@@ -108,7 +108,8 @@ done
 # cpu is an existing macOS internal no-device fixture, equivalent to Kraken-only.
 profile_backend=$BACKEND; [[ $profile_backend != cpu ]] || profile_backend=kraken
 profile_options=(); if $WITH_RSPDUO; then profile_options+=(--with-rspduo); fi
-profile=$(python3 "$ARTIFACT_PLAN" profile "$profile_backend" "${profile_options[@]}") || exit 1
+# macOS Bash 3.2 treats an empty array as unset under nounset.
+profile=$(python3 "$ARTIFACT_PLAN" profile "$profile_backend" ${profile_options[@]+"${profile_options[@]}"}) || exit 1
 read -r ENABLE_RSPDUO ENABLE_USRP ENABLE_HACKRF LOCAL_RSPDUO unused <<<"$profile"
 UHD_FORMULA=${BLAH2_UHD_FORMULA:-uhd}
 for formula in $([[ $ENABLE_USRP == ON ]] && printf '%s' "$UHD_FORMULA") $([[ $ENABLE_HACKRF == ON ]] && printf 'hackrf'); do

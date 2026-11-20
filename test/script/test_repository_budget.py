@@ -115,6 +115,12 @@ class RepositoryBudgetControls(unittest.TestCase):
                          "a41b59b23c4bc671784f4c550e14d2b8ccd5736166d87c5d7c67aa606fba1580")
         self.assertEqual(sum(after > before for before, after in adjustments[120]["changes"].values()), 17)
         self.assertEqual(sum(after < before for before, after in adjustments[120]["changes"].values()), 6)
+        # CI consumes the canonical Node pin and preserves macOS shell options.
+        self.assertGreaterEqual(len(adjustments), 122)
+        self.assertEqual(BUDGET.digest(adjustments[:122]),
+                         "a8a8f177773cb5f18acbdd3aa4e875e1749e21efcae0f0c6b0451ab6893bc132")
+        self.assertEqual(len(adjustments[121]["changes"]), 14)
+        self.assertTrue(all(after > before for before, after in adjustments[121]["changes"].values()))
 
     def test_checkout_line_endings_do_not_change_metrics(self):
         before = BUDGET.measure(self.root, self.paths(), {})

@@ -127,6 +127,24 @@ exit 0
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("use --backend all", result.stderr)
 
+    def test_macos_default_shell_preserves_optional_receiver_arguments(self):
+        environment = self.build_environment(True)
+        environment["FAKE_UNAME"] = "Darwin"
+        environment["CMAKE_ARGUMENTS"] = str(self.temp / "cmake-arguments")
+        executable(self.tools / "brew", '#!/bin/sh\nprintf "%s\\n" /fixture/homebrew\n')
+        executable(self.tools / "cmake", '#!/bin/sh\nprintf "%s\\n" "$@" >"$CMAKE_ARGUMENTS"\nexit 73\n')
+        for options, rspduo, local in (([], "OFF", "ON"), (["--with-rspduo"], "ON", "OFF")):
+            with self.subTest(options=options):
+                result = subprocess.run([
+                    "/bin/bash", str(ROOT / "script/build-macos.sh"), "--backend", "all",
+                    "--gpu", "off", "--build-dir", str(self.temp / "build"), *options,
+                ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 73, result.stderr)
+                arguments = Path(environment["CMAKE_ARGUMENTS"]).read_text().splitlines()
+                for flag, value in (("USRP", "ON"), ("HACKRF", "ON"), ("RSPDUO", rspduo)):
+                    self.assertIn(f"-DBLAH2_ENABLE_{flag}={value}", arguments)
+                self.assertIn(f"-DBLAH2_LOCAL_BUILD_RSPDUO={local}", arguments)
+
     def cmake_fixture_arguments(self) -> list[str]:
         packages = self.temp / "cmake-packages"
         includes = self.temp / "cmake-includes"

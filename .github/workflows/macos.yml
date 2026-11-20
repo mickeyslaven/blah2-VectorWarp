@@ -35,12 +35,12 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
-      - name: Read reviewed Node runtime pin
-        run: python3 script/artifact-plan.py pin node > "$RUNNER_TEMP/vectorwarp-node-version"
+      - id: node-pin
+        run: version=$(python3 script/artifact-plan.py pin node) && echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Set up Node 24
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version-file: ${{ runner.temp }}/vectorwarp-node-version
+          node-version: ${{ steps.node-pin.outputs.version }}
           package-manager-cache: false
       - name: Install open-source build dependencies
         run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb vulkan-loader vulkan-headers molten-vk glslang
@@ -51,7 +51,9 @@ jobs:
       - name: Verify vendor header isolation from project warnings
         run: python3 test/macos/rapidjson_system_include_test.py
       - name: Verify GPU platform and receiver build contracts
-        run: python3 test/packaging/test_gpu_platform_contract.py -v
+        run: |
+          python3 test/packaging/test_gpu_platform_contract.py -v
+          python3 test/packaging/test_receiver_build.py ReceiverBuildContractTest.test_macos_default_shell_preserves_optional_receiver_arguments -v
       - name: Run offline replay and qualification contract regressions
         # Data-only fixtures and fake children: no RF or physical GPU qualification.
         run: |

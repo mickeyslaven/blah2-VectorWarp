@@ -5289,6 +5289,70 @@
           43214
         ]
       }
+    },
+    {
+      "owner": "Canonical release-ci workflow pin and build-release macOS argument contracts",
+      "purpose": "2026-11-20 root-reviewed CI failure repairs in .github/workflows/{ci,gpu-qualification,macos,receiver-compatibility,release-packages}.yml and script/build-macos.sh. Six setup-node invocations receive the unchanged canonical artifact-plan Node version through an executable step output; the macOS workflow executes the default-shell receiver regression, and the builder preserves empty/optional receiver arguments under Bash 3.2 nounset. Production delta is exactly three lines, 143 characters and 67 lexical tokens, with no new files/imports/dependencies or numerical/runtime change. Regression consumers are test/packaging/test_ci_workflows.py (execute each pin producer and verify setup-node binding), test_receiver_build.py (default-shell empty and --with-rspduo flags through a fake CMake boundary), and test_bundled_kraken.py (required package members belong to artifact-plan.json and package-native validates that contract).",
+      "rejected_reuse": "Reading node-version-file through a runner-temporary path failed the setup action contract; hardcoding another Node pin would duplicate the canonical artifact owner. Reuse artifact-plan.py outputs instead. Ordinary empty-array expansion under Bash 3.2 nounset fails before receiver selection; guarded existing-array expansion retains exact options without a second backend route. Preserve Kraken package requirements at their canonical declarative owner rather than reinstating obsolete source-string ownership assertions.",
+      "cleanup_plan": "Keep the original snapshots and all 121 sealed adjustments unchanged. These 14 ceilings equal measured current bytes and are explicit reviewed exception debt, not achievement of preferred owner sizes. Future reduction must ratchet downward. Consolidate workflow pin plumbing only if it preserves canonical version identity, executable output validation and platform-shell behavior without a new parallel owner; no regression removal, skip or weaker physical qualification is authorized. Hosted macOS Bash 3.2 execution and GitHub run acceptance remain distinct from this bounded Linux source/fixture validation.",
+      "changes": {
+        "context_characters:build-release": [
+          652297,
+          652382
+        ],
+        "context_characters:production": [
+          6769427,
+          6769570
+        ],
+        "context_characters:release-ci": [
+          140175,
+          140233
+        ],
+        "context_characters:release-ci/contracts": [
+          415778,
+          415863
+        ],
+        "context_lines:build-release": [
+          12591,
+          12592
+        ],
+        "context_lines:production": [
+          125756,
+          125759
+        ],
+        "context_lines:release-ci": [
+          2663,
+          2665
+        ],
+        "context_lines:release-ci/contracts": [
+          7840,
+          7841
+        ],
+        "context_tokens:build-release": [
+          162617,
+          162640
+        ],
+        "context_tokens:production": [
+          1699358,
+          1699425
+        ],
+        "context_tokens:release-ci": [
+          31388,
+          31432
+        ],
+        "context_tokens:release-ci/contracts": [
+          109298,
+          109321
+        ],
+        "lines:.github": [
+          2663,
+          2665
+        ],
+        "lines:script": [
+          27824,
+          27825
+        ]
+      }
     }
   ],
   "context_snapshot": {
