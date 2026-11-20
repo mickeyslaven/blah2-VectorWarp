@@ -199,7 +199,7 @@ void main(){uint i=indexOf();if(i>=p.count)return;s[128u+i]=clutterRidgeStreak(s
  unsigned cases=0;
  // Compare the actual shader against the independent CPU coordinate oracle,
  // including all corners, both axes and neighborhoods touching row boundaries.
- for(const auto center:std::vector<std::pair<uint32_t,uint32_t>>{{0,0},{0,510},{600,0},{600,510},{300,255},{1,510}}){
+ for(const auto& center:std::vector<std::pair<uint32_t,uint32_t>>{{0,0},{0,510},{600,0},{600,510},{300,255},{1,510}}){
   clear(clutter);c[0]=1;c[1]=12;c[11]=65536;const uint32_t learned=center.first*columns+center.second;
   c[13+3*learned]=12u;c[14+3*learned]=20u;c[12]=1;
   for(int dr=-2;dr<=2;++dr)for(int dc=-5;dc<=5;++dc){
