@@ -25,7 +25,9 @@ struct PostprocessConfig {
 struct PostprocessDetection { double delay=0,doppler=0,snr=0,delayKm=0; };
 static_assert(sizeof(PostprocessDetection)==32,"Postprocess record layout changed");
 struct PostprocessMetrics { double noisePower=0,maxPower=0;
-uint32_t cfarCount=0,centroidCount=0,detectionCount=0; };
+uint32_t cfarCount=0,centroidCount=0,detectionCount=0;
+uint32_t cfarDiagnosticCount=0,centroidDiagnosticCount=0,availableCpis=0;
+bool detectorObserved=false;uint32_t evaluatedCells=0; };
 struct PostprocessOutputs {
  PostprocessMetrics* metrics=nullptr;
  double* display=nullptr;
@@ -44,7 +46,7 @@ struct PostprocessOutputs {
  uint32_t* decisionFlags=nullptr;
  size_t decisionFlagCount=0; // grid bits: CFAR1, centroid2, final4
  uint32_t* detectionCells=nullptr;
- size_t detectionCellCapacity=0; // final stable original grid identities
+ size_t detectionCellCapacity=0; // final stable grid keys (deduplicated for multi-bank evidence)
 };
 namespace gpu_postprocess {
 enum Counter : uint32_t {error=0,levelCells=1,metricCells=2,displayCells=3,cfarCells=4,
@@ -54,12 +56,27 @@ enum Counter : uint32_t {error=0,levelCells=1,metricCells=2,displayCells=3,cfarC
  compactTileCounts=23,compactPrefixTiles=24,compactScatterCells=25,compactKinds=26,statusWords=32};
 struct Layout {
  uint32_t cells=0,levels=0,powers=0,snr=0,flags=0,keep=0,indices=0,candidates=0,direction=0,records=0,
-  metricPartials=0,metricPartialCount=0;
+  metricPartials=0,metricPartialCount=0,bankCandidates=0,bankMotion=0;
  uint64_t bytes=0;
 };
-inline Layout layout(uint32_t rows,uint32_t columns){
+// The valid training population changes at fractional-path and beam boundaries.
+// Precompute the same Gamma-CFAR oracle for every admitted population; never
+// replace unavailable observations with measured zero power.
+inline void appendTemporalAlphas(std::vector<uint32_t>& words,double pfa,
+    uint32_t maximum,uint32_t delayMotion,uint32_t dopplerMotion,uint32_t training){
+ if(maximum<=2)return;
+ const uint32_t passes=track_before_detect::detectorPassCount(maximum),stride=2*training+1;
+ const uint32_t base=uint32_t(words.size());words[54]=base;words[55]=stride;
+ words.resize(words.size()+uint64_t(passes)*stride*2,0);
+ for(uint32_t pass=0;pass<passes;++pass){const uint32_t depth=pass?track_before_detect::bankLength(pass-1):2;
+  const double probability=track_before_detect::passPfa(pfa,maximum,delayMotion,dopplerMotion,pass);
+  for(uint32_t count=1;count<stride;++count){const double alpha=track_before_detect::cfarAlpha(probability,count,depth);
+   std::memcpy(words.data()+base+2*(pass*stride+count),&alpha,8);}}
+ words[56]=uint32_t(words.size());words.resize(words.size()+2*passes,0);
+}
+inline Layout layout(uint32_t rows,uint32_t columns,uint32_t depth=1){
  const uint64_t count=uint64_t(rows)*columns;
- if(!rows||!columns||rows>65535||columns>65535||count>UINT32_MAX/25)
+ if(!rows||!columns||rows>65535||columns>65535||count>UINT32_MAX/(depth>2?62u:25u))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED index capacity");
  Layout l;
  l.cells=uint32_t(count);
@@ -73,11 +90,14 @@ inline Layout layout(uint32_t rows,uint32_t columns){
  l.records=l.direction+l.cells;
  l.metricPartials=l.records+8*l.cells;
  l.metricPartialCount=(l.cells+127u)/128u;
- l.bytes=uint64_t(l.metricPartials+4*l.metricPartialCount)*4;
+ const uint32_t end=(l.metricPartials+4*l.metricPartialCount+1u)&~1u;
+ l.bankCandidates=depth>2?end:0;
+ l.bankMotion=depth>2?end+32*l.cells:0;
+ l.bytes=uint64_t(depth>2?end+36*l.cells:end)*4;
  return l;
 }
 inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns,double fs){
- const auto l=layout(rows,columns);
+ const auto l=layout(rows,columns,c.integrationCpis);
  if(c.tracker||!c.enabled||!std::isfinite(fs)||fs<=0||fs>UINT32_MAX||fs!=std::floor(fs)||
     c.delayAxis.size()!=columns||c.dopplerAxis.size()!=rows)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED flags, sample rate or axes");
@@ -86,6 +106,8 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
+ track_before_detect::validateBeamHistory(c.integrationCpis,c.integrationBeamTolerance);
+ track_before_detect::validateRefinementGrid(c.integrationCpis,c.beamCount,c.bearingScanBeams);
  track_before_detect::validateDelayDrift(c.integrationDelayDriftPerHz,c.dopplerAxis);
  if(c.integrationDelayDriftPerHz!=0&&!tbd)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED fractional delay requires TBD");
@@ -95,8 +117,7 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
     c.integrationDelayMotionBins>(tbd?2u:1u)||c.integrationDopplerMotionBins>(tbd?16u:1u)||
     (!tbd&&c.integrationCpis!=2&&(c.integrationDelayMotionBins||c.integrationDopplerMotionBins))||
     (tbd&&(!c.detection||!c.beamCount))||
-    (c.bearingScanBeams&&(!tbd||c.bearingScanBeams<c.beamCount||c.bearingScanBeams>127||
-      c.bearingScanBeams%c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||c.bearingReferenceAnchor>2||
+    (c.bearingScanBeams&&(!tbd||c.bearingCandidatePeaks!=3||c.bearingMethod>1||c.bearingReferenceAnchor>2||
       c.bearingGuardRadius>3||c.bearingTrainingRadius<=c.bearingGuardRadius||
       c.bearingTrainingRadius>6||!std::isfinite(c.bearingDiagonalLoading)||
       c.bearingDiagonalLoading<=0||c.bearingDiagonalLoading>1))||
@@ -134,6 +155,9 @@ double readS(uint at){return packDouble2x32(uvec2(s[at],s[at+1]));}
 void writeS(uint at,double value){uvec2 bits=unpackDouble2x32(value);s[at]=bits.x;s[at+1]=bits.y;}
 double dopplerAt(uint row){return readD(m[44]+2u*row);}
 double delayAt(uint column){return double(int(m[m[45]+column]));}
+uint bankFlags(uint pass,uint cell){return pass==0u?m[39]+cell:m[57]+8u*(pass-1u)*m[34]+cell;}
+uint bankKeep(uint pass,uint cell){return pass==0u?m[40]+cell:m[57]+(8u*(pass-1u)+1u)*m[34]+cell;}
+uint bankRecord(uint pass,uint cell){return pass==0u?m[42]+6u*cell:m[57]+(8u*(pass-1u)+2u)*m[34]+6u*cell;}
 // Exact accepted FP64 logarithm; no float conversion or host callback.
 double positiveLog10(double x){
  if(!finiteD(x)||!(x>0.0LF)){reject(101u);return 0.0LF;}
@@ -149,6 +173,11 @@ double positiveLog10(double x){
  precise double value=((high+2.0LF*sum)+low)*0.43429448190325182765112891891661LF;
  return value;
 }
+double bankSnr(uint pass,uint cell){if(pass==0u)return readS(m[38]+2u*cell);
+ double power=tbdBanks[(pass-1u)*m[34]+cell];
+ if(!finiteD(power)||power<0.0LF)return packDouble2x32(uvec2(0u,0x7ff80000u));
+ double amplitude=sqrt(power),level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
+ return level-readD(m[56]+2u*(pass-1u));}
 )glsl";
 const char* levelsBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
@@ -157,17 +186,19 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
   (value.y>=0.0LF&&value.y<double(m[75])&&double(beam)==value.y);
  if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76]|(m[93]<<16u)|(readD(94u)!=0.0LF?0x40000000u:0u);m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
- precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
+ precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=(m[75]==0u?0u:(beam+1u)<<8u)|(m[74]==2u?130u<<17u:0u);
+ if(m[86]!=0u)s[m[86]+i]=0u;
  if(m[78]!=0u){uint historyAt=(m[79]%m[74])*m[34]+i;history[historyAt]=current;
   if(m[77]!=0xffffffffu)angleHistory[historyAt]=m[75]==0u?0u:beam+1u;}
  double prior=history[i];
  bool historyReady=m[74]==2u&&finiteD(history[0]);
  if(historyReady&&(m[76]!=0u||m[93]!=0u)){
-  uint row=i/m[33],column=i%m[33];prior=-1.0LF;
+  uint row=i/m[33],column=i%m[33];prior=-1.0LF;double bestMean=-1.0LF;
   for(int dr=-int(m[93]);dr<=int(m[93]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
-   int rr=int(row)+dr,cc=int(column)+dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
+   int rr=int(row)-dr,cc=int(column)-dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
    uint at=uint(rr)*m[33]+uint(cc);double candidate=history[at];if(!finiteD(candidate))continue;
-   if(candidate>prior)prior=candidate;
+   precise double mean=0.5LF*(current+candidate);
+   if(temporalPathBetter(mean,bestMean,false)){bestMean=mean;prior=candidate;s[m[39]+i]=(s[m[39]+i]&0x1ffffu)|((uint(dc+2)|(uint(dr+16)<<3u))<<17u);}
   }
  }
  // Display-map power exists independently of CFAR. Disabling detection must
@@ -192,6 +223,7 @@ int fractionalDelayOffset(double scale,uint row,uint olderRow,uint age){
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
 shared double pathBest2[64],pathBest4[64],pathBest8[64];
+shared uint pathCode2[64],pathCode4[64],pathCode8[64];
 void main(){uint lane=gl_LocalInvocationID.x;
  // Setup-only, on this same device: preserve the original precise FP64/Q16
  // operations, including ties and subnormal handling, without host rounding.
@@ -210,13 +242,14 @@ void main(){uint lane=gl_LocalInvocationID.x;
  uint i=p.a==1u?groupCell:linearCell;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  if(p.a==0u){
+  if(m[58]!=0u)for(uint pass=0u;pass<=m[80];++pass)s[m[58]+pass*m[34]+i]=0u;
   if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
    uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
     0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
    if(baseline>=0.0LF&&!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;
   }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
   for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;
-   tbdBanks[(bank+1u)*m[34]+i]=available>=length?0.0LF:packDouble2x32(uvec2(0u,0x7ff80000u));}
+   tbdBanks[(bank+1u)*m[34]+i]=available>=length?-1.0LF:packDouble2x32(uvec2(0u,0x7ff80000u));}
   return;
  }
  // One workgroup owns one map cell. Its lanes evaluate distinct motion paths
@@ -239,18 +272,22 @@ void main(){uint lane=gl_LocalInvocationID.x;
     else if(length==8u&&m[74]>=8u)best8=sum/8.0LF;
    }
   }
-  pathBest2[lane]=best2;pathBest4[lane]=best4;pathBest8[lane]=best8;barrier();
+  pathBest2[lane]=best2;pathBest4[lane]=best4;pathBest8[lane]=best8;
+  pathCode2[lane]=path;pathCode4[lane]=path;pathCode8[lane]=path;barrier();
   // Reduce the trajectory maxima across the wavefront.  The previous lane-zero
   // loop serialized up to 45 paths for every map cell, leaving the other lanes
   // idle after their trajectory evaluation.  This tree preserves the same max
   // operation (including the -1 sentinel) while taking logarithmic steps.
   for(uint stride=32u;stride>0u;stride>>=1u){if(lane<stride){
-   pathBest2[lane]=max(pathBest2[lane],pathBest2[lane+stride]);
-   pathBest4[lane]=max(pathBest4[lane],pathBest4[lane+stride]);
-   pathBest8[lane]=max(pathBest8[lane],pathBest8[lane+stride]);}barrier();}
+   if(temporalPathBetter(pathBest2[lane+stride],pathBest2[lane],pathCode2[lane+stride]<pathCode2[lane])){pathBest2[lane]=pathBest2[lane+stride];pathCode2[lane]=pathCode2[lane+stride];}
+   if(temporalPathBetter(pathBest4[lane+stride],pathBest4[lane],pathCode4[lane+stride]<pathCode4[lane])){pathBest4[lane]=pathBest4[lane+stride];pathCode4[lane]=pathCode4[lane+stride];}
+   if(temporalPathBetter(pathBest8[lane+stride],pathBest8[lane],pathCode8[lane+stride]<pathCode8[lane])){pathBest8[lane]=pathBest8[lane+stride];pathCode8[lane]=pathCode8[lane+stride];}}barrier();}
   if(lane==0u){double chunkBest[3]=double[3](pathBest2[0],pathBest4[0],pathBest8[0]);
+   uint chunkCode[3]=uint[3](pathCode2[0],pathCode4[0],pathCode8[0]);
    for(uint bank=0u;bank<m[80];++bank){double candidate=chunkBest[bank],prior=tbdBanks[(bank+1u)*m[34]+i];
-    if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
+    if(temporalPathBetter(candidate,prior,false)){tbdBanks[(bank+1u)*m[34]+i]=candidate;
+     if(m[58]!=0u){int dr=int(chunkCode[bank]/delayWidth)-int(m[93]),dc=int(chunkCode[bank]%delayWidth)-int(m[76]);
+      s[m[58]+(bank+1u)*m[34]+i]=(uint(dc)&255u)|((uint(dr)&255u)<<8u);}}}
   }
   return;
  }
@@ -266,23 +303,28 @@ const char* advanceBody=R"glsl(
 void main(){if(indexOf()==0u&&m[78]!=0u&&m[0]==0u)m[79]=min(m[79]+1u,0xfffffffeu);}
 )glsl";
 const char* metricsBody=R"glsl(
-shared double metricTile[128];
+shared double metricTile[128];shared uint metricValid[128];
 void main(){
  // Preserve ordered FP64 additions inside each contiguous tile while allowing
  // every tile to be reduced independently. A short ordered second pass below
  // combines only ceil(cells/128) partials instead of serializing the full map.
  if(m[0]!=0u)return;uint lane=gl_LocalInvocationID.x,first=indexOf()-lane,tile=first/128u;
  uint count=first>=m[34]?0u:min(128u,m[34]-first);
- metricTile[lane]=lane<count?readS(m[36]+2u*(first+lane)):0.0LF;barrier();
+ double value=lane<count?(p.a==0u?readS(m[36]+2u*(first+lane)):tbdBanks[(p.a-1u)*m[34]+first+lane]):0.0LF;
+ bool valid=lane<count&&(p.a==0u||(finiteD(value)&&value>=0.0LF));
+ metricValid[lane]=valid?1u:0u;
+ if(p.a!=0u&&valid){double amplitude=sqrt(value);value=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);}
+ metricTile[lane]=valid?value:0.0LF;barrier();
  if(lane!=0u||count==0u)return;precise double total=0.0LF;double maximum=metricTile[0];
- for(uint j=0u;j<count;++j){double value=metricTile[j];total=total+value;maximum=maximum<value?value:maximum;}
- uint at=m[91]+4u*tile;writeS(at,total);writeS(at+2u,maximum);atomicAdd(m[2],count);
+ uint validCount=0u;for(uint j=0u;j<count;++j){double value=metricTile[j];total=total+value;maximum=maximum<value?value:maximum;validCount+=metricValid[j];}
+ uint at=m[91]+4u*tile;writeS(at,total);writeS(at+2u,p.a==0u?maximum:double(validCount));if(p.a==0u)atomicAdd(m[2],count);
 }
 )glsl";
 const char* metricsFinishBody=R"glsl(
-void main(){if(indexOf()!=0u||m[0]!=0u)return;precise double total=0.0LF;double maximum=readS(m[91]+2u);
+void main(){if(indexOf()!=0u||m[0]!=0u)return;precise double total=0.0LF;double maximum=readS(m[91]+2u),validCount=0.0LF;
  for(uint tile=0u;tile<m[92];++tile){uint at=m[91]+4u*tile;double subtotal=readS(at),peak=readS(at+2u);
-  total=total+subtotal;maximum=maximum<peak?peak:maximum;}
+  total=total+subtotal;maximum=maximum<peak?peak:maximum;validCount+=peak;}
+ if(p.a!=0u){writeD(m[56]+2u*(p.a-1u),validCount>0.0LF?total/validCount:0.0LF);return;}
  precise double noise=total/(double(m[32])*double(m[33]));precise double peak=maximum-noise;
  if(!finiteD(total)||!finiteD(noise)||!finiteD(peak)){reject(203u);return;}
  writeD(64u,noise);writeD(66u,peak);
@@ -294,9 +336,8 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
  // Qualifier-only mode2 preserves unusable-neighbor semantics without running
  // the whole-frame finite-map admission. Production always uses mode0 here.
   if(p.a==2u&&(!(fused[i].x>0.0LF)||!finiteD(fused[i].x)||!finiteD(fused[i].y)||!finiteD(noise))){writeS(m[38]+2u*i,packDouble2x32(uvec2(0u,0x7ff80000u)));return;}
-  // levels is the current amplitude map on the legacy path and the strongest
-  // motion-integrated bank on the TBD path.  Using it here keeps centroiding
-  // and interpolation on the same surface that CFAR actually qualified.
+  // Diagnostic/display SNR only on TBD. Candidate qualification, centroiding
+  // and interpolation use bankSnr() from the originating bank instead.
   precise double snr=readS(m[36]+2u*i)-noise;
   if(!finiteD(snr)){reject(204u);return;}writeS(m[38]+2u*i,snr);}
  else {if(m[78]!=0u){double amplitude=sqrt(max(currentPower[i],0.0LF));
@@ -308,119 +349,175 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
 )glsl";
 const char* cfarBody=R"glsl(
 double detectorPower(uint i){return p.a==0u?readS(m[37]+2u*i):tbdBanks[(p.a-1u)*m[34]+i];}
-void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;if(p.b!=0u){s[m[39]+i]=s[m[39]+i]&0xffffff00u;s[m[40]+i]=0u;}
+void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;uint pass=p.c!=0u?p.a:0u;
+ if(p.b!=0u){s[bankFlags(pass,i)]=pass==0u?s[m[39]+i]&0xffffff00u:0u;s[bankKeep(pass,i)]=0u;}
  uint row=i/m[33],column=i%m[33];atomicAdd(m[4],1u);
  if(abs(dopplerAt(row))<readD(52u)||delayAt(column)<double(int(m[51])))return;
- uint at=m[46]+m[84]*column,n=m[at+4u];if(n==0u)return;atomicAdd(m[5],n);double cut=detectorPower(i);if(!finiteD(cut))return;
- precise double train=0.0LF;for(uint j=m[at];j<m[at+1u];++j)train=train+detectorPower(row*m[33]+j);
- for(uint j=m[at+2u];j<m[at+3u];++j)train=train+detectorPower(row*m[33]+j);
- train=train/double(n);uint alphaIndex=p.a==0u?0u:p.a-1u;precise double threshold=readD(at+6u+2u*alphaIndex)*train;
+ uint at=m[46]+m[84]*column,n=m[at+4u];if(n==0u)return;atomicAdd(m[5],n);double cut=detectorPower(i);if(!finiteD(cut)||(p.a!=0u&&cut<0.0LF))return;
+ precise double train=0.0LF;for(uint j=m[at];j<m[at+1u];++j){double value=detectorPower(row*m[33]+j);if(p.a!=0u&&(!finiteD(value)||value<0.0LF)){--n;continue;}train=train+value;}
+ for(uint j=m[at+2u];j<m[at+3u];++j){double value=detectorPower(row*m[33]+j);if(p.a!=0u&&(!finiteD(value)||value<0.0LF)){--n;continue;}train=train+value;}
+ if(n==0u)return;
+ train=train/double(n);uint alphaIndex=p.a==0u?0u:p.a-1u;
+ double alpha=readD(at+6u+2u*alphaIndex);
+ if(n!=m[at+4u]){if(m[54]==0u||n>=m[55]){reject(205u);return;}alpha=readD(m[54]+2u*(alphaIndex*m[55]+n));}
+ precise double threshold=alpha*train;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
  if(p.a==0u&&m[74]==2u&&m[28]==0u)return;
- if(cut>threshold){uint previous=atomicOr(s[m[39]+i],1u|(p.a==0u?(m[74]==2u?8u:0u):(1u<<(p.a+2u))));if((previous&1u)==0u)atomicAdd(m[6],1u);
-  uint record=m[42]+6u*i;writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,readS(m[38]+2u*i));}
+ if(p.d!=0)atomicAdd(m[63],1u);
+ if(cut>threshold){uint previous=atomicOr(s[bankFlags(pass,i)],1u|(p.a==0u?(m[74]==2u?(m[76]!=0u||m[93]!=0u?16u:8u):0u):(1u<<(p.a+2u))));if((previous&1u)==0u)atomicAdd(m[6],1u);
+  uint record=bankRecord(pass,i);writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,bankSnr(pass,i));}
 }
 )glsl";
 const char* refineBody=R"glsl(
 vec2 cmul(vec2 a,vec2 b){return vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);}
-vec2 cdiv(vec2 a,vec2 b){float d=dot(b,b);return vec2(a.x*b.x+a.y*b.y,a.y*b.x-a.x*b.y)/d;}
-float beamScore(uint beam,uint channels,uint cell,uint shifted,bool adaptive,vec2 inverse[64]){
+bool finiteF(vec2 value){return !any(isnan(value))&&!any(isinf(value));}
+bool finiteZ(dvec2 value){return !any(isnan(value))&&!any(isinf(value));}
+dvec2 dmul(dvec2 a,dvec2 b){precise dvec2 value=dvec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);return value;}
+dvec2 ddiv(dvec2 a,dvec2 b){precise double d=b.x*b.x+b.y*b.y;return dvec2(a.x*b.x+a.y*b.y,a.y*b.x-a.x*b.y)/d;}
+float beamScore(uint beam,uint channels,uint cell,uint shifted,bool adaptive,dvec2 inverse[64]){
  float modelPower=0.0;for(uint c=0u;c<channels;++c){vec2 w=refineWeights[beam*channels+c];
-  if(any(isnan(w))||any(isinf(w)))return -1.0;modelPower+=dot(w,w);}
- if(!(modelPower>1e-20)||isnan(modelPower)||isinf(modelPower))return -1.0;
- vec2 values[8],filtered[8];for(uint c=0u;c<channels;++c)values[c]=channelMaps[c*m[34]+cell%m[33]*m[32]+shifted];
- if(adaptive){for(uint a=0u;a<channels;++a){filtered[a]=vec2(0.0);for(uint b=0u;b<channels;++b)filtered[a]+=cmul(inverse[a*8u+b],values[b]);}}
- vec2 numerator=vec2(0.0);for(uint c=0u;c<channels;++c)numerator+=cmul(refineWeights[beam*channels+c],adaptive?filtered[c]:values[c]);
- if(!adaptive){float power=dot(numerator,numerator);return isnan(power)||isinf(power)?-1.0:power;}
- vec2 denominator=vec2(0.0);for(uint a=0u;a<channels;++a){vec2 z=vec2(0.0);
-  for(uint b=0u;b<channels;++b){vec2 steering=refineWeights[beam*channels+b];steering.y=-steering.y;z+=cmul(inverse[a*8u+b],steering);}
-  denominator+=cmul(refineWeights[beam*channels+a],z);}
- float power=dot(numerator,numerator)/max(abs(denominator.x),1e-12);
- return isnan(power)||isinf(power)?-1.0:power;
+  if(!finiteF(w))return -2.0;modelPower+=dot(w,w);}
+ if(isnan(modelPower)||isinf(modelPower))return -2.0;if(!(modelPower>1e-20))return -1.0;
+ vec2 values[8];dvec2 filtered[8];for(uint c=0u;c<channels;++c){values[c]=channelMaps[c*m[34]+cell%m[33]*m[32]+shifted];if(!finiteF(values[c]))return -2.0;}
+ if(!adaptive){vec2 numerator=vec2(0.0);for(uint c=0u;c<channels;++c)numerator+=cmul(refineWeights[beam*channels+c],values[c]);
+  float power=dot(numerator,numerator);return isnan(power)||isinf(power)?-2.0:power;}
+ for(uint a=0u;a<channels;++a){filtered[a]=dvec2(0.0);for(uint b=0u;b<channels;++b)filtered[a]+=dmul(inverse[a*8u+b],dvec2(values[b]));if(!finiteZ(filtered[a]))return -2.0;}
+ dvec2 numerator=dvec2(0.0),denominator=dvec2(0.0);for(uint c=0u;c<channels;++c)numerator+=dmul(dvec2(refineWeights[beam*channels+c]),filtered[c]);
+ for(uint a=0u;a<channels;++a){dvec2 z=dvec2(0.0);
+  for(uint b=0u;b<channels;++b){dvec2 steering=dvec2(refineWeights[beam*channels+b]);steering.y=-steering.y;z+=dmul(inverse[a*8u+b],steering);}
+  denominator+=dmul(dvec2(refineWeights[beam*channels+a]),z);}
+ if(!finiteZ(numerator)||!finiteZ(denominator)||!(denominator.x>0.0LF))return -2.0;
+ precise double square=numerator.x*numerator.x+numerator.y*numerator.y;float power=float(square/denominator.x);
+ return isnan(power)||isinf(power)?-2.0:power;
 }
 bool excluded(uint beam,uint selected,uint fine,uint radius){uint d=beam>selected?beam-selected:selected-beam;return min(d,fine-d)<=radius;}
-void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==0u)return;
- uint row=i/m[33],column=i%m[33],factor=m[81],channels=m[82],fine=m[83];
+void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||s[m[40]+i]==0u)return;
+ // Coverage counts attempted final candidates. A temporal detection may have
+ // support only in older CPIs; absent current spatial power is not fabricated
+ // into a direction and does not invalidate its temporal detector evidence.
+ atomicAdd(m[15],1u);
+ // Before stable compaction, indices retain the winning bank/source code.
+ // Half-bin interpolation can move the dedup key; refine the originating cell.
+ uint source=(s[m[41]+i]-1u)%m[34];
+ uint row=source/m[33],column=source%m[33],factor=m[81],channels=m[82],fine=m[83];
  s[m[86]+i]=0u;
  uint shifted=(row+m[32]/2u+1u)%m[32],bestBeam=0u,secondBeam=0u,thirdBeam=0u;float best=-1.0,second=-1.0,third=-1.0;
- vec2 covariance[64],inverse[64];for(uint k=0u;k<64u;++k){covariance[k]=vec2(0.0);inverse[k]=vec2(0.0);}
+ // Widen only the <=8x8 adaptive solve, never the full CAF buffers.
+ dvec2 covariance[64],inverse[64];for(uint k=0u;k<64u;++k){covariance[k]=dvec2(0.0);inverse[k]=dvec2(0.0);}
  bool adaptive=m[87]==1u;uint samples=0u;
  if(adaptive){int training=int(m[89]),guard=int(m[88]);
   for(int dr=-training;dr<=training;++dr)for(int dc=-training;dc<=training;++dc){if(abs(dr)<=guard&&abs(dc)<=guard)continue;
    int rr=int(row)+dr,cc=int(column)+dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
-   uint sh=(uint(rr)+m[32]/2u+1u)%m[32];vec2 v[8];for(uint c=0u;c<channels;++c)v[c]=channelMaps[c*m[34]+uint(cc)*m[32]+sh];
-   for(uint a=0u;a<channels;++a)for(uint b=0u;b<channels;++b)covariance[a*8u+b]+=vec2(v[a].x*v[b].x+v[a].y*v[b].y,v[a].y*v[b].x-v[a].x*v[b].y);samples++;}
-  float trace=0.0;for(uint c=0u;c<channels;++c)trace+=covariance[c*8u+c].x;
-  float load=max(trace/max(float(samples*channels),1.0)*uintBitsToFloat(m[90]),1e-12);
-  for(uint a=0u;a<channels;++a){for(uint b=0u;b<channels;++b)covariance[a*8u+b]/=max(float(samples),1.0);covariance[a*8u+a].x+=load;inverse[a*8u+a]=vec2(1.0,0.0);}
-  for(uint pivot=0u;pivot<channels;++pivot){uint choice=pivot;float magnitude=dot(covariance[pivot*8u+pivot],covariance[pivot*8u+pivot]);
-   for(uint r=pivot+1u;r<channels;++r){float candidate=dot(covariance[r*8u+pivot],covariance[r*8u+pivot]);if(candidate>magnitude){magnitude=candidate;choice=r;}}
-   if(!(magnitude>1e-20)){adaptive=false;break;}if(choice!=pivot)for(uint c=0u;c<channels;++c){vec2 q=covariance[pivot*8u+c];covariance[pivot*8u+c]=covariance[choice*8u+c];covariance[choice*8u+c]=q;q=inverse[pivot*8u+c];inverse[pivot*8u+c]=inverse[choice*8u+c];inverse[choice*8u+c]=q;}
-   vec2 divisor=covariance[pivot*8u+pivot];for(uint c=0u;c<channels;++c){covariance[pivot*8u+c]=cdiv(covariance[pivot*8u+c],divisor);inverse[pivot*8u+c]=cdiv(inverse[pivot*8u+c],divisor);}
-   for(uint r=0u;r<channels;++r)if(r!=pivot){vec2 multiplier=covariance[r*8u+pivot];for(uint c=0u;c<channels;++c){covariance[r*8u+c]-=cmul(multiplier,covariance[pivot*8u+c]);inverse[r*8u+c]-=cmul(multiplier,inverse[pivot*8u+c]);}}
+   uint sh=(uint(rr)+m[32]/2u+1u)%m[32];dvec2 v[8];for(uint c=0u;c<channels;++c){vec2 value=channelMaps[c*m[34]+uint(cc)*m[32]+sh];if(!finiteF(value))return;v[c]=dvec2(value);}
+   for(uint a=0u;a<channels;++a)for(uint b=0u;b<channels;++b)covariance[a*8u+b]+=dmul(v[a],dvec2(v[b].x,-v[b].y));samples++;}
+  precise double trace=0.0LF;for(uint c=0u;c<channels;++c)trace+=covariance[c*8u+c].x;
+  double load=max(trace/max(double(samples*channels),1.0LF)*double(uintBitsToFloat(m[90])),1e-12LF);if(!finiteD(trace)||!finiteD(load))return;
+  for(uint a=0u;a<channels;++a){for(uint b=0u;b<channels;++b)covariance[a*8u+b]/=max(double(samples),1.0LF);covariance[a*8u+a].x+=load;inverse[a*8u+a]=dvec2(1.0,0.0);}
+  for(uint pivot=0u;pivot<channels;++pivot){uint choice=pivot;double magnitude=dot(covariance[pivot*8u+pivot],covariance[pivot*8u+pivot]);if(!finiteD(magnitude))return;
+   for(uint r=pivot+1u;r<channels;++r){double candidate=dot(covariance[r*8u+pivot],covariance[r*8u+pivot]);if(!finiteD(candidate))return;if(candidate>magnitude){magnitude=candidate;choice=r;}}
+   if(!(magnitude>1e-20LF)){adaptive=false;break;}if(choice!=pivot)for(uint c=0u;c<channels;++c){dvec2 q=covariance[pivot*8u+c];covariance[pivot*8u+c]=covariance[choice*8u+c];covariance[choice*8u+c]=q;q=inverse[pivot*8u+c];inverse[pivot*8u+c]=inverse[choice*8u+c];inverse[choice*8u+c]=q;}
+   dvec2 divisor=covariance[pivot*8u+pivot];for(uint c=0u;c<channels;++c){covariance[pivot*8u+c]=ddiv(covariance[pivot*8u+c],divisor);inverse[pivot*8u+c]=ddiv(inverse[pivot*8u+c],divisor);}
+   for(uint r=0u;r<channels;++r)if(r!=pivot){dvec2 multiplier=covariance[r*8u+pivot];for(uint c=0u;c<channels;++c){covariance[r*8u+c]-=dmul(multiplier,covariance[pivot*8u+c]);inverse[r*8u+c]-=dmul(multiplier,inverse[pivot*8u+c]);}}
+   for(uint a=0u;a<channels;++a)for(uint b=0u;b<channels;++b)if(!finiteZ(covariance[a*8u+b])||!finiteZ(inverse[a*8u+b]))return;
   }
  }
- for(uint beam=0u;beam<fine;++beam){float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>best){best=power;bestBeam=beam;}}
+ for(uint beam=0u;beam<fine;++beam){float power=beamScore(beam,channels,source,shifted,adaptive,inverse);if(power < -1.0)return;if(power>best){best=power;bestBeam=beam;}}
  if(!(best>0.0)||isnan(best)||isinf(best))return;
- for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>second){second=power;secondBeam=beam;}}
- for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85])||excluded(beam,secondBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>third){third=power;thirdBeam=beam;}}
- double refined=double(sqrt(max(best,0.0))),base=fused[i].x;uint record=m[42]+6u*i;
- // Owl OS/Retina/blah2arm define map level as 10*log10(|complex value|).
- // Fine-beam refinement must stay on that same legacy-compatible scale.
- if(m[87]==0u&&refined>base&&base>0.0LF){double gain=10.0LF*positiveLog10(refined/base);double snr=readS(record+4u)+gain;
-  if(!finiteD(snr)){reject(210u);return;}writeS(record+4u,snr);writeS(m[38]+2u*i,readS(m[38]+2u*i)+gain);}
- uint ratio2=second>0.0?uint(clamp(round(31.0*second/best),0.0,31.0)):0u;
- uint ratio3=third>0.0?uint(clamp(round(31.0*third/best),0.0,31.0)):0u;
+ for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85]))continue;float power=beamScore(beam,channels,source,shifted,adaptive,inverse);if(power>second){second=power;secondBeam=beam;}}
+ for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85])||excluded(beam,secondBeam,fine,m[85]))continue;float power=beamScore(beam,channels,source,shifted,adaptive,inverse);if(power>third){third=power;thirdBeam=beam;}}
+ // Bearing refinement is spatial evidence only. Temporal candidate SNR remains
+ // the calibrated originating-bank statistic used by the canonical detector.
+ uint ratio2=second>0.0?uint(clamp(floor(31.0LF*double(second)/double(best)+0.5LF),0.0LF,31.0LF)):0u;
+ uint ratio3=third>0.0?uint(clamp(floor(31.0LF*double(third)/double(best)+0.5LF),0.0LF,31.0LF)):0u;
  // Versioned per-frame three-lobe evidence. Detection/tracker association
  // derives its coarse beam from the primary; legacy public track JSON ignores it.
  uint secondCode=second>0.0?secondBeam+1u:0u,thirdCode=third>0.0?thirdBeam+1u:0u;
  s[m[86]+i]=0x80000000u|(bestBeam+1u)|(secondCode<<7u)|(thirdCode<<14u)|(ratio2<<21u)|(ratio3<<26u);
- atomicAdd(m[15],1u);
 }
 )glsl";
 const char* centroidBody=R"glsl(
 bool finiteRecord(uint at){return finiteD(readS(at))&&finiteD(readS(at+2u))&&finiteD(readS(at+4u));}
 void main(){uint i=indexOf();if(i>=p.count||m[0]!=0u)return;
  // p.a=1 is a direct-record qualifier binding; production always uses zero.
- if(p.a==0u&&(s[m[39]+i]&1u)==0u)return;s[m[40]+i]=0u;uint record=m[42]+6u*i;
+ if(p.a==0u&&(s[bankFlags(p.b,i)]&1u)==0u)return;s[bankKeep(p.b,i)]=0u;uint record=bankRecord(p.b,i);
  if(!finiteRecord(record))return;atomicAdd(m[7],1u);double centreSnr=readS(record+4u);bool retain=true;
  if(p.a==0u){uint row=i/m[33],column=i%m[33],rb=m[47]+2u*row,cb=m[48]+2u*column;
   for(uint r=m[rb];r<m[rb+1u]&&retain;++r)for(uint c=m[cb];c<m[cb+1u];++c){
-   uint other=r*m[33]+c;if(other!=i&&(s[m[39]+other]&1u)!=0u&&centreSnr<readS(m[38]+2u*other)){retain=false;break;}}}
+   uint other=r*m[33]+c;if(other!=i&&(s[bankFlags(p.b,other)]&1u)!=0u&&centreSnr<readS(bankRecord(p.b,other)+4u)){retain=false;break;}}}
  else {double delay=readS(record),doppler=readS(record+2u);
   precise double lowDelay=delay-readD(68u),highDelay=delay+readD(68u),lowDoppler=doppler-readD(70u),highDoppler=doppler+readD(70u);
   for(uint j=0u;j<p.count;++j){uint other=m[42]+6u*j;if(i==j||!finiteRecord(other))continue;
    double d=readS(other),v=readS(other+2u);if(d>lowDelay&&d<highDelay&&v>lowDoppler&&v<highDoppler&&centreSnr<readS(other+4u)){retain=false;break;}}}
- if(retain){s[m[40]+i]=1u;atomicAdd(m[8],1u);}
+ if(retain){s[bankKeep(p.b,i)]=1u;atomicAdd(m[8],1u);}
 }
 )glsl";
 const char* interpolationBody=R"glsl(
-bool usable(uint i){return fused[i].x>0.0LF&&finiteD(fused[i].x)&&finiteD(fused[i].y)&&finiteD(readS(m[38]+2u*i));}
+bool usable(uint i){return p.b==0u?((m[74]==2u?readS(m[37]+2u*i)>0.0LF:fused[i].x>0.0LF)&&finiteD(fused[i].x)&&finiteD(fused[i].y)&&finiteD(bankSnr(0u,i))):
+ (tbdBanks[(p.b-1u)*m[34]+i]>0.0LF&&finiteD(bankSnr(p.b,i)));}
 bool fit(double left,double centre,double right,out double offset,out double peak){
  precise double denominator=2.0LF*(left-2.0LF*centre+right);
  if(!finiteD(denominator)||abs(denominator)<1e-12LF)return false;
  precise double fittedOffset=(left-right)/denominator;offset=fittedOffset;if(!finiteD(offset)||abs(offset)>1.0LF)return false;
  precise double fittedPeak=centre-((left-right)*offset/4.0LF);peak=fittedPeak;return finiteD(peak);
 }
-void main(){uint i=indexOf();if(i>=p.count||m[0]!=0u||s[m[40]+i]==0u)return;
- uint record=m[42]+6u*i;double delay=readS(record),doppler=readS(record+2u),snr=readS(record+4u);
- if(!finiteD(delay)||!finiteD(doppler)||!finiteD(snr)){s[m[40]+i]=0u;return;}
- atomicAdd(m[9],1u);s[m[39]+i]=s[m[39]+i]|2u;
+void main(){uint i=indexOf();if(i>=p.count||m[0]!=0u||s[bankKeep(p.b,i)]==0u)return;
+ uint record=bankRecord(p.b,i);double delay=readS(record),doppler=readS(record+2u),snr=readS(record+4u);
+ if(!finiteD(delay)||!finiteD(doppler)||!finiteD(snr)){s[bankKeep(p.b,i)]=0u;return;}
+ atomicAdd(m[9],1u);s[bankFlags(p.b,i)]|=2u;
  uint row=i/m[33],column=i%m[33];bool known=true;
  if(p.a!=0u){row=m[32];column=m[33];for(uint r=0u;r<m[32];++r)if(doppler==dopplerAt(r)){row=r;break;}
   for(uint c=0u;c<m[33];++c)if(delay==delayAt(c)){column=c;break;}known=row<m[32]&&column<m[33];}
  uint cell=known?row*m[33]+column:0u;
  precise double fittedDelay=delay,fittedDoppler=doppler,delayPeak=snr,dopplerPeak=snr;bool nonPeak=false;
  if(known&&(m[50]&1u)!=0u&&column>0u&&column+1u<m[33]&&usable(cell-1u)&&usable(cell)&&usable(cell+1u)){
-  double left=readS(m[38]+2u*(cell-1u)),centre=readS(m[38]+2u*cell),right=readS(m[38]+2u*(cell+1u)),offset,peak;
+  double left=bankSnr(p.b,cell-1u),centre=bankSnr(p.b,cell),right=bankSnr(p.b,cell+1u),offset,peak;
   if(centre<left||centre<right)nonPeak=true;else if(fit(left,centre,right,offset,peak)){fittedDelay=delay+offset;delayPeak=peak;}}
  if(!nonPeak&&known&&(m[50]&2u)!=0u&&row>0u&&row+1u<m[32]&&usable(cell-m[33])&&usable(cell)&&usable(cell+m[33])){
-  double left=readS(m[38]+2u*(cell-m[33])),centre=readS(m[38]+2u*cell),right=readS(m[38]+2u*(cell+m[33])),offset,peak;
+  double left=bankSnr(p.b,cell-m[33]),centre=bankSnr(p.b,cell),right=bankSnr(p.b,cell+m[33]),offset,peak;
   if(centre<left||centre<right)nonPeak=true;else if(fit(left,centre,right,offset,peak)){fittedDoppler=doppler+(dopplerAt(row+1u)-doppler)*offset;dopplerPeak=peak;}}
- if(nonPeak){s[m[40]+i]=0u;atomicAdd(m[10],1u);return;}
+ if(nonPeak){s[bankKeep(p.b,i)]=0u;atomicAdd(m[10],1u);return;}
  double finalSnr=max(max(delayPeak,dopplerPeak),snr);
  if(!finiteD(fittedDelay)||!finiteD(fittedDoppler)||!finiteD(finalSnr)){reject(206u);return;}
- uint at=m[42]+6u*i;writeS(at,fittedDelay);writeS(at+2u,fittedDoppler);writeS(at+4u,finalSnr);s[m[39]+i]=s[m[39]+i]|4u;
+ uint at=record;writeS(at,fittedDelay);writeS(at+2u,fittedDoppler);writeS(at+4u,finalSnr);s[bankFlags(p.b,i)]|=4u;
+}
+)glsl";
+// Finalize each bank before deduplication. The winner is selected with an
+// integer CAS over immutable candidate records, preserving bank/grid tie order.
+const char* temporalMergeBody=R"glsl(
+uint lowerRow(double value){uint lo=0u,hi=m[32];while(lo<hi){uint mid=lo+(hi-lo)/2u;
+ if(dopplerAt(mid)<value)lo=mid+1u;else hi=mid;}return lo;}
+uint candidateKey(uint record){double delay=readS(record),doppler=readS(record+2u);
+ int rounded=delay<0.0LF?-int(floor(-delay+0.5LF)):int(floor(delay+0.5LF));
+ int column=rounded-int(m[m[45]]);if(column<0||column>=int(m[33]))return 0xffffffffu;
+ uint row=lowerRow(doppler);if(row==m[32])row=m[32]-1u;
+ else if(row>0u&&abs(doppler-dopplerAt(row-1u))<=abs(dopplerAt(row)-doppler))--row;
+ return row*m[33]+uint(column);}
+uint encodedRecord(uint code){uint at=code-1u;return bankRecord(at/m[34]+1u,at%m[34]);}
+void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;
+ if(p.a==0u){uint flags=0u;for(uint pass=1u;pass<=m[80]+1u;++pass)flags|=s[bankFlags(pass,i)]&3u;
+  s[m[39]+i]=(s[m[39]+i]&0xff00u)|flags;s[m[40]+i]=0u;s[m[41]+i]=0u;
+  if((flags&1u)!=0u)atomicAdd(m[61],1u);if((flags&2u)!=0u)atomicAdd(m[62],1u);return;}
+ if(p.a==1u){if(s[bankKeep(p.b,i)]==0u)return;uint record=bankRecord(p.b,i),key=candidateKey(record);
+  if(key==0xffffffffu){reject(211u);return;}uint code=(p.b-1u)*m[34]+i+1u,prior=atomicAdd(s[m[41]+key],0u);
+  for(;;){if(prior!=0u){double other=readS(encodedRecord(prior)+4u),value=readS(record+4u);
+    if(value<other||(value==other&&code>prior))return;}
+   uint observed=atomicCompSwap(s[m[41]+key],prior,code);if(observed==prior)return;prior=observed;}}
+ if(p.a==2u){uint code=s[m[41]+i];if(code==0u)return;uint pass=(code-1u)/m[34]+1u,source=(code-1u)%m[34],record=bankRecord(pass,source);
+  for(uint k=0u;k<6u;++k)s[m[42]+6u*i+k]=s[record+k];
+  uint motion=s[m[58]+(pass-1u)*m[34]+source];int dc=int(motion<<24u)>>24,dr=int(motion<<16u)>>24;
+  int sourceDc=int(source%m[33])-int(i%m[33]),sourceDr=int(source/m[33])-int(i/m[33]);
+  if(abs(sourceDc)>1||abs(sourceDr)>1){reject(211u);return;}
+  uint sourceCode=1u+uint(sourceDc+1)+3u*uint(sourceDr+1);
+  s[m[39]+i]=(s[m[39]+i]&3u)|4u|(1u<<(pass+2u))|((uint(fused[source].y)+1u)<<8u)|((uint(dc+2)|(uint(dr+16)<<3u))<<17u)|(sourceCode<<26u);
+  s[m[40]+i]=1u;return;}
+ if(p.a==4u){if(s[m[40]+i]==0u)s[m[39]+i]&=~4u;return;}
+ if((s[m[39]+i]&4u)==0u)return;uint record=m[42]+6u*i;
+ double delay=readS(record),doppler=readS(record+2u),snr=readS(record+4u),dd=readD(68u),dv=readD(70u);
+ uint first=lowerRow(doppler-dv);if(first>0u)--first;uint last=min(m[32],lowerRow(doppler+dv)+1u);
+ int firstCol=max(0,int(floor(delay-dd-delayAt(0u)))-1),lastCol=min(int(m[33]),int(ceil(delay+dd-delayAt(0u)))+2);
+ for(uint r=first;r<last;++r)for(int c=firstCol;c<lastCol;++c){uint j=r*m[33]+uint(c);if(j==i||(s[m[39]+j]&4u)==0u)continue;
+  uint other=m[42]+6u*j;double d=readS(other),v=readS(other+2u);
+  if(d>delay-dd&&d<delay+dd&&v>doppler-dv&&v<doppler+dv&&snr<readS(other+4u)){s[m[40]+i]=0u;return;}}
 }
 )glsl";
 // Integer-only stable compaction. The record region is dead until recordsBody;
@@ -464,9 +561,10 @@ void main(){uint i=indexOf();if(i>=(p.a==0u?m[11]:m[14])||m[0]!=0u)return;uint c
 }
 )glsl";
 inline std::vector<std::pair<std::string,std::string>> shaderSources(bool replaySnapshot=false){
- const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody},{"metrics_finish",metricsFinishBody}};
+ const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody},{"metrics_finish",metricsFinishBody},{"temporal_merge",temporalMergeBody}};
  std::vector<std::pair<std::string,std::string>> result;
  for(const auto& b:bodies){std::string prefix=common;
+  prefix+=track_before_detect::pathRankingShaderSource;
   if(std::string(b.first)=="tbd"){const auto at=prefix.find("layout(local_size_x=128)");
    if(at==std::string::npos)throw std::logic_error("TBD local size declaration missing");
    prefix.replace(at,std::string("layout(local_size_x=128)").size(),"layout(local_size_x=64)");}
@@ -498,6 +596,7 @@ class Stage {
  std::array<uint32_t,32> evidenceStatus_{};
  Context& context_;
  const PostprocessConfig config_;
+ bool observeDetector_=false;
  const uint32_t rows_,columns_;
  const Layout layout_;
  Buffer& fused_;
@@ -544,6 +643,9 @@ class Stage {
  }
 public:
  const auto& evidenceStatus()const{return evidenceStatus_;}
+ // Enabled only for the authenticated per-frame replay diagnostic request.
+ // CUT counting happens in the dispatched CFAR kernel after all exclusions.
+ void observeDetector(bool enabled){observeDetector_=enabled;}
  const gpu_native::Timestamps& evidenceTimes()const{return *timestamps_;}
  Stage(Context& context,const PostprocessConfig& config,uint32_t rows,uint32_t columns,uint32_t fs,Buffer& fused,Buffer& scratch,Buffer& staging,
   Buffer* channelMaps=nullptr,Buffer* refinementWeights=nullptr,uint32_t channels=0,uint32_t refinementBeams=0)
@@ -580,6 +682,8 @@ public:
   words[41]=layout_.indices;
   words[42]=layout_.candidates;
   words[43]=layout_.records;
+  words[57]=layout_.bankCandidates;
+  words[58]=layout_.bankMotion;
   words[86]=layout_.direction;
   words[44]=doppler;
   words[45]=delay;
@@ -654,6 +758,10 @@ public:
     words[rowBounds+2*r+1]=last;
    }
   }
+  if(tbd&&config.detection)appendTemporalAlphas(words,config.pfa,config.integrationCpis,
+    config.integrationDelayMotionBins,config.integrationDopplerMotionBins,uint32_t(config.train));
+  if(uint64_t(words.size())*4>context.candidate.properties.limits.maxStorageBufferRange)
+   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED metadata storage range");
   metadata_=std::make_unique<Buffer>(context,words.size()*4,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
   std::memcpy(metadata_->mapped,words.data(),words.size()*4);
   metadata_->flush(0,metadata_->bytes);
@@ -707,6 +815,8 @@ public:
  // plans, but no integration/TBD/angle history may bridge an input gap.
  void appendInputReset(VkCommandBuffer command){
   vkCmdFillBuffer(command,metadata_->handle,0,statusWords*4,0);
+  vkCmdFillBuffer(command,metadata_->handle,61*4,2*4,0);
+  vkCmdFillBuffer(command,metadata_->handle,63*4,4,0);
   vkCmdFillBuffer(command,metadata_->handle,64*4,4*4,0);
   vkCmdFillBuffer(command,metadata_->handle,79*4,4,0);
   // Repeated 0x7ff80000 words form a quiet FP64 NaN: the cold-history sentinel.
@@ -725,6 +835,8 @@ public:
   const bool tbd=config_.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):0;
   vkCmdFillBuffer(command,metadata_->handle,0,statusWords*4,0);
+  vkCmdFillBuffer(command,metadata_->handle,61*4,2*4,0);
+  vkCmdFillBuffer(command,metadata_->handle,63*4,4,0);
   barrier(command);
   timestamps_->begin(command,0);
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
@@ -747,13 +859,23 @@ public:
   barrier(command);}timestamps_->end(command,0);
   if(config_.detection){
    timestamps_->begin(command,1);
-   if(tbd)for(uint32_t pass=0;pass<=banks;++pass){kernels_[3]->append(command,{layout_.cells,pass+1u,pass==0u?1u:0u,0,0});barrier(command);}
-   else {kernels_[3]->append(command,{layout_.cells,0,1,0,0});barrier(command);}
-   if(tbd){kernels_[12]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
+   if(tbd)for(uint32_t pass=1;pass<=banks+1u;++pass){
+    kernels_[1]->append(command,{layout_.cells,pass,0,0,0});barrier(command);
+    kernels_[13]->append(command,{1,pass,0,0,0});barrier(command);
+    kernels_[3]->append(command,{layout_.cells,pass,1,1,observeDetector_?1:0});barrier(command);}
+   else {kernels_[3]->append(command,{layout_.cells,0,1,0,observeDetector_?1:0});barrier(command);}
    timestamps_->end(command,1);
    for(uint32_t stage=2;stage<=3;++stage){timestamps_->begin(command,stage);
-    kernels_[stage+2]->append(command,{layout_.cells,0,0,0,0});barrier(command);timestamps_->end(command,stage);}
+    if(tbd)for(uint32_t pass=1;pass<=banks+1u;++pass){kernels_[stage+2]->append(command,{layout_.cells,0,pass,0,0});barrier(command);}
+    else {kernels_[stage+2]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
+    timestamps_->end(command,stage);}
    timestamps_->begin(command,4);
+   if(tbd){kernels_[14]->append(command,{layout_.cells,0,0,0,0});barrier(command);
+    for(uint32_t pass=1;pass<=banks+1u;++pass){kernels_[14]->append(command,{layout_.cells,1,pass,0,0});barrier(command);}
+    kernels_[14]->append(command,{layout_.cells,2,0,0,0});barrier(command);
+    kernels_[14]->append(command,{layout_.cells,3,0,0,0});barrier(command);
+    kernels_[14]->append(command,{layout_.cells,4,0,0,0});barrier(command);
+    kernels_[12]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
    appendStableCompaction(command,kernels_,layout_.cells,0);
    kernels_[7]->append(command,{layout_.cells,0,0,0,0});
    barrier(command);
@@ -779,18 +901,20 @@ public:
    throw std::runtime_error("GPU postprocess map coverage mismatch");
   const bool tbd=config_.integrationCpis>2;
   const uint32_t detectorPasses=tbd?track_before_detect::detectorPassCount(config_.integrationCpis):1u;
-  if(config_.detection){if(s[cfarCells]!=layout_.cells*detectorPasses||s[trainingAdds]!=expectedTrainingAdds_*detectorPasses||s[cfarAccepted]>layout_.cells||
+  if(config_.detection){if(s[cfarCells]!=layout_.cells*detectorPasses||s[trainingAdds]!=expectedTrainingAdds_*detectorPasses||s[cfarAccepted]>layout_.cells*detectorPasses||
     s[centroidExamined]!=s[cfarAccepted]||s[centroidKept]>s[centroidExamined]||s[interpolationExamined]!=s[centroidKept]||
-    s[interpolationRejected]>s[interpolationExamined]||s[detectionCount]!=s[interpolationExamined]-s[interpolationRejected]||
-    s[compactCells]!=layout_.cells||s[recordCells]!=s[detectionCount]||(tbd&&s[refinedCandidates]!=s[cfarAccepted]))throw std::runtime_error("GPU postprocess detection coverage mismatch");}
+    s[interpolationRejected]>s[interpolationExamined]||s[detectionCount]>s[interpolationExamined]-s[interpolationRejected]||
+    (!tbd&&s[detectionCount]!=s[interpolationExamined]-s[interpolationRejected])||
+    s[compactCells]!=layout_.cells||s[recordCells]!=s[detectionCount]||(tbd&&s[refinedCandidates]!=s[detectionCount]))throw std::runtime_error("GPU postprocess detection coverage mismatch");}
   else for(uint32_t i=cfarCells;i<=centroidDiagnosticRecords;++i)if(s[i])throw std::runtime_error("Disabled GPU detection executed work");
   const uint32_t kinds=s[compactKinds],passes=(kinds&1u)+((kinds>>1u)&1u)+((kinds>>2u)&1u);
   if((config_.detection?(!(kinds&1u)||(kinds&~7u)):(kinds!=0u))||
      s[compactTileCounts]!=passes*((layout_.cells+127u)/128u)||s[compactPrefixTiles]!=s[compactTileCounts]||
      s[compactScatterCells]!=passes*layout_.cells)
    throw std::runtime_error("GPU stable compaction coverage mismatch");
-  if(s[cfarDiagnosticRecords]&&s[cfarDiagnosticRecords]!=s[cfarAccepted])throw std::runtime_error("GPU CFAR diagnostic coverage mismatch");
-  if(s[centroidDiagnosticRecords]&&s[centroidDiagnosticRecords]!=s[centroidKept])throw std::runtime_error("GPU centroid diagnostic coverage mismatch");
+  const auto* metadata=static_cast<const uint32_t*>(metadata_->mapped);
+  if(s[cfarDiagnosticRecords]&&s[cfarDiagnosticRecords]!=(tbd?metadata[61]:s[cfarAccepted]))throw std::runtime_error("GPU CFAR diagnostic coverage mismatch");
+  if(s[centroidDiagnosticRecords]&&s[centroidDiagnosticRecords]!=(tbd?metadata[62]:s[centroidKept]))throw std::runtime_error("GPU centroid diagnostic coverage mismatch");
   return s;
  }
  void validateOutputs(PostprocessOutputs out)const{
@@ -832,16 +956,27 @@ public:
   if(out.levels)copy(uint64_t(layout_.levels)*4,out.levels,uint64_t(layout_.cells)*8);
   if(out.unflooredSnr)copy(uint64_t(layout_.snr)*4,out.unflooredSnr,uint64_t(layout_.cells)*8);
   if(out.decisionFlags){copy(uint64_t(layout_.flags)*4,out.decisionFlags,uint64_t(layout_.cells)*4);
-   for(size_t i=0;i<out.decisionFlagCount;++i)out.decisionFlags[i]&=7u;}
+   if(config_.integrationCpis<=1)for(size_t i=0;i<out.decisionFlagCount;++i)out.decisionFlags[i]&=7u;}
   if(out.detectionCells&&s[detectionCount])copy(uint64_t(layout_.indices)*4,out.detectionCells,uint64_t(s[detectionCount])*4);
-  if(out.cfar)copyDiagnostic(1,out.cfar,s[cfarAccepted]);
-  if(out.centroid)copyDiagnostic(2,out.centroid,s[centroidKept]);
   const auto* words=static_cast<const uint32_t*>(metadata_->mapped);
+  const uint32_t cfarDiagnostic=config_.integrationCpis>2?words[61]:s[cfarAccepted],
+   centroidDiagnostic=config_.integrationCpis>2?words[62]:s[centroidKept];
+  if(out.cfar)copyDiagnostic(1,out.cfar,cfarDiagnostic);
+  if(out.centroid)copyDiagnostic(2,out.centroid,centroidDiagnostic);
   out.metrics->noisePower=getD(words,64);
   out.metrics->maxPower=getD(words,66);
   out.metrics->cfarCount=s[cfarAccepted];
   out.metrics->centroidCount=s[centroidKept];
   out.metrics->detectionCount=s[detectionCount];
+  out.metrics->cfarDiagnosticCount=cfarDiagnostic;
+  out.metrics->centroidDiagnosticCount=centroidDiagnostic;
+  out.metrics->availableCpis=config_.integrationCpis>2?std::min(words[79],config_.integrationCpis):
+   config_.integrationCpis==2?(s[28]?2u:1u):1u;
+  out.metrics->detectorObserved=observeDetector_&&config_.detection;
+  out.metrics->evaluatedCells=words[63];
+  if((!out.metrics->detectorObserved&&words[63])||
+     (out.metrics->detectorObserved&&(words[63]>s[cfarCells]||s[cfarAccepted]>words[63])))
+   throw std::runtime_error("GPU observed CFAR population differs from executed tests");
  }
 private:
  // Optional qualifier materialization: original flags/SNRs survive interpolation.

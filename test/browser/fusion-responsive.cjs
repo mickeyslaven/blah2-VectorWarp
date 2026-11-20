@@ -35,8 +35,6 @@ const server = http.createServer((request, response) => {
           position_envelope:{horizontal_radius_km:envelopeRadius}}],
         validation:{held_out_truth:true,adsb_used_by_solver:false,target_kind:'operational-fused-tracks',
           matches:[{candidate_id:'F1',adsb_hex:'matched',adsb_flight:'RADAR123'}]},
-        map_support:{available:radarAvailable,tracks:[{id:'AMB1',state:'PERSISTENT_AMBIGUOUS',misses:0,
-          diagnostic_only:true,position_hypothesis:{latitude:40.1,longitude:-80.1}}]},
         cross_frequency_support: {tracks: [{id: 'X6010690', state: 'SUPPORT_ACTIVE',
           diagnostic_only: true, supporting_cpis: 2}]}},
       '/api/adsb': {aircraft: [
@@ -210,7 +208,7 @@ async function connect(endpoint) {
     assertGlyphContract(await glyphContract());
     await evaluate(`document.getElementById('fusion-hypotheses').click()`);
     await evaluate(`new Promise(resolve=>setTimeout(resolve,500))`);
-    assert.equal((await glyphContract()).diagnostics,1,'diagnostic hypotheses require explicit enablement');
+    assert.equal((await glyphContract()).diagnostics,0,'No unqualified map-support tracker is rendered');
     await client.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
     assert.equal(await evaluate(`getComputedStyle(document.querySelector('.fusion-aircraft-row')).transitionDuration`),'0s');
     associationsAvailable=false;

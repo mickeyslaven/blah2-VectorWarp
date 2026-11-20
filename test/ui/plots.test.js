@@ -45,6 +45,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       aircraftPlotData: common.aircraftPlotData,
       aircraftHoverText: common.aircraftHoverText,
       aircraftHoverTemplate: common.aircraftHoverTemplate,
+      VectorWarpPlotTheme: common.vectorwarpPlotTheme,
       stabilizeAircraftSnapshots: (rows, options) => {
         snapshotScopes.push(options?.scope);
         return common.stabilizeAircraftSnapshots(rows, options);
@@ -61,9 +62,19 @@ const clone = value => JSON.parse(JSON.stringify(value));
         [method, async (...args) => { calls.push({method, args: clone(args)}); }])),
       startRadarPlot: (_url, render) => { update = render; return {stop() {}}; }
     });
+    require('./display-fixture')(context);
     const source = fs.readFileSync(path.join(__dirname, '../../html/js', `plot_${kind}.js`), 'utf8');
     assert.ok(!source.includes('setInterval'), `${kind} must use shared frame timing`);
     vm.runInContext(source, context);
+    if (kind !== 'map') {
+      const initialLayout = calls[0].args[2], initialConfig = calls[0].args[3];
+      assert.deepEqual(clone(initialLayout.margin), {l: 92, r: 50, b: 50, t: 10, pad: 0},
+        `${kind} retains the shared plot viewport margins`);
+      assert.equal(initialLayout.paper_bgcolor, 'rgba(0,0,0,0)',
+        `${kind} retains the transparent plot canvas`);
+      assert.equal(initialConfig.scrollZoom, kind === 'spectrum' ? undefined : true,
+        `${kind} retains its original scroll-zoom behavior`);
+    }
     if (context.vectorwarpMapReady) await context.vectorwarpMapReady;
     if (context.vectorwarpDetectionReady) await context.vectorwarpDetectionReady;
     if (context.vectorwarpSpectrumReady) await context.vectorwarpSpectrumReady;
@@ -241,6 +252,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     URL, Date,
     liveApiUrl: value => value,
     radarPresentationUrl: value => value,
+    VectorWarpPlotTheme: common.vectorwarpPlotTheme,
     getRadarRuntimeConfig: async () => ({process: {data: {cpi: .5},
       multi_illuminator: {enabled: true}}}),
     fetchRadarJson: async () => null,
@@ -249,6 +261,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     Plotly: {react: async (...args) => unavailableCalls.push(args), update: async () => {}},
     window: {}
   });
+  require('./display-fixture')(unavailableContext);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../html/js/plot_spectrum.js'), 'utf8'),
     unavailableContext);
   await unavailableContext.vectorwarpSpectrumReady;

@@ -67,20 +67,20 @@ exit 0
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_manifests_pin_the_gcc_compatible_rapidjson_snapshot(self):
-        for relative in ("lib/vcpkg.json", "lib/vcpkg-kraken.json"):
-            with self.subTest(manifest=relative):
-                manifest = json.loads((ROOT / relative).read_text(encoding="utf-8"))
-                dependency = next(item for item in manifest["dependencies"]
-                                  if item["name"] == "rapidjson")
-                override = next(item for item in manifest["overrides"]
-                                if item["name"] == "rapidjson")
-                self.assertEqual(dependency, {
-                    "name": "rapidjson", "version>=": "2023-07-17"
-                })
-                self.assertEqual(override, {
-                    "name": "rapidjson", "version-date": "2023-07-17"
-                })
+    def test_manifest_pins_the_gcc_compatible_rapidjson_snapshot(self):
+        manifest = json.loads((ROOT / "lib/vcpkg.json").read_text(encoding="utf-8"))
+        dependency = next(item for item in manifest["dependencies"]
+                          if item["name"] == "rapidjson")
+        override = next(item for item in manifest["overrides"]
+                        if item["name"] == "rapidjson")
+        self.assertEqual(dependency, {
+            "name": "rapidjson", "version>=": "2023-07-17"
+        })
+        self.assertEqual(override, {
+            "name": "rapidjson", "version-date": "2023-07-17"
+        })
+        self.assertEqual(list((ROOT / "lib").glob("vcpkg*.json")),
+                         [ROOT / "lib/vcpkg.json"])
 
     def build_environment(self, with_uhd: bool) -> dict:
         uhd_tools = self.temp / "uhd-tools"
@@ -236,7 +236,7 @@ endif()
             "bash", str(BUILD_SCRIPT), "--backend", "airspy", "--preflight"
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertNotEqual(invalid.returncode, 0)
-        self.assertIn("open-test, kraken, rspduo, usrp, hackrf or all", invalid.stderr)
+        self.assertIn("use --backend all", invalid.stderr)
 
     def test_open_test_preflight_needs_uhd_and_hackrf_but_not_sdrplay(self):
         environment = self.build_environment(True)
@@ -326,6 +326,7 @@ endif()
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
         (artifact / "libexec/check-node-version.js").rename(
             artifact / "libexec/vectorwarp-check-node-version")
+        shutil.copy2(ROOT / "tools/vectorwarp_soak_identity.py", artifact / "libexec/vectorwarp-cohort-check")
         (artifact / "libexec/vectorwarp-check-node-version").chmod(0o755)
         (artifact / 'libexec/vectorwarp').chmod(0o755)
         shutil.copy2(ROOT / 'packaging/deb/preinst', artifact / 'libexec/vectorwarp-quiesce')

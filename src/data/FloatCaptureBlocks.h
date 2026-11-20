@@ -3,12 +3,14 @@
 
 #include <algorithm>
 #include <complex>
+#include <condition_variable>
 #include <cstddef>
 #include <deque>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -20,12 +22,84 @@ public:
   using Sample = std::complex<float>;
   using Buffer = std::vector<Sample>;
   struct Stats { std::size_t allocated, limit, allocations, reuses; };
+  // Separate from Stats: preserve the existing capture-core return ABI.
+  struct ReserveStats {
+    std::size_t target, available, pending, misses, lazyAllocations,
+      asyncAllocations, asyncFailures, waits;
+  };
 
 private:
+  // Private deterministic allocation gate for the shared-core regression;
+  // production has no public/environment allocator override.
+  friend struct FloatCaptureBlockPoolTestAccess;
+  using ReserveAllocator = Buffer(*)(std::size_t, void*);
+  using ReserveRetirer = void(*)(Buffer&&, void*);
+  ReserveAllocator reserveAllocator_ = nullptr;
+  void* reserveAllocatorContext_ = nullptr;
+  ReserveRetirer reserveRetirer_ = nullptr;
+  void* reserveRetirerContext_ = nullptr;
   const std::size_t blockSamples_, limit_;
   mutable std::mutex mutex_;
   std::vector<Buffer> free_;
   std::size_t allocated_ = 0, allocations_ = 0, reuses_ = 0;
+  std::condition_variable reserveChanged_;
+  std::thread reserveThread_;
+  std::size_t reserveTarget_ = 0, pending_ = 0, reserveMisses_ = 0,
+    lazyAllocations_ = 0, asyncAllocations_ = 0, asyncFailures_ = 0,
+    reserveWaits_ = 0;
+  bool stopping_ = false, requested_ = false;
+
+  void requestReserve() noexcept {
+    if (reserveTarget_ && free_.size() < reserveTarget_ && allocated_ < limit_) {
+      requested_ = true;
+      reserveChanged_.notify_one();
+    }
+  }
+  void replenish() noexcept {
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (;;) {
+      reserveChanged_.wait(lock, [&] { return stopping_ || requested_; });
+      if (stopping_) return;
+      requested_ = false;
+      if (free_.size() >= reserveTarget_ || allocated_ == limit_) continue;
+      ++allocated_; ++pending_; // In-flight storage also consumes the bound.
+      lock.unlock();
+      try {
+        // Allocation/first-touch holds no pool or capture lock.
+        Buffer buffer = reserveAllocator_ ? reserveAllocator_(blockSamples_, reserveAllocatorContext_)
+                                          : Buffer(blockSamples_);
+        lock.lock();
+        ++allocations_; ++asyncAllocations_;
+        if (!stopping_ && free_.size() < reserveTarget_) {
+          --pending_;
+          free_.push_back(std::move(buffer));
+        } else {
+          // A concurrently recycled block already filled the reserve. Keep the
+          // redundant allocation charged against both allocated_ and pending_
+          // until its potentially expensive destruction has completed outside
+          // the pool mutex. This prevents receiver acquisition from blocking on
+          // a full-CPI free without transiently exceeding the memory ceiling.
+          lock.unlock();
+          if (reserveRetirer_)
+            reserveRetirer_(std::move(buffer), reserveRetirerContext_);
+          else {
+            Buffer retired(std::move(buffer));
+          }
+          lock.lock();
+          --allocated_; --pending_;
+          // Acquisition may have consumed the recycled reserve while the
+          // redundant block was retiring. Re-evaluate demand so the helper
+          // cannot strand the pool without a reserve.
+          requestReserve();
+        }
+      } catch (...) {
+        lock.lock();
+        --allocated_; --pending_; ++asyncFailures_;
+        requested_ = false; // Retry only on subsequent demand, never spin on OOM.
+      }
+      reserveChanged_.notify_all();
+    }
+  }
 
 public:
   FloatCaptureBlockPool(std::size_t blockSamples, std::size_t capacity,
@@ -49,21 +123,62 @@ public:
     }
   }
 
+  ~FloatCaptureBlockPool() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stopping_ = true;
+    }
+    reserveChanged_.notify_all();
+    if (reserveThread_.joinable()) reserveThread_.join();
+  }
+
+  // Call only during preparation, before producer admission. One additional
+  // warmed block avoids precommitting the configured backlog. Startup free
+  // storage is warmBlocks+1 (bounded by limit), but the steady free target is
+  // only ONE, not warmBlocks+1. Failure here is
+  // fail-closed; subsequent helper allocation failures retain lazy fallback.
+  void prepare_reserve() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (reserveTarget_) return;
+    if (allocated_ < limit_) {
+      ++allocated_;
+      lock.unlock();
+      Buffer buffer;
+      try { buffer = Buffer(blockSamples_); }
+      catch (...) { lock.lock(); --allocated_; throw; }
+      lock.lock();
+      free_.push_back(std::move(buffer)); ++allocations_;
+    }
+    reserveTarget_ = 1;
+    try { reserveThread_ = std::thread([this] { replenish(); }); }
+    catch (...) { reserveTarget_ = 0; throw; }
+  }
+
   std::size_t block_samples() const { return blockSamples_; }
 
   Buffer acquire()
   {
     {
-      std::lock_guard<std::mutex> lock(mutex_);
+      std::unique_lock<std::mutex> lock(mutex_);
+      if (free_.empty() && reserveTarget_) ++reserveMisses_;
+      // A helper constructing the last permitted allocation must not make an
+      // otherwise valid acquisition fail. It never needs the capture locks.
+      if (free_.empty() && allocated_ == limit_ && pending_) {
+        ++reserveWaits_;
+        reserveChanged_.wait(lock, [&] { return !free_.empty() || !pending_; });
+      }
       if (!free_.empty()) {
         auto result = std::move(free_.back());
         free_.pop_back();
         ++reuses_;
+        requestReserve();
         return result;
       }
       if (allocated_ == limit_)
         throw std::runtime_error("Native float capture block pool exhausted");
       ++allocated_;
+      ++lazyAllocations_;
+      requestReserve();
     }
     try {
       Buffer result(blockSamples_);
@@ -87,12 +202,19 @@ public:
       free_.push_back(std::move(buffer));
     else
       --allocated_;
+    requestReserve();
+    reserveChanged_.notify_all();
   }
 
   Stats stats() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
     return {allocated_, limit_, allocations_, reuses_};
+  }
+  ReserveStats reserve_stats() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {reserveTarget_, free_.size(), pending_, reserveMisses_,
+      lazyAllocations_, asyncAllocations_, asyncFailures_, reserveWaits_};
   }
 };
 
@@ -252,6 +374,8 @@ public:
   bool empty() const { return queued_.empty(); }
   void clear() { queued_.clear(); }
   auto stats() const { return pool_->stats(); }
+  void prepare_reserve() { pool_->prepare_reserve(); }
+  auto reserve_stats() const { return pool_->reserve_stats(); }
   void discard(std::size_t count) { queued_.discard(count); }
 
   template<class Complex = std::complex<double>>

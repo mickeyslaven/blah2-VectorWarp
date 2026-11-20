@@ -28,6 +28,18 @@ Pull requests run the CPU, API, browser, macOS, receiver, package, and bundled
 Kraken workflows. `release-packages.yml` builds the same native package profile
 used by releases without publishing it or receiving signing credentials.
 
+Before native signing or Homebrew publication, `script/verify-release-ci.py`
+authenticates successful `main` runs of CI, macOS adapters, macOS standalone,
+Homebrew and bundled Kraken for the exact merged source commit. PR merge
+snapshots and another commit cannot qualify it. The latest matching run must
+be complete and successful; a newer failure or pending run supersedes an older
+success. A publication run cannot attest itself, so repeat hosted checks before
+dispatching publication. Native releases include this check's provenance in
+their signed checksum inventory. This software gate does not replace physical
+GPU/SDR qualification, artifact binding, the full live soak or explicit release
+permission. Homebrew's artifact-specific acceptance still requires maintainer
+review before the protected publication dispatch.
+
 To repeat an installed-package check on a disposable Linux host:
 
 ```sh
@@ -104,61 +116,21 @@ packaging changes integration files, and any deployment-local tree mutation
 invalidates that package's qualification. Candidate artifacts are retained for
 30 days; expire or lose them and a new candidate/soak is required.
 
-For the Linux homeportal/HP cohort, run the read-only identity probe from this
-frozen checkout on each deployed node (with permission to read the running
-units' `/proc` metadata):
-
-```sh
-python3 tools/vectorwarp_soak_identity.py
-ssh -o BatchMode=yes operator@hp python3 - < tools/vectorwarp_soak_identity.py
-```
-
-The probe assumes `/opt/vectorwarp/current`, `/etc/vectorwarp/config.yml` and
-the standard API/processor systemd units. It verifies that both running units
-use that config and artifact. Both must already have been started from the
-final candidate and final config through the reviewed lifecycle. Hashing is
-bounded to 30,000 entries and 2 GiB; special files, broken/external symlinks,
-unreadable or concurrently changed files fail closed. Recordings and mutable
-state must live outside the immutable release tree.
-
-Review the probe outputs against the deployment record, then save a binding
-JSON outside the checkout with this shape (all digests are complete lowercase
-SHA-256 values, and `sourceCommit` is the complete 40-character commit):
-
-```json
-{
-  "schema": 1,
-  "sourceCommit": "<frozen commit>",
-  "candidateRunId": "<successful explicit main package run ID>",
-  "candidateRunAttempt": 1,
-  "nodes": {
-    "homeportal": {
-      "packageFilename": "<exact downloaded package basename>",
-      "packageSha256": "<SHA-256 of that downloaded package>",
-      "release": "<resolved release directory>",
-      "artifactSha256": "<artifactSha256 from reviewed probe>",
-      "configSha256": "<configSha256 from reviewed probe>",
-      "runtimeExecutables": "<copy the probe's runtimeExecutables object>"
-    },
-    "hp": "<same fields from the HP probe>"
-  }
-}
-```
-
-Set `VECTORWARP_SOAK_BINDING` to that file,
-`VECTORWARP_SOAK_HP_SSH` to the authenticated SSH destination, and
-`VECTORWARP_SOAK_STATE` to a new evidence directory. Run
-`tools/vectorwarp_two_node_soak.py` every minute on homeportal. The monitor
-measures both trees, configs and running executables on every observation and
-binds the monitor/probe hashes into the cohort. Preserve the binding, state
-and deployment receipts. Changing a binding or verifier requires a new state
-directory; do not reset or overwrite failed evidence.
+Use the canonical [live-cohort binding and evidence procedure](LIVE_RELEASE_COHORT.md)
+for the current schema, probe commands, per-node resources, and qualification
+receipts. The monitor supports one, two, or more reviewed mixed-capability
+nodes through the same lifecycle; node identity never selects acceptance logic.
+The historical monitor filename remains for installed timer/CLI compatibility.
+Use a fresh state directory whenever the binding or verifier changes; preserve
+failed and historical evidence.
 
 Release acceptance requires `releaseAccepted: true`: valid binding, no sticky
 startup/capture/restart/binding failure, and at least 86,400 continuous healthy
 seconds with no observation gap over 180 seconds. `latestHealthy`, a short
 diagnostic window, or unbound `steadyStateAccepted` cannot release a candidate.
-The monitor explicitly requires recording to be disabled; recording stress
+The monitor uses each binding's reviewed ambiguity and clutter backends rather
+than assuming a receiver- or host-specific backend. The monitor explicitly
+requires recording to be disabled; recording stress
 and recovery tests are separate acceptance evidence.
 
 Only after acceptance, dispatch **Build release packages** from the immutable

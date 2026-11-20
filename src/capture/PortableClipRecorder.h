@@ -39,7 +39,8 @@ public:
 
   bool ingest(IqBlock samples, uint64_t epoch = 0,
     uint64_t firstSample = 0, bool positionAvailable = false,
-    int64_t receiptNanoseconds = 0);
+    int64_t receiptNanoseconds = 0,
+    std::shared_ptr<const RecordingBlockMetadata> metadata = {});
   void request(const IqClipRequest& request);
   IqClipStatus status() const;
   void discontinuity(const std::string& reason);
@@ -64,6 +65,7 @@ private:
   std::thread writer;
   bool stopping = false, haveEpoch = false;
   uint64_t streamEpoch = 0, nextSample = 0, fileSequence = 0;
+  uint64_t ingressSequence = 0;
   int64_t epochNanoseconds = 0;
 
   int64_t now_nanoseconds() const;

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import pathlib
+import json
 import re
 import os
 import subprocess
@@ -22,9 +23,11 @@ class ReleaseMatrixTest(unittest.TestCase):
             ('debian13', 'amd64'), ('debian13', 'arm64'),
             ('fedora44', 'x86_64'), ('fedora44', 'aarch64'),
         }
-        actual = set(re.findall(r'distro: ([\w.]+), format: \w+, arch: (\w+)', workflow))
+        matrix = json.loads(subprocess.check_output(["python3", str(ROOT / "script/artifact-plan.py"), "matrix"], text=True))
+        actual = {(item["distro"], item["arch"]) for item in matrix["include"]}
         self.assertEqual(expected, actual)
-        self.assertEqual(workflow.count('script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test'), 3)
+        self.assertEqual(workflow.count('script/artifact-plan.py native-package'), 3)
+        self.assertNotIn('script/build-native.sh --backend all', workflow)
         self.assertIn('script/test-package-upgrade.sh --previous', workflow)
         self.assertIn('script/test-installed-package.sh --package', workflow)
         self.assertIn('--dragonos-uhd-fixture', workflow)
@@ -132,8 +135,13 @@ exit 0
         self.assertIn('TEST_CMAKE_DIR="$BUILD_DIR/cmake-tests"', build)
         self.assertIn('-DBUILD_TESTING=ON -DBLAH2_OUTPUT_DIR="$TEST_OUTPUT_DIR"', build)
         self.assertIn('-DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"', build)
-        self.assertIn("-name 'test*'", build)
-        self.assertIn('release artifact must not contain test executables', package)
+        self.assertIn('--level build --backend "$BACKEND"', build)
+        self.assertIn('--level package', package)
+
+    def test_kraken_companion_uses_selected_build_tree(self):
+        build = (ROOT / 'script/build-native.sh').read_text()
+        self.assertIn('--build-dir "$BUILD_DIR/kraken-native"', build)
+        self.assertNotIn('build-kraken.py" --jobs', build)
 
     def test_public_build_entrypoints_require_unified_receiver_artifact(self):
         native = (ROOT / 'script/build-native.sh').read_text()
@@ -143,9 +151,8 @@ exit 0
             self.assertIn('receiver-subset builds are internal adapter fixtures; use --backend all',
                           script)
         package = (ROOT / 'script/package-native.sh').read_text()
-        self.assertIn("[[ $backend == all ]] || die 'published packages require all receiver support in one build'",
-                      package)
-        self.assertIn('local_build_receivers == RspDuo', package)
+        self.assertIn('script/artifact-plan.py" validate', package)
+        self.assertIn('--level package', package)
 
 
 if __name__ == '__main__':

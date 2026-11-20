@@ -83,17 +83,14 @@ function projectedUncertainty({aircraft, target, rx, tx, frequency, config, moti
       (!finite(reportedDisagreement) || reportedDisagreement < 0))
     return invalid('invalid-source-disagreement');
   const disagreementM = finite(reportedDisagreement) ? reportedDisagreement * 1000 : 0;
-  // A conflicting source cannot be hidden behind the selected source's NACp.
-  // This conservative admission rule deliberately does not assume that two
-  // providers are independent, nor that their separation is Gaussian noise.
-  if (disagreementM > radius) return invalid('source-disagreement-exceeds-accuracy');
   const v = velocity(observation), projectedV = velocity(aircraft);
   if (!v || !projectedV) return invalid('velocity-unavailable');
   const g = geometry(target, rx, tx, projectedV.ecef, frequency);
   if (!g) return invalid('invalid-geometry');
-  // Below the admission ceiling, use the full observed separation as a
-  // per-horizontal-axis scale floor. Taking max (not adding independent
-  // variances) avoids inventing independence between source errors.
+  // Fusion already bounds its accepted source cluster. Its observed separation
+  // can exceed the winning transponder's NACp: retain the full separation as a
+  // scale floor, then let the association area's hard cap abstain if necessary.
+  // Taking max avoids inventing independence between provider errors.
   const sigmaHorizontal = Math.max(radius / Math.sqrt(5.991464547107979), disagreementM);
   const turn = Math.max(finite(observation.track_rate) ? Math.abs(observation.track_rate) : 0,
     finite(motion.turnRateDegS) ? Math.abs(motion.turnRateDegS) : 0);

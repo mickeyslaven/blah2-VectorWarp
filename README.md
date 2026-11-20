@@ -87,6 +87,9 @@ Since v0.1.38, the next release adds:
 
 - One unified all-receiver build for KrakenSDR, USRP/UHD, dual HackRF, and the
   local SDRplay adapter kit; choose the connected receiver in Settings.
+- Every receiver normalizes its samples at ingress, then uses the same clutter,
+  ambiguity, fusion, temporal, detection, and tracking pipeline. Channelization
+  creates signal lanes; it does not select a second radar implementation.
 - Wideband captures can be channelized into independent, phase-preserving FM
   and HDTV (ATSC) station lanes for parallel radar processing.
 - GPU acceleration now covers both narrow FM and wide HDTV channelization,

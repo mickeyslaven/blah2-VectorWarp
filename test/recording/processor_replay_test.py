@@ -6,147 +6,31 @@ files, and loopback HTTP/TCP peers.  It never discovers, opens, or configures an
 SDR.  Run it explicitly; it is deliberately not wired into CMake yet.
 """
 import argparse
-import http.server
+import importlib.util
 import json
 import os
 from pathlib import Path
 import signal
-import socket
 import struct
 import subprocess
 import tempfile
-import threading
 import time
 import math
 import hashlib
 
 
-HOST = "127.0.0.1"
-PORT_NAMES = ("map", "detection", "track", "illuminator", "timestamp", "timing", "iqdata")
+# Source-tree qualification and explicitly staged detached fixtures share the
+# production peer owner; production never imports this test module.
+_SESSION_PATH = Path(os.environ.get("VECTORWARP_REPLAY_SESSION",
+    str(Path(__file__).resolve().parent.parent.parent / "script/replay_session.py")))
+_SESSION_SPEC = importlib.util.spec_from_file_location("processor_replay_session", _SESSION_PATH)
+SESSION = importlib.util.module_from_spec(_SESSION_SPEC)
+_SESSION_SPEC.loader.exec_module(SESSION)
+HOST, PORT_NAMES = SESSION.HOST, SESSION.PORT_NAMES
+MAX_RETAINED_OUTPUT = SESSION.MAX_RETAINED_OUTPUT
+free_listener, SinkGroup, StatusServer = SESSION.free_listener, SESSION.SinkGroup, SESSION.StatusServer
+json_values, assert_finite = SESSION.json_values, SESSION.assert_finite
 RSP_TYPES = ("RspDuo", "Usrp", "HackRF")
-STATUS_LOCK = threading.Lock()
-MAX_RETAINED_OUTPUT = 8 << 20
-
-
-def free_listener():
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind((HOST, 0))
-    listener.listen()
-    listener.settimeout(.2)
-    return listener
-
-
-class SinkGroup:
-    """Accept and drain processor output so Socket writes cannot block."""
-    def __init__(self):
-        self.listeners = {name: free_listener() for name in PORT_NAMES}
-        self.bytes = {name: 0 for name in PORT_NAMES}
-        # Retain bounded copies of every mathematical product. Receiver parity
-        # must cover detections and tracker evolution, not merely prove that a
-        # processor emitted one finite map.
-        self.payloads = {name: bytearray() for name in
-                         ("map", "detection", "track", "illuminator", "timestamp", "timing")}
-        self.truncated = set()
-        self.stop = threading.Event()
-        self.threads = [threading.Thread(target=self._serve, args=(name, sock), daemon=True)
-                        for name, sock in self.listeners.items()]
-
-    def start(self):
-        for thread in self.threads:
-            thread.start()
-
-    def _serve(self, name, listener):
-        while not self.stop.is_set():
-            try:
-                connection, _ = listener.accept()
-            except socket.timeout:
-                continue
-            except OSError:
-                return
-            with connection:
-                connection.settimeout(.2)
-                while not self.stop.is_set():
-                    try:
-                        block = connection.recv(65536)
-                    except socket.timeout:
-                        continue
-                    except OSError:
-                        break
-                    if not block:
-                        break
-                    self.bytes[name] += len(block)
-                    if name in self.payloads:
-                        remaining = MAX_RETAINED_OUTPUT - len(self.payloads[name])
-                        if len(block) > remaining:
-                            self.truncated.add(name)
-                        if remaining > 0:
-                            self.payloads[name].extend(block[:remaining])
-
-    def ports(self):
-        return {name: listener.getsockname()[1] for name, listener in self.listeners.items()}
-
-    def close(self):
-        self.stop.set()
-        for listener in self.listeners.values():
-            listener.close()
-        for thread in self.threads:
-            thread.join(1)
-
-
-class StatusServer:
-    def __init__(self):
-        self.statuses = []
-        parent = self
-
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == "/capture":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/plain")
-                    self.end_headers()
-                    self.wfile.write(b"false")
-                else:
-                    self.send_error(404)
-
-            def do_POST(self):
-                if self.path != "/api/processor/status":
-                    self.send_error(404)
-                    return
-                try:
-                    size = int(self.headers.get("Content-Length", "0"))
-                    value = json.loads(self.rfile.read(size))
-                    if not isinstance(value, dict):
-                        raise ValueError("status is not an object")
-                except (ValueError, json.JSONDecodeError):
-                    self.send_error(400)
-                    return
-                with STATUS_LOCK:
-                    parent.statuses.append(value)
-                self.send_response(204)
-                self.end_headers()
-
-            def log_message(self, *_):
-                pass
-
-        self.server = http.server.ThreadingHTTPServer((HOST, 0), Handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-
-    @property
-    def port(self):
-        return self.server.server_address[1]
-
-    def start(self):
-        self.thread.start()
-
-    def snapshot(self):
-        with STATUS_LOCK:
-            return list(self.statuses)
-
-    def close(self):
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(2)
 
 
 def write_blah2iq(path, channels, sample_rate, frequency, frames=3, frame_samples=None):
@@ -283,7 +167,7 @@ def config(receiver, channels, recording, api_port, sink_ports, loop=False, mism
         # injected target outside the explicit half-open cancellation span.
         process["clutter"].update(enable=True, delayMin=-1, delayMax=3)
         process["multi_illuminator"] = {
-            "enabled": True, "input_phase_correction": "off",
+            "enabled": True,
             "illuminators": [{"enabled": True, "id": "parity-lane",
                 "standard": "CUSTOM", "frequency_hz": frequency,
                 "occupied_bandwidth_hz": 100000,
@@ -299,7 +183,7 @@ def config(receiver, channels, recording, api_port, sink_ports, loop=False, mism
                                "format": "auto", "provenance": "legacy-unqualified"}},
         "process": process,
         "network": {"ip": HOST, "ports": dict(api=api_port, **sink_ports)},
-        "save": {"iq": False, "map": False, "detection": False, "timing": False, "path": str(recording.parent)},
+        "save": {"map": False, "detection": False, "path": str(recording.parent)},
     }
 
 
@@ -343,35 +227,6 @@ def first_json(payload, name):
     return value
 
 
-def json_values(payload, name):
-    text = bytes(payload).decode()
-    decoder = json.JSONDecoder()
-    values = []
-    position = 0
-    while position < len(text):
-        while position < len(text) and text[position].isspace():
-            position += 1
-        if position == len(text):
-            break
-        try:
-            value, position = decoder.raw_decode(text, position)
-        except json.JSONDecodeError as error:
-            raise AssertionError(f"{name} output is not concatenated JSON: {error}") from error
-        values.append(value)
-    return values
-
-
-def assert_finite(value, name="map"):
-    if isinstance(value, dict):
-        for key, item in value.items():
-            assert_finite(item, f"{name}.{key}")
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            assert_finite(item, f"{name}[{index}]")
-    elif isinstance(value, (int, float)) and not isinstance(value, bool) and not math.isfinite(value):
-        raise AssertionError(f"{name} contains a non-finite number")
-
-
 def assert_finite_numbers(value, name="map.data"):
     if isinstance(value, list):
         for index, item in enumerate(value):
@@ -381,10 +236,15 @@ def assert_finite_numbers(value, name="map.data"):
 
 
 def canonical_product(value, *, drop_track_ids=False):
-    """Remove provenance only; retain every value that can change radar math."""
+    """Remove provenance/runtime timing; retain every radar math/lineage value."""
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
+            if key == "processing_ms":
+                if not isinstance(item, (int, float)) or isinstance(item, bool) or \
+                        not math.isfinite(item) or item < 0:
+                    raise AssertionError("invalid temporal processing timing")
+                continue
             if key in ("timestamp", "eventTime") or (drop_track_ids and key == "id"):
                 continue
             result[key] = canonical_product(item, drop_track_ids=drop_track_ids)
@@ -439,6 +299,14 @@ def canonical_temporal_trace(payload):
         integration = frame.get("detector_integration") if isinstance(frame, dict) else None
         if not isinstance(integration, dict):
             raise AssertionError("lane frame lacks detector integration lineage")
+        elapsed = integration.get("processing_ms")
+        if not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool) or \
+                not math.isfinite(elapsed) or elapsed < 0:
+            raise AssertionError("lane frame has invalid temporal processing timing")
+        # Runtime diagnostics vary with scheduling; every numerical product,
+        # configured policy, readiness flag and source lineage remains exact.
+        integration = {key: value for key, value in integration.items()
+                       if key != "processing_ms"}
         result.append({
             "first_input_sample": frame.get("first_input_sample"),
             "end_input_sample": frame.get("end_input_sample"),
@@ -714,8 +582,8 @@ def invalid_startup_case(binary, field):
         return {"case": f"invalid-{field}", "ok": True, "output_bytes": 0}
 
 
-def invalid_multi_clutter_case(binary, receiver):
-    """All receiver labels refuse an impossible multi-lane setting before IQ."""
+def invalid_tracker_dependency_case(binary, receiver, channelized):
+    """Native YAML rejects tracking without detection instead of rewriting it."""
     with tempfile.TemporaryDirectory(prefix="vectorwarp-invalid-multi-") as temporary:
         root = Path(temporary)
         recording = root / "target.blah2iq"
@@ -725,19 +593,21 @@ def invalid_multi_clutter_case(binary, receiver):
         try:
             status.start()
             sinks.start()
-            payload = config(receiver, 2, recording, status.port, sinks.ports(), temporal_lane=True)
+            payload = config(receiver, 2, recording, status.port, sinks.ports(), temporal_lane=channelized)
             payload["capture"]["fs"] = 2000000
-            payload["process"]["clutter"]["enable"] = False
+            payload["process"]["detection"]["enable"] = False
+            payload["process"]["tracker"]["enable"] = True
             config_path = root / "config.json"
             config_path.write_text(json.dumps(payload))
             result = subprocess.run([str(binary), "-c", str(config_path)], cwd=root,
                                     capture_output=True, text=True, timeout=15, check=False)
             output = result.stdout + result.stderr
-            if result.returncode != 1 or "Multi-illuminator mode requires clutter, detection, and tracking" not in output:
-                raise AssertionError(f"{receiver}: disabled multi-lane clutter was not refused: {output[-4000:]}")
+            if result.returncode != 1 or "Tracking requires detection" not in output:
+                raise AssertionError(f"{receiver}: tracking without detection was not refused: {output[-4000:]}")
             if "Setting up device" in output or any(sinks.bytes.values()):
-                raise AssertionError(f"{receiver}: invalid multi-lane configuration admitted IQ/products")
-            return {"case": "invalid-multi-clutter", "receiver": receiver, "ok": True}
+                raise AssertionError(f"{receiver}: invalid tracker dependency admitted IQ/products")
+            return {"case": "invalid-tracker-dependency", "receiver": receiver,
+                    "channelized": channelized, "ok": True}
         finally:
             sinks.close()
             status.close()
@@ -751,7 +621,8 @@ def main():
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("--binary must be an executable processor path")
     results = [invalid_startup_case(binary, field) for field in ("fs", "fc", "api-port")]
-    results.extend(invalid_multi_clutter_case(binary, receiver) for receiver in (*RSP_TYPES, "Kraken"))
+    results.extend(invalid_tracker_dependency_case(binary, receiver, channelized)
+                   for receiver in (*RSP_TYPES, "Kraken") for channelized in (False, True))
     parity = [run_case(binary, receiver, 2, sample_rate=2000000,
                        recording_frames=6, minimum_cpis=6, target_fixture=True)
               for receiver in (*RSP_TYPES, "Kraken")]

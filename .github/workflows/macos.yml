@@ -35,23 +35,30 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
+      - name: Read reviewed Node runtime pin
+        run: python3 script/artifact-plan.py pin node > "$RUNNER_TEMP/vectorwarp-node-version"
       - name: Set up Node 24
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 24.22.1
+          node-version-file: ${{ runner.temp }}/vectorwarp-node-version
           package-manager-cache: false
       - name: Install open-source build dependencies
         run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb vulkan-loader vulkan-headers molten-vk glslang
       - name: Pin VkFFT for the common Vulkan stages
         run: |
-          git clone --filter=blob:none https://github.com/DTolm/VkFFT.git "$RUNNER_TEMP/VkFFT"
-          git -C "$RUNNER_TEMP/VkFFT" fetch --depth=1 origin 066a17c17068c0f11c9298d848c2976c71fad1c1
-          git -C "$RUNNER_TEMP/VkFFT" checkout --detach 066a17c17068c0f11c9298d848c2976c71fad1c1
+          python3 script/artifact-plan.py checkout VkFFT "$RUNNER_TEMP/VkFFT"
           echo "VKFFT_ROOT=$RUNNER_TEMP/VkFFT" >> "$GITHUB_ENV"
       - name: Verify vendor header isolation from project warnings
         run: python3 test/macos/rapidjson_system_include_test.py
       - name: Verify GPU platform and receiver build contracts
         run: python3 test/packaging/test_gpu_platform_contract.py -v
+      - name: Run offline replay and qualification contract regressions
+        # Data-only fixtures and fake children: no RF or physical GPU qualification.
+        run: |
+          python3 -m unittest discover -s test/gpu -p test_recorded_iq_qualification.py
+          python3 -m unittest discover -s test/script -p test_replay_session.py
+          python3 -m unittest discover -s test/script -p test_run_isolated_iq_replay.py
+          python3 -m unittest discover -s test/script -p test_observer_allocation_contract.py
       - name: Verify npm 11 installs the API in an absolute artifact directory
         run: python3 test/macos/build_macos_npm_install_test.py
       - name: Build unified GPU processing and open receiver adapters

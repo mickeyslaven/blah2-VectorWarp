@@ -56,6 +56,7 @@ failed() {
     "$was_socket" "$was_broker" "$was_api" "$was_processor" >&2
   exit 1
 }
+/usr/bin/python3 /opt/vectorwarp/libexec/vectorwarp-cohort-check --preflight || failed
 [ "$was_socket" = 0 ] || systemctl start vectorwarp-receiver.socket || failed
 [ "$was_broker" = 0 ] || systemctl start vectorwarp-receiver.service || failed
 [ "$was_api" = 0 ] || {
@@ -71,4 +72,5 @@ failed() {
   /etc/vectorwarp/config.yml /opt/vectorwarp/current/api/node_modules || failed
 [ "$was_api" = 0 ] || cleanup
 [ "$was_processor" = 0 ] || systemctl start vectorwarp-processor.service || failed
+[ "$was_processor" = 0 ] || systemctl is-active --quiet vectorwarp-processor.service || failed
 exit 0

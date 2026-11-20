@@ -40,8 +40,7 @@ Config configuration(const char* device) {
   c.detector.guard = 1;
   c.detector.train = 2;
   // Keep this tiny synthetic scene intentionally detection-rich so the
-  // physical qualification executes the guided shader with live track state,
-  // rather than merely validating its descriptor and empty dispatch path.
+  // physical qualification executes ordinary tracking with live track state.
   c.detector.pfa = .9;
   c.detector.centroidDopplerResolution = resolution;
   c.detector.integrationCpis = 8;
@@ -50,14 +49,11 @@ Config configuration(const char* device) {
   c.tracker.enabled = true;
   c.tracker.capacity = 64;
   c.tracker.m = 2;
-  c.tracker.n = 3;
-  c.tracker.nDelete = 4;
+  c.tracker.n = 9; // M=2 with disjoint eight-CPI source windows.
+  c.tracker.nDelete = 7;
   c.tracker.cpi = 63.0 / c.sampleRate;
   c.tracker.rangeRes = 299792458.0 / c.sampleRate;
   c.tracker.lambda = 299792458.0 / c.fusion.frequencyHz;
-  c.tracker.trackGuidedShadow = true;
-  c.tracker.trackGuidedPromote = true;
-  c.tracker.trackGuidedShadowMaxTracks = 64;
   c.bearing = {true, BearingMethod::covarianceMvdr, BearingReferenceAnchor::fixedSite,
     60, 3, 1, 3, .01,
     {0, 1, 2, 3, 4}};
@@ -84,7 +80,7 @@ void snapshotParity(const char* device,const blah2::GpuProcessOptions& options){
    auto c=configuration(device);c.detector.integrationCpis=cpis;c.fusion.mode=mode;
    c.detector.pfa=.6/double(c.fusion.beams);c.reference.analysisInterval=2;
    if(cpis<=2){c.detector.integrationMotionBins=0;c.detector.integrationBeamTolerance=UINT32_MAX;
-    c.tracker.trackGuidedShadow=c.tracker.trackGuidedPromote=false;c.tracker.trackGuidedShadowMaxTracks=0;c.bearing={};}
+    c.bearing={};}
    if(exporting){c.replay.maxBytes=rr::byteLimit;c.replay.maxFrames=9;c.replay.frequencyHz=c.fusion.frequencyHz;
     c.replay.configuredPfa=.6;c.replay.sourceHash.fill(0x33);c.replay.rfHash.fill(0x44);
     c.replay.actualGainDb.assign(c.geometry.channels,29.7);}
@@ -139,10 +135,9 @@ int main(int argc, char** argv) try {
     session->published();
   }
   if (!sawActiveTracker)
-    throw std::runtime_error("Track-guided physical test did not create track state");
+    throw std::runtime_error("Temporal physical test did not create track state");
   std::cout << "GPU_RESIDENT_TBD_PHYSICAL_PASS frames=9 integration_cpis=8"
-    " channels=5 beams=12 history_ready_frame=8 delay_bins=2 doppler_bins=4 track_guided_shadow=1"
-    " guided_max_tracks=64\n";
+    " channels=5 beams=12 history_ready_frame=8 delay_bins=2 doppler_bins=4\n";
   return 0;
 } catch (const std::exception& error) {
   std::cerr << "FAIL resident TBD physical initialization: " << error.what() << '\n';

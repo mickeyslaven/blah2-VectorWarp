@@ -1,4 +1,4 @@
-#include "process/ambiguity/GpuClutterSubmission.h"
+#include "process/ambiguity/GpuClutterBatch.h"
 #include <iostream>
 #include <new>
 #include <stdexcept>

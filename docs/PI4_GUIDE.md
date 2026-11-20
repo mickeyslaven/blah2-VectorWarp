@@ -112,11 +112,13 @@ sudo apt update && sudo apt install vectorwarp
 
 ## Tested RSPduo configuration
 
-The complete [Pi 4B example YAML](../config/config-pi4-rspduo.yml) contains this
-workload, one surveillance worker, four FFT threads, and tracking enabled.
-Use it as a reference when editing Settings; retain your receiver serial,
-network, recording and site values. The example's 551 MHz transmitter and
-neutral site coordinates must be adapted to your actual installation.
+Select RSPduo in Settings to generate its acquisition settings from the shared
+[canonical configuration](../config/config.yml). For a reviewable YAML document,
+run `node api/config-generate.js RspDuo` from the source or installed application
+directory. The generator writes to stdout and does not change the active config.
+Retain your receiver serial, network, recording and site values. To reproduce
+the earlier Pi workload below, choose one surveillance worker and four FFT
+threads, and adapt its 551 MHz transmitter to your actual installation.
 
 Use two RSPduo channels at **2 MS/s**, **551 MHz**, and **500 ms CPI** (one
 million samples). Enable clutter, detection, and tracking; use one surveillance
@@ -195,8 +197,8 @@ selected even when slower than the CPU baseline, subject to runtime-health guard
 
 The earlier Pi-specific `vulkan+cpu` worker used frozen DSP code. It is no longer
 a production build target, is rejected by packaging and installation, and is
-never selected by the processor. Its retained source fixtures and old measurements
-are historical evidence only. Use the common
+never selected by the processor. Its obsolete source fixtures have been removed;
+old measurements remain historical evidence only. Use the common
 [GPU qualification and capability receipts](GPU_ACCELERATION.md) for current
 acceptance; no new Pi hardware result is claimed by this source change.
 

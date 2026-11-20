@@ -35,6 +35,7 @@ jobs:
         run: |
           python3 test/macos/homebrew_release_test.py
           python3 test/macos/homebrew_publish_test.py
+          python3 test/packaging/test_release_ci.py
 
   formula:
     name: Build and test exact merged source on Apple Silicon
@@ -129,12 +130,19 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-24.04
     environment: homebrew-publish
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Require successful hosted checks for the exact merged source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 script/verify-release-ci.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: reviewed-homebrew-tap

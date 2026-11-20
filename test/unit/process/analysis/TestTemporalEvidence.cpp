@@ -1,9 +1,8 @@
 #include "process/detection/PostClutterBootstrap.h"
 #include "process/detection/EmpiricalNullCalibrator.h"
+#include "process/detection/DetectorIntegration.h"
 #include "process/integration/CoherentPathEvidence.h"
 #include "process/integration/TemporalEvidence.h"
-#include "process/integration/TemporalShadowTracker.h"
-#include "process/integration/TemporalEvidenceArtifact.h"
 #include "process/tracker/NormalizedInnovationGate.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -25,11 +24,15 @@ namespace
 Map<std::complex<double>> map(uint32_t rows, uint32_t columns)
 {
   Map<std::complex<double>> result(rows, columns);
-  result.delay = {-1, int(columns) - 2};
-  result.doppler = {-double(rows) / 2, double(rows) / 2};
-  for (uint32_t row = 0; row < rows; ++row)
+  result.delay.resize(columns);
+  result.doppler.resize(rows);
+  for (uint32_t column = 0; column < columns; ++column)
+    result.delay[column] = int(column) - 1;
+  for (uint32_t row = 0; row < rows; ++row) {
+    result.doppler[row] = double(row) - double(rows) / 2;
     for (uint32_t column = 0; column < columns; ++column)
       result.data[row][column] = {};
+  }
   return result;
 }
 
@@ -65,6 +68,26 @@ TEST_CASE("two-CPI production bank retains only adjacent mean-power evidence")
     const auto fresh = engine.process(current, 5, 1);
     REQUIRE(fresh.availableCpis == 1);
     REQUIRE_FALSE(fresh.banks[0].ready);
+  }
+}
+
+TEST_CASE("two-CPI nextafter motion ties retain the first complete mean-power path")
+{
+  for(uint32_t maximum:{2u,4u,8u}) {
+    blah2::integration::TemporalEvidence engine({maximum,1,1});
+    auto previous=map(3,3);
+    previous.data[2][2]={1,0}; // First path: dr=-1, dc=-1.
+    previous.data[2][1]={std::nextafter(1.0,2.0),0}; // Larger old power, same rounded mean.
+    engine.process(previous,7,1);
+    auto current=map(3,3);current.data[1][1]={2,0};
+    const auto result=engine.process(current,7,2);
+    const auto& bank=result.banks[1];
+    REQUIRE(bank.map->data[1][1].real()==std::sqrt(2.5));
+    const auto lineage=bank.lineageAt(4);
+    REQUIRE(lineage.depth==2);
+    REQUIRE(lineage.delayMotion==-1);
+    REQUIRE(lineage.dopplerMotion==-1);
+    REQUIRE(lineage.supportSequences()==std::vector<uint64_t>{2,1});
   }
 }
 
@@ -174,18 +197,37 @@ TEST_CASE("temporal evidence matches mature GPU bank selection")
 TEST_CASE("temporal evidence matches the unconditioned GPU reference contract")
 {
   constexpr uint32_t rows = 5, columns = 6;
-  blah2::integration::TemporalEvidence engine;
+  const auto checkMetrics = [](auto& output, const std::vector<uint8_t>& valid) {
+    double noise = 0, peak = -std::numeric_limits<double>::infinity();
+    uint64_t count = 0, cell = 0;
+    for (const auto& row : output.data)
+      for (const auto value : row) {
+        const bool measured = valid.empty() || valid[cell]; ++cell;
+        if (!measured) continue;
+        const double level = 10 * std::log10(std::max(1e-30, std::abs(value)));
+        noise += level; peak = std::max(peak, level); ++count;
+      }
+    REQUIRE(output.noisePower == (count ? noise / count : 0));
+    REQUIRE(output.maxPower == (count ? peak - noise / count : 0));
+  };
+  for (const auto config : {blah2::integration::TemporalEvidence::Config{8, 0, 0},
+       blah2::integration::TemporalEvidence::Config{8, 2, 4},
+       blah2::integration::TemporalEvidence::Config{8, 1, 2, -.4}}) {
+  blah2::integration::TemporalEvidence engine(config);
   std::vector<std::vector<double>> history;
   const auto reference = [&](uint32_t row, uint32_t column, uint32_t depth) {
     double best = -1; int bestDelay = 0, bestDoppler = 0;
-    for (int dr = -4; dr <= 4; ++dr)
-      for (int dc = -2; dc <= 2; ++dc)
+    for (int dr = -int(config.dopplerMotionBins); dr <= int(config.dopplerMotionBins); ++dr)
+      for (int dc = -int(config.delayMotionBins); dc <= int(config.delayMotionBins); ++dc)
       {
         double sum = 0; bool valid = true;
         for (uint32_t age = 0; age < depth; ++age)
         {
           const int rr = int(row) - dr * int(age);
-          const int cc = int(column) - dc * int(age);
+          if (rr < 0 || rr >= int(rows)) { valid = false; break; }
+          const int cc = track_before_detect::delayPathColumn(int(column), dc, age,
+            config.delayDriftPerHz, double(row) - double(rows) / 2,
+            double(rr) - double(rows) / 2);
           if (rr < 0 || cc < 0 || rr >= int(rows) || cc >= int(columns))
           { valid = false; break; }
           sum += history[history.size() - 1 - age][uint64_t(rr) * columns + cc];
@@ -195,22 +237,26 @@ TEST_CASE("temporal evidence matches the unconditioned GPU reference contract")
       }
     return std::tuple{best, bestDelay, bestDoppler};
   };
-  for (uint64_t sequence = 1; sequence <= 8; ++sequence)
+  for (uint64_t sequence = 1; sequence <= 16; ++sequence)
   {
     auto frame = map(rows, columns);
     history.emplace_back(uint64_t(rows) * columns);
     for (uint32_t row = 0; row < rows; ++row)
       for (uint32_t column = 0; column < columns; ++column)
       {
-        const double amplitude = 1 + ((sequence * 17 + row * 7 + column * 3) % 11);
-        frame.data[row][column] = {amplitude, 0};
-        history.back()[uint64_t(row) * columns + column] = amplitude * amplitude;
+        const double amplitude = std::ldexp(1 + double(
+          (sequence * 17 + row * 7 + column * 3) % 101) / 101,
+          int((sequence * 13 + row * 5 + column) % 25) - 12);
+        frame.data[row][column] = {amplitude, amplitude / 3};
+        history.back()[uint64_t(row) * columns + column] =
+          std::norm(frame.data[row][column]);
       }
     const auto result = engine.process(frame, 11, sequence);
     REQUIRE(result.banks[0].ready == (sequence >= 2));
     REQUIRE(result.banks[1].ready == (sequence >= 2));
     REQUIRE(result.banks[2].ready == (sequence >= 4));
     REQUIRE(result.banks[3].ready == (sequence >= 8));
+    if (result.banks[0].ready) checkMetrics(*result.banks[0].map, {});
     for (std::size_t bank = 1; bank < result.banks.size(); ++bank)
     {
       const auto& output = result.banks[bank];
@@ -220,14 +266,219 @@ TEST_CASE("temporal evidence matches the unconditioned GPU reference contract")
         {
           const auto [power, delay, doppler] = reference(row, column, output.depth);
           const uint64_t cell = uint64_t(row) * columns + column;
-          REQUIRE(std::norm(output.map->data[row][column]) == Catch::Approx(power));
+          REQUIRE(output.map->data[row][column] ==
+            std::complex<double>{std::sqrt(std::max(0.0, power)), 0});
           const auto lineage = output.lineageAt(cell);
+          if (power < 0) {
+            REQUIRE(lineage.depth == 0);
+            REQUIRE(output.validCells[cell] == 0);
+            continue;
+          }
           REQUIRE(lineage.delayMotion == delay);
           REQUIRE(lineage.dopplerMotion == doppler);
           REQUIRE(lineage.newestSequence == sequence);
         }
+      checkMetrics(*output.map, output.validCells);
+    }
+    for (uint32_t row = 0; row < rows; ++row)
+      for (uint32_t column = 0; column < columns; ++column) {
+        const uint64_t cell = uint64_t(row) * columns + column;
+        double selected = history.back()[cell]; uint8_t selectedBank = 0;
+        if (result.banks[0].ready) {
+          selected = .5 * (history.back()[cell] + history[history.size() - 2][cell]);
+          selectedBank = 1;
+        }
+        for (std::size_t bank = 1; bank < result.banks.size(); ++bank)
+          if (result.banks[bank].ready) {
+            const auto [power, delay, doppler] = reference(row, column,
+              result.banks[bank].depth);
+            (void)delay; (void)doppler;
+            if (power > selected) { selected = power; selectedBank = bank + 1; }
+          }
+        REQUIRE(result.selectedBank[cell] == selectedBank);
+        REQUIRE(result.map->data[row][column] ==
+          std::complex<double>{std::sqrt(std::max(0.0, selected)), 0});
+      }
+    checkMetrics(*result.map, {});
+  }
+  }
+}
+
+TEST_CASE("temporal motion validity excludes partial and empty rows from CFAR",
+  "[temporal-validity]")
+{
+  constexpr uint32_t columns = 411;
+  Map<std::complex<double>> frame(5, columns);
+  frame.delay.resize(columns);
+  std::iota(frame.delay.begin(), frame.delay.end(), 0);
+  frame.doppler = {-620, -600, 0, 600, 620};
+  blah2::integration::TemporalEvidence engine({8, 2, 0, -.1});
+  blah2::integration::TemporalEvidence::Result result;
+  for (uint64_t sequence = 1; sequence <= 8; ++sequence)
+    result = engine.process(frame, 31, sequence);
+  // A 60-bin/CPI drift leaves five complete paths at one edge. At 62
+  // bins/CPI the entire depth-eight row is unavailable, in either direction.
+  const std::array<uint32_t, 5> validCounts{0, 5, columns, 5, 0};
+  const auto& mature = result.banks[3];
+  REQUIRE(mature.validCells.size() == 5 * columns);
+  for (uint32_t row = 0; row < 5; ++row) {
+    uint32_t count = 0;
+    for (uint32_t column = 0; column < columns; ++column) {
+      const uint64_t cell = uint64_t(row) * columns + column;
+      const bool valid = mature.validCells[cell] != 0;
+      count += valid;
+      REQUIRE(std::norm(mature.map->data[row][column]) == (valid ? 1 : 0));
+      const auto lineage = mature.lineageAt(cell);
+      REQUIRE(lineage.depth == (valid ? 8 : 0));
+      REQUIRE(lineage.supportSequences().size() == (valid ? 8 : 0));
+    }
+    REQUIRE(count == validCounts[row]);
+  }
+  for (auto& bank : result.banks) {
+    REQUIRE(bank.ready);
+    REQUIRE(bank.map->noisePower == 0);
+    REQUIRE(bank.map->maxPower == 0);
+    CfarDetector1D detector(1e-6 / 30, 2, 32, 0, 0, bank.depth);
+    REQUIRE(detector.process(bank.map.get(), bank.validCells)->get_nDetections() == 0);
+  }
+
+  std::optional<blah2::detection::IntegrationMetrics> integration(std::in_place);
+  integration->ready = true;
+  integration->cpis = 8;
+  integration->delayMotionBins = 2;
+  integration->evidence = std::make_shared<blah2::integration::TemporalEvidence::Result>(
+    std::move(result));
+  CfarDetector1D detector(1e-6, 2, 32, 0, 0);
+  Centroid centroid(1, 1, 1);
+  Interpolate interpolate(true, true);
+  REQUIRE(blah2::detection::detectProducts(*integration->evidence->map,
+    detector, centroid, interpolate, integration)->get_nDetections() == 0);
+}
+
+TEST_CASE("masked CFAR recalibrates the valid training count and retains targets",
+  "[temporal-validity]")
+{
+  Map<std::complex<double>> frame(1, 7);
+  frame.delay = {0, 1, 2, 3, 4, 5, 6}; frame.doppler = {10};
+  const std::vector<uint8_t> valid{0, 0, 1, 1, 1, 1, 1};
+  const std::vector<std::vector<double>> background(1, std::vector<double>(7, 0));
+  for (const uint32_t depth : {1u, 2u, 4u, 8u}) {
+    constexpr double pfa = 1e-5;
+    const double alpha = depth == 1 ? 3 * (std::pow(pfa, -1.0 / 3) - 1) :
+      blah2::detection::integrated_cfar::alpha(pfa, 3, depth);
+    CfarDetector1D detector(pfa, 0, 2, 0, 0, depth);
+    for (const bool above : {false, true}) {
+      // Invalid cells include very large placeholders: neither CUT nor
+      // training may use them. The target has exactly three valid neighbours.
+      frame.data[0] = {{1e10, 0}, {1e10, 0}, {1, 0},
+        {std::sqrt(alpha * (above ? 1 + 1e-8 : 1 - 1e-8)), 0},
+        {1, 0}, {1, 0}, {1, 0}};
+      frame.set_metrics(valid);
+      for (const bool subtractBackground : {false, true}) {
+        const auto detections = detector.process(&frame, valid,
+          subtractBackground ? &background : nullptr);
+        REQUIRE(detections->get_nDetections() == (above ? 1 : 0));
+        if (above) REQUIRE(detections->get_delay().front() == 3);
+      }
+    }
+    std::vector<uint8_t> unavailable(7, 0);
+    frame.set_metrics(unavailable);
+    REQUIRE(frame.noisePower == 0);
+    REQUIRE(frame.maxPower == 0);
+    REQUIRE(detector.process(&frame, unavailable)->get_nDetections() == 0);
+    unavailable[3] = 1;
+    REQUIRE(detector.process(&frame, unavailable)->get_nDetections() == 0);
+    REQUIRE_THROWS_AS(detector.process(&frame, std::vector<uint8_t>(6, 1)),
+      std::invalid_argument);
+    REQUIRE_THROWS_AS(frame.set_metrics(std::vector<uint8_t>(6, 1)),
+      std::invalid_argument);
+  }
+}
+
+TEST_CASE("fully valid temporal banks preserve metrics and detector results exactly",
+  "[temporal-validity]")
+{
+  Map<std::complex<double>> frame(3, 41);
+  frame.delay.resize(41); std::iota(frame.delay.begin(), frame.delay.end(), 0);
+  frame.doppler = {-2, 0, 2};
+  for (uint32_t row = 0; row < 3; ++row) {
+    for (uint32_t column = 0; column < 41; ++column)
+      frame.data[row][column] = {double(1 + (row + column) % 3), 0};
+    frame.data[row][20] = {100, 0};
+  }
+  frame.set_metrics();
+  const std::vector<uint8_t> allValid(3 * 41, 1);
+  auto maskedMetrics = frame;
+  maskedMetrics.set_metrics(allValid);
+  REQUIRE(maskedMetrics.noisePower == frame.noisePower);
+  REQUIRE(maskedMetrics.maxPower == frame.maxPower);
+  for (const double drift : {0., -.001}) {
+    // The fractional displacement rounds to zero at every history age.
+    blah2::integration::TemporalEvidence engine({8, 0, 0, drift});
+    blah2::integration::TemporalEvidence::Result result;
+    for (uint64_t sequence = 1; sequence <= 8; ++sequence)
+      result = engine.process(frame, 8, sequence);
+    for (auto& bank : result.banks) {
+      REQUIRE(bank.validCells.empty());
+      REQUIRE(bank.map->data == frame.data);
+      REQUIRE(bank.map->noisePower == frame.noisePower);
+      REQUIRE(bank.map->maxPower == frame.maxPower);
+      CfarDetector1D detector(1e-5, 1, 4, 0, 0, bank.depth);
+      const auto original = detector.process(&frame);
+      REQUIRE(original->get_nDetections() > 0);
+      for (const auto* mask : std::array<const std::vector<uint8_t>*, 2>{
+          &bank.validCells, &allValid}) {
+        const auto actual = detector.process(bank.map.get(), *mask);
+        REQUIRE(actual->get_delay() == original->get_delay());
+        REQUIRE(actual->get_doppler() == original->get_doppler());
+        REQUIRE(actual->get_snr() == original->get_snr());
+      }
     }
   }
+}
+
+TEST_CASE("real-valued map magnitude fast path preserves exact metrics")
+{
+  Map<std::complex<double>> frame(5, 257);
+  for (uint32_t row = 0; row < 5; ++row)
+    for (uint32_t column = 0; column < 257; ++column) {
+      const double value = std::ldexp(1 + double(column) / 257,
+        int((column * 23 + row * 7) % 2051) - 1050);
+      frame.data[row][column] = {column % 2 ? -value : value,
+        row % 2 ? -0.0 : 0.0};
+    }
+  frame.data[0][0] = {std::numeric_limits<double>::max(), 0};
+  frame.data[0][1] = {0, -0.0};
+  frame.data[0][2] = {3, 4}; // General complex magnitude remains unchanged.
+  for (const bool masked : {false, true}) {
+    std::vector<uint8_t> valid(masked ? 5 * 257 : 0, 1);
+    if (masked) valid[17] = valid[258] = 0;
+    double noise = 0, peak = -std::numeric_limits<double>::infinity();
+    uint64_t count = 0;
+    for (uint32_t row = 0; row < 5; ++row)
+      for (uint32_t column = 0; column < 257; ++column) {
+        if (masked && !valid[row * 257 + column]) continue;
+        const double level = 10 * std::log10(std::max(1e-30,
+          std::abs(frame.data[row][column])));
+        noise += level; peak = std::max(peak, level); ++count;
+      }
+    frame.set_metrics(valid);
+    REQUIRE(frame.noisePower == noise / count);
+    REQUIRE(frame.maxPower == peak - noise / count);
+  }
+  frame.data[0][0] = {std::numeric_limits<double>::infinity(), 0};
+  REQUIRE_THROWS(frame.set_metrics());
+  frame.data[0][0] = {std::numeric_limits<double>::quiet_NaN(), -0.0};
+  REQUIRE_THROWS(frame.set_metrics());
+}
+
+TEST_CASE("stationary temporal path retains finite coordinate validation")
+{
+  auto frame = map(1, 1);
+  frame.doppler[0] = std::numeric_limits<double>::infinity();
+  blah2::integration::TemporalEvidence engine({8, 0, 0});
+  REQUIRE_NOTHROW(engine.process(frame, 19, 1));
+  REQUIRE_THROWS(engine.process(frame, 19, 2));
 }
 
 TEST_CASE("temporal evidence rejects gaps and changed axes")
@@ -368,65 +619,6 @@ TEST_CASE("coherent temporal evidence locks its hop to capture lineage")
   REQUIRE_THROWS(engine.process(gap, 8, 5, 5000, 20000));
 }
 
-TEST_CASE("temporal shadow tracker scores only disjoint windows with the existing tracker")
-{
-  using ShadowTracker = blah2::integration::TemporalShadowTracker;
-  blah2::integration::TemporalEvidence temporal({8, 0, 0});
-  ShadowTracker::Config config;
-  config.enabled = true;
-  config.pfa = .01;
-  config.guardCells = 1;
-  config.trainingCells = 4;
-  config.maximumCandidates = 32;
-  config.confirmationM = 2;
-  config.confirmationN = 3;
-  config.cpiSeconds = .5;
-  config.rangeResolutionM = 100;
-  config.wavelengthM = .5;
-  ShadowTracker tracker(config);
-  Map<std::complex<double>> map(5, 33);
-  map.delay.resize(33);
-  std::iota(map.delay.begin(), map.delay.end(), 0);
-  map.doppler = {-2, -1, 0, 1, 2};
-  std::array<std::vector<std::vector<uint64_t>>, 3> credited;
-  for (uint64_t sequence = 1; sequence <= 16; ++sequence)
-  {
-    for (auto& row : map.data)
-      std::fill(row.begin(), row.end(), std::complex<double>{1, 0});
-    map.data[3][16] = {100, 0};
-    map.set_metrics();
-    const auto evidence = temporal.process(map, 77, sequence);
-    const auto status = tracker.process(evidence, 1000 + sequence * 500);
-    for (std::size_t lane = 0; lane < status.lanes.size(); ++lane)
-      if (status.lanes[lane].evaluated)
-        for (const auto& candidate : status.lanes[lane].latestCandidates)
-          credited[lane].push_back(candidate.lineage.supportSequences());
-  }
-  const auto status = tracker.status();
-  REQUIRE(status.lanes[0].evaluatedWindows == 8);
-  REQUIRE(status.lanes[1].evaluatedWindows == 4);
-  REQUIRE(status.lanes[2].evaluatedWindows == 2);
-  REQUIRE(status.lanes[0].skippedOverlappingWindows == 7);
-  REQUIRE(status.lanes[1].skippedOverlappingWindows == 9);
-  REQUIRE(status.lanes[2].skippedOverlappingWindows == 7);
-  for (std::size_t lane = 0; lane < credited.size(); ++lane)
-    for (std::size_t left = 0; left < credited[lane].size(); ++left)
-      for (std::size_t right = left + 1; right < credited[lane].size(); ++right)
-        for (const auto sequence : credited[lane][left])
-          REQUIRE(std::find(credited[lane][right].begin(),
-            credited[lane][right].end(), sequence) == credited[lane][right].end());
-  tracker.reset();
-  const auto reset = tracker.status();
-  REQUIRE(reset.epoch == 0);
-  REQUIRE(reset.sequence == 0);
-  REQUIRE(reset.lanes[0].evaluatedWindows == 8);
-  REQUIRE(reset.lanes[1].evaluatedWindows == 4);
-  REQUIRE(reset.lanes[2].evaluatedWindows == 2);
-  REQUIRE(reset.lanes[0].tracks == 0);
-  REQUIRE(reset.lanes[1].tracks == 0);
-  REQUIRE(reset.lanes[2].tracks == 0);
-}
-
 TEST_CASE("coherent temporal evidence does not lock timing from rejected input")
 {
   blah2::integration::CoherentPathEvidence::Config config;
@@ -518,40 +710,6 @@ TEST_CASE("normalized innovation gate controls probability and gate volume")
   REQUIRE(diffuse.area > 100);
   const auto singular = gate.evaluate({0, 0}, {1, 2, 2, 1}, {0, 0, 0, 0});
   REQUIRE_FALSE(singular.valid); REQUIRE_FALSE(singular.accepted);
-}
-
-TEST_CASE("temporal evidence artifact is bounded binary with warmup records")
-{
-  const char* retained = std::getenv("VECTORWARP_KEEP_TEMPORAL_ARTIFACT");
-  const auto path = retained ? std::filesystem::path(retained) :
-    std::filesystem::temp_directory_path() /
-      ("vectorwarp-temporal-artifact-" +
-        std::to_string(std::random_device{}()) + ".vwtbd");
-  std::filesystem::remove(path);
-  blah2::integration::TemporalEvidence engine;
-  {
-    blah2::integration::TemporalEvidenceArtifact artifact(path.string(),
-      64ULL << 20, 8, 2, 4, 100, 1, "fused", "diagonal");
-    for (uint64_t sequence = 1; sequence <= 8; ++sequence)
-    {
-      auto frame = map(2, 2);
-      frame.data[0][0] = {double(sequence), 0};
-      const auto result = engine.process(frame, 3, sequence);
-      artifact.write(frame, result, {}, (sequence - 1) * 100, sequence * 100 - 1);
-      REQUIRE(artifact.records() == sequence);
-    }
-    REQUIRE(artifact.bytes() > 32);
-  }
-  std::ifstream input(path, std::ios::binary);
-  const std::vector<char> bytes((std::istreambuf_iterator<char>(input)), {});
-  REQUIRE(bytes.size() > 32);
-  REQUIRE(std::string(bytes.data(), 7) == "VWTBD01");
-  const std::string marker = "FRM1";
-  REQUIRE(std::search(bytes.begin(), bytes.end(),
-    marker.begin(), marker.end()) != bytes.end());
-  REQUIRE_THROWS(blah2::integration::TemporalEvidenceArtifact(path.string(),
-    64ULL << 20, 8, 2, 4, 100, 1, "fused", "diagonal"));
-  if (!retained) std::filesystem::remove(path);
 }
 
 } // namespace

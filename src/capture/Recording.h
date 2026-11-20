@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "RecordingAcquisition.h"
 
 namespace blah2 {
 using IqBlock = std::vector<std::vector<std::complex<float>>>;
@@ -12,6 +13,7 @@ struct RecordingMetadata {
   uint32_t channels = 0, sampleRate = 0, frequency = 0;
   uint64_t samples = 0;
   std::string format;
+  std::string acquisitionJson = {};
 };
 
 struct RecordingProvenance {
@@ -29,9 +31,17 @@ struct RecordingProvenance {
   std::string configurationFingerprint, codeFingerprint, json;
   std::string clockSource, deviceTimeSource, motherboard, subdevices;
   std::vector<double> perChannelGainDb;
+  bool acquisitionIntegrityValid = false, acquisitionHashTrusted = false, exactAcquisition = false;
+  bool geographicSitesAvailable = false;
+  std::string geographicSitesReason = "Recorded geographic sites unavailable; replay geography disabled";
+  std::string acquisitionJson, acquisitionSha256, recordingSha256, gainProvenance;
+  std::string acquisitionReason = "Recording has no acquisition contract; ordinary playback only";
+  RecordingContext acquisitionContext;
+  std::vector<RecordingFrameLineage> frames;
   uint64_t epoch = 0, firstSample = 0, endSample = 0, sourceFirstSample = 0;
   int64_t deviceTimeEpochTick = 0;
   bool sourceSampleAvailable = false, deviceTimeAvailable = false;
+  const std::vector<double>& requested_gains_for_manifold() const;
 };
 
 struct ReplayOptions {
@@ -42,6 +52,12 @@ struct ReplayOptions {
   // precision. decision-grade requires a valid v2 contract with exact,
   // bounded RF time and rejects every legacy/inexact recording.
   std::string provenanceMode = "legacy-unqualified";
+  bool requireExactAcquisition = false;
+  // Trusted separately from the file/sidecar; required for exact admission.
+  std::string expectedRecordingSha256 = {};
+  std::string expectedAcquisitionSha256 = {};
+  bool validateAcquisitionContext = false;
+  RecordingContext expectedAcquisitionContext = {};
 };
 
 // Portable, self-describing float32 complex samples, preserving all input

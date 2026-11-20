@@ -1,8 +1,12 @@
-# Direct-path coherent shadow and cancellation investigation
+# Offline direct-path coherent experiment and cancellation investigation
 
-This source-only change adds `DirectPathCoherentShadow.h` and focused CPU tests.
-It does not connect a new statistic to acquisition, CFAR, tracking, publication,
-or a GPU dispatch. It reuses the existing `CoherentPathEvidence` integrator.
+`src/process/integration/DirectPathCoherentExperiment.h` and its `ExperimentReader`
+are consumed only by explicit offline replay tools and focused CPU tests. They do
+not connect a new statistic to acquisition, CFAR, tracking, publication, or a
+GPU dispatch. They reuse the existing `CoherentPathEvidence` integrator. The
+release executable retains only the sealed replay-lineage sidecar serializer,
+not the coherent experiment. Enable `BLAH2_BUILD_OFFLINE_TOOLS` explicitly (or
+build tests) to build the replay consumers.
 The next acceptance step is exact-IQ replay with recorded sample lineage and
 pre-cancellation anchor IQ; old selected v1 cutouts are insufficient.
 
@@ -88,7 +92,7 @@ The zero-motion coherent diagnostic warmed all expected 2/4/8-CPI banks, but
 its accepted-cell fractions closely match the elementary isotropic-noise
 coherence probabilities at the configured 0.6 threshold: approximately 40%,
 6.4%, and 0.164%. This is not a calibrated null model for correlated radar
-maps, but it provides no target-gain evidence. The scores remain shadow-only,
+maps, but it provides no target-gain evidence. The scores remain offline-only,
 with `null_calibrated=0` and `detector_mutation=0`.
 
 Arm C is rejected. Relative to the baseline it raised detections from 64 to 95
@@ -196,10 +200,10 @@ the retained numerical receipt is not relabeled as a run of that newer binary.
 
 ### Track-continuity audit
 
-The CPU tracker associates measured delay/Doppler observations, expires tentative
-hypotheses within its configured confirmation horizon and retires sufficiently
-inactive tracks. The resident tracker retains the Doppler/range-comb and nuisance
-admission rules; its ordinary confirmation counts measured hits, while the
+The canonical tracker associates measured delay/Doppler observations, expires
+tentative hypotheses within its configured confirmation horizon and retires
+sufficiently inactive tracks. Host and resident execution share Doppler/range-comb
+and nuisance admission rules; ordinary confirmation counts measured hits, while the
 experimental lineage mode separately credits disjoint support windows and never
 credits prediction alone. A cancellation residual-power improvement cannot
 establish any of those downstream outcomes. The earlier C arm's repeated comb

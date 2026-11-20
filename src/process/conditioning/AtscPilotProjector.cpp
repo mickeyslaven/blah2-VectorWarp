@@ -157,19 +157,16 @@ bool AtscPilotProjector::acceptCfo(double value, Metrics& metrics) {
   return locked_;
 }
 
-AtscPilotProjector::Metrics AtscPilotProjector::process(
-  const std::deque<std::complex<double>>& input,
-  std::deque<std::complex<double>>& output, double cfoHz,
-  bool pilotCandidate) {
-  Metrics state; state.coarseCfoHz = cfoHz; state.samples = input.size();
+template<class Sample, class Output>
+AtscPilotProjector::Metrics AtscPilotProjector::process_samples(
+  std::size_t samples, Sample sample, Output& output, double cfoHz, bool pilotCandidate) {
+  Metrics state; state.coarseCfoHz = cfoHz; state.samples = samples;
   if (!pilotCandidate) { fail(); state.reason = "pilot_unqualified"; return state; }
-  const auto refined = refineCfo(config_, input.size(),
-    [&](std::size_t i) { return input[i]; }, cfoHz);
+  const auto refined = refineCfo(config_, samples, sample, cfoHz);
   if (!refined) { fail(); state.reason = "cfo_refinement_unqualified"; return state; }
   state.residualCfoHz = *refined - cfoHz;
   if (!acceptCfo(*refined, state)) { state.reason = "cfo_lock_acquiring"; return state; }
-  auto result = project(config_, input.size(), [&](std::size_t i) { return input[i]; },
-    output, cfoHz_, true);
+  auto result = project(config_, samples, sample, output, cfoHz_, true);
   result.coarseCfoHz = cfoHz; result.residualCfoHz = *refined - cfoHz;
   result.cfoLocked = locked_; result.qualifiedCpis = qualifiedCpis_;
   result.failedCpis = failedCpis_;
@@ -178,27 +175,27 @@ AtscPilotProjector::Metrics AtscPilotProjector::process(
 }
 
 AtscPilotProjector::Metrics AtscPilotProjector::process(
+  const std::deque<std::complex<double>>& input,
+  std::deque<std::complex<double>>& output, double cfoHz, bool pilotCandidate) {
+  return process_samples(input.size(), [&](std::size_t i) { return input[i]; },
+    output, cfoHz, pilotCandidate);
+}
+
+AtscPilotProjector::Metrics AtscPilotProjector::process(IqSampleView input,
+  std::vector<std::complex<double>>& output, double cfoHz, bool pilotCandidate) {
+  return process_samples(input.size(), [&](std::size_t i) { return input[i]; },
+    output, cfoHz, pilotCandidate);
+}
+
+AtscPilotProjector::Metrics AtscPilotProjector::process(
   const std::complex<float>* input, std::size_t samples,
   std::vector<std::complex<double>>& output, double cfoHz,
   bool pilotCandidate) {
   if (!input && samples) throw std::invalid_argument(
     "ATSC pilot projector float input is null");
-  Metrics state; state.coarseCfoHz = cfoHz; state.samples = samples;
-  if (!pilotCandidate) { fail(); state.reason = "pilot_unqualified"; return state; }
-  const auto refined = refineCfo(config_, samples, [&](std::size_t i) {
+  return process_samples(samples, [&](std::size_t i) {
     return std::complex<double>(input[i]);
-  }, cfoHz);
-  if (!refined) { fail(); state.reason = "cfo_refinement_unqualified"; return state; }
-  state.residualCfoHz = *refined - cfoHz;
-  if (!acceptCfo(*refined, state)) { state.reason = "cfo_lock_acquiring"; return state; }
-  auto result = project(config_, samples, [&](std::size_t i) {
-    return std::complex<double>(input[i]);
-  }, output, cfoHz_, true);
-  result.coarseCfoHz = cfoHz; result.residualCfoHz = *refined - cfoHz;
-  result.cfoLocked = locked_; result.qualifiedCpis = qualifiedCpis_;
-  result.failedCpis = failedCpis_;
-  if (!result.applied) fail(); else failedCpis_ = 0;
-  return result;
+  }, output, cfoHz, pilotCandidate);
 }
 
 } // namespace blah2::conditioning

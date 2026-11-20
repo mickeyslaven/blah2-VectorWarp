@@ -82,6 +82,24 @@ test('does not combine detections from distinct transmitter geometry', () => {
   assert.equal(result.tracks.every(track => track.state === 'COOPERATIVE_CANDIDATE'), true);
 });
 
+test('an unidentified source cannot bridge conflicting explicit geometries', () => {
+  const unidentified = source('node-blank', 'channel-blank');
+  const first = source('node-a');
+  const second = source('node-b', 'channel-b');
+  first.transmitter = {...first.transmitter, site_id: 'transmitter-a'};
+  second.transmitter = {...second.transmitter, site_id: 'transmitter-b'};
+  assert.equal(compatibleGeometry(first, second, 100), false);
+
+  const catalog = geometryCatalog([unidentified, first, second]);
+  assert.notEqual(catalog.get(first.key), catalog.get(second.key));
+
+  const tracker = new CooperativeDetectionTracker({m: 2, n: 3});
+  tracker.update([unidentified, first, second], [frame(first, 1000)]);
+  const result = tracker.update([unidentified, first, second], [frame(second, 1500, 10.01)]);
+  assert.equal(result.tracks.length, 2);
+  assert.equal(result.tracks.every(track => track.state === 'COOPERATIVE_CANDIDATE'), true);
+});
+
 test('rejects replayed source timestamps and expires stale publication', () => {
   const nodeA = source('node-a');
   const tracker = new CooperativeDetectionTracker({maximumCoastSeconds: 2});

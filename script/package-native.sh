@@ -23,7 +23,7 @@ Build a distro-native VectorWarp release package from a native artifact.
   --distro NAME           ubuntu22.04, ubuntu24.04, ubuntu26.04, debian12, debian13 or fedora44
   --version X.Y.Z         Stable release version (without v)
   --artifact PATH         Artifact made by build-native.sh
-  --node-runtime PATH     Extracted official Node.js 24.22.1 Linux archive
+  --node-runtime PATH     Extracted official pinned Node.js Linux archive
   --output-dir PATH       Destination for package and manifest (default: dist)
   --test-only             Package only an open-test artifact; never for publication
   --preflight             Validate all inputs and tools, then stop
@@ -78,84 +78,23 @@ esac
 # shellcheck disable=SC1091
 . /etc/os-release
 VERSION=$PACKAGE_VERSION
-case "$DISTRO" in
-  ubuntu22.04)
-    [[ $FORMAT == deb && ${ID:-} == ubuntu && ${VERSION_ID:-} == 22.04 ]] ||
-      die 'ubuntu22.04 DEBs must be built on Ubuntu 22.04'
-    DISTRO_NAME=ubuntu; DISTRO_VERSION=22.04; CODENAME=jammy; PACKAGE_ARCH=$DEB_ARCH ;;
-  ubuntu24.04)
-    [[ $FORMAT == deb && ${ID:-} == ubuntu && ${VERSION_ID:-} == 24.04 ]] ||
-      die 'ubuntu24.04 DEBs must be built on Ubuntu 24.04'
-    DISTRO_NAME=ubuntu; DISTRO_VERSION=24.04; CODENAME=noble; PACKAGE_ARCH=$DEB_ARCH ;;
-  ubuntu26.04)
-    [[ $FORMAT == deb && ${ID:-} == ubuntu && ${VERSION_ID:-} == 26.04 ]] ||
-      die 'ubuntu26.04 DEBs must be built on Ubuntu 26.04'
-    DISTRO_NAME=ubuntu; DISTRO_VERSION=26.04; CODENAME=resolute; PACKAGE_ARCH=$DEB_ARCH ;;
-  debian12)
-    [[ $FORMAT == deb && ${ID:-} == debian && ${VERSION_ID:-} == 12 && ${VERSION_CODENAME:-} == bookworm ]] ||
-      die 'debian12 DEBs must be built on Debian 12 Bookworm'
-    [[ $DEB_ARCH == arm64 ]] || die 'debian12 packages are available only for arm64'
-    DISTRO_NAME=debian; DISTRO_VERSION=12; CODENAME=bookworm; PACKAGE_ARCH=$DEB_ARCH ;;
-  debian13)
-    [[ $FORMAT == deb && ${ID:-} == debian && ${VERSION_ID:-} == 13 && ${VERSION_CODENAME:-} == trixie ]] ||
-      die 'debian13 DEBs must be built on Debian 13 Trixie'
-    DISTRO_NAME=debian; DISTRO_VERSION=13; CODENAME=trixie; PACKAGE_ARCH=$DEB_ARCH ;;
-  fedora44)
-    [[ $FORMAT == rpm && ${ID:-} == fedora && ${VERSION_ID:-} == 44 ]] ||
-      die 'fedora44 RPMs must be built in Fedora 44 userspace'
-    DISTRO_NAME=fedora; DISTRO_VERSION=44; CODENAME=; PACKAGE_ARCH=$RPM_ARCH ;;
-  *) die '--distro must be ubuntu22.04, ubuntu24.04, ubuntu26.04, debian12, debian13 or fedora44' ;;
-esac
+target=$(python3 "$SOURCE_DIR/script/artifact-plan.py" target "$DISTRO" --format "$FORMAT" \
+  --node-arch "$NODE_ARCH" --os-id "${ID:-}" --os-version "${VERSION_ID:-}" --os-codename "${VERSION_CODENAME:-}") || exit 1
+read -r DISTRO_NAME DISTRO_VERSION CODENAME PACKAGE_ARCH <<<"$target"
+[[ $CODENAME != - ]] || CODENAME=
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
-for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-wideband-vulkan.so bin/blah2-gpu-resident-vulkan.so \
-  bin/heimdall share/heimdall/build.json share/heimdall/sbom.cdx.json share/heimdall/service.py share/heimdall/controller.py \
-  bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
-  bin/blah2-receiver-hackrf.so \
-  api/server.js html/index.html config-examples/config.yml; do
-  [[ -e $ARTIFACT/$file ]] || die "release artifact is incomplete: $file"
-done
-if find "$ARTIFACT/bin" -maxdepth 1 \( -type f -o -type l \) -name 'test*' -print -quit | grep -q .; then
-  die 'release artifact must not contain test executables'
-fi
-for notice in asio cpp-httplib rapidjson ryml VkFFT; do
-  [[ -s $ARTIFACT/licenses/$notice.txt ]] || die "artifact lacks third-party notice: $notice"
-done
-[[ ! -e $ARTIFACT/bin/blah2-mixed-worker && ! -L $ARTIFACT/bin/blah2-mixed-worker ]] ||
-  die 'historical mixed DSP workers are not part of the unified release artifact'
-[[ -x $ARTIFACT/bin/blah2 && -x $ARTIFACT/bin/blah2-gpu-worker ]] ||
-  die 'release processor binaries are not executable'
-[[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'installed launcher is missing from release artifact'
-[[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing from release artifact'
+plan_options=(); if $TEST_ONLY; then plan_options+=(--test-only); fi
+python3 "$SOURCE_DIR/script/artifact-plan.py" validate "$ARTIFACT" --level package "${plan_options[@]}"
 backend=$(sed -n 's/^backend=//p' "$ARTIFACT/.vectorwarp-build")
-gpu=$(sed -n 's/^gpu=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_id=$(sed -n 's/^build_os_id=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_version=$(sed -n 's/^build_os_version=//p' "$ARTIFACT/.vectorwarp-build")
 build_arch=$(sed -n 's/^build_arch=//p' "$ARTIFACT/.vectorwarp-build")
 compiled_receivers=$(sed -n 's/^compiled_receivers=//p' "$ARTIFACT/.vectorwarp-build")
 local_build_receivers=$(sed -n 's/^local_build_receivers=//p' "$ARTIFACT/.vectorwarp-build")
-artifact_test_only=$(sed -n 's/^test_only=//p' "$ARTIFACT/.vectorwarp-build")
 SOURCE_COMMIT=$(bash "$SOURCE_DIR/script/artifact-source-commit.sh" "$ARTIFACT" "$SOURCE_DIR")
-if $TEST_ONLY; then
-  [[ $backend == open-test && $compiled_receivers == Usrp,HackRF,Kraken && $artifact_test_only == true ]] ||
-    die '--test-only requires the exact open-test Kraken, UHD, and HackRF artifact'
-else
-  [[ $backend == all ]] || die 'published packages require all receiver support in one build'
-  [[ $compiled_receivers == Usrp,HackRF,Kraken && $local_build_receivers == RspDuo && $artifact_test_only == false ]] ||
-    die 'published package receiver manifest is incomplete'
-  [[ -f $ARTIFACT/receiver-source/rspduo/kit.json && -x $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]] ||
-    die 'published package artifact is missing the local RSPduo source kit or helper'
-fi
-[[ -f $ARTIFACT/receiver-source/kraken/kit.json && -x $ARTIFACT/libexec/vectorwarp-build-kraken.py ]] ||
-  die 'release artifact lacks the pinned local Kraken source kit'
-[[ $gpu == AUTO ]] || die 'published packages require the CPU plus Vulkan AUTO build'
 [[ $build_os_id == "${ID:-}" && $build_os_version == "${VERSION_ID:-}" && $build_arch == "$(uname -m)" ]] ||
   die 'artifact was not built natively on this exact distribution and architecture'
-# SDRplay remains user-installed licensed software. Only our adapter may ship.
-if find "$ARTIFACT" \( -iname '*libsdrplay*' -o -iname 'sdrplay_api*.h' -o -iname 'SDRplay*.run' \) -print -quit | grep -q .; then
-  die 'release artifact must not contain the SDRplay vendor SDK or runtime'
-fi
-
 processor_file=$(file -Lb "$ARTIFACT/bin/blah2")
 case "$NODE_ARCH" in
   x64) [[ $processor_file == *x86-64* || $processor_file == *x86_64* ]] || die 'processor architecture mismatch' ;;
@@ -165,7 +104,8 @@ esac
 [[ -x $NODE_RUNTIME/bin/node && -f $NODE_RUNTIME/LICENSE ]] ||
   die 'Node runtime must contain executable bin/node and LICENSE'
 node_version=$($NODE_RUNTIME/bin/node --version 2>/dev/null || true)
-[[ $node_version == v24.22.1 ]] || die "Node runtime must be v24.22.1 (found ${node_version:-unusable})"
+expected_node=$(python3 "$SOURCE_DIR/script/artifact-plan.py" pin node)
+[[ $node_version == "v$expected_node" ]] || die "Node runtime must be v$expected_node (found ${node_version:-unusable})"
 node_file=$(file -Lb "$NODE_RUNTIME/bin/node")
 case "$NODE_ARCH" in
   x64) [[ $node_file == *x86-64* || $node_file == *x86_64* ]] || die 'Node runtime architecture mismatch' ;;
@@ -408,10 +348,13 @@ manifest="$WORK_DIR/$ASSET.manifest.json"
   printf '  "sha256": "%s",\n' "$sha256"
   printf '  "size": %s,\n' "$size"
   printf '  "backend": "%s",\n' "$backend"
-  if $TEST_ONLY; then printf '  "compiled_receivers": ["Usrp", "HackRF", "Kraken"],\n  "local_build_receivers": [],\n'; else printf '  "compiled_receivers": ["Usrp", "HackRF", "Kraken"],\n  "local_build_receivers": ["RspDuo"],\n'; fi
+  python3 -c 'import json,sys
+for name,value in zip(("compiled_receivers","local_build_receivers"),sys.argv[1:]):
+    print("  " + json.dumps(name) + ": " + json.dumps(value.split(",") if value else []) + ",")' \
+    "$compiled_receivers" "$local_build_receivers"
   printf '  "test_only": %s,\n' "$TEST_ONLY"
   printf '  "gpu": "auto",\n'
-  printf '  "node_version": "24.22.1"\n'
+  printf '  "node_version": "%s"\n' "$expected_node"
   printf '}\n'
 } >"$manifest"
 

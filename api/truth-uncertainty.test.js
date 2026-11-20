@@ -37,9 +37,13 @@ assert.ok(model.covariance.every(Number.isFinite));
 const withDisagreement = disagreement => projectedUncertainty({aircraft: {...aircraft,
   vectorwarp: {...aircraft.vectorwarp, maximum_pairwise_projected_disagreement_km: disagreement}},
 target, rx, tx, frequency: 509e6, config: settings});
-assert.equal(withDisagreement(.45).reason, 'source-disagreement-exceeds-accuracy',
-  '450 m accepted-cluster separation cannot retain the selected 30 m NACp accuracy');
-assert.equal(withDisagreement(.03 + 1e-9).valid, false, 'above-accuracy disagreement abstains');
+const disputedModel = withDisagreement(.45);
+assert.equal(disputedModel.valid, true, 'accepted-cluster disagreement widens the truth model');
+assert.equal(disputedModel.horizontal_position_sigma_m, 450,
+  '450 m source separation cannot retain the selected 30 m NACp accuracy');
+assert.ok(disputedModel.covariance[0] > model.covariance[0]);
+assert.equal(withDisagreement(.03 + 1e-9).valid, true,
+  'NACp is a selected-source accuracy report, not a source-cluster admission cutoff');
 const boundaryDisagreement = withDisagreement(.03);
 assert.equal(boundaryDisagreement.valid, true, 'exact declared-accuracy boundary is admitted');
 assert.equal(boundaryDisagreement.horizontal_position_sigma_m, 30);
@@ -139,11 +143,43 @@ const alignment = {declared: true, model: 'existing-operational-provisional', fr
 const gate = associationGates(span, prediction, targetTime * 1000, 'detection', 0, alignment);
 assert.equal(gate.valid, true);
 assert.equal(gate.shape, 'ellipse');
+const widenedGate = associationGates(span, {...prediction, truth_uncertainty: withDisagreement(.05)},
+  targetTime * 1000, 'detection', 0, alignment);
+assert.equal(widenedGate.valid, true,
+  'moderate accepted-source disagreement beyond NACp still allows a bounded association');
+assert.ok(widenedGate.delayKm > gate.delayKm);
+const replayCoordinates = {sample_rate_hz: 6144000, frequency_hz: 700e6};
+const replayPrediction = new DelayDopplerHistory(configuration).update(fused, replayCoordinates).data.abc123;
+assert.ok(Math.abs(replayPrediction.doppler / prediction.doppler - 700 / 509) < 1e-9,
+  'Instantaneous moving-aircraft truth uses the native replay carrier');
+const replaySpan = limits(configuration, replayCoordinates);
+assert.equal(replaySpan.kmPerBin, 299792.458 / 6144000);
+const fastTurning = projectedUncertainty({aircraft: {...aircraft, gs: 900,
+  vectorwarp: {...aircraft.vectorwarp, observation: {...aircraft.vectorwarp.observation, gs: 900}}},
+  target, rx, tx, frequency: 700e6, config: settings,
+  motion: {turnRateDegS: 15, accelerationMS2: 40}});
+assert.ok(fastTurning.acceleration_sigma_m_s2 > turning.acceleration_sigma_m_s2);
+const fastGate = associationGates(replaySpan, {...replayPrediction,
+  truth_uncertainty: fastTurning}, targetTime * 1000, 'tracker', 0, alignment);
+assert.equal(fastGate.valid, false, 'An extreme aircraft turn cannot silently widen the scoring gate');
+assert.equal(fastGate.reason, 'uncertainty-exceeds-hard-cap');
+assert.equal(associationGates(replaySpan, replayPrediction, targetTime * 1000,
+  'tracker', 0, {...alignment, frameOffsetS: -.101}).valid, false,
+  'Out-of-order or missing frame alignment outside 100 ms must abstain');
 assert.equal(associationGates({...span, truthUncertaintyPolicy: null}, prediction,
   targetTime * 1000).shape, undefined, 'legacy gate family remains the default');
 const inflated = {...prediction, truth_uncertainty: {...model, covariance: [1, 0, 0, 1e6]}};
 assert.equal(associationGates(span, inflated, targetTime * 1000, 'detection', 0,
   alignment).reason, 'uncertainty-exceeds-hard-cap', 'never silently clip a broad ellipse');
+const disputedPrediction = {...prediction, truth_uncertainty: disputedModel};
+const disputedGate = associationGates(span, disputedPrediction, targetTime * 1000,
+  'detection', 0, alignment);
+assert.equal(disputedGate.valid, false);
+assert.equal(disputedGate.reason, 'uncertainty-exceeds-hard-cap',
+  'accepted-cluster uncertainty can still exceed the conservative association budget');
+assert.equal(assignments([{index: 0, delay: prediction.delay, doppler: prediction.doppler}],
+  [['abc123', disputedPrediction]], () => disputedGate, 'detection', targetTime * 1000).size, 0,
+  'even a coincident radar point cannot bypass an over-wide source-disagreement gate');
 const diagonal = {...gate, covariance: [.01, 0, 0, 1], determinant: .01,
   maximumNis: 1, delayKm: .1, dopplerHz: 1};
 const predictions = [['abc123', {delay: 10, doppler: 100}]];

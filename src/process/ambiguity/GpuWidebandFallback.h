@@ -1,15 +1,27 @@
 #pragma once
 #include "process/ambiguity/GpuWidebandChannelizer.h"
+#include "process/conditioning/SamplePhase.h"
 #include <algorithm>
 #include <cmath>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 namespace blah2::wideband_gpu {
-inline bool needsCpuFallback(const std::string& mode,bool gpuActive){return !gpuActive||mode=="auto";}
-template<class Gpu,class Failure> bool attemptWithAutoFallback(bool automatic,Gpu&& gpu,Failure&& failure){try{std::forward<Gpu>(gpu)();return true;}catch(const std::exception& error){if(!automatic)throw;std::forward<Failure>(failure)(error);return false;}}
+// Wideband channelization is optional, including when downstream lanes require
+// GPU execution. A device/driver failure must not change those lane requirements
+// or terminate otherwise valid CPU channelization of the same input block.
+template<class Gpu,class Failure>
+bool attemptOptionalWithFallback(Gpu&& gpu,Failure&& failure)
+{
+  try { std::forward<Gpu>(gpu)(); return true; }
+  catch(const std::exception& error) {
+    std::forward<Failure>(failure)(error);
+    return false;
+  }
+}
 
 enum class QualificationStatus {passed,inconclusive,failed};
 struct QualificationResult
@@ -26,6 +38,8 @@ struct QualificationResult
 // The caller publishes the CPU output for that capture regardless of outcome;
 // on success both histories are already positioned for the next GPU capture,
 // while on failure the CPU history is ready for fail-closed continuation.
+// Timing arguments remain validated diagnostic metadata for existing callers;
+// exceeding a CPI is not numerical failure. The worker bounds a stuck device.
 inline QualificationResult qualifyFirstBlock(
   const std::vector<LaneOutput>& cpu,const std::vector<LaneOutput>& gpu,
   double gpuMilliseconds,double deadlineMilliseconds,
@@ -34,9 +48,9 @@ inline QualificationResult qualifyFirstBlock(
   QualificationResult result;
   if(!std::isfinite(gpuMilliseconds)||gpuMilliseconds<0||
       !std::isfinite(deadlineMilliseconds)||deadlineMilliseconds<=0||
-      gpuMilliseconds>deadlineMilliseconds||!std::isfinite(rmsLimit)||
+      !std::isfinite(rmsLimit)||
       !std::isfinite(peakLimit)||rmsLimit<0||peakLimit<0)
-  {result.reason="wideband GPU first-block deadline qualification failed";return result;}
+  {result.reason="wideband GPU first-block qualification parameters invalid";return result;}
   if(cpu.size()!=gpu.size())
   {result.reason="wideband GPU qualification lane count differs";return result;}
   double representativeEnergy=0,representativeSamples=0;
@@ -145,15 +159,17 @@ public:
     double gpuMilliseconds, double deadlineMilliseconds,
     double rmsLimit=2e-3, double peakLimit=5e-3)
   {
+    // Correct GPU work remains eligible across a slow CPI. Transport timeout
+    // and numerical qualification have separate failure responsibilities.
     QualificationResult result;
     const auto fail = [&](const char* reason) {
       result.reason = reason; return result;
     };
     if (!std::isfinite(gpuMilliseconds) || gpuMilliseconds < 0 ||
         !std::isfinite(deadlineMilliseconds) || deadlineMilliseconds <= 0 ||
-        gpuMilliseconds > deadlineMilliseconds || !std::isfinite(rmsLimit) ||
+        !std::isfinite(rmsLimit) ||
         !std::isfinite(peakLimit) || rmsLimit < 0 || peakLimit < 0)
-      return fail("wideband GPU full-block deadline qualification failed");
+      return fail("wideband GPU full-block qualification parameters invalid");
     if (input.size() != config_.channels || gpu.size() != config_.lanes.size())
       return fail("wideband GPU qualification lane/channel count differs");
     const std::size_t samples = input.front().size();
@@ -302,22 +318,9 @@ private:
   std::complex<double> oscillator(double offset, uint64_t sample) const
   {
     const double tau = 2 * std::acos(-1.0);
-    // Integer-Hz capture configurations have an exact modular phase even
-    // beyond 2^53 samples. Products of two uint32 residues fit uint64.
-    const double reduced = std::fmod(offset, double(config_.inputRateHz));
-    if (std::trunc(reduced) == reduced)
-    {
-      const uint64_t magnitude = uint64_t(std::abs(reduced));
-      const uint64_t residue = magnitude * (sample % config_.inputRateHz) %
-        config_.inputRateHz;
-      const double phase = (reduced < 0 ? tau : -tau) *
-        double(residue) / config_.inputRateHz;
-      return {std::cos(phase), std::sin(phase)};
-    }
-    const long double phase = std::remainder(
-      -2 * std::acos(-1.0L) * static_cast<long double>(offset) * sample /
-        config_.inputRateHz, 2 * std::acos(-1.0L));
-    return {double(std::cos(phase)), double(std::sin(phase))};
+    const double phase = tau * channelizer::mixerPhaseCycles(sample,
+      offset, config_.inputRateHz);
+    return {std::cos(phase), std::sin(phase)};
   }
 
   Config config_;

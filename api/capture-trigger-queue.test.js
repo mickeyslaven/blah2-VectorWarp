@@ -170,6 +170,19 @@ assert.equal(startup.acknowledge(2, null,
   {file: '/clips/startup-retry.mchq', samples: 12000000}), true);
 assert.equal(startup.status().recentEvents[0].state, 'acknowledged');
 
+let longCooldownClock = 5000;
+const longCooldownRetry = new CaptureTriggerQueue({minimumExposureIntervalMs: 120000,
+  now: () => longCooldownClock});
+longCooldownRetry.acceptEligibilityEvent(event(41, 4000));
+assert.equal(longCooldownRetry.request(true).clipRevision, 1);
+assert.equal(longCooldownRetry.acknowledge(1, 'IQ clip pre-roll is unavailable'), true);
+longCooldownClock = 10000;
+assert.equal(longCooldownRetry.retryPreRollFailure(1).clipRevision, 2);
+assert.equal(longCooldownRetry.request(true).clipRevision, 2,
+  'A single pre-roll retry must not expire behind the ordinary exposure cooldown');
+assert.equal(longCooldownRetry.request().pending, true);
+assert.equal(longCooldownRetry.request().failure, null);
+
 let periodicRetryClock = 121000;
 const periodicRetry = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 2, now: () => periodicRetryClock});

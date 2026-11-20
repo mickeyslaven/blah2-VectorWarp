@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 
 
-script = Path(__file__).parents[2] / "script" / "replay-fusion-ab-cass.py"
+script = Path(__file__).parents[2] / "script" / "run-iq-protection-replay.py"
 spec = importlib.util.spec_from_file_location("replay_fusion", script)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -30,3 +30,13 @@ GPU_TRACKER_PREPARED frame=2 detections=5 device_associated=1 unmatched_detectio
 
 if __name__ == "__main__":
     test_aggregates_all_prepared_frames()
+    for bad in ("GPU_TRACKER_PREPARED frame=1 detections=2\n" * 2,
+                "GPU_TRACKER_PREPARED frame=1 detections=-1",
+                "x" * ((16 << 20) + 1)):
+        try:
+            module.parse_tracker_diagnostics(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid/duplicate/unbounded tracker diagnostics accepted")
+    assert module.parse_tracker_diagnostics("NOT_GPU_TRACKER_PREPARED frame=1 detections=1")["frames"] == 0

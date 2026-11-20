@@ -1,4 +1,5 @@
 #pragma once
+#include "data/IqSampleView.h"
 
 #include <complex>
 #include <cstddef>
@@ -41,8 +42,13 @@ public:
   Metrics process(const std::complex<float>* input, std::size_t samples,
     std::vector<std::complex<double>>& output, double cfoHz,
     bool pilotCandidate);
+  Metrics process(IqSampleView input, std::vector<std::complex<double>>& output,
+    double cfoHz, bool pilotCandidate);
 
 private:
+  template<class Sample, class Output>
+  Metrics process_samples(std::size_t samples, Sample sample, Output& output,
+    double cfoHz, bool pilotCandidate);
   Config config_;
   bool haveCfo_ = false, locked_ = false;
   double cfoHz_ = 0;

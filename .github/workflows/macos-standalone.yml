@@ -74,9 +74,7 @@ jobs:
       - name: Build CPU, GPU, and open receiver adapters
         run: |
           npm ci --prefix api --ignore-scripts --no-audit --no-fund
-          git init build/VkFFT
-          git -C build/VkFFT fetch --depth 1 https://github.com/DTolm/VkFFT.git 066a17c17068c0f11c9298d848c2976c71fad1c1
-          git -C build/VkFFT checkout --detach 066a17c17068c0f11c9298d848c2976c71fad1c1
+          python3 script/artifact-plan.py checkout VkFFT build/VkFFT
           BLAH2_UHD_FORMULA=vectorwarp/release-build/vectorwarp-uhd VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
       - name: Stage and audit standalone runtime
         run: |
@@ -217,7 +215,7 @@ jobs:
           source packaging/node-runtime.env
           curl --fail --location --proto '=https' --tlsv1.2 "$NODE_BASE_URL/node-v${NODE_VERSION}.tar.gz" --output "$RUNNER_TEMP/node-source.tar.gz"
           printf '%s  %s\n' "$NODE_SOURCE_SHA256" "$RUNNER_TEMP/node-source.tar.gz" | shasum -a 256 --check
-          git -C build/VkFFT archive --format=tar.gz --output "$RUNNER_TEMP/vkfft-source.tar.gz" 066a17c17068c0f11c9298d848c2976c71fad1c1
+          git -C build/VkFFT archive --format=tar.gz --output "$RUNNER_TEMP/vkfft-source.tar.gz" $(python3 script/artifact-plan.py pin VkFFT)
           curl --fail --location --proto '=https' --tlsv1.2 https://www.sqlite.org/copyright.html --output "$RUNNER_TEMP/sqlite-public-domain.html"
           printf '%s  %s\n' '44ca9f793055c8e32fc65f65a4f5bcf813a33f5bdaaa084067dd617a4ed3cc70' "$RUNNER_TEMP/sqlite-public-domain.html" | shasum -a 256 --check
           python3 script/export-macos-source-closure.py \

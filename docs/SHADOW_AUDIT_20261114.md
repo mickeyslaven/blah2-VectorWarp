@@ -8,7 +8,7 @@ feedback disabled until the acceptance experiment below passes.
 
 ## Corrected evidence
 
-The newest HomePortal WPXI pair ledger contains 2,349 records. The old analyzer
+The newest HomePortal pair ledger for channel alias TX-C contains 2,349 records. The old analyzer
 used a 5–545 km default denominator even though the configured searchable lane
 was approximately 0.781–59.968 km. Re-analysis over the actual search extent:
 

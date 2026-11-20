@@ -1,7 +1,8 @@
 'use strict';
 
 const assert = require('assert');
-const {status, fresh} = require('./processor-status');
+const {status} = require('./processor-status');
+const {fresh} = require('./presentation-history');
 
 const replay = {
   input: 'replay', receiver: 'Kraken', state: 'playing', error: '',

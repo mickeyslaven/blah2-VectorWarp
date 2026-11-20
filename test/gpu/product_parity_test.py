@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Physical GPU acceptance on one all-receiver artifact; no SDR or live service.
+"""Physical GPU two-channel baseline; no SDR or live service.
 
 Uses the canonical six-CPI target twice to exercise target birth/update, absent
 tail, history reset and post-qualification execution. Enumeration is never a
 passing qualification. A missing requested feature class is a hard failure.
+Full unified acceptance also requires the supplemental feature corpus receipts.
 """
 import argparse
+import copy
 import hashlib
 import importlib.util
 import json
@@ -23,10 +25,15 @@ if not __debug__:
     raise RuntimeError("GPU acceptance cannot run with Python assertions disabled")
 
 ROOT = Path(__file__).resolve().parents[2]
+FEATURE_REQUIREMENTS = Path(__file__).with_name("unified_qualification_requirements.json")
 SPEC = importlib.util.spec_from_file_location("canonical_replay",
     ROOT / "test/recording/processor_replay_test.py")
 replay = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(replay)
+ARTIFACT_SPEC = importlib.util.spec_from_file_location("qualification_artifact_binding",
+    ROOT / "script/gpu_artifact_binding.py")
+artifacts = importlib.util.module_from_spec(ARTIFACT_SPEC)
+ARTIFACT_SPEC.loader.exec_module(artifacts)
 RECEIVERS = ("RspDuo", "Usrp", "HackRF", "Kraken")
 FRAMES = 12
 # Match the public two-decimal serialization envelope, not a percentage-based
@@ -40,26 +47,51 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def compare(expected, actual, label="products", *, exact=False):
+def compare(expected, actual, label="products", *, exact=False, absolute=ABS_TOLERANCE):
     """Compare every field and array position; never erase IDs or lineage."""
     if isinstance(expected, dict):
         assert isinstance(actual, dict) and expected.keys() == actual.keys(), label
         for key in expected:
             compare(expected[key], actual[key], f"{label}.{key}",
-                    exact=exact or key == "integration" or "sample" in key or key == "capture_epoch")
+                    exact=exact or key == "integration" or "sample" in key or key == "capture_epoch", absolute=absolute)
     elif isinstance(expected, list):
         assert isinstance(actual, list) and len(expected) == len(actual), label
         for index, (left, right) in enumerate(zip(expected, actual)):
-            compare(left, right, f"{label}[{index}]", exact=exact)
+            compare(left, right, f"{label}[{index}]", exact=exact, absolute=absolute)
     elif type(expected) in (int, float):
         assert type(actual) in (int, float), label
         assert math.isfinite(expected) and math.isfinite(actual), label
         tolerance = 0 if exact or (type(expected) is int and type(actual) is int) else \
-            ABS_TOLERANCE + REL_TOLERANCE * max(abs(expected), abs(actual))
+            absolute + REL_TOLERANCE * max(abs(expected), abs(actual))
         assert abs(expected - actual) <= tolerance, f"{label}: {expected} != {actual}"
     else:
         assert type(expected) is type(actual) and expected == actual, \
             f"{label}: {expected!r} != {actual!r}"
+
+
+def resolved_plan_identity(run, observed):
+    """Native policy plus configured math, physical axes and pinned calibration."""
+    native = observed.get("resolved_product_plan")
+    assert isinstance(native, str) and json.loads(native).get("schema") == "vectorwarp-resolved-products-v1", \
+        "missing native resolved radar plan"
+    def calibrated(value, key=""):
+        if key.endswith("_file") or key == "manifold_file":
+            if not value: return value
+            item = run.get("calibrations", {}).get(Path(value).name)
+            assert item and re.fullmatch(r"[a-f0-9]{64}", item.get("sha256", "")), "unbound manifold content"
+            return {"sha256": item["sha256"]}
+        if isinstance(value, dict): return {name: calibrated(item, name) for name, item in value.items()}
+        if isinstance(value, list): return [calibrated(item) for item in value]
+        return value
+    process = copy.deepcopy(run["config"]["process"])
+    process.get("performance", {}).pop("acceleration", None)
+    identity = {"native": native, "process": calibrated(process),
+        "physical": {key: calibrated(observed[key], key) for key in
+            ("sampleRateHz", "frequencyHz", "inputSamplesPerOutput", "channel_ids", "reference_channel_ids",
+             "geometry", "reference_config", "rows", "columns", "delay_bins", "doppler_hz")},
+        "acquisitionSha256": run.get("acquisition", run.get("scene", {})).get("acquisition_sha256",
+            run.get("scene", {}).get("acquisitionSha256"))}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
 def select_device(report, feature_class, selector=None):
@@ -131,9 +163,10 @@ def assert_execution(timings, lane_frames, mode, temporal, device):
 def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=False):
     with tempfile.TemporaryDirectory(prefix="vectorwarp-product-parity-") as temporary:
         root = Path(temporary)
+        (root / "observer").mkdir()
         generation = str(uuid.uuid4())
         status, sinks = replay.StatusServer(), replay.SinkGroup()
-        process = None
+        process = artifact_channel = None
         log = (root / "processor.log").open("w+")
         try:
             status.start()
@@ -141,6 +174,12 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
             config = replay.config(receiver, 2, recording, status.port, sinks.ports(),
                                    loop=True, temporal_lane=temporal)
             config["capture"]["fs"] = 2000000
+            config["capture"]["replay"]["format"] = "blah2"
+            config["capture"]["replay"]["qualification"] = {"enabled": True,
+                "confirmation": "offline-physical-gpu-qualification-v1", "observer": {
+                    "directory": str(root / "observer"), "summary_only": True,
+                    "max_frames": 64, "max_samples_per_channel": 16777216,
+                    "max_map_cells": 4194304, "max_bytes": 268435456}}
             config["process"]["performance"]["acceleration"] = mode
             # Resident and portable must run the same algorithm, not differing
             # defaults. Resident requires clutter and an explicit tracker bound.
@@ -149,11 +188,16 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
             config["process"]["tracker"]["initiate"].update(
                 stationary_clutter={"enable": False}, acceleration_model="hypothesis_bank")
             cfg = root / "config.json"
+            binding = artifacts.prepare(binary, mode != "cpu")
+            artifact_channel = artifacts.ReceiptChannel(binding, config,
+                {**os.environ, "BLAH2_GPU_DEVICE": device["id"]})
             cfg.write_text(json.dumps(config))
-            environment = {**os.environ, "BLAH2_GPU_DEVICE": device["id"]}
+            artifacts.verify_files(binding)
             process = subprocess.Popen([str(binary), "-c", str(cfg)], cwd=root,
-                env=environment, stdout=log, stderr=subprocess.STDOUT,
+                env=artifact_channel.environment, pass_fds=artifact_channel.pass_fds,
+                stdout=log, stderr=subprocess.STDOUT,
                 start_new_session=True)
+            artifact_channel.launched()
             def completed():
                 if process.poll() is not None:
                     return True
@@ -171,6 +215,8 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
                 thread.join(.05)
             log.seek(0)
             output = log.read()
+            artifact_receipt = artifacts.validate(binding, artifact_channel.finish(), process.pid,
+                require_worker=mode != "cpu" and not refuse)
             assert "Setting up device" not in output, "replay attempted live SDR setup"
             assert not sinks.truncated, f"product retention overflow: {sinks.truncated}"
             if refuse:
@@ -182,7 +228,8 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
                 assert exited or any(frame.get("state") == "error" for frame in status.snapshot()), reason[-4000:]
                 assert not any(sinks.bytes[name] for name in ("map", "detection", "track", "illuminator")), \
                     "unsupported resident route published numerical products"
-                return {"receiver": receiver, "mode": mode, "refused": True,
+                return {"receiver": receiver, "mode": mode, "temporal": temporal, "refused": True,
+                        "artifactBinding": binding, "artifactReceipt": artifact_receipt,
                         "reason": "shaderFloat64=0" if feature_refusal else "resident-module-not-built"}
             assert not exited and not forced and process.returncode == 0, output[-6000:]
             assert not any(any(frame.get("captureDroppedSamples", [])) for frame in status.snapshot()), \
@@ -204,7 +251,12 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
                         [frame.get("timestamp") for frame in timings], f"unbound {name}/timing frame"
                     products[name] = [replay.canonical_product(frame) for frame in values]
             execution = assert_execution(timings, lanes, mode, temporal, device)
+            observed = [json.loads(row) for row in (root / "observer/coherent-observer.jsonl").read_text().splitlines()]
+            plans = {resolved_plan_identity({"config": config}, row) for row in observed if row["stage"] == "products"}
+            assert len(plans) == 1, "resolved native plan missing or changed during parity replay"
             return {"receiver": receiver, "mode": mode, "temporal": temporal,
+                    "radarPlanSha256": plans.pop(),
+                    "artifactBinding": binding, "artifactReceipt": artifact_receipt,
                     "processorGeneration": generation, "processorPid": process.pid,
                     "configSha256": digest(cfg), "execution": execution,
                     "products": products}
@@ -216,6 +268,8 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
         finally:
             if process is not None:
                 replay.stop_process(process)
+            if artifact_channel is not None:
+                artifact_channel.close()
             sinks.close()
             status.close()
             log.close()
@@ -275,21 +329,24 @@ def main():
                 if identity_baseline is not None:
                     compare(identity_baseline, cpu["products"], f"{receiver}.receiverIdentity", exact=True)
                 identity_baseline = cpu["products"]
-                modes = ["gpu"] + (["gpu-resident"] if not temporal and args.device_class == "fp64" else [])
+                modes = ["gpu"] + (["gpu-resident"] if args.device_class == "fp64" else [])
                 cases.append(cpu)
                 for mode in modes:
                     gpu = run_case(binary, recording, receiver, mode, temporal, device)
+                    assert cpu["radarPlanSha256"] == gpu["radarPlanSha256"], "backend changed resolved radar plan"
                     compare(cpu["products"], gpu["products"], f"{receiver}.{mode}.cpuParity")
                     cases.append(gpu)
-                if not temporal and args.device_class == "fp32":
-                    cases.append(run_case(binary, recording, receiver, "gpu-resident", False, device, refuse=True))
+                if args.device_class == "fp32":
+                    cases.append(run_case(binary, recording, receiver, "gpu-resident", temporal, device, refuse=True))
     assert artifacts == {path.name: digest(path) for path in sorted(binary.parent.iterdir()) if path.is_file()}, \
         "native artifact changed during qualification"
     for case in cases:
         if "products" in case:
             encoded = json.dumps(case.pop("products"), sort_keys=True, allow_nan=False).encode()
             case["productsSha256"] = hashlib.sha256(encoded).hexdigest()
-    receipt = {"schema": "vectorwarp-gpu-product-parity-v1", "passed": True,
+    receipt = {"schema": "vectorwarp-gpu-product-parity-v2", "passed": True,
+        "qualificationScope": "two-channel-products",
+        "featureContractSha256": digest(FEATURE_REQUIREMENTS),
         "sourceSha": args.source_sha, "system": platform.system(), "architecture": platform.machine(),
         "deviceClass": args.device_class, "device": device, "nativeCapabilities": native,
         "receiverCapabilities": receivers,
@@ -297,7 +354,9 @@ def main():
         "tolerance": {"absolute": ABS_TOLERANCE, "relative": REL_TOLERANCE}, "cases": cases}
     args.receipt.parent.mkdir(parents=True, exist_ok=True)
     args.receipt.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
-    print(json.dumps({"passed": True, "receipt": str(args.receipt), "cases": len(cases)}))
+    print(json.dumps({"passed": True, "qualificationScope": receipt["qualificationScope"],
+        "unifiedAcceptance": "requires-supplemental-receipts",
+        "receipt": str(args.receipt), "cases": len(cases)}))
 
 
 if __name__ == "__main__":

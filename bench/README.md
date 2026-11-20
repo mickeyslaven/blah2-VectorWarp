@@ -1,5 +1,9 @@
 # Recorded-IQ comparison
 
+The [benchmark evidence index](../docs/benchmarks/README.md) links retained
+campaigns, pinned source/profile identities, and the shared `campaign.py`
+reproduction and reconciliation commands.
+
 This harness measures the signal-processing pipeline from an identical recorded
 input: reference preparation, spectrum, clutter filtering, delay–Doppler maps,
 detection, tracking and output serialization. It does **not** measure live
@@ -174,7 +178,8 @@ with a final capture counter snapshot. SDK call acceptance does not establish
 independent hardware readback or RF/channel coherence. Offline fake-processor
 tests exercise the harness without accessing a radio.
 
-Measured Pi 4B results and live-throughput limits for the ARM port are in
-[the September 18 campaign report](../docs/PI_ARM_PORT_RESULTS_20260918.md).
-The full 500 ms profile in that campaign exceeded the live processing budget;
-the harness correctly rejects its capture overflow.
+Measured Pi efficiency results and their acceptance contract are retained in
+[the campaign comparison](../docs/benchmarks/20260911-pi-efficiency/comparison.json)
+and [contract](../docs/benchmarks/20260911-pi-efficiency/contract.json). The
+full 500 ms profile exceeded the live processing budget; the harness correctly
+rejects its capture overflow.

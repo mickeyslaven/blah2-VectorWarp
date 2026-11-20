@@ -5,26 +5,39 @@
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
 #include "process/tracker/Tracker.h"
-#include "../../../core/TrackGuidedShadow.private.h"
+#include "process/tracker/SignalProgressClock.h"
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
 #include <optional>
 #include <chrono>
 #include <deque>
 #include <map>
+#include <functional>
 
 namespace blah2::detection {
 
-// Tracker kinematics use capture cadence, not wall-clock scheduling jitter.
-// Quotient/remainder conversion avoids overflowing endSample * 1000.
-inline uint64_t signalTimeMilliseconds(uint64_t endSample, uint32_t rate) {
-  if (!rate || endSample / rate > UINT64_MAX / 1000)
-    throw std::invalid_argument("Capture sample time cannot be represented");
-  const uint64_t whole = (endSample / rate) * 1000;
-  const uint64_t fraction = ((endSample % rate) * 1000) / rate;
-  if (whole > UINT64_MAX - fraction)
-    throw std::overflow_error("Capture sample time exhausted");
-  return whole + fraction;
+using tracker_clock::signalTimeMilliseconds;
+using tracker_clock::SignalProgressClock;
+
+struct IntegrationBudget { uint64_t workingBytes, pathSamples; };
+// Admission and execution share native map dimensions, never display decimation.
+inline IntegrationBudget temporalIntegrationBudget(uint32_t rows, uint32_t columns,
+    uint32_t maximumCpis, uint32_t motionBins) {
+  if (maximumCpis != 2 && maximumCpis != 4 && maximumCpis != 8)
+    throw std::invalid_argument("Temporal detector depth must be two, four or eight CPIs");
+  const auto motion = track_before_detect::decodeMotionBins(motionBins);
+  if (maximumCpis == 2 && motionBins > 1)
+    throw std::invalid_argument("Two-CPI integration motion must be zero or one bin");
+  const uint64_t cells = uint64_t(rows) * columns;
+  if (!cells || cells > (1ULL << 20))
+    throw std::invalid_argument("Temporal detector exceeds the 1048576-cell CPU contract");
+  const uint64_t powerBanks = maximumCpis == 8 ? 4 : maximumCpis == 4 ? 3 : 2;
+  const uint64_t depths = maximumCpis == 8 ? 14 : maximumCpis == 4 ? 6 : 2;
+  const IntegrationBudget budget{cells * (maximumCpis * 8 + 192 + powerBanks * 8),
+    cells * (2 * motion.delay + 1) * (2 * motion.doppler + 1) * depths};
+  if (budget.workingBytes > (256ULL << 20) || budget.pathSamples > (256ULL << 20))
+    throw std::invalid_argument("Temporal detector exceeds its 256-MiB/268435456-path-sample contract; reduce explicit geometry or motion bounds");
+  return budget;
 }
 
 struct IntegrationMetrics {
@@ -36,6 +49,7 @@ struct IntegrationMetrics {
   uint64_t captureEpoch = 0;
   uint64_t firstInputSample = 0, endInputSample = 0;
   integration::EvidenceLineage window;
+  const char* backend = "cpu";
   std::shared_ptr<integration::TemporalEvidence::Result> evidence;
 };
 
@@ -55,11 +69,13 @@ public:
   explicit DetectorIntegration(uint32_t motionBins)
     : DetectorIntegration(2, motionBins) {}
   DetectorIntegration(uint32_t maximumCpis, uint32_t motionBins,
-      double delayDriftPerHz = 0)
+      double delayDriftPerHz = 0, uint32_t beamCount = 0,
+      uint32_t beamTolerance = UINT32_MAX)
     : maximumCpis_(maximumCpis), motionBins_(motionBins),
       motion_(track_before_detect::decodeMotionBins(motionBins)),
       delayDriftPerHz_(motion_.fractionalDelay ? delayDriftPerHz : 0),
-      evidence_({maximumCpis, motion_.delay, motion_.doppler, delayDriftPerHz_, maximumCpis > 2}) {
+      evidence_({maximumCpis, motion_.delay, motion_.doppler, delayDriftPerHz_,
+        beamCount, beamTolerance}) {
     if (maximumCpis == 2 && motionBins > 1)
       throw std::invalid_argument("Two-CPI integration motion must be zero or one bin");
     if (motion_.fractionalDelay && !(delayDriftPerHz_ < 0))
@@ -73,7 +89,8 @@ public:
   }
   template <typename MapOwner>
   IntegrationMetrics process(MapOwner& map,
-      uint64_t captureEpoch, uint64_t first, uint64_t end, bool positionAvailable) {
+      uint64_t captureEpoch, uint64_t first, uint64_t end, bool positionAvailable,
+      const std::vector<uint32_t>* beams = nullptr) {
     IntegrationMetrics metrics;
     metrics.cpis = maximumCpis_; metrics.motionBins = motionBins_;
     metrics.delayMotionBins = motion_.delay;
@@ -81,18 +98,12 @@ public:
     metrics.delayDriftPerHz = delayDriftPerHz_;
     metrics.captureEpoch = captureEpoch;
     if (!map) throw std::invalid_argument("Detector integration requires a map");
-    const uint64_t cells = uint64_t(map->get_nRows()) * map->get_nCols();
     // Deterministic pre-admission bounds, independent of OS/receiver/backend.
     // FP64 histories and power maps are never silently downsampled or narrowed.
-    if (!cells || cells > (1ULL << 20))
-      throw std::invalid_argument("Temporal detector exceeds the 1048576-cell CPU contract");
-    metrics.workingBytesBound = cells * (maximumCpis_ * 8 + 192);
-    const uint64_t depths = maximumCpis_ == 8 ? 14 : maximumCpis_ == 4 ? 6 : 2;
-    metrics.pathSamplesBound = cells * (2 * motion_.delay + 1) *
-      (2 * motion_.doppler + 1) * depths;
-    if (metrics.workingBytesBound > (256ULL << 20) ||
-        metrics.pathSamplesBound > (256ULL << 20))
-      throw std::invalid_argument("Temporal detector exceeds its 256-MiB/268435456-path-sample contract; reduce explicit geometry or motion bounds");
+    const auto budget = temporalIntegrationBudget(map->get_nRows(), map->get_nCols(),
+      maximumCpis_, motionBins_);
+    metrics.workingBytesBound = budget.workingBytes;
+    metrics.pathSamplesBound = budget.pathSamples;
     if (!positionAvailable || end <= first) {
       reset(); metrics.historyReset = true; return metrics;
     }
@@ -104,7 +115,7 @@ public:
       throw std::overflow_error("Detector integration sequence exhausted");
     const auto started = std::chrono::steady_clock::now();
     auto integrated = std::make_shared<integration::TemporalEvidence::Result>(
-      evidence_.process(*map, generation_, ++sequence_));
+      evidence_.process(*map, generation_, ++sequence_, nullptr, beams));
     metrics.processingMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - started).count();
     metrics.availableCpis = integrated->availableCpis;
@@ -120,7 +131,17 @@ public:
     if (maximumCpis_ > 2) {
       map = std::move(integrated->map);
       metrics.evidence = std::move(integrated);
-    } else if (bank.ready) map = std::move(bank.map);
+    } else if (bank.ready) {
+      map = std::move(bank.map);
+      // Keep selected per-cell motion even though this single configured
+      // family does not use the multi-bank detector/threshold branch.
+      integrated->map.reset();
+      for (auto& unused : integrated->banks) {
+        unused.map.reset();
+        if (&unused != &bank) unused.detectorPower.clear();
+      }
+      metrics.evidence = std::move(integrated);
+    }
     return metrics;
   }
 };
@@ -128,27 +149,33 @@ public:
 inline std::unique_ptr<Detection> detectProducts(Map<std::complex<double>>& map,
     CfarDetector1D& detector, Centroid& centroid, Interpolate& interpolate,
     const std::optional<IntegrationMetrics>& integration,
-    const std::vector<std::vector<double>>* background = nullptr) {
+    const std::vector<std::vector<double>>* background = nullptr,
+    const std::function<uint32_t(uint32_t, uint32_t)>& spatialAt = {},
+    CfarDetector1D::Trials* trials = nullptr) {
   // Never apply a two-CPI threshold to an unintegrated startup/reset map.
   if (integration && !integration->ready)
     return std::make_unique<Detection>(std::vector<double>{},
       std::vector<double>{}, std::vector<double>{});
-  if (integration && integration->evidence) {
+  if (integration && integration->cpis > 2 && integration->evidence) {
     // Separate depth-specific Gamma passes; never threshold the maximum of
     // different depths as if it were one Gamma-distributed observation.
     const auto& metrics = *integration;
     std::vector<double> delays, dopplers, snrs;
     std::vector<Detection::Evidence> lineages;
+    std::vector<uint32_t> spatial;
     std::map<std::pair<double, double>, std::size_t> uniqueCells;
-    const double trials = track_before_detect::trialCount(metrics.cpis,
+    const double motionTrials = track_before_detect::trialCount(metrics.cpis,
       metrics.delayMotionBins, metrics.dopplerMotionBins);
     for (uint8_t index = 0; index < metrics.evidence->banks.size(); ++index) {
       const auto& bank = metrics.evidence->banks[index];
       if (!bank.ready) continue;
-      auto pass = detector.forIntegration(bank.depth, index ? 2 * trials : 2);
-      auto candidates = pass->process(bank.map.get(), background);
+      auto pass = detector.forIntegration(bank.depth, index ? 2 * motionTrials : 2);
+      auto candidates = pass->process(bank.map.get(), bank.validCells, background,
+        nullptr, std::numeric_limits<std::size_t>::max(), nullptr, trials,
+        &bank.detectorPower);
       const auto ds = candidates->get_delay(), fs = candidates->get_doppler();
       std::vector<Detection::Evidence> candidateLineage;
+      std::vector<uint32_t> candidateSpatial;
       for (std::size_t candidate = 0; candidate < ds.size(); ++candidate) {
         const auto column = std::find(bank.map->delay.begin(), bank.map->delay.end(), ds[candidate]);
         const auto row = std::find(bank.map->doppler.begin(), bank.map->doppler.end(), fs[candidate]);
@@ -159,8 +186,11 @@ inline std::unique_ptr<Detection> detectProducts(Map<std::complex<double>>& map,
         candidateLineage.push_back({lineage.epoch, lineage.newestSequence,
           lineage.depth, uint8_t(index + 1), lineage.delayMotion,
           lineage.dopplerMotion, lineage.sequences});
+        if (spatialAt) candidateSpatial.push_back(spatialAt(
+          uint32_t(row - bank.map->doppler.begin()), uint32_t(column - bank.map->delay.begin())));
       }
       candidates->set_evidence(std::move(candidateLineage));
+      if (spatialAt) candidates->set_spatial(std::move(candidateSpatial));
       auto centered = centroid.process(candidates.get());
       // Interpolation must use the same bank that passed CFAR, never the
       // display maximum across depths (which carries a different statistic).
@@ -172,31 +202,81 @@ inline std::unique_ptr<Detection> detectProducts(Map<std::complex<double>>& map,
           [&](double left, double right) {
             return std::abs(left - finalDoppler[candidate]) < std::abs(right - finalDoppler[candidate]);
           });
-        const auto key = std::make_pair(double(std::llround(finalDelay[candidate])), *nearest);
+        const auto key = std::make_pair(*nearest, double(std::llround(finalDelay[candidate])));
         const auto found = uniqueCells.find(key);
         if (found == uniqueCells.end()) {
           uniqueCells.emplace(key, delays.size());
           delays.push_back(finalDelay[candidate]); dopplers.push_back(finalDoppler[candidate]);
           snrs.push_back(finalSnr[candidate]);
           lineages.push_back(finalized->get_evidence()[candidate]);
+          if (spatialAt) spatial.push_back(finalized->get_spatial()[candidate]);
         } else if (finalSnr[candidate] > snrs[found->second]) {
           const auto at = found->second;
           delays[at] = finalDelay[candidate]; dopplers[at] = finalDoppler[candidate];
           snrs[at] = finalSnr[candidate]; lineages[at] = finalized->get_evidence()[candidate];
+          if (spatialAt) spatial[at] = finalized->get_spatial()[candidate];
         }
       }
     }
-    Detection combined(std::move(delays), std::move(dopplers), std::move(snrs));
-    combined.set_evidence(std::move(lineages));
+    // Canonical row-major grid-key order matches resident stable compaction.
+    // Winner selection above remains highest SNR, then first originating bank.
+    std::vector<double> orderedDelays, orderedDopplers, orderedSnrs;
+    std::vector<Detection::Evidence> orderedLineages;
+    std::vector<uint32_t> orderedSpatial;
+    for (const auto& cell : uniqueCells) {
+      const auto at = cell.second;
+      orderedDelays.push_back(delays[at]); orderedDopplers.push_back(dopplers[at]);
+      orderedSnrs.push_back(snrs[at]); orderedLineages.push_back(lineages[at]);
+      if (spatialAt) orderedSpatial.push_back(spatial[at]);
+    }
+    Detection combined(std::move(orderedDelays), std::move(orderedDopplers), std::move(orderedSnrs));
+    combined.set_evidence(std::move(orderedLineages));
+    if (spatialAt) combined.set_spatial(std::move(orderedSpatial));
     return centroid.process(&combined);
   }
-  auto first = detector.process(&map, background);
+  const auto* bank = integration && integration->evidence ?
+    &integration->evidence->banks[integration->motionBins ? 1u : 0u] : nullptr;
+  auto first = bank ? detector.process(&map, bank->validCells, background, nullptr,
+    std::numeric_limits<std::size_t>::max(), nullptr, trials, &bank->detectorPower) :
+    detector.process(&map, background, nullptr,
+      std::numeric_limits<std::size_t>::max(), nullptr, trials);
+  if (spatialAt) {
+    std::vector<uint32_t> spatial;
+    const auto delays = first->get_delay(), dopplers = first->get_doppler();
+    for (size_t candidate = 0; candidate < delays.size(); ++candidate) {
+      const auto column = std::find(map.delay.begin(), map.delay.end(), delays[candidate]);
+      const auto row = std::find(map.doppler.begin(), map.doppler.end(), dopplers[candidate]);
+      if (column == map.delay.end() || row == map.doppler.end())
+        throw std::logic_error("Spatial detector candidate left its native grid");
+      spatial.push_back(spatialAt(uint32_t(row - map.doppler.begin()),
+        uint32_t(column - map.delay.begin())));
+    }
+    first->set_spatial(std::move(spatial));
+  }
   if (integration) {
     const auto& window = integration->window;
     Detection::Evidence evidence{window.epoch, window.newestSequence,
       window.depth, uint8_t(integration->motionBins ? 2 : 1),
       window.delayMotion, window.dopplerMotion, window.sequences};
-    first->set_evidence(std::vector<Detection::Evidence>(first->get_nDetections(), evidence));
+    std::vector<Detection::Evidence> lineages(first->get_nDetections(), evidence);
+    if (integration->evidence) {
+      const uint8_t index = integration->motionBins ? 1u : 0u;
+      const auto& bank = integration->evidence->banks[index];
+      const auto delays = first->get_delay(), dopplers = first->get_doppler();
+      for (size_t candidate = 0; candidate < lineages.size(); ++candidate) {
+        const auto column = std::find(map.delay.begin(), map.delay.end(), delays[candidate]);
+        const auto row = std::find(map.doppler.begin(), map.doppler.end(), dopplers[candidate]);
+        if (column == map.delay.end() || row == map.doppler.end())
+          throw std::logic_error("Two-CPI detector candidate left its native grid");
+        const auto lineage = bank.lineageAt(uint64_t(row - map.doppler.begin()) *
+          map.get_nCols() + uint64_t(column - map.delay.begin()));
+        if (lineage.depth != 2)
+          throw std::logic_error("Two-CPI detector selected unavailable source lineage");
+        lineages[candidate] = {lineage.epoch, lineage.newestSequence, lineage.depth,
+          uint8_t(index + 1), lineage.delayMotion, lineage.dopplerMotion, lineage.sequences};
+      }
+    }
+    first->set_evidence(std::move(lineages));
   }
   auto centered = centroid.process(first.get());
   return interpolate.process(centered.get(), &map);
@@ -204,36 +284,9 @@ inline std::unique_ptr<Detection> detectProducts(Map<std::complex<double>>& map,
 
 inline std::unique_ptr<Track> trackProducts(Detection& detections,
     Tracker& tracker, uint64_t signalTimeMs,
-    const std::optional<IntegrationMetrics>& integration,
-    const CfarDetector1D* detector = nullptr) {
+    const std::optional<IntegrationMetrics>& integration) {
   if (integration && integration->historyReset) tracker.reset(true);
-  std::vector<TrackerGuidedCandidate> guided;
-  if (detector && integration && integration->evidence && integration->ready) {
-    const auto& evidence = *integration->evidence;
-    const auto& bank = evidence.banks[0];
-    if (bank.ready && !evidence.recentPower[1].empty()) {
-      auto& map = *bank.map;
-      const std::vector<double> doppler(map.doppler.begin(), map.doppler.end());
-      for (const auto& prediction : tracker.guidedPredictions(signalTimeMs)) {
-        const double columnValue = std::floor(prediction.delay - map.delay.front() + .5);
-        TrackerGuidedCandidate candidate;
-        candidate.trackId = prediction.trackId;
-        const auto& window = bank.window;
-        candidate.evidence = {window.epoch, window.newestSequence,
-          window.depth, 1, 0, 0, window.sequences};
-        if (std::isfinite(columnValue) && columnValue >= 0 && columnValue < map.get_nCols()) {
-          const auto value = track_guided_shadow::evaluate(evidence.recentPower[0],
-            evidence.recentPower[1], map.get_nRows(), map.get_nCols(), map.delay.front(),
-            doppler, prediction.delay, prediction.dopplerHz, prediction.priorDelay,
-            prediction.priorDopplerHz, detector->guardCells(), detector->trainingCells(),
-            detector->guidedAlpha(map.get_nCols(), uint32_t(columnValue)));
-          candidate.valid = value.valid; candidate.aboveThreshold = value.aboveThreshold;
-        }
-        guided.push_back(std::move(candidate));
-      }
-    }
-  }
-  return tracker.process(&detections, signalTimeMs, guided);
+  return tracker.process(&detections, signalTimeMs);
 }
 
 template <typename Writer>
@@ -245,7 +298,7 @@ void writeIntegration(Writer& writer, const IntegrationMetrics& metrics) {
   writer.Key("doppler_motion_bins"); writer.Uint(metrics.dopplerMotionBins);
   writer.Key("delay_drift_bins_per_hz"); writer.Double(metrics.delayDriftPerHz);
   writer.Key("arithmetic"); writer.String("fp64");
-  writer.Key("backend"); writer.String("cpu");
+  writer.Key("backend"); writer.String(metrics.backend);
   writer.Key("pfa_allocation"); writer.String(metrics.cpis > 2 ?
     "half_baseline_half_all_configured_motion_paths" : "single_configured_family");
   writer.Key("processing_ms"); writer.Double(metrics.processingMs);
@@ -254,6 +307,9 @@ void writeIntegration(Writer& writer, const IntegrationMetrics& metrics) {
   writer.Key("bank_ready"); writer.StartArray();
   if (metrics.evidence)
     for (const auto& bank : metrics.evidence->banks) writer.Bool(bank.ready);
+  else if (metrics.availableCpis)
+    for (const uint32_t depth : {2u, 2u, 4u, 8u})
+      writer.Bool(depth <= metrics.cpis && depth <= metrics.availableCpis);
   writer.EndArray();
   writer.Key("available_cpis"); writer.Uint(metrics.availableCpis);
   writer.Key("ready"); writer.Bool(metrics.ready);

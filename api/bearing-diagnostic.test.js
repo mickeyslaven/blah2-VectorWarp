@@ -39,6 +39,9 @@ assert.equal(result.reference_anchor, 'fixed_site');
 assert.deepEqual(result.best.mapping, desired.mapping);
 assert.ok(result.best.median_error_deg < 1e-6);
 assert.equal(result.auto_apply, false);
+assert.equal(result.offline_only, true);
+assert.equal(result.shadow_only, undefined);
+assert.equal(require('./bearing-diagnostic').createBearingDiagnostic, undefined);
 assert.match(result.interpretation, /no result changes live geometry/i);
 assert.match(result.identifiability, /mathematically degenerate/i);
 assert.deepEqual(inverse([[[2, 0], [0, 0]], [[0, 0], [4, 0]]]),
@@ -51,7 +54,8 @@ assert.equal(evaluateBearing(samples, whitenedDetection).available, true,
 
 const v2Result = evaluateBearing(samples.map(sample => ({
   ...sample,
-  schema: 'vectorwarp-manifold-sample-v2'
+  schema: 'vectorwarp-manifold-sample-v2',
+  precision_contract: 'binary64-json-roundtrip-v1'
 })), config);
 assert.equal(v2Result.available, true,
   'the live v2 manifold recorder schema must remain replay-compatible with bearing diagnostics');
@@ -148,4 +152,4 @@ for (const [candidate, label] of [[projectedConfig, 'configuration'],
   assert.equal(evaluated.available, false, `${label} must remain outside ordinary diagnostics`);
   assert.match(evaluated.reason, /experimental projected replay evidence/i);
 }
-console.log('Bearing diagnostic: complex channel permutations, exact covariance scoring, and safe shadow-only reporting passed.');
+console.log('Bearing diagnostic: complex channel permutations, exact covariance scoring, and explicit offline-only reporting passed.');

@@ -8,8 +8,8 @@ produce many duplicate tracks and more unmatched ACTIVE outputs.
 
 ## Frozen evidence and exclusions
 
-Source copied from HomePortal:
-`/var/lib/vectorwarp-api/temporal-pairs/homeportal-wpxi-20261114-v9.jsonl`.
+Source copied from HomePortal's v9 ledger under
+`/var/lib/vectorwarp-api/temporal-pairs/` (private basename omitted).
 Frozen snapshot:
 `/var/tmp/shadow-rerun-v9-20261114.ltKwbp/source.jsonl`.
 SHA-256: `f7460445d3eaec29747592af1af6a37d8246e6827d27d58970cac6743e36f1dc`.

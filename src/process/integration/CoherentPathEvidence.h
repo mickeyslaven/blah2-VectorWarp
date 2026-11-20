@@ -18,7 +18,7 @@
 namespace blah2::integration
 {
 
-// Portable shadow contract for Doppler-phase-compensated complex integration.
+// Offline replay contract for Doppler-phase-compensated complex integration.
 // It is deliberately separate from the accepted noncoherent TBD banks.  A
 // result is emitted only when the selected path passes a measured coherence
 // floor; every depth/sign combination is a separate empirical-null stratum.

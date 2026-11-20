@@ -4,15 +4,13 @@
 #include "GpuTracker.private.h"
 #include "process/ambiguity/BearingSteering.h"
 #include "process/ambiguity/ResidentFusionWeights.h"
-// Private direct-call arithmetic seam. Included after ClutterPipeline, inside
-// blah2's private namespace. No main/worker ABI or production route is changed.
-// Host work is immutable input/output byte copies, status checks and submission.
+// Private captured-input arithmetic for the resident module, included after
+// ClutterPipeline inside blah2's private namespace. Host work is immutable
+// input/output byte copies, status checks and submission.
 enum ResidentFrameStage : uint32_t {
-  residentSuppliedReference = 1u,
   residentClutter = 2u,
   residentAmbiguity = 4u,
   residentFusion = 8u,
-  residentSupportedStages = 15u,
   residentCapturedReference = 16u,
   residentSpectrum = 32u,
   residentCapturedSupportedStages = 62u,
@@ -34,10 +32,9 @@ struct ResidentFrameConfig {
     std::vector<std::complex<float>> manifoldResponses;
     std::vector<std::complex<float>> directResponse;
   } fusion;
-  // Supplied canonical reference, native clutter, ambiguity, shift/fusion.
-  // Captured mode explicitly adds GPU synthesis/dedicated selection and spectrum.
-  // Display/detection/tracker are explicit; main/worker routing remains unsupported.
-  uint32_t stages = residentSupportedStages;
+  // Captured synthesis/dedicated selection, spectrum, clutter and ambiguity.
+  // Display/detection/tracker are explicit additional stages.
+  uint32_t stages = residentCapturedSupportedStages;
   // Private boundary tests may lower the batch ceiling; zero keeps automatic.
   // This never removes channels or changes any allocator limit.
   uint32_t clutterBatchLimit = 0;
@@ -53,7 +50,7 @@ struct ResidentFrameOutputs {
   // Published row-major shifted Doppler, delay; FP64 configured fusion.
   std::complex<double>* fused = nullptr;
   size_t fusedCount = 0;
-  // Optional diagnostics; candidates are invalid whenever finishRadar is false.
+  // Optional diagnostics; candidates are invalid whenever finishResidentRadar is false.
   std::complex<double>* filtered = nullptr;
   size_t filteredCount = 0;
   std::complex<double>* tail = nullptr;
@@ -292,7 +289,8 @@ inline void hostRead(VkCommandBuffer command){
 }
 inline ResidentFrameConfig validate(ResidentFrameConfig config){
  const auto& g=config.geometry;
- const bool supplied=config.reference.mode==ReferenceMode::supplied;
+ if(config.reference.mode!=ReferenceMode::capturedArray&&config.reference.mode!=ReferenceMode::capturedDedicated)
+  throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED reference mode");
  if(!config.inputChannels||config.inputChannels>8||g.channels>config.inputChannels||
     config.surveillanceChannels.size()!=g.channels)
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED input/surveillance dimensions");
@@ -302,7 +300,7 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
    throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance channel mapping");
   used[channel]=true;
  }
- if(supplied||config.reference.mode==ReferenceMode::capturedArray){
+ if(config.reference.mode==ReferenceMode::capturedArray){
   if(config.inputChannels!=g.channels)
    throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED array input dimensions");
   for(uint32_t i=0;i<g.channels;++i)if(config.surveillanceChannels[i]!=i)
@@ -316,7 +314,7 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
     config.replayMaxBytes>resident_replay::byteLimit||
     (config.replayMaxBytes&&(config.reference.mode!=ReferenceMode::capturedArray||!config.postprocess.detection)))
   throw std::invalid_argument("Resident replay export configuration invalid");
- const uint32_t expectedStages=(supplied?residentSupportedStages:residentCapturedSupportedStages)|
+ const uint32_t expectedStages=residentCapturedSupportedStages|
   (config.postprocess.enabled?residentMapDisplay:0u)|(config.postprocess.detection?residentDetection:0u)|(config.tracker.enabled?residentTracker:0u);
  if(config.postprocess.tracker||(!config.postprocess.enabled&&config.postprocess.detection)||(config.tracker.enabled&&(!config.postprocess.enabled||!config.postprocess.detection))||
     config.clutterBatchLimit>g.channels || config.stages!=expectedStages || config.middle!=0 || !std::isfinite(config.sampleRate) || !(config.sampleRate>0))
@@ -338,7 +336,7 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
      config.fusion.directPathAzimuthRad||config.fusion.directPathNullDb||
      !config.fusion.manifoldResponses.empty()||!config.fusion.directResponse.empty())))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
- if(config.fusion.mode!=0&&!supplied&&
+ if(config.fusion.mode!=0&&
     (config.reference.mode!=ReferenceMode::capturedArray||
      config.reference.referenceChannels!=config.surveillanceChannels))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED coherent reference topology");
@@ -363,7 +361,7 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
  const uint64_t mc=uint64_t(g.delays)*g.doppler*g.channels;
  if(nc>UINT32_MAX/2 || rc>UINT32_MAX/2 || mc>UINT32_MAX/2 || nc>SIZE_MAX/16)
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED index capacity");
- if(!supplied)gpu_reference::validate(config.reference,g.clutterSamples,config.inputChannels,config.sampleRate);
+ gpu_reference::validate(config.reference,g.clutterSamples,config.inputChannels,config.sampleRate);
  if(config.postprocess.bearingReferenceAnchor==2){
   if(config.reference.mode!=ReferenceMode::capturedArray||
      config.reference.referenceChannels.size()!=g.channels||g.channels<2||
@@ -376,7 +374,7 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
     throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED projected bearing requires every channel in order");
  }
  if(config.postprocess.enabled)gpu_postprocess::validate(config.postprocess,g.doppler,g.delays,config.sampleRate);
- if(config.tracker.enabled){gpu_tracker::validate(config.tracker,g.doppler*g.delays);
+ if(config.tracker.enabled){gpu_tracker::validate(config.tracker,g.doppler*g.delays,config.postprocess.integrationCpis);
   const double actualCpi=(double(config.correlation)*g.doppler)/config.sampleRate;
   if(!gpu_tracker::sameDouble(config.tracker.cpi,actualCpi))throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED tracker actual CPI mismatch");}
  return config;
@@ -429,8 +427,7 @@ class ResidentFramePipeline {
    auto g=config.geometry;
    g.channels=channels;
    clutter=std::make_unique<ClutterPipeline>(context,g,false,false,true);
-   if(config.reference.mode!=ReferenceMode::supplied)
-    referenceStage=std::make_unique<gpu_reference::Stage>(context,config.reference,g.clutterSamples,config.inputChannels,config.sampleRate,clutter->borrowedReference(),clutter->borrowedWork());
+   referenceStage=std::make_unique<gpu_reference::Stage>(context,config.reference,g.clutterSamples,config.inputChannels,config.sampleRate,clutter->borrowedReference(),clutter->borrowedWork());
    constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
    constexpr auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
    // Late allocations coexist with initialized full ambiguity and clutter plans.
@@ -445,8 +442,8 @@ class ResidentFramePipeline {
     replayReference=std::make_unique<Buffer>(context,uint64_t(g.clutterSamples)*16,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     replayBank=std::make_unique<Buffer>(context,uint64_t(g.doppler)*g.delays*std::max(1u,config.fusion.beams)*8,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
    }
-   if(referenceStage)referenceStage->bind(*canonical);
-   Buffer* referenceInput=referenceStage?&referenceStage->referenceBuffer():canonical.get();
+   referenceStage->bind(*canonical);
+   Buffer* referenceInput=&referenceStage->referenceBuffer();
    referenceCast=std::make_unique<Kernel>(context,gpu_resident::referenceSource,
      std::vector<Buffer*>{referenceInput,&clutter->residentReference(),status.get()});
    referencePack=std::make_unique<Kernel>(context,gpu_resident::referencePackSource,
@@ -493,7 +490,7 @@ class ResidentFramePipeline {
     fusion=std::make_unique<Kernel>(context,gpu_resident::fusionShader(false,bool(replayBank)).c_str(),bindings);}
    if(config.postprocess.enabled){
     Buffer* scratch=&clutter->borrowedReference();
-    const auto required=gpu_postprocess::layout(config.geometry.doppler,config.geometry.delays).bytes;
+    const auto required=gpu_postprocess::layout(config.geometry.doppler,config.geometry.delays,config.postprocess.integrationCpis).bytes;
     if(scratch->bytes<required){
      constexpr auto device=VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
      dedicatedPostprocessScratch=std::make_unique<Buffer>(context,required,device);
@@ -512,7 +509,7 @@ class ResidentFramePipeline {
    check(vkBeginCommandBuffer(command,&begin),"resident reference recording");
    gpu_resident::hostWrite(command);
    barrier(command);
-   if(referenceStage)referenceStage->append(command);
+   referenceStage->append(command);
    timestamps->begin(command,0);
    const uint32_t n=g.clutterSamples;
    int64_t rotation=int64_t(g.clutterDelayMin)%n;
@@ -616,47 +613,10 @@ class ResidentFramePipeline {
     throw std::runtime_error("Coherent fusion received zero-norm reference weights");
    const double waveNumber=6.283185307179586476925286766559*config.fusion.frequencyHz/299792458.0;
    const uint32_t channels=config.geometry.channels;
-   std::array<double,8> channelScale{};
-   channelScale.fill(1.0);
    const bool whiten=config.fusion.mode==2&&checkpoint.covarianceValid;
-   if(whiten){
-    const auto& covariance=checkpoint.covariance;
-    double loadedTrace=0;
-    for(uint32_t c=0;c<channels;++c)loadedTrace+=covariance[c*channels+c].real();
-    const double rawTrace=loadedTrace/(1.0+checkpoint.config.diagonalLoading);
-    const double referenceLoading=checkpoint.config.diagonalLoading*rawTrace/channels;
-    std::complex<double> rayleigh{};
-    for(uint32_t left=0;left<channels;++left)
-     for(uint32_t right=0;right<channels;++right)
-      rayleigh+=std::conj(checkpoint.weights[left])*covariance[left*channels+right]*
-       checkpoint.weights[right];
-    const double principal=std::max(0.0,rayleigh.real()-referenceLoading);
-    std::array<double,8> noise{},ordered{};
-    double residualTrace=0;
-    for(uint32_t channel=0;channel<channels;++channel){
-     noise[channel]=std::max(0.0,covariance[channel*channels+channel].real()-
-      principal*std::norm(checkpoint.weights[channel]));
-     residualTrace+=noise[channel];
-    }
-    const double floor=std::max(referenceLoading,.05*residualTrace/channels);
-    for(uint32_t channel=0;channel<channels;++channel)
-     ordered[channel]=noise[channel]=std::max(noise[channel],floor);
-    for(uint32_t channel=1;channel<channels;++channel){
-     const double value=ordered[channel];
-     uint32_t position=channel;
-     while(position&&ordered[position-1]>value){
-      ordered[position]=ordered[position-1];
-      --position;
-     }
-     ordered[position]=value;
-    }
-    const double median=ordered[channels/2];
-    if(std::isfinite(median)&&median>0)
-     for(uint32_t channel=0;channel<channels;++channel)
-      // A bounded diagonal inverse is robust to unmodelled arrival angles and
-      // calibration error. Full covariance MVDR created deep real-echo nulls.
-      channelScale[channel]=std::clamp(median/noise[channel],.5,2.0);
-   }
+   const auto channelScale=blah2::resident_fusion::whiteningScales(
+    checkpoint.covariance.data(),checkpoint.weights.data(),channels,
+    checkpoint.config.diagonalLoading,whiten);
    const double nullFraction=1.0-std::pow(10.0,-config.fusion.directPathNullDb/20.0);
    const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
    const bool bearingRefinement=&buffer==refinementWeights.get();
@@ -907,7 +867,7 @@ public:
    // tracker capacity. Only clutter batching changes on a retry, never tracks.
    if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
     work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout(),
-    work_->postprocessStage->integrationBuffer(),work_->postprocessStage->currentPowerBuffer());
+    config_.postprocess.integrationCpis);
    break;}
    catch(const std::exception& error){reason=error.what();
     tracker_.reset();work_.reset();
@@ -928,7 +888,7 @@ public:
     <<" clutter_scratch_reused_bytes="<<work_->clutter->residentScratchReusedBytes()
     <<" device_used="<<b.deviceUsed()<<" device_peak="<<b.devicePeak()
     <<" device_limit="<<b.deviceLimit()
-    <<" supplied_reference="<<(config_.reference.mode==ReferenceMode::supplied?1:0)<<" stages="<<config_.stages<<" cpu_bulk_calls=0 cpu_solve_calls=0"
+    <<" supplied_reference=0 stages="<<config_.stages<<" cpu_bulk_calls=0 cpu_solve_calls=0"
     <<" diagnostic_capacity_bytes="<<gpu_diagnostics::FrameLog::capacity<<" diagnostic_host_bytes="<<sizeof(gpu_diagnostics::FrameLog)<<'\n';}
  }
  GpuDevice device()const{return context_.candidate.info;}
@@ -945,8 +905,6 @@ public:
   if(prepared_||poisoned_||(tracker_&&tracker_->pending()))throw std::logic_error("Resident submit probe configuration requires healthy idle state");
   hostTiming_.configureSubmitContextProbe(path);
  }
- uint32_t trackerCheckpointWordCapacity()const{if(!tracker_)throw std::logic_error("Resident tracker disabled");
- return tracker_->checkpointWordCapacity();}
  void commitTracker(TrackerToken token){
   if(!tracker_||prepared_||poisoned_)throw std::logic_error("Resident tracker commit phase invalid");
   try{tracker_->commit(token);}catch(const std::logic_error&){throw;}catch(...){fail();
@@ -1036,9 +994,6 @@ public:
   catch(const std::invalid_argument&){throw;}catch(...){fail();
   throw;}
  }
- void resetReferenceState(){requireCaptured(true);
- try{work_->referenceStage->reset();}catch(...){fail();
- throw;}}
  void resetInput(){requireCaptured(true);
   try{reset();work_->referenceStage->reset();
    if(work_->postprocessStage){gpu_reference::CommandOwner command(context_);command.allocate();
@@ -1053,12 +1008,6 @@ public:
    // Fusion calibration has no accumulated state: the next freshly learned
    // checkpoint rewrites every beam weight before its first radar dispatch.
   }catch(...){fail();throw;}
- }
- bool probePositiveLog(const double* input,size_t count,double* result){
-  requireCaptured(true);
-  try{return work_->referenceStage->probePositiveLog(input,count,result);}
-  catch(const std::invalid_argument&){throw;}catch(...){fail();
-  throw;}
  }
  bool prepareCaptured(const D* canonical,size_t count,ReferenceOutputs out){
   requireCaptured(true);
@@ -1118,55 +1067,14 @@ public:
   requireCaptured(false);
   if(!prepared_)throw std::logic_error("Resident captured-radar phase invalid");
   validateOutputs(capturedInput_,capturedCount_,out);
-  return executeRadar(nullptr,capturedCount_,out);
- }
- bool prepareReference(const D* reference,size_t count){
-  if(config_.reference.mode!=ReferenceMode::supplied || poisoned_ || prepared_ || (tracker_&&tracker_->pending()))throw std::logic_error("Resident supplied-reference phase invalid");
-  if(!reference || count!=config_.geometry.clutterSamples)throw std::invalid_argument("Resident reference dimensions changed");
-  referenceHostRange_=gpu_resident::hostRange(reference,count,16);
-  readyEvidence_={};
-  finalEvidence_={};
-  batchEvidence_={};
-  frameStart_=std::chrono::steady_clock::now();
-  ++generation_;
-  hostTiming_.begin(generation_);
-  context_.hostTiming=&hostTiming_;
-  context_.diagnostics.begin();
-  try {
-   gpu_host::Scope timer(context_.hostTiming,"supplied.prepare");
-   std::memset(work_->status->mapped,0,work_->status->bytes);
-   work_->status->flush(0,work_->status->bytes);
-   std::memcpy(work_->canonical->mapped,reference,count*16);
-   work_->canonical->flush(0,count*16);
-   submit(work_->commands.handles[0],"resident reference packing");
-   const auto s=status();
-   if(s[gpu_resident::referenceSamples]!=count || s[gpu_resident::referenceLive]!=uint64_t(config_.correlation)*config_.geometry.doppler)
-    throw std::runtime_error("Resident reference coverage mismatch");
-   // Fence above completes every canonical reference reader before raw reuse.
-   prepared_=true;
-   context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_RESIDENT_REFERENCE frame="<<generation_<<" device_cast_samples="<<s[1]
-    <<" device_packed_live="<<s[2]<<" gpu_pack_ms="<<work_->timestamps->milliseconds(0)
-    <<" cpu_reference_cast_calls=0 cpu_mix_calls=0\n";
-   return true;
-  } catch(const ClutterRejected& e){return reject(e,"reference_pack");}
-    catch(const std::domain_error& e){return reject(e,"reference_pack");}
-    catch(...){fail();
-    throw;}
- }
- bool finishRadar(const D* canonicalSurveillance,size_t count,ResidentFrameOutputs out){
-  if(config_.reference.mode!=ReferenceMode::supplied || poisoned_ || !prepared_)throw std::logic_error("Resident supplied-radar phase invalid");
-  validateOutputs(canonicalSurveillance,count,out);
-  return executeRadar(canonicalSurveillance,count,out);
+  return executeRadar(out);
  }
 private:
- // A null upload selects already resident captured input; no per-frame CPU DSP.
- bool executeRadar(const D* canonicalSurveillance,size_t count,ResidentFrameOutputs out){
+ // Reuse captured input already uploaded by prepareCaptured; no per-frame CPU DSP.
+ bool executeRadar(ResidentFrameOutputs out){
   const auto& g=config_.geometry;
   const uint32_t n=g.clutterSamples,live=config_.correlation*g.doppler,tail=n-live;
   try {
-   if(canonicalSurveillance){gpu_host::Scope timer(context_.hostTiming,"radar.upload");
-   std::memcpy(work_->canonical->mapped,canonicalSurveillance,count*16);
-   work_->canonical->flush(0,count*16);}
    bool nativeReady=false;
    {gpu_host::Scope timer(context_.hostTiming,"radar.native_reference");
    nativeReady=work_->clutter->beginFrameResident();}
@@ -1260,7 +1168,7 @@ private:
    context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_RESIDENT_END frame="<<generation_<<" valid=1 device_shifted_cells="<<s[6]
     <<" device_fused_cells="<<s[7]<<" gpu_ambiguity_ms="<<work_->timestamps->milliseconds(3)
     <<" gpu_fusion_readback_ms="<<work_->timestamps->milliseconds(4)<<" host_reference_to_result_ms="<<wall
-    <<" cpu_bulk_calls=0 cpu_solve_calls=0 cpu_subtract_calls=0 cpu_fusion_calls=0 supplied_reference="<<(config_.reference.mode==ReferenceMode::supplied?1:0)<<" stages="<<config_.stages<<'\n';
+    <<" cpu_bulk_calls=0 cpu_solve_calls=0 cpu_subtract_calls=0 cpu_fusion_calls=0 supplied_reference=0 stages="<<config_.stages<<'\n';
     context_.diagnostics.flush();}
    finalEvidence_=s;
    evidenceHostResultMs_=wall;

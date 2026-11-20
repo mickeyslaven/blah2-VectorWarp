@@ -7,6 +7,8 @@
 #define TIMING_H
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstddef>
 #include <stdint.h>
 #include <vector>
@@ -61,6 +63,26 @@ private:
   bool captureTerminal = false;
   std::vector<blah2::multi_illuminator::LaneHealthStatus> multiLaneHealth;
 
+  // Inclusive consumer-cycle diagnostics, not DSP stage receipts. A cycle is
+  // closed on the next loop entry, after publication and local destruction.
+  // Constant-size totals let sparse monitors recover interval means instead
+  // of mistaking the current CPI for a representative processing average.
+  using CycleClock = std::chrono::steady_clock;
+  struct CycleMetric {
+    uint64_t samples = 0;
+    double latest = 0, total = 0, maximum = 0;
+    void observe(double milliseconds) noexcept {
+      ++samples; latest = milliseconds; total += milliseconds;
+      maximum = std::max(maximum, milliseconds);
+    }
+  };
+  std::array<CycleMetric, 6> processingCycleMetrics{};
+  std::array<CycleClock::time_point, 4> pendingCycle{};
+  CycleClock::time_point previousCycleEnd{};
+  bool processingCyclePending = false, havePreviousCycleEnd = false;
+  uint64_t pendingCycleNCpi = 0, pendingCycleTimestamp = 0;
+  uint64_t completedCycleNCpi = 0, completedCycleTimestamp = 0;
+
 public:
   /// @brief Constructor.
   /// @param tStart Start time (POSIX ms).
@@ -77,6 +99,14 @@ public:
   /// @brief Generate JSON of the map and metadata.
   /// @return JSON string.
   std::string to_json();
+
+  // Only a successfully published ordinary multi-lane CPI is recorded. Its
+  // diagnostics appear in a later publication with explicit completed-CPI
+  // identity; these calls never change the existing instantaneous cpi metric.
+  void record_processing_cycle(CycleClock::time_point start,
+    CycleClock::time_point pipelineStart, CycleClock::time_point pipelineEnd,
+    CycleClock::time_point publicationEnd) noexcept;
+  void complete_processing_cycle(CycleClock::time_point end) noexcept;
   void set_acceleration(const blah2::AccelerationStatus& value) {
     acceleration = value; ambiguityExecutionSet = false;
   }
@@ -150,11 +180,6 @@ public:
     if (value) clear_execution();
   }
 
-  /// @brief Append the map to a save file.
-  /// @param json JSON string of map and metadata.
-  /// @param path Path of file to save.
-  /// @return True is save is successful.
-  bool save(std::string json, std::string path);
 };
 
 #endif

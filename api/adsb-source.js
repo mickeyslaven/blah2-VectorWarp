@@ -358,7 +358,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       healthy_sources: healthy.length, failed_sources: failed};
     return data;
   }
-  async function getAt(kind, targetAtMs) {
+  async function getAt(kind, targetAtMs, nativeFrame = null) {
     if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
     if (preview) throw new Error('Preview: no live ADS-B connection');
     if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
@@ -372,7 +372,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     await ready;
     const data = await rawAircraft(targetAtMs);
     if (kind === 'aircraft') return data;
-    const result = geometry.update(data); warmup = result.warming; return result.data;
+    const result = geometry.update(data, nativeFrame); warmup = result.warming; return result.data;
   }
   async function get(kind) {
     if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');

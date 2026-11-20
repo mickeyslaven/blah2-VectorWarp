@@ -114,5 +114,24 @@ inline void validateAtscReferenceMode(const std::string& standard,
   if (mode != "raw" && standard != "ATSC" && standard != "ATSC-1.0")
     throw std::invalid_argument("ATSC pilot_aided requires an ATSC 1.0 lane");
 }
+
+// Pilot projection operates causally on the current and prior CPIs, so ATSC
+// 1.0 lanes use the same qualified reference path for live and replay input.
+// Array references retain raw IQ because their synthesized topology is not a
+// qualified input to the single-reference pilot projector.
+inline std::string resolveAtscReferenceMode(const std::string& standard,
+  const std::string& requested, bool /*offlineReplay*/, bool arrayReference = false)
+{
+  const bool atsc1 = standard == "ATSC" || standard == "ATSC-1.0";
+  if (requested == "automatic") {
+    if (!atsc1 && standard != "ATSC-3.0")
+      throw std::invalid_argument("ATSC automatic reference requires an ATSC lane");
+    return atsc1 && !arrayReference ? "pilot_aided" : "raw";
+  }
+  validateAtscReferenceMode(standard, requested);
+  if (requested == "pilot_aided" && arrayReference)
+    throw std::invalid_argument("ATSC pilot_aided does not support array reference");
+  return requested;
+}
 } // namespace blah2::conditioning
 #endif

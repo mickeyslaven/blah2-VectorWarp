@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+ARTIFACT_PLAN="$SOURCE_DIR/script/artifact-plan.py"
 BUILD_DIR="$SOURCE_DIR/build/macos"
 OUTPUT_DIR=""
 BACKEND=all
@@ -76,7 +77,7 @@ elif [[ ${VECTORWARP_MACOS_BREW_PREFIX:-} == /* && -d ${VECTORWARP_MACOS_BREW_PR
 else
   die 'Homebrew is required; install it, then rerun'
 fi
-for command in cmake ninja node npm python3 rsync; do command -v "$command" >/dev/null || die "missing $command; install it, then rerun"; done
+for command in cmake ninja node npm python3; do command -v "$command" >/dev/null || die "missing $command; install it, then rerun"; done
 node "$SOURCE_DIR/script/check-node-version.js" || die 'a patched supported Node.js release is required'
 
 BUILD_DIR=$(normalize_path "$BUILD_DIR")
@@ -104,17 +105,11 @@ for formula in "${dependencies[@]}"; do
     die "missing $formula; run: brew install $formula"
 done
 
-ENABLE_USRP=OFF
-ENABLE_HACKRF=OFF
-ENABLE_RSPDUO=OFF
-LOCAL_RSPDUO=OFF
-case "$BACKEND" in
-  usrp) ENABLE_USRP=ON ;;
-  hackrf) ENABLE_HACKRF=ON ;;
-  rspduo) ENABLE_RSPDUO=ON ;;
-  all) ENABLE_USRP=ON; ENABLE_HACKRF=ON; LOCAL_RSPDUO=ON ;;
-esac
-if $WITH_RSPDUO; then ENABLE_RSPDUO=ON; LOCAL_RSPDUO=OFF; fi
+# cpu is an existing macOS internal no-device fixture, equivalent to Kraken-only.
+profile_backend=$BACKEND; [[ $profile_backend != cpu ]] || profile_backend=kraken
+profile_options=(); if $WITH_RSPDUO; then profile_options+=(--with-rspduo); fi
+profile=$(python3 "$ARTIFACT_PLAN" profile "$profile_backend" "${profile_options[@]}") || exit 1
+read -r ENABLE_RSPDUO ENABLE_USRP ENABLE_HACKRF LOCAL_RSPDUO unused <<<"$profile"
 UHD_FORMULA=${BLAH2_UHD_FORMULA:-uhd}
 for formula in $([[ $ENABLE_USRP == ON ]] && printf '%s' "$UHD_FORMULA") $([[ $ENABLE_HACKRF == ON ]] && printf 'hackrf'); do
   have_formula "$formula" ||
@@ -153,17 +148,8 @@ cmake --build "$CMAKE_DIR" --parallel "$JOBS"
 if $RUN_TESTS; then ctest --test-dir "$CMAKE_DIR" --output-on-failure; fi
 find "$OUTPUT_DIR/bin" -maxdepth 1 -type f -name 'test*' -delete
 rm -rf "$OUTPUT_DIR/bin/test"
-for directory in api html config; do
-  mkdir -p "$OUTPUT_DIR/$directory"
-  rsync -a --delete --exclude node_modules --exclude '*.test.js' \
-    "$SOURCE_DIR/$directory/" "$OUTPUT_DIR/$directory/"
-done
-mkdir -p "$OUTPUT_DIR/script"
+python3 "$ARTIFACT_PLAN" stage --source "$SOURCE_DIR" --output "$OUTPUT_DIR" --platform macos
 rm -f "$OUTPUT_DIR/vectorwarp-macos"
-install -m 0755 "$SOURCE_DIR/script/vectorwarp-macos" "$OUTPUT_DIR/script/vectorwarp-macos"
-install -m 0755 "$SOURCE_DIR/script/vectorwarp-macos.py" "$OUTPUT_DIR/script/vectorwarp-macos.py"
-install -m 0755 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$OUTPUT_DIR/script/vectorwarp-kraken-macos.py"
-install -m 0755 "$SOURCE_DIR/script/check-node-version.js" "$OUTPUT_DIR/script/check-node-version.js"
 if [[ $LOCAL_RSPDUO == ON ]]; then
   kit_parent="$OUTPUT_DIR/receiver-source"
   mkdir -p "$kit_parent"
@@ -193,7 +179,6 @@ if [[ $LOCAL_RSPDUO == ON ]]; then
   install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-sdrplay-macos.sh" "$OUTPUT_DIR/script/vectorwarp-build-sdrplay-macos.sh"
   install -m 0644 "$SOURCE_DIR/script/vectorwarp-build-sdrplay-macos.js" "$OUTPUT_DIR/script/vectorwarp-build-sdrplay-macos.js"
 fi
-install -m 0644 "$SOURCE_DIR/LICENSE" "$OUTPUT_DIR/LICENSE"
 # npm 11 resolves a prefixed project through a different code path.  Running
 # from the staged directory keeps package and lockfile discovery local to the
 # artifact, including when its root is an absolute path.

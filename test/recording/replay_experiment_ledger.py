@@ -6,6 +6,7 @@ import hashlib
 import json
 import struct
 import importlib.util
+import subprocess
 from pathlib import Path
 
 
@@ -16,6 +17,8 @@ BLAH2IQ_HEADER_BYTES = 64
 BLAH2IQ_BLOCK_HEADER_BYTES = 16
 BLAH2IQ_MAX_BLOCK_SAMPLES = 262144
 BLAH2IQ_BYTES_PER_COMPLEX_F32 = 8
+ACQUISITION_MAXIMUM_BYTES = 1 << 20
+RECORDING_INSPECTOR = Path(__file__).resolve().parents[2] / "bin" / "inspectRecordingProvenance"
 
 _ARTIFACT_SPEC = importlib.util.spec_from_file_location(
     "temporal_evidence_artifact", Path(__file__).with_name("temporal_evidence_artifact.py"))
@@ -37,8 +40,15 @@ def validate_manifest(value, require_execution=False):
     if not isinstance(recording, dict) or not isinstance(recording.get("path"), str):
         raise ValueError("recording path is required")
     fingerprint = _sha256(recording.get("sha256"), "recording")
-    if recording.get("format") != "blah2iq-v1":
-        raise ValueError("recording format must be completed blah2iq-v1")
+    if recording.get("format") not in ("blah2iq-v1", "blah2iq-v2", "mchq"):
+        raise ValueError("recording format must be completed blah2iq-v1, blah2iq-v2 or mchq")
+    acquisition = recording.get("acquisition", {})
+    if not isinstance(acquisition, dict) or set(acquisition) - {"require_exact", "sha256"}:
+        raise ValueError("recording acquisition controls are invalid")
+    if "require_exact" in acquisition and type(acquisition["require_exact"]) is not bool:
+        raise ValueError("recording acquisition require_exact must be boolean")
+    if "sha256" in acquisition:
+        _sha256(acquisition["sha256"], "acquisition")
     for name in ("sample_count", "channels", "sample_rate_hz", "center_frequency_hz", "cpi_samples"):
         if type(recording.get(name)) is not int or recording[name] < 1:
             raise ValueError(f"recording {name} is required")
@@ -135,7 +145,7 @@ def validate_manifest(value, require_execution=False):
     return value
 
 
-def verify_artifact(artifact, root, name):
+def verify_artifact(artifact, root, name, recording_inspector=None):
     path = Path(artifact["path"])
     if not path.is_absolute():
         path = root / path
@@ -146,14 +156,68 @@ def verify_artifact(artifact, root, name):
     if digest.hexdigest() != artifact["sha256"]:
         raise ValueError(f"{name} bytes do not match the experiment manifest")
     if name == "recording":
-        verify_blah2iq_recording(artifact, root)
+        return verify_blah2iq_recording(artifact, root, recording_inspector)
 
 
-def verify_blah2iq_recording(recording, root):
-    """Check BLAH2IQ v1 framing without decoding all IQ samples into memory."""
+def _inspect_acquisition(recording, path, recording_inspector=None):
+    """Use production semantics, including RapidJSON double canonicalization.
+
+    The inspector is a tool selected by the operator, never a path/command from
+    the untrusted recording or its adjacent metadata. The experiment manifest's
+    IQ and optional acquisition hashes are the external trust anchors.
+    """
+    inspector = Path(recording_inspector or RECORDING_INSPECTOR).resolve()
+    if not inspector.is_file():
+        raise ValueError("acquisition validation requires built inspectRecordingProvenance")
+    controls = recording.get("acquisition", {})
+    arguments = [str(inspector), str(path.resolve()),
+                 "mchq" if recording["format"] == "mchq" else "blah2",
+                 str(recording["channels"]), str(recording["sample_rate_hz"]),
+                 str(recording["center_frequency_hz"]),
+                 _sha256(recording.get("sha256"), "recording"),
+                 controls.get("sha256", ""), "1" if controls.get("require_exact") else "0"]
+    try:
+        completed = subprocess.run(arguments, check=False, capture_output=True,
+                                   text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f"acquisition inspector unavailable: {error}") from error
+    if completed.returncode:
+        raise ValueError("acquisition validation failed: " + completed.stderr.strip()[:2048])
+    if len(completed.stdout) > 16384:
+        raise ValueError("acquisition inspector output exceeds bound")
+    try:
+        result = json.loads(completed.stdout)
+    except (ValueError, TypeError) as error:
+        raise ValueError("acquisition inspector returned invalid JSON") from error
+    if not isinstance(result, dict) or result.get("schema") != "vectorwarp-recording-inspection-v1" or \
+            result.get("recording_sha256") != recording["sha256"] or \
+            result.get("channels") != recording["channels"] or \
+            result.get("sample_rate_hz") != recording["sample_rate_hz"] or \
+            result.get("center_frequency_hz") != recording["center_frequency_hz"] or \
+            result.get("sample_count") != str(recording["sample_count"]):
+        raise ValueError("acquisition inspector identity differs from experiment")
+    if result.get("exact_acquisition") is True and (
+            result.get("acquisition_capable") is not True or
+            result.get("acquisition_hash_trusted") is not True or
+            result.get("acquisition_integrity_valid") is not True):
+        raise ValueError("untrusted acquisition cannot be exact")
+    if controls.get("require_exact") and (result.get("exact_acquisition") is not True or
+            result.get("epoch") != recording["hardware_epoch"]):
+        raise ValueError("exact acquisition identity/epoch differs from experiment")
+    return result
+
+
+def verify_blah2iq_recording(recording, root, recording_inspector=None):
+    """Check bounded v1/v2 framing and production acquisition admission.
+
+    MCHQ/MCHT parsing also delegates to the same production reader. This is
+    acquisition reproducibility, never a physical-RF or exact-UTC receipt.
+    """
     path = Path(recording["path"])
     if not path.is_absolute():
         path = root / path
+    if recording["format"] == "mchq":
+        return _inspect_acquisition(recording, path, recording_inspector)
     expected_channels = recording["channels"]
     expected_samples = recording["sample_count"]
     expected_rate = recording["sample_rate_hz"]
@@ -162,15 +226,26 @@ def verify_blah2iq_recording(recording, root):
     with path.open("rb") as stream:
         header = stream.read(BLAH2IQ_HEADER_BYTES)
         if len(header) != BLAH2IQ_HEADER_BYTES or header[:8] != BLAH2IQ_MAGIC:
-            raise ValueError("recording is not a BLAH2IQ v1 file")
+            raise ValueError("recording is not a BLAH2IQ file")
         version, header_size, channels, sample_rate, frequency, encoding = struct.unpack_from(
             "<IIIIII", header, 8)
         samples, complete = struct.unpack_from("<QQ", header, 40)
-        if (version, header_size, encoding, complete) != (1, BLAH2IQ_HEADER_BYTES, 1, 1):
+        if (version, header_size) not in ((1, BLAH2IQ_HEADER_BYTES), (2, 128)) or \
+                (encoding, complete) != (1, 1):
             raise ValueError("recording BLAH2IQ header is unsupported or incomplete")
+        if recording["format"] != f"blah2iq-v{version}":
+            raise ValueError("recording BLAH2IQ version differs from experiment")
         if channels != expected_channels or sample_rate != expected_rate or \
                 frequency != expected_frequency or samples != expected_samples:
             raise ValueError("recording BLAH2IQ header differs from declared geometry")
+        if version == 2:
+            length = struct.unpack_from("<I", header, 32)[0]
+            if not 0 < length <= ACQUISITION_MAXIMUM_BYTES or 128 + length > size:
+                raise ValueError("recording acquisition metadata exceeds bound or is truncated")
+            embedded_hash = stream.read(64)
+            acquisition_json = stream.read(length)
+            if hashlib.sha256(acquisition_json).hexdigest().encode("ascii") != embedded_hash:
+                raise ValueError("recording embedded acquisition SHA-256 mismatch")
         position = 0
         while position < samples:
             block = stream.read(BLAH2IQ_BLOCK_HEADER_BYTES)
@@ -187,6 +262,11 @@ def verify_blah2iq_recording(recording, root):
             position += count
         if stream.tell() != size:
             raise ValueError("recording BLAH2IQ file has trailing bytes")
+    if version == 2 or Path(str(path) + ".acquisition.json").exists() or recording.get("acquisition"):
+        return _inspect_acquisition(recording, path, recording_inspector)
+    return {"exact_acquisition": False, "acquisition_integrity_valid": False,
+            "acquisition_hash_trusted": False,
+            "acquisition_reason": "Legacy recording has no acquisition contract"}
 
 
 def verify_temporal_output(arm, manifest, root):
@@ -229,11 +309,15 @@ def main():
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--verify-recording", action="store_true")
     parser.add_argument("--require-execution", action="store_true")
+    parser.add_argument("--recording-inspector", type=Path,
+                        help="Explicit trusted native inspection tool; never read from acquisition metadata")
     arguments = parser.parse_args()
     manifest = validate_manifest(json.loads(arguments.manifest.read_text()),
                                  require_execution=arguments.require_execution)
+    acquisition = None
     if arguments.verify_recording or arguments.require_execution:
-        verify_artifact(manifest["recording"], arguments.manifest.parent, "recording")
+        acquisition = verify_artifact(manifest["recording"], arguments.manifest.parent,
+                                      "recording", arguments.recording_inspector)
     if arguments.require_execution:
         for arm in manifest["arms"]:
             verify_artifact(arm["output"], arguments.manifest.parent,
@@ -241,7 +325,7 @@ def main():
             if arm["type"] in ("post_clutter_bootstrap", "temporal_shadow"):
                 verify_temporal_output(arm, manifest, arguments.manifest.parent)
     print(json.dumps({"valid": True, "arms": len(manifest["arms"]),
-                      "splits": len(manifest["splits"])}, separators=(",", ":")))
+                      "splits": len(manifest["splits"]), "acquisition": acquisition}, separators=(",", ":")))
 
 
 if __name__ == "__main__":

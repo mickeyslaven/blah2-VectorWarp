@@ -1,8 +1,10 @@
 #include "capture/Recording.h"
+#include "capture/RecordingAcquisitionJson.h"
 #include "capture/kraken/HeimdallFrame.h"
 #include "capture/kraken/KrakenClipRecorder.h"
 #include "capture/kraken/HostArrivalClock.h"
 #include "data/meta/EventTime.h"
+#include "process/tracker/SignalProgressClock.h"
 
 #include <atomic>
 #include <cassert>
@@ -17,6 +19,27 @@
 #include <sstream>
 #include <thread>
 #include <unistd.h>
+
+namespace blah2 {
+struct KrakenClipRecorderTestAccess {
+  static void discardUnpublishedAttempt(KrakenClipRecorder& recorder,
+      uint32_t samples) {
+    // Ordinary fixture frames have not been published to any receiver. A
+    // failed synthetic attempt can be retried without representing a source
+    // gap. Only the fixture's single ingress thread touches this counter.
+    const auto skipped = recorder.skippedIngressSamples.exchange(0,
+      std::memory_order_acq_rel);
+    assert(skipped == samples);
+  }
+  static void hold(KrakenClipRecorder& recorder, std::mutex& gate,
+      std::condition_variable& changed, bool& held, bool& release) {
+    std::lock_guard<std::mutex> recorderLock(recorder.mutex);
+    std::unique_lock<std::mutex> gateLock(gate);
+    held = true; changed.notify_one();
+    changed.wait(gateLock, [&] { return release; });
+  }
+};
+}
 
 namespace
 {
@@ -72,7 +95,7 @@ WireFrame frame(unsigned sequence, uint32_t samplesPerFrame = FRAME_SAMPLES)
   return value;
 }
 
-void ingest(blah2::KrakenClipRecorder& recorder, WireFrame value)
+void ingest(blah2::KrakenClipRecorder& recorder, const WireFrame value)
 {
   // These sample-exact recorder fixtures model paced delivery. The first
   // receipt comes from the injected clock; subsequent receipts advance by
@@ -81,8 +104,20 @@ void ingest(blah2::KrakenClipRecorder& recorder, WireFrame value)
   const int64_t receipt = previous.available ? previous.epochEstimateNanoseconds +
     static_cast<int64_t>((static_cast<__int128>(previous.nextSample +
       value.header.samplesPerChannel) * 1000000000LL) / SAMPLE_RATE) : 0;
-  assert(recorder.ingest(value.fixed, std::move(value.metadata),
-    std::move(value.payload), value.header, nullptr, receipt));
+  const auto deadline = std::chrono::steady_clock::now() +
+    std::chrono::seconds(3);
+  while (!recorder.ingest(value.fixed, value.metadata, value.payload,
+      value.header, nullptr, receipt)) {
+    // Writer wakeup/completion can briefly own the optional recorder mutex.
+    // Keep the const synthetic frame until admitted, rather than assert that this
+    // nonblocking API can never contend. The contention regression below
+    // calls ingest directly and must still retain every skipped sample.
+    blah2::KrakenClipRecorderTestAccess::discardUnpublishedAttempt(recorder,
+      value.header.samplesPerChannel);
+    if (std::chrono::steady_clock::now() >= deadline)
+      throw std::runtime_error("Clip recorder did not admit fixture frame");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
 }
 
 WireFrame timed(WireFrame value, uint64_t first, uint64_t receipt)
@@ -109,17 +144,20 @@ blah2::IqClipRequest request(uint64_t revision, int64_t start, int64_t end)
     {"pass-" + std::to_string(revision)}};
 }
 
-blah2::IqClipStatus wait(blah2::KrakenClipRecorder& recorder)
+blah2::IqClipStatus wait(blah2::KrakenClipRecorder& recorder, uint64_t revision)
 {
   const auto deadline = std::chrono::steady_clock::now() +
     std::chrono::seconds(3);
   while (std::chrono::steady_clock::now() < deadline)
   {
     auto status = recorder.status();
-    if (status.terminal) return status;
+    // Status retains the latest completed revision while a newer request is
+    // collecting or writing. An older terminal result is not our completion.
+    if (status.terminal && status.revision == revision) return status;
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
-  throw std::runtime_error("Clip recorder did not reach a terminal state");
+  throw std::runtime_error("Clip recorder did not complete revision " +
+    std::to_string(revision));
 }
 
 rapidjson::Document json_file(const std::string& path)
@@ -193,6 +231,74 @@ int main()
       assert(rejected && "native clip/ring cap must not be expandable");
     }
 
+    // Saturate the actual recorder mutex from another thread. Missing copies
+    // fail the affected clip but cannot reset acquisition position or freeze
+    // the receiver-independent tracker progression when metadata returns.
+    {
+      blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
+        SAMPLE_RATE, FREQUENCY, options);
+      blah2::tracker_clock::SignalProgressClock progress;
+      for (unsigned sequence = 0; sequence < 3; ++sequence) {
+        ingest(recorder, frame(sequence));
+        const auto position = recorder.position();
+        assert(progress.advance(FRAME_SAMPLES, SAMPLE_RATE, true,
+          position.epoch, position.nextSample) == sequence + 1);
+      }
+      const auto before = recorder.position();
+      recorder.request(request(200, 1000, 1008));
+      std::mutex gate;
+      std::condition_variable changed;
+      bool held = false, release = false;
+      std::thread holder([&] {
+        blah2::KrakenClipRecorderTestAccess::hold(recorder, gate, changed,
+          held, release);
+      });
+      {
+        std::unique_lock<std::mutex> lock(gate);
+        changed.wait(lock, [&] { return held; });
+      }
+      for (unsigned sequence = 3; sequence < 5; ++sequence) {
+        auto value = frame(sequence);
+        const bool retained = recorder.ingest(value.fixed,
+          std::move(value.metadata), std::move(value.payload), value.header,
+          nullptr, 1000000000LL + sequence * 1000000LL);
+        assert(!retained);
+        assert(progress.advance(FRAME_SAMPLES, SAMPLE_RATE) == sequence + 1);
+      }
+      {
+        std::lock_guard<std::mutex> lock(gate);
+        release = true; changed.notify_one();
+      }
+      holder.join();
+      auto value = frame(5);
+      blah2::KrakenClipRecorder::Position after;
+      assert(recorder.ingest(value.fixed, std::move(value.metadata),
+        std::move(value.payload), value.header, &after, 1005000000LL));
+      assert(after.available && !after.discontinuity && after.epoch == before.epoch);
+      assert(after.nextSample == 6ULL * FRAME_SAMPLES);
+      assert(after.epochEstimateNanoseconds == before.epochEstimateNanoseconds);
+      assert(progress.advance(FRAME_SAMPLES, SAMPLE_RATE, true,
+        after.epoch, after.nextSample) == 6);
+      assert(recorder.status().revision == 200 && recorder.status().terminal &&
+        recorder.status().error == "Kraken clip ring was saturated; recorder copy dropped");
+      // The discarded prefix cannot be represented as a continuous clip.
+      recorder.request(request(201, 1000, 1007));
+      assert(recorder.status().revision == 201 && recorder.status().terminal &&
+        recorder.status().error == "Kraken clip pre-roll is unavailable");
+      recorder.request(request(202, 1004, 1007));
+      // Recovery is still collecting: the previous terminal result remains
+      // visible, so waiting for just any terminal status would return too soon.
+      assert(recorder.status().revision == 201 && recorder.status().terminal);
+      ingest(recorder, frame(6)); ingest(recorder, frame(7));
+      const auto recovered = wait(recorder, 202);
+      assert(recovered.revision == 202 && recovered.error.empty() &&
+        recovered.samples == 3ULL * FRAME_SAMPLES);
+      recorder.discontinuity("real input boundary");
+      ingest(recorder, frame(8));
+      const auto reset = recorder.position();
+      assert(reset.epoch == before.epoch + 1 && reset.nextSample == FRAME_SAMPLES);
+    }
+
     // A completed event-time window remains recordable after ring wrap if its
     // actual sample interval is retained. Wall-clock age is not sufficient:
     // the second request has aged out even though it is a valid short window.
@@ -204,7 +310,7 @@ int main()
       const auto before = recorder.position();
       assert(before.nextSample == 30ULL * FRAME_SAMPLES);
       recorder.request(request(100, 1010, 1015));
-      const auto late = wait(recorder);
+      const auto late = wait(recorder, 100);
       assert(late.revision == 100 && late.error.empty() &&
         late.samples == 5ULL * FRAME_SAMPLES && !late.file.empty());
       // Repeated claims cannot create a second artifact or alter its identity.
@@ -259,12 +365,15 @@ int main()
         delayedTime.estimateNanoseconds - firstTime.estimateNanoseconds ==
           100000000LL);
       const auto annotated = blah2::annotate_event_time(
-        "{\"timestamp\":999}", delayedTime);
+        "{\"timestamp\":999,\"gain\":7.699999809265137,\"response\":[1e-20,0.12345678901234567]}", delayedTime);
       rapidjson::Document document;
-      document.Parse(annotated.c_str());
+      document.Parse<rapidjson::kParseFullPrecisionFlag>(annotated.c_str());
       assert(!document.HasParseError() && document["eventTime"]["exact"] == false &&
         document["eventTime"]["uncertaintyBounded"] == false &&
         document["eventTime"]["uncertaintyNs"].IsNull());
+      assert(document["gain"].GetDouble() == double(7.7f) &&
+        document["response"][0].GetDouble() == 1e-20 &&
+        document["response"][1].GetDouble() == 0.12345678901234567);
       clock = 1000000000LL;
     }
 
@@ -289,7 +398,7 @@ int main()
         expected.push_back(value.decoded);
         ingest(recorder, std::move(value));
       }
-      const auto status = wait(recorder);
+      const auto status = wait(recorder, 1);
       assert(status.revision == 1 && status.error.empty());
       assert(status.samples == 5ULL * FRAME_SAMPLES);
       blah2::RecordingReader reader(status.file,
@@ -336,23 +445,72 @@ int main()
     for (bool withTiming : {false, true}) {
       blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
         SAMPLE_RATE, FREQUENCY, options);
+      blah2::RecordingContext context;
+      context.referenceMode = "array_eigenbeam";
+      context.referenceChannels = context.surveillanceChannels = {0,1,2,3,4};
+      context.coherent = context.geometryConfirmed = true;
+      context.geometryJson = R"({"units":"m","x_axis_bearing_deg_true":0,"elements":[{"daq_channel":0,"position":[0,0,0]},{"daq_channel":1,"position":[1,0,0]},{"daq_channel":2,"position":[0,1,0]},{"daq_channel":3,"position":[-1,0,0]},{"daq_channel":4,"position":[0,-1,0]}]})";
+      context.configurationSha256 = std::string(64, 'a');
+      context.codeSha256 = std::string(64, 'b');
+      context.manifoldSha256 = {{"bearing", std::string(64, 'c')}};
+      context.geographicSitesJson = R"({"schema":"vectorwarp-recorded-geographic-sites-v1","provenance":"operator-configured-at-acquisition","rx":{"latitude":40.1,"longitude":-80.2,"altitude":300.0},"tx":{"latitude":40.5,"longitude":-80.0,"altitude":450.0},"illuminators":{}})";
+      recorder.set_recording_context(context);
       ingest(recorder, withTiming ? timed(frame(20, 3000), 60000, 1000000000) : frame(20, 3000));
       ingest(recorder, withTiming ? timed(frame(21, 3000), 63000, 1001250000) : frame(21, 3000));
       recorder.request(request(10, 999, 1002));
       ingest(recorder, withTiming ? timed(frame(22, 3000), 66000, 1002500000) : frame(22, 3000));
-      const auto status = wait(recorder);
+      const auto status = wait(recorder, 10);
       assert(status.revision == 10 && status.error.empty() &&
         status.samples == 7200);
       blah2::RecordingReader reader(status.file,
         {"auto", "Kraken", CHANNELS, SAMPLE_RATE, FREQUENCY, 0});
       blah2::IqBlock block;
+      unsigned originalSequence = 20;
       for (uint32_t count : {2400U, 3000U, 1800U})
       {
         assert(reader.read(block) && block.size() == CHANNELS);
         for (const auto& channel : block) assert(channel.size() == count);
+        const auto original = frame(originalSequence, 3000);
+        const uint32_t offset = originalSequence++ == 20 ? 600 : 0;
+        for (uint32_t channel = 0; channel < CHANNELS; ++channel)
+          assert(std::equal(block[channel].begin(), block[channel].end(),
+            original.decoded[channel].begin() + offset));
       }
       assert(!reader.read(block));
+      reader.seek(100); assert(reader.read(block));
+      const auto original = frame(20, 3000);
+      for (uint32_t channel = 0; channel < CHANNELS; ++channel)
+        assert(std::equal(block[channel].begin(), block[channel].end(),
+          original.decoded[channel].begin() + 700));
+      assert(reader.provenance().acquisitionIntegrityValid);
+      assert(!reader.provenance().geographicSitesAvailable);
+      assert(reader.provenance().acquisitionContext.referenceChannels == context.referenceChannels);
+      assert(reader.provenance().acquisitionContext.surveillanceChannels == context.surveillanceChannels);
+      assert(reader.provenance().acquisitionContext.geometryJson == context.geometryJson);
+      assert(reader.provenance().acquisitionContext.manifoldSha256 == context.manifoldSha256);
+      assert(reader.provenance().perChannelGainDb == std::vector<double>({15,16,17,18,19}));
+      assert(reader.provenance().gainProvenance == "sample-aligned-receiver-header");
+      assert(reader.provenance().frames.size() == 3 && reader.provenance().frames[0].sliceOffset == 600);
+      blah2::ReplayOptions exact{"auto", "Usrp", CHANNELS, SAMPLE_RATE, FREQUENCY, 0};
+      exact.requireExactAcquisition = true;
+      exact.expectedRecordingSha256 = reader.provenance().recordingSha256;
+      exact.expectedAcquisitionSha256 = reader.provenance().acquisitionSha256;
+      exact.validateAcquisitionContext = true; exact.expectedAcquisitionContext = context;
+      const auto rejected = [&](const blah2::ReplayOptions& candidate) {
+        bool failed = false;
+        try { blah2::RecordingReader invalid(status.file, candidate); }
+        catch (const std::runtime_error&) { failed = true; }
+        assert(failed);
+      };
       if (withTiming) {
+        blah2::RecordingReader qualified(status.file, exact);
+        assert(qualified.provenance().exactAcquisition && qualified.provenance().acquisitionHashTrusted);
+        assert(qualified.provenance().geographicSitesAvailable &&
+          qualified.provenance().acquisitionContext.geographicSitesJson == context.geographicSitesJson);
+        auto altered = exact; altered.expectedAcquisitionSha256.clear(); rejected(altered);
+        altered = exact; altered.expectedRecordingSha256 = std::string(64, 'f'); rejected(altered);
+        altered = exact; altered.expectedAcquisitionSha256 = std::string(64, 'f'); rejected(altered);
+        altered = exact; altered.expectedAcquisitionContext.surveillanceChannels = {0,1}; rejected(altered);
         assert(reader.provenance().sourceSampleAvailable &&
           reader.provenance().epoch == 1 &&
           reader.provenance().sourceFirstSample == 60600);
@@ -370,6 +528,8 @@ int main()
         assert(!sidecar["upstreamTiming"]["hardwareUtc"].GetBool());
         assert(!sidecar["eventTime"]["exact"].GetBool());
       } else {
+        assert(!reader.provenance().exactAcquisition);
+        rejected(exact);
         // Legacy MCHQ frames have no embedded timing, but the authenticated
         // native clip sidecar still supplies the recorder's coherent sample
         // interval for offline truth alignment.
@@ -379,6 +539,31 @@ int main()
         assert(!reader.provenance().contractValid &&
           !reader.provenance().decisionGrade);
       }
+      // Changing metadata and its self-declared digest cannot satisfy the
+      // externally pinned acquisition identity, even though ordinary playback
+      // can still consume a structurally valid manifest.
+      auto manifest = json_file(status.file + ".acquisition.json");
+      manifest["acquisition"]["codeSha256"].SetString(std::string(64, 'd').c_str(), manifest.GetAllocator());
+      const auto changedHash = blah2::acquisition::digest(blah2::acquisition::encode(manifest["acquisition"]));
+      manifest["acquisitionSha256"].SetString(changedHash.c_str(), manifest.GetAllocator());
+      { std::ofstream output(status.file + ".acquisition.json"); output << blah2::acquisition::encode(manifest); }
+      rejected(exact);
+      // Payload binding is independently checked, not just the metadata hash.
+      manifest["recordingSha256"].SetString(std::string(64, 'e').c_str(), manifest.GetAllocator());
+      { std::ofstream output(status.file + ".acquisition.json"); output << blah2::acquisition::encode(manifest); }
+      auto wrongData = exact; wrongData.expectedAcquisitionSha256 = changedHash;
+      rejected(wrongData);
+      manifest["recordingSha256"].SetString(exact.expectedRecordingSha256.c_str(), manifest.GetAllocator());
+      manifest["acquisition"]["frames"][0].RemoveMember("originalMeanIq");
+      const auto missingMeanHash = blah2::acquisition::digest(blah2::acquisition::encode(manifest["acquisition"]));
+      manifest["acquisitionSha256"].SetString(missingMeanHash.c_str(), manifest.GetAllocator());
+      { std::ofstream output(status.file + ".acquisition.json"); output << blah2::acquisition::encode(manifest); }
+      auto missingMean = exact; missingMean.expectedAcquisitionSha256 = missingMeanHash;
+      rejected(missingMean);
+      std::filesystem::remove(status.file + ".acquisition.json");
+      blah2::RecordingReader legacy(status.file, {"auto", "Kraken", CHANNELS, SAMPLE_RATE, FREQUENCY, 0});
+      assert(legacy.metadata().samples == 7200 && !legacy.provenance().exactAcquisition);
+      rejected(exact);
     }
 
     // A revised overlapping request replaces the active bounds and produces
@@ -395,7 +580,7 @@ int main()
       recorder.request(request(3, 1000, 1007));
       for (unsigned sequence = 5; sequence < 8; ++sequence)
         ingest(recorder, frame(sequence));
-      const auto status = wait(recorder);
+      const auto status = wait(recorder, 3);
       assert(status.revision == 3 && status.error.empty() &&
         status.samples == 7ULL * FRAME_SAMPLES);
     }
@@ -409,7 +594,7 @@ int main()
         ingest(recorder, frame(sequence));
       recorder.request(request(4, 1000, 1007));
       recorder.discontinuity("test synchronization loss");
-      const auto status = wait(recorder);
+      const auto status = wait(recorder, 4);
       assert(status.revision == 4 && status.file.empty() &&
         status.error == "test synchronization loss");
     }
@@ -448,7 +633,7 @@ int main()
         releaseWriter = true;
       }
       gateCondition.notify_all();
-      const auto status = wait(recorder);
+      const auto status = wait(recorder, 8);
       assert(status.revision == 8 && status.error.empty() &&
         !status.file.empty());
     }
@@ -482,7 +667,7 @@ int main()
       ingest(recorder, frame(4));
       assert(std::chrono::steady_clock::now() - before <
         std::chrono::milliseconds(100));
-      const auto saturated = wait(recorder);
+      const auto saturated = wait(recorder, 7);
       assert(saturated.revision == 7 && saturated.error.find("saturated") !=
         std::string::npos);
       {
@@ -503,7 +688,7 @@ int main()
       recorder.request(request(8, 1000, 1001));
       assert(std::chrono::steady_clock::now() - before <
         std::chrono::milliseconds(100));
-      const auto failed = wait(recorder);
+      const auto failed = wait(recorder, 8);
       assert(failed.revision == 8 && failed.file.empty() &&
         failed.error.find("Cannot create clip") != std::string::npos);
     }
@@ -514,7 +699,7 @@ int main()
       blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
         SAMPLE_RATE, FREQUENCY, options);
       recorder.request(request(9, 1000, 11001));
-      const auto failed = wait(recorder);
+      const auto failed = wait(recorder, 9);
       assert(failed.revision == 9 &&
         failed.error.find("ten-second") != std::string::npos);
     }

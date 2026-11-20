@@ -85,7 +85,7 @@
     balanced: Object.freeze({pfa: 0.00001, minDoppler: 15, M: 3, N: 6,
       minSnrDb: 5, deleteAfter: 10, accelerationModel: 'adaptive_gate'}),
     conservative: Object.freeze({pfa: 0.000001, minDoppler: 20, M: 4, N: 8,
-      minSnrDb: 7, deleteAfter: 3, accelerationModel: 'automatic'})
+      minSnrDb: 7, deleteAfter: 3, accelerationModel: 'hypothesis_bank'})
   });
 
   function gainMode(config) {
@@ -116,21 +116,13 @@
     const clutter = config?.process?.clutter || {};
     if (clutter.enable !== true) return 'off';
     if (clutter.followAmbiguity === true) return 'automatic';
-    const ambiguity = config?.process?.ambiguity || {};
-    return clutter.delayMin === ambiguity.delayMin && clutter.delayMax === ambiguity.delayMax ?
-      'full_window' : 'custom';
+    return 'custom';
   }
 
   function applyClutterMode(config, mode) {
     const clutter = ensure(ensure(config, 'process'), 'clutter');
     clutter.enable = mode !== 'off';
     if (mode === 'automatic') clutter.followAmbiguity = true;
-    if (mode === 'full_window') {
-      const ambiguity = config.process.ambiguity || {};
-      clutter.followAmbiguity = false;
-      clutter.delayMin = ambiguity.delayMin ?? 0;
-      clutter.delayMax = ambiguity.delayMax ?? 0;
-    }
     if (mode === 'custom') {
       clutter.followAmbiguity = false;
       const ambiguity = config.process.ambiguity || {};
@@ -164,9 +156,7 @@
     initiate.M = values.M;
     initiate.N = values.N;
     initiate.min_snr_db = values.minSnrDb;
-    initiate.acceleration_model = values.accelerationModel === 'automatic' ?
-      (process.performance?.acceleration === 'gpu-resident' ? 'adaptive_gate' :
-        'hypothesis_bank') : values.accelerationModel;
+    initiate.acceleration_model = values.accelerationModel;
     tracker.delete = values.deleteAfter;
     return config;
   }
@@ -180,24 +170,21 @@
     return (detection.integration_cpis ?? 1) === 1 && (detection.integration_motion_bins ?? 0) === 0 ? 'off' : 'custom';
   }
 
-  function prepareResidentArray(config) {
-    const process = ensure(config, 'process');
-    const performance = ensure(process, 'performance');
-    performance.acceleration = 'gpu-resident';
-    const tracker = ensure(process, 'tracker');
-    if (!Number.isInteger(tracker.gpu_capacity)) tracker.gpu_capacity = 256;
-    const fusion = ensure(process, 'surveillance_fusion');
-    if (!fusion.mode || fusion.mode === 'noncoherent') fusion.mode = 'coherent_beam_bank';
-    // Recording roles are authoritative; selecting recovery must not rewrite
-    // either their metadata or the dormant live receiver's reference mapping.
-    if (!(config.capture?.replay?.state === true && Number.isInteger(config.capture.replay.channel_count))) {
-      const topology = (typeof module !== 'undefined' && module.exports ?
-        require('./processing_capabilities') : globalThis.VectorWarpProcessingCapabilities).processingCapabilities(config);
-      const reference = ensure(process, 'reference_synthesis');
-      reference.mode = 'array_eigenbeam';
-      reference.channels = [...topology.surveillanceChannels];
-    }
-    return config;
+  // Admission mirror of process/tracker/ConfirmationContract.h. N counts CPI
+  // endpoints, not overlapping detections. Presets never widen these limits.
+  function temporalConfirmationErrors(config) {
+    const tracker = config?.process?.tracker;
+    if (tracker?.enable !== true) return [];
+    const detection = config.process.detection || {}, tbd = detection.track_before_detect;
+    const depth = tbd?.enable === true ? (tbd.max_cpis ?? 8) : (detection.integration_cpis ?? 1);
+    const {M, N} = tracker.initiate || {}, misses = tracker.delete;
+    if (![1, 2, 4, 8].includes(depth) || ![M, N, misses].every(Number.isInteger) || M < 1)
+      return []; // Field validators report malformed values.
+    const minimumWindow = 1 + depth * (M - 1), minimumMisses = depth - 1;
+    return N >= minimumWindow && misses >= minimumMisses ? [] : [
+      `process.tracker.initiate.N must be >= ${minimumWindow} and process.tracker.delete must be >= ${minimumMisses} ` +
+      `for disjoint ${depth}-CPI confirmation (M=${M}; N >= 1 + depth*(M-1)). ` +
+      'Explicit replay qualification of initiation latency, continuity and false tracks is required before changing these limits; defaults are not migrated.'];
   }
 
   function applyWeakTargetMode(config, mode) {
@@ -210,12 +197,7 @@
     if (mode === 'eight') tbd.max_cpis = 8;
     if (!tbd.enable) {
       if (tbd.fractional_delay !== undefined) tbd.fractional_delay = false;
-      const guided = config.process.tracker?.track_guided_shadow;
-      if (object(guided)) for (const key of ['enable', 'promote', 'sustain'])
-        if (guided[key] !== undefined) guided[key] = false;
     }
-    if (['two', 'two_motion','four','eight'].includes(mode) &&
-        config.process.tracker?.beam_tolerance !== undefined) prepareResidentArray(config);
     // Adjacent-CPI integration is supported by CPU and portable GPU paths too.
     // Two-frame presets must not silently switch an FP32 machine to resident.
     return config;
@@ -361,46 +343,35 @@
   }
 
   function applyProcessingMode(config, mode) {
-    const process = ensure(config, 'process');
-    const performance = ensure(process, 'performance');
-    if (mode === 'automatic') {
-      const needsResident = process.bearing?.enable === true ||
-        (process.tracker?.beam_tolerance !== undefined &&
-          ((process.detection?.integration_cpis ?? 1)>1 || process.detection?.track_before_detect?.enable === true)) ||
-        process.surveillance_fusion?.mode === 'noise_whitened_beam_bank';
-      performance.acceleration = needsResident ? 'gpu-resident' : 'auto';
-      if (performance.acceleration === 'gpu-resident') {
-        const tracker = ensure(process, 'tracker');
-        if (!Number.isInteger(tracker.gpu_capacity)) tracker.gpu_capacity = 256;
-      }
-      return config;
+    const pipeline = ensure(config, 'process');
+    const performance = ensure(pipeline, 'performance');
+    // Execution policy never substitutes a statistic, topology or stage.
+    // The shared capability validator refuses an unavailable implementation.
+    const needsResident = pipeline.bearing?.enable === true ||
+      pipeline.surveillance_fusion?.mode === 'noise_whitened_beam_bank' ||
+      (pipeline.tracker?.beam_tolerance !== undefined &&
+        ((pipeline.detection?.integration_cpis ?? 1) > 1 ||
+          pipeline.detection?.track_before_detect?.enable === true));
+    performance.acceleration = mode === 'cpu' ? 'cpu' : needsResident ? 'gpu-resident' : 'auto';
+    return config;
+  }
+
+  function applyReceiverProfile(config, profile, initializeProcessing = false) {
+    const capture = ensure(config, 'capture'), geometry = capture.device?.array_geometry;
+    capture.device = JSON.parse(JSON.stringify(profile.device));
+    if (geometry !== undefined) capture.device.array_geometry = geometry;
+    if (capture.replay?.state === true) return config;
+    capture.fs = profile.sampleRate;
+    if (initializeProcessing) {
+      const process = ensure(config, 'process');
+      for (const [key, value] of Object.entries(profile.process || {}))
+        process[key] = {...process[key], ...JSON.parse(JSON.stringify(value))};
     }
-    performance.acceleration = 'cpu';
-    const detection = ensure(process, 'detection');
-    // Generic power integration is portable. Beam-conditioned histories still
-    // require the resident beam identity path and are disabled by this action.
-    if (process.tracker?.beam_tolerance !== undefined) {
-      detection.integration_cpis = 1;
-      detection.integration_motion_bins = 0;
-      if (object(detection.track_before_detect)) {
-        detection.track_before_detect.enable=false;
-        if (detection.track_before_detect.fractional_delay!==undefined)
-          detection.track_before_detect.fractional_delay=false;
-      }
-      const guided=process.tracker.track_guided_shadow;
-      if (object(guided)) for(const key of ['enable','promote','sustain'])
-        if(guided[key]!==undefined)guided[key]=false;
-    }
-    if (object(process.bearing)) process.bearing.enable = false;
-    // Power TBD, stationary suppression and lineage-safe guided recovery are
-    // shared host algorithms; changing hardware does not erase their settings.
-    if (process.surveillance_fusion?.mode === 'noise_whitened_beam_bank')
-      process.surveillance_fusion.mode = 'coherent_beam_bank';
     return config;
   }
 
   return {scaleDelayBin, effectiveDelayConfig, legacyDelayReferenceRate,
     detectionProfiles, trackingProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
-    detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode,
-    applyTrackingProfile, processingMode, applyProcessingMode, associationGates, assignments};
+    detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode, temporalConfirmationErrors,
+    applyTrackingProfile, processingMode, applyProcessingMode, applyReceiverProfile, associationGates, assignments};
 });

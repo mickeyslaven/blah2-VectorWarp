@@ -93,6 +93,12 @@ class HomebrewReleaseTest(unittest.TestCase):
         self.command("--output-tap-dir", str(output))
         self.assertTrue((output / "homebrew-release.json").is_file())
 
+    def test_accepts_current_architecture_contract(self):
+        self.write_archive("AGENTS.md", (ROOT / "AGENTS.md").read_bytes())
+        output = self.root / "architecture-contract"
+        self.command("--output-tap-dir", str(output))
+        self.assertTrue((output / "homebrew-release.json").is_file())
+
     def test_accepts_public_runtime_and_tool_sources(self):
         for path in (
             "runtime/vectorwarp-example.service",

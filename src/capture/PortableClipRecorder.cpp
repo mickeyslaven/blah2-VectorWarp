@@ -1,5 +1,6 @@
 #include "PortableClipRecorder.h"
 #include "Sha256.h"
+#include "RecordingAcquisitionJson.h"
 
 #include <algorithm>
 #include <chrono>
@@ -52,6 +53,9 @@ void write_synced(const std::string& path,const std::string& value) {
 }
 struct PortableClipRecorder::Block {
   uint64_t epoch = 0, first = 0, count = 0;
+  uint64_t sequence = 0;
+  bool positionAvailable = false;
+  std::shared_ptr<const RecordingBlockMetadata> metadata;
   IqBlock samples;
 };
 struct PortableClipRecorder::Active {
@@ -131,12 +135,17 @@ void PortableClipRecorder::fail_active_locked(const std::string& error) {
 }
 
 bool PortableClipRecorder::ingest(IqBlock samples, uint64_t epoch,
-    uint64_t firstSample, bool positionAvailable, int64_t receiptNanoseconds) {
+    uint64_t firstSample, bool positionAvailable, int64_t receiptNanoseconds,
+    std::shared_ptr<const RecordingBlockMetadata> metadata) {
   if (samples.size() != channels || samples.empty()) return false;
   const std::size_t count = samples.front().size();
   if (!count || std::any_of(samples.begin(), samples.end(),
       [&](const auto& channel) { return channel.size() != count; })) return false;
   std::unique_lock<std::mutex> lock(mutex);
+  if (!ring.empty() && ring.back()->metadata != metadata) {
+    fail_active_locked("Acquisition settings changed during portable clip");
+    ring.clear(); retainedSamples = 0; haveEpoch = false;
+  }
   const int64_t receipt = receiptNanoseconds ? receiptNanoseconds : now_nanoseconds();
   uint64_t first = positionAvailable ? firstSample : nextSample;
   if (!haveEpoch || (positionAvailable && (epoch != streamEpoch || first != nextSample))) {
@@ -156,12 +165,17 @@ bool PortableClipRecorder::ingest(IqBlock samples, uint64_t epoch,
   }
   auto block = std::make_shared<Block>();
   block->epoch = streamEpoch; block->first = first; block->count = count;
+  block->sequence = ++ingressSequence; block->positionAvailable = positionAvailable;
+  block->metadata = std::move(metadata);
   block->samples = std::move(samples);
   nextSample = first + count;
   ring.push_back(block); retainedSamples += count;
-  if (active && active->epoch == streamEpoch && nextSample > active->first)
-    active->blocks.push_back(block);
-  while (ring.size() > 1 && retainedSamples > ringSamples) {
+  if (active && active->epoch == streamEpoch && nextSample > active->first) {
+    if (active->blocks.size() >= acquisition::maximumFrames)
+      fail_active_locked("Portable clip frame lineage exceeds bounded capacity");
+    else active->blocks.push_back(block);
+  }
+  while (ring.size() > 1 && (retainedSamples > ringSamples || ring.size() > acquisition::maximumFrames)) {
     retainedSamples -= ring.front()->count;
     ring.pop_front();
   }
@@ -276,7 +290,25 @@ IqClipStatus PortableClipRecorder::write_job(Job& job) {
     ("aircraft-" + std::to_string(stamp) + "-" +
       std::to_string(job.sequence) + ".blah2iq")).string();
   const std::string partial=file+".partial", metadataPartial=file+".json.partial";
-  RecordingWriter output(partial, {channels, sampleRate, frequency, 0, "blah2"});
+  std::vector<RecordingFrameLineage> lineage;
+  bool positions = true;
+  std::shared_ptr<const RecordingBlockMetadata> metadata;
+  bool metadataSet = false;
+  for (const auto& block : job.blocks) {
+    const auto begin = std::max(job.first, block->first);
+    const auto finish = std::min(job.end, block->first + block->count);
+    if (finish <= begin) continue;
+    if (lineage.size() >= acquisition::maximumFrames)
+      throw std::runtime_error("Portable clip frame lineage exceeds bounded capacity");
+    if (!metadataSet) { metadata = block->metadata; metadataSet = true; }
+    if (metadata != block->metadata)
+      throw std::runtime_error("Portable clip crosses an acquisition settings boundary");
+    positions = positions && block->positionAvailable && block->epoch == job.epoch;
+    lineage.push_back({block->sequence, block->first, block->count, begin - block->first, finish - begin});
+  }
+  const auto acquisitionJson = acquisition::serialize(metadata.get(), receiver, channels,
+    sampleRate, frequency, job.epoch, job.first, job.end, positions, lineage);
+  RecordingWriter output(partial, {channels, sampleRate, frequency, 0, "blah2", acquisitionJson});
   uint64_t written = 0;
   try {
     for (auto& block : job.blocks) {

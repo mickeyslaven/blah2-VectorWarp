@@ -13,6 +13,7 @@ const point = (now, lon, seen = 0, extra = {}) => ({now, aircraft: [{hex: 'abc',
 assert.deepEqual(history.update(point(100, .5)).data, {}, 'First position warms up');
 const first = history.update(point(101, .6)).data.abc;
 assert.ok(Number.isFinite(first.delay) && Number.isFinite(first.doppler));
+assert.equal(first.doppler_method, 'position-fit-fallback');
 assert.equal(first.position.longitude, .6);
 assert.equal(first.position.altitude_geom_ft, 10000);
 assert.equal(first.hex, 'abc');
@@ -58,6 +59,35 @@ assert.ok(Math.abs(doubled.doppler / first.doppler - 2) < 1e-9,
   'Bistatic Doppler must scale with the configured live carrier frequency');
 assert.ok(Math.abs(doubled.delay - first.delay) < 1e-9,
   'Excess-path delay must remain independent of carrier frequency');
+const replayConfig = {...config, capture: {fc: 100e6, fs: 2.4e6,
+  replay: {state: true, frequency_hz: 200e6, sample_rate_hz: 2e6}}};
+assert.equal(new DelayDopplerHistory(replayConfig).update(point(100, .5)).aligned_unavailable, true);
+require('../test/helpers/trusted-replay-sites')(replayConfig);
+const replayGeometry = new DelayDopplerHistory(replayConfig);
+const nativeCoordinates = {sample_rate_hz: 6144000, frequency_hz: 539e6};
+replayGeometry.update(point(100, .5), nativeCoordinates);
+const nativeReplay = replayGeometry.update(point(101, .6), nativeCoordinates).data.abc;
+assert.equal(nativeReplay.frequency_hz, 539e6);
+assert.ok(Math.abs(nativeReplay.doppler / first.doppler - 5.39) < 1e-9);
+assert.equal(nativeReplay.delay, first.delay);
+replayGeometry.update(point(103, .8), nativeCoordinates);
+const outOfOrderReplay = replayGeometry.update(point(102, .7), nativeCoordinates).data.abc;
+assert.equal(outOfOrderReplay.frequency_hz, 539e6);
+assert.ok(Number.isFinite(outOfOrderReplay.doppler));
+for (const bad of [null, false, 0, -1, NaN, Infinity, '539000000']) {
+  assert.deepEqual(replayGeometry.update(point(104, .9),
+    {...nativeCoordinates, frequency_hz: bad}).data, {});
+  assert.equal(replayGeometry.output.size, 0, 'Invalid metadata cannot resurrect old truth');
+}
+assert.deepEqual(replayGeometry.update(point(104, .9), [nativeCoordinates,
+  {...nativeCoordinates, sample_rate_hz: 2.4e6}]).data, {});
+const undeclaredReplay = new DelayDopplerHistory({...config,
+  capture: {...config.capture, replay: {state: true, file: replayConfig.capture.replay.file,
+    recording_sha256: replayConfig.capture.replay.recording_sha256}}});
+assert.deepEqual(undeclaredReplay.update(point(101, .6)).data, {},
+  'Replay may never silently use the selected live carrier');
+assert.equal(undeclaredReplay.update(point(100, .5), nativeCoordinates).warming.length, 1);
+assert.equal(undeclaredReplay.update(point(101, .6), nativeCoordinates).data.abc.frequency_hz, 539e6);
 const mlatHistory = new DelayDopplerHistory(config);
 const mlatPoint = (now, lon) => ({now, aircraft: [{hex: 'def456', type: 'mlat',
   position_source: 'MLAT', source_fields: ['lat', 'lon'], lat: 0, lon,
@@ -68,5 +98,15 @@ assert.ok(Number.isFinite(mlatResult.delay) && Number.isFinite(mlatResult.dopple
   'MLAT with barometric altitude remains displayable on delay-Doppler');
 assert.equal(mlatResult.position_source, 'MLAT');
 assert.equal(mlatResult.position.altitude_source, 'BAROMETRIC_FALLBACK');
+const stableMotion = new DelayDopplerHistory(config);
+stableMotion.update(point(100, 1.5, 0, {gs: .1, track: 0}));
+const jittered = stableMotion.update(point(101, 1.5001, 0, {gs: .1, track: 0})).data.abc;
+assert.equal(jittered.doppler_method, 'reported-kinematic',
+  'Valid reported motion must prevent position jitter from defining Doppler');
+assert.ok(Math.abs(jittered.doppler) < 1,
+  'Near-stationary reported motion must remain near zero Doppler');
+assert.ok(Math.abs(jittered.doppler_position_fit_hz) > 5,
+  'The diagnostic position fit must retain the rejected jitter-sensitive estimate');
+assert.ok(Math.abs(jittered.doppler_estimator_difference_hz) > 5);
 console.log('ADS-B WGS84 geometry, units, PR #5 timing/duplicates, ordering, eviction and reset tests passed.');
 require('./truth-uncertainty.test');

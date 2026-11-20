@@ -5,63 +5,76 @@ const path = require('path');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig,
   writeConfigAtomically} = require('./config-manager.js');
-const {configurationForReceiver} = require('./config-store.js');
+const {configurationForReceiver, setupDefaults} = require('./config-store.js');
 
 function load(name) {
-  const value = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', name), 'utf8'));
+  const value = name === 'config.yml' ? setupDefaults() : configurationForReceiver(name);
   if (value.capture.device.type === 'HackRF') value.capture.device.serial = ['0001', '0002'];
   return value;
 }
 const clone = value => JSON.parse(JSON.stringify(value));
 
+// Native 601x1261 lane geometry; display downsampling cannot admit more work.
+for (const fractional of [false, true]) for (const [delay, doppler, accepted] of
+    [[1, 1, true], [2, 2, true], [2, 4, false]]) {
+  const config = load('Usrp');
+  config.capture.fs = 24576000; config.capture.fc = 548000000;
+  config.process.data.cpi = 0.5;
+  config.process.delay_reference_sample_rate_hz = 2000000;
+  config.process.ambiguity = {delayMin: -10, delayMax: 400, dopplerMin: -600, dopplerMax: 600};
+  config.process.clutter.followAmbiguity = true;
+  config.process.detection.track_before_detect = {enable: true, max_cpis: 8,
+    motion_bins: 1, delay_motion_bins: delay, doppler_motion_bins: doppler,
+    fractional_delay: fractional};
+  Object.assign(config.process.tracker.initiate, {M: 2, N: 9});
+  config.process.tracker.delete = 7;
+  config.network.ports.illuminator = 3007;
+  config.process.multi_illuminator = {enabled: true, illuminators: [{
+    id: 'atsc', enabled: true, standard: 'ATSC-1.0', frequency_hz: 551000000,
+    occupied_bandwidth_hz: 5380000, output_sample_rate_hz: 6144000,
+    filter_taps_per_phase: 64, atsc_reference_mode: 'pilot_aided',
+    transmitter: {name: 'test', latitude: 40, longitude: -80, altitude: 300}}]};
+  const before = JSON.stringify(config), result = validateConfig(config);
+  assert.equal(result.valid, accepted, result.errors.join('; '));
+  assert.equal(JSON.stringify(config), before, 'budget admission must not rewrite intent');
+  if (!accepted) assert.ok(result.errors.some(error =>
+    error.includes('601x1261') && error.includes('477452430 path samples')));
+  config.process.detection.track_before_detect.max_cpis = 4;
+  assert.equal(validateConfig(config).valid, true, 'same motion fits four-CPI path budget');
+}
+const arrayTemporalBudget = load('Kraken');
+arrayTemporalBudget.process.data.cpi = 0.5;
+arrayTemporalBudget.process.delay_reference_sample_rate_hz = 2400000;
+arrayTemporalBudget.process.ambiguity = {delayMin: -10, delayMax: 500, dopplerMin: -600, dopplerMax: 600};
+arrayTemporalBudget.process.clutter.followAmbiguity = true;
+arrayTemporalBudget.process.detection.track_before_detect = {enable: true, max_cpis: 8,
+  motion_bins: 1, delay_motion_bins: 2, doppler_motion_bins: 4, fractional_delay: true};
+Object.assign(arrayTemporalBudget.process.tracker.initiate, {M: 4, N: 25});
+arrayTemporalBudget.process.tracker.delete = 7;
+assert.equal(validateConfig(arrayTemporalBudget).valid, true,
+  validateConfig(arrayTemporalBudget).errors.join('; '));
+arrayTemporalBudget.process.detection.track_before_detect.doppler_motion_bins = 16;
+assert.ok(validateConfig(arrayTemporalBudget).errors.some(error =>
+  error.includes('601x511') && error.includes('path samples')));
+
 const firstRun = validateConfig(load('config.yml'));
 assert.equal(firstRun.valid, false);
 assert.ok(firstRun.errors.includes('capture.device.type is not supported'));
 
-for (const name of ['config-hackrf.yml', 'config-usrp.yml',
-  'config-kraken.yml', 'config-pi4-rspduo.yml']) {
+for (const name of ['HackRF', 'Usrp',
+  'Kraken', 'RspDuo']) {
   const result = validateConfig(load(name));
   assert.equal(result.valid, true, `${name}: ${result.errors.join('; ')}`);
 }
 
-const krakenProfile = load('config-kraken.yml');
-assert.equal(krakenProfile.process.detection.live_temporal_shadow.enabled, false);
-for (const profile of ['config-hackrf.yml', 'config-kraken.yml',
-  'config-pi4-rspduo.yml', 'config-usrp.yml']) {
-  const observer = load(profile);
-  observer.process.detection.live_temporal_shadow = {
-    enabled: true, bootstrap_covariance: 'robust_shrinkage', max_cpis: 8,
-    delay_motion_bins: 2, doppler_motion_bins: 4,
-    score_tracks: true, association_sustain: true,
-    association_sustain_cpis: 8,
-    minimum_initiation_snr_db: 6.5,
-    max_cells: 524288, max_work_ms: 20, min_interval_ms: 100};
-  assert.equal(validateConfig(observer).valid, true,
-    `${profile} accepts the isolated live observer: ${validateConfig(observer).errors.join('; ')}`);
-  for (const mutate of [
-    value => { value.process.detection.live_temporal_shadow.max_cells = 524289; },
-    value => { value.process.detection.live_temporal_shadow.max_work_ms = 0; },
-    value => { value.process.detection.live_temporal_shadow.max_work_ms = 151; },
-    value => { value.process.detection.live_temporal_shadow.min_interval_ms = 39; },
-    value => { value.process.detection.live_temporal_shadow.max_cpis = 6; },
-    value => { value.process.detection.live_temporal_shadow.association_sustain_cpis = 3; },
-    value => { value.process.detection.live_temporal_shadow.max_cpis = 4;
-      value.process.detection.live_temporal_shadow.association_sustain_cpis = 8; },
-    value => { value.process.detection.live_temporal_shadow.bootstrap_covariance = 'auto'; },
-    value => { value.capture.replay.state = true; },
-    value => { value.process.clutter.enable = false; }
-  ]) {
-    const invalid = clone(observer); mutate(invalid);
-    assert.equal(validateConfig(invalid).valid, false, 'live observer bounds fail closed');
-  }
-}
-assert.equal(krakenProfile.network.tracker_forward.enabled, false,
+const krakenProfile = load('Kraken');
+assert.equal(krakenProfile.network.tracker_forward?.enabled ?? false, false,
   'the generic Kraken profile must not start a disconnected external tracker feed');
 assert.equal(validateConfig({...krakenProfile, network: {
   ...krakenProfile.network, tracker_forward: {enabled: false}}}).valid, true,
   'a disabled tracker feed must not require an unused external endpoint');
 const incompleteEnabledTracker = clone(krakenProfile);
-incompleteEnabledTracker.network.tracker_forward.enabled = true;
+incompleteEnabledTracker.network.tracker_forward = {enabled: true};
 assert.equal(validateConfig(incompleteEnabledTracker).valid, false,
   'enabling the tracker feed requires an explicit endpoint');
 
@@ -79,6 +92,17 @@ twoFmIlluminators.process.multi_illuminator = {enabled: true, illuminators: [
 ]};
 assert.equal(validateConfig(twoFmIlluminators).valid, true,
   'one Kraken passband accepts two isolated FM illuminators');
+for (const enabled of [false, true]) for (const clutter of [false, true])
+  for (const detection of [false, true]) for (const tracker of [false, true]) {
+    const candidate = clone(twoFmIlluminators);
+    candidate.process.multi_illuminator.enabled = enabled;
+    candidate.process.clutter.enable = clutter;
+    candidate.process.detection.enable = detection;
+    candidate.process.tracker.enable = tracker;
+    const result = validateConfig(candidate);
+    assert.equal(result.valid, !tracker || detection,
+      `Stage toggles share one dependency in single/multi mode: ${JSON.stringify({enabled, clutter, detection, tracker})}; ${result.errors.join('; ')}`);
+  }
 const laneBirthThreshold = clone(twoFmIlluminators);
 laneBirthThreshold.process.multi_illuminator.illuminators[1].tracker_min_snr_db = 5.5;
 assert.equal(validateConfig(laneBirthThreshold).valid, true,
@@ -88,22 +112,6 @@ for (const threshold of ['5.5', NaN, Infinity, -101, 101]) {
   const invalid = clone(twoFmIlluminators);
   invalid.process.multi_illuminator.illuminators[0].tracker_min_snr_db = threshold;
   assert.equal(validateConfig(invalid).valid, false, 'lane birth threshold must be finite and bounded');
-}
-const multiLiveShadow = clone(twoFmIlluminators);
-Object.assign(multiLiveShadow.process.detection.live_temporal_shadow,
-  {enabled: true, illuminator_id: 'fm-91.3'});
-assert.equal(validateConfig(multiLiveShadow).valid, true,
-  `one multi-illuminator lane may own the live observer: ${validateConfig(multiLiveShadow).errors.join('; ')}`);
-for (const mutate of [
-  value => { delete value.process.detection.live_temporal_shadow.illuminator_id; },
-  value => { value.process.detection.live_temporal_shadow.illuminator_id = 'missing'; },
-  value => { value.process.detection.live_temporal_shadow.illuminator_id = ['fm-90.5', 'fm-91.3']; },
-  value => { value.process.multi_illuminator.illuminators[1].enabled = false; },
-  value => { value.process.multi_illuminator.enabled = false; },
-  value => { value.capture.replay.state = true; }
-]) {
-  const invalid = clone(multiLiveShadow); mutate(invalid);
-  assert.equal(validateConfig(invalid).valid, false, 'multi live observer fails closed on ambiguous or inactive selection');
 }
 const replayIlluminator = clone(twoFmIlluminators);
 replayIlluminator.capture.replay = {...replayIlluminator.capture.replay,
@@ -118,30 +126,34 @@ assert.equal(validateConfig(replayIlluminator).valid, true,
   `lane validation follows replay rate/carrier: ${validateConfig(replayIlluminator).errors.join('; ')}`);
 assert.equal(replayIlluminator.capture.fs, 2400000,
   'wideband replay leaves the Kraken live sample rate untouched');
-const replayShadow = clone(replayIlluminator);
-Object.assign(replayShadow.process.detection.temporal_shadow, {
-  enabled: true, illuminator_id: 'atsc', input_statistic: 'post_clutter_bootstrap',
-  bootstrap_covariance: 'shrinkage', artifact_path: 'temporal-shadow.vwtbd',
-  artifact_max_mb: 4096});
-assert.equal(validateConfig(replayShadow).valid, true,
-  `temporal shadow is a replay-only exact-lane arm: ${validateConfig(replayShadow).errors.join('; ')}`);
-const robustReplayShadow = clone(replayShadow);
-robustReplayShadow.process.detection.temporal_shadow.bootstrap_covariance = 'robust_shrinkage';
-assert.equal(validateConfig(robustReplayShadow).valid, true,
-  'the robust covariance estimator is an explicit replay-only shadow choice');
-const invalidReplayCovariance = clone(replayShadow);
-invalidReplayCovariance.process.detection.temporal_shadow.bootstrap_covariance = 'automatic';
-assert.equal(validateConfig(invalidReplayCovariance).valid, false,
-  'unknown bootstrap covariance modes fail closed');
-const liveShadow = clone(twoFmIlluminators);
-Object.assign(liveShadow.process.detection.temporal_shadow,
-  {enabled: true, illuminator_id: 'fm-90.5'});
-assert.equal(validateConfig(liveShadow).valid, false,
-  'temporal shadow cannot run on live acquisition');
-const missingShadowLane = clone(replayShadow);
-missingShadowLane.process.detection.temporal_shadow.illuminator_id = 'missing';
-assert.equal(validateConfig(missingShadowLane).valid, false,
-  'temporal shadow must identify exactly one enabled lane');
+for (const standard of ['ATSC', 'ATSC-1.0', 'ATSC-3.0']) {
+  for (const offlineReplay of [false, true]) {
+    for (const requested of ['automatic', 'raw', 'pilot_aided']) {
+      const candidate = load('Usrp');
+      candidate.capture.fc = 539000000;
+      candidate.capture.fs = 12288000;
+      candidate.capture.replay.state = offlineReplay;
+      candidate.process.ambiguity.dopplerMin = -2400;
+      candidate.process.ambiguity.dopplerMax = 2400;
+      candidate.process.multi_illuminator = {enabled: true, illuminators: [{
+        id: 'atsc', enabled: true, standard, frequency_hz: 539000000,
+        occupied_bandwidth_hz: 6000000, output_sample_rate_hz: 6144000,
+        transmitter: {name: 'ATSC test', latitude: 40.44, longitude: -80, altitude: 300},
+        atsc_reference_mode: requested, reference_channel: 0, surveillance_channels: [1]}]};
+      const expected = requested !== 'pilot_aided' || standard !== 'ATSC-3.0';
+      const result = validateConfig(candidate);
+      assert.equal(result.valid, expected,
+        `${standard}/${requested}/replay=${offlineReplay}: ${result.errors.join('; ')}`);
+    }
+  }
+}
+const pilotArray = clone(replayIlluminator);
+pilotArray.process.multi_illuminator.illuminators[0].atsc_reference_mode = 'pilot_aided';
+assert.ok(validateConfig(pilotArray).errors.some(error =>
+  error.includes('pilot_aided does not support array reference')));
+pilotArray.process.multi_illuminator.illuminators[0].atsc_reference_mode = 'automatic';
+assert.equal(validateConfig(pilotArray).valid, true,
+  'automatic array reference safely retains raw rather than forcing pilot projection');
 for (const mutate of [
   value => { value.capture.replay.sample_rate_hz = 12000000; },
   value => { value.capture.replay.frequency_hz = 527000000; }
@@ -169,8 +181,8 @@ const residentMultiIlluminator = clone(twoFmIlluminators);
 residentMultiIlluminator.process.performance.acceleration = 'gpu-resident';
 assert.equal(validateConfig(residentMultiIlluminator).valid, true,
   'multi admits bounded resident frontends and the common host product contract');
-for (const source of [twoFmIlluminators, ...['config-hackrf.yml', 'config-usrp.yml',
-  'config-kraken.yml', 'config-pi4-rspduo.yml'].map(load)]) {
+for (const source of [twoFmIlluminators, ...['HackRF', 'Usrp',
+  'Kraken', 'RspDuo'].map(load)]) {
   for (const acceleration of ['cpu', 'auto', 'gpu', 'gpu-resident']) {
     for (const max_cpis of [4, 8]) {
       const value = clone(source);
@@ -179,8 +191,8 @@ for (const source of [twoFmIlluminators, ...['config-hackrf.yml', 'config-usrp.y
         motion_bins: 1, fractional_delay: true};
       value.process.tracker.initiate.stationary_clutter = {
         enable: true, persistence_cpis: 4, max_doppler_hz: 0};
-      value.process.tracker.track_guided_shadow = {enable: true, max_tracks: 32,
-        promote: false, sustain: true};
+      value.process.tracker.initiate.N = 1 + max_cpis * (value.process.tracker.initiate.M - 1);
+      value.process.tracker.delete = Math.max(value.process.tracker.delete, max_cpis - 1);
       const result = validateConfig(value);
       assert.equal(result.valid, true, `${value.capture.device.type}/${acceleration}/${max_cpis}: ${result.errors.join('; ')}`);
     }
@@ -188,12 +200,12 @@ for (const source of [twoFmIlluminators, ...['config-hackrf.yml', 'config-usrp.y
 }
 const fmReferenceExperiment = clone(twoFmIlluminators);
 fmReferenceExperiment.process.multi_illuminator.experimental_fm_reference_quality_filter = true;
-assert.ok(validateConfig(fmReferenceExperiment).errors.some(error =>
-  error.includes('experimental FM reference quality filtering requires')));
+assert.equal(validateConfig(fmReferenceExperiment).valid, true,
+  `Explicit FM reference setting is available live: ${validateConfig(fmReferenceExperiment).errors.join('; ')}`);
 fmReferenceExperiment.capture.replay.state = true;
 Object.assign(fmReferenceExperiment.capture.replay, {sample_rate_hz: 2400000, frequency_hz: 90900000});
 assert.equal(validateConfig(fmReferenceExperiment).valid, true,
-  `FM reference experiment is explicit replay only: ${validateConfig(fmReferenceExperiment).errors.join('; ')}`);
+  `Explicit FM reference setting is identical in replay: ${validateConfig(fmReferenceExperiment).errors.join('; ')}`);
 fmReferenceExperiment.process.multi_illuminator.illuminators.forEach(lane => { lane.standard = 'generic'; });
 assert.ok(validateConfig(fmReferenceExperiment).errors.some(error =>
   error.includes('experimental FM reference quality filtering requires')));
@@ -246,16 +258,8 @@ for (const [cpis, motion] of [[0, 0], [3, 0], [1, 1], [2, 2]]) {
 
 for (const [field, mutate] of [
   ['coherent fusion', value => { value.process.surveillance_fusion.mode = 'coherent_beam_bank'; }],
-  ['detection manifold automation', value => {
-    value.process.surveillance_fusion.detection_manifold_automation.enabled = true;
-  }],
   ['beam tolerance', value => { value.process.tracker.beam_tolerance = 1; }],
-  ['track-guided shadow', value => { value.process.tracker.track_guided_shadow.enable = true; }],
-  ['track-guided promotion', value => { value.process.tracker.track_guided_shadow.promote = true; }],
   ['bearing', value => { value.process.bearing.enable = true; }],
-  ['frequency-resolved bearing shadow', value => {
-    value.process.bearing.frequency_resolved_shadow.enabled = 'auto';
-  }],
   ['bearing manifold recorder', value => {
     value.process.bearing.manifold_recorder.enabled = 'on';
   }]
@@ -266,7 +270,7 @@ for (const [field, mutate] of [
     `multi-illuminator mode must reject unsupported ${field}`);
 }
 
-const sixChannel = load('config-kraken.yml');
+const sixChannel = load('Kraken');
 sixChannel.capture.device.channel_count = 6;
 sixChannel.capture.device.surveillance_channels = [0, 1, 2, 3, 4, 5];
 sixChannel.process.reference_synthesis.channels = [0, 1, 2, 3, 4, 5];
@@ -293,7 +297,7 @@ incompleteManualClutter.process.clutter.followAmbiguity = false;
 delete incompleteManualClutter.process.clutter.delayMax;
 assert.equal(validateConfig(incompleteManualClutter).valid, false,
   'manual clutter range requires both half-open endpoints');
-const coherentFusion = load('config-kraken.yml');
+const coherentFusion = load('Kraken');
 coherentFusion.process.surveillance_fusion = {mode: 'coherent_beam_bank', beams: 12};
 coherentFusion.capture.device.array_geometry = {
   shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
@@ -325,15 +329,71 @@ for (const feature of ['noise-whitened', 'bearing', 'beam-history']) {
   configured.process.performance.acceleration = 'gpu-resident';
   configured.process.tracker.gpu_capacity = 128;
   if (feature === 'noise-whitened') configured.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
-  if (feature === 'bearing') configured.process.bearing.enable = true;
+  if (feature === 'bearing') {
+    configured.process.bearing.enable = true;
+    configured.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 1};
+    configured.process.tracker.initiate.N = 1 + 4 * (configured.process.tracker.initiate.M - 1);
+    configured.process.tracker.delete = Math.max(configured.process.tracker.delete, 3);
+  }
   if (feature === 'beam-history') {
     configured.process.detection.integration_cpis = 2;
     configured.process.tracker.beam_tolerance = 1;
   }
   const result = validateConfig(configured);
-  assert.equal(result.valid, true, `${feature} coherent lanes: ${result.errors.join('; ')}`);
+  if (feature === 'beam-history') {
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(error => error.includes('Two-CPI beam compatibility history is unsupported')),
+      result.errors.join('; '));
+    for (const depth of [4, 8]) {
+      const supported = clone(configured);
+      supported.process.detection.track_before_detect = {enable: true, max_cpis: depth, motion_bins: 1};
+      supported.process.tracker.initiate.N = 1 + depth * (supported.process.tracker.initiate.M - 1);
+      supported.process.tracker.delete = Math.max(supported.process.tracker.delete, depth - 1);
+      const accepted = validateConfig(supported);
+      assert.equal(accepted.valid, true, `${depth}-CPI beam-history coherent lanes: ${accepted.errors.join('; ')}`);
+    }
+  } else assert.equal(result.valid, true, `${feature} coherent lanes: ${result.errors.join('; ')}`);
+}
+for (const depth of [1, 2, 4, 8]) for (const channelized of [false, true]) {
+  const base = clone(channelized ? coherentLanes : coherentFusion);
+  base.process.performance.acceleration = 'gpu-resident';
+  base.process.tracker.gpu_capacity = 128;
+  base.process.detection.integration_cpis = Math.min(depth, 2);
+  base.process.detection.track_before_detect = {enable: depth > 2, max_cpis: Math.max(depth, 4), motion_bins: 1};
+  base.process.tracker.initiate.N = 1 + depth * (base.process.tracker.initiate.M - 1);
+  base.process.tracker.delete = Math.max(base.process.tracker.delete, depth - 1);
+  for (const [beams, scan, enabled, accepted] of [
+    [31, 60, false, true], [32, 60, false, depth <= 2],
+    [127, 127, true, depth > 2], [128, 128, true, false]
+  ]) {
+    const value = clone(base);
+    value.process.surveillance_fusion.beams = beams;
+    Object.assign(value.process.bearing, {enable: enabled, scan_beams: scan});
+    const before = JSON.stringify(value), result = validateConfig(value);
+    assert.equal(result.valid, accepted, `${depth}/${channelized}/${beams}/${enabled}: ${result.errors.join('; ')}`);
+    assert.equal(JSON.stringify(value), before, 'refinement admission must not clamp or rewrite');
+    if (depth > 2 && !accepted) assert.ok(result.errors.some(error => error.includes('at most 31')));
+    if (depth <= 2 && enabled) assert.ok(result.errors.some(error => error.includes('four/eight-CPI track-before-detect')));
+  }
+  if (depth > 2) for (const backend of ['cpu', 'auto', 'gpu']) {
+    const portable = clone(base);
+    portable.process.performance.acceleration = backend;
+    portable.process.surveillance_fusion.beams = 360;
+    portable.process.bearing.enable = false;
+    const result = validateConfig(portable);
+    assert.equal(result.valid, true, `${backend} temporal grid remains supported: ${result.errors.join('; ')}`);
+  }
 }
 const missingLaneSite = clone(coherentLanes);
+for(const backend of ['cpu','auto','gpu','gpu-resident'])for(const multi of [false,true]) {
+  const beam=clone(multi?coherentLanes:coherentFusion);
+  beam.process.performance.acceleration=backend;
+  beam.process.detection.integration_cpis=1;
+  beam.process.detection.track_before_detect={enable:false};
+  beam.process.tracker.beam_tolerance=1;
+  assert.ok(validateConfig(beam).errors.some(error=>error.includes('active resident coherent temporal')),
+    `${backend}/${multi} must not ignore one-CPI beam tolerance`);
+}
 delete missingLaneSite.process.multi_illuminator.illuminators[0].transmitter_location;
 assert.equal(validateConfig(missingLaneSite).valid, false, 'coherent lane never borrows a global transmitter site');
 for (const site of [{latitude: 91, longitude: 0, altitude: 0},
@@ -376,24 +436,6 @@ measuredFusion.capture.device.heimdall.gain_control = 'fixed';
 measuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
 assert.equal(validateConfig(measuredFusion).valid, true,
   'coherent beam-bank fusion accepts a distinct detection manifold path');
-const detectionCollection = clone(measuredFusion);
-delete detectionCollection.process.surveillance_fusion.manifold_file;
-detectionCollection.truth.adsb.enabled = true;
-detectionCollection.process.surveillance_fusion.detection_manifold_automation = {
-  enabled: true,
-  corpus_path: '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl',
-  validation_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-validation.jsonl',
-  candidate_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-candidate.json'
-};
-assert.equal(validateConfig(detectionCollection).valid, true,
-  'live detection manifold collection settings survive validation');
-for (const [name, value] of [['enabled', 'true'], ['corpus_path', 'relative.jsonl'],
-  ['validation_path', 7], ['candidate_path', 'candidate.json']]) {
-  const invalid = clone(detectionCollection);
-  invalid.process.surveillance_fusion.detection_manifold_automation[name] = value;
-  assert.equal(validateConfig(invalid).valid, false,
-    `reject invalid detection manifold automation ${name}`);
-}
 for (const manifold of ['', '   ', 7, null]) {
   const invalid = clone(coherentFusion);
   invalid.process.surveillance_fusion.manifold_file = manifold;
@@ -467,30 +509,26 @@ const nonresidentStationaryClutter = clone(stationaryClutterTracker);
 nonresidentStationaryClutter.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentStationaryClutter).valid, false,
   'persistent clutter initiation requires resident acceleration');
-const guidedShadowTracker = clone(stationaryClutterTracker);
-guidedShadowTracker.process.detection.track_before_detect = {
+const temporalTracker = clone(stationaryClutterTracker);
+temporalTracker.process.detection.track_before_detect = {
   enable: true, max_cpis: 8, motion_bins: 1};
-guidedShadowTracker.process.tracker.track_guided_shadow = {enable: true, max_tracks: 64};
-assert.equal(validateConfig(guidedShadowTracker).valid, true,
-  'bounded track-guided shadow accepts resident rolling history');
+temporalTracker.process.tracker.initiate.N = 1 + 8 * (temporalTracker.process.tracker.initiate.M - 1);
+temporalTracker.process.tracker.delete = 7;
+assert.equal(validateConfig(temporalTracker).valid, true,
+  'canonical temporal detection accepts resident rolling history');
 for (const mode of [undefined, 'cpu', 'auto', 'gpu']) {
-  const invalid = clone(guidedShadowTracker);
+  const invalid = clone(temporalTracker);
   if (mode === undefined) delete invalid.process.performance;
   else invalid.process.performance.acceleration = mode;
   const result = validateConfig(invalid);
-  assert.ok(!result.errors.some(error => /stationary-clutter.*requires gpu-resident|track-guided shadow requires gpu-resident/.test(error)),
+  assert.ok(!result.errors.some(error => /stationary-clutter.*requires gpu-resident/.test(error)),
     `host recovery is not backend-gated for ${mode ?? 'missing performance'}`);
 }
 const inactiveStationaryTracker = clone(stationaryClutterTracker);
 inactiveStationaryTracker.process.tracker.enable = false;
 assert.ok(validateConfig(inactiveStationaryTracker).errors.some(error =>
   error.includes('stationary-clutter initiation filtering requires enabled tracking')));
-const malformedDormantGuided = clone(krakenProfile);
-delete malformedDormantGuided.process.performance;
-malformedDormantGuided.process.tracker.track_guided_shadow = {enable: false, max_tracks: 0};
-assert.ok(validateConfig(malformedDormantGuided).errors.some(error => error.includes('track_guided_shadow.max_tracks')),
-  'omitted performance cannot bypass guided schema checks');
-const fractionalDelayTracker = clone(guidedShadowTracker);
+const fractionalDelayTracker = clone(temporalTracker);
 fractionalDelayTracker.process.detection.track_before_detect.fractional_delay = true;
 assert.equal(validateConfig(fractionalDelayTracker).valid, true,
   'explicit fractional delay accepts resident TBD');
@@ -503,41 +541,29 @@ const fractionalWithoutTbd = clone(fractionalDelayTracker);
 fractionalWithoutTbd.process.detection.track_before_detect.enable = false;
 assert.equal(validateConfig(fractionalWithoutTbd).valid, false,
   'fractional delay cannot silently bypass TBD');
-const promotedGuidedTracker = clone(guidedShadowTracker);
-promotedGuidedTracker.process.tracker.track_guided_shadow.promote = true;
-promotedGuidedTracker.process.tracker.initiate.M = 2;
-promotedGuidedTracker.process.tracker.initiate.N = 3;
-assert.equal(validateConfig(promotedGuidedTracker).valid, true,
-  'experimental guided promotion accepts a feasible independent-window contract');
-const impossibleGuidedTracker = clone(promotedGuidedTracker);
-impossibleGuidedTracker.process.tracker.initiate.M = 4;
-impossibleGuidedTracker.process.tracker.initiate.N = 6;
-assert.equal(validateConfig(impossibleGuidedTracker).valid, false,
-  'experimental guided promotion must reject impossible disjoint 4-of-6');
-impossibleGuidedTracker.process.tracker.track_guided_shadow.promote = false;
-assert.equal(validateConfig(impossibleGuidedTracker).valid, true,
-  'ordinary production 4-of-6 must remain valid with promotion off');
-impossibleGuidedTracker.process.tracker.track_guided_shadow.promote = true;
-impossibleGuidedTracker.process.tracker.initiate.N = 7;
-assert.equal(validateConfig(impossibleGuidedTracker).valid, true,
-  'explicit experimental 4-of-7 has a feasible endpoint window');
-const promotionWithoutShadow = clone(guidedShadowTracker);
-promotionWithoutShadow.process.tracker.track_guided_shadow = {enable: false,
-  promote: true, max_tracks: 64};
-assert.equal(validateConfig(promotionWithoutShadow).valid, false,
-  'track-guided promotion cannot bypass the evaluator');
-const unboundedGuidedShadow = clone(guidedShadowTracker);
-unboundedGuidedShadow.process.tracker.track_guided_shadow.max_tracks = 1025;
-assert.equal(validateConfig(unboundedGuidedShadow).valid, false,
-  'track-guided shadow cannot exceed tracker capacity');
-const noHistoryGuidedShadow = clone(guidedShadowTracker);
-noHistoryGuidedShadow.process.detection.track_before_detect.enable = false;
-assert.equal(validateConfig(noHistoryGuidedShadow).valid, false,
-  'track-guided shadow requires rolling track-before-detect history');
-const nonresidentGuidedShadow = clone(guidedShadowTracker);
-nonresidentGuidedShadow.process.performance.acceleration = 'auto';
-assert.equal(validateConfig(nonresidentGuidedShadow).valid, false,
-  'track-guided shadow requires resident GPU execution');
+for (const depth of [1, 2, 4, 8]) for (const acceleration of ['cpu', 'gpu', 'auto', 'gpu-resident']) {
+  const candidate = clone(temporalTracker);
+  candidate.process.performance.acceleration = acceleration;
+  candidate.process.surveillance_fusion.mode = 'coherent_beam_bank';
+  candidate.process.detection.track_before_detect.enable = depth > 2;
+  candidate.process.detection.track_before_detect.max_cpis = Math.max(4, depth);
+  candidate.process.detection.integration_cpis = Math.min(2, depth);
+  Object.assign(candidate.process.tracker.initiate, {M: 4, N: 1 + depth * 3});
+  candidate.process.tracker.delete = Math.max(1, depth - 1);
+  const snapshot = JSON.stringify(candidate);
+  const admission = validateConfig(candidate);
+  assert.equal(admission.valid, true, `feasible ${depth}-CPI ${acceleration}: ${admission.errors.join('; ')}`);
+  assert.equal(JSON.stringify(candidate), snapshot, 'validation must not migrate settings');
+  if (depth > 1) {
+    candidate.process.tracker.initiate.N--;
+    assert.ok(validateConfig(candidate).errors.some(error => error.includes(`N must be >= ${1 + depth * 3}`)),
+      'one-short confirmation window must fail with the derived recommendation');
+    candidate.process.tracker.initiate.N++;
+    candidate.process.tracker.delete = depth - 2;
+    assert.ok(validateConfig(candidate).errors.some(error => error.includes(`delete must be >= ${depth - 1}`)),
+      'short coast horizon must fail before startup');
+  }
+}
 const mismatchedCalibration = clone(coherentFusion);
 mismatchedCalibration.process.reference_synthesis.channels = [0, 1, 2, 3];
 assert.equal(validateConfig(mismatchedCalibration).valid, false,
@@ -561,6 +587,9 @@ projectedBearing.process.reference_synthesis = {mode: 'array_eigenbeam',
 projectedBearing.process.clutter.enable = true;
 projectedBearing.process.performance.acceleration = 'gpu-resident';
 projectedBearing.process.tracker.gpu_capacity = 4096;
+projectedBearing.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 1};
+projectedBearing.process.tracker.initiate.N = 1 + 4 * (projectedBearing.process.tracker.initiate.M - 1);
+projectedBearing.process.tracker.delete = Math.max(projectedBearing.process.tracker.delete, 3);
 Object.assign(projectedBearing.process.surveillance_fusion,
   {mode: 'coherent_beam_bank', direct_path_null_db: 0});
 Object.assign(projectedBearing.process.bearing, {enable: true,
@@ -570,8 +599,15 @@ Object.assign(projectedBearing.capture.device.array_geometry,
   {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
 const projectedBearingValidation = validateConfig(projectedBearing);
 assert.equal(projectedBearingValidation.valid, true,
-  `projected fixed-site model accepts only the explicit native replay experiment: ${projectedBearingValidation.errors.join('; ')}`);
-for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml', 'config-hackrf.yml', 'config-kraken.yml']) {
+  `projected fixed-site model accepts its explicit geometry/backend contract: ${projectedBearingValidation.errors.join('; ')}`);
+for (const state of [false, true]) for (const format of ['auto', 'blah2']) {
+  const candidate = clone(projectedBearing);
+  Object.assign(candidate.capture.replay, {state, format});
+  const result = validateConfig(candidate);
+  assert.equal(result.valid, true, `Projected bearing live/replay parity: ${result.errors.join('; ')}`);
+  assert.deepEqual(candidate.process, projectedBearing.process, 'Validation cannot translate radar settings');
+}
+for (const profile of ['Usrp', 'RspDuo', 'HackRF', 'Kraken']) {
   const recorded = load(profile);
   recorded.process = clone(projectedBearing.process);
   recorded.network = clone(projectedBearing.network);
@@ -588,8 +624,6 @@ for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml', 'config-hackr
     `projected replay uses recorded topology under ${profile}: ${result.errors.join('; ')}`);
 }
 for (const mutate of [
-  value => { value.capture.replay.state = false; },
-  value => { value.capture.replay.format = 'auto'; },
   value => { value.capture.device.surveillance_channels = [0, 1, 2, 3]; },
   value => { value.process.reference_synthesis.mode = 'channel'; },
   value => { value.process.clutter.enable = false; },
@@ -610,8 +644,8 @@ for (const beams of [3, 361, 12.5]) {
 }
 // Sample-rate limits belong to the receiver, not to the shared DSP pipeline.
 // USRP and dual HackRF can request 6 MS/s; Kraken and coherent RSPduo cannot.
-for (const [name, accepted] of [['config-usrp.yml', true],
-  ['config-hackrf.yml', true], ['config-kraken.yml', false], ['config.yml', false]]) {
+for (const [name, accepted] of [['Usrp', true],
+  ['HackRF', true], ['Kraken', false], ['config.yml', false]]) {
   const value = name === 'config.yml' ?
     configurationForReceiver('RspDuo', load(name)) : load(name);
   value.capture.fs = 6000000;
@@ -661,7 +695,7 @@ for (const timeout of [0, 10.1, '1']) {
   const value = clone(sixChannel); value.truth.adsb.source_timeout = timeout;
   assert.equal(validateConfig(value).valid, false, `Reject ADS-B source timeout: ${timeout}`);
 }
-for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml']) {
+for (const name of ['config.yml', 'HackRF', 'Usrp', 'Kraken']) {
   for (const mode of ['auto', 'cpu', 'gpu', 'cuda', '', 1, true, null]) {
     const value = name === 'config.yml' ?
       configurationForReceiver('RspDuo', load(name)) : load(name);
@@ -676,7 +710,7 @@ assert.deepEqual(profiles.map(profile => profile.type).sort(),
 const usrpProfile = profiles.find(profile => profile.type === 'Usrp');
 assert.equal(usrpProfile.device.address, 'type=b200',
   'The B210 profile must use a UHD USB selector, not a hostname-like bare token');
-assert.equal(load('config-usrp.yml').capture.device.address, 'type=b200',
+assert.equal(load('Usrp').capture.device.address, 'type=b200',
   'The installed USRP example must select the B200 family');
 for (const type of ['Usrp', 'RspDuo']) {
   const paired = configurationForReceiver(type, load('config.yml'));
@@ -687,7 +721,7 @@ for (const type of ['Usrp', 'RspDuo']) {
   assert.equal(validateConfig(paired).valid, false,
     `${type} rejects a reference input outside its coherent channel count`);
 }
-for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml']) {
+for (const profile of ['Usrp', 'RspDuo']) {
   const residentDedicated = load(profile);
   residentDedicated.process.performance.acceleration = 'gpu-resident';
   residentDedicated.process.tracker.gpu_capacity = 256;
@@ -700,7 +734,7 @@ for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml']) {
       `${profile} rejects malformed dedicated-reference resident topology`);
   }
 }
-const residentHackRfReversed = load('config-hackrf.yml');
+const residentHackRfReversed = load('HackRF');
 residentHackRfReversed.process.performance.acceleration = 'gpu-resident';
 residentHackRfReversed.process.tracker.gpu_capacity = 256;
 residentHackRfReversed.process.reference_synthesis = {
@@ -723,14 +757,14 @@ assert.equal(validateConfig(residentPartialArray).valid, false,
   'resident array reference must map every canonical capture input identically');
 for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial',
   'type=b\t200', 'type=b200,type=b210']) {
-  const invalid = load('config-usrp.yml');
+  const invalid = load('Usrp');
   invalid.capture.device.address = address;
   assert.equal(validateConfig(invalid).valid, false,
     `Reject malformed UHD device arguments: ${address}`);
 }
 for (const address of ['type=b200', 'serial=31ABC42', 'addr=192.0.2.1',
   'type=b200,serial=31ABC42']) {
-  const valid = load('config-usrp.yml');
+  const valid = load('Usrp');
   valid.capture.device.address = address;
   assert.equal(validateConfig(valid).valid, true,
     `Accept UHD key=value device arguments: ${address}`);
@@ -905,10 +939,10 @@ try {
   fs.chownSync = () => {
     const error = new Error('permission denied'); error.code = 'EACCES'; throw error;
   };
-  const rejectedOwnerChange = clone(sixChannel); rejectedOwnerChange.save.iq = true;
+  const rejectedOwnerChange = clone(sixChannel); rejectedOwnerChange.save.map = true;
   assert.throws(() => writeConfigAtomically(ownershipFilename, rejectedOwnerChange),
     error => error.code === 'EACCES', 'Unrelated ownership errors must fail closed');
-  assert.equal(yaml.load(fs.readFileSync(ownershipFilename, 'utf8')).save.iq, sixChannel.save.iq);
+  assert.equal(yaml.load(fs.readFileSync(ownershipFilename, 'utf8')).save.map, sixChannel.save.map);
 } finally {
   fs.statSync = originalStatSync;
   fs.chownSync = originalChownSync;
@@ -994,6 +1028,9 @@ for (const [minimum, maximum, valid] of [[-198, 198, true], [-199, 198, false],
   [-198, 199, false], [-10, 245, false]]) {
   const boundary = clone(sixChannel);
   boundary.capture.fs = 2400000;
+  // This test's signed-lag limits are native 2.4 MHz samples, not the
+  // independently configured physical coordinates of a fresh profile.
+  boundary.process.delay_reference_sample_rate_hz = boundary.capture.fs;
   boundary.process.data.cpi = .2;
   Object.assign(boundary.process.ambiguity, {delayMin: minimum, delayMax: maximum,
     dopplerMin: -6000, dopplerMax: 6000});
@@ -1036,7 +1073,7 @@ const invalidProvenance = clone(sixChannel);
 invalidProvenance.capture.replay.provenance = 'best-effort';
 assert.equal(validateConfig(invalidProvenance).valid, false,
   'Replay must not silently invent an unqualified provenance mode');
-const residentSnapshotReplay = clone(sixChannel);
+const residentSnapshotReplay = clone(projectedBearing);
 residentSnapshotReplay.capture.replay.state = true;
 residentSnapshotReplay.process.performance.acceleration = 'gpu-resident';
 residentSnapshotReplay.process.tracker.gpu_capacity = 256;
@@ -1054,6 +1091,7 @@ for (const mutate of [
   value => { value.capture.replay.resident_snapshot.rf_profile_file = 'relative'; },
   value => { value.capture.replay.resident_snapshot.max_frames = 129; },
   value => { value.capture.replay.resident_snapshot.max_bytes = 536870913; },
+  value => { value.process.surveillance_fusion.mode = 'noncoherent'; },
   value => { value.process.multi_illuminator.enabled = true; }
 ]) {
   const invalid = clone(residentSnapshotReplay); mutate(invalid);
@@ -1073,17 +1111,21 @@ assert.equal(validateConfig(portableAircraftClip).valid, true,
   'Automatic aircraft IQ clips are valid for a non-Kraken receiver');
 console.log(`Exhaustive type checks passed for ${checked} device-setting leaves; boundary and cross-field tests passed.`);
 
-for (const maximum of [undefined, 1, 256, 65535]) {
-  const candidate = load('config-usrp.yml');
-  candidate.process.detection.doppler_ridge_scrubber = {
-    mode: 'shadow', persistence_cpis: 12, minimum_excess_db: 3,
-    maximum_subtraction_db: 12, doppler_tolerance_hz: 4,
-    neighborhood_rows: 8, delay_stride: 4,
-    ...(maximum === undefined ? {} : {shadow_maximum_cpis: maximum})};
+for (const name of ['HackRF', 'Usrp',
+  'Kraken', 'RspDuo']) {
+  const candidate = load(name);
+  candidate.process.tracker.initiate.doppler_ridge_clutter.enable = true;
+  candidate.process.performance.acceleration = 'gpu-resident';
   assert.equal(validateConfig(candidate).valid, true,
-    `bounded ridge shadow window ${maximum}: ${validateConfig(candidate).errors.join('; ')}`);
-  for (const invalid of [0, -1, 1.5, 65536, '256']) {
-    candidate.process.detection.doppler_ridge_scrubber.shadow_maximum_cpis = invalid;
-    assert.ok(validateConfig(candidate).errors.some(error => error.includes('shadow_maximum_cpis')));
-  }
+    `${name} resident frontend still executes the host ridge birth filter`);
+  candidate.process.tracker.enable = false;
+  assert.ok(validateConfig(candidate).errors.includes(
+    'Doppler ridge birth filtering requires enabled detection and tracking'));
+}
+for (const base of [coherentFusion, coherentLanes, residentSnapshotReplay]) {
+  const candidate = clone(base);
+  candidate.process.performance.acceleration = 'gpu-resident';
+  candidate.process.tracker.initiate.doppler_ridge_clutter.enable = true;
+  assert.ok(validateConfig(candidate).errors.includes(
+    'Doppler ridge birth filter is unavailable in resident products'));
 }

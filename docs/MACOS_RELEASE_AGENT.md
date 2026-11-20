@@ -11,77 +11,56 @@ source and notices, signs with local Developer ID certificates, submits the
 package to Apple, staples and verifies it, uploads the Mac PKG/source/receipt,
 then publishes the draft and waits for the public download matrix to appear.
 
-The recipient private key and Apple identities stay on this Mac. The agent
-refuses a source/recipe/embedded-header/npm-lock change relative to the
-reviewed v0.1.9 source bundle. This is intentional: automatically reusing
-outdated corresponding source or notices would publish a misleading release.
-When that gate fails, the agent logs and notifies the owner; the changed
-dependency source/notices must be collected and reviewed before the release
-can be published. Homebrew formula updates can trigger this gate even without
-a source-code change. The reviewed base bundle covers `cpp-httplib 0.54.1`
-on Apple Silicon. The Intel hosted image currently uses `0.53.1`; the agent
-checks that CI's formula source URL and SHA-256, fetches that exact source
-archive, verifies its MIT license text matches the reviewed notice, and adds
-it to the new corresponding-source archive. Other header-version changes,
-including a build using `0.56.0`, still stop. Merge builds are unattended, but
-tag publication is not guaranteed unattended across future dependency drift.
+The recipient private key and Apple identities stay on this Mac. One current
+input manifest binds the exact candidate commit, hosted run, both runtime
+manifests, dependency inventories and source closures, compile-header versions,
+formula recipes, npm lock, Node pins, and notice inventory. There is no historical
+baseline fallback, version-transition exception, network source fetch, or
+automatic approval. Both architectures must pass the same closure and license
+checks; cached inputs repeat those checks before signing.
 
-An exact dependency transition may be approved without rebuilding the tagged
-runtime. Review both architecture inventories and their verified source-closure
-archives, then create an owner-only dependency review receipt. The receipt is
-bound to the candidate commit and hosted run, the old baseline commit, every
-new or changed formula claim, and the SHA-256 of both inventories and both
-closures. Configure its absolute path as `dependency_review_receipt`. Any
-different runtime, run, inventory, closure, formula claim, source, recipe, or
-notice remains blocked. The receipt is archived with the corresponding source.
+After reviewing those actual inputs, create an owner-only regular JSON file
+(`chmod 600`) outside the checkout with exactly these fields:
 
-First-party CMake changes can be reviewed without replacing the dependency
-baseline or moving an existing release tag. Review the complete diff from
-the baseline commit reported by `prepare-macos-release-inputs.py` to the
-candidate tag. Confirm that every guarded change only changes first-party
-build wiring and introduces no new dependency source, version, recipe, or
-license requirement. If dependency inputs changed, use the exact dependency
-transition review above; a first-party build receipt cannot approve them.
+```json
+{
+  "schema": 1,
+  "purpose": "current-macos-release-inputs",
+  "source_id": "<full candidate commit>",
+  "run_id": "<successful hosted run ID>",
+  "version": "<major.minor.patch>",
+  "files": {"<input member>": {"sha256": "<digest>", "size": 123}},
+  "sources": {}
+}
+```
 
-Record that review in an owner-only regular JSON file (`chmod 600`) outside
-the checkout. Its exact fields are `schema: 1`,
-`purpose: "first-party-build-only"`, `baseline_source_id`, `source_id`, and
-`files`. Both source IDs must be full commit hashes. `files` maps **every**
-guarded changed path to the SHA-256 of that file's Git blob at `source_id`,
-the reviewed source commit.
-Only `CMakeLists.txt` and files immediately inside `cmake/` ending in
-`.cmake` are eligible. Use the bytes from `git show COMMIT:PATH`, not a
-working-tree copy. Extra or missing paths, an unrelated reviewed commit, an old
-baseline, changed hashes, symlinks, or group/world-readable receipts stop
-publication. A receipt records a completed human/operator source review;
-generating hashes alone does not establish that dependencies are unchanged.
+The exact required `files` keys come from `input_files()` in
+`script/prepare-macos-release-inputs.py`: the source npm lock and Node pin file,
+current notices manifest/index, and each architecture's standalone manifest,
+inventory, closure, header versions and cpp-httplib formula. `sources` binds
+every file in the optional offline public-source directory, using the same
+digest/size records. Missing, extra, changed, linked or unreviewed inputs stop
+publication. Generating hashes alone does not establish source/license review.
+The current notice index must enumerate every production npm dependency's
+name/version/license and notice paths in both runtimes, plus the hashed native
+notices. The validated notice manifest binds the complete public notice tree.
 
-Add the receipt's absolute path as the optional `review_receipt` field in
-the existing local agent configuration. Keep the configuration owner-only
-and preserve its other fields. The helper runs from the agent's updated,
-reviewed `main` checkout; the runtime and archived application source remain
-at the immutable release tag. The review can also cover a later tag only when
-the receipt's reviewed source commit is an ancestor of that tag, its complete
-guarded path set is unchanged from the reviewed commit, and every guarded Git
-blob at both commits still has the recorded digest. This reuses identical
-reviewed first-party build inputs; a new, removed, or changed guarded build
-input still requires a new review receipt. The archived receipt bytes remain
-unchanged. For an ancestor reuse, derived release metadata records both the
-reviewed source commit and the actual candidate source commit.
-The receipt is copied into the corresponding-source archive as
-`VectorWarp-corresponding-source/build-source-review.json`; its digest and
-source IDs also appear in `macos-release.json`. Do not put secrets in it.
-
-All original runtime, inventory, header, formula, npm lock, baseline source,
-notice, and hosted-build pin checks still run. Cached release inputs repeat
-those checks and must match the current review receipt before signing.
-Without a receipt, the original fail-closed build-change policy applies.
+Configure the absolute paths as `input_manifest`, `current_notices`, and,
+when used, `public_sources`. The exact review bytes are archived as
+`VectorWarp-corresponding-source/input-review.json`; their digest and candidate
+identity appear in the prepared-input and public release receipts. Any changed
+candidate or input requires a new review. Preserve old receipts and source
+bundles as historical evidence outside the checkout; they are never inputs to
+current validation. Existing installations need an explicit reviewed
+configuration migration; the installer will not overwrite them.
 
 After this code is merged to `main`, install once on the signing Mac:
 
 ```sh
-python3 script/install-macos-release-agent.py --check
-python3 script/install-macos-release-agent.py
+python3 script/install-macos-release-agent.py --check \
+  --input-manifest /absolute/current-review.json --notices /absolute/current-notices
+python3 script/install-macos-release-agent.py \
+  --input-manifest /absolute/current-review.json --notices /absolute/current-notices
 ```
 
 The installer copies the reviewed local evidence and encryption key into an

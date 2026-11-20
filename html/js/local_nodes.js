@@ -60,11 +60,15 @@
         remove.addEventListener('click', async () => {
           if (!window.confirm(`Remove ${node.label} from this portal?`)) return;
           remove.disabled = true;
+          const message = panel.querySelector('.local-node-message');
+          message.textContent = 'Removing node…';
           try {
             await request(`/api/federation/nodes/${encodeURIComponent(node.id)}`, {
               method: 'DELETE', headers: {'X-VectorWarp-Intent': 'local-node-remove-v1'}});
+            message.textContent = 'Node removed.';
             await renderLocalNodes();
-          } catch (error) { panel.querySelector('.local-node-message').textContent = error.message; }
+          } catch (error) { message.textContent = error.message; }
+          finally { remove.disabled = false; }
         });
         row.append(copy, remove); return row;
       }));

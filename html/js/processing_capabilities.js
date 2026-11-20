@@ -14,6 +14,40 @@ const ADAPTERS = Object.freeze({
   HackRF: {coherent: false}
 });
 
+// Shared API admission and UI availability predicates. Native qualification
+// remains authoritative; these checks keep both clients on the same contract.
+function residentReferenceCompatible(topology) {
+  const {referenceMode, coherent, referenceChannels, surveillanceChannels, channelCount} = topology;
+  const allInputs = channels => channels.length === channelCount &&
+    channels.every((channel, index) => channel === index);
+  return referenceMode === 'array_eigenbeam' ?
+    coherent && allInputs(referenceChannels) && allInputs(surveillanceChannels) :
+    referenceMode === 'dedicated' && referenceChannels.length === 1 &&
+      surveillanceChannels.length >= 1 && !surveillanceChannels.includes(referenceChannels[0]);
+}
+
+function regularSurveillancePolygon(geometry, channels) {
+  if (geometry?.shape !== 'regular_polygon') return false;
+  const byChannel = new Map((Array.isArray(geometry.elements) ? geometry.elements : [])
+    .map(element => [element?.daq_channel, element?.position]));
+  const positions = (Array.isArray(channels) ? channels : []).map(channel => byChannel.get(channel));
+  if (positions.length < 3 || !positions.every(position => Array.isArray(position) &&
+      position.length === 3 && position.every(Number.isFinite))) return false;
+  const centre = [0, 1, 2].map(axis =>
+    positions.reduce((sum, position) => sum + position[axis], 0) / positions.length);
+  const radii = positions.map(position => Math.hypot(position[0] - centre[0], position[1] - centre[1]));
+  const angles = positions.map(position => Math.atan2(position[1] - centre[1], position[0] - centre[0]));
+  const radius = radii.reduce((sum, value) => sum + value, 0) / radii.length;
+  const wrap = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
+  const step = wrap(angles[1] - angles[0]), tolerance = Math.max(1e-6, radius * 1e-5);
+  return Number.isFinite(radius) && radius > 0 && Math.abs(step) > 1e-5 &&
+    Math.abs(wrap(positions.length * step)) <= 1e-5 &&
+    positions.every((position, index) => Math.abs(radii[index] - radius) <= tolerance &&
+      Math.abs(position[2] - centre[2]) <= tolerance &&
+      Math.abs(wrap(angles[index] - angles[0] - index * step)) <= 1e-5 &&
+      angles.slice(0, index).every(prior => Math.abs(wrap(angles[index] - prior)) > 1e-5));
+}
+
 function processingCapabilities(config) {
   const device = config.capture?.device || {};
   const replay = config.capture?.replay || {};
@@ -83,5 +117,21 @@ function processingCapabilities(config) {
       Number.isInteger(heimdall.port) && heimdall.port > 0 && heimdall.port <= 65535};
 }
 
-return {processingCapabilities};
+// Admission facts shared by API refusal and UI availability. Callers retain
+// distinct enabled-state checks, diagnostics and dormant-value behavior.
+function experimentalSettingSupport(config, topology = processingCapabilities(config)) {
+  const process = config.process || {}, multi = process.multi_illuminator?.enabled === true;
+  const replay = config.capture?.replay?.state === true;
+  const hostFrontend = ['cpu', 'gpu'].includes(process.performance?.acceleration);
+  const residentProducts = process.performance?.acceleration === 'gpu-resident' &&
+    (process.surveillance_fusion?.mode ?? 'noncoherent') !== 'noncoherent';
+  return {residentProducts,
+    targetProtection: !multi && hostFrontend && topology.coherentSurveillance &&
+      topology.confirmedGeometry && topology.referenceGeometry &&
+      process.surveillance_fusion?.mode === 'coherent_beam_bank',
+    complexCutout: replay && hostFrontend,
+    ridgeBirth: !residentProducts && process.detection?.enable === true && process.tracker?.enable === true};
+}
+
+return {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon, experimentalSettingSupport};
 });

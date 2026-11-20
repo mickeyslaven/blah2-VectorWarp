@@ -206,6 +206,7 @@ int main() {
       !recovered.provenance().decisionGrade);
     std::filesystem::remove(oldPath); std::filesystem::remove(oldPath + ".provenance.json");
     std::filesystem::remove(newPath); std::filesystem::remove(newPath + ".provenance.json");
+    std::filesystem::remove(newPath + ".acquisition.json");
     std::filesystem::remove(directory);
   }
   std::cout << "Kraken actual socket capture: setting-boundary, fragmentation/resync, calibration/noise/retune/noncoherent loss, recording rollover/replay, partial disconnect/reconnect and nonfinite cases passed. No SDR opened.\n";

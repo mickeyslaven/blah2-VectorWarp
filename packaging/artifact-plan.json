@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "purpose": "Canonical build profiles, source staging and runtime validation; OS, signing and SDK adapters consume this plan.",
+  "dependencies": {"vcpkg":{"url":"https://github.com/microsoft/vcpkg.git","commit":"b45fe136ff576ad06105fed78245e765ab35ad16"},"VkFFT":{"url":"https://github.com/DTolm/VkFFT.git","commit":"066a17c17068c0f11c9298d848c2976c71fad1c1"}},
+  "node_pins": "packaging/node-runtime.env",
+  "receivers": {"RspDuo":"rspduo","Usrp":"usrp","HackRF":"hackrf","Kraken":null},
+  "profiles": {"all":{"compiled":["Usrp","HackRF","Kraken"],"local":["RspDuo"]},"open-test":{"compiled":["Usrp","HackRF","Kraken"],"local":[]},"kraken":{"compiled":["Kraken"],"local":[]},"rspduo":{"compiled":["RspDuo","Kraken"],"local":[]},"usrp":{"compiled":["Usrp","Kraken"],"local":[]},"hackrf":{"compiled":["HackRF","Kraken"],"local":[]}},
+  "stage": {
+    "common": [
+      ["api","api",null,["node_modules","*.test.js"]],
+      ["html","html",null,[]],
+      ["LICENSE","LICENSE","0644"]
+    ],
+    "linux": [
+      ["config/config.yml","config-examples/config.yml","0644"],
+      ["docs","docs",null,[]],
+      ["contrib/systemd","systemd",null,[]],
+      ["script/vectorwarp-restart","libexec/vectorwarp-restart","0755"],
+      ["script/vectorwarp-health-watchdog.js","libexec/vectorwarp-health-watchdog.js","0755"],
+      ["script/vectorwarp-config-guard.js","libexec/vectorwarp-config-guard.js","0755"],
+      ["script/vectorwarp-activate-web","libexec/vectorwarp-activate-web","0755"],
+      ["script/vectorwarp","libexec/vectorwarp","0755"],
+      ["packaging/deb/preinst","libexec/vectorwarp-quiesce","0755"],
+      ["script/vectorwarp-wait-api.js","libexec/vectorwarp-wait-api.js","0755"],
+      ["tools/vectorwarp_soak_identity.py","libexec/vectorwarp-cohort-check","0755"],
+      ["script/check-node-version.js","libexec/vectorwarp-check-node-version","0644"],
+      ["script/evaluate-bearing-calibration.js","libexec/vectorwarp-bearing-diagnostic","0755"],
+      ["script/vectorwarp-receiver-helper.py","libexec/vectorwarp-receiver-helper","0755"],
+      ["script/vectorwarp-sudoers-migrate.py","libexec/vectorwarp-sudoers-migrate","0755"],
+      ["script/vectorwarp-receiver-apt.py","libexec/vectorwarp-receiver-apt.py","0755"],
+      ["script/vectorwarp-receiver-dnf.py","libexec/vectorwarp-receiver-dnf.py","0755"],
+      ["script/vectorwarp-gpu-setup","libexec/vectorwarp-gpu-setup","0755"],
+      ["script/vectorwarp-sdrplay-service.py","libexec/vectorwarp-sdrplay-service.py","0755"],
+      ["script/vectorwarp-prepare-sdrplay.js","libexec/vectorwarp-prepare-sdrplay.js","0644"],
+      ["script/vectorwarp-build-sdrplay.py","libexec/vectorwarp-build-sdrplay.py","0755"],
+      ["script/vectorwarp-build-kraken.py","libexec/vectorwarp-build-kraken.py","0755"],
+      ["README.md","README.md","0644"]
+    ],
+    "macos": [
+      ["config","config",null,["node_modules","*.test.js"]],
+      ["script/vectorwarp-macos","script/vectorwarp-macos","0755"],
+      ["script/vectorwarp-macos.py","script/vectorwarp-macos.py","0755"],
+      ["script/vectorwarp-kraken-macos.py","script/vectorwarp-kraken-macos.py","0755"],
+      ["script/check-node-version.js","script/check-node-version.js","0755"]
+    ],
+    "replay-support": [
+      ["script/replay_session.py","replay_session.py","0644"],
+      ["script/gpu_artifact_binding.py","gpu_artifact_binding.py","0644"],
+      ["test/recording/processor_replay_test.py","processor_replay_test.py","0644"]
+    ]
+  },
+  "benchmark_excludes": ["*.log","*.jsonl","*.frames.csv","*.command.json","*.geometry.json","*.profile.json","*.summary.json","*-per-cpi.csv","per-cpi.csv"],
+  "required": {
+    "base": ["bin/blah2","api/server.js","html/index.html","config-examples/config.yml"],
+    "build": ["bin/libblah2-capture-core.so.1"],
+    "package": [".vectorwarp-build","bin/blah2-gpu-worker","bin/blah2-gpu-vulkan.so","bin/blah2-gpu-wideband-vulkan.so","bin/blah2-gpu-resident-vulkan.so","bin/heimdall","share/heimdall/build.json","share/heimdall/sbom.cdx.json","share/heimdall/service.py","share/heimdall/controller.py","receiver-source/kraken/kit.json","libexec/vectorwarp-build-kraken.py","libexec/vectorwarp","libexec/vectorwarp-quiesce"]
+  },
+  "notices": ["asio","cpp-httplib","rapidjson","ryml","VkFFT"],
+  "forbidden": ["bin/blah2-mixed-worker"],
+  "linux_arches": {"x64":{"deb":"amd64","rpm":"x86_64","runner":"ubuntu-24.04"},"arm64":{"deb":"arm64","rpm":"aarch64","runner":"ubuntu-24.04-arm"}},
+  "linux_distros": {
+    "ubuntu22.04": {"id":"ubuntu","version":"22.04","format":"deb","codename":"jammy","arches":["x64","arm64"],"image":"docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7"},
+    "ubuntu24.04": {"id":"ubuntu","version":"24.04","format":"deb","codename":"noble","arches":["x64","arm64"]},
+    "ubuntu26.04": {"id":"ubuntu","version":"26.04","format":"deb","codename":"resolute","arches":["x64","arm64"],"image":"docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d"},
+    "debian12": {"introduced":"0.1.10","id":"debian","version":"12","format":"deb","codename":"bookworm","arches":["arm64"],"image":"docker.io/library/debian@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26"},
+    "debian13": {"id":"debian","version":"13","format":"deb","codename":"trixie","arches":["x64","arm64"],"image":"docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1"},
+    "fedora44": {"id":"fedora","version":"44","format":"rpm","codename":"","arches":["x64","arm64"],"image":"registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6"}
+  }
+}

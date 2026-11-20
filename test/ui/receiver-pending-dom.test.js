@@ -23,7 +23,7 @@ fs.writeFileSync(preload, `const fs = require('fs'); const original = fs.fsyncSy
 fs.renameSync = function(from, to) { const result = rename.call(fs, from, to); renamedConfig = to === ${JSON.stringify(filename)}; return result; };
 fs.fsyncSync = function(fd) { if (renamedConfig && fs.fstatSync(fd).isDirectory() && fs.existsSync(${JSON.stringify(fsyncMarker)}))
   throw new Error('simulated directory fsync failure after rename'); return original.call(fs, fd); };`);
-const config = yaml.load(fs.readFileSync(path.join(root, 'config/config-kraken.yml'), 'utf8'));
+const config = require('../../api/config-store').configurationForReceiver('Kraken');
 // This receiver-sync fixture exercises pending persistence and an offline Suite,
 // not the installed Linux automatic-gain helper transaction.
 config.capture.device.heimdall.gain_control = 'fixed';

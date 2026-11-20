@@ -2,6 +2,7 @@
 """Offline workflow routing, publication, YAML and shell contract checks."""
 import ast
 import fnmatch
+import json
 import os
 from pathlib import Path
 import re
@@ -88,8 +89,10 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn("main", document["on"]["push"]["branches"], name)
         package = workflow("release-packages.yml")["jobs"]["package"]
         self.assertNotIn("environment", package)
-        self.assertEqual(len(package["strategy"]["matrix"]["include"]), 11)
-        self.assertEqual(sum("script/build-native.sh --backend all" in step.get("run", "")
+        self.assertEqual(package["strategy"]["matrix"], "${{ fromJSON(needs.validate.outputs.matrix) }}")
+        matrix = json.loads(subprocess.check_output(["python3", str(ROOT / "script/artifact-plan.py"), "matrix"], text=True))
+        self.assertEqual(len(matrix["include"]), 11)
+        self.assertEqual(sum("script/artifact-plan.py native-package" in step.get("run", "")
                              for step in package["steps"]), 3)
 
     def test_publication_requires_explicit_dispatch_opt_in(self):
@@ -109,6 +112,25 @@ class WorkflowContracts(unittest.TestCase):
             for step in document["jobs"][job_name].get("steps", []):
                 if step.get("uses", "").startswith("actions/checkout@"):
                     self.assertEqual(step.get("with", {}).get("persist-credentials"), "false")
+
+    def test_offline_qualification_contracts_run_on_both_hosted_platforms(self):
+        for name, job_name in (("ci.yml", "test"), ("macos.yml", "local-runtime")):
+            job = workflow(name)["jobs"][job_name]
+            with self.subTest(workflow=name):
+                step = next(step for step in job["steps"] if step.get("name") ==
+                            "Run offline replay and qualification contract regressions")
+                self.assertNotIn("if", step)
+                self.assertNotIn("continue-on-error", step)
+                self.assertNotIn("continue-on-error", job)
+                expected = [f"python3 -m unittest discover -s test/{directory} -p {suite}.py"
+                            for directory, suite in (
+                                ("gpu", "test_recorded_iq_qualification"),
+                                ("script", "test_replay_session"),
+                                ("script", "test_run_isolated_iq_replay"),
+                                ("script", "test_observer_allocation_contract"))]
+                self.assertEqual(step["run"].splitlines(), expected)
+                source = "\n".join(step.get("run", "") for step in job["steps"])
+                self.assertNotIn("test/gpu/recorded_iq_qualification.py", source)
 
     def test_signing_downloads_only_packages_and_rechecks_remote_tag(self):
         jobs = workflow("release-packages.yml")["jobs"]
@@ -141,6 +163,32 @@ class WorkflowContracts(unittest.TestCase):
                                   "workflow_dispatch", require_gpu_receipts=True))
         self.assertTrue(condition(workflow("release-packages.yml")["jobs"]["qualified-linux-gpu"]["if"],
                                   "workflow_dispatch", "refs/tags/v1.2.3", publish=True))
+
+    def test_publication_authenticates_all_hosted_workflows_before_credentials(self):
+        for name, job_name, credential in (
+            ("release-packages.yml", "sign-and-draft-release", "gpg --batch --import"),
+            ("homebrew.yml", "publish", "HOMEBREW_TAP_DEPLOY_KEY"),
+        ):
+            job = workflow(name)["jobs"][job_name]
+            self.assertEqual(job["permissions"]["actions"], "read")
+            steps = job["steps"]
+            gate_index = next(index for index, step in enumerate(steps)
+                              if "verify-release-ci.py" in step.get("run", ""))
+            credential_index = next(index for index, step in enumerate(steps)
+                                    if credential in step.get("run", ""))
+            self.assertLess(gate_index, credential_index)
+            self.assertEqual(steps[gate_index]["env"]["GH_TOKEN"], "${{ github.token }}")
+        signing = workflow("release-packages.yml")["jobs"]["sign-and-draft-release"]
+        checksum = next(step["run"] for step in signing["steps"] if step.get("name") ==
+                        "Collect final signed release assets and checksums")
+        self.assertIn("release-ci-provenance.json", checksum)
+        repository = workflow("publish-package-repository.yml")["jobs"]["rebuild-repository"]
+        download = next(step["run"] for step in repository["steps"] if step.get("name") ==
+                        "Download and verify reviewed release package assets")
+        self.assertLess(download.index("gpgv --keyring"),
+                        download.index("--pattern release-ci-provenance.json"))
+        self.assertLess(download.index("--pattern release-ci-provenance.json"),
+                        download.index("sha256sum --check --strict"))
 
     def test_main_and_pr_package_versions_allow_real_upgrade_without_publication(self):
         step = next(step for step in workflow("release-packages.yml")["jobs"]["validate"]["steps"]
@@ -185,6 +233,28 @@ class WorkflowContracts(unittest.TestCase):
         self.assertEqual(set(qualification["on"]), {"workflow_dispatch"})
         self.assertIn("environment", qualification["jobs"]["qualify"])
         self.assertEqual(qualification["jobs"]["qualify"]["strategy"]["max-parallel"], "1")
+
+    def test_linux_resident_temporal_parity_is_explicit_cpu_only_vulkan(self):
+        job = workflow("ci.yml")["jobs"]["test"]
+        source = "\n".join(step.get("run", "") for step in job["steps"])
+        self.assertIn("mesa-vulkan-drivers", source)
+        self.assertIn("-DCMAKE_BUILD_TYPE=Release", source)
+        self.assertIn("-DBLAH2_TEST_SOFTWARE_VULKAN=ON", source)
+        self.assertIn("ctest --test-dir build/ci --output-on-failure --no-tests=error", source)
+        cmake = (ROOT / "cmake/GpuProcessTests.cmake").read_text()
+        self.assertRegex(cmake, r'option\(BLAH2_TEST_SOFTWARE_VULKAN [^\n]+ OFF\)')
+        self.assertIn("COMMAND testGpuTbdFractional --software", cmake)
+        self.assertIn("COMMAND testGpuTrackerCorrectness --software", cmake)
+        self.assertIn("set_tests_properties(residentReplaySnapshotCpuContract PROPERTIES TIMEOUT 60)", cmake)
+        self.assertIn("COMMAND testClutterReplaySoftware --software", cmake)
+        self.assertIn("add_test(NAME clutterReplayCheckpointCpuContract COMMAND testClutterReplayCheckpoint)", cmake)
+        clutter = (ROOT / "test/gpu/TestClutterReplaySoftware.cpp").read_text()
+        self.assertIn("candidate.properties.deviceType!=VK_PHYSICAL_DEVICE_TYPE_CPU", clutter)
+        self.assertIn("physical_gpu_execution=0", clutter)
+        for name in ("residentReplayShaderCpuCompile", "residentWireCpuBoundary",
+                     "residentProcessCpuBoundary", "residentReplaySnapshotCpuContract",
+                     "gpuResultJsonCpuCompatibility"):
+            self.assertIn("add_test(NAME " + name, cmake)
 
 
 if __name__ == "__main__":

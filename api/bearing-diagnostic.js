@@ -192,7 +192,7 @@ function evaluateReferenceDirection(referenceUpdates, config) {
   const amplitudeSpanMedian = amplitudeSpans.length ? median(amplitudeSpans) : null;
   const reliable = rows.length >= 10 && finite(coherentMedian) && coherentMedian >= .8 &&
     finite(amplitudeSpanMedian) && amplitudeSpanMedian <= 6;
-  return {available: true, shadow_only: true, auto_apply: false,
+  return {available: true, offline_only: true, auto_apply: false,
     source: {name: config.location?.tx?.name || 'configured transmitter',
       bearing_deg_true: transmitterBearing},
     configured: {heading_deg_true: configuredHeading,
@@ -262,7 +262,7 @@ function evaluateReferenceSurvey(sources, config) {
     candidate.mapping.every((value, index) => value === configuredMapping[index]))?.id;
   const sourceSummary = prepared.map(({name, bearing_deg_true, quality}) =>
     ({name, bearing_deg_true, quality}));
-  return {available: true, shadow_only: true, auto_apply: false,
+  return {available: true, offline_only: true, auto_apply: false,
     physical_ch0_heading_deg_true: geometry(config).xAxis,
     quality_gate: {minimum_updates: 10, minimum_coherence: .8, maximum_amplitude_span_db: 6},
     sources: sourceSummary, reliable_sources: reliable.map(source => source.name),
@@ -419,7 +419,7 @@ function evaluateBearing(samples, config) {
   const sectors = new Set(valid.map(sample => Math.floor(normalize(sample.truth.bearing_deg_true) / 45))).size;
   const best = results[0] || null, runnerUp = results[1] || null;
   const evidenceReady = valid.length >= 100 && identities.size >= 5 && sectors >= 4;
-  return {available: true, shadow_only: true, auto_apply: false,
+  return {available: true, offline_only: true, auto_apply: false,
     method: valid[valid.length - 1].bearing_replay.method,
     reference_anchor: valid[valid.length - 1].bearing_replay.reference_anchor || 'live_eigenbeam',
     samples: valid.length, aircraft: identities.size, sectors,
@@ -446,35 +446,7 @@ function readSamples(filename, {maximumBytes = 64 * 1024 * 1024, maximumRows = 2
 
 function readReferenceUpdates(filename, options) { return readSamples(filename, options); }
 
-function createBearingDiagnostic(config, {fileSystem = fs} = {}) {
-  const filename = config.process?.bearing?.manifold_recorder?.path;
-  const referenceFilename = filename ? `${filename}.reference.jsonl` : null;
-  let cache = null;
-  return {status() {
-    if (!filename) return {available: false, reason: 'No manifold recorder path is configured.'};
-    try {
-      let stat = null, referenceStat = null;
-      try { stat = fileSystem.statSync(filename); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-      try { referenceStat = fileSystem.statSync(referenceFilename); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-      if (!cache || cache.size !== stat?.size || cache.mtimeMs !== stat?.mtimeMs ||
-          cache.referenceSize !== referenceStat?.size || cache.referenceMtimeMs !== referenceStat?.mtimeMs) {
-        const value = stat ? evaluateBearing(readSamples(filename), config) :
-          {available: false, reason: 'No bearing samples have been recorded yet.'};
-        value.known_angle_reference = evaluateReferenceDirection(referenceStat ?
-          readReferenceUpdates(referenceFilename, {maximumRows: 4096}) : [], config);
-        cache = {size: stat?.size, mtimeMs: stat?.mtimeMs,
-          referenceSize: referenceStat?.size, referenceMtimeMs: referenceStat?.mtimeMs, value};
-      }
-      return cache.value;
-    } catch (error) {
-      return {available: false, reason: error.message};
-    }
-  }};
-}
-
-module.exports = {evaluateBearing, evaluateReferenceDirection, evaluateReferenceSurvey, createBearingDiagnostic,
+module.exports = {evaluateBearing, evaluateReferenceDirection, evaluateReferenceSurvey,
   readSamples, readReferenceUpdates, mappings, inverse,
   bestBearing, bestMeasuredBearing, circularError,
   steeringWeights: weights};

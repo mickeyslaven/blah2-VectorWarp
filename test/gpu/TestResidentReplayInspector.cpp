@@ -21,7 +21,7 @@ Config configuration(){
   c.fusion={FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6,{}, {}};
   c.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,1);
   c.detector.integrationBeamTolerance=1;
-  c.tracker.enabled=true;c.tracker.capacity=2;c.tracker.m=4;c.tracker.n=6;c.tracker.nDelete=3;
+  c.tracker.enabled=true;c.tracker.capacity=2;c.tracker.m=4;c.tracker.n=13;c.tracker.nDelete=3;
   c.tracker.cpi=63.0/128000;c.tracker.rangeRes=299792458.0/128000;c.tracker.lambda=.6;
   c.device="cpu-contract-only";rr::test::enable(c);c.replay.maxFrames=4;validateConfig(c);return c;
 }

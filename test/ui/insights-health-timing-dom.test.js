@@ -20,12 +20,15 @@ const context = vm.createContext({
   sessionStorage: {getItem: () => null, setItem: () => {}},
   addFullscreenControl: () => {}, addRecordingControl: () => {},
   liveApiUrl: path => path, getRadarRuntimeConfig: async () => config,
+  getIlluminatorContext: async () => ({enabled: false, id: null, illuminators: []}),
+  fetchCachedJsonResource: async url => (await context.fetchStatusResource(url)).text().then(JSON.parse),
   radarPresentationUrl: path => `${path}${path.includes('?') ? '&' : '?'}presentation=aligned`,
   startRadarUpdates: callback => { refresh = callback; return {stop() {}}; },
   fetchStatusResource: async url => ({ok: true, status: 200, text: async () =>
     JSON.stringify(url.startsWith('/api/timing') ? timing :
       url.startsWith('/api/tracker') ? tracker : config)})
 });
+require('./display-fixture')(context);
 vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'),
   context, {filename: 'insights.js'});
 

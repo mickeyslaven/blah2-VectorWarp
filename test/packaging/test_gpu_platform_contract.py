@@ -80,6 +80,147 @@ class GpuPlatformPolicyTest(unittest.TestCase):
 
 
 class GpuBuildContractTest(unittest.TestCase):
+    def test_vulkan_resources_are_shared_but_backend_policy_stays_local(self):
+        ambiguity = ROOT / "src/process/ambiguity"
+        shared = (ambiguity / "VulkanResources.private.h").read_text()
+        for marker in ("struct Buffer", "struct Kernel", "struct NativePlan", "multiplySource", "chirpPrepareSource"):
+            self.assertTrue(marker in shared, f"canonical resource missing: {marker}")
+        for path, action in ((ambiguity / "VulkanBackend.cpp", "using CPU"),
+                             (ROOT / "core/VulkanBackend.private.cpp", "resident route stopped")):
+            source = path.read_text()
+            self.assertTrue('VulkanResources.private.h"' in source)
+            self.assertTrue(f'memoryFailureAction = "{action}"' in source)
+            for marker in ("struct Buffer", "struct Kernel", "struct NativePlan", "multiplySource =", "chirpPrepareSource ="):
+                self.assertFalse(marker in source, f"duplicate resource returned: {marker}")
+            for marker in ("struct Instance", "struct Context", "budgetAllocateMemory"):
+                self.assertTrue(marker in source, f"backend policy moved: {marker}")
+
+    def test_portable_factory_has_one_owner_and_advanced_modules_keep_identity(self):
+        ambiguity = ROOT / "src/process/ambiguity"
+        portable = (ambiguity / "VulkanBackend.cpp").read_text()
+        private = (ROOT / "core/VulkanBackend.private.cpp").read_text()
+        for marker in ("class VulkanBackend final", "blah2_gpu_create("):
+            self.assertTrue(marker in portable, f"portable owner missing {marker}")
+            self.assertFalse(marker in private, f"duplicate portable implementation: {marker}")
+        for marker in ("blah2_gpu_driver_status", "blah2_gpu_devices"):
+            self.assertTrue(marker in private, f"advanced module identity missing {marker}")
+        worker = (ambiguity / "GpuWorker.cpp").read_text()
+        for factory in ("blah2_gpu_create", "blah2_gpu_create_resident", "blah2_gpu_create_wideband"):
+            self.assertTrue(f'"{factory}"' in worker, f"worker factory missing {factory}")
+
+    def test_resident_private_pipeline_only_accepts_captured_reference(self):
+        pipeline = (ROOT / "core/GpuResidentFrame.private.h").read_text()
+        reference = (ROOT / "core/GpuReferenceSpectrum.private.h").read_text()
+        for marker in ("ReferenceMode::supplied", "residentSuppliedReference",
+                       "bool prepareReference(", "bool finishRadar(", "probePositiveLog"):
+            self.assertFalse(marker in pipeline, f"unreachable private route returned: {marker}")
+        self.assertIn("capturedArray=1, capturedDedicated=2", reference)
+        self.assertTrue("GPU_RESIDENT_UNSUPPORTED reference mode" in pipeline)
+        self.assertTrue("supplied_reference=0" in pipeline)  # Stable qualification field.
+        self.assertFalse("positive-log-probe" in reference)
+
+    def test_ready_reply_drain_and_resident_control_deadlines(self):
+        ambiguity = ROOT / "src/process/ambiguity"
+        policy = (ambiguity / "GpuWorkerLifetime.h").read_text()
+        self.assertLess(policy.index("const int ready=poll"), policy.index("if(Clock::now()>=deadline)"))
+        self.assertIn("std::max<int64_t>(0", policy)
+        wideband = (ambiguity / "GpuWidebandProcess.cpp").read_text()
+        resident = (ambiguity / "GpuResidentProcess.cpp").read_text()
+        for source in (wideband, resident):
+            self.assertIn("gpu_receive_deadline::waitReadable(fd,deadline", source)
+            self.assertIn("MSG_DONTWAIT", source)
+        self.assertIn("r=reply(pendingBegin_+std::chrono::milliseconds(options_.frameMs))", wideband)
+        self.assertIn("const auto ready=reply(startupDeadline)", wideband)
+        self.assertNotIn("1-ms floor", wideband)
+        for operation in ("commit", "abort", "published", "restore", "resetInput"):
+            start = resident.index(f"auto p=request(Op::{operation})")
+            send = resident.index("transport::sendPacket(child_->fd(),p)", start)
+            self.assertIn("deadline_=Clock::now()+std::chrono::milliseconds", resident[start:send])
+        fixture = (ROOT / "test/gpu/TestGpuResidentProcess.cpp").read_text()
+        for marker in ("Queued resident reply rejected after deadline", "Delayed control acknowledgments", '"commit-timeout"', '"published-timeout"'):
+            self.assertIn(marker, fixture)
+
+    def test_live_frame_diagnostics_are_inert_and_offline_output_is_deferred(self):
+        ambiguity = ROOT / "src/process/ambiguity"
+        policy = (ambiguity / "GpuWorkerLifetime.h").read_text()
+        self.assertIn("appendEnvironment", policy)
+        self.assertIn("environment.erase", policy)
+        self.assertIn("gpu_worker_lifetime::expectedParent()!=getppid()", policy)
+        self.assertIn("offline?parseLimit", policy)
+        for filename in ("GpuWorkerTransport.private.h", "GpuWidebandProcess.cpp"):
+            source = (ambiguity / filename).read_text()
+            self.assertIn("gpu_offline_diagnostics::appendEnvironment(childEnvironment,options_.offlineTransportTrace)", source)
+        profile = (ambiguity / "GpuClutterProfile.h").read_text()
+        self.assertNotIn("std::cerr", profile)
+        self.assertNotIn("std::getenv", profile)
+        self.assertIn("gpu_offline_diagnostics::frameLimit()", profile)
+        deferred = (ambiguity / "GpuDeferredDiagnostics.h").read_text()
+        self.assertIn("void flush()noexcept{active_=false;}", deferred)
+        self.assertIn("deferredOutput().append", deferred)
+        self.assertIn("maximumBytes=64*65536", deferred)
+        self.assertNotIn("active_?stream_:std::cerr", deferred)
+        self.assertIn("context_.diagnostics.stream()<<std::setprecision(12)<<\"GPU_TRACKER_COMMIT", (ROOT / "core/GpuTracker.private.h").read_text())
+        fixture = (ROOT / "test/gpu/TestFrameDiagnostics.cpp").read_text()
+        self.assertIn("Blocked stderr delayed reply/object destruction", fixture)
+
+    def test_wideband_generic_fp32_admission_is_not_a_sample_rate_policy(self):
+        root = ROOT / "src/process/ambiguity"
+        planner = (root / "GpuWidebandChannelizer.cpp").read_text()
+        module = (root / "GpuWidebandModule.cpp").read_text()
+        self.assertNotIn("2400000", planner)
+        self.assertNotIn("2400000", module)
+        self.assertIn("Context::Arithmetic::fp32", module)
+        self.assertIn("maxStorageBufferRange", module)
+        self.assertIn("layout_.totalBytes > (512ULL << 20)", planner)
+        self.assertIn("VW_SECOND_OUTPUT_RATE", (ROOT / "test/gpu/TestGpuWidebandPhysical.cpp").read_text())
+
+    def test_wideband_trace_policy_change_has_a_new_private_wire_version(self):
+        transport = (ROOT / "src/process/ambiguity/GpuWidebandProcess.cpp").read_text()
+        self.assertIn("constexpr uint32_t magic=0x42574702", transport)
+        self.assertNotIn("0x42574701", transport)
+        fixture = (ROOT / "test/unit/process/ambiguity/TestGpuWidebandProcess.cpp").read_text()
+        self.assertIn('"legacy-header"', fixture)
+        self.assertIn('"legacy-reply"', fixture)
+
+    def test_all_worker_routes_bind_the_spawning_parent_without_rejecting_pid_one(self):
+        root = ROOT / "src/process/ambiguity"
+        for name in ("GpuWorkerTransport.private.h", "GpuWidebandProcess.cpp"):
+            source = (root / name).read_text()
+            self.assertIn("gpu_worker_lifetime::bindParent(childEnvironment)", source, name)
+        for name in ("GpuProcess.cpp", "GpuResidentProcess.cpp", "GpuWidebandProcess.cpp"):
+            source = (root / name).read_text()
+            self.assertIn("gpu_worker_lifetime::protectWorker()", source, name)
+            self.assertNotRegex(source, r"parent\s*==\s*1", name)
+        for name, policy in (("GpuProcess.cpp", "portable"), ("GpuResidentProcess.cpp", "resident")):
+            source = (root / name).read_text()
+            self.assertIn('#include "GpuWorkerTransport.private.h"', source)
+            self.assertIn("std::make_unique<gpu_worker_transport::Child>", source)
+            self.assertIn("gpu_worker_transport::" + policy, source)
+        self.assertFalse((root / "GpuResidentTransport.private.h").exists())
+        helper = (root / "GpuWorkerLifetime.h").read_text()
+        self.assertIn("getppid() != parent", helper)
+        self.assertIn("PR_SET_PDEATHSIG", helper)
+        self.assertIn("EVFILT_PROC", helper)
+        tests = (ROOT / "cmake/GpuProcessTests.cmake").read_text()
+        self.assertIn("NAME gpuWorkerLifetime", tests)
+        self.assertIn("NAME gpuWorkerPidNamespace", tests)
+
+    def test_retired_alternate_processor_sources_and_build_routes_are_absent(self):
+        for path in ("src/process/mixed", "test/unit/process/mixed"):
+            self.assertFalse(any(item.is_file() for item in (ROOT / path).rglob("*")), path)
+        for path in ("CMakeLists.txt", "cmake/GpuAcceleration.cmake", "bench/Pipeline.cpp",
+                     "src/blah2.cpp", "src/process/clutter/WienerHopf.cpp",
+                     "src/process/ambiguity/Ambiguity.cpp", "src/process/ambiguity/Ambiguity.h"):
+            source = (ROOT / path).read_text()
+            for token in ("VECTORWARP_MIXED_AUTO", "process/mixed/", "blah2::mixed",
+                          "testMixed", "mixedAutoPolicy", "mixedWorkerFaults",
+                          "VECTORWARP_MIXED_FIR_BENCH", "VECTORWARP_GPU_BLOCKED_FULL_BENCH",
+                          "VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH"):
+                self.assertNotIn(token, source, f"{path}: retired alternate processor {token}")
+        source = (ROOT / "test/unit/process/ambiguity/TestAccelerationFallback.cpp").read_text()
+        for fault in ('"nan-tail"', '"wrong-tail"'):
+            self.assertIn(fault, source, "Retired full-map tail guards must live on the canonical path")
+
     def test_production_has_no_pi_specific_frozen_dsp_pipeline(self):
         processor = (ROOT / "src/blah2.cpp").read_text()
         cmake = (ROOT / "cmake/GpuAcceleration.cmake").read_text()
@@ -89,11 +230,15 @@ class GpuBuildContractTest(unittest.TestCase):
                           "process/mixed/", "mixed::"):
                 self.assertNotIn(token, source)
         self.assertIn("blah2::Acceleration acceleration(", processor)
-        self.assertIn("acceleration.processClutter(", processor)
-        self.assertIn("acceleration.process(", processor)
-        for path in ("script/build-native.sh", "script/build-macos.sh",
-                     "script/package-native.sh", "script/install-native.sh",
-                     "packaging/pi/verify-pi4-image.sh"):
+        pipeline = (ROOT / "src/process/pipeline/RadarPipeline.h").read_text()
+        self.assertTrue("pipeline::processFrontend(" in processor)
+        self.assertTrue("acceleration->processClutter(" in pipeline)
+        self.assertTrue("acceleration->process(" in pipeline)
+        for path in ("script/build-native.sh", "script/package-native.sh", "script/install-native.sh"):
+            source = (ROOT / path).read_text()
+            self.assertIn(' validate ', source)
+            self.assertIn('artifact-plan.py', source)
+        for path in ("script/build-macos.sh", "packaging/pi/verify-pi4-image.sh"):
             source = (ROOT / path).read_text()
             self.assertIn("historical mixed DSP workers are not part of the unified", source)
             refusal = next(line for line in source.splitlines()
@@ -122,19 +267,19 @@ class GpuBuildContractTest(unittest.TestCase):
         self.assertIn("const uint64_t bytes = Layout(geometry).bytes", transport)
         self.assertIn("bytes > UINT64_MAX - (uint64_t(page) - 1)", transport)
         self.assertIn("((bytes + uint64_t(page) - 1) / uint64_t(page)) * uint64_t(page)", transport)
-        self.assertIn("if (options_.allocationLimitBytes)", transport)
-        self.assertIn('rfind("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=", 0)', transport)
-        self.assertIn("argv, childEnvironmentPointers.data()", transport)
-        self.assertNotIn('setenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES"', transport)
+        shared = (ROOT / "src/process/ambiguity/GpuWorkerTransport.private.h").read_text()
+        self.assertIn("if (options_.allocationLimitBytes)", shared)
+        self.assertIn('rfind("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=", 0)', shared)
+        self.assertIn("argv, childEnvironmentPointers.data()", shared)
+        self.assertNotIn('setenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES"', shared)
         fixture = (ROOT / "test/gpu/TestGpuProcess.cpp").read_text()
         self.assertIn("Portable mapping reservation lost physical page rounding", fixture)
         self.assertIn("Lane construction mutated the parent's environment", fixture)
 
     def test_auto_uses_correctness_and_health_not_comparative_speed(self):
         acceleration = (ROOT / "src/process/ambiguity/Acceleration.cpp").read_text()
-        mixed = (ROOT / "src/process/mixed/MixedAutoPolicy.h").read_text()
         wideband = (ROOT / "src/process/ambiguity/GpuWidebandFallback.h").read_text()
-        for source in (acceleration, mixed):
+        for source in (acceleration, wideband):
             self.assertNotIn(".95", source)
             self.assertNotIn("CPU is faster", source)
             self.assertNotIn("CPU clutter is faster", source)
@@ -145,9 +290,8 @@ class GpuBuildContractTest(unittest.TestCase):
                        "clutterStatus_.gpuMs = median(clutterGpuTimes_)"):
             self.assertIn(metric, acceleration)
         self.assertIn("GPU clutter accuracy check failed", acceleration)
-        self.assertIn("Mixed full complex-map accuracy check failed", mixed)
-        self.assertIn("Capture backlog grew during mixed processing", mixed)
-        self.assertIn("gpuMilliseconds>deadlineMilliseconds", wideband)
+        self.assertNotIn("gpuMilliseconds>deadlineMilliseconds", wideband)
+        self.assertIn("!std::isfinite(gpuMilliseconds)", wideband)
         self.assertNotIn("cpuMilliseconds", wideband)
         # Clutter/FIR composition and ambiguity use the same admission class.
         fixture = (ROOT / "test/unit/process/ambiguity/TestAccelerationFallback.cpp").read_text()
@@ -205,7 +349,8 @@ class GpuBuildContractTest(unittest.TestCase):
         source = (ROOT / "src/process/ambiguity/GpuWidebandProcess.cpp").read_text()
         self.assertIn("POSIX_SPAWN_CLOEXEC_DEFAULT", source)
         self.assertIn("posix_spawn_file_actions_addinherit_np(&actions,fd)", source)
-        self.assertIn("posix_spawn_file_actions_addclosefrom_np(&actions,5)", source)
+        self.assertIn("posix_spawn_file_actions_addclosefrom_np(&actions,gpu_artifact_binding::active()?7:5)", source)
+        self.assertIn("gpu_artifact_binding::spawnActions(actions,false)", source)
         self.assertIn('opendir("/proc/self/fd")', source)
         self.assertLess(source.index("const bool standardOpen"), source.index("memory_=int(syscall"))
         self.assertIn("if(attributesReady)posix_spawnattr_destroy", source)

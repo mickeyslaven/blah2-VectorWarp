@@ -1,6 +1,8 @@
 #ifndef SUBBAND_CHANNELIZER_H
 #define SUBBAND_CHANNELIZER_H
 
+#include "data/CanonicalSignal.h"
+
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -26,16 +28,7 @@ public:
     uint32_t tapsPerPhase = 24;
   };
 
-  struct Output
-  {
-    std::vector<std::vector<std::complex<float>>> channels;
-    // Input index at which the first output was produced. The corresponding
-    // RF time is earlier by groupDelayInputSamples.
-    uint64_t firstInputSample = 0;
-    bool hasFirstInputSample = false;
-    uint32_t inputSamplesPerOutput = 0;
-    double groupDelayInputSamples = 0;
-  };
+  using Output = iq::CoherentSamples;
 
   SubbandChannelizer(Config config, std::size_t channelCount);
   ~SubbandChannelizer();

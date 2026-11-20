@@ -69,6 +69,14 @@ private:
   std::unique_ptr<blah2::PortableClipRecorder> portableClipRecorder;
   mutable std::mutex clipMutex;
   blah2::IqClipStatus portableClipUnavailable;
+  std::mutex acquisitionMutex;
+  blah2::RecordingContext recordingContext;
+  std::shared_ptr<const blah2::RecordingBlockMetadata> recordingBlockMetadata;
+  uint64_t recordingMetadataEpoch = 0;
+  std::shared_ptr<const blah2::RecordingBlockMetadata> manualRecordingMetadata;
+  std::vector<blah2::RecordingFrameLineage> manualRecordingFrames;
+  bool manualRecordingPositionAvailable = false, manualRecordingBounded = true;
+  std::shared_ptr<const blah2::RecordingBlockMetadata> recording_block_metadata(uint64_t epoch);
   std::string open_file_locked(const SampleTimePosition* startPosition = nullptr);
   void record_block_locked(const blah2::IqBlock& samples,
     const SampleTimePosition* startPosition);
@@ -112,6 +120,12 @@ public:
   // Backend-specific applied settings/readback embedded in the portable v2
   // recording contract. Empty is represented explicitly, never as exact.
   virtual std::string recording_provenance_json() const { return "{}"; }
+  // Empty means unavailable, never a zero-gain assumption. Only a backend with
+  // sample-aligned applied getter evidence may override this method.
+  virtual std::vector<double> recording_applied_gain_db() const { return {}; }
+  virtual std::string recording_gain_provenance() const { return "sample-aligned-readback"; }
+  virtual void set_recording_context(blah2::RecordingContext context);
+  static std::string recording_code_sha256();
 
   // File replay is receiver-independent and is owned by Capture/ReplayPlayer.
 

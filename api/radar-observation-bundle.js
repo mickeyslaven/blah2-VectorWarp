@@ -1,6 +1,7 @@
 'use strict';
+const {geographicConfig, geographicContext} = require('./replay-geographic-sites');
 
-const finite = value => value !== null && value !== '' && value !== undefined &&
+const finite = value => typeof value !== 'boolean' && value !== null && value !== '' && value !== undefined &&
   Number.isFinite(Number(value));
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 
@@ -9,7 +10,9 @@ function compactTrack(track) {
   const state = String(track.state || '').toUpperCase();
   if (!['ACTIVE', 'CONFIRMED', 'COASTING', 'ASSOCIATED'].includes(state) ||
       track.delay === null || track.doppler === null ||
-      !finite(track.delay) || !finite(track.doppler) || track.id === undefined || track.id === null)
+      !finite(track.delay) || !finite(track.doppler) || track.id === undefined || track.id === null ||
+      track.delay_sigma_bins !== undefined &&
+        (!finite(track.delay_sigma_bins) || Number(track.delay_sigma_bins) < 0))
     return null;
   return {id: String(track.id), state, delay: Number(track.delay), doppler: Number(track.doppler),
     n: Number(track.n) || 0,
@@ -23,14 +26,20 @@ function compactTrack(track) {
 
 function lineage(frame, timestamp) {
   const event = frame?.tracks?.eventTime || frame?.eventTime || null;
-  const epoch = frame?.capture_sample_position_available === true ? frame.capture_epoch : event?.epoch;
-  const first = frame?.capture_sample_position_available === true ?
-    frame.capture_first_input_sample : event?.firstSample;
-  const end = frame?.capture_sample_position_available === true ?
-    frame.capture_end_input_sample : event?.endSample;
-  return {epoch: epoch === undefined || epoch === null ? null : String(epoch),
-    first_sample: first === undefined || first === null ? null : String(first),
-    end_sample: end === undefined || end === null ? null : String(end),
+  const native = frame?.tracks?.input_lineage || frame?.input_lineage;
+  const exact = value => typeof value === 'string' && /^\d+$/.test(value) &&
+    BigInt(value) < 2n ** 64n ? value :
+    Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  // Native exact strings take precedence over rounded compatibility fields.
+  // Never manufacture an exact sample identity from an unsafe JS integer.
+  const positioned = frame?.capture_sample_position_available === true;
+  const epoch = native ? native.available === true ? native.captureEpochExact : null :
+    event?.epoch ?? (positioned ? frame.capture_epoch : null);
+  const first = native ? native.available === true ? native.firstInputSampleExact : null :
+    event?.firstSample ?? (positioned ? frame.capture_first_input_sample : null);
+  const end = native ? native.available === true ? native.endInputSampleExact : null :
+    event?.endSample ?? (positioned ? frame.capture_end_input_sample : null);
+  return {epoch: exact(epoch), first_sample: exact(first), end_sample: exact(end),
     frame_timestamp: timestamp,
     event_time: clone(event)};
 }
@@ -50,6 +59,17 @@ function channelObservation({nodeId, serverSessionId, configRevision, id, receiv
     frequencyHz, sampleRateHz, cpiSeconds, frame}) {
   if (typeof frame === 'string') try { frame = JSON.parse(frame); } catch (_) { return null; }
   const tracks = frame?.tracks || frame;
+  for (const name of ['sample_rate_hz', 'frequency_hz']) {
+    if ([tracks, frame].some(item => item?.[name] !== undefined &&
+        (!finite(item[name]) || Number(item[name]) <= 0))) return null;
+    if (tracks?.[name] !== undefined && frame?.[name] !== undefined &&
+        Number(tracks[name]) !== Number(frame[name])) return null;
+  }
+  // Tracker delay is in the native product's actual sample bins. The saved
+  // process.delay_reference_sample_rate_hz is only a configuration coordinate
+  // convention and cannot label published tracker measurements.
+  sampleRateHz = tracks?.sample_rate_hz ?? frame?.sample_rate_hz ?? sampleRateHz;
+  frequencyHz = tracks?.frequency_hz ?? frame?.frequency_hz ?? frequencyHz;
   const rawTimestamp = tracks?.timestamp ?? frame?.timestamp;
   const timestamp = Number(rawTimestamp);
   if (!nodeId || !serverSessionId || !configRevision || !id || !finite(rawTimestamp) || timestamp <= 0 ||
@@ -72,6 +92,8 @@ function channelObservation({nodeId, serverSessionId, configRevision, id, receiv
 
 function buildObservationBundle({nodeId, serverSessionId, configRevision, config,
     illuminatorFrames, primaryTracks}) {
+  const geographic = geographicContext(config);
+  config = geographicConfig(config);
   const multi = config?.process?.multi_illuminator;
   const cpiSeconds = Number(config?.process?.data?.cpi);
   let channels = [];
@@ -83,13 +105,16 @@ function buildObservationBundle({nodeId, serverSessionId, configRevision, config
       frame: illuminatorFrames?.latest(item.id)}));
   else channels = [channelObservation({nodeId, serverSessionId, configRevision, id: 'primary',
     receiver: config?.location?.rx, transmitter: config?.location?.tx,
-    frequencyHz: config?.capture?.fc,
-    sampleRateHz: config?.process?.delay_reference_sample_rate_hz || config?.capture?.fs,
+    frequencyHz: config?.capture?.replay?.state === true ?
+      config.capture.replay.frequency_hz : config?.capture?.fc,
+    sampleRateHz: config?.capture?.replay?.state === true ?
+      config.capture.replay.sample_rate_hz : config?.capture?.fs,
     cpiSeconds,
     frame: primaryTracks})];
   return {schema: 'vectorwarp-radar-observation-bundle-v1', node_id: nodeId,
     server_session_id: serverSessionId, config_revision: configRevision,
-    generated_at: Date.now(), channels: channels.filter(Boolean)};
+    generated_at: Date.now(), geographic_provenance: geographic,
+    channels: channels.filter(Boolean)};
 }
 
 module.exports = {compactTrack, channelObservation, buildObservationBundle};

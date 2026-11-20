@@ -1,7 +1,5 @@
 'use strict';
 
-const {manifoldSampleFingerprint} = require('./manifold-recorder');
-
 // Truth-blind diagnostics only. This module never changes gain, channel
 // weights, quarantine state, or detector behavior.
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -110,32 +108,6 @@ function diagnoseArrayChannels(channels, options = {}) {
     automaticWeightingAllowed: false, automaticQuarantineAllowed: false};
 }
 
-function directAnchorMeasurements(candidate, channels, config, configFingerprint) {
-  const unavailable = reason => ({available: false, reason, measurements: new Map()});
-  if (!candidate || typeof candidate !== 'object') return unavailable('candidate_missing');
-  const mapping = candidate.channel_mapping;
-  const expected = config?.capture?.device?.surveillance_channels;
-  if (!Array.isArray(mapping) || !Array.isArray(expected) || mapping.length !== channels ||
-      mapping.length !== expected.length || mapping.some((value, index) => value !== expected[index]))
-    return unavailable('candidate_channel_mapping_mismatch');
-  if (candidate.frequency_hz !== config.capture?.fc || candidate.sample_rate_hz !== config.capture?.fs)
-    return unavailable('candidate_acquisition_mismatch');
-  if (typeof configFingerprint !== 'string' || !configFingerprint)
-    return unavailable('candidate_epoch_identity_unavailable');
-  if (candidate.config_fingerprint !== configFingerprint)
-    return unavailable('candidate_config_identity_mismatch');
-  const response = candidate.direct_anchor?.response;
-  if (!Array.isArray(response) || response.length !== channels || response.some(value =>
-    !Array.isArray(value) || value.length !== 2 || !value.every(finite)))
-    return unavailable('candidate_direct_anchor_missing_or_invalid');
-  return {available: true, reason: null, measurements: new Map(mapping.map((id, index) => {
-    const [real, imaginary] = response[index];
-    return [id, {magnitude: Math.hypot(real, imaginary), response: [real, imaginary],
-      phaseDeg: Math.atan2(imaginary, real) * 180 / Math.PI}];
-  })),
-  configFingerprint: typeof candidate.config_fingerprint === 'string' ? candidate.config_fingerprint : null};
-}
-
 // Platform-neutral optional telemetry. A complex snapshot is not a phase
 // stability observation: producers must provide the measured stability and an
 // ADC-generation match for every channel.
@@ -160,22 +132,6 @@ function complexChannelMeasurements(telemetry, count, frequencyHz, sampleRateHz,
   return {available: true, reason: null, measurements};
 }
 
-function expectedManifoldFingerprint(config, upstreamStatus, telemetryComplete) {
-  if (!telemetryComplete) return null;
-  const actual = upstreamStatus?.actual, channels = actual?.adcHeadroom?.channels;
-  const mapping = config?.capture?.device?.surveillance_channels;
-  if (!Array.isArray(channels) || !Array.isArray(mapping)) return null;
-  // Upstream status does not promise array order. The measured manifold
-  // identity is ordered by surveillance channel mapping, so join explicitly
-  // by DAQ channel rather than fingerprinting transport order.
-  const byChannel = new Map(channels.map(channel => [channel?.channel, channel]));
-  if (byChannel.size !== channels.length) return null;
-  const gains = mapping.map(channel => byChannel.get(channel)?.actualGainDb);
-  if (!gains.every(finite)) return null;
-  try { return manifoldSampleFingerprint(config, gains, actual.centerFrequency, actual.sampleRate); }
-  catch (_) { return null; }
-}
-
 function completeAdcTelemetry(adc, count) {
   const channels = Array.isArray(adc?.channels) ? adc.channels : [];
   if (adc?.complete !== true || channels.length !== count) return false;
@@ -195,11 +151,8 @@ function coherentAdcGeneration(adc, telemetryComplete) {
   return new Set(generations).size === 1;
 }
 
-// Adapter for the read-only Suite status and optional, already-recorded
-// manifold candidate. It has no writes and intentionally does not make a
-// candidate active. The report is bound to the API config revision and the
-// measured upstream acquisition identity so stale evidence is visible.
-function diagnoseUpstreamArrayChannels({config, upstreamStatus, candidate = null,
+// Read-only Suite telemetry, bound to the loaded configuration and acquisition.
+function diagnoseUpstreamArrayChannels({config, upstreamStatus,
   configRevision = null, loadedConfigRevision = null, configFingerprint = null} = {}) {
   const count = config?.capture?.device?.channel_count;
   if (!Number.isInteger(count) || count < 1 || count > 64)
@@ -219,10 +172,6 @@ function diagnoseUpstreamArrayChannels({config, upstreamStatus, candidate = null
   const upstreamMatched = upstreamStatus?.matched !== false;
   const coherentEpochReady = telemetryComplete && acquisitionMatchesConfig &&
     adcGenerationCoherent === true && calibrationReady && revisionsMatch && upstreamMatched;
-  // Candidates use the recorder's measured acquisition identity (including
-  // applied gains), not the broader settings-only site fingerprint.
-  const expectedFingerprint = expectedManifoldFingerprint(config, upstreamStatus, telemetryComplete);
-  const candidateDirect = directAnchorMeasurements(candidate, count, config, expectedFingerprint);
   const complex = coherentEpochReady ? complexChannelMeasurements(
     upstreamStatus?.actual?.complexChannelTelemetry, count, upstreamStatus.actual.centerFrequency,
     upstreamStatus.actual.sampleRate, adc) :
@@ -235,7 +184,7 @@ function diagnoseUpstreamArrayChannels({config, upstreamStatus, candidate = null
       {available: false, reason: 'incoherent_adc_generation', measurements: new Map()} :
       !coherentEpochReady ?
         {available: false, reason: 'upstream_epoch_not_ready', measurements: new Map()} :
-      candidateDirect;
+      {available: false, reason: 'direct_anchor_telemetry_unavailable', measurements: new Map()};
   const report = diagnoseArrayChannels(Array.from({length: count}, (_, id) => {
     const sample = byId.get(id);
     const anchor = direct.measurements.get(id), complexMeasurement = complex.measurements.get(id);
@@ -292,9 +241,7 @@ function diagnoseUpstreamArrayChannels({config, upstreamStatus, candidate = null
       upstreamMatched,
       coherentEpochReady,
       adcGeneration: telemetryComplete ? adc.channels.map(channel => channel.generation) : null},
-    directAnchor: {available: direct.available, reason: direct.reason,
-      configFingerprint: direct.configFingerprint || null,
-      expectedConfigFingerprint: expectedFingerprint},
+    directAnchor: {available: direct.available, reason: direct.reason},
     complexChannelTelemetry: {available: complex.available, reason: complex.reason}};
   return report;
 }

@@ -1,4 +1,4 @@
-#include "process/integration/DirectPathCoherentReplay.h"
+#include "process/integration/DirectPathCoherentExperiment.h"
 #include "ResidentReplayFixture.h"
 
 #include <filesystem>
@@ -32,10 +32,10 @@ void populatePilot(rr::ResidentReplaySnapshot& snapshot) {
   blah2::resident::wire::Writer rawWriter{{raw.data(),raw.size()}}, referenceWriter{{reference.data(),reference.size()}};
   for (size_t offset=0;offset<raw.size();offset+=16) rawWriter.f64(offset,1);
   for (size_t offset=0;offset<reference.size();offset+=16) referenceWriter.f64(offset,1);
-  blah2::resident::Sha256 hash; hash.add(raw.data(),raw.size()); snapshot.identity.rawIqHash=hash.finish();
+  blah2::Sha256 hash; hash.update(raw.data(),raw.size()); snapshot.identity.rawIqHash=hash.finishBytes();
 }
-blah2::integration::DirectPathCoherentShadow::Config shadowConfig() {
-  blah2::integration::DirectPathCoherentShadow::Config result; result.channelIds={0,1}; result.anchorChannelId=0; result.spatialCoefficients={1/std::sqrt(2.),{0,-1/std::sqrt(2.)}}; result.temporal.minimumCoherence=.1; return result;
+blah2::integration::DirectPathCoherentExperiment::Config experimentConfig() {
+  blah2::integration::DirectPathCoherentExperiment::Config result; result.channelIds={0,1}; result.anchorChannelId=0; result.spatialCoefficients={1/std::sqrt(2.),{0,-1/std::sqrt(2.)}}; result.temporal.minimumCoherence=.1; return result;
 }
 void fractionalMaps(const fs::path& directory) {
   auto value=config(); value.detector.integrationCpis=8;
@@ -107,10 +107,10 @@ int main() {
       validated.snapshot.blocks.at(uint32_t(rr::BlockKind::rawIq)-1).bytes ==
         first.blocks.at(uint32_t(rr::BlockKind::rawIq)-1).bytes,
       "Validated snapshot parser changed sealed IQ/configuration data");
-    // Validly encoded but incompatible metadata must fail before shadow input.
+    // Validly encoded but incompatible metadata must fail before experiment input.
     auto changedTune=sidecar(second,value,164,3,538000000); cr::writeSidecarExclusive(two,changedTune);
-    cr::ShadowReader reader(shadowConfig()); const auto fallback=reader.append(one); check(fallback.powerFallback != nullptr, "fallback map missing");
-    check(fallback.powerFallback->data[0][0] == blah2::integration::DirectPathCoherentShadow::Complex(9.25,0),
+    cr::ExperimentReader reader(experimentConfig()); const auto fallback=reader.append(one); check(fallback.powerFallback != nullptr, "fallback map missing");
+    check(fallback.powerFallback->data[0][0] == blah2::integration::DirectPathCoherentExperiment::Complex(9.25,0),
       "fallback did not retain accepted current-power map");
     rejects([&]{reader.append(two);}, "changed tuning sidecar accepted");
     fs::remove(cr::sidecarPath(two)); auto changedGain=sidecar(second,value,164); changedGain.actualGainDb[0] += 1; cr::writeSidecarExclusive(two,changedGain);

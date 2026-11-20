@@ -1,4 +1,5 @@
 #include "Source.h"
+#include "RecordingAcquisitionJson.h"
 
 #include <iostream>
 #include <algorithm>
@@ -93,6 +94,40 @@ void Source::configure_portable_clips(double preSeconds,
   portableClipUnavailable = {};
 }
 
+std::string Source::recording_code_sha256() {
+  const std::string identity = BLAH2_RECEIVER_CODE_FINGERPRINT;
+  return blah2::acquisition::sha256(identity) ? identity : std::string{};
+}
+
+void Source::set_recording_context(blah2::RecordingContext context) {
+  std::lock_guard<std::mutex> lock(acquisitionMutex);
+  recordingContext = std::move(context);
+  recordingBlockMetadata.reset();
+}
+
+std::shared_ptr<const blah2::RecordingBlockMetadata>
+Source::recording_block_metadata(uint64_t epoch) {
+  const auto gains = recording_applied_gain_db();
+  std::lock_guard<std::mutex> lock(acquisitionMutex);
+  if (!recordingBlockMetadata || recordingMetadataEpoch != epoch ||
+      recordingBlockMetadata->perChannelGainDb != gains) {
+    auto value = std::make_shared<blah2::RecordingBlockMetadata>();
+    value->context = recordingContext;
+    // The two-input native source adapter is reference 0 / surveillance 1.
+    // Array geometry/roles must be supplied by the configured pipeline.
+    if (value->context.referenceMode.empty() && recordingChannels == 2) {
+      value->context.referenceMode = "dedicated";
+      value->context.referenceChannels = {0}; value->context.surveillanceChannels = {1};
+    }
+    value->receiverDetailsJson = recording_provenance_json();
+    value->perChannelGainDb = gains;
+    value->gainProvenance = gains.size() == recordingChannels ?
+      recording_gain_provenance() : "requested-settings-only";
+    recordingBlockMetadata = std::move(value); recordingMetadataEpoch = epoch;
+  }
+  return recordingBlockMetadata;
+}
+
 void Source::request_clip(const blah2::IqClipRequest& request) {
   std::lock_guard<std::mutex> lock(clipMutex);
   if (portableClipRecorder) portableClipRecorder->request(request);
@@ -147,6 +182,8 @@ std::string Source::open_file_locked(const SampleTimePosition* startPosition)
     pendingStarts.assign(recordingChannels, 0);
     channelStarted.assign(recordingChannels, false);
     recordedSamples = 0; recordingError.clear(); recordingDiscontinuities.clear();
+    manualRecordingMetadata.reset(); manualRecordingFrames.clear();
+    manualRecordingPositionAvailable = false; manualRecordingBounded = true;
     recordingStartPosition = startPosition ? *startPosition : sample_time_position();
     recordingActive = true;
     write_recording_provenance_locked(false);
@@ -157,10 +194,11 @@ std::string Source::open_file_locked(const SampleTimePosition* startPosition)
 
 void Source::close_file()
 {
-  std::lock_guard<std::mutex> lock(recordingMutex);
+  std::unique_lock<std::mutex> lock(recordingMutex);
   recordingResumePending = false;
   recordingActive = false;
   if (!recordingWriter) return;
+  const auto finalizedFile = recordingFile;
   try {
     if (!recordingWriter->samples())
       throw std::runtime_error("No samples were recorded");
@@ -169,9 +207,33 @@ void Source::close_file()
       if (!pending.empty()) throw std::runtime_error("Recording ended with unpaired input samples");
     recordingWriter->close(); recordedSamples = recordingWriter->samples();
     write_recording_provenance_locked(true);
+    const bool supportedAcquisition = type == "Kraken" || type == "Usrp" || type == "RspDuo" || type == "HackRF";
+    std::string acquisitionJson, acquisitionReason;
+    if (manualRecordingMetadata && manualRecordingBounded && !manualRecordingFrames.empty() && supportedAcquisition) {
+      const auto first = manualRecordingFrames.front().sourceFirst;
+      if (first > UINT64_MAX - recordedSamples) throw std::runtime_error("Recording acquisition sample interval overflow");
+      acquisitionJson = blah2::acquisition::serialize(manualRecordingMetadata.get(), type,
+        recordingChannels, fs, fc, recordingStartPosition.epoch, first, first + recordedSamples,
+        manualRecordingPositionAvailable, manualRecordingFrames);
+    } else acquisitionReason = "Acquisition frame lineage unavailable or exceeded bounded capacity; ordinary playback only";
+    recordingWriter.reset(); pendingChannels.clear();
+    // A full-artifact digest can outlive a callback interval. The finalized
+    // filename/context are immutable locals; never hold ingress or clip locks
+    // while hashing it, and never bind a concurrently started new recording.
+    lock.unlock();
+    if (supportedAcquisition)
+      blah2::acquisition::writeManifest(finalizedFile, acquisitionJson, {}, acquisitionReason);
   }
-  catch (const std::exception& error) { recording_failed(error.what()); throw; }
-  recordingWriter.reset(); pendingChannels.clear();
+  catch (const std::exception& error) {
+    if (lock.owns_lock()) recording_failed(error.what());
+    else {
+      lock.lock();
+      if (recordingFile == finalizedFile) recordingError = error.what();
+      // The clean IQ remains ordinary-playable, but a failed/missing manifest
+      // cannot satisfy exact admission. Do not corrupt a newer recording.
+    }
+    throw;
+  }
 }
 
 void Source::recording_failed(const std::string& error) {
@@ -349,7 +411,8 @@ void Source::flush_recording_locked() {
 
 void Source::record_block(const blah2::IqBlock& samples) {
   if (!recording_wants_samples()) return;
-  if (portableClipRecorder) portableClipRecorder->ingest(samples);
+  if (portableClipRecorder) portableClipRecorder->ingest(samples, 0, 0, false, 0,
+    recording_block_metadata(processing_epoch()));
   std::lock_guard<std::mutex> lock(recordingMutex);
   record_block_locked(samples, nullptr);
 }
@@ -358,7 +421,8 @@ void Source::record_block(const blah2::IqBlock& samples,
     const SampleTimePosition& startPosition) {
   if (!recording_wants_samples()) return;
   if (portableClipRecorder) portableClipRecorder->ingest(samples,
-    startPosition.epoch, startPosition.nextSample, startPosition.available);
+    startPosition.epoch, startPosition.nextSample, startPosition.available, 0,
+    recording_block_metadata(startPosition.epoch));
   std::lock_guard<std::mutex> lock(recordingMutex);
   record_block_locked(samples, &startPosition);
 }
@@ -369,12 +433,26 @@ void Source::record_block_locked(const blah2::IqBlock& samples,
     if (recordingResumePending && !recordingWriter)
       open_file_locked(startPosition);
     if (!recordingActive || !recordingWriter) return;
-    if (startPosition && !recordingWriter->samples() &&
-        !recordingStartPosition.available) {
+    if (startPosition && !recordingWriter->samples()) {
       recordingStartPosition = *startPosition;
       write_recording_provenance_locked(false);
     }
+    const auto prior = recordingWriter->samples();
+    const auto metadata = recording_block_metadata(startPosition ? startPosition->epoch : processing_epoch());
+    if (!prior) {
+      manualRecordingMetadata = metadata;
+      manualRecordingPositionAvailable = startPosition && startPosition->available;
+    } else if (manualRecordingMetadata != metadata) manualRecordingBounded = false;
     recordingWriter->append(samples);
+    if (manualRecordingBounded && manualRecordingFrames.size() < blah2::acquisition::maximumFrames) {
+      const auto first = startPosition && startPosition->available ? startPosition->nextSample :
+        (recordingStartPosition.available ? recordingStartPosition.nextSample + prior : prior);
+      const auto count = static_cast<uint64_t>(samples.front().size());
+      if (prior && (!startPosition || !startPosition->available)) manualRecordingPositionAvailable = false;
+      if (!manualRecordingFrames.empty() && first != manualRecordingFrames.back().sourceFirst + manualRecordingFrames.back().count)
+        manualRecordingBounded = false;
+      else manualRecordingFrames.push_back({manualRecordingFrames.size() + 1, first, count, 0, count});
+    } else manualRecordingBounded = false;
   }
   catch (const std::exception& error) { recording_failed(error.what()); }
 }

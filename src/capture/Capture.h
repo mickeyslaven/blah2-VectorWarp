@@ -41,6 +41,7 @@ private:
   blah2::ReplayOptions replayOptions;
   mutable std::mutex statusMutex;
   blah2::ReplayProgress replayProgress;
+  std::atomic<uint64_t> replayQueuedSamples{0};
   blah2::ReplayControlMailbox replayControl;
   std::string captureError;
   uint64_t recordingRequestId = 0;
@@ -48,6 +49,7 @@ private:
   std::string unsupportedClipError;
   bool automaticClips = false;
   double clipPreSeconds = 0, clipMaximumSeconds = 0;
+  blah2::RecordingContext recordingContext;
 
 public:
   struct SamplePosition
@@ -89,6 +91,9 @@ public:
   }
   std::string status_json() const;
   void processing_error(const std::string& error);
+  // Classify a processing exception at the shared live/replay boundary. A
+  // signal-requested stop is normal; an unsignalled live failure remains fatal.
+  void processing_failure_or_stop(const std::string& error);
 
   /// @brief Sampling frequency (Hz).
   uint32_t fs;
@@ -111,6 +116,22 @@ public:
   Capture(std::string type, uint32_t fs, uint32_t fc, std::string path);
   void configure_aircraft_clips(bool enabled, double preSeconds,
     double postSeconds);
+  void set_recording_context(blah2::RecordingContext context) {
+    if (sourceReady.load()) throw std::logic_error("Recording context must be set before acquisition");
+    recordingContext = std::move(context);
+  }
+  void require_exact_replay_acquisition(std::string trustedSha256,
+      std::string trustedAcquisitionSha256 = {}) {
+    replayOptions.requireExactAcquisition = true;
+    replayOptions.expectedRecordingSha256 = std::move(trustedSha256);
+    replayOptions.expectedAcquisitionSha256 = std::move(trustedAcquisitionSha256);
+    replayOptions.validateAcquisitionContext = true;
+    replayOptions.expectedAcquisitionContext = recordingContext;
+  }
+  void trust_replay_acquisition(std::string trustedSha256, std::string trustedAcquisitionSha256 = {}) {
+    replayOptions.expectedRecordingSha256 = std::move(trustedSha256);
+    replayOptions.expectedAcquisitionSha256 = std::move(trustedAcquisitionSha256);
+  }
 
   /// @brief Implement the capture process.
   /// @param buffer1 Buffer for reference samples.
@@ -136,7 +157,8 @@ public:
   /// @return Void.
   void set_replay(bool loop, std::string file, std::string format = "auto",
     uint32_t legacyBlockSamples = 0,
-    std::string provenanceMode = "legacy-unqualified");
+    std::string provenanceMode = "legacy-unqualified",
+    uint64_t startSample = 0);
   // Optional receiver extension, installed before start when the loaded
   // module supports it. Older modules retain the normal FIFO contract.
   void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }

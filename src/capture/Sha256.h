@@ -3,12 +3,15 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 
 namespace blah2 {
 class Sha256 {
 public:
   void update(const void* source, std::size_t count) {
+    if (count > UINT64_MAX / 8 - total)
+      throw std::overflow_error("SHA-256 input length overflow");
     const auto* bytes = static_cast<const uint8_t*>(source); total += count;
     while (count) {
       const std::size_t copied = std::min(count, block.size() - used);
@@ -17,18 +20,26 @@ public:
       if (used == block.size()) { transform(block.data()); used = 0; }
     }
   }
-  std::string finish() {
+  // Recording manifests use hex; GPU/replay identities use these same bytes.
+  std::array<uint8_t, 32> finishBytes() {
     const uint64_t bits = total * 8; block[used++] = 0x80;
     if (used > 56) { std::fill(block.begin()+used,block.end(),0); transform(block.data()); used=0; }
     std::fill(block.begin()+used,block.begin()+56,0);
     for (unsigned i=0;i<8;++i) block[63-i]=static_cast<uint8_t>(bits>>(i*8));
     transform(block.data());
+    std::array<uint8_t, 32> result{};
+    for (unsigned i = 0; i < state.size(); ++i)
+      for (unsigned j = 0; j < 4; ++j)
+        result[4 * i + j] = static_cast<uint8_t>(state[i] >> (24 - 8 * j));
+    return result;
+  }
+  std::string finish() {
     const char hex[]="0123456789abcdef";
     std::string result;
     result.reserve(64);
-    for(uint32_t word:state) {
-      for(int shift:{28,24,20,16,12,8,4,0})
-        result.push_back(hex[(word>>shift)&15]);
+    for (uint8_t byte : finishBytes()) {
+      result.push_back(hex[byte >> 4]);
+      result.push_back(hex[byte & 15]);
     }
     return result;
   }

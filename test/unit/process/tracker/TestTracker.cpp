@@ -9,6 +9,7 @@
 #include "data/Track.h"
 #include "process/tracker/Tracker.h"
 #include "process/tracker/TrackerDiagnosticsJson.h"
+#include "process/ambiguity/GpuResidentQualification.h"
 #include "data/meta/Constants.h"
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
@@ -42,9 +43,8 @@ TEST_CASE("CPU tracker diagnostics JSON reports exclusive radar-only frame count
   CHECK(json["pair_in_gate"].GetUint64() == 2);
   CHECK(json["associations"].GetUint64() == 1);
   CHECK(json["birth_snr_rejected"].GetUint64() == 3);
-  CHECK(json["birth_exclusive_rejected"].GetUint64() == 0);
-  CHECK(json["promotions"].GetUint64() == 1);
-  CHECK(json["weak_support_credited_cpis"].GetUint64() == 0);
+  CHECK_FALSE(json.HasMember("birth_exclusive_rejected"));
+  CHECK(json["promotions"].GetUint64() == 0); // unresolved same-delay Doppler pair
   CHECK(json["candidate_track_pairs"].GetUint64() ==
     json["pair_already_claimed"].GetUint64() + json["pair_delay_rejected"].GetUint64() +
     json["pair_doppler_rejected"].GetUint64() + json["pair_innovation_rejected"].GetUint64() +
@@ -53,6 +53,75 @@ TEST_CASE("CPU tracker diagnostics JSON reports exclusive radar-only frame count
   CHECK(tracker.frame_diagnostics().noOp);
   CHECK(tracker.frame_diagnostics().associations == 0);
   CHECK(tracker.frame_diagnostics().promotions == 0);
+}
+
+TEST_CASE("T01 canonical comb births retain strength and ordered ties", "[tracker][admission]")
+{
+  for(bool adaptive:{false,true})for(bool range:{false,true})for(bool ties:{false,true}) {
+    std::vector<unsigned> order{0,1,2};
+    do {
+      std::vector<double> delay,doppler,snr;
+      for(auto i:order){delay.push_back(range?20:8+12*i);doppler.push_back(range?-16+16*int(i):2*int(i));snr.push_back(ties?10:8+2*i);}
+      Tracker tracker(1,4,4,.5,0,100000,1,5,adaptive);
+      Detection input(delay,doppler,snr);const auto tracks=tracker.process(&input,1000);
+      REQUIRE(tracks->get_n()==1);
+      const auto winner=ties?0:std::find(order.begin(),order.end(),2)-order.begin();
+      CHECK(tracks->get_current(0).get_delay().front()==delay[winner]);
+      CHECK(tracks->get_current(0).get_doppler().front()==doppler[winner]);
+      CHECK(tracks->get_state(0)==(range?"TENTATIVE":"ACTIVE"));
+      CHECK(tracker.frame_diagnostics().birthDopplerCombRejected==uint64_t(range?0:2));
+      CHECK(tracker.frame_diagnostics().birthRangeCombRejected==uint64_t(range?2:0));
+    }while(std::next_permutation(order.begin(),order.end()));
+  }
+  Tracker control(1,4,4,.5,0,100000,1,5,true);
+  Detection independent({8,20,34},{-20,0,20},{10,10,10});
+  CHECK(control.process(&independent,1000)->get_nState("ACTIVE")==3);
+}
+
+TEST_CASE("T02 range ambiguity retains measured votes without premature promotion", "[tracker][admission]")
+{
+  for(uint32_t minimum:{1u,2u}) {
+    Tracker tracker(minimum,3,3,.5,0,100000,1,5,true);
+    Detection ambiguous({20,20},{-8,8},{10,10});
+    for(uint64_t frame=1;frame<=2;++frame) {
+      auto tracks=tracker.process(&ambiguous,500*frame);
+      REQUIRE(tracks->get_n()==2);CHECK(tracks->get_nState("ACTIVE")==0);
+    }
+    Detection resolved(20,-8,10);
+    auto tracks=tracker.process(&resolved,1500);
+    REQUIRE(tracks->get_n()==1);CHECK(tracks->get_state(0)=="ACTIVE");
+    Detection none(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+    CHECK(tracker.process(&none,2000)->get_state(0)=="COASTING");
+    for(uint64_t frame=5;frame<=7;++frame)tracks=tracker.process(&none,500*frame);
+    CHECK(tracks->get_n()==0);
+  }
+}
+
+TEST_CASE("T03 canonical tracker accepts first interior and final signed-grid columns", "[tracker][admission]")
+{
+  for(double delay:{-4.,0.,4.})for(double doppler:{-2.,0.,2.}) {
+    Tracker tracker(1,3,3,.5,0,100000,1,5,true);
+    tracker.configureGrid({-4,-3,-2,-1,0,1,2,3,4},{-2,0,2});
+    Detection input(delay,doppler,10);
+    CHECK(tracker.process(&input,1000)->get_nState("ACTIVE")==1);
+    CHECK(tracker.process(&input,1500)->get_n()==1);
+    CHECK(tracker.frame_diagnostics().associations==1);
+  }
+}
+
+TEST_CASE("T05 finite stationary cutoff is inclusive and permits measured recovery", "[tracker][stationary]")
+{
+  for(double sign:{-1.,1.})for(double outside:{std::nextafter(2.,3.),2.01})for(double maximum:{0.,2.}) {
+    TrackerRecoveryConfig recovery{true,3,maximum,65536};
+    Tracker tracker(2,6,4,.5,0,100000,1,5,true,{},true,9.210340371976184,{},recovery);
+    Detection boundary(20,sign*2,10);
+    for(uint64_t frame=1;frame<=4;++frame)tracker.process(&boundary,500*frame);
+    CHECK(tracker.frame_diagnostics().stationaryQuarantined==1);
+    Detection next(20,sign*outside,10);const auto tracks=tracker.process(&next,2500);
+    REQUIRE(tracks->get_n()==1);
+    CHECK(tracker.frame_diagnostics().stationaryQuarantined==uint64_t(maximum==0));
+    CHECK(tracks->get_state(0)==(maximum==0?"TENTATIVE":"ACTIVE"));
+  }
 }
 
 TEST_CASE("Measured seed counts toward early M-of-N confirmation", "[tracker][confirmation]")
@@ -117,11 +186,12 @@ TEST_CASE("First adaptive reassociation uses actual elapsed missed time", "[trac
     Detection empty(std::vector<double>{}, std::vector<double>{}, std::vector<double>{});
     tracker.process(&empty, uneven ? 1300 : 1500);
     const double elapsed = uneven ? 1.1 : 1.;
-    Detection next(100-lambda*(100*elapsed+5*elapsed*elapsed)/rangeRes, 100+10*elapsed, 10);
+    // maxAcc=10 at CPI=.5 has the canonical quantized span 8 Hz/s.
+    Detection next(100-lambda*(100*elapsed+4*elapsed*elapsed)/rangeRes, 100+8*elapsed, 10);
     auto tracks = tracker.process(&next, uneven ? 2100 : 2000);
     REQUIRE(tracks->get_n() == 1);
     CHECK(tracks->get_nInactive(0) == 0);
-    CHECK_THAT(tracks->get_acceleration(0), Catch::Matchers::WithinAbs(10, 1e-9));
+    CHECK_THAT(tracks->get_acceleration(0), Catch::Matchers::WithinAbs(8, 1e-9));
   }
   Tracker rejected(4, 6, 3, .5, 10, rangeRes, lambda, 7, true);
   Detection first(100, 100, 10);
@@ -263,8 +333,8 @@ TEST_CASE("Track histories are bounded without limiting M-of-N promotion", "[tra
   Track track;
   const auto index = track.add(Detection(0, 0, 1));
   for (int i = 1; i <= 500; ++i) {
-    track.set_current(index, Detection(i, -i, 1));
     track.set_state(index, "ASSOCIATED");
+    track.set_current(index, Detection(i, -i, 1));
   }
   track.promote(index, 250, 255);
   CHECK(track.get_state(index) == "ACTIVE");
@@ -289,8 +359,8 @@ TEST_CASE("Removing a track keeps per-track counters aligned", "[track]")
   track.add(Detection(2, 2, 2));
   track.set_nInactive(0, 5);
   track.set_nInactive(1, 1);
-  track.set_current(1, Detection(3, 3, 3));
   track.set_state(1, "ASSOCIATED");
+  track.set_current(1, Detection(3, 3, 3));
   track.remove(0);
   CHECK(track.get_n() == 1);
   CHECK(track.get_nInactive(0) == 1);
@@ -353,97 +423,26 @@ TEST_CASE("Weak detections cannot initiate conservative tracks", "[tracker]")
   CHECK(tracks->get_state(0) == "ACTIVE");
 }
 
-TEST_CASE("Disjoint weak evidence sustains only operational tracks",
-  "[tracker][weak-support]")
-{
-  Tracker empty(2, 3, 3, .5, 10, 50, .6, 7, true);
-  TrackerWeakSupportCandidate support;
-  support.delay = 10; support.dopplerHz = 20;
-  support.epoch = 1; support.newestSequence = 4; support.depth = 4;
-  support.sequences = {4, 3, 2, 1, 0, 0, 0, 0};
-  CHECK(empty.applyWeakSupport({support}) == 0);
-
-  Detection first(10, 20, 8);
-  auto tracks = empty.process(&first, 1000);
-  REQUIRE(tracks->get_n() == 1);
-  CHECK(tracks->get_state(0) == "TENTATIVE");
-  CHECK(empty.applyWeakSupport({support}) == 0);
-
-  Detection second(9.88, 20, 8);
-  tracks = empty.process(&second, 1500);
-  REQUIRE(tracks->get_state(0) == "ACTIVE");
-  const auto measured = tracks->get_nAssociated(0);
-  Detection none(std::vector<double>{}, std::vector<double>{},
-    std::vector<double>{});
-  tracks = empty.process(&none, 2000);
-  tracks = empty.process(&none, 2500);
-  tracks = empty.process(&none, 3000);
-  REQUIRE(tracks->get_n() == 1);
-  REQUIRE(tracks->get_state(0) == "COASTING");
-
-  support.delay = tracks->get_current(0).get_delay().front();
-  support.dopplerHz = tracks->get_current(0).get_doppler().front();
-  CHECK(empty.applyWeakSupport({support}) == 1);
-  CHECK(empty.applyWeakSupport({support}) == 0);
-  tracks = empty.process(&none, 3500);
-  REQUIRE(tracks->get_n() == 1);
-  CHECK(tracks->get_state(0) == "COASTING");
-  CHECK(tracks->get_nInactive(0) == 1);
-  CHECK(tracks->get_nAssociated(0) == measured);
-  const auto& diagnostics = empty.frame_diagnostics();
-  CHECK(diagnostics.weakSupportAccepted == 1);
-  CHECK(diagnostics.weakSupportLineageRejected == 1);
-  CHECK(diagnostics.associations == 0);
-  CHECK(diagnostics.promotions == 0);
-}
-
-TEST_CASE("Weak support accepts one lineage-safe 2 4 or 8 CPI bank",
-  "[tracker][weak-support]")
-{
-  for (const uint8_t depth : {uint8_t(2), uint8_t(4), uint8_t(8)}) {
-    Tracker tracker(1, 2, 8, .5, 10, 50, .6, 7, true);
-    Detection seed(10, 20, 8);
-    auto tracks = tracker.process(&seed, 1000);
-    REQUIRE(tracks->get_state(0) == "ACTIVE");
-    Detection none(std::vector<double>{}, std::vector<double>{},
-      std::vector<double>{});
-    tracks = tracker.process(&none, 1500);
-
-    TrackerWeakSupportCandidate support;
-    support.delay = tracks->get_current(0).get_delay().front();
-    support.dopplerHz = tracks->get_current(0).get_doppler().front();
-    support.epoch = depth; support.newestSequence = depth; support.depth = depth;
-    for (uint8_t i = 0; i < depth; ++i) support.sequences[i] = depth - i;
-    CHECK(tracker.applyWeakSupport({support}) == 1);
-    CHECK(tracker.applyWeakSupport({support}) == 0);
-    // A newer window that still overlaps the credited interval is not an
-    // independent confirmation, and unsupported support depths fail closed.
-    support.newestSequence = depth + 1;
-    for (uint8_t i = 0; i < depth; ++i)
-      support.sequences[i] = depth + 1 - i;
-    CHECK(tracker.applyWeakSupport({support}) == 0);
-    support.depth = 3;
-    support.newestSequence = depth * 3;
-    for (uint8_t i = 0; i < depth; ++i)
-      support.sequences[i] = depth * 3 - i;
-    CHECK(tracker.applyWeakSupport({support}) == 0);
-    tracker.process(&none, 2000);
-    const auto& diagnostics = tracker.frame_diagnostics();
-    CHECK(diagnostics.weakSupportAccepted == 1);
-    CHECK(diagnostics.weakSupportCreditedCpis == depth);
-    CHECK(diagnostics.weakSupportLineageRejected == 3);
-  }
-}
-
 namespace {
-Detection::Evidence sourceEvidence(uint64_t epoch,uint64_t newest,uint8_t depth) {
+Detection::Evidence sourceEvidence(uint64_t epoch, uint64_t newest, uint8_t depth)
+{
+  if (depth != 1 && depth != 2 && depth != 4 && depth != 8)
+    throw std::invalid_argument("Test evidence depth is not canonical");
   Detection::Evidence value;
-  value.epoch=epoch;value.newestSequence=newest;value.depth=depth;
-  for(uint8_t i=0;i<depth;++i)value.sequences[i]=newest-i;
+  value.epoch = epoch;
+  value.newestSequence = newest;
+  value.depth = depth;
+  value.bank = depth <= 2 ? 1 : depth == 4 ? 2 : 3;
+  value.delayMotion = 0;
+  value.dopplerMotion = 0;
+  for (uint8_t i = 0; i < depth; ++i) value.sequences[i] = newest - i;
   return value;
 }
-Detection temporalDetection(uint64_t epoch,uint64_t newest,uint8_t depth) {
-  Detection result(10,0,10);result.set_evidence({sourceEvidence(epoch,newest,depth)});
+
+Detection temporalDetection(uint64_t epoch, uint64_t newest, uint8_t depth)
+{
+  Detection result(10, 0, 10);
+  result.set_evidence({sourceEvidence(epoch, newest, depth)});
   return result;
 }
 }
@@ -485,6 +484,50 @@ TEST_CASE("Temporal detector windows receive one disjoint confirmation vote", "[
     tracks=tracker.process(&seed,(2*depth+4)*1000);
     CHECK(tracks->get_nAssociated(0)==1);
   }
+}
+
+TEST_CASE("Private qualification budgets real confirmed tracks and resets", "[tracker][lineage][startup]")
+{
+  using blah2::resident::Qualification;
+  for(const uint8_t depth:{uint8_t(1),uint8_t(2),uint8_t(4),uint8_t(8)})
+    for(const uint32_t minimum:{1u,2u,3u,1u+254u/depth}) {
+      const uint32_t window=tracker_confirmation::confirmationMinimumWindow(minimum,depth);
+      const uint32_t due=Qualification::confirmationFrame(depth,minimum);
+      Tracker tracker(minimum,window,depth-1,1,0,100,2);
+      for(uint64_t epoch=0;epoch<2;++epoch) {
+        tracker.reset();
+        Qualification gate(Qualification::startupCount(8,depth,minimum,window,depth-1),depth);
+        uint32_t frames=0;
+        gate.prepareStartup([&](uint32_t frame){
+          ++frames;
+          // Hold the first candidate until its entire configured support is
+          // positive. This prevents shallower/earlier hits masking the bound.
+          const bool positive=frame>=depth,mature=frame+1>=2u*depth;
+          Detection detection=mature?temporalDetection(epoch,frame+1,depth):
+            Detection(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+          const auto tracks=tracker.process(&detection,1000ULL*(frame+1));
+          rapidjson::Document product;product.Parse(tracks->to_json(frame+1).c_str());
+          REQUIRE_FALSE(product.HasParseError());
+          uint64_t confirmed=0;
+          for(const auto& item:product["data"].GetArray()) {
+            const std::string state=item["state"].GetString();
+            if(state=="ACTIVE"||state=="COASTING")++confirmed;
+          }
+          CHECK(confirmed==uint64_t(frame+1>=due));
+          if(frame+1==2u*depth&&minimum>1) {
+            CHECK(product["n"].GetUint64()==1);
+            CHECK(product["data"].Empty());
+          }
+          gate.control(positive,positive?mature:frame+1>=depth,
+            detection.get_nDetections(),product["n"].GetUint64(),confirmed,true,frame+1>=due);
+          gate.checked(Qualification::reference);gate.checked(Qualification::filtered);
+          gate.checked(Qualification::maps);gate.checkedProducts(std::min(frame+1,uint32_t(depth)));
+        },[]{},[&]{gate.requireControls();tracker.reset();});
+        CHECK(frames==std::max(8u+depth-1,due));
+        Detection empty(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+        CHECK(tracker.process(&empty,1000)->get_n()==0);
+      }
+    }
 }
 
 TEST_CASE("Mixed depth evidence shares one disjoint ledger", "[tracker][lineage]")
@@ -590,7 +633,8 @@ TEST_CASE("Shared stationary policy quarantines persistent cells and preserves d
   CHECK(tracker.frame_diagnostics().stationaryQuarantined==1);
   Detection mixture({10,100},{0,20},{10,10});
   tracks=tracker.process(&mixture,4000);
-  CHECK(tracker.frame_diagnostics().stationaryBirthRejected==1);
+  CHECK(tracker.frame_diagnostics().stationaryQuarantined==1);
+  CHECK(tracker.frame_diagnostics().stationaryBirthRejected==0);
   CHECK(tracks->get_nState("ACTIVE")==1);
   CHECK(tracker.frame_diagnostics().stationaryCells<=128);
   tracker.reset();
@@ -611,7 +655,7 @@ TEST_CASE("Shared stationary occupancy has an explicit bounded capacity", "[trac
 TEST_CASE("Stationary capacity pressure cannot quarantine established tracks", "[tracker][stationary]")
 {
   TrackerRecoveryConfig config;config.stationaryClutter=true;config.persistenceCpis=2;
-  config.maximumStationaryCells=1;
+  config.maximumStationaryCells=54;
   Tracker tracker(1,5,5,1,0,100,2,-100,false,{},true,9.210340371976184,{},config);
   Detection targets({10,100},{0,20},{10,10});
   REQUIRE(tracker.process(&targets,1000)->get_nState("ACTIVE")==2);
@@ -651,68 +695,8 @@ TEST_CASE("Repeated empty-track timestamps cannot teach stationary occupancy", "
   CHECK(tracker.frame_diagnostics().stationaryCells==27);
   tracker.process(&weak,999);
   CHECK(tracker.frame_diagnostics().noOp);
-  CHECK(tracker.process(&strong,2000)->get_nState("ACTIVE")==1);
-}
-
-TEST_CASE("Guided shadow never changes ordinary tracking products", "[tracker][guided]")
-{
-  TrackerRecoveryConfig config;config.guidedShadow=true;
-  Tracker tracker(2,5,5,1,0,100,2,-100,false,{},true,9.210340371976184,{},config);
-  auto seed=temporalDetection(0,1,1);auto tracks=tracker.process(&seed,1000);
-  const auto id=tracks->get_id(0);
-  Detection none(std::vector<double>{},std::vector<double>{},std::vector<double>{});
-  TrackerGuidedCandidate candidate{id,sourceEvidence(0,3,2),true,true};
-  tracks=tracker.process(&none,3000,{candidate});
-  REQUIRE(tracks->get_n()==1);
-  CHECK(tracks->get_state(0)=="TENTATIVE");
-  CHECK(tracks->get_nAssociated(0)==1);
-  CHECK(tracker.frame_diagnostics().guidedWouldRecover==1);
-  CHECK(tracker.frame_diagnostics().guidedPromotions==0);
-}
-
-TEST_CASE("Guided 2 4 and 8 CPI recovery shares zero-epoch detector credit", "[tracker][guided][lineage]")
-{
-  for(const uint8_t depth:{uint8_t(2),uint8_t(4),uint8_t(8)}) {
-    TrackerRecoveryConfig config;config.guidedShadow=true;config.guidedPromote=true;config.guidedSustain=true;
-    Tracker tracker(2,2*depth+1,2*depth,1,0,100,2,-100,false,{},true,9.210340371976184,{},config);
-    auto seed=temporalDetection(0,1,1);auto tracks=tracker.process(&seed,1000);
-    const auto id=tracks->get_id(0);
-    Detection none(std::vector<double>{},std::vector<double>{},std::vector<double>{});
-    auto prediction=tracker.guidedPredictions(depth*1000);
-    REQUIRE(prediction.size()==1);CHECK(prediction[0].trackId==id);
-    TrackerGuidedCandidate overlap{id,sourceEvidence(0,depth,depth),true,true};
-    tracks=tracker.process(&none,depth*1000,{overlap});
-    CHECK(tracks->get_state(0)!="ACTIVE");
-    CHECK(tracker.frame_diagnostics().guidedLineageRejected==1);
-    TrackerGuidedCandidate fresh{id,sourceEvidence(0,depth+1,depth),true,true};
-    tracks=tracker.process(&none,(depth+1)*1000,{fresh});
-    REQUIRE(tracks->get_state(0)=="ACTIVE");
-    CHECK(tracks->get_nAssociated(0)==1); // Guided paths are never measured fixes.
-    CHECK(tracks->get_acceleration(0)==0);
-    CHECK_FALSE(tracks->get_acceleration_estimated(0));
-    CHECK(tracker.frame_diagnostics().guidedPromotions==1);
-    fresh.evidence=sourceEvidence(0,2*depth+1,depth);
-    tracks=tracker.process(&none,(2*depth+1)*1000,{fresh});
-    CHECK(tracks->get_state(0)=="COASTING");
-    CHECK(tracks->get_nAssociated(0)==1);
-    CHECK(tracks->get_acceleration(0)==0);
-    CHECK_FALSE(tracks->get_acceleration_estimated(0));
-    CHECK(tracker.frame_diagnostics().guidedSustained==1);
-  }
-}
-
-TEST_CASE("Weak support accepts epoch zero but cannot reuse detector evidence", "[tracker][weak-support][lineage]")
-{
-  Tracker tracker(1,2,8,1,0,100,2);
-  auto seed=temporalDetection(0,2,2);auto tracks=tracker.process(&seed,2000);
-  REQUIRE(tracks->get_state(0)=="ACTIVE");
-  TrackerWeakSupportCandidate support;
-  support.delay=10;support.dopplerHz=0;support.epoch=0;support.depth=2;
-  support.newestSequence=2;support.sequences={2,1,0,0,0,0,0,0};
-  CHECK(tracker.applyWeakSupport({support})==0);
-  support.newestSequence=4;support.sequences={4,3,0,0,0,0,0,0};
-  CHECK(tracker.applyWeakSupport({support})==1);
-  CHECK(tracker.applyWeakSupport({support})==0);
+  CHECK(tracker.process(&strong,2000)->get_n()==0);
+  CHECK(tracker.frame_diagnostics().stationaryBirthRejected==1);
 }
 
 TEST_CASE("One detection cannot update two tracks", "[tracker]")
@@ -784,6 +768,71 @@ TEST_CASE("Equal-area normalized gate matches legacy geometric area", "[tracker]
   const auto tracks = equalArea.process(&outsideEqualArea, 2000);
   REQUIRE(tracks->get_n() == 2);
   CHECK(equalArea.frame_diagnostics().associations == 0);
+}
+
+TEST_CASE("Shared adaptive association fits one physical acceleration and strict boundaries", "[tracker][association]")
+{
+  using tracker_association::associationDecision;
+  const auto gate=[](double delay,double doppler,double span=8.) {
+    return associationDecision(delay,doppler,0,0,.5,true,.5,span,.125,true,9.210340371976184);
+  };
+  CHECK(gate(-1,4).accepted);
+  CHECK(gate(-1,4).distance==0);
+  CHECK_FALSE(gate(1.5,4).accepted); // Inside the box, no common acceleration.
+  CHECK_FALSE(gate(-2,0).accepted); // Open outer boundary.
+  CHECK_FALSE(gate(0,6).accepted);
+  CHECK(gate(0,0,0).accepted); // Zero span is a singleton, not an empty interval.
+  CHECK_FALSE(gate(1,0,0).accepted);
+  CHECK_FALSE(gate(0,2,0).accepted);
+  CHECK(associationDecision(2,0,0,0,1,false,1,0,0,true,4).accepted);
+  CHECK_FALSE(associationDecision(std::nextafter(2.,3.),0,0,0,1,false,1,0,0,true,4).accepted);
+  CHECK_FALSE(gate(std::numeric_limits<double>::infinity(),0).valid);
+}
+
+TEST_CASE("Shared spatial association checks all peaks and circular tolerance", "[tracker][association]")
+{
+  using tracker_association::spatialCompatible;
+  const uint32_t multiple=0x80000000u|1u|(17u<<7u)|(33u<<14u);
+  CHECK(spatialCompatible(multiple,5,12,4,0));
+  CHECK(spatialCompatible(multiple,9,12,4,0));
+  CHECK_FALSE(spatialCompatible(multiple,3,12,4,1));
+  CHECK(spatialCompatible(12,1,12,4,1));
+  CHECK_FALSE(spatialCompatible(12,2,12,4,1));
+  CHECK(spatialCompatible(0,8,12,4,0));
+  CHECK(spatialCompatible(1,8,12,4,UINT32_MAX));
+  for(uint32_t beams:{4u,12u,24u})for(uint32_t a=1;a<=beams;++a)
+    for(uint32_t b=1;b<=beams;++b)for(uint32_t tolerance:{0u,1u,2u}) {
+      const uint32_t distance=a>b?a-b:b-a;
+      const bool expected=std::min(distance,beams-distance)<=tolerance;
+      CHECK(spatialCompatible(a,b,beams,4,tolerance)==expected);
+      const uint32_t fine=0x80000000u|((a-1)*4+1);
+      CHECK(spatialCompatible(fine,b,beams,4,tolerance)==expected);
+    }
+}
+
+TEST_CASE("Beam-aware shared tracker retains accepted spatial history through coast and reset", "[tracker][association]")
+{
+  Tracker tracker(2,5,5,.5,0,100,1,5,false,{},false);
+  tracker.configureSpatialAssociation(12,4,0);
+  Detection seed(20,0,8);seed.set_spatial({0x80000000u|1u|(17u<<7u)});
+  auto tracks=tracker.process(&seed,1000);const auto id=tracks->get_id(0);
+  Detection secondary(20,0,8);secondary.set_spatial({5});
+  tracks=tracker.process(&secondary,1500);
+  REQUIRE(tracks->get_n()==1);CHECK(tracks->get_state(0)=="ACTIVE");
+  CHECK(tracker.spatialForTrack(id)==5);
+  Detection empty(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+  tracks=tracker.process(&empty,2000);CHECK(tracker.spatialForTrack(id)==5);
+  Detection incompatible(20,0,4);incompatible.set_spatial({1});
+  tracks=tracker.process(&incompatible,2500);
+  REQUIRE(tracks->get_n()==1);CHECK(tracks->get_nInactive(0)==2);
+  CHECK(tracker.frame_diagnostics().pairSpatialRejected==1);
+  CHECK(tracker.spatialForTrack(id)==5);
+  Detection missing(20,0,8);
+  CHECK_THROWS_AS(tracker.process(&missing,3000),std::invalid_argument);
+  incompatible.set_spatial({13});CHECK_THROWS_AS(tracker.process(&incompatible,3000),std::invalid_argument);
+  tracker.reset();CHECK(tracker.spatialForTrack(id)==0);
+  CHECK_THROWS_AS(tracker.process(&missing,3000),std::invalid_argument);
+  CHECK(tracker.process(&seed,3000)->get_n()==1);
 }
 
 TEST_CASE("Birth exclusivity runs after full association", "[tracker][birth]")

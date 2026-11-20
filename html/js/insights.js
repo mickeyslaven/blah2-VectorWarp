@@ -4,22 +4,15 @@
   const root = document.getElementById('view-root');
   const state = document.getElementById('view-state');
   const view = document.body.dataset.insightView;
-  const currentNode = () => typeof selectedNode === 'function' ? selectedNode() : 'local';
-  const getLaneContext = typeof getIlluminatorContext === 'function' ?
-    getIlluminatorContext : async () => ({enabled: false, id: null, item: null, illuminators: []});
-  const laneScope = typeof illuminatorDisplayScope === 'function' ?
-    illuminatorDisplayScope : () => ['health', 'calibration'].includes(view) ? 'aggregate' : 'selected';
-  const laneUrl = typeof selectedIlluminatorUrl === 'function' ?
-    selectedIlluminatorUrl : path => path;
-  const laneConfig = typeof selectedIlluminatorConfig === 'function' ?
-    selectedIlluminatorConfig : config => config;
-  const atRadarFrame = typeof radarFrameUrl === 'function' ? radarFrameUrl :
-    (path, timestamp) => {
-      if (!Number.isSafeInteger(Number(timestamp)) || Number(timestamp) < 0) return path;
-      const url = new URL(path, window.location.href);
-      url.searchParams.set('frame_timestamp', String(Number(timestamp)));
-      return `${url.pathname}${url.search}`;
-    };
+  const currentNode = selectedNode;
+  const getLaneContext = getIlluminatorContext;
+  const laneScope = illuminatorDisplayScope;
+  const laneUrl = selectedIlluminatorUrl;
+  const getConfig = () => readRadarDisplayConfig('geographic');
+  const fetchJson = fetchCachedJsonResource;
+  const apiJson = (path, options) => readRadarDisplay('geographic', path, options);
+  const allChannelJson = path => readRadarDisplay('network', path);
+  const federatedNodeJson = readFederatedRadar;
   const associationGates = window.VectorWarpConfigProfiles?.associationGates;
   const assignRadarPoints = window.VectorWarpConfigProfiles?.assignments;
   const colors = ['#ff8754', '#4dd4b0', '#70a7ff', '#f7c75f', '#d995ff', '#ff8298'];
@@ -119,54 +112,6 @@
     state.className = `view-state ${tone}`.trim();
   }
 
-  async function fetchJson(url, options = {}, cachePolicy = {}) {
-    if (typeof fetchCachedJsonResource === 'function')
-      return fetchCachedJsonResource(url, options, cachePolicy);
-    const response = await fetchStatusResource(url, {cache: 'no-store', ...options});
-    if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-    const text = await response.text();
-    return text.trim() ? JSON.parse(text) : null;
-  }
-
-  async function apiJson(path, {awaitFresh = false} = {}) {
-    const context = await getLaneContext();
-    const selectedProduct = laneScope() === 'selected' &&
-      /^\/api\/(?:detection|tracker|bearing|locations|adsb\/delay-doppler|live-scorecard(?:\/provisional)?|statistics|radar\/coverage)(?:[/?]|$)/.test(path);
-    const productPath = selectedProduct ? laneUrl(path, context) : path;
-    const aligned = /^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing|iqdata)(?:[/?]|$)/.test(productPath) ?
-      radarPresentationUrl(productPath) : productPath;
-    const result = await fetchJson(liveApiUrl(aligned), {}, awaitFresh ?
-      {freshMs: 0, awaitFresh: true} : {});
-    if (selectedProduct && (await getLaneContext()).id !== context.id)
-      throw new Error('Channel changed during refresh');
-    return result;
-  }
-
-  async function allChannelJson(path) {
-    return fetchJson(liveApiUrl(path));
-  }
-
-  async function federatedNodeJson(path, fleet) {
-    const nodes = fleet?.nodes?.length ? fleet.nodes :
-      [{id: 'local', label: 'Local', local: true}];
-    const settled = await Promise.allSettled(nodes.map(async node => {
-      const prefix = node.local ? '' :
-        `/api/federation/nodes/${encodeURIComponent(node.id)}`;
-      // A reachable API is not necessarily an observing radar.  Never merge a
-      // stopped node's retained scorecard into a live network headline: doing
-      // so gives old outages the same weight as the current common session.
-      const [status, value] = await Promise.all([
-        fetchJson(liveApiUrl(`${prefix}/api/system/status?summary=1`)),
-        fetchJson(liveApiUrl(`${prefix}${path}`))
-      ]);
-      if (status?.radar !== 'receiving' || status?.processorFresh !== true)
-        throw new Error(`${node.label || node.id} is not receiving fresh radar frames`);
-      return {node, value};
-    }));
-    return settled.filter(result => result.status === 'fulfilled')
-      .map(result => result.value);
-  }
-
   function networkAssociationAggregate(rows, fleet) {
     const channels = [];
     for (const {node, value} of rows) for (const source of array(value?.channels)) {
@@ -178,20 +123,29 @@
       const display = `${channelName} (${node.label})`;
       const exposureCounts = array(source.passes).reduce((totals, pass) => {
         totals.eligible += Number(pass.cpi_exposure?.eligible_cpis) || 0;
+        totals.associationEligible += Number(pass.cpi_exposure?.association_eligible_cpis ??
+          pass.cpi_exposure?.eligible_cpis) || 0;
         totals.detected += Number(pass.cpi_exposure?.detected_cpis) || 0;
         totals.tracked += Number(pass.cpi_exposure?.operationally_tracked_cpis) || 0;
         totals.seconds += Number(pass.cpi_exposure?.eligible_seconds) || 0;
+        totals.associationSeconds += Number(pass.cpi_exposure?.association_eligible_seconds ??
+          pass.cpi_exposure?.eligible_seconds) || 0;
         return totals;
-      }, {eligible: 0, detected: 0, tracked: 0, seconds: 0});
+      }, {eligible: 0, associationEligible: 0, detected: 0, tracked: 0,
+        seconds: 0, associationSeconds: 0});
       const cpiExposure = {...exposureCounts,
-        detection_fraction: exposureCounts.eligible ?
-          exposureCounts.detected / exposureCounts.eligible : null,
-        missed_detection_fraction: exposureCounts.eligible ?
-          (exposureCounts.eligible - exposureCounts.detected) / exposureCounts.eligible : null,
-        operational_track_fraction: exposureCounts.eligible ?
-          exposureCounts.tracked / exposureCounts.eligible : null,
-        operationally_untracked_fraction: exposureCounts.eligible ?
-          (exposureCounts.eligible - exposureCounts.tracked) / exposureCounts.eligible : null};
+        association_eligible_cpis: exposureCounts.associationEligible,
+        association_eligible_seconds: exposureCounts.associationSeconds,
+        detection_fraction: exposureCounts.associationEligible ?
+          exposureCounts.detected / exposureCounts.associationEligible : null,
+        missed_detection_fraction: exposureCounts.associationEligible ?
+          (exposureCounts.associationEligible - exposureCounts.detected) /
+            exposureCounts.associationEligible : null,
+        operational_track_fraction: exposureCounts.associationEligible ?
+          exposureCounts.tracked / exposureCounts.associationEligible : null,
+        operationally_untracked_fraction: exposureCounts.associationEligible ?
+          (exposureCounts.associationEligible - exposureCounts.tracked) /
+            exposureCounts.associationEligible : null};
       channels.push({...source, cpi_exposure: cpiExposure,
         node_id: node.id, node_label: node.label,
         channel_key: `${node.id}:${channelName}`, display_channel: display,
@@ -205,16 +159,21 @@
     const audited = sum(channel => channel.association_statistics?.timing?.audited_aircraft_cpis);
     const exact = sum(channel => channel.association_statistics?.timing?.exact_timed_aircraft_cpis);
     const exposure = {eligible: sum(channel => channel.cpi_exposure?.eligible),
+      associationEligible: sum(channel => channel.cpi_exposure?.associationEligible),
       detected: sum(channel => channel.cpi_exposure?.detected),
       tracked: sum(channel => channel.cpi_exposure?.tracked),
-      seconds: sum(channel => channel.cpi_exposure?.seconds)};
-    exposure.detection_fraction = exposure.eligible ? exposure.detected / exposure.eligible : null;
-    exposure.missed_detection_fraction = exposure.eligible ?
-      (exposure.eligible - exposure.detected) / exposure.eligible : null;
-    exposure.operational_track_fraction = exposure.eligible ?
-      exposure.tracked / exposure.eligible : null;
-    exposure.operationally_untracked_fraction = exposure.eligible ?
-      (exposure.eligible - exposure.tracked) / exposure.eligible : null;
+      seconds: sum(channel => channel.cpi_exposure?.seconds),
+      associationSeconds: sum(channel => channel.cpi_exposure?.associationSeconds)};
+    exposure.association_eligible_cpis = exposure.associationEligible;
+    exposure.association_eligible_seconds = exposure.associationSeconds;
+    exposure.detection_fraction = exposure.associationEligible ?
+      exposure.detected / exposure.associationEligible : null;
+    exposure.missed_detection_fraction = exposure.associationEligible ?
+      (exposure.associationEligible - exposure.detected) / exposure.associationEligible : null;
+    exposure.operational_track_fraction = exposure.associationEligible ?
+      exposure.tracked / exposure.associationEligible : null;
+    exposure.operationally_untracked_fraction = exposure.associationEligible ?
+      (exposure.associationEligible - exposure.tracked) / exposure.associationEligible : null;
     const groups = [];
     const mergeBands = (target, source) => {
       for (const [name, band] of Object.entries(source || {})) {
@@ -359,11 +318,6 @@
         track_population: population, unique_aircraft_passes: unique}};
   }
 
-  async function getConfig() {
-    const config = await getRadarRuntimeConfig();
-    return laneScope() === 'selected' ? laneConfig(config) : config;
-  }
-
   function selectedLaneLabel() {
     return window.vectorwarpIlluminatorContext?.id || 'radar';
   }
@@ -397,11 +351,6 @@
     return sampleRate && sampleRate > 0 ? 299792458 / sampleRate / 1000 : null;
   }
 
-  function frequencyLabel(config) {
-    const frequency = finite(config?.capture?.fc);
-    return frequency === null ? 'Frequency unavailable' : `${number(frequency / 1e6, 3)} MHz`;
-  }
-
   function card(value, label, tone = '') {
     return `<article class="metric-card ${tone}"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></article>`;
   }
@@ -423,6 +372,20 @@
     }
     const template = document.createElement('template');
     template.innerHTML = markup;
+    const patchChildren = (current, next) => {
+      const oldChildren = Array.from(current.childNodes);
+      const newChildren = Array.from(next.childNodes);
+      for (let index = 0; index < newChildren.length; index++) {
+        const oldChild = oldChildren[index];
+        if (!oldChild) current.appendChild(newChildren[index].cloneNode(true));
+        else {
+          const patched = patchNode(oldChild, newChildren[index]);
+          if (patched !== oldChild) current.replaceChild(patched, oldChild);
+        }
+      }
+      while (current.childNodes.length > newChildren.length)
+        current.removeChild(current.lastChild);
+    };
     const patchNode = (current, next) => {
       if (current.nodeType !== next.nodeType ||
           (current.nodeType === 1 && current.tagName !== next.tagName))
@@ -445,32 +408,10 @@
         if (current.getAttribute(attribute.name) !== attribute.value)
           current.setAttribute(attribute.name, attribute.value);
       }
-      const oldChildren = Array.from(current.childNodes);
-      const newChildren = Array.from(next.childNodes);
-      for (let index = 0; index < newChildren.length; index++) {
-        const oldChild = oldChildren[index];
-        if (!oldChild) current.appendChild(newChildren[index].cloneNode(true));
-        else {
-          const patched = patchNode(oldChild, newChildren[index]);
-          if (patched !== oldChild) current.replaceChild(patched, oldChild);
-        }
-      }
-      while (current.childNodes.length > newChildren.length)
-        current.removeChild(current.lastChild);
+      patchChildren(current, next);
       return current;
     };
-    const oldChildren = Array.from(target.childNodes);
-    const newChildren = Array.from(template.content.childNodes);
-    for (let index = 0; index < newChildren.length; index++) {
-      const oldChild = oldChildren[index];
-      if (!oldChild) target.appendChild(newChildren[index].cloneNode(true));
-      else {
-        const patched = patchNode(oldChild, newChildren[index]);
-        if (patched !== oldChild) target.replaceChild(patched, oldChild);
-      }
-    }
-    while (target.childNodes.length > newChildren.length)
-      target.removeChild(target.lastChild);
+    patchChildren(target, template.content);
   }
 
   function renderDetail(markup) {
@@ -507,7 +448,7 @@
 
   function setupLocationMapScaffold() {
     if (root.dataset.ready) return;
-    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><div class="location-map-drawers"><details class="location-map-sidebar location-map-controls"><summary aria-label="Map controls"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.38.35.72.64 1 .3.27.68.41 1.08.4H21v4h-.1a1.7 1.7 0 0 0-1.5.6Z"></path></svg></span><span class="map-sidebar-title">Options</span><span class="map-sidebar-selected">Map layers</span></summary><div class="location-map-sidebar-body"><div class="map-controls-body"><label class="map-coverage-filter"><span>Background</span><select id="map-background-mode" title="Local aerial imagery uses installed offline packs."><option value="aerial">Aerial imagery + roads</option><option value="street">Street map + terrain</option></select></label><label class="map-coverage-filter"><span>Radar ellipses</span><select id="radar-map-overlay-mode" title="Display only; radar association continues when ellipses are hidden."><option value="off">Hidden</option><option value="all">Show confirmed tracks</option></select></label><label class="map-coverage-filter"><span>ADS-B aircraft</span><select id="adsb-map-filter-mode" title="Map display filter; ingestion and statistics are unchanged."><option value="all">Show all</option><option value="range">All within selected range</option><option value="radar">All within observed radar range</option><option value="tracked">Only radar-tracked</option></select></label><label class="map-coverage-filter map-adsb-range"><span>Maximum range</span><span class="map-range-input"><input id="adsb-map-range-km" type="number" min="1" max="1000" step="1" inputmode="decimal"><span>km</span></span><small>Receiver-to-aircraft ground range.</small></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map" title="Confirmed track sectors; gaps mean no evidence."><span><strong>24 h observed radar reach</strong></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft" title="Keep the current radar-associated aircraft selected."><span><strong>Auto-select radar matches</strong></span></label><label class="map-auto-select"><input type="checkbox" id="show-fusion-envelopes"><span><strong>Diagnostic position envelopes</strong></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div><div class="insight-stats" id="view-summary"></div><div id="view-detail"></div></div></details><details class="location-map-sidebar location-aircraft-sidebar"><summary aria-label="Aircraft details"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 14v-2l8-3V3c0-1.1.9-2 2-2s2 .9 2 2v6l8 3v2l-8-1v5l3 2v2l-5-1-5 1v-2l3-2v-5l-8 1Z"></path></svg></span><span class="map-sidebar-title">Aircraft</span><span class="map-sidebar-selected" id="map-sidebar-selected">Select a plane</span></summary><div class="location-map-sidebar-body"><div id="selected-aircraft-detail" aria-live="polite"></div></div></details></div></div></section>`;
+    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><div class="location-map-drawers"><details class="location-map-sidebar location-map-controls"><summary aria-label="Map controls"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.38.35.72.64 1 .3.27.68.41 1.08.4H21v4h-.1a1.7 1.7 0 0 0-1.5.6Z"></path></svg></span><span class="map-sidebar-title">Options</span><span class="map-sidebar-selected">Map layers</span></summary><div class="location-map-sidebar-body"><div class="map-controls-body"><label class="map-coverage-filter"><span>Background</span><select id="map-background-mode" title="Local aerial imagery uses installed offline packs."><option value="aerial">Aerial imagery + roads</option><option value="street">Street map + terrain</option></select></label><label class="map-coverage-filter"><span>Radar ellipses</span><select id="radar-map-overlay-mode" title="Display only; radar association continues when ellipses are hidden."><option value="off">Hidden</option><option value="all">Show confirmed tracks</option></select></label><label class="map-coverage-filter"><span>ADS-B aircraft</span><select id="adsb-map-filter-mode" title="Map display filter; ingestion and statistics are unchanged."><option value="all">All aircraft</option><option value="tracked">Radar tracked</option><option value="none">None</option></select></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map" title="Confirmed track sectors; gaps mean no evidence."><span><strong>24 h observed radar reach</strong></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft" title="Keep the current radar-associated aircraft selected."><span><strong>Auto-select radar matches</strong></span></label><label class="map-auto-select"><input type="checkbox" id="show-fusion-envelopes"><span><strong>Diagnostic position envelopes</strong></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div><div class="insight-stats" id="view-summary"></div><div id="view-detail"></div></div></details><details class="location-map-sidebar location-aircraft-sidebar"><summary aria-label="Aircraft details"><span class="map-sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 14v-2l8-3V3c0-1.1.9-2 2-2s2 .9 2 2v6l8 3v2l-8-1v5l3 2v2l-5-1-5 1v-2l3-2v-5l-8 1Z"></path></svg></span><span class="map-sidebar-title">Aircraft</span><span class="map-sidebar-selected" id="map-sidebar-selected">Select a plane</span></summary><div class="location-map-sidebar-body"><div id="selected-aircraft-detail" aria-live="polite"></div></div></details></div></div></section>`;
     root.dataset.ready = 'true';
     const controlsDrawer = root.querySelector?.('.location-map-controls');
     const aircraftDrawer = root.querySelector?.('.location-aircraft-sidebar');
@@ -520,8 +461,6 @@
     }));
     const radarOverlayMode = document.getElementById('radar-map-overlay-mode');
     const adsbFilterMode = document.getElementById('adsb-map-filter-mode');
-    if (adsbFilterMode) adsbFilterMode.innerHTML = '<option value="all">All aircraft</option><option value="tracked">Radar tracked</option><option value="none">None</option>';
-    root.querySelector?.('.map-adsb-range')?.remove();
     const backgroundMode = document.getElementById('map-background-mode');
     const showCoverage = document.getElementById('show-radar-coverage-on-map');
     const showEnvelopes = document.getElementById('show-fusion-envelopes');
@@ -580,7 +519,6 @@
     });
     coverageAltitude?.addEventListener?.('change', () => {
       radarCoverageAltitudeBand = coverageAltitude.value || 'all';
-      radarCoverageCache = null;
       try { localStorage.setItem('vectorwarp-radar-coverage-altitude', radarCoverageAltitudeBand); }
       catch (_) { /* Persistence is optional. */ }
       renderLocations().catch(error => { window.blah2ViewLastError = error?.message || String(error); });
@@ -807,7 +745,6 @@
   let showRadarCoverageOnMap = true;
   let showFusionEnvelopes = new URLSearchParams(window.location.search).get('fusion_diagnostics') === '1';
   let radarCoverageAltitudeBand = 'all';
-  let radarCoverageCache = null;
   let mapBackgroundMode = 'aerial';
   try { autoSelectRadarAircraft = localStorage.getItem('vectorwarp-auto-select-radar-aircraft') === 'true'; }
   catch (_) { /* Persistence is optional. */ }
@@ -862,22 +799,6 @@
   const aircraftPhotoQueue = [];
   const queuedAircraftPhotos = new Set();
   let aircraftPhotoPumpActive = false;
-
-  async function radarCoverage() {
-    if (!showRadarCoverageOnMap) return null;
-    const key = radarCoverageAltitudeBand;
-    const now = Date.now();
-    if (radarCoverageCache?.key === key && now - radarCoverageCache.at < 30000)
-      return radarCoverageCache.value;
-    if (radarCoverageCache?.key === key && radarCoverageCache.promise)
-      return radarCoverageCache.promise;
-    const entry = {key, at: now, value: radarCoverageCache?.key === key ? radarCoverageCache.value : null};
-    entry.promise = apiJson(`/api/radar/coverage?hours=24&bins=72&altitude=${encodeURIComponent(key)}`)
-      .then(value => { entry.value = value; entry.at = Date.now(); return value; })
-      .finally(() => { entry.promise = null; });
-    radarCoverageCache = entry;
-    return entry.promise;
-  }
 
   function aircraftValue(value, suffix = '') {
     return value === null || value === undefined || value === '' ? '—' : `${escapeHtml(value)}${suffix}`;
@@ -994,10 +915,6 @@
     });
   }
 
-  const radarCoverageSourceId = 'vectorwarp-radar-coverage';
-  const radarCoverageFillLayerId = 'vectorwarp-radar-coverage-fill';
-  const radarCoverageLineLayerId = 'vectorwarp-radar-coverage-line';
-  const bearingOverlaySourceId = 'vectorwarp-bearing-overlays';
 
   function locationMapStyle(imageryManifest = {}) {
     const sources = {
@@ -1089,196 +1006,14 @@
     });
   }
 
-  async function ensureLocationMap(viewport) {
-    const graph = document.getElementById('data');
-    if (graph?._vectorwarpMap) return graph._vectorwarpMap;
-    const maplibre = await (window.vectorwarpMapLibreReady || Promise.resolve(window.maplibregl));
-    if (!maplibre?.Map) throw new Error('Map renderer could not load');
-    let imageryManifest = {};
-    try { imageryManifest = await apiJson('/api/map/imagery'); } catch (_) {}
-    let savedCamera = null;
-    try {
-      const candidate = JSON.parse(localStorage.getItem('vectorwarp-map-camera-v1') || 'null');
-      if (candidate?.key === viewport.key && Array.isArray(candidate.center) &&
-          candidate.center.length === 2 && candidate.center.every(Number.isFinite)) savedCamera = candidate;
-    } catch (_) { /* Camera persistence is optional. */ }
-    const map = new maplibre.Map({
-      container: graph,
-      style: locationMapStyle(imageryManifest),
-      center: savedCamera?.center || [viewport.center.lon, viewport.center.lat],
-      zoom: Number.isFinite(savedCamera?.zoom) ? savedCamera.zoom : viewport.zoom,
-      pitch: Number.isFinite(savedCamera?.pitch) ? savedCamera.pitch : 0,
-      bearing: Number.isFinite(savedCamera?.bearing) ? savedCamera.bearing : 0,
-      minPitch: 0,
-      maxPitch: 85,
-      attributionControl: true,
-      cooperativeGestures: false,
-      renderWorldCopies: false,
-      dragRotate: true,
-      touchPitch: true,
-      // Keep several neighboring zoom rings resident so turning the camera
-      // reuses tiles instead of unloading and fetching the same view again.
-      // The explicit cap remains suitable for mobile memory budgets.
-      maxTileCacheZoomLevels: 8,
-      maxTileCacheSize: 192,
-      fadeDuration: 220
-    });
-    graph._vectorwarpMap = map;
-    map.on('moveend', () => {
-      try {
-        const center = map.getCenter();
-        localStorage.setItem('vectorwarp-map-camera-v1', JSON.stringify({key: viewport.key,
-          center: [center.lng, center.lat], zoom: map.getZoom(), pitch: map.getPitch(),
-          bearing: map.getBearing(), at: Date.now()}));
-      } catch (_) { /* Camera persistence is optional. */ }
-    });
-    graph.dataset.mapRenderer = 'maplibre-terrain';
-    if (maplibre.NavigationControl && map.addControl) {
-      const compass = new maplibre.NavigationControl({
-        showCompass: true, showZoom: false, visualizePitch: true
-      });
-      map.addControl(compass, 'top-left');
-      graph.dataset.mapCompass = 'bearing-and-pitch';
-    }
-    await new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error('Map renderer timed out')), 15000);
-      map.once('load', () => { window.clearTimeout(timeout); resolve(); });
-      map.once('error', event => {
-        // A missing terrain tile must not prevent the base map and live radar
-        // overlays from loading. Only fail before the style itself exists.
-        if (!map.isStyleLoaded?.() && !map.getStyle?.()) {
-          window.clearTimeout(timeout);
-          reject(event?.error || new Error('Map renderer failed'));
-        }
-      });
-    });
-    syncMapBackground(map);
-    return map;
-  }
+  const ensureLocationMap = viewport => ensureRadarDisplayMap(
+    'geographic', document.getElementById('data'), viewport, locationMapStyle, syncMapBackground);
 
-  function bearingOverlayGeoJson(rows) {
-    const features = [];
-    for (const item of rows) {
-      const properties = {track: String(item.id ?? ''),
-        uncertainty: finite(item.uncertainty_deg), state: String(item.state || '')};
-      const corridor = array(item.uncertainty_corridor).map(point =>
-        [finite(point.longitude), finite(point.latitude)]).filter(point => point.every(Number.isFinite));
-      if (corridor.length > 1) features.push({type: 'Feature',
-        properties: {...properties, kind: 'corridor'},
-        geometry: {type: 'LineString', coordinates: corridor}});
-      const resolved = item.location && [finite(item.location.longitude), finite(item.location.latitude)];
-      if (resolved && resolved.every(Number.isFinite)) features.push({type: 'Feature',
-        properties: {...properties, kind: 'resolved'}, geometry: {type: 'Point', coordinates: resolved}});
-      const estimate = !item.location && item.estimate &&
-        [finite(item.estimate.longitude), finite(item.estimate.latitude)];
-      if (estimate && estimate.every(Number.isFinite)) features.push({type: 'Feature',
-        properties: {...properties, kind: 'estimate'}, geometry: {type: 'Point', coordinates: estimate}});
-      if (!item.location) for (const candidate of array(item.candidates)) {
-        const coordinates = [finite(candidate.longitude), finite(candidate.latitude)];
-        if (coordinates.every(Number.isFinite)) features.push({type: 'Feature',
-          properties: {...properties, kind: 'candidate'}, geometry: {type: 'Point', coordinates}});
-      }
-    }
-    return {type: 'FeatureCollection', features};
-  }
-
-  function syncBearingOverlayLayers(map, rows) {
-    if (!map?.addSource || !map?.getSource || !map?.addLayer || !map?.getLayer) return;
-    const data = bearingOverlayGeoJson(rows);
-    const source = map.getSource(bearingOverlaySourceId);
-    if (source?.setData) source.setData(data);
-    else map.addSource(bearingOverlaySourceId, {type: 'geojson', data});
-    const activeSource = map.getSource(bearingOverlaySourceId);
-    if (activeSource) activeSource._vectorwarpData = data;
-    const add = layer => { if (!map.getLayer(layer.id)) map.addLayer(layer); };
-    add({id: 'vectorwarp-bearing-corridors', type: 'line', source: bearingOverlaySourceId,
-      filter: ['==', ['get', 'kind'], 'corridor'],
-      paint: {'line-color': '#f7c75f', 'line-opacity': .72, 'line-width': 6}});
-    add({id: 'vectorwarp-bearing-resolved', type: 'circle', source: bearingOverlaySourceId,
-      filter: ['==', ['get', 'kind'], 'resolved'],
-      paint: {'circle-radius': 7, 'circle-color': '#f7c75f', 'circle-opacity': .95,
-        'circle-stroke-color': '#211812', 'circle-stroke-width': 2}});
-    add({id: 'vectorwarp-bearing-estimates', type: 'circle', source: bearingOverlaySourceId,
-      filter: ['==', ['get', 'kind'], 'estimate'],
-      paint: {'circle-radius': 6, 'circle-color': '#b99cff', 'circle-opacity': .58}});
-    add({id: 'vectorwarp-bearing-candidates', type: 'circle', source: bearingOverlaySourceId,
-      filter: ['==', ['get', 'kind'], 'candidate'],
-      paint: {'circle-radius': 5, 'circle-color': '#f7c75f', 'circle-opacity': .55}});
-  }
-
-  function syncFusionEnvelopeLayers(map, data) {
-    if (!map?.addSource || !map?.getSource || !map?.addLayer || !map?.getLayer) return;
-    const sourceId = 'vectorwarp-fusion-envelopes';
-    const source = map.getSource(sourceId);
-    if (source?.setData) source.setData(data);
-    else map.addSource(sourceId, {type:'geojson',data});
-    const active = map.getSource(sourceId);
-    if (active) active._vectorwarpData = data;
-    if (!map.getLayer('vectorwarp-fusion-envelope-fill')) map.addLayer({
-      id:'vectorwarp-fusion-envelope-fill',type:'fill',source:sourceId,
-      paint:{'fill-color':'#b6aca6','fill-opacity':.08}});
-    if (!map.getLayer('vectorwarp-fusion-envelope-outline')) map.addLayer({
-      id:'vectorwarp-fusion-envelope-outline',type:'line',source:sourceId,
-      paint:{'line-color':'#b6aca6','line-width':2,'line-dasharray':[3,2]}});
-  }
-
-  function radarCoverageGeoJson(coverage, receiver) {
-    const rows = Array.isArray(coverage?.points) ? coverage.points.map(point => ({
-      bin: Number(point.bin),
-      coordinate: [Number(point.longitude), Number(point.latitude)]
-    })).filter(row => Number.isInteger(row.bin) && row.coordinate.every(Number.isFinite))
-      .sort((left, right) => left.bin - right.bin) : [];
-    const runs = [];
-    for (const row of rows) {
-      const run = runs.at(-1);
-      if (run && row.bin === run.at(-1).bin + 1) run.push(row);
-      else runs.push([row]);
-    }
-    const binCount = Math.max(1, Number(coverage?.bins) || 72);
-    if (runs.length > 1 && runs[0][0]?.bin === 0 &&
-        runs.at(-1).at(-1)?.bin === binCount - 1) {
-      const wrapped = runs.pop().concat(runs.shift());
-      runs.unshift(wrapped);
-    }
-    const origin = [Number(receiver?.longitude), Number(receiver?.latitude)];
-    if (!origin.every(Number.isFinite)) return {type: 'FeatureCollection', features: []};
-    return {type: 'FeatureCollection', features: runs.map((run, index) => {
-      const points = run.map(row => row.coordinate);
-      return points.length > 1 ? {
-        type: 'Feature', id: `sector-${index}`, properties: {},
-        geometry: {type: 'Polygon', coordinates: [[origin, ...points, origin]]}
-      } : {
-        type: 'Feature', id: `radial-${index}`, properties: {},
-        geometry: {type: 'LineString', coordinates: [origin, ...points]}
-      };
-    })};
-  }
-
-  function syncRadarCoverageLayer(map, coverage, receiver) {
-    if (!map?.addSource || !map?.getSource || !map?.addLayer || !map?.getLayer) return false;
-    const data = radarCoverageGeoJson(coverage, receiver);
-    try {
-      const source = map.getSource(radarCoverageSourceId);
-      if (source?.setData) source.setData(data);
-      else map.addSource(radarCoverageSourceId, {type: 'geojson', data});
-      const activeSource = map.getSource(radarCoverageSourceId);
-      if (activeSource) activeSource._vectorwarpData = data;
-      if (!map.getLayer(radarCoverageFillLayerId)) map.addLayer({
-        id: radarCoverageFillLayerId, type: 'fill', source: radarCoverageSourceId,
-        filter: ['==', '$type', 'Polygon'],
-        paint: {'fill-color': '#20dddc', 'fill-opacity': .09}
-      });
-      if (!map.getLayer(radarCoverageLineLayerId)) map.addLayer({
-        id: radarCoverageLineLayerId, type: 'line', source: radarCoverageSourceId,
-        paint: {'line-color': '#20dddc', 'line-opacity': .92, 'line-width': 3}
-      });
-      return true;
-    } catch (_) {
-      // Older geographic renderers may not expose style mutation. Retain the
-      // screen-space SVG path below as a compatibility fallback.
-      return false;
-    }
-  }
+  const locationMapLayers = view === 'locations' ? (() => {
+    const factory = window.VectorWarpLocationMapLayers?.createMapLayers;
+    if (typeof factory !== 'function') throw new Error('Location map layers could not load');
+    return factory({finite, array});
+  })() : null;
 
   function renderAircraftOverlays(aircraft, sites = [], radarTracks = [], coverage = null) {
     const schedule = window.requestAnimationFrame || (callback => callback());
@@ -1351,7 +1086,7 @@
       // Keep the 24-hour boundary in geographic coordinates. Mapbox can then
       // transform one stable GPU layer during pan, pitch and pinch zoom rather
       // than making Mobile Safari repeatedly composite a changing SVG path.
-      layer._coverageUsesMapLayer = syncRadarCoverageLayer(map, coverage, sites[0]);
+      layer._coverageUsesMapLayer = locationMapLayers.syncRadarCoverageLayer(map, coverage, sites[0]);
       const seenRadarTracks = new Set();
       for (const track of radarTracks) {
         const id = String(track.id);
@@ -1512,22 +1247,9 @@
         };
         if (refreshGeometry) {
         layer._lastGeometryUpdate = updateNow;
-        const coverageRows = Array.isArray(layer._radarCoverage?.points) ?
-          layer._radarCoverage.points.map(point => ({bin: Number(point.bin),
-            point: map.project([point.longitude, point.latitude])}))
-            .filter(row => Number.isInteger(row.bin)).sort((left, right) => left.bin - right.bin) : [];
-        const coverageRuns = [];
-        for (const row of coverageRows) {
-          const run = coverageRuns.at(-1);
-          if (run && row.bin === run.at(-1).bin + 1) run.push(row);
-          else coverageRuns.push([row]);
-        }
-        const binCount = Math.max(1, Number(layer._radarCoverage?.bins) || 72);
-        if (coverageRuns.length > 1 && coverageRuns[0][0]?.bin === 0 &&
-            coverageRuns.at(-1).at(-1)?.bin === binCount - 1) {
-          const wrapped = coverageRuns.pop().concat(coverageRuns.shift());
-          coverageRuns.unshift(wrapped);
-        }
+        const coverageRuns = locationMapLayers.contiguousCoverageRuns(layer._radarCoverage,
+          point => map.project([point.longitude, point.latitude]),
+          () => true);
         const receiverPoint = sites[0] ? map.project([sites[0].longitude, sites[0].latitude]) : null;
         // Never close or smooth across unsupported bearings. Each contiguous
         // run becomes its own observed sector; an isolated bin is an honest
@@ -1673,18 +1395,10 @@
 
   async function renderLocations() {
     setupLocationMapScaffold();
-    const [config, tracker, coverage, laneContext, fused] = await Promise.all([
-      getConfig(), apiJson('/api/tracker', {awaitFresh: true}),
-      radarCoverage().catch(() => radarCoverageCache?.value || null), getLaneContext(),
-      apiJson('/api/tracker/fused', {awaitFresh: true}).catch(() => null)
-    ]);
-    // Anchor every selected-channel overlay to the tracker frame. Without an
-    // exact lane timestamp, the geographic map can compare one channel's
-    // tracks with ADS-B geometry from an adjacent/global presentation frame.
-    const frameTimestamp = Number.isSafeInteger(Number(tracker?.timestamp)) ?
-      Number(tracker.timestamp) : null;
-    const detection = await apiJson(atRadarFrame('/api/detection', frameTimestamp),
-      {awaitFresh: true});
+    const {config, tracker, coverage, laneContext, fused, frameTimestamp, detection} =
+      await readRadarDisplayBundle('geographic', {
+        coverage: showRadarCoverageOnMap, altitude: radarCoverageAltitudeBand
+      });
     const receiver = config?.location?.rx || {};
     const transmitter = config?.location?.tx || {};
     if ([receiver.latitude, receiver.longitude, transmitter.latitude, transmitter.longitude]
@@ -1722,35 +1436,7 @@
     const remoteIdEnabled = config?.truth?.remote_id?.enabled === true;
     if (adsbEnabled || remoteIdEnabled) {
       try {
-        const loadTruth = async (base, enabled) => {
-          if (!enabled) return [];
-          const laneGeometryAvailable = base === '/api/adsb' ||
-            !window.vectorwarpIlluminatorContext?.enabled;
-          const [feed, geometry] = await Promise.all([
-            apiJson(atRadarFrame(base, frameTimestamp), {awaitFresh: true}),
-            laneGeometryAvailable ?
-              apiJson(atRadarFrame(`${base}/delay-doppler?overlay=1`, frameTimestamp),
-                {awaitFresh: true}) : {}
-          ]);
-          const rows = feed?.disabledForReplay ? [] : array(feed?.aircraft).filter(item =>
-            finite(item.lat) !== null && finite(item.lon) !== null && (finite(item.seen_pos) ?? 0) < 120);
-          const byId = new Map(Object.entries(geometry || {}).map(([id, item]) =>
-            [String(item?.hex || id || '').toUpperCase(), item]));
-          return rows.map(item => {
-            const geometryRow = byId.get(String(item.hex || '').toUpperCase()) || null;
-            return {...item, ...(geometryRow || {}),
-              _lane_geometry_current: finite(geometryRow?.delay) !== null &&
-                finite(geometryRow?.doppler) !== null};
-          });
-        };
-        const results = await Promise.allSettled([
-          loadTruth('/api/adsb', adsbEnabled), loadTruth('/api/remote-id', remoteIdEnabled)
-        ]);
-        aircraft = results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
-        const failed = results.filter((result, index) =>
-          [adsbEnabled, remoteIdEnabled][index] && result.status === 'rejected');
-        if (!aircraft.length && failed.length) throw failed[0].reason;
-        if (failed.length) aircraftError = 'Some aircraft sources are temporarily unavailable';
+        ({aircraft, aircraftError} = await readRadarDisplayTruth(config, frameTimestamp));
         aircraft = stabilizeAircraftSnapshots(aircraft, {
           scope: `map:${laneContext.enabled ? laneContext.id : 'single'}`, graceMs: 10000
         }).map(item => {
@@ -1878,8 +1564,8 @@
     renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(independentPositions.length, 'Independent radar positions')}${showFusionEnvelopes ? card(fusionEnvelopes.features.length, 'Diagnostic envelopes') : ''}${card(mapAircraft.length, 'Aircraft shown')}${remoteIdEnabled ? card(remoteIdCount, 'Remote ID drones') : ''}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, laneContext.enabled ? `${laneContext.id} coverage passes` : 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
     renderDetail('');
     const map = await ensureLocationMap(locationMapViewport);
-    syncBearingOverlayLayers(map, bearingRows);
-    syncFusionEnvelopeLayers(map, fusionEnvelopes);
+    locationMapLayers.syncBearingOverlayLayers(map, bearingRows);
+    locationMapLayers.syncFusionEnvelopeLayers(map, fusionEnvelopes);
     renderSelectedAircraftCard(mapAircraft);
     renderAircraftOverlays(mapAircraft, [
       {...receiver, kind: 'receiver', name: receiver.name || 'Receiver'},
@@ -2408,16 +2094,18 @@
       return;
     }
     if (document.body.classList?.contains('distance-view')) {
-      const selectedPasses = {eligible_adsb_passes:lifetime.eligible_passes,
+      const associationEligible = lifetime.association_eligible_passes ??
+        lifetime.eligible_passes;
+      const selectedPasses = {eligible_adsb_passes:associationEligible,
         detection:{associated_passes:lifetime.detected_passes, yield:lifetime.detection_yield},
         tracking:{associated_passes:lifetime.tracked_passes, yield:lifetime.tracking_yield}};
       const selectedChannel = {identity:{illuminator:context.enabled ? context.id : 'Primary channel'},
         node_label:fleet?.nodes?.find(node => node.local)?.label || 'Local',
         cpi_exposure:lifetime.cpi_exposure || {}};
       renderHtml(root, `<div class="statistics-page"><section class="statistics-section statistics-channel-overview"><header><h2>Selected channel aircraft-pass results · ${escapeHtml(timingLabel)}</h2></header><div class="insight-stats insight-stats-four statistics-distance-hero">
-        <article class="metric-card statistics-hero-eligible"><strong>${integer(lifetime.eligible_passes)}</strong><span>All-time eligible passes</span></article>
-        <article class="metric-card good statistics-hero-detected"><strong>${percent(lifetime.detection_yield, 1)}</strong><span>Detected eligible passes</span><small>${integer(lifetime.detected_passes)} / ${integer(lifetime.eligible_passes)} passes</small></article>
-        <article class="metric-card good statistics-hero-tracked"><strong>${percent(lifetime.tracking_yield, 1)}</strong><span>Tracked eligible passes</span><small>${integer(lifetime.tracked_passes)} / ${integer(lifetime.eligible_passes)} passes</small></article>
+        <article class="metric-card statistics-hero-eligible"><strong>${integer(associationEligible)}</strong><span>Comparable aircraft passes</span></article>
+        <article class="metric-card good statistics-hero-detected"><strong>${percent(lifetime.detection_yield, 1)}</strong><span>Detected comparable passes</span><small>${integer(lifetime.detected_passes)} / ${integer(associationEligible)} passes</small></article>
+        <article class="metric-card good statistics-hero-tracked"><strong>${percent(lifetime.tracking_yield, 1)}</strong><span>Tracked comparable passes</span><small>${integer(lifetime.tracked_passes)} / ${integer(associationEligible)} passes</small></article>
       </div>${kioskCpiVisuals(lifetime.cpi_exposure, [selectedChannel], selectedPasses, true)}</section></div>`);
       const laneState = context.enabled ? `${context.id} · ` : '';
       setState(statistics.error ? `${laneState}Collection warning · ${statistics.error}` :
@@ -2485,112 +2173,48 @@
     statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
   }
 
-  function bearingEngineeringDiagnostics(bearingDiagnostic) {
-    if (!bearingDiagnostic) return `<section class="info-card"><h2>Array engineering diagnostics</h2><p class="view-note">Known-angle and wiring evidence is not available from this receiver.</p></section>`;
-    const reference = bearingDiagnostic.known_angle_reference;
-    const referenceMarkup = !reference ? '' : reference.available ?
-      `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
-        <div><dt>RF source</dt><dd>${escapeHtml(reference.source?.name || 'Configured transmitter')} · ${number(reference.source?.bearing_deg_true, 3)}° true</dd></div>
-        <div><dt>Configured fit</dt><dd>Heading ${number(reference.configured?.heading_deg_true, 1)}° · phase error ${number(reference.configured?.median_phase_error_deg, 1)}° median / ${number(reference.configured?.p95_phase_error_deg, 1)}° p95</dd></div>
-        <div><dt>Best mapping at configured heading</dt><dd>${escapeHtml(array(reference.best_mapping_at_configured_heading?.mapping).join(' → ') || 'Unavailable')} · phase error ${number(reference.best_mapping_at_configured_heading?.median_phase_error_deg, 1)}°</dd></div>
-        <div><dt>Fitted phase axis</dt><dd>${number(reference.heading_with_configured_mapping?.heading_deg_true, 0)}° true (${number(reference.heading_with_configured_mapping?.signed_correction_deg, 0)}° model offset) · phase error ${number(reference.heading_with_configured_mapping?.median_phase_error_deg, 1)}°</dd></div>
-        <div><dt>RF evidence</dt><dd>${integer(reference.quality?.updates)} updates · coherence ${number(reference.quality?.coherent_fraction_median, 3)} median · amplitude span ${number(reference.quality?.amplitude_span_db_median, 1)} dB median</dd></div>
-      </dl>${reference.quality?.reliable === false ? '<p class="view-note">This source is excluded from multi-reference calibration by the RF quality gate.</p>' : ''}<p class="view-note">${escapeHtml(reference.limitation)}</p></section>` :
-      `<section class="info-card"><h2>Known-angle reference</h2><p class="view-note">${escapeHtml(reference.reason)}</p></section>`;
-    const wiringMarkup = bearingDiagnostic.available ?
-      `<section class="info-card"><h2>Bearing wiring diagnostic · shadow only</h2><dl>
-        <div><dt>Evidence</dt><dd>${integer(bearingDiagnostic.samples)} samples · ${integer(bearingDiagnostic.aircraft)} aircraft · ${integer(bearingDiagnostic.sectors)}/8 sectors</dd></div>
-        <div><dt>Active mapping</dt><dd>${escapeHtml(array(bearingDiagnostic.active?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.active?.median_error_deg, 1)}°</dd></div>
-        <div><dt>Best replay</dt><dd>${escapeHtml(array(bearingDiagnostic.best?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.best?.median_error_deg, 1)}°</dd></div>
-        <div><dt>Heading-only correction</dt><dd>${number(bearingDiagnostic.global_heading_bias?.signed_correction_deg, 0)}° · median error ${number(bearingDiagnostic.global_heading_bias?.median_error_deg, 1)}°</dd></div>
-        <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
-      </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
-      `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p class="view-note">${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    return `<details class="statistics-details calibration-engineering"><summary>Array engineering diagnostics</summary><div class="statistics-grid">${wiringMarkup}${referenceMarkup}</div></details>`;
-  }
-
   async function renderCalibration() {
-    setupPlotScaffold('insight-content-wide');
-    const config = await getConfig();
-    const campaign = await apiJson('/api/array-calibration/status');
-    let bearingDiagnostic = null;
-    try { bearingDiagnostic = await apiJson('/api/bearing/diagnostic'); }
-    catch (_) { /* Optional on receivers without bearing support. */ }
-    const bearingCampaign = campaign?.bearing || {};
-    const progress = bearingCampaign.progress || {};
-    const automation = bearingCampaign.automation || {};
-    const recorder = campaign?.corpus || {};
-    const reference = campaign?.reference || {};
-    const detectionCampaign = campaign?.detection || {};
-    const detectionProgress = detectionCampaign.progress || {};
-    const detectionAutomation = detectionCampaign.automation || {};
-    const sectors = array(progress.sectors);
-    const requirements = array(progress.requirements);
-    const completion = finite(progress.evidence_completion_fraction) ?? 0;
-    const bearingConfigured = config?.process?.bearing?.enable === true;
-    const recorderConfigured = config?.process?.bearing?.manifold_recorder?.enabled === true;
-    const retainedEvidence = (finite(progress.samples) ?? 0) > 0 ||
-      (finite(progress.independent_passes) ?? 0) > 0 || Boolean(bearingCampaign.active_model) ||
-      automation.qualified === true;
-    const campaignAvailable = bearingConfigured || recorderConfigured || retainedEvidence;
-    if (!campaignAvailable) {
-      renderHtml(document.getElementById('view-summary'),
-        `${card('Unavailable', 'Array calibration')}` +
-        `${card('Disabled', 'Bearing output')}` +
-        `${card('Disabled', 'Shared array recorder')}`);
-    } else renderHtml(document.getElementById('view-summary'),
-        `${card(percent(completion, 0), 'Collection gate progress', progress.collection_ready ? 'good' : 'warning')}` +
-        `${card(integer(progress.independent_passes), 'Independent passes')}` +
-        `${card(integer(progress.unique_aircraft), 'Unique aircraft')}` +
-        `${card(`${integer(progress.covered_sectors)}/${integer(progress.required_covered_sectors)}`, 'Covered sectors')}`);
-    const requirementRows = requirements.map(item => `<tr><td>${escapeHtml(item.label)}</td><td>${item.comparison === 'at_most' ? `≤ ${number(item.required, 1)}` : integer(item.required)}</td><td>${item.comparison === 'at_most' ? number(item.current, 1) : integer(item.current)}</td><td><span class="state-pill ${item.complete ? 'active' : 'coasting'}">${item.complete ? 'Ready' : 'Collecting'}</span></td></tr>`);
-    const sectorRows = sectors.map(item => `<tr><td>${integer(item.from_deg)}–${integer(item.to_deg)}°</td><td>${integer(item.samples)}</td><td>${integer(item.passes)}</td><td>${integer(item.aircraft)}</td><td><span class="state-pill ${item.ready ? 'active' : 'coasting'}">${item.ready ? 'Covered' : `${integer(item.passes_needed)} passes / ${integer(item.aircraft_needed)} aircraft needed`}</span></td></tr>`);
-    const blockers = campaignAvailable ? array(progress.next_actions) : [];
-    const failureText = array(automation.failures).filter(Boolean);
-    const detectionFailureText = array(detectionAutomation.failures).filter(Boolean);
-    const active = Boolean(bearingCampaign.active_model);
-    const frequencyHz = finite(campaign.frequency_hz);
+    if (!root.dataset.ready) {
+      root.innerHTML = '<div class="insight-stats" id="view-summary"></div><div id="view-detail"></div>';
+      root.dataset.ready = 'true';
+    }
+    const calibration = await apiJson('/api/array-calibration/status');
+    const recorder = calibration?.corpus || {};
+    const reference = calibration?.reference || {};
+    const bearing = calibration?.bearing || {};
+    const detection = calibration?.detection || {};
+    const cohorts = recorder.accumulated_cohorts || {};
+    const recorderState = recorder.active ? 'Recording' : recorder.queued ? 'Waiting' :
+      recorder.enabled ? 'Ready' : 'Disabled';
+    const frequencyHz = finite(calibration?.frequency_hz);
+    renderHtml(document.getElementById('view-summary'),
+      `${card(recorderState, 'Evidence recorder', recorder.error ? 'bad' : recorder.active ? 'good' : '')}` +
+      `${card(integer(recorder.accepted_samples_this_process), 'Samples this process')}` +
+      `${card(integer(cohorts.sampleRows), 'Retained samples')}` +
+      `${card(integer(reference.samples), 'Reference samples')}`);
     renderDetail(`<div class="overview-grid">
-      <section class="info-card"><h2>Campaign state</h2><dl>
+      <section class="info-card"><h2>Evidence recorder</h2><dl>
         <div><dt>Frequency</dt><dd>${frequencyHz === null ? '—' : `${number(frequencyHz / 1e6, 3)} MHz`}</dd></div>
-        <div><dt>Shared corpus recorder</dt><dd>${recorder.enabled ? (recorder.automatic ? 'Collecting automatically' : 'Collecting — explicitly enabled') : 'Disabled'} · ${integer(progress.samples)} retained samples</dd></div>
-        <div><dt>Fitter</dt><dd>${escapeHtml(humanize(automation.state))}${automation.running ? ' · running now' : ''}</dd></div>
-        <div><dt>Candidate</dt><dd>${automation.qualified ? 'Qualified on held-out passes' : 'Not qualified'}</dd></div>
-        <div><dt>Live bearing manifold</dt><dd>${active ? escapeHtml(bearingCampaign.active_model) : bearingConfigured ? 'Ideal steering model' : 'Bearing output disabled'}</dd></div>
-        <div><dt>Last sample</dt><dd>${progress.last_sample_at ? escapeHtml(timeLabel(progress.last_sample_at)) : 'Waiting for accepted evidence'}</dd></div>
-      </dl><details><summary>Qualification details</summary><p>${escapeHtml(progress.limitation || 'Collection and production qualification are separate.')}</p></details></section>
-      <section class="info-card"><h2>Next evidence needed</h2>${!campaignAvailable ? '<p class="view-note">No array-calibration campaign is active. Enable bearing or the shared array recorder to collect evidence.</p>' : blockers.length ? `<ul class="calibration-blockers">${blockers.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="view-note">Collection gates are complete. Held-out performance gates determine whether the candidate can activate.</p>'}${failureText.length ? `<p class="view-note evaluation-note">Latest fit: ${escapeHtml(failureText.join(' '))}</p>` : ''}</section>
+        <div><dt>State</dt><dd>${escapeHtml(recorderState)}${recorder.automatic ? ' · automatic collection' : ''}</dd></div>
+        <div><dt>Corpus</dt><dd>${recorder.path ? escapeHtml(recorder.path) : 'No corpus configured'}</dd></div>
+        <div><dt>Retained cohorts</dt><dd>${integer(cohorts.files)}</dd></div>
+        <div><dt>Last write</dt><dd>${recorder.last_write_at ? escapeHtml(timeLabel(recorder.last_write_at)) : 'No evidence written'}</dd></div>
+        <div><dt>Recorder errors</dt><dd>${recorder.error ? escapeHtml(recorder.error) : 'None'}</dd></div>
+      </dl></section>
       <section class="info-card"><h2>Reference stability</h2><dl>
         <div><dt>Reference samples</dt><dd>${integer(reference.samples)}</dd></div>
         <div><dt>Latest phase step</dt><dd>${number(reference.maximum_phase_step_deg, 2)}°</dd></div>
         <div><dt>Latest amplitude step</dt><dd>${number(reference.maximum_amplitude_step_db, 2)} dB</dd></div>
-        <div><dt>Recorder errors</dt><dd>${recorder.error ? escapeHtml(recorder.error) : 'None'}</dd></div>
+        <div><dt>Last reference</dt><dd>${reference.last_sample_at ? escapeHtml(timeLabel(reference.last_sample_at)) : 'No reference recorded'}</dd></div>
       </dl></section>
-      <section class="info-card"><h2>Detection manifold shadow</h2><dl>
-        <div><dt>Automation</dt><dd>${detectionAutomation.enabled ? escapeHtml(humanize(detectionAutomation.state)) : 'Disabled by default'}</dd></div>
-        <div><dt>Positive-control samples</dt><dd>${integer(detectionProgress.accepted_samples)}</dd></div>
-        <div><dt>Positive-control fit</dt><dd>${detectionProgress.positive_control?.fit_ready ? 'Ready' : 'Collecting detected cells'}</dd></div>
-        <div><dt>Truth-selected replay diagnostic</dt><dd>${detectionProgress.validation?.ready ? 'Coverage ready' : 'Coverage incomplete'} · ${integer(detectionProgress.validation_passes)} passes / ${integer(detectionProgress.miss_passes)} misses</dd></div>
-        <div><dt>Production full-bank receipts</dt><dd>${integer(detectionProgress.production_replay?.imported_passes)} imported · receipt harness ready / native export required</dd></div>
-        <div><dt>Supported sectors / bins</dt><dd>${integer(detectionProgress.covered_sectors)} / ${integer(detectionProgress.fit_bins)}</dd></div>
-        <div><dt>Candidate</dt><dd>Diagnostic only — production qualification disabled</dd></div>
-        <div><dt>Runtime compatibility</dt><dd>${detectionAutomation.runtime_candidate_path ? 'Replay-only dense artifact available' : 'None — sparse offline model'}</dd></div>
-        <div><dt>Promotion</dt><dd>Never automatic</dd></div>
-        <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
-      </dl><details><summary>Qualification details</summary><p>${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p></details>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
-    </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>
-    <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>${bearingEngineeringDiagnostics(bearingDiagnostic)}`);
-    const labels = sectors.map(item => `${integer(item.from_deg)}–${integer(item.to_deg)}°`);
-    await Plotly.react('data', [
-      {x: labels, y: sectors.map(item => item.passes), name: 'Independent passes', type: 'bar', marker: {color: colors[0]}},
-      {x: labels, y: sectors.map(item => item.aircraft), name: 'Unique aircraft', type: 'bar', marker: {color: colors[1]}}
-    ], {...plotBase, barmode: 'group', xaxis: {title: 'Local array azimuth sector', gridcolor: '#47362e'}, yaxis: {title: 'Independent evidence', rangemode: 'tozero', gridcolor: '#47362e'}}, plotConfig);
-    const tone = recorder.error || automation.error || detectionAutomation.error ? 'bad' : automation.qualified ? 'good' : 'warning';
-    setState(!campaignAvailable ? 'Unavailable · bearing and array recorder disabled' :
-      recorder.error || automation.error || detectionAutomation.error ? `Calibration warning · ${recorder.error || automation.error || detectionAutomation.error}` :
-      automation.qualified ? 'Qualified measured manifold' : recorder.enabled || automation.running ?
-        `Collecting · ${percent(completion, 0)} of minimum evidence gates` :
-        `Idle · retained evidence ${percent(completion, 0)}`, tone);
+      <section class="info-card"><h2>Active static models</h2><dl>
+        <div><dt>Bearing manifold</dt><dd>${bearing.active_model ? escapeHtml(bearing.active_model) : bearing.enabled ? 'Ideal steering model' : 'Bearing output disabled'}</dd></div>
+        <div><dt>Detection manifold</dt><dd>${detection.active_model ? escapeHtml(detection.active_model) : detection.enabled ? 'Configured steering model' : 'Detection disabled'}</dd></div>
+      </dl></section>
+    </div>`);
+    setState(recorder.error ? `Recorder warning · ${recorder.error}` :
+      `Evidence recorder · ${recorderState.toLowerCase()}`,
+      recorder.error ? 'bad' : recorder.active ? 'good' : 'warning');
   }
 
   const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics, calibration: renderCalibration};

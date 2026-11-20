@@ -20,15 +20,24 @@ HASH = "b" * 64
 def fixture():
     run = {"id": "123", "attempt": 1}
     node = {"release": "/opt/vectorwarp/current", "artifactSha256": HASH,
+            "endpoint": "http://127.0.0.1:3000", "ssh": None,
+            "disk": {"path": "/var/lib", "minimumFreeBytes": 200_000_000_000},
+            "qualifications": {"radar-behavior": HASH, "physical-gpu": HASH},
             "configSha256": HASH, "packageFilename": "vectorwarp_1.2.3_amd64.deb",
             "packageSha256": HASH,
+            "hostIdSha256": "c" * 64,
+            "acceleration": "vulkan", "clutterAcceleration": "vulkan", "maximumCadenceMs": 600,
+            "runtimeModules": {unit: {} for unit in gate.identity.UNITS},
             "runtimeExecutables": {unit: {"path": "/bin/" + unit, "sha256": HASH}
                                    for unit in gate.identity.UNITS}}
-    binding = {"schema": 1, "sourceCommit": SOURCE, "candidateRunId": "123",
+    binding = {"schema": 3, "sourceCommit": SOURCE, "candidateRunId": "123",
+               "monitorMinimumFreeBytes": 200_000_000_000,
+               "regressionPolicySha256": "d" * 64,
                "candidateRunAttempt": 1, "nodes": {name: copy.deepcopy(node)
                                                   for name in ("homeportal", "hp")}}
+    binding["nodes"]["hp"]["hostIdSha256"] = "e" * 64
     raw = json.dumps(binding)
-    summary = {"schema": 3, "releaseAccepted": True, "startupAccepted": True,
+    summary = {"schema": 3, "startedEpoch": 13600, "releaseAccepted": True, "startupAccepted": True,
                "steadyStateAccepted": True, "latestHealthy": True,
                "diagnosticWindow": False, "latestFailures": [], "startupFailures": [],
                "releaseBinding": {"expected": binding, "sha256": hashlib.sha256(raw.encode()).hexdigest(),
@@ -38,10 +47,19 @@ def fixture():
                    "cleanSeconds": 86400, "cleanSamples": 1441, "lastSampleEpoch": 100000,
                    "cleanSinceEpoch": 13600, "startupAccepted": True, "startupFailures": [],
                    "steadyStateAccepted": True},
-               "latest": {"epoch": 100000, "healthy": True, "failures": [], "nodes": {}}}
+               "latest": {"epoch": 100000, "healthy": True, "failures": [], "nodes": {},
+                   "monitorFreeBytes": 300_000_000_000,
+                   "regressionEvidence": {"schema": 1, "bindingSha256": hashlib.sha256(raw.encode()).hexdigest(),
+                       "policySha256": "d" * 64,
+                       "nodes": {name: {"retiredCpis": 0, "retiredSamples": 0,
+                           "qualifications": node["qualifications"]} for name in binding["nodes"]},
+                       "evidenceSha256": "f" * 64, "evaluationStartEpoch": 13600,
+                       "evaluatedThroughEpoch": 100000, "regressionDetected": False}}}
     for name, expected in binding["nodes"].items():
         summary["latest"]["nodes"][name] = {"status": {"build": {"commit": SOURCE},
             "loadedRevision": HASH, "configRevision": HASH}, "process": copy.deepcopy(expected)}
+        summary["latest"]["nodes"][name]["process"]["disk"] = {
+            "path": "/var/lib", "freeBytes": 300_000_000_000}
     return {"bindingJson": raw, "summary": summary}, run, binding
 
 
@@ -65,6 +83,34 @@ class ExactCandidatePromotion(unittest.TestCase):
     def test_full_24_hour_receipt_is_accepted(self):
         envelope, run, binding = fixture()
         self.assertEqual(gate.receipt(envelope, run, SOURCE), binding)
+
+    def test_receipt_matches_arbitrary_reviewed_topology_and_qualification_set(self):
+        for count in (1, 2, 3):
+            envelope, run, binding = fixture()
+            latest = envelope["summary"]["latest"]
+            template = copy.deepcopy(binding["nodes"]["homeportal"])
+            measured = copy.deepcopy(latest["nodes"]["homeportal"])
+            binding["nodes"] = {}; latest["nodes"] = {}
+            regression = latest["regressionEvidence"]; regression["nodes"] = {}
+            for index in range(count):
+                name = f"site-{index}"
+                binding["nodes"][name] = copy.deepcopy(template)
+                binding["nodes"][name]["hostIdSha256"] = f"{index + 1:064x}"
+                latest["nodes"][name] = copy.deepcopy(measured)
+                latest["nodes"][name]["process"]["hostIdSha256"] = f"{index + 1:064x}"
+                regression["nodes"][name] = {"retiredCpis": 0, "retiredSamples": 0,
+                                           "qualifications": template["qualifications"]}
+            envelope["bindingJson"] = json.dumps(binding)
+            digest = hashlib.sha256(envelope["bindingJson"].encode()).hexdigest()
+            envelope["summary"]["releaseBinding"].update(expected=binding, sha256=digest)
+            regression["bindingSha256"] = digest
+            self.assertEqual(gate.receipt(envelope, run, SOURCE), binding)
+            for field, value in (("nodes", {}), ("monitorFreeBytes", 0)):
+                bad = copy.deepcopy(envelope); bad["summary"]["latest"][field] = value
+                with self.assertRaises(ValueError): gate.receipt(bad, run, SOURCE)
+            bad = copy.deepcopy(envelope)
+            bad["summary"]["latest"]["regressionEvidence"]["nodes"]["site-0"]["qualifications"] = {}
+            with self.assertRaises(ValueError): gate.receipt(bad, run, SOURCE)
 
     def test_missing_short_diagnostic_or_inconsistent_soak_is_rejected(self):
         for field, value in (("releaseAccepted", False), ("startupAccepted", False),
@@ -102,6 +148,15 @@ class ExactCandidatePromotion(unittest.TestCase):
                 envelope["summary"]["latest"]["nodes"]["hp"]["process"]["artifactSha256"] = "c" * 64
             with self.subTest(case=case), self.assertRaises(ValueError):
                 gate.receipt(envelope, run, source)
+
+    def test_signing_gate_requires_fresh_bound_nonregressing_evaluation(self):
+        for key, value in (("bindingSha256", "0" * 64), ("policySha256", "0" * 64),
+                           ("evaluatedThroughEpoch", 99000), ("regressionDetected", True),
+                           ("nodes", {"homeportal": {"retiredCpis": 0, "retiredSamples": 0}})):
+            envelope, run, _ = fixture()
+            envelope["summary"]["latest"]["regressionEvidence"][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                gate.receipt(envelope, run, SOURCE)
 
     def test_rebuild_or_deployment_mutation_cannot_replace_soaked_package(self):
         _, _, binding = fixture()

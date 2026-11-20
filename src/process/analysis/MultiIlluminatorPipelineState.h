@@ -100,6 +100,12 @@ public:
 
   void input_epoch_reset() { nextInputDiscontinuity_ = true; }
 
+  void gpu_requalified()
+  {
+    runtimeFallback_ = false;
+    fallbackReason_.clear();
+  }
+
   void startup_fallback(std::string reason) {
     runtimeFallback_ = true;
     fallbackReason_ = std::move(reason);

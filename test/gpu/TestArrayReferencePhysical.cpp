@@ -72,7 +72,17 @@ void run(blah2::Context& context, uint32_t samples, uint32_t channels) {
   std::mt19937 generator(42);
   std::uniform_real_distribution<double> noise(-.01, .01);
   double maxError = 0;
-  for (uint32_t frame = 0; frame < 16; ++frame) {
+  for (uint32_t frame = 0; frame < 19; ++frame) {
+    const bool scaled = frame >= 16;
+    const double inputScale = frame == 17 ? 1e-7 : frame == 18 ? 1e-8 : 1;
+    if (scaled) {
+      cpu.reset();
+      // Each amplitude starts without retained weights: parity must exercise
+      // low-energy covariance iteration, not reuse a unit-scale eigenvector.
+      std::fill(words.begin() + 64, words.begin() + 180, 0);
+      std::memcpy(metadata.mapped, words.data(), sizeof(words));
+      metadata.flush(0, metadata.bytes);
+    }
     auto* rawValues = static_cast<Z*>(raw.mapped);
     for (uint32_t c = 0; c < channels; ++c) {
       auto& values = inputs[c]->resize_for_write(samples);
@@ -84,6 +94,7 @@ void run(blah2::Context& context, uint32_t samples, uint32_t channels) {
         if (frame >= 12 && channels >= 3)
           values[n] = c == 0 ? std::sqrt(.9) * (n % 2 ? -1.0 : 1.0) :
             1.0 / std::sqrt(double(channels - 1));
+        if (scaled) values[n] = std::polar(inputScale, .3*c + .02*n);
         rawValues[size_t(c) * samples + n] = values[n];
       }
     }
@@ -107,6 +118,14 @@ void run(blah2::Context& context, uint32_t samples, uint32_t channels) {
       require(std::isfinite(error) && error < 1e-12, "Resident reference oracle rejected frame");
     }
     const auto& metrics = cpu.get_metrics();
+    if (scaled) {
+      require(!metrics.fallback, "Amplitude scaling changed the reference beam");
+      require(std::abs(metrics.coherentGainDb - 10*std::log10(double(channels))) < 1e-10,
+        "Amplitude scaling lost physical coherent gain");
+      for (uint32_t n = 0; n < samples; ++n)
+        require(std::abs(std::abs(actual[n])/inputScale - std::sqrt(double(channels))) < 1e-10,
+          "Resident low-energy reference lost coherent amplitude");
+    }
     require(words[130] == metrics.updates && words[131] == 0 && words[132] == channels,
       "Resident reference counters differ");
     for (uint32_t c = 0; c < channels; ++c) {
@@ -124,7 +143,7 @@ void run(blah2::Context& context, uint32_t samples, uint32_t channels) {
     require(scale == 1, "Per-CPI normalization returned");
   }
   std::cout << "PASS physical reference channels=" << channels << " samples="
-    << samples << " frames=16 max_error=" << maxError << '\n';
+    << samples << " frames=19 max_error=" << maxError << '\n';
 }
 }
 int main() {
@@ -142,7 +161,7 @@ int main() {
     blah2::Context context(instance, *selected);
     for (const uint32_t samples : {64U, 257U})
       for (const uint32_t channels : {2U, 3U, 5U, 8U}) run(context, samples, channels);
-    std::cout << "COMPLETE physical_reference_parity fixtures=8 frames=128 tolerance=1e-12\n";
+    std::cout << "COMPLETE physical_reference_parity fixtures=8 frames=152 tolerance=1e-12\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "FAIL physical reference: " << error.what() << '\n'; return 1;

@@ -9,6 +9,56 @@
 #include <vector>
 
 namespace blah2::resident_fusion {
+// Shared bounded diagonal whitening calibration. Both resident fusion and its
+// canonical CPU qualification oracle consume their independently learned
+// reference covariance; neither may substitute the other backend's weights.
+inline std::array<double,8> whiteningScales(const std::complex<double>* covariance,
+ const std::complex<double>* weights,uint32_t channels,double diagonalLoading,
+ bool covarianceValid){
+ std::array<double,8> scale{};scale.fill(1.0);
+ if(!covarianceValid)return scale;
+ if(!covariance||!weights||!channels||channels>8||
+    !std::isfinite(diagonalLoading)||diagonalLoading<0)
+  throw std::invalid_argument("Surveillance whitening covariance invalid");
+ for(uint32_t i=0;i<channels*channels;++i)
+  if(!std::isfinite(covariance[i].real())||!std::isfinite(covariance[i].imag()))
+   throw std::invalid_argument("Surveillance whitening covariance is nonfinite");
+ for(uint32_t i=0;i<channels;++i)
+  if(!std::isfinite(weights[i].real())||!std::isfinite(weights[i].imag()))
+   throw std::invalid_argument("Surveillance whitening reference weight is nonfinite");
+ double loadedTrace=0;
+ for(uint32_t c=0;c<channels;++c)loadedTrace+=covariance[c*channels+c].real();
+ const double rawTrace=loadedTrace/(1.0+diagonalLoading);
+ const double referenceLoading=diagonalLoading*rawTrace/channels;
+ std::complex<double> rayleigh{};
+ for(uint32_t left=0;left<channels;++left)
+  for(uint32_t right=0;right<channels;++right)
+   rayleigh+=std::conj(weights[left])*covariance[left*channels+right]*weights[right];
+ const double principal=std::max(0.0,rayleigh.real()-referenceLoading);
+ std::array<double,8> noise{},ordered{};
+ double residualTrace=0;
+ for(uint32_t channel=0;channel<channels;++channel){
+  noise[channel]=std::max(0.0,covariance[channel*channels+channel].real()-
+   principal*std::norm(weights[channel]));
+  residualTrace+=noise[channel];
+ }
+ const double floor=std::max(referenceLoading,.05*residualTrace/channels);
+ for(uint32_t channel=0;channel<channels;++channel)
+  ordered[channel]=noise[channel]=std::max(noise[channel],floor);
+ for(uint32_t channel=1;channel<channels;++channel){
+  const double value=ordered[channel];uint32_t position=channel;
+  while(position&&ordered[position-1]>value){
+   ordered[position]=ordered[position-1];--position;
+  }
+  ordered[position]=value;
+ }
+ const double median=ordered[channels/2];
+ if(std::isfinite(median)&&median>0)
+  for(uint32_t channel=0;channel<channels;++channel)
+   scale[channel]=std::clamp(median/noise[channel],.5,2.0);
+ return scale;
+}
+
 inline std::array<std::complex<double>,8> calibratedWeights(
  std::array<std::complex<double>,8> steering,uint32_t channels,
  const std::complex<double>* directWeights,const double* channelScale,

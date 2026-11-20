@@ -1,6 +1,6 @@
 #include "WienerHopfReplayContract.h"
 #include "process/clutter/WienerHopf.h"
-#include "process/ambiguity/GpuResidentHash.h"
+#include "capture/Sha256.h"
 #include "process/utility/FftwThreads.h"
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -31,18 +31,18 @@ std::string hex(const Hash& hash) {
   return result;
 }
 Hash digest(const std::vector<uint8_t>& bytes) {
-  blah2::resident::Sha256 hash; hash.add(bytes.data(), bytes.size()); return hash.finish();
+  blah2::Sha256 hash; hash.update(bytes.data(), bytes.size()); return hash.finishBytes();
 }
 std::string executableHash(const char* argument) {
   const char* path = std::getenv("PATH");
   std::ifstream input(blah2::integration::cancellation_replay::runningExecutablePath(
     argument, path ? path : ""), std::ios::binary);
   if (!input) throw std::runtime_error("Cannot bind replay executable provenance");
-  blah2::resident::Sha256 hash; std::array<char, 65536> buffer{};
+  blah2::Sha256 hash; std::array<char, 65536> buffer{};
   while (input.read(buffer.data(), buffer.size()) || input.gcount())
-    hash.add(buffer.data(), size_t(input.gcount()));
+    hash.update(buffer.data(), size_t(input.gcount()));
   if (!input.eof()) throw std::runtime_error("Cannot read replay executable provenance");
-  return hex(hash.finish());
+  return hex(hash.finishBytes());
 }
 void string(Writer& w, const char* key, const std::string& value) {
   w.Key(key); w.String(value.c_str(), rapidjson::SizeType(value.size()));
@@ -108,14 +108,14 @@ int main(int argc, char** argv) {
     }
     // Validate the entire cohort before solving; retain hashes, not all payloads.
     blah2::integration::cancellation_replay::Cohort cohort;
-    std::vector<Hash> frameHashes; blah2::resident::Sha256 cohortHash;
+    std::vector<Hash> frameHashes; blah2::Sha256 cohortHash;
     for (int argument = first; argument < argc; ++argument) {
       activePath = argv[argument]; const auto frame = loadValidatedSnapshot(activePath);
       geometry(frame); cohort.append(frame.sidecar, frame.config.geometry.clutterSamples);
       frameHashes.push_back(blah2::integration::cancellation_replay::frameIdentity(frame.sidecar));
-      cohortHash.add(frameHashes.back().data(), frameHashes.back().size());
+      cohortHash.update(frameHashes.back().data(), frameHashes.back().size());
     }
-    const auto cohortDigest = hex(cohortHash.finish());
+    const auto cohortDigest = hex(cohortHash.finishBytes());
     rapidjson::StringBuffer manifest; Writer mw(manifest); mw.StartObject();
     string(mw, "record", "manifest"); string(mw, "status", diagnostic ? "diagnostic_only" : "blocked_missing_evidence");
     string(mw, "cohort_sha256", cohortDigest); string(mw, "replay_executable_sha256", executableHash(argv[0]));

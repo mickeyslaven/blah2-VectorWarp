@@ -2,6 +2,7 @@
 #define POST_CLUTTER_BOOTSTRAP_H
 
 #include "data/Map.h"
+#include "process/detection/IntegratedCfar.h"
 #include "process/integration/EvidenceWorkBudget.h"
 
 #include <algorithm>
@@ -20,11 +21,11 @@ namespace blah2::detection
 
 // CPU reference for the manifold-independent post-clutter statistic.  It is
 // deliberately independent of a GPU API so every supported platform has the
-// same numerical contract before an accelerated shadow is qualified.
+// same numerical contract for the offline residentWeakEvidenceScore command.
 class PostClutterBootstrap
 {
 public:
-  // robustShrinkage is a shadow-only portable contract.  The established
+  // robustShrinkage is a offline portable contract.  The established
   // diagonal and fixed-shrinkage arms intentionally retain their exact math.
   enum class Covariance { diagonal, shrinkage, robustShrinkage };
 
@@ -110,26 +111,51 @@ public:
     // without allocating a matrix, CUT vector and training vectors per cell.
     if (channels == 1 && config_.covariance == Covariance::diagonal)
     {
-      for (uint32_t row = 0; row < rows; ++row)
+      // Every training ring reuses the same row samples. Cache their exact
+      // complex covariance terms once; summation remains left-to-right for
+      // every CUT, including the original guard and boundary exclusions.
+      Map<std::complex<double>>::MetricAccumulator metrics;
+      std::vector<uint32_t> trainedByRow(rows);
+      const auto compute = [&](uint32_t begin, uint32_t end, double* levels) {
+      std::vector<double> covarianceTerms(columns), covarianceSums;
+      std::vector<uint8_t> finitePower(columns);
+      for (uint32_t row = begin; row < end; ++row) {
+        bool finiteRow = true;
+        for (uint32_t column = 0; column < columns; ++column) {
+          if (budget && column % 32 == 0) budget->check();
+          const auto value = maps.front()->data[row][column];
+          finitePower[column] = std::isfinite(std::norm(value));
+          finiteRow = finiteRow && finitePower[column];
+          covarianceTerms[column] = (value * std::conj(value)).real();
+        }
+        if (finiteRow)
+          integrated_cfar::orderedTrainingSums(covarianceTerms,
+            config_.guardCells, config_.trainingCells, covarianceSums, budget);
         for (uint32_t column = 0; column < columns; ++column)
         {
           if (budget && column % 32 == 0) budget->check();
-          std::complex<double> covariance{};
+          double covariance = 0;
           uint32_t samples = 0;
           bool valid = true;
           const int first = std::max<int>(0, int(column) -
             int(config_.guardCells + config_.trainingCells));
-          const int last = std::min<int>(int(columns) - 1, int(column) +
-            int(config_.guardCells + config_.trainingCells));
-          for (int training = first; training <= last; ++training)
-          {
-            if (std::abs(training - int(column)) <= int(config_.guardCells))
-              continue;
-            const auto value = maps.front()->data[row][training];
-            const double power = std::norm(value);
-            if (!std::isfinite(power)) { valid = false; break; }
-            covariance += value * std::conj(value);
-            ++samples;
+          const int leftEnd = std::max<int>(0, int(column) - int(config_.guardCells));
+          const int rightBegin = std::min<int>(columns, int(column) + int(config_.guardCells) + 1);
+          const int last = std::min<int>(columns, int(column) +
+            int(config_.guardCells + config_.trainingCells) + 1);
+          if (finiteRow) {
+            covariance = covarianceSums[column];
+            samples = uint32_t(leftEnd - first + last - rightBegin);
+          } else {
+            for (int training = first; training < leftEnd; ++training) {
+              if (!finitePower[training]) { valid = false; break; }
+              covariance += covarianceTerms[training]; ++samples;
+            }
+            if (valid)
+              for (int training = rightBegin; training < last; ++training) {
+                if (!finitePower[training]) { valid = false; break; }
+                covariance += covarianceTerms[training]; ++samples;
+              }
           }
           valid = valid && samples >= 2;
           double statistic = 0;
@@ -137,7 +163,7 @@ public:
           if (valid)
           {
             covariance /= double(samples);
-            const double scale = covariance.real();
+            const double scale = covariance;
             const auto cut = maps.front()->data[row][column];
             valid = scale > 0 && std::isfinite(scale) &&
               std::isfinite(cut.real()) && std::isfinite(cut.imag());
@@ -150,13 +176,26 @@ public:
               if (valid) family = 1;
             }
           }
-          if (family == 1) ++result.trainedCells;
-          else ++result.invalidCells;
+          trainedByRow[row] += family == 1;
           result.statisticFamily[uint64_t(row) * columns + column] = family;
           result.map->data[row][column] = {
             std::sqrt(std::max(0.0, statistic)), 0};
+          if (levels) levels[uint64_t(row - begin) * columns + column] =
+            Map<std::complex<double>>::MetricAccumulator::level(result.map->data[row][column]);
+          else metrics.add(result.map->data[row][column]);
         }
-      result.map->set_metrics();
+      }
+      };
+      if (budget && budget->executor)
+        integration::orderedRowTiles(rows, columns, 1, *budget, compute,
+          [&](uint32_t begin, uint32_t end, const double* levels) {
+            for (uint64_t cell = 0; cell < uint64_t(end - begin) * columns; ++cell)
+              metrics.addLevel(levels[cell]);
+          });
+      else compute(0, rows, nullptr);
+      for (const auto trained : trainedByRow) result.trainedCells += trained;
+      result.invalidCells = uint64_t(rows) * columns - result.trainedCells;
+      metrics.apply(*result.map);
       return result;
     }
     using Matrix = std::vector<std::complex<double>>;

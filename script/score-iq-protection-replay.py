@@ -17,7 +17,7 @@ def load(path):
 SPEED_OF_LIGHT_M_S = 299792458.0
 
 
-def admitted_truth(admission):
+def admitted_truth(admission, empty_error="admission contains no valid truth samples"):
     points = {}
     for capture in admission.get("captures", {}).values():
         if not capture.get("valid"):
@@ -42,7 +42,7 @@ def admitted_truth(admission):
         if missing:
             raise ValueError("admitted CPI has no exact evaluation truth sample")
     if not points:
-        raise ValueError("admission contains no valid truth samples")
+        raise ValueError(empty_error)
     return points
 
 

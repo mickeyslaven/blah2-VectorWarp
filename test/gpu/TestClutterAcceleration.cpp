@@ -96,6 +96,8 @@ struct Mock final : blah2::GpuBackend, blah2::GpuClutterFrameBackend {
   bool processClutterFrame() override {
     ++calls;
     if (fault=="throw") throw std::runtime_error("Injected clutter failure");
+    if (fault=="transient")
+      throw std::runtime_error("GPU worker clutter execution timed out after 1500 ms; using CPU");
     if (fault=="reject") return false;
     for (size_t i = 0; i < source.size(); ++i) {
       const int64_t shifted = (int64_t(i)-geometry.clutterDelayMin)%int64_t(source.size());
@@ -135,6 +137,61 @@ void compare(const std::vector<std::unique_ptr<IqData>>& actual,
     require(peakError <= std::max(peakInput*1e-8, 1e-20),
       "Clutter per-channel peak differs from FP64 CPU oracle");
   }
+}
+
+void runTransientRecovery() {
+  constexpr size_t samples=64, channels=2;
+  const auto x=signal(samples);
+  const auto y=surveillance(x,channels);
+  const auto expected=cpuResult(x,y,-2,3);
+  const blah2::GpuGeometry geometry{8,4,2,channels,0,samples,5,-2};
+  std::shared_ptr<Mock> worker;
+  unsigned creations=0, cpuCalls=0;
+  auto factory=[&](const blah2::GpuGeometry& shape,const std::string&)
+      ->std::unique_ptr<blah2::GpuBackend>{
+    worker=std::make_shared<Mock>(shape,x,expected); ++creations;
+    struct Holder final:blah2::GpuBackend,blah2::GpuClutterFrameBackend{
+      std::shared_ptr<Mock> value;
+      explicit Holder(std::shared_ptr<Mock> item):value(std::move(item)){}
+      blah2::GpuDevice device()const override{return value->device();}
+      void process(const std::vector<std::complex<float>>& a,
+        const std::vector<std::complex<float>>& b,std::vector<std::complex<float>>& c)override{
+        value->process(a,b,c);}
+      bool clutterAvailable()const override{return true;}
+      blah2::GpuClutterBuffers clutterBuffers()override{return value->clutterBuffers();}
+      bool processClutterFrame()override{return value->processClutterFrame();}
+    };
+    return std::make_unique<Holder>(worker);
+  };
+  blah2::Acceleration acceleration("gpu",geometry,2,48000,0,"auto",factory);
+  std::vector<std::unique_ptr<IqData>> data;
+  std::vector<std::unique_ptr<WienerHopf>> filters;
+  std::vector<IqData*> pointers;
+  for(size_t channel=0;channel<channels;++channel){
+    data.push_back(std::make_unique<IqData>(samples)); pointers.push_back(data.back().get());
+    filters.push_back(std::make_unique<WienerHopf>(-2,3,samples));
+  }
+  const auto frame=[&]{
+    IqData reference(samples); reference.replace(std::deque<Complex>(x));
+    for(size_t channel=0;channel<channels;++channel)
+      data[channel]->replace(std::deque<Complex>(y[channel]));
+    require(acceleration.processClutter(reference,pointers,[&]{
+      ++cpuCalls; bool ok=true;
+      for(size_t channel=0;channel<channels;++channel)
+        ok=filters[channel]->process(&reference,data[channel].get())&&ok;
+      return ok;
+    }),"Transient clutter recovery frame was rejected");
+    compare(data,expected,y);
+  };
+  for(unsigned i=0;i<blah2::Acceleration::ClutterQualificationFrames;++i) frame();
+  worker->fault="transient"; frame();
+  frame();
+  require(creations==2,"Transient clutter worker did not create exactly one replacement");
+  require(cpuCalls==5,"Transient clutter replacement skipped bounded CPU requalification");
+  require(worker->calls==1 && acceleration.clutterTiming().gpuExecuted &&
+    acceleration.clutterTiming().cpuExecuted,
+    "Transient clutter replacement was not numerically checked on its first frame");
+  std::cout<<"PASS transient clutter worker self-recovery\n";
 }
 
 void runCase(int minimum, int maximum, size_t samples, const std::string& device) {
@@ -428,6 +485,7 @@ int main(int argc,char** argv) try {
   runCase(3,11,256,device);
   runCase(-31,33,64,device); // B=N and L=2N+1.
   if(device.empty()) for(const std::string fault:{"wrong","nan","reject","throw","shape"}) runFallback(fault);
+  if(device.empty()) runTransientRecovery();
   runRankDeficient(device);
   if(device.empty()) runThrowingCpuOracle();
   else runComposed(device);

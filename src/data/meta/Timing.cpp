@@ -1,13 +1,10 @@
 #include "Timing.h"
 #include "data/meta/BackendMembership.h"
 #include "data/meta/StageExecution.h"
-#include <iostream>
-#include <cstdlib>
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
-#include "rapidjson/filewritestream.h"
 
 // constructor
 Timing::Timing(uint64_t _tStart)
@@ -29,6 +26,34 @@ void Timing::update(uint64_t _tNow, std::vector<double> _time, std::vector<std::
   uptime = _tNow-tStart;
 }
 
+void Timing::record_processing_cycle(CycleClock::time_point start,
+    CycleClock::time_point pipelineStart, CycleClock::time_point pipelineEnd,
+    CycleClock::time_point publicationEnd) noexcept
+{
+  pendingCycle = {start, pipelineStart, pipelineEnd, publicationEnd};
+  pendingCycleNCpi = n; pendingCycleTimestamp = tNow;
+  processingCyclePending = true;
+}
+
+void Timing::complete_processing_cycle(CycleClock::time_point end) noexcept
+{
+  if (!processingCyclePending) return;
+  const auto milliseconds = [](auto stop, auto start) {
+    return std::chrono::duration<double, std::milli>(stop - start).count();
+  };
+  processingCycleMetrics[0].observe(milliseconds(pendingCycle[1], pendingCycle[0]));
+  processingCycleMetrics[1].observe(milliseconds(pendingCycle[2], pendingCycle[1]));
+  processingCycleMetrics[2].observe(milliseconds(pendingCycle[3], pendingCycle[2]));
+  processingCycleMetrics[3].observe(milliseconds(end, pendingCycle[3]));
+  processingCycleMetrics[4].observe(milliseconds(end, pendingCycle[0]));
+  if (havePreviousCycleEnd)
+    processingCycleMetrics[5].observe(milliseconds(end, previousCycleEnd));
+  previousCycleEnd = end; havePreviousCycleEnd = true;
+  completedCycleNCpi = pendingCycleNCpi;
+  completedCycleTimestamp = pendingCycleTimestamp;
+  processingCyclePending = false;
+}
+
 std::string Timing::to_json()
 {
   rapidjson::Document document;
@@ -39,6 +64,28 @@ std::string Timing::to_json()
   document.AddMember("nCpi", n, allocator);
   document.AddMember("uptime_s", uptime/1000.0, allocator);
   document.AddMember("uptime_days", uptime/1000.0/60/60/24, allocator);
+  if (processingCycleMetrics[4].samples) {
+    rapidjson::Value cycles(rapidjson::kObjectType);
+    cycles.AddMember("scope", "completed_multi_consumer_cycles", allocator);
+    cycles.AddMember("lastCompletedNCpi", completedCycleNCpi, allocator);
+    cycles.AddMember("lastCompletedTimestamp", completedCycleTimestamp, allocator);
+    // No stage summation: completion_interval includes capture waits, while
+    // processing includes preparation, pipeline, publication and destruction.
+    const char* keys[] = {"capture_prepare", "pipeline", "publication",
+      "post_publication", "processing", "completion_interval"};
+    for (std::size_t i = 0; i < processingCycleMetrics.size(); ++i) {
+      const auto& metric = processingCycleMetrics[i];
+      rapidjson::Value value(rapidjson::kObjectType);
+      value.AddMember("samples", metric.samples, allocator);
+      value.AddMember("latestMs", metric.latest, allocator);
+      value.AddMember("totalMs", metric.total, allocator);
+      value.AddMember("meanMs", metric.samples ? metric.total / metric.samples : 0,
+        allocator);
+      value.AddMember("maximumMs", metric.maximum, allocator);
+      cycles.AddMember(rapidjson::Value(keys[i], allocator), value, allocator);
+    }
+    document.AddMember("processingCycle", cycles, allocator);
+  }
   const auto backendJson = [&](const blah2::AccelerationStatus& status, bool known) {
     rapidjson::Value gpu(rapidjson::kObjectType);
     const auto addText = [&](const char* key, const std::string& value) {
@@ -151,59 +198,4 @@ std::string Timing::to_json()
   document.Accept(writer);
 
   return strbuf.GetString();
-}
-
-bool Timing::save(std::string _json, std::string filename)
-{
-  using namespace rapidjson;
-
-  rapidjson::Document document;
-
-  // create file if it doesn't exist
-  if (FILE *fp = fopen(filename.c_str(), "r"); !fp)
-  {
-    if (fp = fopen(filename.c_str(), "w"); !fp)
-      return false;
-    fputs("[]", fp);
-    fclose(fp);
-  }
-
-  // add the document to the file
-  if (FILE *fp = fopen(filename.c_str(), "rb+"); fp)
-  {
-    // check if first is [
-    std::fseek(fp, 0, SEEK_SET);
-    if (getc(fp) != '[')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // is array empty?
-    bool isEmpty = false;
-    if (getc(fp) == ']')
-      isEmpty = true;
-
-    // check if last is ]
-    std::fseek(fp, -1, SEEK_END);
-    if (getc(fp) != ']')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // replace ] by ,
-    fseek(fp, -1, SEEK_END);
-    if (!isEmpty)
-      fputc(',', fp);
-
-    // add json element
-    fwrite(_json.c_str(), sizeof(char), _json.length(), fp);
-
-    // close the array
-    std::fputc(']', fp);
-    fclose(fp);
-    return true;
-  }
-  return false;
 }

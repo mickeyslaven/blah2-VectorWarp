@@ -1,13 +1,11 @@
 'use strict';
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const {createRequire} = require('node:module');
 const root = path.resolve(process.argv[2]);
 const fromApi = createRequire(path.join(root, 'api', 'config-manager.js'));
 const {validateConfig, FIELD_RULES} = fromApi('./config-manager.js');
-const yaml = fromApi('js-yaml');
-const load = () => yaml.load(fs.readFileSync(path.join(root, 'config', 'config-kraken.yml'), 'utf8'));
+const load = () => fromApi('./config-store').configurationForReceiver('Kraken');
 function valid(config) {
   const result = validateConfig(config);
   assert.equal(result.valid, true, result.errors.join('; '));
@@ -33,7 +31,7 @@ const tbd = resident();
 tbd.process.surveillance_fusion.mode = 'coherent_beam_bank';
 tbd.capture.device.array_geometry = {
   shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
-  mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
+  mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true,
   x_axis_bearing_deg_true: 0,
   bearing_channels: [...tbd.capture.device.surveillance_channels],
   elements: tbd.capture.device.surveillance_channels.map((daq_channel, index) => ({
@@ -43,7 +41,21 @@ tbd.capture.device.array_geometry = {
   }))
 };
 tbd.process.detection.track_before_detect = {enable: true, max_cpis: 8, motion_bins: 1};
+invalid(tbd, 'disjoint 8-CPI confirmation');
+tbd.process.tracker.initiate.N = 1 + 8 * (tbd.process.tracker.initiate.M - 1);
+tbd.process.tracker.delete = Math.max(tbd.process.tracker.delete, 7);
 valid(tbd);
+const beamTwo = structuredClone(tbd);
+beamTwo.process.detection.track_before_detect.enable = false;
+beamTwo.process.detection.integration_cpis = 2;
+beamTwo.process.tracker.beam_tolerance = 1;
+invalid(beamTwo, 'Two-CPI beam compatibility history is unsupported');
+delete beamTwo.process.tracker.beam_tolerance;valid(beamTwo);
+for (const depth of [4, 8]) {
+  const supported = structuredClone(tbd);
+  supported.process.detection.track_before_detect.max_cpis = depth;
+  supported.process.tracker.beam_tolerance = 1;valid(supported);
+}
 for (const mutate of [
   candidate => { candidate.capture.device.array_geometry.elements[0].position[0] += .001; },
   candidate => { candidate.capture.device.array_geometry.elements[0].position[2] += .001; },
@@ -69,14 +81,19 @@ for (const value of [3, 5, 6, 7, 9]) {
 }
 const noCoherentTbd = resident();
 noCoherentTbd.process.detection.track_before_detect.enable = true;
-invalid(noCoherentTbd, 'coherent surveillance fusion');
+noCoherentTbd.process.tracker.initiate.N = 1 + 8 * (noCoherentTbd.process.tracker.initiate.M - 1);
+noCoherentTbd.process.tracker.delete = Math.max(noCoherentTbd.process.tracker.delete, 7);
+// Resident power TBD executes on the canonical noncoherent route as well.
+valid(noCoherentTbd);
 for (const mode of ['auto', 'cpu', 'gpu']) {
   const candidate = load();candidate.process.performance.acceleration = mode;
   candidate.process.detection.integration_cpis = 2;
-  invalid(candidate, 'multi-CPI detection requires gpu-resident acceleration');
+  valid(candidate); // Canonical host temporal products also execute on these routes.
 }
 const missing = resident();delete missing.process.tracker.gpu_capacity;
-invalid(missing, 'process.tracker.gpu_capacity');
+valid(missing); // Noncoherent resident ambiguity publishes canonical host products.
+const missingCoherent = structuredClone(tbd);delete missingCoherent.process.tracker.gpu_capacity;
+invalid(missingCoherent, 'process.tracker.gpu_capacity');
 for (const value of [0, -1, 1.5, 4294967296, '128', NaN, Infinity]) {
   const c = resident();c.process.tracker.gpu_capacity = value;
   invalid(c, 'process.tracker.gpu_capacity');
@@ -85,6 +102,8 @@ const noTracker = resident();noTracker.process.tracker.enable = false;
 delete noTracker.process.tracker.gpu_capacity;valid(noTracker);
 const noClutter = resident();noClutter.process.clutter.enable = false;invalid(noClutter, 'requires clutter');
 const noDetection = resident();noDetection.process.detection.enable = false;invalid(noDetection, 'requires process.detection.enable');
+const noCoherentDetection = structuredClone(tbd);noCoherentDetection.process.detection.enable = false;
+invalid(noCoherentDetection, 'requires process.detection.enable');
 assert.ok(FIELD_RULES['process.performance.acceleration'].choices.includes('gpu-resident'));
 assert.equal(FIELD_RULES['process.tracker.gpu_capacity'].optional, true);
 console.log('COMPLETE resident-config-api validation only; no receiver, GPU, network, or config mutation');

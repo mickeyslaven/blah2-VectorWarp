@@ -9,18 +9,20 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include "GpuDeferredDiagnostics.h"
+#include "data/meta/StreamProfile.h"
 
 namespace blah2 {
 
-// Disabled by default. Opt in for at most 64 frames per pipeline with
-// BLAH2_GPU_CLUTTER_PROFILE_FRAMES=N. Queries are recorded only in diagnostic
-// pipelines, and unsupported timestamps degrade to host timing only.
+// Explicit offline callers may authorize at most 64 frames per pipeline.
+// Inherited profile settings alone are ignored. Sink I/O is teardown-only;
+// unsupported timestamps degrade to host timing only.
 class GpuClutterProfile {
 public:
   enum Host : unsigned { ReferenceCopy, ReferenceEnqueue, ReferenceWaitTail, ReferenceOverlapWall,
     Factor, BaselinePrepare, Covariance,
     InputCopy, InitialWait, InitialSolve, Baseline, Residual, ResidualCopy,
-    ResidualWait, CorrectionSolve, WeightCopy, FinishWait, Merge, HostCount };
+    ResidualWait, CorrectionSolve, WeightCopy, FinishWait, Merge, FenceWait, HostCount };
   using Clock = std::chrono::steady_clock;
   class Scope {
     double* elapsed_;
@@ -46,19 +48,31 @@ private:
   Clock::time_point start_;
   std::array<double, HostCount> host_{};
   std::array<double, 4> gpu_{};
+  gpu_diagnostics::FrameLog diagnostics_;
+  // Live stream profiling is a separate, fixed, memory-only recorder. It does
+  // not authorize offline diagnostics, create query pools or alter commands.
+  struct LiveRecord {
+    uint32_t frame=0,seen=0;
+    Clock::time_point start,end;
+    std::array<double,HostCount> host{};
+    stream_profile::Activity begin,finished;
+  };
+  const unsigned liveLimit_=stream_profile::frameLimit();
+  unsigned liveSize_=0;
+  bool liveActive_=false;
+  stream_profile::Activity liveBegin_;
+  std::unique_ptr<LiveRecord[]> live_;
+  static constexpr const char* hostNames_[HostCount] = {
+    "reference_copy", "reference_enqueue", "reference_wait_tail", "reference_overlap_wall", "factor",
+    "baseline_prepare", "covariance_fp64", "input_copy", "initial_wait", "initial_solve", "baseline",
+    "residual", "residual_copy", "residual_wait", "correction_solve", "weight_copy", "finish_wait",
+    "merge", "fence_wait"};
 public:
   GpuClutterProfile(VkPhysicalDevice physical, VkDevice device, uint32_t queue,
       float period, uint32_t samples, uint32_t bins, uint32_t channels)
     : device_(device), period_(period), samples_(samples), bins_(bins), channels_(channels) {
-    const char* value = std::getenv("BLAH2_GPU_CLUTTER_PROFILE_FRAMES");
-    if (!value || !*value) return;
-    for (const char* p = value; *p; ++p) {
-      if (*p < '0' || *p > '9' || limit_ > 6)
-        throw std::invalid_argument("BLAH2_GPU_CLUTTER_PROFILE_FRAMES must be 0..64");
-      limit_ = limit_ * 10 + unsigned(*p-'0');
-    }
-    if (limit_ > 64)
-      throw std::invalid_argument("BLAH2_GPU_CLUTTER_PROFILE_FRAMES must be 0..64");
+    if(liveLimit_)live_=std::make_unique<LiveRecord[]>(liveLimit_);
+    limit_ = gpu_offline_diagnostics::frameLimit();
     if (!limit_) return;
     uint32_t count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
@@ -75,17 +89,33 @@ public:
   }
   GpuClutterProfile(const GpuClutterProfile&) = delete;
   GpuClutterProfile& operator=(const GpuClutterProfile&) = delete;
-  ~GpuClutterProfile() { if (pool_) vkDestroyQueryPool(device_, pool_, nullptr); }
+  ~GpuClutterProfile() {
+    for(unsigned i=0;i<liveSize_;++i){const auto& r=live_[i];
+      stream_profile::Line line;
+      line.append("STREAM_PROFILE_CLUTTER pid=%lld frame=%u samples=%u bins=%u channels=%u start_us=%llu end_us=%llu wall_ms=%.6f timings=wall_nonadditive",
+        stream_profile::processId(),r.frame,samples_,bins_,channels_,
+        static_cast<unsigned long long>(stream_profile::micros(r.start)),
+        static_cast<unsigned long long>(stream_profile::micros(r.end)),stream_profile::ms(r.end,r.start));
+      for(unsigned stage=0;stage<HostCount;++stage)
+        if(r.seen&(uint32_t(1)<<stage))line.append(" host_%s_ms=%.6f",hostNames_[stage],r.host[stage]);
+      stream_profile::activity(line,r.begin,r.finished,"thread");
+    }
+    if (pool_) vkDestroyQueryPool(device_, pool_, nullptr);
+  }
   void beginFrame() {
-    active_ = frame_ < limit_;
+    diagnostics_.begin();
+    liveActive_=liveSize_<liveLimit_;
+    active_ = frame_ < limit_ || liveActive_;
     if (!active_) return;
     ++frame_; hostSeen_ = gpuSeen_ = 0; host_.fill(0); gpu_.fill(0);
     start_ = Clock::now();
+    liveBegin_=stream_profile::Activity::capture(liveActive_);
   }
   Scope scope(Host stage) {
     if (active_) hostSeen_ |= uint32_t(1) << stage;
     return Scope(active_ ? &host_[stage] : nullptr);
   }
+  std::ostream& diagnostics()noexcept{return diagnostics_.stream();}
   void recordBegin(VkCommandBuffer command, uint32_t phase) const {
     if (!pool_) return;
     vkCmdResetQueryPool(command, pool_, phase*2, 2);
@@ -109,14 +139,15 @@ public:
       gpu_[stage] += double((ticks[1]-ticks[0]) & mask) * double(period_) / 1e6;
   }
   void finish() noexcept {
-    if (!active_) return;
+    if (!active_) {diagnostics_.flush();return;}
     active_ = false;
+    if(liveActive_){
+      live_[liveSize_++]={frame_,hostSeen_,start_,Clock::now(),host_,liveBegin_,
+        stream_profile::Activity::capture(true)};
+      liveActive_=false;
+    }
+    if(frame_>limit_){diagnostics_.flush();return;}
     try {
-      static constexpr const char* names[] = {"reference_copy", "reference_enqueue",
-        "reference_wait_tail", "reference_overlap_wall", "factor",
-        "baseline_prepare", "covariance_fp64", "input_copy", "initial_wait", "initial_solve", "baseline",
-        "residual", "residual_copy", "residual_wait", "correction_solve", "weight_copy",
-        "finish_wait", "merge"};
       static constexpr const char* gpuNames[] = {"reference_fft", "initial_corr", "residual_corr", "correction_fir"};
       std::ostringstream line;
       line << "GPU_CLUTTER_PROFILE frame=" << frame_ << " limit=" << limit_
@@ -125,11 +156,12 @@ public:
         << " timestamp_bits=" << bits_ << " host_total_ms="
         << std::chrono::duration<double, std::milli>(Clock::now()-start_).count();
       for (unsigned i = 0; i < HostCount; ++i)
-        if (hostSeen_ & (uint32_t(1) << i)) line << " host_" << names[i] << "_ms=" << host_[i];
+        if (hostSeen_ & (uint32_t(1) << i)) line << " host_" << hostNames_[i] << "_ms=" << host_[i];
       for (unsigned i = 0; i < gpu_.size(); ++i)
         if (gpuSeen_ & (uint32_t(1) << i)) line << " gpu_" << gpuNames[i] << "_ms=" << gpu_[i];
-      line << '\n'; std::cerr << line.str();
+      line << '\n'; diagnostics_.stream() << line.str();
     } catch (...) { /* Diagnostics must not change frame acceptance. */ }
+    diagnostics_.flush();
   }
 };
 } // namespace blah2

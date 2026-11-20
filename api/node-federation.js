@@ -30,6 +30,7 @@ const READS = new Set(['/api/federation/capabilities', '/api/system/status', '/a
   '/stash/iqdata', '/stash/timing']);
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ACTIVE = 8;
+const MAX_LIVE_ASSOCIATIONS = 1024;
 
 function nodeCapabilities(config = {}) {
   const multi = config.process?.multi_illuminator;
@@ -49,13 +50,14 @@ function nodeCapabilities(config = {}) {
       channel_count: config.capture?.device?.channel_count ?? null},
     processing: {multi_illuminator: multi?.enabled === true,
       illuminator_standards: standards,
-      atsc_reference_modes: ['automatic', 'raw', 'pilot_aided'],
+      atsc_reference_modes: ['automatic', 'raw'],
+      atsc_replay_reference_modes: ['automatic', 'raw', 'pilot_aided'],
       atsc3_reference_modes: ['automatic', 'raw'],
       atsc_decision_directed_available: false,
       reference_reconstruction: {
         raw: {status: 'stable', standards: ['*']},
         fm_modulation_aided: {status: 'experimental', live_selectable: false},
-        atsc_8vsb: {status: 'qualified-pilot-projection', live_selectable: true,
+        atsc_8vsb: {status: 'experimental-offline', live_selectable: false,
           completed_stages: ['heldout-pilot-projection', 'raw-clutter-separation',
             'field-sync', 'confidence-gated-symbol-reconstruction'],
           full_reconstruction_live_selectable: false},
@@ -121,7 +123,8 @@ function localNodeOrigin(host, port) {
   return `http://${family === 6 ? `[${address}]` : address}:${numericPort}`;
 }
 
-function probeJson(origin, pathname, timeoutMs = 2500, maxBytes = 2 * 1024 * 1024) {
+function probeJson(origin, pathname, timeoutMs = 2500, maxBytes = 2 * 1024 * 1024,
+    headers = {}) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES)
     return Promise.reject(new Error('Node probe byte limit is invalid'));
   return new Promise((resolve, reject) => {
@@ -132,7 +135,7 @@ function probeJson(origin, pathname, timeoutMs = 2500, maxBytes = 2 * 1024 * 102
     const target = new URL(pathname, origin);
     const request = (target.protocol === 'https:' ? https : http).get(target, {timeout: timeoutMs,
       agent: target.protocol === 'https:' ? HTTPS_AGENT : HTTP_AGENT,
-      headers: {Accept: 'application/json', 'Accept-Encoding': 'identity'}}, response => {
+      headers: {Accept: 'application/json', 'Accept-Encoding': 'identity', ...headers}}, response => {
       if (response.statusCode !== 200) { response.resume();
         return finish(new Error(`Node probe returned HTTP ${response.statusCode}`)); }
       response.on('data', chunk => { size += chunk.length;
@@ -148,6 +151,38 @@ function probeJson(origin, pathname, timeoutMs = 2500, maxBytes = 2 * 1024 * 102
     deadline = setTimeout(() => request.destroy(new Error('Node probe deadline exceeded')),
       timeoutMs);
   });
+}
+
+function mergeLiveAircraftAssociations(rows, maximum = MAX_LIVE_ASSOCIATIONS) {
+  const byAircraft = new Map();
+  const labels = value => [...new Set((Array.isArray(value) ? value : [value])
+    .filter(item => typeof item === 'string' && item.trim() && item.trim().length <= 80)
+    .map(item => item.trim()))];
+  for (const {entry = {}, value} of rows || []) {
+    if (!Array.isArray(value?.associations)) continue;
+    for (const association of value.associations.slice(0, maximum)) {
+      const hex = String(association?.hex || '').trim().toLowerCase();
+      const tracked = association?.tracked === true;
+      const detected = tracked || association?.detected === true;
+      if (!hex || !detected || (!byAircraft.has(hex) && byAircraft.size >= maximum)) continue;
+      const current = byAircraft.get(hex) || {hex, flight: '', detected: false, tracked: false,
+        channels: new Set(), sources: new Set(), detected_cpis: 0, tracked_cpis: 0, last_at: 0};
+      current.detected ||= detected;
+      current.tracked ||= tracked;
+      current.flight ||= typeof association.flight === 'string' ? association.flight : '';
+      current.detected_cpis += Number(association.detected_cpis) || 0;
+      current.tracked_cpis += Number(association.tracked_cpis) || 0;
+      current.last_at = Math.max(current.last_at, Number(association.last_at) || 0);
+      for (const channel of labels(association.channels)) current.channels.add(channel);
+      const associationSources = Array.isArray(association.sources) ? association.sources : [];
+      for (const source of labels([entry.label, association.source, ...associationSources]))
+        current.sources.add(source);
+      byAircraft.set(hex, current);
+    }
+  }
+  return [...byAircraft.values()].map(item => ({...item,
+    channels: [...item.channels].sort(), sources: [...item.sources].sort()})).sort((left, right) =>
+    left.hex.localeCompare(right.hex));
 }
 
 async function discoverLocalNode(host, port, label) {
@@ -203,7 +238,7 @@ function configuredApiPort(config = {}, environment = process.env) {
 
 function safeConfig(config) {
   const p = config.process || {}, c = config.capture || {}, t = config.truth || {};
-  return {capture: {fs: c.fs, fc: c.fc, device: {type: c.device?.type,
+  return {capture: {fs: c.fs, fc: c.fc, replay: {state: c.replay?.state === true}, device: {type: c.device?.type,
     channel_count: c.device?.channel_count, reference_channel: c.device?.reference_channel,
     surveillance_channels: c.device?.surveillance_channels}},
     location: config.location, process: {data: p.data,
@@ -221,6 +256,9 @@ function safeConfig(config) {
 }
 
 function cooperativeSources(node, config) {
+  // Config-only discovery cannot authenticate a remote recording's sites.
+  // Replay contributions must use the producer's verified observation bundle.
+  if (config?.capture?.replay?.state === true) return [];
   const capture = config?.capture || {}, process = config?.process || {};
   const multi = process.multi_illuminator;
   if (multi?.enabled === true) return (multi.illuminators || [])
@@ -497,6 +535,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   let cooperativeBusy = false, cooperativeLastPollAt = null, cooperativeLastError = null;
   let networkStatisticsCache = null, networkStatisticsCacheAt = 0;
   let networkStatisticsPromise = null;
+  let liveAssociationCache = null, liveAssociationCacheAt = 0;
+  let liveAssociationPromise = null;
   let cooperativeTotalSourceCount = 0, cooperativeSourceCount = 0, cooperativeAvailableSources = 0;
   const configuredBindAddress = net.isIP(config?.network?.ip || '') ? config.network.ip : '0.0.0.0';
   const localAddress = configuredBindAddress === '0.0.0.0' ? '127.0.0.1' :
@@ -504,10 +544,12 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   const localOrigin = `http://${net.isIP(localAddress) === 6 ? `[${localAddress}]` : localAddress}:${configuredApiPort(config)}`;
   const cooperativeEntries = () => [{id: identity, label: localLabel,
     expectedIdentity: identity, origin: localOrigin, local: true}, ...nodes.map(node => ({id: node.id,
-    label: node.label, expectedIdentity: node.expectedIdentity, origin: node.origin, local: false}))];
+    label: node.label, expectedIdentity: node.expectedIdentity, origin: node.origin, token: node.token,
+    local: false}))];
   async function cooperativeRead(entry, pathname, timeoutMs = 900,
       maxBytes = 2 * 1024 * 1024) {
-    const result = await probeJson(entry.origin, pathname, timeoutMs, maxBytes);
+    const result = await probeJson(entry.origin, pathname, timeoutMs, maxBytes,
+      entry.token ? {Authorization: `Bearer ${entry.token}`} : {});
     if (result.identity !== entry.expectedIdentity) throw new Error(`Node identity mismatch: ${entry.id}`);
     return result.value;
   }
@@ -589,6 +631,24 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
       error: cooperativeLastError}}));
   app.get('/api/federation/geographic-fusion', (_req, res) =>
     res.json(geographicFusion.snapshot()));
+  app.get('/api/federation/live-aircraft-associations', async (_req, res) => {
+    try {
+      if (liveAssociationCache && Date.now() - liveAssociationCacheAt < 750)
+        return res.json(liveAssociationCache);
+      if (!liveAssociationPromise) liveAssociationPromise = (async () => {
+        const rows = await Promise.all(cooperativeEntries().map(async entry => {
+          try { return {entry, value: await cooperativeRead(entry,
+            '/api/live-aircraft-associations', 1500, 512 * 1024)}; }
+          catch (_) { return null; }
+        }));
+        return {schema: 'vectorwarp-federated-live-aircraft-associations-v1', timestamp: Date.now(),
+          associations: mergeLiveAircraftAssociations(rows.filter(Boolean))};
+      })();
+      liveAssociationCache = await liveAssociationPromise;
+      liveAssociationCacheAt = Date.now();
+      res.json(liveAssociationCache);
+    } finally { liveAssociationPromise = null; }
+  });
   app.get('/api/federation/statistics-summary', async (_req, res) => {
     try {
       if (networkStatisticsCache && Date.now() - networkStatisticsCacheAt < 2000)
@@ -798,4 +858,4 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
 module.exports = {installNodeFederation, registry, safeConfig, nodeCapabilities, READS,
   localNodeOrigin, probeJson, discoverLocalNode, cooperativeSources, compactNodeStatistics,
   combineNodeStatistics, deduplicatePasses, alignNodeStatistics, defaultRegistryPath,
-  configuredApiPort};
+  configuredApiPort, mergeLiveAircraftAssociations};

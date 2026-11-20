@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const {CausalFunnelRecorder, validateFrame} = require('./causal-funnel-recorder');
 const {createCausalFunnelProducer, createMultiIlluminatorCausalFrame} =
   require('./causal-funnel-producer');
@@ -40,6 +41,10 @@ assert.doesNotThrow(() => validateFrame({...frame2(), reason: 'duplicate', candi
 assert.throws(() => validateFrame({...frame2(), reason: 'duplicate'}), /Invalid/);
 assert.throws(() => validateFrame({...frame2(), lineage: {...lineage, generation: 9007199254740992}}), /lineage/);
 assert.throws(() => validateFrame({...frame2(), lineage: {...lineage, end_sample: '1'}}), /interval/);
+assert.throws(() => validateFrame({...frame2(), lineage: {...lineage,
+  end_sample: lineage.first_sample}}), /interval/, 'Raw capture intervals are half-open and nonempty');
+assert.throws(() => validateFrame({...frame2(), lineage: {...lineage,
+  input_epoch: undefined}}), /interval/, 'Capture bounds cannot assert an unknown epoch');
 assert.throws(() => validateFrame({...frame2(), lineage: {...lineage, truth_epoch: '1'}}), /Truth-shaped/);
 assert.throws(() => validateFrame({...frame2(), coverage: {...frame2().coverage, tracks_retained: 1}}), /coverage/);
 assert.throws(() => validateFrame({...frame2(), candidates: [{...frame2().candidates[0], reason: 'truth_matched'}]}), /metadata/);
@@ -54,7 +59,7 @@ assert.doesNotThrow(() => validateFrame({...frame2(), candidates: [{...frame2().
 assert.throws(() => validateFrame({...frame2(), candidates: [{...frame2().candidates[0],
   kind: 'track', confirmation_credit: null}]}), /metadata/);
 
-const multiFrame = createMultiIlluminatorCausalFrame({id: 'WTAE-RF27',
+const multiInput = {id: 'TX-A-RF27',
   timestamp: 1794521720793, frequency_hz: 587000000, sample_rate_hz: 2000000,
   first_input_sample: 1200000, end_input_sample: 2200000,
   capture_sample_position_available: true, capture_epoch: 3,
@@ -63,14 +68,33 @@ const multiFrame = createMultiIlluminatorCausalFrame({id: 'WTAE-RF27',
     snr: [6.5, 7.25, 8.75]},
   trackerDiagnostics: {detections: 3, tracks_before: 1, tracks_after: 2,
     candidate_track_pairs: 3, pair_in_gate: 1, associations: 1, misses: 0,
-    birth_candidates: 2, initiated: 1, no_op: false}}, 2);
-assert.equal(validateFrame(JSON.parse(JSON.stringify(multiFrame))).channel, 'WTAE-RF27');
+    birth_candidates: 2, initiated: 1, no_op: false}};
+const multiFrame = createMultiIlluminatorCausalFrame(multiInput, 2);
+assert.equal(validateFrame(JSON.parse(JSON.stringify(multiFrame))).channel, 'TX-A-RF27');
 assert.deepEqual(multiFrame.coverage, {candidates_total: 3, tracks_total: 2,
   candidates_retained: 2, tracks_retained: 0, truncated: true});
 assert.equal(multiFrame.lineage.input_epoch, '3');
 assert.equal(multiFrame.tracker_diagnostics.associations, 1);
+const singletonLane = createMultiIlluminatorCausalFrame({...multiInput,
+  end_input_sample: multiInput.first_input_sample, capture_epoch: 0,
+  capture_end_input_sample: multiInput.capture_first_input_sample + 1});
+assert.equal(validateFrame(singletonLane).lineage.input_epoch, '0',
+  'Genuine epoch zero and inclusive one-sample lane intervals remain valid');
+for (const capture_epoch of [undefined, null, -1, 0.5, NaN, Infinity, true,
+  Number.MAX_SAFE_INTEGER + 1, '0'])
+  assert.throws(() => createMultiIlluminatorCausalFrame({...multiInput, capture_epoch}), /capture lineage/);
+for (const capture_end_input_sample of [undefined, multiInput.capture_first_input_sample,
+  multiInput.capture_first_input_sample - 1])
+  assert.throws(() => createMultiIlluminatorCausalFrame({...multiInput, capture_end_input_sample}), /capture lineage/);
+const unpositioned = createMultiIlluminatorCausalFrame({...multiInput,
+  capture_sample_position_available: false, capture_epoch: undefined,
+  capture_first_input_sample: undefined, capture_end_input_sample: undefined});
+assert.doesNotThrow(() => validateFrame(unpositioned));
+assert.equal(unpositioned.lineage.input_epoch, undefined);
+assert.equal(unpositioned.lineage.first_sample, undefined);
+assert.equal(unpositioned.lineage.end_sample, undefined);
 assert.throws(() => createMultiIlluminatorCausalFrame({
-  ...multiFrame, id: 'WTAE RF27'}), /identity/);
+  ...multiFrame, id: 'TX-A RF27'}), /identity/);
 assert.throws(() => validateFrame({...multiFrame,
   tracker_diagnostics: {...multiFrame.tracker_diagnostics, adsb_matches: 1}}),
   /Truth-shaped/);
@@ -88,6 +112,39 @@ assert.throws(() => validateFrame({...multiFrame,
   assert.equal(row.epoch_id, 'causal-test-epoch');
   assert.equal(recorder.status().written, 1);
   assert.equal(recorder.status().truth_blind, true);
+  // Historical native-only v2 epochs omitted the now-explicit false default.
+  // Resume without rewriting their manifest, but retain every actual guard.
+  const legacyConfig = JSON.parse(JSON.stringify(config));
+  legacyConfig.process.evidence.causal_funnel.path = path.join(directory, 'legacy');
+  const legacy = new CausalFunnelRecorder(legacyConfig);
+  const oldEpoch = JSON.parse(JSON.stringify(legacy.epoch));
+  delete oldEpoch.config.api_ingest_enabled;
+  const oldManifest = JSON.stringify({...oldEpoch,
+    fingerprint: crypto.createHash('sha256').update(JSON.stringify(oldEpoch)).digest('hex')}) + '\n';
+  fs.mkdirSync(legacy.options.path);
+  fs.writeFileSync(legacy.manifestFile(), oldManifest);
+  assert.equal(legacy.accept(frame2()), true);
+  await legacy.flush();
+  assert.equal(legacy.status().written, 1);
+  assert.equal(legacy.status().error, null);
+  assert.equal(fs.readFileSync(legacy.manifestFile(), 'utf8'), oldManifest);
+  for (const change of [{api_ingest_enabled: true}, {max_candidates: 3}]) {
+    const changedLegacy = JSON.parse(JSON.stringify(legacyConfig));
+    Object.assign(changedLegacy.process.evidence.causal_funnel, change);
+    const refused = new CausalFunnelRecorder(changedLegacy);
+    assert.equal(refused.accept(frame2()), true);
+    await refused.flush();
+    assert.equal(refused.status().written, 0);
+    assert.match(refused.status().error, /immutable/);
+    assert.equal(fs.readFileSync(legacy.manifestFile(), 'utf8'), oldManifest);
+  }
+  fs.writeFileSync(legacy.manifestFile(), oldManifest.replace(/"fingerprint":"[a-f0-9]+"/,
+    '"fingerprint":"' + '0'.repeat(64) + '"'));
+  const tampered = new CausalFunnelRecorder(legacyConfig);
+  assert.equal(tampered.accept(frame2()), true);
+  await tampered.flush();
+  assert.equal(tampered.status().written, 0);
+  assert.match(tampered.status().error, /immutable/);
   const apiOnlyConfig = JSON.parse(JSON.stringify(config));
   apiOnlyConfig.process.evidence.causal_funnel.enabled = false;
   apiOnlyConfig.process.evidence.causal_funnel.api_ingest_enabled = true;
@@ -95,9 +152,13 @@ assert.throws(() => validateFrame({...multiFrame,
   apiOnlyConfig.process.evidence.causal_funnel.path = path.join(directory, 'api-only');
   const apiOnly = new CausalFunnelRecorder(apiOnlyConfig);
   assert.equal(apiOnly.status().enabled, true);
+  assert.equal(apiOnly.status().native_enabled, false);
+  assert.equal(apiOnly.status().api_ingest_enabled, true);
   assert.equal(apiOnly.accept(multiFrame), true);
   await apiOnly.flush();
   assert.equal(apiOnly.status().written, 1);
+  assert.equal(apiOnly.status().native_received, 0,
+    'API-ingested multi-illuminator frames are not native socket receipts');
   assert.throws(() => validateFrame({...frame(1), truth: {icao: 'abc123'}}), /Truth-shaped field/);
   assert.throws(() => validateFrame({...frame(1), candidates: [{...frame(1).candidates[0], latitude: 1}]}), /Truth-shaped field/);
   assert.doesNotThrow(() => validateFrame({...frame(1), source: 'native'}));

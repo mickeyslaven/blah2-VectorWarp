@@ -50,7 +50,8 @@ public:
   static void decode_metadata(Header& header, const std::vector<uint8_t>& bytes);
   static std::size_t payload_size(const Header& header);
   static std::vector<std::vector<std::complex<float>>> decode_payload(
-    const Header& header, const std::vector<uint8_t>& bytes);
+    const Header& header, const std::vector<uint8_t>& bytes,
+    const std::vector<double>& originalMeanIq = {});
   static bool is_synchronized_data(const Header& header);
   static bool timing_contiguous(const Header& previous, const Header& current);
 };

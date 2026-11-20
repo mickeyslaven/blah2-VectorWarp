@@ -111,6 +111,11 @@ jobs:
             packages/vectorwarp-archive-key.asc
           gpgv --keyring "$RUNNER_TEMP/vectorwarp-release-keyring.gpg" \
             packages/SHA256SUMS.asc packages/SHA256SUMS
+          # New releases sign the hosted-check provenance too. Older signed
+          # releases may predate it; use the authenticated inventory as authority.
+          if awk '$2 == "release-ci-provenance.json" {found=1} END {exit !found}' packages/SHA256SUMS; then
+            gh release download "$TAG" --dir packages --pattern release-ci-provenance.json
+          fi
           (cd packages && sha256sum --check --strict SHA256SUMS)
           test -f packages/package-manifest.json
           git fetch --no-tags origin "refs/tags/${TAG}:refs/vectorwarp-release-candidate/${TAG}"

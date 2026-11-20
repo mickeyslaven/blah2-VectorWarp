@@ -1,8 +1,20 @@
 #include "process/ambiguity/ResidentFusionWeights.h"
-#include "process/analysis/ProductionReplayContract.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <limits>
+
+TEST_CASE("resident whitening uses independently learned bounded covariance")
+{
+  std::array<std::complex<double>,4> covariance{{1,0,0,4}};
+  const std::array<std::complex<double>,2> weights{{1,0}};
+  const auto scale=blah2::resident_fusion::whiteningScales(covariance.data(),weights.data(),2,0,true);
+  REQUIRE(scale[0]==2);REQUIRE(scale[1]==1);
+  const auto absent=blah2::resident_fusion::whiteningScales(nullptr,nullptr,2,0,false);
+  for(const auto value:absent)REQUIRE(value==1);
+  covariance[1]={std::numeric_limits<double>::quiet_NaN(),0};
+  REQUIRE_THROWS_AS(blah2::resident_fusion::whiteningScales(covariance.data(),weights.data(),2,0,true),std::invalid_argument);
+}
 
 TEST_CASE("resident measured fusion uses target to direct response ratios")
 {
@@ -178,22 +190,4 @@ TEST_CASE("aligned resident null is phase equivariant without invented orthogona
     power+=std::norm(baseline[channel]);
   }
   REQUIRE(power==Catch::Approx(.01).epsilon(1e-12));
-}
-
-TEST_CASE("production replay trial and temporal contract matches resident bounds")
-{
-  REQUIRE(blah2::production_replay::familywisePfa(.04, 4, 9) ==
-    Catch::Approx(.04 / 36).epsilon(1e-15));
-  REQUIRE_THROWS_AS(blah2::production_replay::familywisePfa(.04, 0, 1), std::invalid_argument);
-  REQUIRE_NOTHROW(blah2::production_replay::temporal(1, 0, 0, true));
-  REQUIRE_NOTHROW(blah2::production_replay::temporal(8, 2, 16, true));
-  REQUIRE_THROWS_AS(blah2::production_replay::temporal(1, 1, 0, true), std::invalid_argument);
-  REQUIRE_THROWS_AS(blah2::production_replay::temporal(4, 0, 0, false), std::invalid_argument);
-}
-
-TEST_CASE("production replay covariance input is bounded and fail closed")
-{
-  REQUIRE_NOTHROW(blah2::production_replay::covariance({1,.2,.2,2},2));
-  REQUIRE_THROWS_AS(blah2::production_replay::covariance({1,.2,.2,0},2), std::invalid_argument);
-  REQUIRE_THROWS_AS(blah2::production_replay::covariance({1,.2,.2},2), std::invalid_argument);
 }

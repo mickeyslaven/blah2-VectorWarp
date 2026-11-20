@@ -13,7 +13,7 @@ const {selectedIlluminatorConfig} = require('../html/js/common');
 const {delaySampleDescription} = require('../html/js/config_ui');
 const clone = value => JSON.parse(JSON.stringify(value));
 const km = (bin, rate) => bin * 299792.458 / rate;
-const config = yaml.load(fs.readFileSync(path.join(__dirname, '../config/config-usrp.yml'), 'utf8'));
+const config = configurationForReceiver('Usrp');
 config.capture.fs = 61440000;
 config.capture.fc = 539000000;
 config.process.delay_reference_sample_rate_hz = 2400000;
@@ -162,11 +162,51 @@ try {
   legacy.process.multi_illuminator.illuminators[1].output_sample_rate_hz = 300000;
   assert.equal(legacyDelayReferenceRate(legacy), 300000);
   assert.equal(setupDefaults().process.delay_reference_sample_rate_hz, 2000000);
-  assert.equal(configurationForReceiver('Kraken').process.delay_reference_sample_rate_hz, 2400000);
+  assert.equal(configurationForReceiver('Kraken').process.delay_reference_sample_rate_hz, 2000000);
   assert.equal(configurationForReceiver('Usrp').process.delay_reference_sample_rate_hz, 2000000);
-  const switched = configurationForReceiver('Usrp', configurationForReceiver('Kraken'));
+  const existingKraken = configurationForReceiver('Kraken');
+  existingKraken.process.delay_reference_sample_rate_hz = 2400000;
+  existingKraken.process.data.cpi = .75;
+  existingKraken.process.tracker.enable = false;
+  fs.writeFileSync(filename, yaml.dump(existingKraken));
+  const existingBytes = fs.readFileSync(filename);
+  assert.equal(migrateKnownDefaults(filename), false, 'explicit prior coordinates are not new defaults');
+  assert.deepEqual(fs.readFileSync(filename), existingBytes, 'upgrade preserves exact user config bytes');
+  const existingRead = readConfig(filename).config;
+  assert.equal(existingRead.process.delay_reference_sample_rate_hz, 2400000);
+  assert.equal(existingRead.process.data.cpi, .75);
+  assert.equal(existingRead.process.tracker.enable, false);
+  assert.equal(effectiveDelayConfig(existingRead, 2400000).process.ambiguity.delayMax, 400);
+  const switched = configurationForReceiver('Usrp', existingKraken);
   assert.equal(switched.process.delay_reference_sample_rate_hz, 2400000,
     'switching receivers retains the existing physical delay scale');
+  assert.equal(switched.process.data.cpi, .75);
+  assert.equal(switched.process.tracker.enable, false);
+
+  const newKraken = configurationForReceiver('Kraken');
+  assert.equal(newKraken.capture.fs, 2400000, 'actual acquisition rate remains truthful');
+  const projectedKraken = effectiveDelayConfig(newKraken, 2400000, {scaleNeighborhoods: true}).process;
+  assert.deepEqual(projectedKraken.ambiguity,
+    {delayMin: -12, delayMax: 480, dopplerMin: -200, dopplerMax: 200});
+  assert.deepEqual(projectedKraken.clutter,
+    {enable: true, followAmbiguity: true, delayMin: -12, delayMax: 481});
+  assert.deepEqual(['nGuard', 'nTrain', 'minDelay', 'nCentroid'].map(key => projectedKraken.detection[key]),
+    [3, 8, 6, 8], 'physical delay neighborhoods round outward on actual sample grid');
+  assert.ok(Math.abs(km(projectedKraken.ambiguity.delayMax, 2400000) - km(400, 2000000)) < 1e-12);
+
+  for (const type of ['Kraken', 'Usrp', 'RspDuo', 'HackRF']) {
+    const configured = configurationForReceiver(type);
+    assert.equal(configured.process.delay_reference_sample_rate_hz, 2000000);
+    assert.equal(configured.process.data.cpi, .5);
+    assert.equal(configured.process.tracker.enable, true);
+    assert.deepEqual(configured.process.ambiguity, setupDefaults().process.ambiguity);
+    assert.deepEqual(configured.process.detection, setupDefaults().process.detection);
+    const power = structuredClone(configured);
+    power.process.detection.track_before_detect = {enable: true, max_cpis: 8, motion_bins: 1};
+    const retained = configurationForReceiver(type, power);
+    assert.deepEqual(retained.process.detection.track_before_detect, power.process.detection.track_before_detect,
+      `${type}: receiver selection must not disable supported power temporal integration`);
+  }
 
   const mixed = clone(config); mixed.capture.fs = 153600000;
   mixed.process.data.cpi = .02;

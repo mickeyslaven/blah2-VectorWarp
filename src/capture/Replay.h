@@ -39,6 +39,7 @@ class ReplayPlayer {
 public:
   using Progress = std::function<void(const ReplayProgress&)>;
   using Control = std::function<ReplayCommand()>;
+  using QueuePosition = std::function<void(uint64_t)>;
   // consumerBusy is checked at EOF so the final processing frame can finish
   // before reporting completion or starting a new loop.
   // Production sets awaitControlsAtEof: complete then means idle/seekable,
@@ -48,6 +49,7 @@ public:
     const std::atomic<bool>& stopped, const Progress& progress,
     const std::function<bool()>& consumerBusy = [] { return false; },
     const Control& control = [] { return ReplayCommand{}; },
-    bool awaitControlsAtEof = false);
+    bool awaitControlsAtEof = false,
+    const QueuePosition& queuePosition = [](uint64_t) {});
 };
 }

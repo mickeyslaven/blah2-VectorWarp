@@ -13,12 +13,15 @@
 
 #include "data/Detection.h"
 #include "data/Track.h"
+#include "ConfirmationContract.h"
+#include "AssociationContract.h"
 
 #include <stdint.h>
 #include <memory>
 #include <array>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <deque>
 #include <map>
@@ -28,20 +31,6 @@ struct TrackerRecoveryConfig {
   uint32_t persistenceCpis = 60;
   double maximumDopplerHz = 0; // zero covers the full configured Doppler map
   uint32_t maximumStationaryCells = 65536;
-  bool guidedShadow = false, guidedPromote = false, guidedSustain = false;
-  uint32_t guidedMaximumTracks = 64;
-};
-
-struct TrackerGuidedPrediction {
-  std::string trackId;
-  double priorDelay = 0, priorDopplerHz = 0, delay = 0, dopplerHz = 0;
-  bool operational = false;
-};
-
-struct TrackerGuidedCandidate {
-  std::string trackId;
-  Detection::Evidence evidence;
-  bool valid = false, aboveThreshold = false;
 };
 
 struct DopplerRidgeConfig
@@ -52,7 +41,7 @@ struct DopplerRidgeConfig
   double minimumDelaySeparationKm = .25;
 };
 
-// Optional shadow/replay policy. Existing tracks always associate against the
+// Offline replay policy. Existing tracks always associate against the
 // complete candidate set first. Only unmatched new births are made exclusive
 // around measurements actually claimed this frame and stronger selected births.
 struct BirthExclusivityConfig
@@ -68,30 +57,26 @@ struct TrackerFrameDiagnostics {
   bool noOp=false;
   uint64_t detections=0, tracksBefore=0, tracksAfter=0;
   uint64_t pairs=0, pairClaimed=0, pairDelayRejected=0, pairDopplerRejected=0, pairInGate=0;
-  uint64_t pairInnovationRejected=0;
+  uint64_t pairInnovationRejected=0, pairSpatialRejected=0;
   uint64_t associations=0, misses=0, promotions=0, tentativeExpired=0, inactivityDeleted=0;
   uint64_t birthCandidates=0, birthSnrRejected=0, birthRidgeRejected=0,
-    birthExclusiveRejected=0, initiated=0;
-  uint64_t weakSupportCandidates=0, weakSupportInGate=0,
-    weakSupportAccepted=0, weakSupportCreditedCpis=0,
-    weakSupportLineageRejected=0;
+    birthExclusiveRejected=0, birthDopplerCombRejected=0, birthRangeCombRejected=0, initiated=0;
   uint64_t lineageResets=0, pairLineageRejected=0, birthLineageRejected=0,
     creditedCpis=0, independentCredits=0, birthCapacityRejected=0;
   uint64_t stationaryBirthRejected=0, stationaryQuarantined=0,
     stationaryCells=0, stationaryCapacityRejected=0, stationaryBirthCapacityRejected=0;
-  uint64_t guidedCandidates=0, guidedInvalid=0, guidedWouldRecover=0,
-    guidedLineageRejected=0, guidedStationaryRejected=0,
-    guidedPromotions=0, guidedSustained=0, guidedBudgetRejected=0;
 };
 
-// A deliberately imprecise, truth-blind support observation. It may extend
-// the coast lifetime of an already operational track, but can never create,
-// promote, reposition, or change the acceleration of a track.
-struct TrackerWeakSupportCandidate {
-  double delay = 0, dopplerHz = 0;
-  uint64_t epoch = 0, newestSequence = 0;
-  uint8_t depth = 0;
-  std::array<uint64_t, 8> sequences{};
+
+// Startup/replay oracle view only. No resident checkpoint is fed back into
+// inference and no evaluation truth is present.
+struct TrackerQualificationState {
+  std::string id;
+  uint32_t state=0,spatial=0,source=0;
+  double delay=0,doppler=0,acceleration=0,missedSeconds=0;
+  uint64_t inactive=0,measurements=0,updates=0,epoch=0,highWaterSequence=0;
+  bool accelerationEstimated=false,everConfirmed=false,lineageKnown=false;
+  std::vector<uint8_t> confirmationVotes;
 };
 
 class Tracker
@@ -133,6 +118,13 @@ private:
   /// receiver's native delay and Doppler bins, so the contract is independent
   /// of SDR sample rate, carrier frequency, operating system and backend.
   bool normalizedInnovationGate;
+  uint32_t spatialBeams=0, spatialFineFactor=1, spatialTolerance=UINT32_MAX;
+  // The latest spatial observation is retained across prediction/coast,
+  // exactly as resident history carries its last spatial word forward.
+  std::unordered_map<std::string,uint32_t> trackSpatial;
+  struct QuarantineSample {double delay,doppler;bool associated;};
+  std::unordered_map<std::string,std::deque<QuarantineSample>> quarantineHistory;
+  std::unordered_set<std::string> previouslyConfirmed;
 
   /// NIS radius squared for the normalized gate. 4/pi gives the same area as
   /// the legacy +/-1-bin rectangle when covariance is the identity.
@@ -142,6 +134,11 @@ private:
 
   /// @brief Index of detections already updated.
   std::vector<bool> doNotInitiate;
+  std::vector<tracker_policy::Candidate> policyCandidates,policyPredictions;
+  std::deque<int> nativeDelay;
+  std::deque<double> nativeDoppler;
+  double dopplerRow(double value) const;
+  bool stationaryKey(double delay,double doppler,std::pair<int64_t,int64_t>& key) const;
 
   /// @brief POSIX timestamp of last update (ms).
   uint64_t timestamp;
@@ -160,12 +157,6 @@ private:
   };
   std::vector<DopplerRidgeState> dopplerRidges;
 
-  struct WeakSupportLineage {
-    uint64_t epoch = 0, highWaterSequence = 0;
-    bool initialized = false;
-  };
-  std::unordered_map<std::string, WeakSupportLineage> weakSupportLineage;
-  TrackerFrameDiagnostics pendingWeakSupport;
   TrackerRecoveryConfig recovery;
   struct EvidenceLedger {
     uint64_t epoch = 0, highWaterSequence = 0;
@@ -179,7 +170,6 @@ private:
   bool pendingLineageReset = false;
   struct StationaryCell { uint64_t last = 0; uint32_t streak = 0; };
   std::map<std::pair<int64_t,int64_t>,StationaryCell> stationaryCells;
-  std::vector<TrackerGuidedCandidate> frameGuided;
   bool frameHasEvidence = false;
   bool validEvidence(const Detection::Evidence&, bool requireCurrentEpoch = true) const;
   bool freshEvidence(const std::string&, const Detection::Evidence&) const;
@@ -187,10 +177,10 @@ private:
   void appendVote(uint64_t index, bool credit);
   void promote(uint64_t index, bool credit);
   bool stationary(double delay, double doppler) const;
+  bool quarantine(uint64_t index,double delay,double doppler) const;
   bool stationaryCapacityBlocked(double delay, double doppler) const;
   void pruneStationary();
   void learnStationary(Detection& detection);
-  bool guidedRecovery(uint64_t index, Detection& prediction, bool& credit);
   void pruneLedgers();
 
   void updateDopplerRidges(Detection& detection);
@@ -230,16 +220,15 @@ public:
   /// @param detection Detection data for last CPI.
   /// @param timestamp POSIX timestamp (ms).
   /// @return Pointer to track data.
-  std::unique_ptr<Track> process(Detection *detection, uint64_t timestamp,
-    const std::vector<TrackerGuidedCandidate>& guided = {});
+  std::unique_ptr<Track> process(Detection *detection, uint64_t timestamp);
   void configureRecovery(TrackerRecoveryConfig config);
-  std::vector<TrackerGuidedPrediction> guidedPredictions(uint64_t timestamp);
+  void configureGrid(const std::deque<int>& delay,const std::deque<double>& doppler);
+  void configureSpatialAssociation(uint32_t beams,uint32_t fineFactor,uint32_t tolerance);
+  uint32_t spatialForTrack(const std::string& id) const {
+    const auto found=trackSpatial.find(id);return found==trackSpatial.end()?0u:found->second;
+  }
+  std::vector<TrackerQualificationState> qualificationState();
 
-  /// Credit disjoint temporal evidence to existing ACTIVE/COASTING tracks.
-  /// Returns the number of coast lifetimes reset. The current measurement,
-  /// state history, association count, acceleration and promotion window are
-  /// never modified.
-  uint64_t applyWeakSupport(const std::vector<TrackerWeakSupportCandidate>& candidates);
 
   /// @brief Update tracks by associating detections.
   /// @param detection Detection data for last CPI.

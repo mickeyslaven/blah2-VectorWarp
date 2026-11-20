@@ -20,6 +20,9 @@ const configFor = (definitions = illuminators, rx = receiver, localization = {})
   location: {rx}, process: {multi_illuminator: {enabled: true, illuminators: definitions, localization},
     tracker: {initiate: {M: 3, N: 6}, delete: 3}}});
 const config = configFor();
+for (const retired of ['localPoint', 'geographicPoint', 'excessPath', 'ellipseIntersections'])
+  assert.equal(require('./multi-illuminator-track-fusion')[retired], undefined,
+    'The unsupported planar geographic solver must not reappear beside canonical WGS84 3D');
 function cohort(definitions = illuminators, point = target, index = 0, rx = receiver, epoch = 4) {
   const local = localPoint3d(rx, point);
   return definitions.map(definition => ({id: definition.id, sample_rate_hz: definition.output_sample_rate_hz,
@@ -98,6 +101,26 @@ const expiredSnapshot = freshnessFuser.snapshot(freshnessFuser.lastReceiptAt + 1
 assert.equal(expiredSnapshot.operational_localization, false);
 assert.equal(expiredSnapshot.tracks.length, 0,
   'Stopped input expires without needing another capture cohort');
+
+for (const badInput of [() => [], () => { const frames = cohort(illuminators, target, 3);
+  frames[0].tracks.data[0].delay_sigma_bins = -1; return frames; }, () => { const frames = cohort(illuminators, target, 3);
+  frames[0].capture_epoch++; return frames; }, () => { const frames = cohort(illuminators, target, 3);
+  frames.forEach(frame => { frame.timestamp = frame.tracks.timestamp = 100001; }); return frames; }]) {
+  const fuser = new MultiIlluminatorTrackFuser(config);
+  for (let index = 0; index < 3; ++index) fuser.update(cohort(illuminators, target, index));
+  assert.equal(fuser.snapshot().operational_localization, true);
+  const rejected = fuser.update(badInput());
+  for (const result of [rejected, fuser.snapshot(), fuser.lastResult]) {
+    assert.equal(result.available, false);
+    assert.equal(result.operational_localization, false);
+    assert.deepEqual(result.tracks, []);
+    assert.deepEqual(result.hypotheses, []);
+    assert.deepEqual(result.position_candidates, []);
+  }
+  const recovered = fuser.update(cohort(illuminators, target, 4));
+  assert.equal(recovered.available, true);
+  assert.equal(recovered.tracks[0].state, 'FUSED_ACTIVE');
+}
 
 for (const mutate of [frames => { frames[2].capture_first_input_sample += 1; },
   frames => { frames[2].capture_epoch += 1; }, frames => { frames[2].timestamp += 1; },
@@ -285,8 +308,8 @@ const reset = speedFuser.update(resetFrames);
 assert.equal(reset.capture_epoch, 5, 'New capture epochs reset association even if timestamps go backwards');
 assert.equal(reset.tracks[0].state, 'FUSED_CANDIDATE');
 assert.notEqual(reset.tracks[0].id, speedResult.tracks[0].id);
-assert.equal(speedFuser.update(resetFrames), reset, 'Repeating one capture cannot accumulate confirming hits');
-assert.equal(speedFuser.update(cohort(illuminators, target, 4)), reset,
+assert.deepEqual(speedFuser.update(resetFrames), reset, 'Repeating one capture cannot accumulate confirming hits');
+assert.equal(speedFuser.update(cohort(illuminators, target, 4)).available, false,
   'A delayed cohort from an already retired epoch cannot restore old track identities');
 
 // A coasting alternative may share one lane with a valid continuation. Rotate
@@ -346,17 +369,26 @@ replayFuser.update(intervalFrames(10000, 11000, 100000));
 const beforeReplay = replayFuser.update(intervalFrames(11000, 12000, 101000));
 assert.equal(beforeReplay.tracks[0].state, 'FUSED_CANDIDATE');
 assert.equal(beforeReplay.tracks[0].supporting_frames, 2);
-assert.equal(replayFuser.update(intervalFrames(10000, 11000, 102000)), beforeReplay,
+const receiptBeforeReplay = replayFuser.lastReceiptAt;
+assert.equal(replayFuser.update(intervalFrames(10000, 11000, 100000)), beforeReplay,
+  'An earlier accepted CPI leaves the latest result unchanged');
+assert.equal(replayFuser.update(intervalFrames(11000, 12000, 102000)).available, false,
+  'Retimestamping the latest consumed interval cannot supply a new observation');
+assert.equal(replayFuser.update(intervalFrames(10000, 11000, 102000)).available, false,
   'A replay of a non-latest sample interval cannot promote the third hit');
-assert.equal(replayFuser.update(intervalFrames(9000, 10000, 103000)), beforeReplay,
+assert.equal(replayFuser.update(intervalFrames(9000, 10000, 103000)).available, false,
   'A previously unseen but out-of-order sample interval is rejected');
-assert.equal(replayFuser.update(intervalFrames(11500, 12500, 104000)), beforeReplay,
+assert.equal(replayFuser.update(intervalFrames(11500, 12500, 104000)).available, false,
   'An overlapping capture window cannot reuse confirming samples');
+assert.equal(replayFuser.lastReceiptAt, receiptBeforeReplay,
+  'Duplicate or overlapping intervals cannot refresh the accepted evidence age');
+assert.equal([...replayFuser.tracks.values()][0].hits.filter(Boolean).length, 2,
+  'Rejected duplicate and overlapping intervals leave independent confirmation unchanged');
 let afterLedger;
 for (let index = 0; index < 130; index += 1)
   afterLedger = replayFuser.update(intervalFrames(12000 + index * 1000, 13000 + index * 1000, 105000 + index * 1000));
 assert.ok(replayFuser.seenCaptureIntervals.size <= 128);
-assert.equal(replayFuser.update(intervalFrames(10000, 11000, 300000)), afterLedger,
+assert.equal(replayFuser.update(intervalFrames(10000, 11000, 300000)).available, false,
   'The sample watermark rejects replay even after its interval leaves the bounded ledger');
 const freshEpoch = replayFuser.update(intervalFrames(10000, 11000, 100, 5));
 assert.equal(freshEpoch.tracks[0].state, 'FUSED_CANDIDATE');
@@ -445,19 +477,21 @@ assert.equal(oneHypothesis.hypotheses.length, 1);
 assertDiagnostic(oneHypothesis, 'Dropping the last mirror at the output limit cannot establish uniqueness');
 
 const serverSource = require('fs').readFileSync(require.resolve('./server.js'), 'utf8');
-const parserSource = serverSource.slice(serverSource.indexOf('function parseIlluminatorFrame'),
-  serverSource.indexOf('function acceptIlluminatorFrame'));
-const parserContext = {input: JSON.stringify({schema:'vectorwarp-multi-illuminator-frame-v1',
-  id:'lane',map:{timestamp:1,nRows:1,nCols:1,sourceRows:2,sourceCols:2,
+const {RadarSessionStore} = require('./presentation-history');
+const parserSession = new RadarSessionStore({config: {process: {multi_illuminator: {
+  illuminators: [{id: 'lane', enabled: true, frequency_hz: 100000000,
+    output_sample_rate_hz: 200000}]}}}});
+const {value: parsedFrame} = parserSession.acceptIlluminator(JSON.stringify({
+  schema:'vectorwarp-multi-illuminator-frame-v1', id:'lane', timestamp:1,
+  frequency_hz:100000000, sample_rate_hz:200000, first_input_sample:0, end_input_sample:100,
+  map:{timestamp:1,nRows:1,nCols:1,sourceRows:2,sourceCols:2,
     presentationStride:2,presentation_only:true,presentation_pooling:'max',data:[[12.25]]},
-  detections:{data:[]},tracks:{data:[]}})};
-require('node:vm').runInNewContext(`${parserSource}; result=parseIlluminatorFrame(input)`,
-  parserContext);
-assert.equal(parserContext.result.map.presentation_only, true,
+  detections:{data:[]},tracks:{data:[]}}));
+assert.equal(parsedFrame.map.presentation_only, true,
   'Compact parser must retain the presentation-only scientific boundary');
-assert.equal(parserContext.result.map.presentationStride, 2,
+assert.equal(parsedFrame.map.presentationStride, 2,
   'Compact parser must retain source/presentation geometry provenance');
-assert.match(parserContext.result.map_json, /"data":\[\[12\.25\]\]/,
+assert.match(parsedFrame.map_json, /"data":\[\[12\.25\]\]/,
   'Compact parser must retain display raster bytes');
 const fusedRoute = serverSource.slice(serverSource.indexOf("app.get('/api/tracker/fused'"),
   serverSource.indexOf("app.get('/api/tracker/native'"));
@@ -466,7 +500,7 @@ assert.doesNotMatch(fusedRoute, /multiIlluminatorTrackFuser\.update/,
 const ingestRoute = serverSource.slice(serverSource.indexOf('function acceptIlluminatorFrame'),
   serverSource.indexOf("jsonStreamServer('illuminator'"));
 assert.match(ingestRoute,
-  /latestMultiIlluminatorFusion = multiIlluminatorTrackFuser\.update\(cohort\)/,
+  /multiIlluminatorTrackFuser\.update\(cohort\)/,
   'Every newly completed capture cohort advances fusion without a browser poll');
 assert.match(ingestRoute, /item\.map\?\.presentation_only === true/,
   'Presentation-only maps are identified before scientific map support');

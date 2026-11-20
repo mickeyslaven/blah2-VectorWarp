@@ -13,6 +13,36 @@ include(${PROJECT_ROOT}/cmake/RapidJson.cmake)
 target_link_libraries(testRecording PRIVATE Threads::Threads blah2RapidJson)
 add_test(NAME recordingFormats COMMAND testRecording)
 
+# Offline evidence admission deliberately shares production parsing and RapidJSON
+# canonical hashes instead of reimplementing floating-point JSON in Python.
+add_executable(inspectRecordingProvenance
+  ${PROJECT_ROOT}/test/recording/InspectRecordingProvenance.cpp
+  ${PROJECT_ROOT}/src/capture/Recording.cpp
+  ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
+target_compile_features(inspectRecordingProvenance PRIVATE cxx_std_17)
+target_include_directories(inspectRecordingProvenance PRIVATE ${PROJECT_ROOT}/src)
+target_compile_options(inspectRecordingProvenance PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(inspectRecordingProvenance PRIVATE Threads::Threads blah2RapidJson)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME replayAcquisitionLedger COMMAND ${CMAKE_COMMAND} -E env
+  "VECTORWARP_TEST_RECORDING_INSPECTOR=$<TARGET_FILE:inspectRecordingProvenance>"
+  ${Python3_EXECUTABLE} ${PROJECT_ROOT}/test/recording/test_replay_experiment_ledger.py)
+set_tests_properties(replayAcquisitionLedger PROPERTIES TIMEOUT 30)
+
+add_executable(testReplayCoherentObserver ${PROJECT_ROOT}/test/recording/TestReplayCoherentObserver.cpp)
+target_compile_features(testReplayCoherentObserver PRIVATE cxx_std_17)
+target_include_directories(testReplayCoherentObserver PRIVATE ${PROJECT_ROOT}/src)
+target_compile_options(testReplayCoherentObserver PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(testReplayCoherentObserver PRIVATE Threads::Threads blah2RapidJson)
+add_test(NAME replayCoherentObserver COMMAND testReplayCoherentObserver)
+
+add_executable(testReplayDetectorObservation ${PROJECT_ROOT}/test/recording/TestReplayDetectorObservation.cpp)
+target_compile_features(testReplayDetectorObservation PRIVATE cxx_std_17)
+target_include_directories(testReplayDetectorObservation PRIVATE ${PROJECT_ROOT}/src)
+target_compile_options(testReplayDetectorObservation PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(testReplayDetectorObservation PRIVATE Threads::Threads blah2RapidJson)
+add_test(NAME replayDetectorObservation COMMAND testReplayDetectorObservation)
+
 add_executable(testKrakenStream ${PROJECT_ROOT}/test/capture/KrakenStreamFixture.cpp
   ${PROJECT_ROOT}/src/capture/kraken/Kraken.cpp
   ${PROJECT_ROOT}/src/capture/kraken/KrakenClipRecorder.cpp)

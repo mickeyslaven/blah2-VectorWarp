@@ -163,32 +163,6 @@
       bearing: 4, shape: 'cross', dedicated: true});
     return presets.map(item => Object.freeze(item));
   }
-  function disableIncompatibleArrayFeatures(config, dedicated = false) {
-    const process = config.process || {};
-    if (process.surveillance_fusion &&
-        ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(process.surveillance_fusion.mode))
-      process.surveillance_fusion.mode = 'noncoherent';
-    if (process.bearing) process.bearing.enable = false;
-    if (process.detection) {
-      if (process.detection.track_before_detect) process.detection.track_before_detect.enable = false;
-      if (dedicated) {
-        process.detection.integration_cpis = 1;
-        process.detection.integration_motion_bins = 0;
-      }
-    }
-    if (dedicated && process.performance?.acceleration === 'gpu-resident')
-      process.performance.acceleration = 'auto';
-    if (dedicated && process.tracker) {
-      if (process.tracker.track_guided_shadow) {
-        process.tracker.track_guided_shadow.enable = false;
-        process.tracker.track_guided_shadow.promote = false;
-      }
-      if (process.tracker.initiate?.stationary_clutter)
-        process.tracker.initiate.stationary_clutter.enable = false;
-      if (process.tracker.initiate?.acceleration_model === 'adaptive_gate')
-        process.tracker.initiate.acceleration_model = 'hypothesis_bank';
-    }
-  }
   function presetRecord(config, presetId) {
     const preset = layoutPresets().find(item => item.id === presetId);
     if (!preset) return null;
@@ -244,14 +218,11 @@
       device.surveillance_channels = channels;
       config.process.reference_synthesis = {...existingSynthesis,
         mode: 'dedicated', channels: [reference]};
-      disableIncompatibleArrayFeatures(config, true);
     } else {
       device.reference_channel = channels[0];
       device.surveillance_channels = channels;
       config.process.reference_synthesis = {...existingSynthesis,
         mode: 'array_eigenbeam', channels};
-      if (generated.preset.shape !== 'regular_polygon')
-        disableIncompatibleArrayFeatures(config, false);
     }
     return true;
   }
@@ -282,7 +253,6 @@
       device.surveillance_channels = remove(device.surveillance_channels, channel);
       geometry.bearing_channels = remove(geometry.bearing_channels, channel);
       synthesis.mode = 'dedicated'; synthesis.channels = [channel];
-      disableIncompatibleArrayFeatures(config, true);
       if (valid(previous) && previous !== channel && channelRole(config, previous) === 'disabled')
         device.surveillance_channels = add(device.surveillance_channels, previous);
     } else {
@@ -310,7 +280,8 @@
   function applyReferenceMode(config, mode) {
     const device = config.capture.device;
     const geometry = device.array_geometry;
-    const synthesis = config.process.reference_synthesis;
+    if (!object(config.process)) config.process = {};
+    const synthesis = config.process.reference_synthesis ||= {};
     if (mode === 'array_eigenbeam') {
       const oldReference = device.reference_channel;
       synthesis.mode = 'array_eigenbeam';
@@ -327,7 +298,6 @@
       synthesis.mode = 'dedicated'; synthesis.channels = [reference];
       device.surveillance_channels = (device.surveillance_channels || []).filter(channel => channel !== reference);
       geometry.bearing_channels = (geometry.bearing_channels || []).filter(channel => channel !== reference);
-      disableIncompatibleArrayFeatures(config, true);
     }
     invalidate(geometry); return config;
   }
@@ -343,7 +313,7 @@
     for (const [value, label] of [['array_eigenbeam', 'Automatic from array'], ['dedicated', 'Dedicated reference antenna']]) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; referenceSelect.appendChild(option);
     }
-    referenceSelect.value = config.process.reference_synthesis.mode;
+    referenceSelect.value = config.process?.reference_synthesis?.mode || '';
     referenceSelect.disabled = !canEdit();
     referenceSelect.addEventListener('change', () => {
       applyReferenceMode(config, referenceSelect.value); changed(true);
@@ -491,9 +461,10 @@
       delete heimdall.gain_control;
       delete heimdall.channel_gains;
     }
-    return JSON.stringify([device.type,
+    const synthesis = config.process?.reference_synthesis || {};
+    return JSON.stringify([device.type, device.serial, device.address,
       device.channel_count, device.reference_channel, device.surveillance_channels,
-      heimdall, config.process?.reference_synthesis, geometry]);
+      heimdall, synthesis.mode, synthesis.channels, geometry]);
   }
   function reconcile(config, previous) {
     if (previous && context(config) !== context(previous))

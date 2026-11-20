@@ -2,7 +2,7 @@
 """Bounded Pi soak diagnostics; no processing/RF settings are changed.
 
 perf's overwrite ring retains recent samples *before* a trigger. CPU samples
-include the processor, isolated mixed worker, SDRplay service and kernel. This
+include the processor, isolated GPU worker, SDRplay service and kernel. This
 does not measure GPU occupancy. See docs/PI_SOAK_DIAGNOSTICS.md for limits.
 """
 import collections

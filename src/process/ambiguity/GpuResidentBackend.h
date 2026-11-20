@@ -16,8 +16,11 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=15;
-constexpr uint32_t protocol=0x4247520f,packetBytes=160,configBytes=32768;
+constexpr unsigned moduleAbi=17;
+inline void validateModuleAbi(unsigned abi){
+ if(abi!=moduleAbi)throw std::invalid_argument("Resident module ABI17 required: older modules lack exact tracker elapsed intervals");
+}
+constexpr uint32_t protocol=0x42475211,packetBytes=160,configBytes=32768;
 static_assert(configBytes>=640+(360+127+1)*8*sizeof(std::complex<float>)+152,
  "Resident config cannot carry maximum fusion and bearing manifolds");
 constexpr uint64_t sharedLimit=512ULL<<20;
@@ -46,10 +49,13 @@ enum class Section:uint32_t {config=1,delayAxis=2,dopplerAxis=3,canonical=4,
  referenceCheckpoint=12,tracker0=13,tracker1=14,detections=15,filtered=16,
  tail=17,fullReference=18,levels=19,unflooredSnr=20,cfar=21,centroid=22,
  flags=23,detectionCells=24,readyEvidence=25,reason=26,device=27,
- preparedEvidence=28,controlEvidence=29,guidedRecoveries=30,replaySnapshot=31,causalTrace=32};
+ preparedEvidence=28,controlEvidence=29,reserved30=30,replaySnapshot=31,causalTrace=32};
 constexpr uint64_t bit(Section s){return uint64_t(1)<<uint32_t(s);}
 constexpr uint64_t diagnosticMask=((uint64_t(1)<<25)-1)&~((uint64_t(1)<<16)-1);
-inline uint64_t outputPresence(uint64_t capacity,uint64_t requested){return (capacity&~diagnosticMask)|requested;}
+inline uint64_t outputPresence(uint64_t capacity,uint64_t requested){
+ // ABI16: allocated candidate-cell/flag identities are publication metadata,
+ // including on frames which do not request expensive numeric diagnostics.
+ return (capacity&(~diagnosticMask|bit(Section::flags)|bit(Section::detectionCells)))|requested;}
 enum class ReferenceMode:uint32_t {capturedArray=1,capturedDedicated=2};
 struct ReferenceConfig {
  std::vector<uint32_t> channels;
@@ -104,18 +110,17 @@ struct TrackerConfig {
  bool stationaryClutter=false;
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
- bool trackGuidedShadow=false;
- bool trackGuidedPromote=false;
- bool trackGuidedSustain=false;
+ // ABI17 padding: retired experimental flags must remain zero.
+ std::array<uint8_t,3> reservedPolicy{};
  bool normalizedInnovationGate=false;
- uint32_t trackGuidedShadowMaxTracks=0;
+ uint32_t reservedLimit=0;
 };
 constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;
 inline uint32_t trackerHistoryCapacity(const TrackerConfig& t){
  return std::max(trackerDisplayHistory,t.n);
 }
 inline uint32_t trackerRecordWords(const TrackerConfig& t){
- return 16+8*trackerHistoryCapacity(t);
+ return 20+8*trackerHistoryCapacity(t);
 }
 struct Config {
  GpuGeometry geometry{};
@@ -177,9 +182,15 @@ struct OutputViews {
  // Parent Session-owned immutable setup metadata; no new wire/GPU allocation.
  Span<const double> delayKm,doppler;
  Span<const DetectionRecord> detections,cfar,centroid;
- Span<const uint32_t> flags,detectionCells,trackerCheckpoint,guidedRecoveryWords,causalTrace;
+ Span<const uint32_t> flags,detectionCells,trackerCheckpoint;
+ // ABI17 output padding. Never allocated, exported or populated.
+ Span<const uint32_t> reservedOutput;
+ Span<const uint32_t> causalTrace;
  double noise=0,maxPower=0;
  uint64_t cfarCount=0,centroidCount=0,detectionCount=0;
+ bool detectorObserved=false;
+ uint64_t evaluatedCells=0;
+ uint32_t availableCpis=0;
  Token trackerToken{};
  bool trackerNoOp=false;
  uint32_t trackerSlot=0;
@@ -213,6 +224,10 @@ public:
  virtual ~Session()=default;
  virtual const Config& config()const=0;
  virtual const Layout& layout()const=0;
+ // Immutable config/module/device binding, independent of session nonce and
+ // frame IDs. Used only to transfer a completed private numerical receipt to
+ // a fresh production instance of exactly the same admitted implementation.
+ virtual std::array<uint8_t,96> qualificationIdentity()const=0;
  virtual Phase phase()const=0;
  virtual Span<std::complex<double>> input()=0; // idle/settled only
  virtual void begin(Frame,uint64_t diagnosticPresence=0)=0;

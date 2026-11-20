@@ -25,6 +25,7 @@ void writeTrackerFrameDiagnostics(Writer& writer, const TrackerFrameDiagnostics&
   count("pair_delay_rejected", d.pairDelayRejected);
   count("pair_doppler_rejected", d.pairDopplerRejected);
   count("pair_innovation_rejected", d.pairInnovationRejected);
+  count("pair_spatial_rejected", d.pairSpatialRejected);
   count("pair_in_gate", d.pairInGate);
   count("pair_lineage_rejected", d.pairLineageRejected);
   count("associations", d.associations);
@@ -35,13 +36,9 @@ void writeTrackerFrameDiagnostics(Writer& writer, const TrackerFrameDiagnostics&
   count("birth_candidates", d.birthCandidates);
   count("birth_snr_rejected", d.birthSnrRejected);
   count("birth_ridge_rejected", d.birthRidgeRejected);
-  count("birth_exclusive_rejected", d.birthExclusiveRejected);
+  count("birth_doppler_comb_rejected", d.birthDopplerCombRejected);
+  count("birth_range_comb_rejected", d.birthRangeCombRejected);
   count("initiated", d.initiated);
-  count("weak_support_candidates", d.weakSupportCandidates);
-  count("weak_support_in_gate", d.weakSupportInGate);
-  count("weak_support_accepted", d.weakSupportAccepted);
-  count("weak_support_credited_cpis", d.weakSupportCreditedCpis);
-  count("weak_support_lineage_rejected", d.weakSupportLineageRejected);
   count("lineage_resets", d.lineageResets);
   count("birth_lineage_rejected", d.birthLineageRejected);
   count("birth_capacity_rejected", d.birthCapacityRejected);
@@ -52,13 +49,5 @@ void writeTrackerFrameDiagnostics(Writer& writer, const TrackerFrameDiagnostics&
   count("stationary_quarantined", d.stationaryQuarantined);
   count("stationary_cells", d.stationaryCells);
   count("stationary_cell_capacity_rejected", d.stationaryCapacityRejected);
-  count("guided_candidates", d.guidedCandidates);
-  count("guided_invalid", d.guidedInvalid);
-  count("guided_would_recover", d.guidedWouldRecover);
-  count("guided_lineage_rejected", d.guidedLineageRejected);
-  count("guided_stationary_rejected", d.guidedStationaryRejected);
-  count("guided_promotions", d.guidedPromotions);
-  count("guided_sustained", d.guidedSustained);
-  count("guided_budget_rejected", d.guidedBudgetRejected);
   writer.EndObject();
 }

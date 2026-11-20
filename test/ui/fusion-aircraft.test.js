@@ -26,9 +26,9 @@ assert.equal(model.sourceLabel('adsb'),radarVisualSemantics.labels.adsb);
 assert.equal(model.sourceLabel('radar'),radarVisualSemantics.labels.independent);
 assert.equal(model.stateLabel('tracked'),radarVisualSemantics.labels.tracked);
 assert.deepEqual(model.transmitterSiteLabels([
-  {id:'WPGH',frequency_hz:509e6,transmitter_site:'wgph',transmitter:{latitude:40.495278,longitude:-80.004444}},
-  {id:'WPNT',frequency_hz:515e6,transmitter_site:'wpnt',transmitter:{latitude:40.495278,longitude:-80.004444}},
-  {id:'WPXI',frequency_hz:527e6,transmitter_site:'wpxi',transmitter:{latitude:40.46325,longitude:-80.0043056}},
+  {id:'TX-A',frequency_hz:509e6,transmitter_site:'lane-a',transmitter:{latitude:40.495278,longitude:-80.004444}},
+  {id:'TX-B',frequency_hz:515e6,transmitter_site:'lane-b',transmitter:{latitude:40.495278,longitude:-80.004444}},
+  {id:'TX-C',frequency_hz:527e6,transmitter_site:'lane-c',transmitter:{latitude:40.46325,longitude:-80.0043056}},
   {id:'primary',frequency_hz:509e6}
 ]), ['Site 1','Site 1','Site 2','Site 1'], 'co-sited relayed channels share one site label');
 for (const value of values) {

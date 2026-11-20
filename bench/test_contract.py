@@ -90,13 +90,13 @@ def main():
                      clutter_min=-10, clutter_max=200,
                      benchmark_workers=1, benchmark_fft_threads=2)
         smoke_profile.write_text(json.dumps(smoke))
-        # Explicit mixed replay is diagnostic-only and must reject unsupported
-        # geometry instead of silently measuring CPU fallback.
+        # The retired alternate processor is not a benchmark route. Reject its
+        # historical mode before opening IQ or creating any output artifact.
         rejected_mixed = run(fast, str(root / "absent.mchq"), str(smoke_profile),
                              str(root / "mixed-rejected"), "pair", "mixed", "1",
                              "none", str(root / "absent.maps"))
         assert rejected_mixed.returncode != 0
-        assert "Mixed benchmark requires" in rejected_mixed.stderr
+        assert "Invalid benchmark mode" in rejected_mixed.stderr
         assert not (root / "mixed-rejected.frames.csv").exists()
         recording = root / "smoke.mchq"
         write_recording(recording)

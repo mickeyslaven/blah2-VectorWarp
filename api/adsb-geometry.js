@@ -5,6 +5,8 @@
 // tar1090 feed; it never accepts a converter URL or request-supplied geometry.
 const C = 299792458;
 const truthUncertainty = require('./truth-uncertainty');
+const {observationCoordinates} = require('./observation-coordinates');
+const {geographicContext} = require('./replay-geographic-sites');
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const radians = value => value * Math.PI / 180;
 const degrees = value => value * 180 / Math.PI;
@@ -46,14 +48,18 @@ class DelayDopplerHistory {
     this.lastNow = null; this.configure(config);
   }
   configure(config) {
-    const adsb = config.truth?.[this.truthKey] || {}, rx = config.location?.rx || {}, tx = config.location?.tx || {};
+    this.config = config;
+    const geographic = geographicContext(config);
+    this.geographicIdentity = JSON.stringify(geographic);
+    const adsb = config.truth?.[this.truthKey] || {}, rx = geographic.location?.rx || {}, tx = geographic.location?.tx || {};
     this.window = Number.isInteger(adsb.smoothing_window) ? adsb.smoothing_window : 10;
     this.maxAge = finite(adsb.max_position_age) ? adsb.max_position_age : 30;
     this.uncertaintyPolicy = truthUncertainty.policy(adsb.uncertainty_association);
     this.rx = ecef(rx.latitude, rx.longitude, rx.altitude);
     this.tx = ecef(tx.latitude, tx.longitude, tx.altitude);
     this.rxSite = {...rx}; this.txSite = {...tx};
-    this.baseline = distance(this.rx, this.tx); this.frequency = config.capture.fc;
+    this.baseline = distance(this.rx, this.tx);
+    this.frequency = observationCoordinates(config, [], {requireRate: false})?.frequency;
     this.valid = this.rx.every(finite) && this.tx.every(finite) && finite(this.baseline) &&
       finite(this.frequency) && this.frequency > 0;
     this.history.clear(); this.output.clear(); this.snapshots.clear();
@@ -127,6 +133,13 @@ class DelayDopplerHistory {
       if (!slopes.length && !uncertainty?.valid) continue;
       const look = lookGeometry(this.rxSite, aircraft);
       const transmitterRange = distance(this.tx, target) / 1000;
+      const reportedVelocity = truthUncertainty.velocity(aircraft);
+      const reportedGeometry = reportedVelocity && truthUncertainty.geometry(
+        target, this.rx, this.tx, reportedVelocity.ecef, this.frequency);
+      const fittedDoppler = slopes.length ? -median(slopes) / (C / this.frequency) : null;
+      const kinematicDoppler = finite(reportedGeometry?.doppler) ? reportedGeometry.doppler : null;
+      const selectedDoppler = uncertainty?.valid ? uncertainty.doppler_hz :
+        kinematicDoppler ?? fittedDoppler;
       const result = {timestamp,
         hex: typeof aircraft.hex === 'string' ? aircraft.hex.trim().toLowerCase() : '',
         flight: typeof aircraft.flight === 'string' ? aircraft.flight.trim() : '',
@@ -139,8 +152,13 @@ class DelayDopplerHistory {
         desc: typeof aircraft.desc === 'string' ? aircraft.desc : '',
         ownOp: typeof aircraft.ownOp === 'string' ? aircraft.ownOp : '',
         year: typeof aircraft.year === 'string' || Number.isFinite(aircraft.year) ? aircraft.year : '',
-        delay: delay / 1000, doppler: uncertainty?.valid ? uncertainty.doppler_hz :
-          -median(slopes) / (C / this.frequency),
+        delay: delay / 1000, doppler: selectedDoppler,
+        doppler_method: uncertainty?.valid ? 'uncertainty-kinematic' :
+          kinematicDoppler !== null ? 'reported-kinematic' : 'position-fit-fallback',
+        doppler_position_fit_hz: fittedDoppler,
+        doppler_kinematic_hz: kinematicDoppler,
+        doppler_estimator_difference_hz: kinematicDoppler !== null && fittedDoppler !== null ?
+          kinematicDoppler - fittedDoppler : null,
         ...(uncertainty ? {truth_uncertainty: uncertainty} : {}),
         frequency_hz: this.frequency,
         delay_definition: 'excess_bistatic_path_km',
@@ -172,7 +190,25 @@ class DelayDopplerHistory {
     for (const [hex, result] of this.output) output[hex] = result;
     return this.remember(now, {data: output, warming});
   }
-  update(feed) {
+  update(feed, nativeFrame = null) {
+    const geographic = geographicContext(this.config);
+    if (JSON.stringify(geographic) !== this.geographicIdentity) this.configure(this.config);
+    if (!geographic.available) {
+      this.clear();
+      return {data: {}, warming: [], aligned_unavailable: true, reason: geographic.reason};
+    }
+    const coordinates = observationCoordinates(this.config, nativeFrame, {requireRate: false});
+    if (!coordinates) {
+      this.clear();
+      return {data: {}, warming: [], aligned_unavailable: true,
+        reason: 'Invalid or unavailable observation carrier/sample-rate metadata.'};
+    }
+    if (this.frequency !== coordinates.frequency) {
+      this.clear();
+      this.frequency = coordinates.frequency;
+    }
+    this.valid = this.rx.every(finite) && this.tx.every(finite) && finite(this.baseline) &&
+      finite(this.frequency) && this.frequency > 0;
     const now = feed?.now;
     if (finite(now) && this.snapshots.has(now)) return this.snapshots.get(now);
     if (finite(now)) {

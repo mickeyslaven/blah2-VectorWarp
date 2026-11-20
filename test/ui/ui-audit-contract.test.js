@@ -4,20 +4,13 @@ const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const {JSDOM} = require('./jsdom');
+const {routeInventory, copyIssues} = require('../helpers/ui-acceptance');
 
 const root = path.resolve(__dirname, '../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
-const pageFiles = [];
-function collect(directory) {
-  for (const entry of fs.readdirSync(directory, {withFileTypes: true})) {
-    const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) collect(file);
-    else if (entry.name === 'index.html') pageFiles.push(file);
-  }
-}
-collect(path.join(root, 'html'));
-
-assert.equal(pageFiles.length, 24, 'Every canonical page and compatibility redirect is included in the audit contract');
+const inventory = routeInventory();
+const pageFiles = inventory.pages;
 const redirectRoutes = new Set([
   'html/display/map/index.html', 'html/display/evaluation/index.html',
   'html/display/overview/index.html', 'html/display/activity/index.html',
@@ -31,6 +24,19 @@ const redirectRoutes = new Set([
 for (const file of pageFiles) {
   const html = fs.readFileSync(file, 'utf8');
   const route = path.relative(root, file);
+  const dom = new JSDOM(html);
+  for (const element of dom.window.document.querySelectorAll('script[src],link[rel="stylesheet"][href]')) {
+    const reference = element.getAttribute('src') || element.getAttribute('href');
+    if (/^(?:https?:)?\/\//.test(reference)) continue;
+    const asset = reference.split(/[?#]/)[0];
+    const resolved = asset.startsWith('/') ? path.join(root, 'html', asset) : path.resolve(path.dirname(file), asset);
+    assert.ok(fs.existsSync(resolved), `${route}: missing script or stylesheet ${reference}`);
+  }
+  dom.window.document.querySelectorAll('script,style').forEach(node => node.remove());
+  assert.deepEqual(copyIssues(dom.window.document.body.textContent), [], `${route}: actionable page copy`);
+  const ids = [...dom.window.document.querySelectorAll('[id]')].map(node => node.id);
+  assert.equal(new Set(ids).size, ids.length, `${route}: unique control and landmark IDs`);
+  dom.window.close();
   if (redirectRoutes.has(route)) {
     assert.match(html, /location\.replace\(/,
       `${route} must redirect to its canonical replacement`);
@@ -39,6 +45,16 @@ for (const file of pageFiles) {
   assert.match(html, /<h1(?:\s|>)/i, `${route} must expose a page heading`);
   assert.match(html, /common\.js/, `${route} must use shared navigation/status behavior`);
 }
+assert.equal(inventory.aliases.length, redirectRoutes.size, 'Redirect inventory is reviewed explicitly');
+for (const route of ['/?radar_view=fusion', '/?radar_view=channel', '/display/configuration/?setup=1',
+  '/display/statistics/?tab=adsb', '/display/diagnostics/?view=timing',
+  '/display/diagnostics/?view=health', '/display/signal/?view=maxhold',
+  '/display/detection/?view=range', '/display/detection/?view=doppler'])
+  assert.ok(inventory.routes.includes(route), `${route}: browser acceptance includes selected views`);
+for (const phrase of ['Lorem ipsum', 'Coming soon', 'This panel allows you to configure settings',
+  'Placeholder content', 'As an AI language model', 'TODO: add guidance'])
+  assert.ok(copyIssues(phrase).length, `Copy lint catches ${phrase}`);
+assert.deepEqual(copyIssues('Deleting permanently removes this recording. Replay requires trusted acquisition metadata. GPU qualification is incomplete.'), []);
 
 const capturePages = pageFiles.filter(file =>
   /data-capture-controls="true"/.test(fs.readFileSync(file, 'utf8')));
@@ -84,6 +100,7 @@ assert.match(assistant, /aria-labelledby.*setup-wizard-title/);
 const controller = read('html/controller/index.html');
 const statisticsPage = read('html/display/statistics/index.html');
 const insights = read('html/js/insights.js');
+const locationMapLayers = read('html/js/locations-map-layers.js');
 const consolidated = read('html/js/consolidated_views.js');
 assert.doesNotMatch(controller, /href="\/display\/evaluation"/,
   'ADS-B evaluation must not remain a duplicate navigation destination');
@@ -129,9 +146,9 @@ for (const [kind, views] of Object.entries({diagnostics: {activity:'Activity', t
     assert.equal(scripts.length,1,`${kind}/${view} loads one renderer`);
   }
 }
-assert.match(insights, /addSource\(radarCoverageSourceId, \{type: 'geojson', data\}\)/,
+assert.match(locationMapLayers, /addSource\(id, \{type: 'geojson', data\}\)/,
   'Radar coverage uses a geographic Mapbox source so zoom cannot tear a screen-space path');
-assert.match(insights, /source\.setData\(data\)/,
+assert.match(locationMapLayers, /source\.setData\(data\)/,
   'Radar coverage updates its existing map layer without rebuilding the map');
 assert.match(insights, /layer\._coverageUsesMapLayer \? '' : coveragePath/,
   'The SVG coverage renderer is retained only as a compatibility fallback');

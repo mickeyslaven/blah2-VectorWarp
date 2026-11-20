@@ -1,4 +1,5 @@
 #include "Map.h"
+#include "JsonArrayFile.h"
 #include "data/meta/Constants.h"
 #include <iostream>
 #include <cstdlib>
@@ -10,17 +11,13 @@
 namespace {
 // Preserve the existing map display scale while keeping silence finite.
 template<class Value> double mapLevel(Value value) {
-  const double magnitude = std::abs(value);
-  if (!std::isfinite(magnitude))
-    throw std::runtime_error("Radar map contains a non-finite sample");
-  return 10 * std::log10(std::max(1e-30, magnitude));
+  return Map<Value>::MetricAccumulator::level(value);
 }
 }
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
-#include "rapidjson/filewritestream.h"
 
 // constructor
 template <class T>
@@ -359,96 +356,32 @@ std::string Map<T>::delay_bin_to_km(std::string json, uint32_t fs)
 template <class T>
 void Map<T>::set_metrics()
 {
-  // get map noise level
-  double value;
-  double noisePower = 0;
-  double maxPower = -std::numeric_limits<double>::infinity();
+  set_metrics({});
+}
+
+template <class T>
+void Map<T>::set_metrics(const std::vector<uint8_t>& validCells)
+{
+  if (!validCells.empty() && validCells.size() != uint64_t(nRows) * nCols)
+    throw std::invalid_argument("Radar map validity dimensions differ");
+  MetricAccumulator metrics;
   for (uint32_t i = 0; i < nRows; i++)
   {
     for (uint32_t j = 0; j < nCols; j++)
     {
-      value = mapLevel(data[i][j]);
-      noisePower = noisePower + value;
-      maxPower = (maxPower < value) ? value : maxPower;
+      if (!validCells.empty() && !validCells[uint64_t(i) * nCols + j]) continue;
+      metrics.add(data[i][j]);
     }
   }
-  noisePower = noisePower / (static_cast<double>(nRows) * nCols);
-  this->noisePower = noisePower;
-  this->maxPower = maxPower - noisePower;
+  // An unavailable bank has no noise estimate, not a measured zero-power
+  // background. Keep metadata finite; its validity mask prevents detection.
+  metrics.apply(*this);
 }
 
 template <class T>
 bool Map<T>::save(std::string _json, std::string filename)
 {
-  using namespace rapidjson;
-
-  rapidjson::Document document;
-
-  // create file if it doesn't exist
-  if (FILE *fp = fopen(filename.c_str(), "r"); fp)
-  {
-    if (std::fclose(fp) != 0)
-      return false;
-  }
-  else
-  {
-    if (fp = fopen(filename.c_str(), "w"); !fp)
-      return false;
-    const bool initialized = std::fputs("[]", fp) >= 0;
-    if (std::fclose(fp) != 0 || !initialized)
-      return false;
-  }
-
-  // add the document to the file
-  if (FILE *fp = fopen(filename.c_str(), "rb+"); fp)
-  {
-    // check if first is [
-    if (std::fseek(fp, 0, SEEK_SET) != 0)
-    {
-      std::fclose(fp);
-      return false;
-    }
-    if (getc(fp) != '[')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // is array empty?
-    bool isEmpty = false;
-    if (getc(fp) == ']')
-      isEmpty = true;
-
-    // check if last is ]
-    if (std::fseek(fp, -1, SEEK_END) != 0)
-    {
-      std::fclose(fp);
-      return false;
-    }
-    if (getc(fp) != ']')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // replace ] by ,
-    if (std::fseek(fp, -1, SEEK_END) != 0 ||
-        (!isEmpty && std::fputc(',', fp) == EOF))
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // add json element
-    const bool wroteJson = std::fwrite(_json.data(), sizeof(char),
-      _json.size(), fp) == _json.size();
-
-    // close the array
-    const bool closedArray = wroteJson && std::fputc(']', fp) != EOF;
-    const bool flushed = closedArray && std::fflush(fp) == 0;
-    return std::fclose(fp) == 0 && flushed;
-  }
-  return false;
+  return blah2::data::appendJsonArray(_json, filename);
 }
 
 // allowed types

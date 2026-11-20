@@ -36,55 +36,8 @@ function accumulateDetectionHistory(frame) {
 }
 
 // setup plotly
-var layout = {
-  font: {color: '#f3eee9'},
-  autosize: true,
-  margin: {
-    l: 92,
-    r: 50,
-    b: 50,
-    t: 10,
-    pad: 0
-  },
-  hoverlabel: {
-    namelength: 0
-  },
-  plot_bgcolor: "rgba(0,0,0,0)",
-  paper_bgcolor: "rgba(0,0,0,0)",
-  annotations: [],
-  uirevision: 'vectorwarp-detections',
-  displayModeBar: false,
-  xaxis: {
-    gridcolor: '#47362e', zerolinecolor: '#47362e',
-    title: {
-      text: xTitle,
-      font: {
-        size: 18
-      }
-    },
-    showgrid: false,
-    ticks: '',
-    side: 'bottom'
-  },
-  yaxis: {
-    gridcolor: '#47362e', zerolinecolor: '#47362e',
-    title: {
-      text: yTitle,
-      font: {
-        size: 18
-      }
-    },
-    showgrid: false,
-    ticks: '',
-    ticksuffix: ' ',
-    categoryorder: "total descending"
-  }
-};
-var config = {
-  responsive: true,
-  displayModeBar: false,
-  scrollZoom: true
-}
+var layout = VectorWarpPlotTheme.cartesianLayout('vectorwarp-detections', xTitle, yTitle);
+var config = VectorWarpPlotTheme.config(true);
 
 // setup plotly data
 var data = [
@@ -98,22 +51,14 @@ var data = [
 Plotly.react('data', data, layout, config);
 
 // callback function
-var radarUpdates = null;
 async function renderDetection(data) {
   data = accumulateDetectionHistory(data);
 
+  if (xVariable === 'timestamp')
+    data[xVariable] = data[xVariable].map(value => new Date(value));
+
   // case draw new plot
   if (!plotted) {
-
-    // timestamp posix to js
-    if (xVariable === "timestamp")
-    {
-      for (let i = 0; i < data[xVariable].length; i++)
-      {
-        data[xVariable][i] = new Date(data[xVariable][i]);
-      }
-    }
-
     var trace1 = {
         name: radarVisualSemantics.labels.detection,
         legendrank: radarVisualSemantics.legendRank.detection,
@@ -130,14 +75,6 @@ async function renderDetection(data) {
   }
   // case update plot
   else {
-    // timestamp posix to js
-    if (xVariable === "timestamp")
-    {
-      for (let i = 0; i < data[xVariable].length; i++)
-      {
-        data[xVariable][i] = new Date(data[xVariable][i]);
-      }
-    }
     var trace_update = {
       x: [data[xVariable]],
       y: [data[yVariable]]
@@ -149,8 +86,7 @@ async function renderDetection(data) {
 async function configureDetectionChannel(context) {
   detectionHistory = [];
   plotted = false;
-  urlDetection = liveApiUrl(radarPresentationUrl(
-    selectedIlluminatorUrl('/api/detection', context)));
+  urlDetection = radarDisplayUrl('detection', undefined, context);
   if (typeof window !== 'undefined' && window.vectorwarpDetectionHistory !== true &&
       typeof getRadarRuntimeConfig === 'function') {
     try {
@@ -173,9 +109,5 @@ async function configureDetectionChannel(context) {
     } catch (_) { /* Live detections still render if runtime metadata is delayed. */ }
   }
 }
-window.addEventListener('vectorwarp:illuminator-change', event => { void configureDetectionChannel(event.detail); });
-var vectorwarpDetectionReady = getIlluminatorContext().then(async context => {
-  await configureDetectionChannel(context);
-  radarUpdates = startRadarPlot(() => urlDetection, renderDetection);
-  return radarUpdates;
-});
+var vectorwarpDetectionReady = startRadarDisplay('detection', renderDetection,
+  {url: () => urlDetection, configure: configureDetectionChannel});

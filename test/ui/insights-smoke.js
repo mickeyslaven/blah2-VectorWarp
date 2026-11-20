@@ -91,15 +91,9 @@ const portable = {
       resolved: 0, stationary: 0}, diagnostic: {available: false}, recorder: {enabled: false},
       automation: {state: 'disabled'}, frequency_resolved: {enabled: false}}},
   '/api/array-calibration/status': {frequency_hz: 100000000,
-    corpus: {enabled: false}, reference: {samples: 0},
-    bearing: {active_model: null, automation: {enabled: false, state: 'disabled', qualified: false},
-    progress: {samples: 0, independent_passes: 0, unique_aircraft: 0, covered_sectors: 0,
-      required_covered_sectors: 6, evidence_completion_fraction: 0, requirements: [], sectors: [],
-      next_actions: ['Collect evidence.']}}, detection: {automation: {enabled: false,
-      state: 'disabled', qualified: false, promotion_allowed: false}, progress: {accepted_samples: 0,
-      independent_passes: 0, validation_passes: 0, miss_passes: 0, covered_sectors: 0,
-      fit_bins: 0, positive_control: {fit_ready: false}, validation: {ready: false},
-      production_replay: {imported_passes: 0}}}}
+    corpus: {enabled: false, accepted_samples_this_process: 0,
+      accumulated_cohorts: {sampleRows: 0, files: 0}}, reference: {samples: 0},
+    bearing: {enabled: false, active_model: null}, detection: {enabled: false, active_model: null}}
 };
 const rich = {
   '/api/config': {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', gain: [10, 10, 10, 10, 10, 10]}}, location: {rx: {name: 'Test receiver', latitude: 40.0, longitude: -80.0, altitude: 250}, tx: {name: 'Test illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}}, process: {data: {cpi: .2, overlap: .1}, ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -800, dopplerMax: 800}, detection: {enable: true, pfa: .0001}, tracker: {enable: true, initiate: {M: 3, N: 5}}, bearing: {enable: true}, spectrum: {enable: true}}, truth: {adsb: {enabled: true, display_range_km: 30}, ais: {enabled: false}}},
@@ -128,20 +122,11 @@ const rich = {
       automation: {state: 'collecting', qualified: false},
       frequency_resolved: {enabled: true, state: 'idle'}}},
   '/api/array-calibration/status': {frequency_hz: 527000000,
-    corpus: {enabled: true, automatic: false, accepted_samples_this_process: 120},
+    corpus: {enabled: true, active: true, automatic: false, accepted_samples_this_process: 120,
+      accumulated_cohorts: {sampleRows: 240, files: 2}, path: '/tmp/calibration.jsonl'},
     reference: {samples: 90, maximum_phase_step_deg: .2, maximum_amplitude_step_db: .01},
-    bearing: {active_model: null, automation: {enabled: true, state: 'collecting', qualified: false},
-    progress: {samples: 120, independent_passes: 60, unique_aircraft: 20, covered_sectors: 6,
-      required_covered_sectors: 6, evidence_completion_fraction: .8,
-      requirements: [{label: 'Independent passes', required: 40, current: 60, complete: true}],
-      sectors: [{from_deg: 0, to_deg: 45, samples: 20, passes: 10, aircraft: 4, ready: true,
-        passes_needed: 0, aircraft_needed: 0}], next_actions: []}},
-    detection: {automation: {enabled: false, state: 'disabled', qualified: false,
-      promotion_allowed: false, runtime_candidate_path: '/tmp/replay-only.runtime.json'}, progress: {accepted_samples: 48, independent_passes: 24,
-      validation_passes: 5, miss_passes: 3, covered_sectors: 4, fit_bins: 7,
-      positive_control: {fit_ready: true}, validation: {ready: false},
-      production_replay: {imported_passes: 0},
-      limitation: 'Truth-selected statistics are diagnostic only; native full-bank replay is required.'}}},
+    bearing: {enabled: true, active_model: '/tmp/bearing-static.json'},
+    detection: {enabled: true, active_model: '/tmp/detection-static.json'}},
   '/api/adsb': {now: Date.now() / 1000, aircraft: [{hex: 'abc123', flight: 'TEST1', lat: 40.05, lon: -80.1, alt_geom: 5000, seen_pos: 1}]},
   '/api/locations': {enabled: true, available: true, data: [
     {id: 'T1', state: 'ASSOCIATED', bearing_deg_true: 112, uncertainty_deg: 8,
@@ -189,6 +174,9 @@ global.window.setTimeout = () => 0;
 global.window.clearTimeout = () => {};
 global.fetch = global.fetchStatusResource;
 const common = require('../../html/js/common.js');
+for (const name of ['selectedNode', 'radarFrameUrl', 'fetchCachedJsonResource',
+  'readRadarDisplay', 'readFederatedRadar', 'readRadarDisplayBundle', 'readRadarDisplayConfig',
+  'readRadarDisplayTruth', 'ensureRadarDisplayMap']) global[name] = common[name];
 global.getRadarRuntimeConfig = common.getRadarRuntimeConfig;
 global.startRadarUpdates = common.startRadarUpdates;
 global.radarPresentationUrl = common.radarPresentationUrl;
@@ -211,10 +199,11 @@ global.stabilizeAircraftSnapshots = common.stabilizeAircraftSnapshots;
 global.updateAircraftTrackHistories = common.updateAircraftTrackHistories;
 global.selectRadarAssociatedAircraft = common.selectRadarAssociatedAircraft;
 
+vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/locations-map-layers.js'), 'utf8'), {filename: 'locations-map-layers.js'});
 vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 
 setTimeout(() => {
-  const plotViews = new Set(['activity', 'site', 'evaluation', 'tracks', 'calibration']);
+  const plotViews = new Set(['activity', 'site', 'evaluation', 'tracks']);
   const errors = [];
   const rendered = [...elements.values()].map(element => element.innerHTML).join('');
   if (!root.children.length) errors.push('view root remained empty');
@@ -245,14 +234,13 @@ setTimeout(() => {
       (!rendered.includes('association-flow') || !rendered.includes('Detected') ||
        !rendered.includes('Tracked') || !rendered.includes('direction-sky-cell')))
     errors.push('statistics association and directional visuals were not rendered');
-  if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||
-      !rendered.includes('Diagnostic only — production qualification disabled') ||
-      !rendered.includes('Never automatic') ||
-      !rendered.includes('Positive-control fit') ||
-      !rendered.includes('Truth-selected replay diagnostic') ||
-      !rendered.includes('Production full-bank receipts') ||
-      !rendered.includes('Qualification details')))
-    errors.push('detection manifold progress and promotion policy were not rendered');
+  if (view === 'calibration' && (!rendered.includes('Evidence recorder') ||
+      !rendered.includes('Reference stability') || !rendered.includes('Active static models') ||
+      /Campaign state|Candidate|Promotion|Qualification gates|Detection manifold shadow/.test(rendered)))
+    errors.push('calibration must show recorder/reference/static models without live fitting state');
+  if (view === 'calibration' && mode === 'rich' &&
+      (!rendered.includes('/tmp/bearing-static.json') || !rendered.includes('/tmp/detection-static.json')))
+    errors.push('calibration must preserve both configured static manifold paths');
   if (/\b(?:undefined|NaN)\b/.test(rendered)) errors.push('view rendered an invalid value');
   if (rendered.length < 100) errors.push('view rendered too little content');
   if (errors.length) {

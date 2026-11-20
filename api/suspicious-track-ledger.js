@@ -34,7 +34,7 @@ const DEFAULTS = Object.freeze({gapMs: 3000, coincidenceSlopMs: 3000,
   maximumFileBytes: 32 * 1024 * 1024, coincidenceIntervalMs: 1000,
   persistIntervalMs: 30000});
 
-function publicTrack(track) {
+function publicTrack(track, includeSamples = true) {
   const measured = track.samples.filter(sample => sample.measured !== false);
   return {track_key: track.key, channel: track.channel, track_id: track.id,
     frequency_hz: track.frequency_hz, transmitter_site: track.transmitter_site,
@@ -45,7 +45,7 @@ function publicTrack(track) {
     delay_motion_km: track.delay_motion_km, doppler_motion_hz: track.doppler_motion_hz,
     median_delay_km: median(measured.map(sample => sample.delay_km)),
     median_doppler_hz: median(measured.map(sample => sample.doppler_hz)),
-    samples: clone(track.samples)};
+    ...(includeSamples ? {samples: clone(track.samples)} : {})};
 }
 
 class SuspiciousTrackLedger {
@@ -182,10 +182,30 @@ class SuspiciousTrackLedger {
 
   findCoincidences() {
     const tracks = [...this.retained, ...[...this.active.values()]
-      .filter(track => this.eligible(track)).map(publicTrack)]
+      // Coincidence formation needs summary statistics, not another deep copy
+      // of every retained IQ-derived sample on every one-second pass.
+      .filter(track => this.eligible(track)).map(track => publicTrack(track, false))]
       .sort((left, right) => right.last_at - left.last_at)
       .slice(0, this.options.maximumCandidateTracks);
-    const groups = new Map();
+    // The former implementation scanned every event and every event track key
+    // for every candidate pair.  At the documented bounds that was millions of
+    // string comparisons per second and could starve the API event loop.  Build
+    // the inverse index once, then preserve the same connected-component merge
+    // semantics with constant-time lookups.
+    const eventByTrackKey = new Map();
+    for (const event of this.events)
+      for (const key of event.track_keys || []) eventByTrackKey.set(key, event);
+    const mergeEvents = (event, other) => {
+      if (!other || event === other) return event;
+      event.track_keys.push(...other.track_keys);
+      event.channels.push(...other.channels);
+      event.distinct_transmitter_sites.push(...other.distinct_transmitter_sites);
+      event.same_site_consistency.push(...other.same_site_consistency);
+      for (const key of other.track_keys) eventByTrackKey.set(key, event);
+      const index = this.events.indexOf(other);
+      if (index >= 0) this.events.splice(index, 1);
+      return event;
+    };
     for (let leftIndex = 0; leftIndex < tracks.length; leftIndex += 1)
       for (let rightIndex = leftIndex + 1; rightIndex < tracks.length; rightIndex += 1) {
         const left = tracks[leftIndex], right = tracks[rightIndex];
@@ -194,43 +214,30 @@ class SuspiciousTrackLedger {
             right.last_at + this.options.coincidenceSlopMs < left.started_at) continue;
         const sameSite = this.sameSiteEvidence(left, right);
         if (sameSite && !sameSite.consistent) continue;
-        const key = eventId([left.track_key, right.track_key]);
-        groups.set(key, {left, right, sameSite});
+        const leftEvent = eventByTrackKey.get(left.track_key);
+        const rightEvent = eventByTrackKey.get(right.track_key);
+        let event = leftEvent || rightEvent;
+        if (!event) {
+          event = {event_id: eventId([left.track_key, right.track_key]),
+            created_at: this.now(), updated_at: this.now(),
+            status: 'radar-only-candidate', truth_used_for_selection: false,
+            track_keys: [], channels: [], distinct_transmitter_sites: [],
+            same_site_consistency: []};
+          this.events.push(event);
+        } else mergeEvents(event, leftEvent === event ? rightEvent : leftEvent);
+        event.updated_at = this.now();
+        event.track_keys = [...new Set([...event.track_keys, left.track_key, right.track_key])];
+        event.channels = [...new Set([...event.channels, left.channel, right.channel])];
+        event.distinct_transmitter_sites = [...new Set([...event.distinct_transmitter_sites,
+          left.transmitter_site, right.transmitter_site].filter(Boolean))];
+        eventByTrackKey.set(left.track_key, event);
+        eventByTrackKey.set(right.track_key, event);
+        if (sameSite && !event.same_site_consistency.some(item =>
+            item.channels.includes(left.channel) && item.channels.includes(right.channel)))
+          event.same_site_consistency.push({channels: [left.channel, right.channel], ...sameSite});
+        event.evidence_class = event.distinct_transmitter_sites.length >= 2 ?
+          'multiple-distinct-bistatic-geometries' : 'co-sited-frequency-corroboration';
       }
-    for (const {left, right, sameSite} of groups.values()) {
-      const connected = this.events.filter(item => item.track_keys.includes(left.track_key) ||
-        item.track_keys.includes(right.track_key));
-      let event = connected[0];
-      if (!event) {
-        event = {event_id: eventId([left.track_key, right.track_key]),
-          created_at: this.now(), updated_at: this.now(),
-          status: 'radar-only-candidate', truth_used_for_selection: false,
-          track_keys: [], channels: [], distinct_transmitter_sites: [],
-          same_site_consistency: []};
-        this.events.push(event);
-      } else if (connected.length > 1) {
-        for (const other of connected.slice(1)) {
-          event.track_keys.push(...other.track_keys);
-          event.channels.push(...other.channels);
-          event.distinct_transmitter_sites.push(...other.distinct_transmitter_sites);
-          event.same_site_consistency.push(...other.same_site_consistency);
-          this.events.splice(this.events.indexOf(other), 1);
-        }
-      }
-      event.updated_at = this.now();
-      event.track_keys = [...new Set([...event.track_keys, left.track_key, right.track_key])];
-      event.channels = [...new Set([...event.channels, left.channel, right.channel])];
-      event.distinct_transmitter_sites = [...new Set([...event.distinct_transmitter_sites,
-        left.transmitter_site, right.transmitter_site].filter(Boolean))];
-      event.track_keys = [...new Set(event.track_keys)];
-      event.channels = [...new Set(event.channels)];
-      event.distinct_transmitter_sites = [...new Set(event.distinct_transmitter_sites)];
-      if (sameSite && !event.same_site_consistency.some(item =>
-          item.channels.includes(left.channel) && item.channels.includes(right.channel)))
-        event.same_site_consistency.push({channels: [left.channel, right.channel], ...sameSite});
-      event.evidence_class = event.distinct_transmitter_sites.length >= 2 ?
-        'multiple-distinct-bistatic-geometries' : 'co-sited-frequency-corroboration';
-    }
     this.enforceBounds();
   }
 
@@ -266,7 +273,7 @@ class SuspiciousTrackLedger {
 
   snapshot({includeSamples = false} = {}) {
     const tracks = [...this.retained, ...[...this.active.values()]
-      .filter(track => this.eligible(track)).map(publicTrack)];
+      .filter(track => this.eligible(track)).map(track => publicTrack(track))];
     const compact = track => includeSamples ? clone(track) : {...clone(track), samples: undefined};
     return {schema: 'vectorwarp-suspicious-track-ledger-v1',
       selection_policy: 'truth-blind-radar-kinematics-and-cross-illuminator-consistency',

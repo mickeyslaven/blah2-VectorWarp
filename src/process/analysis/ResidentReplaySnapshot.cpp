@@ -1,6 +1,6 @@
 #include "ResidentReplaySnapshot.h"
 #include "process/ambiguity/GpuResidentWire.h"
-#include "process/ambiguity/GpuResidentHash.h"
+#include "capture/Sha256.h"
 #include "../../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <cmath>
@@ -14,7 +14,7 @@ using wire::add;
 using wire::mul;
 constexpr uint32_t blocks=20;
 bool nonzero(const Hash& h){return std::any_of(h.begin(),h.end(),[](auto x){return x!=0;});}
-Hash hash(const uint8_t* p,size_t n){Sha256 s;s.add(p,n);return s.finish();}
+Hash hash(const uint8_t* p,size_t n){blah2::Sha256 s;s.update(p,n);return s.finishBytes();}
 uint32_t passes(const Config& c){return c.detector.integrationCpis>2?
  track_before_detect::detectorPassCount(c.detector.integrationCpis):1;}
 uint32_t refinement(const Config& c){return c.detector.integrationCpis>2?
@@ -32,7 +32,9 @@ uint32_t fractionalOffsetWords(const Config& c){
 uint64_t metadataBytes(const Config& c){
  // Stage appends its device-generated signed offset table to this buffer.
  // Export it verbatim and include it in the allocation, descriptor and hash.
- return mul(add(metadataPrefixWords(c),fractionalOffsetWords(c)),4);}
+ const uint64_t alphaWords=c.detector.integrationCpis>2?
+  uint64_t(passes(c))*(2*c.detector.train+2)*2:0;
+ return mul(add(add(metadataPrefixWords(c),fractionalOffsetWords(c)),alphaWords),4);}
 std::array<uint64_t,blocks> sizes(const Config& c){const auto& g=c.geometry;
  const uint64_t cells=mul(g.doppler,g.delays),n=g.clutterSamples,ch=g.channels;
  const auto depth=c.detector.integrationCpis>2?c.detector.integrationCpis:1;
@@ -118,6 +120,18 @@ void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
  require(m.u32(35*4)==(fractionalOffsetWords(c)?metadataPrefixWords(c):0),
   "Replay snapshot fractional delay table layout differs");
  const bool tbd=c.detector.integrationCpis>2;
+ const uint32_t alphaBase=uint32_t(metadataPrefixWords(c)+fractionalOffsetWords(c)),
+  alphaStride=2*c.detector.train+1;
+ require(tbd?(m.u32(54*4)==alphaBase&&m.u32(55*4)==alphaStride&&
+   m.u32(56*4)==alphaBase+2*passes(c)*alphaStride):
+  (!m.u32(54*4)&&!m.u32(55*4)),"Replay valid-population alpha layout differs");
+ if(tbd)for(uint32_t pass=0;pass<passes(c);++pass){
+  const uint32_t cpis=pass?track_before_detect::bankLength(pass-1):2;
+  const double pfa=track_before_detect::passPfa(c.detector.pfa,c.detector.integrationCpis,motion.delay,motion.doppler,pass);
+  for(uint32_t count=0;count<alphaStride;++count)require(
+   m.f64((alphaBase+2*(pass*alphaStride+count))*4)==(count?track_before_detect::cfarAlpha(pfa,count,cpis):0),
+   "Replay valid-population CFAR alpha differs");
+  require(std::isfinite(m.f64((m.u32(56*4)+2*pass)*4)),"Replay bank noise invalid");}
  const uint32_t available=m.u32(79*4),depth=tbd?c.detector.integrationCpis:1;
  require(tbd?(available>0):available==0,"Replay snapshot temporal advance invalid");
  const auto history=reader(block(s,BlockKind::powerHistory));
@@ -157,7 +171,7 @@ void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
  if(c.tracker.enabled){const auto tracker=reader(block(s,BlockKind::trackerCheckpoint));
   const auto count=tracker.u64(16),used=trackerHeaderWords+count*trackerRecordWords(c.tracker);
   const auto schema=tracker.u32(0);
-  require(((c.tracker.trackGuidedPromote||c.tracker.trackGuidedSustain)?schema==4:(schema>=1&&schema<=3))&&
+  require(schema==5&&tracker.u32(108)==uint32_t(c.detector.integrationCpis>1)&&
    tracker.u32(4)==trackerRecordWords(c.tracker)*4&&
    tracker.u32(8)==c.tracker.capacity&&tracker.u32(12)==trackerHistoryCapacity(c.tracker)&&
    count<=c.tracker.capacity&&tracker.u64(40)==c.epoch&&tracker.u64(48)==id.generation&&

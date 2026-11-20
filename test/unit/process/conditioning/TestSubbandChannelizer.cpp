@@ -1,4 +1,5 @@
 #include "process/conditioning/SubbandChannelizer.h"
+#include "process/conditioning/SamplePhase.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
@@ -262,4 +263,79 @@ TEST_CASE("subband channelizer rejects unsafe inputs and resynchronizes gaps")
     std::vector<std::vector<std::complex<float>>>{
       std::vector<std::complex<float>>(10),
       std::vector<std::complex<float>>(9)}, 100));
+}
+
+TEST_CASE("channelizer absolute mixer phase preserves exact large sample positions")
+{
+  using Channelizer = blah2::channelizer::SubbandChannelizer;
+  constexpr uint32_t rate = 131072, outputRate = 65536;
+  constexpr uint64_t first = (uint64_t(1) << 63) + 7;
+  const std::vector<std::vector<std::complex<float>>> input(2,
+    std::vector<std::complex<float>>(256, {1, .25}));
+  // Periods exceed the 65536-entry oscillator table limit. The old double
+  // sample-index seed loses the low bits and gives a different complex CPI.
+  for (double offset : {-1., 1., -.5, .5}) {
+    const uint64_t period = offset == 1 || offset == -1 ? rate : 2 * rate;
+    Channelizer large({rate, outputRate, offset, 40000, 4}, 2);
+    Channelizer reduced({rate, outputRate, offset, 40000, 4}, 2);
+    const auto actual = large.process(input, first);
+    const auto expected = reduced.process(input, first % period);
+    REQUIRE(actual.channels.size() == expected.channels.size());
+    for (size_t channel = 0; channel < actual.channels.size(); ++channel) {
+      REQUIRE(actual.channels[channel].size() == expected.channels[channel].size());
+      for (size_t index = 0; index < actual.channels[channel].size(); ++index)
+        REQUIRE(std::abs(actual.channels[channel][index] - expected.channels[channel][index]) < 1e-6);
+    }
+    const auto gap = large.process(input, first + 1001);
+    Channelizer fresh({rate, outputRate, offset, 40000, 4}, 2);
+    const auto afterGap = fresh.process(input, (first + 1001) % period);
+    REQUIRE(gap.channels == afterGap.channels);
+    Channelizer rewound({rate, outputRate, offset, 40000, 4}, 2);
+    REQUIRE(large.process(input, first - 500).channels ==
+      rewound.process(input, (first - 500) % period).channels);
+  }
+  REQUIRE(blah2::channelizer::mixerPhaseCycles(UINT64_MAX, 1, UINT32_MAX) == 0);
+}
+
+TEST_CASE("channelizer fractional absolute phase uses exact binary frequency")
+{
+  using blah2::channelizer::mixerPhaseCycles;
+  // Independent Python Fraction.from_float rational oracle, not a floating
+  // absolute angle or offset/rate seed. Non-power-of-two sample rate matters.
+  REQUIRE(std::abs(mixerPhaseCycles(UINT64_MAX, .1, 131070) + .45078126192111084) < 2e-16);
+  REQUIRE(std::abs(mixerPhaseCycles(UINT64_MAX, -.1, 131070) - .45078126192111084) < 2e-16);
+  REQUIRE(mixerPhaseCycles(UINT64_MAX, .5, 131070) == -.25);
+  REQUIRE(mixerPhaseCycles(UINT64_MAX, 1.25, 131070) == -.625);
+  REQUIRE_THROWS(mixerPhaseCycles(1, 1, 0));
+  using Channelizer = blah2::channelizer::SubbandChannelizer;
+  constexpr uint64_t first = (uint64_t(1) << 63) + 71;
+  for (double offset : {.1, -.1, 1e-10}) {
+    Channelizer full({131070, 65535, offset, 40000, 4}, 2);
+    Channelizer split({131070, 65535, offset, 40000, 4}, 2);
+    const std::vector<std::vector<std::complex<float>>> input(2,
+      std::vector<std::complex<float>>(256, {1, .25}));
+    const auto expected = full.process(input, first);
+    std::vector<std::vector<std::complex<float>>> joined(2);
+    size_t cursor = 0;
+    for (size_t size : {31, 97, 128}) {
+      const std::vector<std::vector<std::complex<float>>> block(2,
+        std::vector<std::complex<float>>(size, {1, .25}));
+      const auto actual = split.process(block, first + cursor);
+      for (size_t channel = 0; channel < 2; ++channel)
+        joined[channel].insert(joined[channel].end(), actual.channels[channel].begin(),
+          actual.channels[channel].end());
+      cursor += size;
+    }
+    for (size_t channel = 0; channel < 2; ++channel) {
+      REQUIRE(joined[channel].size() == expected.channels[channel].size());
+      for (size_t i = 0; i < joined[channel].size(); ++i)
+        REQUIRE(std::abs(joined[channel][i] - expected.channels[channel][i]) < 1e-6);
+    }
+    // Even a sub-nanohertz offset accumulates significant absolute phase;
+    // it must not enter the integer-zero oscillator table.
+    const auto steady = expected.channels[0].back();
+    const double phase = 2 * pi * mixerPhaseCycles(first + 255 - 4, offset, 131070);
+    REQUIRE(std::abs(steady - std::complex<float>(
+      std::complex<double>(1, .25) * std::polar(1., phase))) < 1e-4);
+  }
 }

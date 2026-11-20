@@ -13,6 +13,10 @@
 #include <vector>
 #include <deque>
 #include <complex>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
 template <typename T>
 
@@ -26,6 +30,32 @@ private:
   uint32_t nCols;
 
 public:
+  // Shared row-major metric accumulator. Producers may reuse an identical
+  // cell level across their output maps without changing reduction order.
+  struct MetricAccumulator {
+    double sum = 0, peak = -std::numeric_limits<double>::infinity();
+    uint64_t count = 0;
+    static double magnitude(double value) { return std::abs(value); }
+    static double magnitude(std::complex<double> value) {
+      // hypot(x, +/-0) is exactly abs(x); other complex values retain hypot.
+      return value.imag() == 0 ? std::abs(value.real()) : std::abs(value);
+    }
+    static double level(T value) {
+      const double absolute = magnitude(value);
+      if (!std::isfinite(absolute))
+        throw std::runtime_error("Radar map contains a non-finite sample");
+      return 10 * std::log10(std::max(1e-30, absolute));
+    }
+    void addLevel(double value) {
+      sum = sum + value; peak = (peak < value) ? value : peak; ++count;
+    }
+    double add(T value) { const double result = level(value); addLevel(result); return result; }
+    void apply(Map<T>& map) const {
+      map.noisePower = count ? sum / static_cast<double>(count) : 0;
+      map.maxPower = count ? peak - map.noisePower : 0;
+    }
+  };
+
   /// @brief Map data to store.
   std::vector<std::vector<T>> data;
 
@@ -62,6 +92,10 @@ public:
   /// @brief Create map metrics (noise power, dynamic range).
   /// @return Void.
   void set_metrics();
+
+  /// @brief Exclude invalid temporal cells; an empty mask preserves all cells.
+  /// @param validCells Row-major mask, either empty or one byte per map cell.
+  void set_metrics(const std::vector<uint8_t>& validCells);
 
   /// @brief Get the number of rows in the map.
   /// @return Number of rows.

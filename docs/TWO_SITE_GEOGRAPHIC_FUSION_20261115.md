@@ -5,10 +5,11 @@ commit, push, or deployment is part of this change.
 
 ## Verified geometry and useful output
 
-The inspected HP and HomePortal configurations report the same receiver:
-40.4421967375442, -80.05656014497772, 349.65 m. WPGH RF20 (509 MHz) and
-WPNT RF21 (515 MHz) are co-sited at 40.495278, -80.004444, 691.8 m. WPXI
-RF23 (527 MHz) is at 40.46325, -80.0043056, 615 m. HP's duplicate WPGH
+Channel names below are portable aliases. The inspected HP and HomePortal
+configurations report the same receiver:
+40.4421967375442, -80.05656014497772, 349.65 m. TX-A RF20 (509 MHz) and
+TX-B RF21 (515 MHz) are co-sited at 40.495278, -80.004444, 691.8 m. TX-C
+RF23 (527 MHz) is at 40.46325, -80.0043056, 615 m. HP's duplicate TX-A
 illumination contributes RF evidence but no additional geometric equation.
 The setup therefore has two independent transmitter sites. HP bearing was
 disabled at inspection; no angular measurement is invented or enabled here.

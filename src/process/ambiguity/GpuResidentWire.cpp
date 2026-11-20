@@ -1,9 +1,9 @@
 #include "GpuResidentWire.h"
+#include "TemporalCandidateCell.h"
 #include "../../../core/TrackBeforeDetect.private.h"
 #include "../../../core/GpuTrackerAdmission.private.h"
-#include "GpuResidentHash.h"
+#include "capture/Sha256.h"
 #include "GpuMemory.h"
-#include "process/analysis/ProductionReplayContract.h"
 #include <algorithm>
 #include <cmath>
 #include <climits>
@@ -15,8 +15,8 @@ uint64_t wire::mandatoryPresence(const Config& c){uint64_t m=0;
 for(unsigned i=1;i<=12;++i)m|=uint64_t(1)<<i;
 for(unsigned i=25;i<=29;++i)m|=uint64_t(1)<<i;
 if(c.tracker.enabled)m|=bit(Section::tracker0)|bit(Section::tracker1);
-if(c.tracker.trackGuidedShadow)m|=bit(Section::guidedRecoveries);
 if(c.detector.enabled)m|=bit(Section::detections);
+if(c.detector.enabled&&c.detector.integrationCpis>1)m|=bit(Section::flags)|bit(Section::detectionCells);
 if(c.replay.maxBytes)m|=bit(Section::replaySnapshot);
 return m;}
 void validateConfig(const Config& c){
@@ -83,8 +83,11 @@ void validateConfig(const Config& c){
    std::norm(value)>1e-12f,"Resident surveillance direct-anchor response invalid");
  const auto& d=c.detector;
  const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
- production_replay::temporal(d.integrationCpis,motion.delay,motion.doppler,
-  f.mode!=FusionMode::noncoherent);
+ require((d.integrationCpis==1||d.integrationCpis==2||d.integrationCpis==4||d.integrationCpis==8)&&
+  motion.delay<=2&&motion.doppler<=(d.integrationCpis>2?16u:1u)&&
+  (d.integrationCpis!=1||(!motion.delay&&!motion.doppler))&&
+  (d.integrationCpis<=2||f.mode!=FusionMode::noncoherent),
+  "Production replay temporal/TBD contract is invalid");
  if(motion.fractionalDelay){
   require(d.enabled&&d.integrationCpis>2&&f.mode!=FusionMode::noncoherent,
     "Fractional delay requires enabled coherent track-before-detect");
@@ -92,6 +95,7 @@ void validateConfig(const Config& c){
     g.clutterSamples,f.frequencyHz),c.dopplerAxis);
  }
  const auto& b=c.bearing;
+ track_before_detect::validateRefinementGrid(d.integrationCpis,f.beams,b.enabled?b.scanBeams:0);
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
  require(b.referenceAnchor==BearingReferenceAnchor::liveEigenbeam||
@@ -106,7 +110,7 @@ void validateConfig(const Config& c){
    b.manifoldResponses.empty(),"Projected bearing experiment requires five-channel ideal covariance replay");
  if(b.enabled){
   require(f.mode!=FusionMode::noncoherent&&d.enabled&&c.tracker.enabled&&
-   b.scanBeams>=f.beams&&b.scanBeams<=127&&b.scanBeams%f.beams==0&&
+   d.integrationCpis>2&&b.scanBeams&&
    b.candidatePeaks==3&&b.guardRadius<=3&&b.trainingRadius>b.guardRadius&&
    b.trainingRadius<=6&&std::isfinite(b.diagonalLoading)&&
    b.diagonalLoading>0&&b.diagonalLoading<=1&&
@@ -130,22 +134,21 @@ void validateConfig(const Config& c){
  require(c.spectrumBins==1+(g.clutterSamples-1)/decimation,"Resident spectrum shape differs");
  require(!c.tracker.enabled||d.enabled,"Resident tracker requires detection");
  if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&
-  (d.integrationCpis==1||d.integrationCpis==2||d.integrationCpis==4||d.integrationCpis==8)&&motion.delay<=2&&
-  motion.doppler<=(d.integrationCpis>2?16u:1u)&&
-  (d.integrationCpis==2||d.integrationCpis>2||(!motion.delay&&!motion.doppler))&&(d.integrationCpis<=2||f.mode!=FusionMode::noncoherent)&&
   (d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
- require(!t.trackGuidedPromote||gpu_tracker::experimentalConfirmationFeasible(t.m,t.n),
-  "Experimental disjoint guided confirmation requires N >= 2*M-1; ordinary M-of-N is unchanged with promotion off");
+ require(t.reservedPolicy==std::array<uint8_t,3>{}&&!t.reservedLimit,
+  "Resident reserved tracker configuration must be zero");
+ track_before_detect::validateBeamHistory(d.integrationCpis,d.integrationBeamTolerance);
  if(t.enabled){const uint32_t recordWords=trackerRecordWords(t);
- require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0&&std::isfinite(t.minInitiationSnrDb)&&t.minInitiationSnrDb>=-100&&t.minInitiationSnrDb<=100&&std::isfinite(t.stationaryMaxDopplerHz)&&t.stationaryMaxDopplerHz>=0&&(t.stationaryClutter?(t.stationaryPersistenceCpis>=2&&t.stationaryPersistenceCpis<=65535):(!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0))&&(t.trackGuidedShadow?(t.trackGuidedShadowMaxTracks&&t.trackGuidedShadowMaxTracks<=t.capacity):(!t.trackGuidedPromote&&!t.trackGuidedSustain&&!t.trackGuidedShadowMaxTracks)),"Resident tracker configuration invalid");
+ tracker_confirmation::validate(t.m,t.n,t.nDelete,d.integrationCpis);
+ require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0&&std::isfinite(t.minInitiationSnrDb)&&t.minInitiationSnrDb>=-100&&t.minInitiationSnrDb<=100&&std::isfinite(t.stationaryMaxDopplerHz)&&t.stationaryMaxDopplerHz>=0&&(t.stationaryClutter?(t.stationaryPersistenceCpis>=2&&t.stationaryPersistenceCpis<=65535):(!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0)),"Resident tracker configuration invalid");
  double actual=(double(c.correlation)*g.doppler)/c.sampleRate;
  require(std::memcmp(&actual,&t.cpi,8)==0,"Resident tracker CPI must be actual CPI");
- require(!t.trackGuidedShadow||d.integrationCpis>2,"Track-guided shadow requires rolling track-before-detect history");}
- else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0&&t.minInitiationSnrDb==-100&&!t.stationaryClutter&&!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0&&!t.trackGuidedShadow&&!t.trackGuidedPromote&&!t.trackGuidedSustain&&!t.normalizedInnovationGate&&!t.trackGuidedShadowMaxTracks,"Disabled resident tracker has configuration");
+}
+ else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0&&t.minInitiationSnrDb==-100&&!t.stationaryClutter&&!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0&&!t.normalizedInnovationGate,"Disabled resident tracker has configuration");
  require(!c.device.empty()&&c.device.size()<96&&c.device.find('\0')==std::string::npos,"Resident device selector invalid");
  resident_replay::validateExportConfig(c);
- const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<33)-2);
+ const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<33)-2)&~bit(Section::reserved30);
  require((c.presence&mandatory)==mandatory&&!(c.presence&~known),"Resident required/presence bits invalid");
  require(t.enabled||!(c.presence&(bit(Section::tracker0)|bit(Section::tracker1))),"Disabled tracker checkpoint supplied");
  require(t.enabled||!(c.presence&bit(Section::causalTrace)),"Disabled tracker causal trace supplied");
@@ -199,7 +202,6 @@ const uint64_t m=mul(g.doppler,g.delays),n=g.clutterSamples,k=c.spectrumBins,s=g
  put(Section::device,1,1,deviceEvidenceBytes,2);
  put(Section::preparedEvidence,1,1,preparedEvidenceBytes,2);
  put(Section::controlEvidence,1,1,controlEvidenceBytes,2);
- put(Section::guidedRecoveries,2,4,mul(c.tracker.trackGuidedShadowMaxTracks,24),2);
  put(Section::replaySnapshot,1,1,c.replay.maxBytes?resident_replay::requiredBytes(c):0,2);
  put(Section::causalTrace,2,4,causal_trace::bytes,2);
  l.bytes=align(at,pageBytes);
@@ -320,10 +322,8 @@ const auto&t=c.tracker;
  w.u32(584,t.stationaryClutter);
  w.u32(588,t.stationaryPersistenceCpis);
  w.f64(592,t.stationaryMaxDopplerHz);
- w.u32(604,t.trackGuidedShadow);
- w.u32(608,t.trackGuidedShadowMaxTracks);
- w.u32(612,(t.trackGuidedPromote?1u:0u)|(t.trackGuidedSustain?2u:0u)|
-   (t.normalizedInnovationGate?4u:0u));
+ // 604..611 and policy bits 0..1 are reserved zero in ABI17.
+ w.u32(612,t.normalizedInnovationGate?4u:0u);
  w.u64(344,c.spectrumBins);
  w.u64(352,c.presence);
  w.f64(360,c.fusion.frequencyHz);
@@ -478,12 +478,9 @@ ref.centreHz=r.f64(160);
  t.stationaryClutter=boolean(584);
  t.stationaryPersistenceCpis=r.u32(588);
  t.stationaryMaxDopplerHz=r.f64(592);
- t.trackGuidedShadow=boolean(604);
- t.trackGuidedShadowMaxTracks=r.u32(608);
+ r.zeros(604,8);
  const uint32_t trackerPolicy=r.u32(612);
- require(!(trackerPolicy&~7u),"Resident tracker policy flags invalid");
- t.trackGuidedPromote=(trackerPolicy&1u)!=0;
- t.trackGuidedSustain=(trackerPolicy&2u)!=0;
+ require(!(trackerPolicy&~4u),"Resident tracker policy flags invalid");
  t.normalizedInnovationGate=(trackerPolicy&4u)!=0;
  c.spectrumBins=narrow(r.u64(344));
  c.presence=r.u64(352);
@@ -502,13 +499,13 @@ ref.centreHz=r.f64(160);
  require(std::memcmp(canonical.data(),b.data,configBytes)==0,"Resident config is not canonical");
  return c;}
 Hash wire::configHash(const Config& c){const auto config=encodeConfig(c);
-Sha256 hash;
-hash.add(config.data(),config.size());
+blah2::Sha256 hash;
+hash.update(config.data(),config.size());
 uint8_t scalar[8]{};
 Writer w{{scalar,8}};
 for(auto v:c.delayAxis){w.u32(0,uint32_t(v));
-hash.add(scalar,4);}for(auto v:c.dopplerAxis){w.f64(0,v);
-hash.add(scalar,8);}return hash.finish();}
+hash.update(scalar,4);}for(auto v:c.dopplerAxis){w.f64(0,v);
+hash.update(scalar,8);}return hash.finishBytes();}
 namespace {
 std::array<uint8_t,1280> mappingHeader(const Mapping& map,const Config& c,Nonce nonce){std::array<uint8_t,1280> b{};
 Writer w{{b.data(),b.size()}};
@@ -571,10 +568,12 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  require(p.phase==Phase::prepared||p.phase==Phase::committed,"Resident outputs unavailable in this phase");
  Reader r{map.read(Section::metrics)};
  require(r.u32(0)==1&&r.u32(4)==128&&r.u64(8)==p.frame.logicalId&&r.u64(16)==p.frame.consumedSequence,"Resident metrics identity mismatch");
- const uint32_t guidedCount=r.u32(88),guidedWords=r.u32(92);
- if(c.tracker.trackGuidedShadow)require(guidedCount<=c.tracker.trackGuidedShadowMaxTracks&&guidedWords==6,"Resident guided recovery metrics invalid");
- else require(!guidedCount&&!guidedWords,"Disabled guided recovery produced metrics");
- r.zeros(96,32);
+ r.zeros(88,8); // Retired experimental output metrics remain reserved.
+ const uint32_t cfarDiagnosticCount=r.u32(96),centroidDiagnosticCount=r.u32(100);
+ v.availableCpis=r.u32(104);
+ require(r.u32(108)<=1,"Resident detector observation flag invalid");
+ v.detectorObserved=r.u32(108)!=0;v.evaluatedCells=r.u64(112);r.zeros(120,8);
+ require(v.availableCpis>=1&&v.availableCpis<=c.detector.integrationCpis,"Resident temporal history readiness invalid");
  require(r.u32(80)==c.stages()&&r.u32(84)==c.stages(),"Resident completed computational mask differs");
  v.noise=r.f64(24);
  v.maxPower=r.f64(32);
@@ -583,7 +582,13 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  v.centroidCount=r.u64(48);
  v.detectionCount=r.u64(56);
  const uint64_t m=uint64_t(c.geometry.doppler)*c.geometry.delays;
- require(v.cfarCount<=m&&v.centroidCount<=v.cfarCount&&v.detectionCount<=v.centroidCount,"Resident detection counts invalid");
+ const uint32_t detectorPasses=c.detector.integrationCpis>2?track_before_detect::detectorPassCount(c.detector.integrationCpis):1;
+ require(v.detectorObserved?(c.detector.enabled&&v.evaluatedCells<=m*detectorPasses&&
+   v.cfarCount<=v.evaluatedCells):v.evaluatedCells==0,"Resident observed CFAR population invalid");
+ require(v.cfarCount<=m*detectorPasses&&v.centroidCount<=v.cfarCount&&v.detectionCount<=v.centroidCount&&v.detectionCount<=m&&
+  cfarDiagnosticCount<=m&&cfarDiagnosticCount<=v.cfarCount&&centroidDiagnosticCount<=cfarDiagnosticCount&&centroidDiagnosticCount<=v.centroidCount,
+  "Resident detection counts invalid");
+ require(c.detector.integrationCpis==1||v.availableCpis>=2||!v.detectionCount,"Resident warmup produced detections");
  if(!c.detector.enabled)require(!v.cfarCount&&!v.centroidCount&&!v.detectionCount,"Disabled detector produced records");
  v.maps=sectionView<std::complex<float>>(map,visible,Section::maps);
  v.fused=sectionView<std::complex<double>>(map,visible,Section::fused);
@@ -598,19 +603,28 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  v.flags=sectionView<uint32_t>(map,visible,Section::flags);
  v.detectionCells=sectionView<uint32_t>(map,visible,Section::detectionCells);
  if(v.detections.data)v.detections.size=size_t(v.detectionCount);
- if(v.cfar.data)v.cfar.size=size_t(v.cfarCount);
- if(v.centroid.data)v.centroid.size=size_t(v.centroidCount);
+ if(v.cfar.data)v.cfar.size=cfarDiagnosticCount;
+ if(v.centroid.data)v.centroid.size=centroidDiagnosticCount;
  if(v.detectionCells.data)v.detectionCells.size=size_t(v.detectionCount);
+ if(c.detector.enabled&&c.detector.integrationCpis>1){
+  require(v.flags.size==m&&v.detectionCells.size==v.detectionCount,"Resident temporal candidate lineage missing");
+  for(size_t i=0;i<v.detectionCells.size;++i){const uint32_t cell=v.detectionCells.data[i];
+   require(cell<m,"Resident temporal candidate cell invalid");const uint32_t flags=v.flags.data[cell],bank=(flags>>3)&15;
+   require((flags&4)&&bank&&!(bank&(bank-1)),"Resident temporal originating bank ambiguous");
+   (void)temporal_candidate::sourceCell(cell,flags,c.geometry.doppler,c.geometry.delays,c.detector.integrationCpis);
+   const uint32_t depth=(bank&8)?8:(bank&4)?4:2;
+   const int delay=int((flags>>17)&7)-2,doppler=int((flags>>20)&63)-16;
+   const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
+   require(depth<=v.availableCpis&&std::abs(delay)<=int(motion.delay)&&std::abs(doppler)<=int(motion.doppler)&&
+    (bank!=1u||(!delay&&!doppler)),"Resident temporal support invalid");
+  }}
  v.preparedEvidence=map.read(Section::preparedEvidence);
  v.trackerSlot=r.u32(72);
  v.trackerNoOp=r.u32(76)!=0;
  require(r.u32(76)<=1&&v.trackerSlot<=1,"Resident tracker flags invalid");
  if(c.tracker.enabled){v.trackerToken=p.tracker;
  v.trackerCheckpoint=sectionView<uint32_t>(map,visible,v.trackerSlot?Section::tracker1:Section::tracker0);
- v.guidedRecoveryWords=sectionView<uint32_t>(map,visible,Section::guidedRecoveries);
  v.causalTrace=sectionView<uint32_t>(map,visible,Section::causalTrace);
- require(v.guidedRecoveryWords.size>=uint64_t(guidedCount)*guidedWords,"Resident guided recovery output short");
- v.guidedRecoveryWords.size=uint64_t(guidedCount)*guidedWords;
  const uint64_t words=r.u64(64);
  const uint64_t recordWords=trackerRecordWords(c.tracker),history=trackerHistoryCapacity(c.tracker);
  require(words>=trackerHeaderWords&&words<=v.trackerCheckpoint.size&&(words-trackerHeaderWords)%recordWords==0,"Resident checkpoint used length invalid");
@@ -618,7 +632,7 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  const auto* bank=v.trackerCheckpoint.data;
  Reader br{{reinterpret_cast<const uint8_t*>(bank),size_t(words*4)}};
  const uint32_t schema=br.u32(0);
- require(((c.tracker.trackGuidedPromote||c.tracker.trackGuidedSustain)?schema==4:(schema>=1&&schema<=3))&&br.u32(4)==recordWords*4&&br.u32(8)==c.tracker.capacity&&br.u32(12)==history&&br.u64(16)<=c.tracker.capacity&&words==trackerHeaderWords+recordWords*br.u64(16)&&br.u64(40)==c.epoch,"Resident tracker checkpoint envelope differs");
+ require(schema==5&&br.u32(108)==uint32_t(c.detector.integrationCpis>1)&&br.u32(4)==recordWords*4&&br.u32(8)==c.tracker.capacity&&br.u32(12)==history&&br.u64(16)<=c.tracker.capacity&&words==trackerHeaderWords+recordWords*br.u64(16)&&br.u64(40)==c.epoch,"Resident tracker checkpoint envelope differs");
  if(!v.trackerNoOp)require(br.u64(48)==p.frame.logicalId&&br.u64(56)==p.frame.consumedSequence,"Resident tracker checkpoint frame differs");
  require(p.tracker.epoch==c.epoch&&p.tracker.generation==p.frame.logicalId&&p.tracker.consumedSequence==p.frame.consumedSequence&&p.tracker.transaction,"Resident prepared token invalid");}else require(!r.u64(64)&&!v.trackerSlot&&!v.trackerNoOp&&same(p.tracker,{}),"Disabled tracker produced checkpoint/token");
  return v;}

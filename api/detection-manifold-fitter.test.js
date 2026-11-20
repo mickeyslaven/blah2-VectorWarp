@@ -7,10 +7,11 @@ const os = require('os');
 const path = require('path');
 const {spawnSync} = require('child_process');
 const {compatibilityFingerprint} = require('./manifold-identity');
-const {BANK_HASH_CONTRACT, detectionBankHash, fitDetectionManifold,
+const {BANK_HASH_CONTRACT, detectionBankHash, fitDetectionManifold: fitBank,
   denseRuntimeCandidate, responseFor} = require('./detection-manifold-fitter');
 
 const beams = 8, frequency = 539000000, directAzimuth = 26;
+const fitDetectionManifold = (rows, options = {}) => fitBank(rows, {azimuthBins: beams, ...options});
 const positions = [[0, 0, 0], [.2, 0, 0], [0, .2, 0]];
 const identity = {frequency_hz: frequency, sample_rate_hz: 2400000,
   channel_mapping: [0, 1, 2], requested_gain_db: [12, 12, 12],
@@ -50,7 +51,8 @@ function samples(elevations = () => 5) {
   const rows = [];
   for (let beam = 0; beam < beams; ++beam) for (let pass = 0; pass < 2; ++pass) {
     const azimuth = beam * 360 / beams + 17, commonPhase = beam * .13 + pass * .7;
-    rows.push({schema: 'vectorwarp-manifold-sample-v2', frequency_hz: frequency,
+    rows.push({schema: 'vectorwarp-manifold-sample-v2',
+      precision_contract: 'binary64-json-roundtrip-v1', frequency_hz: frequency,
       sample_rate_hz: 2400000, channels: positions.length, config_fingerprint: 'fixed-installed-state',
       manifold_identity: clone(identity), icao: `aircraft-${beam}-${pass}`, radar_timestamp_ms: 1000000,
       direct_path_local_azimuth_deg: directAzimuth,

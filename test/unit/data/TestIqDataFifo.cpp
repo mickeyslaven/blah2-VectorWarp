@@ -3,10 +3,23 @@
 #include "capture/usrp/UsrpIngress.h"
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <future>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
+
+struct FloatCaptureBlockPoolTestAccess {
+  static void allocator(FloatCaptureBlockPool& pool,
+      FloatCaptureBlockPool::Buffer(*allocate)(std::size_t,void*),void* context) {
+    pool.reserveAllocator_=allocate;pool.reserveAllocatorContext_=context;
+  }
+  static void retirer(FloatCaptureBlockPool& pool,
+      FloatCaptureBlockPool::ReserveRetirer retire,void* context) {
+    pool.reserveRetirer_=retire;pool.reserveRetirerContext_=context;
+  }
+};
 
 namespace {
 void require(bool condition, const char* reason) {
@@ -15,6 +28,100 @@ void require(bool condition, const char* reason) {
 template<class F> void rejects(F action) {
   try { action(); } catch (const std::runtime_error&) { return; }
   throw std::runtime_error("Out-of-range FIFO operation accepted");
+}
+
+void contiguous_double_contracts() {
+  using Sample = std::complex<double>;
+  IqData block(8);
+  auto& scratch = block.resize_contiguous_for_write(8);
+  const auto* address = scratch.data();
+  for (size_t i = 0; i < scratch.size(); ++i) scratch[i] = {100000000.25 + i, 100000000.5 - i};
+  const auto original = scratch;
+  require(block.take_storage_metrics().allocations == 1, "FP64 scratch was not allocated once");
+  const auto view = block.sample_view();
+  std::vector<Sample> copied(view.begin(), view.end());
+  require(copied == original && view.data() == address && view.end() - view.begin() == 8,
+    "Contiguous FP64 view changed bits, iterator range, or ownership");
+  std::vector<std::complex<float>> narrowed(3);
+  view.copy_to(narrowed.data(), 3, 2);
+  for (size_t i = 0; i < narrowed.size(); ++i)
+    require(narrowed[i] == std::complex<float>(original[i + 2]), "FP64 view changed GPU narrowing boundary");
+  const std::complex<float> estimate[] = {{100000000, 100000000}, {100000000, 100000000}};
+  rejects([&] { block.subtract_clutter(nullptr, 2); });
+  require(block.sample_view()[0] == original[0], "Rejected estimate mutated contiguous input");
+  block.subtract_clutter(estimate, 2);
+  require(block.get_length() == 2 && block.sample_view().data() == address &&
+    block.sample_view()[0] == Sample(.25, .5), "Contiguous subtraction lost FP64 cancellation");
+  block.discard_front(2);
+  require(block.get_length() == 0, "Contiguous consumption retained logical samples");
+  auto& reused = block.resize_contiguous_for_write(8);
+  require(reused.data() == address && reused[7] == original[7],
+    "Consumed FP64 scratch was reallocated or unnecessarily initialized");
+  std::copy(original.begin(), original.end(), reused.begin());
+  block.discard_front(3);
+  require(block.get_length() == 5 && block.sample_view()[0] == original[3],
+    "Contiguous consumption changed the short tail");
+  block.assign_complex(original.data(), 8);
+  const Sample doubleEstimate[] = {{200000000, 200000000}, {200000000, 200000000}};
+  block.subtract_clutter(doubleEstimate, 2, 2);
+  require(block.sample_view()[0] == Sample(.25, .5), "Contiguous FP64 divisor changed cancellation");
+  block.clear();
+  require(block.get_length() == 0 && block.resize_contiguous_for_write(8).data() == address,
+    "Reset did not retain private FP64 scratch");
+  block.assign_complex(original.data(), 8);
+  const auto nativeCosts = block.take_storage_metrics();
+  require(!nativeCosts.allocations && !nativeCosts.materializations && !nativeCosts.materializedSamples,
+    "Native FP64 operations silently materialized or allocated");
+  const auto& legacy = block.view_data();
+  require(std::equal(legacy.begin(), legacy.end(), original.begin()), "Legacy view changed contiguous samples");
+  block.view_data();
+  const auto legacyCosts = block.take_storage_metrics();
+  require(legacyCosts.materializations == 1 && legacyCosts.materializedSamples == 8 &&
+    legacyCosts.materializationMs >= 0, "Legacy conversion was hidden or repeated");
+  block.resize_for_write(8)[0] = {7, -8};
+  require(block.sample_view()[0] == Sample(7, -8), "Legacy mutation left a stale FP64 reader");
+  require(block.resize_contiguous_for_write(8)[0] == Sample(7, -8),
+    "Returning to contiguous storage lost legacy mutations");
+  const auto owned = block.take_all();
+  block.resize_contiguous_for_write(8)[0] = {123, 456};
+  require(owned[0] == Sample(7, -8) && owned[7] == original[7],
+    "EOF drain borrowed storage from the reusable scratch");
+}
+
+void stream_profile_contracts() {
+  blah2::stream_profile::Histogram histogram;
+  for (unsigned i=1;i<=100;++i) histogram.observe(i);
+  require(histogram.count==100 && histogram.percentile(.5)==50 &&
+    histogram.percentile(.95)==95 && histogram.percentile(.99)==99 &&
+    histogram.maximum==100 && histogram.over10==90,
+    "Stream profile quantiles or repeated tail counts changed");
+  histogram.observe(1500);
+  require(histogram.percentile(1)==1500 && histogram.over500==1,
+    "Stream profile overflow understated the measured tail");
+  blah2::stream_profile::Histogram fractional;fractional.observe(.01);
+  require(fractional.percentile(.5)==.5,
+    "Stream profile quantile is not a conservative half-ms bound");
+}
+
+void stream_profile_smoke() {
+  using namespace blah2::stream_profile;
+  require(frameLimit()==2,"Run profile smoke with VECTORWARP_STREAM_PROFILE_FRAMES=2");
+  Consumer consumer;
+  Worker worker("fixture-worker");
+  Receiver receiver;
+  for(unsigned i=0;i<3;++i){
+    const auto now=Clock::now();
+    CycleRecord cycle;cycle.sequence=i+1;cycle.epoch=7;
+    cycle.time.fill(now);cycle.threadBegin=Activity::capture(true);
+    cycle.processBegin=Activity::capture(true,true);
+    consumer.record(cycle);consumer.complete(now);
+    WorkRecord work;work.sequence=i+1;work.time.fill(now);
+    work.begin=Activity::capture(true);worker.record(work);
+    ReceiveRecord receive;receive.when=micros(now);receive.phases[3]=double(i+1);
+    receive.sampled=receiver.sample();receive.begin=receive.end=Activity::capture(receive.sampled);
+    receiver.record(receive,0);
+  }
+  require(!consumer.enabled()&&!worker.enabled(),"Profile record storage exceeded its fixed bound");
 }
 
 void contiguous_float_contracts() {
@@ -104,16 +211,18 @@ void contiguous_float_contracts() {
           "Contiguous native fragmented fallback changed samples");
       }
 
-  // A CPU fallback uses an initially empty conversion vector. Returning it
-  // must surrender the pool slot instead of leaking a slot on every CPI.
+  // Trackerclock1 CPU fallback exchanges an initially empty destination and
+  // releases that slot; the next receive can allocate its bounded replacement.
   IqData fallback(20); fallback.enable_float_capture(10);
   for (unsigned frame = 0; frame < 40; ++frame) {
     fallback.append_unlocked(next);
     FloatCaptureChunkQueue q; q.push(fallback.take_float_blocks(10));
     std::vector<Sample> converted;
     q.take(10, converted);
-    require(converted == next && fallback.float_capture_pool_stats().allocated == 0,
-      "CPU fallback leaked a native capture pool slot");
+    const auto stats = fallback.float_capture_pool_stats();
+    require(converted == next && stats.allocated == 0 && stats.allocations == frame+1 &&
+      q.last_transfer().swapped == 10 && !q.last_transfer().copied,
+      "CPU fallback changed samples or permanently consumed a pool slot");
   }
   // Shutdown destroys the producer before the last transferred block drains.
   FloatCaptureChunkQueue survivor;
@@ -126,7 +235,7 @@ void contiguous_float_contracts() {
 
   // Receiver acquisition and consumer retirement share only the bounded pool.
   // Exercise cross-thread reuse independently of their separately locked FIFOs.
-  auto concurrent = std::make_shared<FloatCaptureBlockPool>(64, 192);
+  auto concurrent = std::make_shared<FloatCaptureBlockPool>(64, 192, 4);
   std::atomic<bool> start{false};
   std::vector<std::future<void>> workers;
   for (unsigned worker = 0; worker < 4; ++worker)
@@ -180,6 +289,30 @@ void contiguous_float_contracts() {
       "Native partial-block refill exceeded its queue/allocation budget");
   }
 
+  // Two prepared blocks are a startup reservation, never an allocation cap.
+  // Hold every allowed block simultaneously, then replace incompatible storage.
+  for (unsigned capacity : {20u, 23u, 80u}) {
+    auto lazy = std::make_shared<FloatCaptureBlockPool>(10, capacity, 2);
+    const auto before = lazy->stats();
+    require(before.allocated==2 && before.allocations==2,
+      "Lazy capture eagerly allocated its backlog");
+    std::vector<FloatCaptureBlockPool::Buffer> held;
+    for (unsigned i=0;i<before.limit;++i)held.push_back(lazy->acquire());
+    require(held.size()>2 && lazy->stats().allocated==before.limit &&
+      lazy->stats().allocations==before.limit,"Lazy pool did not grow to its configured bound");
+    rejects([&]{lazy->acquire();});
+    held.back().clear();lazy->recycle(std::move(held.back()));held.pop_back();
+    held.push_back(lazy->acquire());
+    require(lazy->stats().allocated==before.limit &&
+      lazy->stats().allocations==before.limit+1,"Lazy replacement consumed a permanent pool slot");
+    for(auto& buffer:held)lazy->recycle(std::move(buffer));
+    held.clear();
+    for(unsigned i=0;i<before.limit;++i)held.push_back(lazy->acquire());
+    require(lazy->stats().allocations==before.limit+1,
+      "Recycled lazy pool allocated unnecessarily");
+    for(auto& buffer:held)lazy->recycle(std::move(buffer));
+  }
+
   // Pointer exchange and pool allocation counters are deterministic timing
   // contracts; the elapsed time is reported, not a platform-dependent gate.
   constexpr std::size_t samples = 262144, frames = 64;
@@ -207,10 +340,255 @@ void contiguous_float_contracts() {
     << std::chrono::duration<double, std::micro>(taking).count() / frames
     << " us/take\n";
 }
+
+void asynchronous_reserve_contracts() {
+  using Pool=FloatCaptureBlockPool;
+  using Sample=Pool::Sample;
+  for(unsigned capacity:{128u,145u,512u}) {
+    auto pool=std::make_shared<Pool>(64,capacity,2);
+    const auto bound=pool->stats().limit;
+    pool->prepare_reserve();pool->prepare_reserve();
+    require(pool->stats().allocated==std::min<std::size_t>(3,bound) &&
+      pool->reserve_stats().target==1,"Reserve preparation precommitted the backlog or repeated");
+    std::vector<Pool::Buffer> held;
+    for(std::size_t i=0;i<bound;++i){
+      held.push_back(pool->acquire());
+      std::fill(held.back().begin(),held.back().end(),Sample(float(i),-float(i)));
+      require(pool->stats().allocated<=bound,"In-flight reserve escaped the allocation bound");
+    }
+    rejects([&]{pool->acquire();});
+    // An incompatible fallback destination releases its slot. Race the helper
+    // for its replacement, including the final in-flight allocation at limit.
+    for(unsigned round=0;round<40;++round){
+      Pool::Buffer empty;
+      held.back().swap(empty);
+      pool->recycle(std::move(held.back()));
+      held.back()=pool->acquire();
+      require(held.back().size()==64 && pool->stats().allocated<=bound,
+        "Bounded reserve replacement failed or exceeded its pool limit");
+    }
+    for(std::size_t i=0;i+1<held.size();++i)
+      require(std::all_of(held[i].begin(),held[i].end(),[&](Sample v){return v==Sample(float(i),-float(i));}),
+        "Reserve replacement overwrote an outstanding block");
+    for(auto& buffer:held)pool->recycle(std::move(buffer));
+    require(pool->reserve_stats().misses>0,"Reserve misses were not accounted");
+  }
+  auto pool=std::make_shared<Pool>(64,512,2);pool->prepare_reserve();
+  std::vector<Pool::Buffer> held;
+  for(unsigned i=0;i<3;++i)held.push_back(pool->acquire());
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!pool->reserve_stats().available && std::chrono::steady_clock::now()<deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  require(pool->reserve_stats().available==1 && pool->reserve_stats().asyncAllocations==1 &&
+    pool->reserve_stats().lazyAllocations==0 && pool->stats().allocated==4,
+    "Helper did not first-touch exactly one reserve outside acquisition");
+  for(auto& buffer:held)pool->recycle(std::move(buffer));
+
+  std::vector<std::future<void>> threads;
+  for(unsigned channel=0;channel<4;++channel)
+    threads.push_back(std::async(std::launch::async,[pool,channel]{
+      for(unsigned frame=0;frame<400;++frame){
+        FloatCaptureBlock block(pool,pool->acquire());
+        std::fill(block.data.begin(),block.data.end(),Sample(float(channel),float(frame)));
+        std::this_thread::yield();
+        require(std::all_of(block.data.begin(),block.data.end(),[&](Sample v){return v==Sample(float(channel),float(frame));}),
+          "Async reserve changed concurrently held samples");
+        require(pool->stats().allocated<=pool->stats().limit,"Concurrent reserve exceeded memory bound");
+      }
+    }));
+  for(auto& thread:threads){
+    if(thread.wait_for(std::chrono::seconds(5))!=std::future_status::ready)std::abort();
+    thread.get();
+  }
+  // Receiver reset/destruction cannot invalidate transferred storage or its
+  // helper. Original sample order and paired accepted counts remain exact.
+  FloatCaptureChunkQueue survivor;
+  std::vector<Sample> expected(128);
+  for(unsigned i=0;i<expected.size();++i)expected[i]={float(i),-float(i)};
+  {
+    IqData a(512),b(512);a.enable_float_capture(64,2);b.enable_float_capture(64,2);
+    a.prepare_float_capture_reserve();b.prepare_float_capture_reserve();
+    UsrpIngressTiming timing;
+    for(unsigned at=0;at<expected.size();){const auto count=std::min(17u,unsigned(expected.size())-at);
+      append_usrp_block(a,b,expected.data()+at,expected.data()+at,count,timing);at+=count;}
+    require(timing.samples==128 && a.get_data()==b.get_data(),"Reserve changed paired sample lineage");
+    survivor.push(a.take_float_blocks());a.clear();b.clear();
+  }
+  std::vector<Sample> actual;survivor.take(128,actual);
+  require(actual==expected,"Async reserve shutdown/reset invalidated delayed samples");
 }
-int main() {
+
+// No allocator timing assumptions: stop the helper after it reserves a slot,
+// while neither the pool mutex nor either receiver lock is held.
+struct ReserveGate {
+  std::mutex mutex;std::condition_variable changed;
+  unsigned entered=0,permits=0,failures=0;
+  static FloatCaptureBlockPool::Buffer allocate(std::size_t size,void* context) {
+    auto& gate=*static_cast<ReserveGate*>(context);
+    std::unique_lock<std::mutex> lock(gate.mutex);++gate.entered;gate.changed.notify_all();
+    if(!gate.changed.wait_for(lock,std::chrono::seconds(5),[&]{return gate.permits!=0;}))std::abort();
+    --gate.permits;
+    if(gate.failures){--gate.failures;throw std::bad_alloc();}
+    lock.unlock();return FloatCaptureBlockPool::Buffer(size);
+  }
+  void wait(unsigned count) {
+    std::unique_lock<std::mutex> lock(mutex);
+    if(!changed.wait_for(lock,std::chrono::seconds(5),[&]{return entered>=count;}))std::abort();
+  }
+  void release(bool fail=false) {
+    std::lock_guard<std::mutex> lock(mutex);++permits;if(fail)++failures;changed.notify_all();
+  }
+};
+
+struct RetireGate {
+  std::mutex mutex;std::condition_variable changed;
+  unsigned entered=0,permits=0;
+  static void retire(FloatCaptureBlockPool::Buffer&& buffer,void* context) {
+    auto& gate=*static_cast<RetireGate*>(context);
+    std::unique_lock<std::mutex> lock(gate.mutex);++gate.entered;gate.changed.notify_all();
+    if(!gate.changed.wait_for(lock,std::chrono::seconds(10),[&]{return gate.permits!=0;}))std::abort();
+    --gate.permits;lock.unlock();
+    FloatCaptureBlockPool::Buffer retired(std::move(buffer));
+  }
+  void wait(unsigned count) {
+    std::unique_lock<std::mutex> lock(mutex);
+    if(!changed.wait_for(lock,std::chrono::seconds(5),[&]{return entered>=count;}))std::abort();
+  }
+  void release() {
+    std::lock_guard<std::mutex> lock(mutex);++permits;changed.notify_all();
+  }
+};
+
+void deterministic_reserve_contracts() {
+  using Pool=FloatCaptureBlockPool;
+  // limit=4, warm=2+1: the helper owns the last slot and acquire must wait
+  // rather than exhaust or allocate a fifth block.
+  {
+    ReserveGate gate;Pool pool(8,24,2);
+    FloatCaptureBlockPoolTestAccess::allocator(pool,ReserveGate::allocate,&gate);
+    pool.prepare_reserve();std::vector<Pool::Buffer> held;
+    for(unsigned i=0;i<3;++i)held.push_back(pool.acquire());
+    gate.wait(1);
+    require(pool.stats().allocated==4 && pool.reserve_stats().pending==1,
+      "Helper did not reserve the last counted slot before allocation");
+    auto fourth=std::async(std::launch::async,[&]{return pool.acquire();});
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!pool.reserve_stats().waits && std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+    require(pool.reserve_stats().waits==1,"Final-slot acquisition did not wait for helper");
+    gate.release();
+    if(fourth.wait_for(std::chrono::seconds(5))!=std::future_status::ready)std::abort();
+    held.push_back(fourth.get());
+    require(held.back().size()==8 && pool.stats().allocated==4 &&
+      pool.reserve_stats().lazyAllocations==0,"Pending final slot was duplicated or exhausted");
+    for(auto& block:held)pool.recycle(std::move(block));
+  }
+  // A helper allocation can become redundant when a consumer recycles a block
+  // concurrently. Retiring that full block must not hold the pool mutex, but it
+  // remains charged until destruction so physical storage cannot exceed limit.
+  {
+    ReserveGate allocation;RetireGate retirement;Pool pool(8,24,2);
+    FloatCaptureBlockPoolTestAccess::allocator(pool,ReserveGate::allocate,&allocation);
+    FloatCaptureBlockPoolTestAccess::retirer(pool,RetireGate::retire,&retirement);
+    pool.prepare_reserve();std::vector<Pool::Buffer> held;
+    for(unsigned i=0;i<3;++i)held.push_back(pool.acquire());
+    allocation.wait(1);
+    pool.recycle(std::move(held.back()));held.pop_back();
+    allocation.release();retirement.wait(1);
+    auto probe=std::async(std::launch::async,[&]{
+      auto stats=pool.stats();auto reserve=pool.reserve_stats();
+      return std::make_tuple(stats,reserve,pool.acquire());
+    });
+    if(probe.wait_for(std::chrono::seconds(5))!=std::future_status::ready){
+      retirement.release();std::abort();
+    }
+    auto observed=probe.get();
+    require(std::get<0>(observed).allocated==4 &&
+      std::get<1>(observed).pending==1,
+      "Reserve retirement held the pool mutex or escaped the physical ceiling");
+    held.push_back(std::move(std::get<2>(observed)));
+    require(held.back().size()==8,
+      "Receiver acquisition blocked behind reserve retirement");
+    retirement.release();allocation.wait(2);allocation.release();
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while((pool.reserve_stats().pending || !pool.reserve_stats().available) &&
+        std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+    require(pool.reserve_stats().available==1 && !pool.reserve_stats().pending &&
+      pool.reserve_stats().lazyAllocations==0 && pool.stats().allocated==4,
+      "Retired reserve was not replenished within the original bound");
+    for(auto& block:held)pool.recycle(std::move(block));
+  }
+  // Pool shutdown joins an in-progress redundant-block retirement without
+  // reacquiring the pool mutex around destruction or invalidating callers.
+  {
+    ReserveGate allocation;RetireGate retirement;
+    auto pool=std::make_unique<Pool>(8,24,2);
+    FloatCaptureBlockPoolTestAccess::allocator(*pool,ReserveGate::allocate,&allocation);
+    FloatCaptureBlockPoolTestAccess::retirer(*pool,RetireGate::retire,&retirement);
+    pool->prepare_reserve();std::vector<Pool::Buffer> held;
+    for(unsigned i=0;i<3;++i)held.push_back(pool->acquire());
+    allocation.wait(1);pool->recycle(std::move(held.back()));held.pop_back();
+    allocation.release();retirement.wait(1);
+    std::promise<void> started;auto ready=started.get_future();
+    auto stop=std::async(std::launch::async,[owned=std::move(pool),&started]()mutable{
+      started.set_value();owned.reset();
+    });
+    ready.wait();
+    require(stop.wait_for(std::chrono::milliseconds(10))==std::future_status::timeout,
+      "Pool shutdown failed to join active reserve retirement");
+    retirement.release();
+    if(stop.wait_for(std::chrono::seconds(5))!=std::future_status::ready)std::abort();
+    stop.get();
+    require(held.size()==2 && held.front().size()==8,
+      "Reserve retirement shutdown invalidated caller-owned storage");
+  }
+  // A failed helper relinquishes its slot and does not spin. A later demand
+  // can lazily succeed while triggering exactly one bounded helper retry.
+  {
+    ReserveGate gate;Pool pool(8,40,2);
+    FloatCaptureBlockPoolTestAccess::allocator(pool,ReserveGate::allocate,&gate);
+    pool.prepare_reserve();std::vector<Pool::Buffer> held;
+    for(unsigned i=0;i<3;++i)held.push_back(pool.acquire());
+    gate.wait(1);gate.release(true);
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!pool.reserve_stats().asyncFailures && std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+    require(pool.reserve_stats().asyncFailures==1 && !pool.reserve_stats().pending &&
+      pool.stats().allocated==3,"Failed reserve retained its slot or retried without demand");
+    held.push_back(pool.acquire());gate.wait(2);
+    require(pool.reserve_stats().lazyAllocations==1 && pool.stats().allocated==5,
+      "Allocation failure disabled bounded lazy fallback or later retry");
+    gate.release();
+    for(auto& block:held)pool.recycle(std::move(block));
+  }
+  // Shutdown joins an in-flight allocation without holding the pool mutex.
+  {
+    ReserveGate gate;auto pool=std::make_unique<Pool>(8,24,2);
+    FloatCaptureBlockPoolTestAccess::allocator(*pool,ReserveGate::allocate,&gate);
+    pool->prepare_reserve();std::vector<Pool::Buffer> held;
+    for(unsigned i=0;i<3;++i)
+      held.push_back(pool->acquire());
+    gate.wait(1);
+    std::promise<void> started;auto ready=started.get_future();
+    auto stop=std::async(std::launch::async,[owned=std::move(pool),&started]()mutable{
+      started.set_value();owned.reset();
+    });
+    ready.wait();
+    require(stop.wait_for(std::chrono::milliseconds(10))==std::future_status::timeout,
+      "Pool destruction failed to join its in-flight allocator");
+    gate.release();if(stop.wait_for(std::chrono::seconds(5))!=std::future_status::ready)std::abort();stop.get();
+    require(held.size()==3 && held.front().size()==8,"Shutdown invalidated externally owned samples");
+  }
+}
+}
+int main(int argc,char** argv) {
   try {
+    if(argc==2&&std::string(argv[1])=="--stream-profile-smoke"){
+      stream_profile_smoke();return 0;
+    }
+    stream_profile_contracts();
+    contiguous_double_contracts();
     contiguous_float_contracts();
+    asynchronous_reserve_contracts();
+    deterministic_reserve_contracts();
     for (unsigned first = 0; first <= 40; ++first) {
       for (unsigned second = 0; second <= 40; ++second) {
         for (unsigned take = 0; take <= first + second; ++take) {

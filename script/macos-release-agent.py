@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import socket
 import subprocess
@@ -68,21 +69,18 @@ def choose_run(runs, commit):
 def config(path):
     value = json.loads(Path(path).read_text())
     required = {"checkout", "cache", "recipient_key", "recipient_certificate",
-                "baseline_arm64_inventory", "baseline_x86_64_inventory",
-                "baseline_notices", "baseline_source_archive", "application_identity",
+                "input_manifest", "current_notices", "application_identity",
                 "installer_identity", "team_id", "notary_profile"}
-    optional = {"review_receipt", "dependency_review_receipt"}
+    optional = {"public_sources"}
     if (not required <= set(value) or set(value) - required - optional or
             value["team_id"] != "DJGHPX8T7R"):
         raise ValueError("invalid local agent configuration")
-    for name in required - {"application_identity", "installer_identity", "team_id", "notary_profile"}:
+    for name in required - {"application_identity", "installer_identity", "team_id", "notary_profile", "input_manifest"}:
         value[name] = Path(value[name]).expanduser().resolve()
-    if "review_receipt" in value:
-        # Preserve the final path component so the helper can reject symlinks.
-        value["review_receipt"] = Path(value["review_receipt"]).expanduser().absolute()
-    if "dependency_review_receipt" in value:
-        value["dependency_review_receipt"] = \
-            Path(value["dependency_review_receipt"]).expanduser().absolute()
+    # Preserve the final component: the review reader rejects symlinks.
+    value["input_manifest"] = Path(value["input_manifest"]).expanduser().absolute()
+    if "public_sources" in value:
+        value["public_sources"] = Path(value["public_sources"]).expanduser().resolve()
     if not value["recipient_key"].is_file() or value["recipient_key"].stat().st_mode & 0o077:
         raise ValueError("recipient private key is missing or not owner-only")
     return value
@@ -235,15 +233,8 @@ def trusted_tag(checkout, tag):
 def required_linux_assets(detail, tag):
     names = {entry["name"] for entry in detail["assets"]}
     number = tag[1:]
-    expected = {f"vectorwarp_{number}-1_{distro}_{arch}.deb"
-                for distro in ("ubuntu22.04", "ubuntu24.04", "ubuntu26.04", "debian13")
-                for arch in ("amd64", "arm64")}
-    # Debian 12 ARM64 joined the stable package matrix after v0.1.9.  Keep
-    # the original draft contract for its immutable release, but do not let a
-    # newer draft publish until Bookworm's package is present.
-    if version(tag) >= (0, 1, 10):
-        expected.add(f"vectorwarp_{number}-1_debian12_arm64.deb")
-    expected.update(f"vectorwarp-{number}-1.fc44.{arch}.rpm" for arch in ("x86_64", "aarch64"))
+    artifact_plan = runpy.run_path(str(ROOT / "script/artifact-plan.py"))
+    expected = artifact_plan["release_filenames"](number)
     expected.update(("SHA256SUMS", "SHA256SUMS.asc", "package-manifest.json"))
     if not expected <= names:
         raise ValueError(f"{tag} lacks the complete Linux draft")
@@ -346,10 +337,9 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
     helper = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(helper)
     values = {"checkout": source, "version": candidate["tag"][1:], "output": output,
-              "baseline_notices": settings["baseline_notices"],
-              "baseline_source_archive": settings["baseline_source_archive"],
-              "review_receipt": settings.get("review_receipt"),
-              "dependency_review_receipt": settings.get("dependency_review_receipt"),
+              "notices": settings["current_notices"],
+              "input_manifest": settings["input_manifest"],
+              "sources": settings.get("public_sources"),
               "run_id": str(candidate.get("mac_run", "0"))}
     for arch in ARCHES:
         values[arch] = runtimes[arch]
@@ -357,25 +347,22 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
         values[arch + "_header_versions"] = diagnostics[arch] / "header-input-versions.txt"
         values[arch + "_cpp_formula"] = diagnostics[arch] / "cpp-httplib-formula.rb"
         values[arch + "_closure"] = diagnostics[arch].parent / f"macos-source-closure-{arch}.tar.gz"
-        values["baseline_" + arch + "_inventory"] = settings["baseline_" + arch + "_inventory"]
     args = argparse.Namespace(**values)
     # A cached directory must never turn into an alternate path around review
     # or dependency checks, including when the configured receipt changes.
-    verified_runtimes, source_id, review, dependency_review = helper.verify_inputs(args)
+    verified_runtimes, source_id, review = helper.verify_inputs(args)
     if source_id != candidate["commit"]:
         raise ValueError("release input source differs from candidate")
-    expected_review = review["metadata"] if review is not None else None
-    expected_dependency_review = dependency_review["metadata"] if dependency_review is not None else None
+    expected_review = review["metadata"]
     if not output.exists():
         helper.prepare(args)
     receipt = json.loads((output / "receipt.json").read_text())
     archive = output / f"vectorwarp-{args.version}-macos-corresponding-source.tar.gz"
     if (output.is_symlink() or archive.is_symlink() or not archive.is_file() or
-            receipt.get("schema") != 1 or receipt.get("version") != args.version or
+            receipt.get("schema") != 2 or receipt.get("version") != args.version or
             receipt.get("source_archive") != archive.name or
             receipt.get("source_archive_size") != archive.stat().st_size or
-            receipt.get("build_source_review") != expected_review or
-            receipt.get("dependency_source_review") != expected_dependency_review or
+            receipt.get("input_review") != expected_review or
             receipt["source_id"] != candidate["commit"] or
             receipt["source_archive_sha256"] != digest(archive) or
             receipt["notices_sha256"] != digest(output / "notices/notices.json")):
@@ -383,8 +370,7 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
     helper.package.validated_notices(output / "notices",
             {arch: json.loads((runtime / "standalone.json").read_text())
              for arch, runtime in verified_runtimes.items()}, verified_runtimes)
-    reviews = {"build_source_review": expected_review,
-               "dependency_source_review": expected_dependency_review}
+    reviews = {"input_review": expected_review}
     return output, archive, reviews
 
 

@@ -5,7 +5,7 @@ const {distanceM} = require('./cooperative-detection-tracker');
 const {MultiIlluminatorTrackFuser} = require('./multi-illuminator-track-fusion');
 
 const C_KM_S = 299792.458;
-const finite = value => value !== null && value !== '' && value !== undefined &&
+const finite = value => typeof value !== 'boolean' && value !== null && value !== '' && value !== undefined &&
   Number.isFinite(Number(value));
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const validLocation = value => [value?.latitude, value?.longitude, value?.altitude].every(finite) &&
@@ -66,7 +66,9 @@ class FederatedGeographicFusion {
               !track || track.id === null || track.id === undefined ||
               !['ACTIVE', 'CONFIRMED', 'COASTING', 'ASSOCIATED'].includes(
                 String(track.state || '').toUpperCase()) ||
-              !finite(track.delay) || !finite(track.doppler))) {
+              !finite(track.delay) || !finite(track.doppler) ||
+              track.delay_sigma_bins !== undefined &&
+                (!finite(track.delay_sigma_bins) || Number(track.delay_sigma_bins) < 0))) {
           rejected.push({source: key || null, reason: 'invalid-channel-observation'}); continue;
         }
         const receiverSeparationM = distanceM(receiver, channel.receiver);
@@ -135,7 +137,8 @@ class FederatedGeographicFusion {
       return true;
     });
     if (advancing.length < 2)
-      return this.snapshot(now);
+      return rejected.some(item => item.reason === 'overlapping-or-replayed-source-interval') ?
+        this.unavailable('New observations overlap or replay already consumed source intervals.') : this.snapshot(now);
     let consumedTarget, targetTimestamp, targetTimingUncertaintyMs;
     for (;;) {
       consumedTarget = advancing.reduce((latest, item) =>
@@ -152,7 +155,8 @@ class FederatedGeographicFusion {
       if (advancing.length < 2) return this.snapshot(now);
     }
     if (this.lastResult && finite(this.lastResult.timestamp) &&
-        targetTimestamp <= Number(this.lastResult.timestamp)) return this.snapshot(now);
+        targetTimestamp <= Number(this.lastResult.timestamp))
+      return this.unavailable('New source intervals have non-advancing observation time.');
     // Only evidence that survived alignment, replay and overlap checks may
     // change persistent source-domain state. Diagnostic or rejected arrivals
     // must not reset healthy temporal support.
@@ -249,11 +253,13 @@ class FederatedGeographicFusion {
   }
   unavailable(reason) {
     this.lastError = reason;
-    return this.lastResult || {schema: 'vectorwarp-multi-illuminator-track-fusion-v1',
+    this.lastResult = {...(this.lastResult || {}), schema: 'vectorwarp-multi-illuminator-track-fusion-v1',
       available: false, operational_localization: false, reason, hypotheses: [], tracks: [],
       position_candidates: [], federation: {...this.sourceStatus, adsb_used_by_solver: false}};
+    return this.lastResult;
   }
   snapshot(now = Date.now()) {
+    if (this.lastError) return this.unavailable(this.lastError);
     if (!this.fuser || !this.lastResult) return this.unavailable(this.lastError ||
       'Waiting for aligned federated radar observations.');
     const staleAfterSeconds = Math.max(.1, 2 *

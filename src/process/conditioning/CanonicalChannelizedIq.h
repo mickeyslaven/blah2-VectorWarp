@@ -16,12 +16,14 @@ inline iq::CanonicalLineage canonicalLineage(const IlluminatorOutput& output,
 {
   if (output.id != provenance.laneId || output.frequencyHz != provenance.frequencyHz)
     throw std::invalid_argument("Channelizer lane does not match canonical provenance");
-  if (output.samples.channels.size() != provenance.channelCount ||
+  output.samples.validateStorage();
+  if (output.samples.channelCount() != provenance.channelCount ||
       provenance.channelCount == 0 || provenance.channelCount > iq::maxCanonicalChannels)
     throw std::invalid_argument("Channelizer channels do not match canonical provenance");
-  const auto count = output.samples.channels.front().size();
-  for (const auto& channel : output.samples.channels)
-    if (channel.size() != count)
+  const auto channelSize = [](const auto& view) { return view.size(); };
+  const auto count = output.samples.visitChannel(0, channelSize);
+  for (std::size_t channel = 0; channel < output.samples.channelCount(); ++channel)
+    if (output.samples.visitChannel(channel, channelSize) != count)
       throw std::invalid_argument("Channelizer coherent channels have unequal lengths");
   if (output.samples.hasFirstInputSample != (count != 0))
     throw std::invalid_argument("Channelizer output sample anchor is missing or spurious");

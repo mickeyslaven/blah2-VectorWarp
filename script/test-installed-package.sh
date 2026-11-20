@@ -113,14 +113,16 @@ podman exec "$container" python3 /tmp/sdrplay_child_setup_test.py \
   --helper /opt/vectorwarp/libexec/vectorwarp-build-sdrplay \
   --unit "$(podman exec "$container" systemctl show --property=FragmentPath --value vectorwarp-sdrplay-build.service)" \
   --build-user vectorwarp-build >"$evidence/sdrplay-child-setup.log" 2>&1
-podman cp "$source_root/test/recording/processor_replay_test.py" "$container:/tmp/processor_replay_test.py"
+python3 "$source_root/script/artifact-plan.py" stage --source "$source_root" \
+  --output "$evidence/replay-support" --platform replay-support
+podman cp "$evidence/replay-support/." "$container:/tmp/"
 podman cp "$source_root/test/packaging/installed_service_test.py" "$container:/tmp/installed_service_test.py"
-podman exec "$container" python3 /tmp/installed_service_test.py >"$evidence/services.log" 2>&1
+podman exec "$container" env VECTORWARP_REPLAY_SESSION=/tmp/replay_session.py python3 /tmp/installed_service_test.py >"$evidence/services.log" 2>&1
 address=$(podman inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")
 [[ $address =~ ^10\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'expected a private test container address'
 NODE_PATH="$browser_modules" node "$source_root/test/browser/installed-settings.cjs" \
   "http://$address:3000" "$evidence" >"$evidence/browser.log" 2>&1
-podman exec "$container" python3 /tmp/installed_service_test.py --verify-replay \
+podman exec "$container" env VECTORWARP_REPLAY_SESSION=/tmp/replay_session.py python3 /tmp/installed_service_test.py --verify-replay \
   >"$evidence/services-replay.log" 2>&1
 podman exec "$container" python3 /tmp/installed_reinstall_test.py "/tmp/package.$format" --running-replay \
   >"$evidence/upgrade-running-replay.log" 2>&1
@@ -135,6 +137,7 @@ podman exec "$container" systemctl stop vectorwarp-processor.service
 # UID/GID/supplementary groups and zero capability sets before exec.
 podman exec "$container" setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all \
   --reuid=vectorwarp --regid=vectorwarp --init-groups --reset-env \
-  /usr/bin/python3 -I /tmp/service_account_exec.py vectorwarp /usr/bin/python3 /tmp/processor_replay_test.py \
+  /usr/bin/python3 -I /tmp/service_account_exec.py vectorwarp /usr/bin/env \
+  VECTORWARP_REPLAY_SESSION=/tmp/replay_session.py /usr/bin/python3 /tmp/processor_replay_test.py \
   --binary /opt/vectorwarp/current/bin/blah2 >"$evidence/processor-replay.log" 2>&1
 printf 'Installed service, browser, and synthetic processor tests passed: %s\n' "$package"

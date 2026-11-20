@@ -1,5 +1,6 @@
 #include "Tracker.h"
 #include "NormalizedInnovationGate.h"
+#include "ConfirmationContract.h"
 #include <algorithm>
 #include <iostream>
 #include <cmath>
@@ -11,10 +12,68 @@
 
 void Tracker::reset(bool lineageDiscontinuity)
 {
+  const auto beams=spatialBeams,fineFactor=spatialFineFactor,tolerance=spatialTolerance;
+  const auto delay=nativeDelay;const auto doppler=nativeDoppler;
   *this = Tracker(m, n, nDelete, cpi, maxAccInit, rangeRes, lambda,
     minInitiationSnr, adaptiveGate, dopplerRidge, normalizedInnovationGate,
     associationMaximumNis, birthExclusivity, recovery);
+  configureSpatialAssociation(beams,fineFactor,tolerance);
+  configureGrid(delay,doppler);
   pendingLineageReset=lineageDiscontinuity;
+}
+
+void Tracker::configureGrid(const std::deque<int>& delay,const std::deque<double>& doppler)
+{
+  if(delay==nativeDelay&&doppler==nativeDoppler)return;
+  if(delay.empty()!=doppler.empty())throw std::invalid_argument("Incomplete tracker grid");
+  for(size_t i=0;i<delay.size();++i)
+    if(int64_t(delay[i])!=int64_t(delay.front())+int64_t(i))throw std::invalid_argument("Tracker delay grid is not contiguous");
+  for(size_t i=0;i<doppler.size();++i)
+    if(!std::isfinite(doppler[i])||(i&&doppler[i]<=doppler[i-1]))throw std::invalid_argument("Tracker Doppler grid is not ordered");
+  if(frameOrdinal)reset(true);
+  nativeDelay=delay;nativeDoppler=doppler;
+}
+
+double Tracker::dopplerRow(double value) const
+{
+  if(nativeDoppler.empty())return std::ceil(value*cpi-.5);
+  const auto right=std::lower_bound(nativeDoppler.begin(),nativeDoppler.end(),value);
+  if(right==nativeDoppler.begin())return 0;
+  if(right==nativeDoppler.end())return double(nativeDoppler.size()-1);
+  const auto index=right-nativeDoppler.begin();
+  return tracker_policy::nearestAxisLeft(value,nativeDoppler[index-1],*right)?index-1:index;
+}
+
+void Tracker::configureSpatialAssociation(uint32_t beams,uint32_t fineFactor,uint32_t tolerance)
+{
+  if(frameOrdinal || beams>511 || !fineFactor || fineFactor>127 ||
+     (!beams && tolerance!=UINT32_MAX) || (beams && tolerance!=UINT32_MAX && tolerance>beams))
+    throw std::invalid_argument("Invalid or already-active tracker spatial association contract");
+  spatialBeams=beams;spatialFineFactor=fineFactor;spatialTolerance=tolerance;
+}
+
+std::vector<TrackerQualificationState> Tracker::qualificationState()
+{
+  std::vector<TrackerQualificationState> result;result.reserve(track.get_n());
+  for(uint64_t i=0;i<track.get_n();++i){TrackerQualificationState value;
+    value.id=track.get_id(i);const auto state=track.get_state(i);auto current=track.get_current(i);
+    value.state=state=="TENTATIVE"?0u:state=="ASSOCIATED"?1u:state=="ACTIVE"?2u:3u;
+    value.delay=current.get_delay().front();value.doppler=current.get_doppler().front();
+    value.acceleration=track.get_acceleration(i);value.missedSeconds=track.get_missed_seconds(i);
+    value.inactive=track.get_nInactive(i);value.measurements=track.get_nAssociated(i);
+    value.updates=track.get_nUpdates(i);value.spatial=spatialForTrack(value.id);
+    value.source=uint32_t(track.get_current_source(i));
+    value.accelerationEstimated=track.get_acceleration_estimated(i);
+    value.everConfirmed=previouslyConfirmed.count(value.id)!=0;
+    const auto found=evidenceLedgers.find(value.id);
+    if(found!=evidenceLedgers.end()) {const auto& ledger=found->second;
+      value.lineageKnown=ledger.initialized;value.epoch=ledger.epoch;
+      value.highWaterSequence=ledger.highWaterSequence;
+      for(bool vote:ledger.votes)value.confirmationVotes.push_back(vote);
+    }
+    result.push_back(std::move(value));
+  }
+  return result;
 }
 
 uint64_t Tracker::initiationMultiplicity(double cpi,
@@ -23,11 +82,11 @@ uint64_t Tracker::initiationMultiplicity(double cpi,
   if (!std::isfinite(cpi) || cpi <= 0 ||
       !std::isfinite(maximumAcceleration) || maximumAcceleration < 0)
     throw std::invalid_argument("Invalid initiation geometry");
-  if (adaptive) return 1;
   const double resolution = 1 / (cpi * cpi);
   const double bins = std::floor(maximumAcceleration / resolution);
-  if (bins > 65535)
+  if (!std::isfinite(resolution) || resolution<=0 || !std::isfinite(bins) || bins > 65535)
     throw std::invalid_argument("Too many initial tracking acceleration hypotheses");
+  if (adaptive) return 1;
   return 2 * uint64_t(bins) + 1;
 }
 
@@ -94,16 +153,14 @@ void Tracker::configureRecovery(TrackerRecoveryConfig config)
   if (!std::isfinite(config.maximumDopplerHz) || config.maximumDopplerHz < 0 ||
       (config.stationaryClutter && (config.persistenceCpis < 2 ||
        config.persistenceCpis > 65535 || !config.maximumStationaryCells ||
-       config.maximumStationaryCells > 1048576)) ||
-      ((config.guidedPromote || config.guidedSustain) && !config.guidedShadow) ||
-      (config.guidedShadow && (!config.guidedMaximumTracks || config.guidedMaximumTracks > 65535)) ||
-      (config.guidedPromote && n < 2 * m - 1))
+       config.maximumStationaryCells > 1048576)))
     throw std::invalid_argument("Invalid shared tracker recovery policy");
   recovery = config;
   // Configuration boundaries cannot reuse prior algorithm evidence.
-  track=Track{}; timestamp=0; diagnostics={}; pendingWeakSupport={};
-  doNotInitiate.clear(); lineageNoBirth.clear(); frameGuided.clear(); frameHasEvidence=false;
-  evidenceLedgers.clear(); weakSupportLineage.clear(); stationaryCells.clear();
+  track=Track{}; timestamp=0; diagnostics={};
+  doNotInitiate.clear(); lineageNoBirth.clear(); frameHasEvidence=false;
+  evidenceLedgers.clear(); stationaryCells.clear(); trackSpatial.clear();
+  quarantineHistory.clear();previouslyConfirmed.clear();
   dopplerRidges.clear(); pendingLineageReset=false;
   evidenceEpoch = 0; evidenceEpochInitialized=false; frameSequence = 0; frameOrdinal = 0;
 }
@@ -111,7 +168,7 @@ void Tracker::configureRecovery(TrackerRecoveryConfig config)
 bool Tracker::validEvidence(const Detection::Evidence& value, bool requireCurrentEpoch) const
 {
   if (!value.newestSequence ||
-      (value.depth != 1 && value.depth != 2 && value.depth != 4 && value.depth != 8) ||
+      !tracker_confirmation::confirmationDepthValid(value.depth) ||
       value.newestSequence != value.sequences[0] ||
       (requireCurrentEpoch && evidenceEpochInitialized && value.epoch != evidenceEpoch)) return false;
   for (uint8_t i = 1; i < value.depth; ++i)
@@ -124,8 +181,12 @@ bool Tracker::freshEvidence(const std::string& id, const Detection::Evidence& va
 {
   if (!validEvidence(value)) return false;
   const auto found = evidenceLedgers.find(id);
-  return found == evidenceLedgers.end() || !found->second.initialized || found->second.epoch != value.epoch ||
-    value.sequences[value.depth-1] > found->second.highWaterSequence;
+  if (found == evidenceLedgers.end() || !found->second.initialized || found->second.epoch != value.epoch)
+    return true;
+  if (value.newestSequence<=found->second.highWaterSequence) return false;
+  const uint64_t gap=value.newestSequence-found->second.highWaterSequence;
+  const uint32_t recent=gap<8 ? 1u<<uint32_t(gap-1) : 0;
+  return tracker_confirmation::confirmationDisjoint(value.depth,recent);
 }
 
 bool Tracker::creditEvidence(const std::string& id, const Detection::Evidence* value)
@@ -144,7 +205,7 @@ bool Tracker::creditEvidence(const std::string& id, const Detection::Evidence* v
 
 void Tracker::appendVote(uint64_t index, bool credit)
 {
-  if (!frameHasEvidence && !recovery.guidedPromote && !recovery.stationaryClutter &&
+  if (!frameHasEvidence && !recovery.stationaryClutter &&
       evidenceLedgers.find(track.get_id(index))==evidenceLedgers.end()) return;
   auto& votes = evidenceLedgers[track.get_id(index)].votes;
   votes.push_back(credit);
@@ -154,7 +215,7 @@ void Tracker::appendVote(uint64_t index, bool credit)
 void Tracker::promote(uint64_t index, bool credit)
 {
   const auto found=evidenceLedgers.find(track.get_id(index));
-  if (!frameHasEvidence && !recovery.guidedPromote && !recovery.stationaryClutter &&
+  if (!frameHasEvidence && !recovery.stationaryClutter &&
       (found==evidenceLedgers.end() || !found->second.initialized)) {
     track.promote(index, m, n);
     return;
@@ -165,46 +226,66 @@ void Tracker::promote(uint64_t index, bool credit)
       track.get_state(index) != "COASTING") track.promote(index, 1, 1);
 }
 
-static bool stationaryKey(double delay, double doppler, double cpi,
-  std::pair<int64_t,int64_t>& key)
+bool Tracker::stationaryKey(double delay, double doppler,
+  std::pair<int64_t,int64_t>& key) const
 {
   // Explicit bounds also keep neighbourhood addition away from int64 overflow.
   if (!std::isfinite(delay) || !std::isfinite(doppler) ||
       std::abs(delay) > 1e9 || std::abs(doppler*cpi) > 1e9) return false;
-  key = {int64_t(std::floor(delay+.5)), int64_t(std::floor(doppler*cpi+.5))};
+  const double column=tracker_policy::nativeDelayCoordinate(delay,nativeDelay.empty()?0:nativeDelay.front(),uint32_t(nativeDelay.size()));
+  key = {int64_t(column), int64_t(dopplerRow(doppler))};
   return true;
 }
 
 bool Tracker::stationary(double delay, double doppler) const
 {
   if (!recovery.stationaryClutter ||
-      (recovery.maximumDopplerHz > 0 && std::abs(doppler) > recovery.maximumDopplerHz)) return false;
+      !tracker_policy::stationaryDopplerEligible(doppler,recovery.maximumDopplerHz)) return false;
   std::pair<int64_t,int64_t> key;
-  if (!stationaryKey(delay,doppler,cpi,key)) return true;
-  const auto found = stationaryCells.find(key);
-  // Exhausted storage is not evidence that this cell is stationary. In
-  // particular, it cannot quarantine an existing moving track.
-  if (found == stationaryCells.end()) return false;
-  const auto& cell = found->second;
-  const uint64_t missed = frameOrdinal > cell.last ? frameOrdinal-cell.last-1 : 0;
-  return cell.streak >= recovery.persistenceCpis + missed/4;
+  if (!stationaryKey(delay,doppler,key)) return true;
+  // Match the resident ridge lookup over the learned 9-by-3 neighborhood.
+  // Missing/exhausted storage is never evidence of stationary clutter.
+  for(int x=-4;x<=4;++x)for(int y=-1;y<=1;++y){
+    const auto found=stationaryCells.find({key.first+x,key.second+y});
+    if(found==stationaryCells.end())continue;
+    const auto& cell=found->second;
+    if(tracker_policy::persistentEvidence(cell.streak,cell.last,frameOrdinal)>=recovery.persistenceCpis)return true;
+  }
+  return false;
+}
+
+bool Tracker::quarantine(uint64_t index,double delay,double doppler) const
+{
+  if(!stationary(delay,doppler))return false;
+  const auto found=quarantineHistory.find(track.get_id(index));
+  const uint32_t samples=recovery.persistenceCpis,capacity=std::max(100u,n);
+  if(found==quarantineHistory.end() || samples<2 || samples>capacity || found->second.size()+1<samples)return false;
+  double lowDelay=delay,highDelay=delay,lowDoppler=doppler,highDoppler=doppler;
+  uint32_t associated=1;
+  const auto& history=found->second;
+  for(size_t i=history.size()-(samples-1);i<history.size();++i){const auto& value=history[i];
+    lowDelay=std::min(lowDelay,value.delay);highDelay=std::max(highDelay,value.delay);
+    lowDoppler=std::min(lowDoppler,value.doppler);highDoppler=std::max(highDoppler,value.doppler);
+    associated+=value.associated;
+  }
+  return tracker_quarantine::quarantineHistory(samples,capacity,uint32_t(history.size()+1),
+    associated,highDelay-lowDelay,highDoppler-lowDoppler,cpi);
 }
 
 bool Tracker::stationaryCapacityBlocked(double delay, double doppler) const
 {
   if (!recovery.stationaryClutter ||
-      (recovery.maximumDopplerHz > 0 && std::abs(doppler) > recovery.maximumDopplerHz)) return false;
+      !tracker_policy::stationaryDopplerEligible(doppler,recovery.maximumDopplerHz)) return false;
   std::pair<int64_t,int64_t> key;
-  return stationaryKey(delay,doppler,cpi,key) &&
-    stationaryCells.size() >= recovery.maximumStationaryCells && !stationaryCells.count(key);
+  return stationaryKey(delay,doppler,key) &&
+    tracker_policy::stationaryCapacityBlocked(uint32_t(stationaryCells.size()),recovery.maximumStationaryCells,stationaryCells.count(key)!=0);
 }
 
 void Tracker::pruneStationary()
 {
   // Evict before association/birth admission, not one frame after a cell expires.
   for (auto it = stationaryCells.begin(); it != stationaryCells.end();)
-    if (frameOrdinal > it->second.last &&
-        (frameOrdinal-it->second.last-1)/4 >= it->second.streak)
+    if (tracker_policy::persistentEvidence(it->second.streak,it->second.last,frameOrdinal)==0)
       it = stationaryCells.erase(it);
     else ++it;
 }
@@ -214,12 +295,14 @@ void Tracker::learnStationary(Detection& detection)
   if (!recovery.stationaryClutter) return;
   const auto delay = detection.get_delay(), doppler = detection.get_doppler();
   for (size_t i = 0; i < delay.size(); ++i) {
-    if (recovery.maximumDopplerHz > 0 && std::abs(doppler[i]) > recovery.maximumDopplerHz) continue;
+    if (!tracker_policy::stationaryDopplerEligible(doppler[i],recovery.maximumDopplerHz)) continue;
     std::pair<int64_t,int64_t> key;
-    if (!stationaryKey(delay[i],doppler[i],cpi,key)) continue;
+    if (!stationaryKey(delay[i],doppler[i],key)) continue;
     // Same 9-delay by 3-Doppler-cell occupancy neighbourhood as the resident policy.
-    for (int x=-4; x<=4; ++x) for (int y=-1; y<=1; ++y) {
+    for (int y=-1; y<=1; ++y) for (int x=-4; x<=4; ++x) {
       const auto cellKey = std::make_pair(key.first+x,key.second+y);
+      if(!nativeDelay.empty()&&(cellKey.first<0||cellKey.second<0||
+         cellKey.first>=int64_t(nativeDelay.size())||cellKey.second>=int64_t(nativeDoppler.size())))continue;
       auto found = stationaryCells.find(cellKey);
       if (found == stationaryCells.end()) {
         if (stationaryCells.size() >= recovery.maximumStationaryCells) {
@@ -229,51 +312,11 @@ void Tracker::learnStationary(Detection& detection)
       }
       auto& cell = found->second;
       if (cell.last == frameOrdinal) continue;
-      const uint64_t decay = cell.last && frameOrdinal > cell.last ? (frameOrdinal-cell.last-1)/4 : 0;
-      cell.streak = uint32_t(std::min<uint64_t>(65535,
-        (decay >= cell.streak ? 0 : cell.streak-decay)+1));
+      cell.streak = tracker_policy::advancePersistentStreak(cell.streak,cell.last,frameOrdinal);
       cell.last = frameOrdinal;
     }
   }
   diagnostics.stationaryCells = stationaryCells.size();
-}
-
-std::vector<TrackerGuidedPrediction> Tracker::guidedPredictions(uint64_t currentTime)
-{
-  std::vector<TrackerGuidedPrediction> output;
-  if (!recovery.guidedShadow || currentTime <= timestamp) return output;
-  const double elapsed = double(currentTime-timestamp)/1000;
-  for (uint64_t i=0; i<track.get_n() && output.size()<recovery.guidedMaximumTracks; ++i) {
-    auto prior=track.get_current(i), next=predict(prior,track.get_acceleration(i),elapsed);
-    output.push_back({track.get_id(i),prior.get_delay().front(),prior.get_doppler().front(),
-      next.get_delay().front(),next.get_doppler().front(),
-      track.get_state(i)=="ACTIVE" || track.get_state(i)=="COASTING"});
-  }
-  return output;
-}
-
-bool Tracker::guidedRecovery(uint64_t index, Detection& prediction, bool& credit)
-{
-  if (!recovery.guidedShadow) return false;
-  const auto candidate=std::find_if(frameGuided.begin(),frameGuided.end(),[&](const auto& item){
-    return item.trackId==track.get_id(index);});
-  if (candidate==frameGuided.end()) return false;
-  ++diagnostics.guidedCandidates;
-  if (!candidate->valid || !candidate->aboveThreshold ||
-      (candidate->evidence.depth!=2 && candidate->evidence.depth!=4 && candidate->evidence.depth!=8) ||
-      !validEvidence(candidate->evidence)) { ++diagnostics.guidedInvalid; return false; }
-  if (stationary(prediction.get_delay().front(),prediction.get_doppler().front())) {
-    ++diagnostics.guidedStationaryRejected; return false;
-  }
-  if (!freshEvidence(track.get_id(index),candidate->evidence)) {
-    ++diagnostics.guidedLineageRejected; return false;
-  }
-  ++diagnostics.guidedWouldRecover;
-  const bool operational=track.get_state(index)=="ACTIVE" || track.get_state(index)=="COASTING";
-  if (!(operational ? recovery.guidedSustain : recovery.guidedPromote)) return false;
-  credit=creditEvidence(track.get_id(index),&candidate->evidence);
-  if (operational) ++diagnostics.guidedSustained;
-  return credit;
 }
 
 void Tracker::pruneLedgers()
@@ -282,8 +325,12 @@ void Tracker::pruneLedgers()
   for (uint64_t i=0; i<track.get_n(); ++i) live.insert(track.get_id(i));
   for (auto it=evidenceLedgers.begin(); it!=evidenceLedgers.end();)
     if (!live.count(it->first)) it=evidenceLedgers.erase(it); else ++it;
-  for (auto it=weakSupportLineage.begin(); it!=weakSupportLineage.end();)
-    if (!live.count(it->first)) it=weakSupportLineage.erase(it); else ++it;
+  for (auto it=trackSpatial.begin(); it!=trackSpatial.end();)
+    if (!live.count(it->first)) it=trackSpatial.erase(it); else ++it;
+  for(auto it=quarantineHistory.begin();it!=quarantineHistory.end();)
+    if(!live.count(it->first))it=quarantineHistory.erase(it);else ++it;
+  for(auto it=previouslyConfirmed.begin();it!=previouslyConfirmed.end();)
+    if(!live.count(*it))it=previouslyConfirmed.erase(it);else ++it;
 }
 
 void Tracker::updateDopplerRidges(Detection& detection)
@@ -351,32 +398,43 @@ bool Tracker::blocksDopplerRidgeBirth(double dopplerHz) const
     });
 }
 
-std::unique_ptr<Track> Tracker::process(Detection *detection, uint64_t currentTime,
-  const std::vector<TrackerGuidedCandidate>& guided)
+std::unique_ptr<Track> Tracker::process(Detection *detection, uint64_t currentTime)
 {
   const auto& evidence=detection->get_evidence();
+  const auto& spatial=detection->get_spatial();
+  if(spatialBeams && spatial.size()!=detection->get_nDetections())
+    throw std::invalid_argument("Beam-aware tracking requires explicit spatial evidence");
+  for(uint32_t word:spatial) {
+    if(word&0x80000000u) {
+      const uint32_t a=word&127u,b=(word>>7u)&127u,c=(word>>14u)&127u;
+      const uint64_t fineCount=uint64_t(spatialBeams)*spatialFineFactor;
+      if(!spatialBeams || !a || a>fineCount || b>fineCount || c>fineCount)
+        throw std::invalid_argument("Invalid fine spatial evidence");
+    } else if((word&511u)>spatialBeams || ((word>>9u)&2047u)>spatialBeams*4u ||
+              ((word&511u)==0u && ((word>>9u)&2047u)!=0u))
+      throw std::invalid_argument("Invalid coarse spatial evidence");
+  }
+  // Refuse impossible temporal births before changing any state. The pipeline
+  // also validates the deepest enabled bank before its first warm-up frame.
+  for (const auto& item:evidence) if (validEvidence(item,false))
+    tracker_confirmation::validate(m,n,nDelete,item.depth);
   uint64_t epoch=0,sequence=0;
   bool haveEpoch=false;
   for (const auto& item:evidence) if (validEvidence(item,false)) {
     epoch=item.epoch; sequence=item.newestSequence; haveEpoch=true; break;
-  }
-  if (!haveEpoch) for (const auto& item:guided) if(item.valid && validEvidence(item.evidence,false)) {
-    epoch=item.evidence.epoch; sequence=item.evidence.newestSequence; haveEpoch=true; break;
   }
   const bool epochReset=haveEpoch && evidenceEpochInitialized && epoch!=evidenceEpoch;
   if (epochReset) reset(true);
   if (haveEpoch) {evidenceEpoch=epoch;evidenceEpochInitialized=true;}
   // Duplicate or reversed timestamps cannot define a velocity update. Do not
   // age tracks or create duplicates from a repeated frame.
-  diagnostics = pendingWeakSupport;
-  pendingWeakSupport = {};
+  diagnostics = {};
   diagnostics.detections = detection->get_nDetections();
   diagnostics.tracksBefore = track.get_n();
   diagnostics.lineageResets=pendingLineageReset;
   pendingLineageReset=false;
   diagnostics.stationaryCells=stationaryCells.size();
-  if ((frameOrdinal > 0 && currentTime <= timestamp) ||
-      (sequence && frameSequence && sequence<=frameSequence))
+  if (tracker_policy::frameClockNoOp(frameOrdinal>0,currentTime,timestamp,sequence,frameSequence))
   {
     diagnostics.noOp = true;
     diagnostics.tracksAfter = track.get_n();
@@ -386,10 +444,10 @@ std::unique_ptr<Track> Tracker::process(Detection *detection, uint64_t currentTi
   ++frameOrdinal;
   pruneStationary();
   frameHasEvidence=!evidence.empty();
-  const size_t guidedLimit=recovery.guidedShadow ? recovery.guidedMaximumTracks : 0;
-  frameGuided.assign(guided.begin(),guided.begin()+std::min(guided.size(),guidedLimit));
-  diagnostics.guidedBudgetRejected=guided.size()-frameGuided.size();
   lineageNoBirth.assign(detection->get_nDetections(),false);
+  policyCandidates.clear();policyPredictions.clear();
+  const auto delays=detection->get_delay(),dopplers=detection->get_doppler(),snrs=detection->get_snr();
+  for(size_t i=0;i<delays.size();++i)policyCandidates.push_back({delays[i],dopplerRow(dopplers[i]),snrs[i],true});
   doNotInitiate.clear();
   for (size_t i = 0; i < detection->get_nDetections(); i++)
   {
@@ -405,96 +463,21 @@ std::unique_ptr<Track> Tracker::process(Detection *detection, uint64_t currentTi
     timestamp = currentTime;
   }
   pruneLedgers();
-  initiate(detection);
+  for(size_t i=0;i<policyCandidates.size();++i)policyCandidates[i].unmatched=!doNotInitiate[i]&&!lineageNoBirth[i];
+  // Resident ordering: association sees prior occupancy; births see the
+  // current accepted endpoint's occupancy update as well.
   learnStationary(*detection);
+  initiate(detection);
   pruneLedgers();
+  for(uint64_t i=0;i<track.get_n();++i){const auto state=track.get_state(i);
+    if(state=="ACTIVE"||state=="COASTING")previouslyConfirmed.insert(track.get_id(i));
+    if(recovery.stationaryClutter){auto value=track.get_current(i);auto& history=quarantineHistory[track.get_id(i)];
+      history.push_back({value.get_delay().front(),value.get_doppler().front(),track.get_current_source(i)==Track::Source::detector});
+      if(history.size()>std::max(100u,n))history.pop_front();}
+  }
   diagnostics.tracksAfter = track.get_n();
 
   return std::make_unique<Track>(track);
-}
-
-uint64_t Tracker::applyWeakSupport(
-  const std::vector<TrackerWeakSupportCandidate>& candidates)
-{
-  pendingWeakSupport.weakSupportCandidates += candidates.size();
-  std::unordered_set<std::string> liveIds;
-  for (uint64_t index = 0; index < track.get_n(); ++index)
-    liveIds.insert(track.get_id(index));
-  for (auto it = weakSupportLineage.begin(); it != weakSupportLineage.end();)
-    if (!liveIds.count(it->first)) it = weakSupportLineage.erase(it);
-    else ++it;
-
-  std::vector<bool> claimed(candidates.size(), false);
-  uint64_t accepted = 0;
-  const double delayGate = 1.0;
-  const double dopplerGate = 1.0 / cpi;
-  const blah2::tracker::NormalizedInnovationGate innovationGate({
-    associationMaximumNis, 100, 1e-9});
-  for (uint64_t index = 0; index < track.get_n(); ++index) {
-    const auto state = track.get_state(index);
-    if (state != "ACTIVE" && state != "COASTING") continue;
-    auto current = track.get_current(index);
-    const double delay = current.get_delay().front();
-    const double doppler = current.get_doppler().front();
-    std::size_t best = candidates.size();
-    double bestDistance = std::numeric_limits<double>::infinity();
-    for (std::size_t candidate = 0; candidate < candidates.size(); ++candidate) {
-      if (claimed[candidate]) continue;
-      const auto& value = candidates[candidate];
-      const double dd = value.delay-delay;
-      const double df = (value.dopplerHz-doppler)*cpi;
-      const bool inGate = normalizedInnovationGate ?
-        innovationGate.evaluate({dd, df}, {0, 0, 0, 0}, {1, 0, 0, 1}).accepted :
-        (value.delay > delay-delayGate && value.delay < delay+delayGate &&
-          value.dopplerHz > doppler-dopplerGate && value.dopplerHz < doppler+dopplerGate);
-      if (!inGate) continue;
-      ++pendingWeakSupport.weakSupportInGate;
-      const double distance = dd*dd + df*df;
-      if (distance < bestDistance) { bestDistance = distance; best = candidate; }
-    }
-    if (best == candidates.size()) continue;
-    const auto& value = candidates[best];
-    bool valid = (value.depth == 2 || value.depth == 4 || value.depth == 8) &&
-      value.newestSequence != 0 &&
-      value.newestSequence == value.sequences[0];
-    for (uint8_t i = 1; valid && i < value.depth; ++i)
-      valid = value.sequences[i] != 0 &&
-        value.sequences[i] + 1 == value.sequences[i-1];
-    auto& ledger = weakSupportLineage[track.get_id(index)];
-    if (valid && (!ledger.initialized || ledger.epoch != value.epoch)) ledger = {value.epoch, 0, true};
-    if (valid && value.newestSequence <= ledger.highWaterSequence) valid = false;
-    // A valid candidate is one contiguous interval.  The oldest sequence is
-    // therefore sufficient to reject overlap with every previously credited
-    // interval; retaining every CPI for the lifetime of a track is unnecessary.
-    if (valid && value.sequences[value.depth - 1] <= ledger.highWaterSequence)
-      valid = false;
-    if (!valid) {
-      ++pendingWeakSupport.weakSupportLineageRejected;
-      continue;
-    }
-    Detection::Evidence supportEvidence;
-    supportEvidence.epoch=value.epoch;
-    supportEvidence.newestSequence=value.newestSequence;
-    supportEvidence.depth=value.depth;
-    supportEvidence.sequences=value.sequences;
-    if (!freshEvidence(track.get_id(index),supportEvidence)) {
-      ++pendingWeakSupport.weakSupportLineageRejected;
-      continue;
-    }
-    auto& shared=evidenceLedgers[track.get_id(index)];
-    if (!shared.initialized || shared.epoch!=value.epoch) shared.votes.clear();
-    shared.epoch=value.epoch; shared.highWaterSequence=value.newestSequence; shared.initialized=true;
-    ledger.epoch = value.epoch;
-    ledger.highWaterSequence = value.newestSequence;
-    // This is a survival credit only. In particular, leave COASTING as
-    // COASTING and do not append a measured sample.
-    track.set_nInactive(index, 0);
-    claimed[best] = true;
-    ++accepted;
-    pendingWeakSupport.weakSupportCreditedCpis += value.depth;
-  }
-  pendingWeakSupport.weakSupportAccepted += accepted;
-  return accepted;
 }
 
 void Tracker::update(Detection *detection, uint64_t current)
@@ -519,19 +502,15 @@ void Tracker::update(Detection *detection, uint64_t current)
     const double delayPredict = prediction.get_delay().front();
     const double dopplerPredict = prediction.get_doppler().front();
     const bool needsAccelerationEstimate = adaptiveGate &&
+      track.get_state(i)!="ACTIVE" && track.get_state(i)!="COASTING" &&
       !track.get_acceleration_estimated(i);
     // First reassociation must use the actual elapsed time since the seed,
     // including all missed updates (not only the most recent CPI).
     const double accelerationTime = needsAccelerationEstimate ?
-      T + track.get_missed_seconds(i) : T;
-    const double delayGate = needsAccelerationEstimate ? 2.0 : 1.0;
-    // A newly initiated adaptive track has no acceleration estimate yet.
-    // Include the configured acceleration envelope plus one Doppler bin so a
-    // real maneuver can supply the second observation that estimates it.
-    const double dopplerGate = needsAccelerationEstimate ?
-      maxAccInit * accelerationTime + 1 / cpi : 1 / cpi;
-    const blah2::tracker::NormalizedInnovationGate innovationGate({
-      associationMaximumNis, 100, 1e-9});
+      tracker_association::associationElapsed(T,track.get_missed_seconds(i)) : T;
+    const double resolution=1/(cpi*cpi);
+    const double span=resolution*std::floor(maxAccInit/resolution);
+    const double q=lambda*.5*accelerationTime*accelerationTime/rangeRes;
     size_t match = detection->get_nDetections();
     double bestDistance = std::numeric_limits<double>::infinity();
     
@@ -540,20 +519,19 @@ void Tracker::update(Detection *detection, uint64_t current)
     {
       ++diagnostics.pairs;
       if (doNotInitiate[j]) { ++diagnostics.pairClaimed; continue; }
-      const double deltaDelay = delay[j] - delayPredict;
-      const double deltaDoppler = (doppler[j] - dopplerPredict) * cpi;
-      if (normalizedInnovationGate && !needsAccelerationEstimate)
-      {
-        const auto gate = innovationGate.evaluate({deltaDelay, deltaDoppler},
-          {0, 0, 0, 0}, {1, 0, 0, 1});
-        if (!gate.accepted) { ++diagnostics.pairInnovationRejected; continue; }
+      const auto gate=tracker_association::associationDecision(delay[j],doppler[j],
+        delayPredict,dopplerPredict,cpi,needsAccelerationEstimate,accelerationTime,
+        span,q,normalizedInnovationGate,associationMaximumNis);
+      if(!gate.accepted) {
+        if(gate.rejection==2)++diagnostics.pairDelayRejected;
+        else if(gate.rejection==4)++diagnostics.pairDopplerRejected;
+        else ++diagnostics.pairInnovationRejected;
+        continue;
       }
-      else
-      {
-        if (!(delay[j] > delayPredict-delayGate && delay[j] < delayPredict+delayGate))
-          { ++diagnostics.pairDelayRejected; continue; }
-        if (!(doppler[j] > dopplerPredict-dopplerGate && doppler[j] < dopplerPredict+dopplerGate))
-          { ++diagnostics.pairDopplerRejected; continue; }
+      if(!tracker_association::spatialCompatible(spatialForTrack(track.get_id(i)),
+          detection->get_spatial().empty()?0u:detection->get_spatial()[j],
+          spatialBeams,spatialFineFactor,spatialTolerance)) {
+        ++diagnostics.pairSpatialRejected;continue;
       }
       if ((evidence.empty() && evidenceEpochInitialized) ||
           (!evidence.empty() && !freshEvidence(track.get_id(i),evidence[j]))) {
@@ -565,7 +543,7 @@ void Tracker::update(Detection *detection, uint64_t current)
       // All predicates passed; preserve the original deterministic nearest
       // neighbour ranking and first-candidate tie break.
       {
-        const double distance = deltaDelay * deltaDelay + deltaDoppler * deltaDoppler;
+        const double distance = gate.distance;
         if (distance < bestDistance) { bestDistance = distance; match = j; }
       }
     }
@@ -573,64 +551,35 @@ void Tracker::update(Detection *detection, uint64_t current)
     if (match < detection->get_nDetections())
     {
       const std::string previousState = track.get_state(i);
-      if (stationary(delay[match],doppler[match])) {
-        doNotInitiate[match]=true;
-        ++diagnostics.stationaryQuarantined;
-        evidenceLedgers[track.get_id(i)].votes.clear();
-        // Quarantined observations are not measured evidence or operational fixes.
-        track.set_state(i,"TENTATIVE");
-        track.set_predicted_current(i,prediction);
-        appendVote(i,false);
-        track.set_nInactive(i,track.get_nInactive(i)+1);
-        track.set_missed_seconds(i,track.get_missed_seconds(i)+T);
-        if (track.get_nUpdates(i)>=n || track.get_nInactive(i)>nDelete) {
-          ++diagnostics.tentativeExpired; track.remove(i); continue;
-        }
-        ++i; continue;
-      }
+      const bool quarantined=quarantine(i,delay[match],doppler[match]);
+      if(quarantined)++diagnostics.stationaryQuarantined;
       const bool credit=creditEvidence(track.get_id(i),evidence.empty()?nullptr:&evidence[match]);
       track.set_acceleration(i, (doppler[match] - detectionCurrent.get_doppler().front()) / accelerationTime);
       track.set_acceleration_estimated(i, true);
       track.set_nInactive(i, 0);
-      track.set_missed_seconds(i, 0);
+      track.set_missed_seconds(i,tracker_association::associationMissed(T,track.get_missed_seconds(i),true));
       ++diagnostics.associations;
       doNotInitiate[match] = true;
-      track.set_state(i, previousState == "ACTIVE" || previousState == "COASTING" ?
-        "ACTIVE" : "ASSOCIATED");
-      promote(i, credit);
+      const uint32_t oldState=previousState=="ACTIVE"?2u:previousState=="COASTING"?3u:previousState=="ASSOCIATED"?1u:0u;
+      const auto nextState=tracker_quarantine::quarantineAssociationState(quarantined,oldState);
+      track.set_state(i,nextState==0?"TENTATIVE":nextState==2?"ACTIVE":"ASSOCIATED");
+      if(quarantined||tracker_policy::View{policyCandidates,policyPredictions}.rangeCombAmbiguous(uint32_t(match)))
+        appendVote(i,credit);else promote(i, credit);
       // Record the measured sample after promotion so its display history is
       // paired with the state actually assigned to that measurement.
       track.set_current(i, Detection(delay[match], doppler[match], snr[match]));
+      if(spatialBeams)trackSpatial[track.get_id(i)]=detection->get_spatial()[match];
       if (track.get_state(i) == "ACTIVE" && previousState != "ACTIVE" && previousState != "COASTING")
         ++diagnostics.promotions;
-      if (track.get_state(i) != "ACTIVE" && track.get_nUpdates(i) >= n)
+      if (track.get_state(i) != "ACTIVE" && !previouslyConfirmed.count(track.get_id(i)) && track.get_nUpdates(i) >= n)
       {
         ++diagnostics.tentativeExpired;
         track.remove(i);
         continue;
       }
+      policyPredictions.push_back({delayPredict,dopplerRow(dopplerPredict),0,true});
       ++i;
       continue;
-    }
-
-    bool guidedCredit=false;
-    if (guidedRecovery(i,prediction,guidedCredit)) {
-      const std::string previous=track.get_state(i);
-      const bool operational=previous=="ACTIVE" || previous=="COASTING";
-      // A guided path is a prediction, never a measured location, velocity,
-      // association count, or acceleration estimate.
-      track.set_predicted_current(i,prediction);
-      track.set_state(i,operational ? "COASTING" : "ASSOCIATED");
-      track.set_nInactive(i,0);
-      track.set_missed_seconds(i,track.get_missed_seconds(i)+T);
-      promote(i,guidedCredit);
-      if (!operational && track.get_state(i)=="ACTIVE") {
-        ++diagnostics.promotions; ++diagnostics.guidedPromotions;
-      }
-      if (!operational && track.get_state(i)!="ACTIVE" && track.get_nUpdates(i)>=n) {
-        ++diagnostics.tentativeExpired; track.remove(i); continue;
-      }
-      ++i; continue;
     }
 
     // update state if no detections associated
@@ -650,20 +599,20 @@ void Tracker::update(Detection *detection, uint64_t current)
       track.set_state(i, track.get_state(i));
     }
     track.set_nInactive(i, track.get_nInactive(i)+1);
-    track.set_missed_seconds(i, track.get_missed_seconds(i)+T);
+    track.set_missed_seconds(i,tracker_association::associationMissed(T,track.get_missed_seconds(i),false));
     appendVote(i,false);
     ++diagnostics.misses;
 
     // remove if tentative or coasting too long
     const bool tentativeExpired = track.get_state(i) != "ACTIVE" &&
-      track.get_state(i) != "COASTING" && track.get_nUpdates(i) >= n;
+      track.get_state(i) != "COASTING" && !previouslyConfirmed.count(track.get_id(i)) && track.get_nUpdates(i) >= n;
     if (tentativeExpired || track.get_nInactive(i) > nDelete)
     {
       if (tentativeExpired) ++diagnostics.tentativeExpired;
       else ++diagnostics.inactivityDeleted;
       track.remove(i);
     }
-    else ++i;
+    else {policyPredictions.push_back({delayPredict,dopplerRow(dopplerPredict),0,true});++i;}
   }
 }
 
@@ -696,7 +645,7 @@ void Tracker::initiate(Detection *detection)
       return snr[left] > snr[right];
     });
   std::vector<std::pair<double, double>> reservedBirthNeighborhoods;
-  const bool boundedRecovery=frameHasEvidence || recovery.guidedShadow || recovery.stationaryClutter;
+  const bool boundedRecovery=frameHasEvidence || recovery.stationaryClutter;
   std::unordered_set<std::string> liveLineageIds;
   if (boundedRecovery) for(uint64_t i=0;i<track.get_n();++i) liveLineageIds.insert(track.get_id(i));
   if (birthExclusivity.enabled)
@@ -730,6 +679,11 @@ void Tracker::initiate(Detection *detection)
       ++diagnostics.birthRidgeRejected;
       continue;
     }
+    tracker_policy::View policy{policyCandidates,policyPredictions};
+    if(!policy.dopplerRidgeHasBirthCapacity(uint32_t(i))||!policy.combBirthEligible(uint32_t(i),false)) {
+      ++diagnostics.birthDopplerCombRejected;continue;
+    }
+    if(!policy.combBirthEligible(uint32_t(i),true)) {++diagnostics.birthRangeCombRejected;continue;}
     if (stationary(delay[i],doppler[i])) {
       ++diagnostics.stationaryBirthRejected; continue;
     }
@@ -759,8 +713,9 @@ void Tracker::initiate(Detection *detection)
         track.remove(index);++diagnostics.birthCapacityRejected;continue;
       }
       track.set_acceleration(index, accInit[j]);
+      if(spatialBeams)trackSpatial[track.get_id(index)]=detection->get_spatial()[i];
       const bool credit=creditEvidence(track.get_id(index),evidence.empty()?nullptr:&evidence[i]);
-      promote(index,credit);
+      if(policy.rangeCombAmbiguous(uint32_t(i)))appendVote(index,credit);else promote(index,credit);
       ++diagnostics.initiated;
       if (track.get_state(index) == "ACTIVE") ++diagnostics.promotions;
     }

@@ -392,8 +392,8 @@ public:
     solution_=buffer(uint64_t(bins)*channels*16);
     initial_=buffer(uint64_t(bins)*channels*16);
     weights_=buffer(uint64_t(fft)*channels*16);
-    workPlan_=std::make_unique<NativePlan>(context,*work_,fft,tileBlocks,true,false,true);
-    weightPlan_=std::make_unique<NativePlan>(context,*weights_,fft,channels,true,false,true);
+    workPlan_=std::make_unique<NativePlan>(context,*work_,fft,tileBlocks,true,true);
+    weightPlan_=std::make_unique<NativePlan>(context,*weights_,fft,channels,true,true);
     auto kernel=[&](const std::string& source,std::vector<Buffer*> buffers) {
       buffers.insert(buffers.begin(),status_.get());
       return std::make_unique<Kernel>(context,source.c_str(),buffers);

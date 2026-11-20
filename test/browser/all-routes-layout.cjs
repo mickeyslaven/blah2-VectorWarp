@@ -8,34 +8,21 @@ const os = require('node:os');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
 const {once} = require('node:events');
+const {routeInventory, copyIssues} = require('../helpers/ui-acceptance');
 const root = path.resolve(__dirname, '../../html');
-const pages = fs.readdirSync(root, {recursive:true}).filter(file => file.endsWith('index.html'));
-const aliases = [], routes = [];
-for (const file of pages) {
-  const route = '/' + file.replace(/index\.html$/, '');
-  const html = fs.readFileSync(path.join(root, file), 'utf8');
-  const redirect = html.match(/location\.replace\(['"]([^'"]+)/);
-  if (redirect) aliases.push({route, destination:redirect[1]});
-  else routes.push(route);
-}
-routes.push('/display/statistics/?tab=adsb', '/display/diagnostics/?view=timing',
-  '/display/diagnostics/?view=health', '/display/signal/?view=maxhold',
-  '/display/detection/?view=range', '/display/detection/?view=doppler');
+const {pages, aliases, routes} = routeInventory();
 const selectedRoutes=process.env.VECTORWARP_LAYOUT_ROUTES?JSON.parse(process.env.VECTORWARP_LAYOUT_ROUTES):routes;
-assert.equal(pages.length, 24, 'Inventory includes all canonical and compatibility HTML pages');
 
-const config = {capture:{fc:509e6,fs:2.4e6,device:{type:'Kraken',channel_count:5,
-  gain:[10,10,10,10,10],array_geometry:{shape:'regular_polygon',radius_m:.19}}},
-  process:{data:{cpi:.5,buffer:2},performance:{acceleration:'cpu'},
-    ambiguity:{delayMin:0,delayMax:100,dopplerMin:-100,dopplerMax:100},
-    clutter:{enable:true},detection:{enable:true,pfa:.001},
-    tracker:{enable:true,initiate:{M:3,N:6},delete:3},spectrum:{enable:true}},
-  truth:{adsb:{enabled:true,tar1090:'auto'}},
-  location:{rx:{name:'Layout fixture receiver',latitude:40,longitude:-80,altitude:250},
-    tx:{name:'Layout fixture transmitter',latitude:40.2,longitude:-80.1,altitude:400}},
-  save:{path:'/tmp/layout-fixture/',map:false,detection:false},
-  network:{ip:'127.0.0.1',ports:{api:3000,map:3001,detection:3002,track:3003,
-    timestamp:4000,timing:4001,iqdata:4002}}};
+// Exercise the shipped settings schema, including capability-disabled and
+// experimental fields, rather than a shorter hand-maintained configuration.
+const {configurationForReceiver} = require('../../api/config-store');
+const {getDeviceProfiles, FIELD_RULES} = require('../../api/config-manager');
+const config = configurationForReceiver('Kraken');
+config.capture.fc = 509e6;
+config.process.performance.acceleration = 'cpu';
+config.location = {rx:{name:'Layout fixture receiver',latitude:40,longitude:-80,altitude:250},
+  tx:{name:'Layout fixture transmitter',latitude:40.2,longitude:-80.1,altitude:400}};
+config.save.path = '/tmp/layout-fixture/';
 const period = {passes:10,eligible_passes:8,detected_passes:6,tracked_passes:4,
   detection_yield:.75,tracking_yield:.5,out_of_config_passes:2,
   eligible_no_radar_return:2,detected_not_tracked:2,
@@ -57,7 +44,7 @@ function fixture(url) {
   return {
     '/api/config':config, '/api/runtime/config':config,
     '/api/config/capabilities':{editable:true,restartAvailable:false,
-      configRevision:'layout-fixture',deviceProfiles:[],fieldRules:{}},
+      configRevision:'layout-fixture',deviceProfiles:getDeviceProfiles(),fieldRules:FIELD_RULES},
     '/api/system/status':{serverId:'layout-fixture',radar:'receiving',adsb:'receiving',adsbEnabled:true},
     '/capture/status':{supported:false,available:false,recording:false},
     '/api/federation/nodes':{nodes:[{id:'local',label:'Layout fixture',local:true}]},
@@ -124,7 +111,7 @@ async function connect(endpoint) {
 }
 (async()=>{
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'vectorwarp-all-routes-'));
-  let browser,client; const report={pages:pages.length,aliases,checks:[],issues:[]};
+  let browser,client,currentRoute; const report={pages:pages.length,aliases,checks:[],issues:[],exceptions:[]};
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try {
     browser=spawn(process.env.VECTORWARP_CHROME_EXECUTABLE||'/usr/bin/chromium-browser',
@@ -141,6 +128,9 @@ async function connect(endpoint) {
     const targets=await(await fetch(`http://${new URL(endpoint).host}/json/list`)).json();
     client=await connect(targets.find(item=>item.type==='page').webSocketDebuggerUrl);
     await client.send('Page.enable');
+    client.on('Runtime.exceptionThrown',event=>report.exceptions.push({route:currentRoute,
+      message:event.exceptionDetails?.exception?.description||event.exceptionDetails?.text}));
+    await client.send('Runtime.enable');
     client.on('Fetch.requestPaused',event=>{
       const json=event.request.url.endsWith('tilejson.json');
       const body=json?Buffer.from(JSON.stringify({tilejson:'3.0.0',tiles:['https://tiles.example.test/{z}/{x}/{y}.png'],minzoom:0,maxzoom:12})).toString('base64'):
@@ -154,6 +144,7 @@ async function connect(endpoint) {
       if(value.exceptionDetails)throw new Error(JSON.stringify(value.exceptionDetails));return value.result.value;};
     const base=`http://127.0.0.1:${server.address().port}`;
     const navigate=async(route,requireView=true)=>{
+      currentRoute=route;
       const loaded=new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error(`Load timed out: ${route}`)),30000);
         client.on('Page.loadEventFired',()=>{clearTimeout(timeout);resolve();});});
       await client.send('Page.navigate',{url:base+route});
@@ -176,7 +167,7 @@ async function connect(endpoint) {
           !e.closest('.location-aircraft-detail,.maplibregl-control-container'))
         .map(e=>({tag:e.tagName,id:e.id,classes:e.className,text:e.textContent.slice(0,60),...box(e)}))
         .filter(r=>r.right>innerWidth+2||r.x < -2);
-      return {width:innerWidth,height:innerHeight,overflow:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)-innerWidth,
+      return {text:document.body.innerText,width:innerWidth,height:innerHeight,overflow:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)-innerWidth,
         nav,escaped,current:document.querySelectorAll('.app-nav [aria-current="page"]').length,
         overflowNodes:[...document.querySelectorAll('body *')].filter(visible).filter(e=>e.getBoundingClientRect().right>innerWidth+2)
           .slice(0,12).map(e=>({tag:e.tagName,classes:e.getAttribute('class'),id:e.id,...box(e)})),
@@ -185,7 +176,8 @@ async function connect(endpoint) {
         h1:document.querySelectorAll('h1').length,tables:document.querySelectorAll('.data-table-wrap').length,
         visibleHeaders:document.querySelectorAll('.app-header').length};})()`);
     const record=async(route,state='default')=>{
-      const result=await measure();report.checks.push({route,state,...result});
+      const {text:copy,...result}=await measure();report.checks.push({route,state,...result});
+      assert.deepEqual(copyIssues(copy),[],`${route}/${state}: useful visible copy`);
       if(process.env.VECTORWARP_LAYOUT_SCREENSHOTS&&state==='default'&&[320,720,768,1080,1440].includes(result.width)){
         const shot=await client.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
         fs.writeFileSync(path.join(process.env.VECTORWARP_LAYOUT_SCREENSHOTS,
@@ -284,6 +276,7 @@ async function connect(endpoint) {
     if(process.env.VECTORWARP_LAYOUT_REPORT)fs.writeFileSync(process.env.VECTORWARP_LAYOUT_REPORT,JSON.stringify(report,null,2));
     assert.equal(report.issues.length,0,JSON.stringify(report.issues.map(({route,state,width,reason,overflow,escaped})=>
       ({route,state,width,reason,overflow,escaped})),null,2));
+    assert.deepEqual(report.exceptions,[],'Every reachable view must render without uncaught JavaScript exceptions');
     console.log(`${selectedRoutes.length} canonical/query views and ${report.checks.length} viewport/state checks passed.`);
   }finally{
     if(process.env.VECTORWARP_LAYOUT_REPORT)fs.writeFileSync(process.env.VECTORWARP_LAYOUT_REPORT,JSON.stringify(report,null,2));

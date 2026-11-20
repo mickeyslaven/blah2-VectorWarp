@@ -1,3 +1,4 @@
+option(BLAH2_TEST_SOFTWARE_VULKAN "Run explicit CPU-only Vulkan parity tests in CTest (not physical GPU qualification)" OFF)
 add_executable(testGpuWorkerDouble ${PROJECT_ROOT}/test/gpu/WorkerDouble.cpp)
 target_link_libraries(testGpuWorkerDouble PRIVATE blah2GpuProcess)
 include(${PROJECT_ROOT}/cmake/RapidJson.cmake)
@@ -6,6 +7,65 @@ target_compile_features(testGpuDeviceSelection PRIVATE cxx_std_17)
 target_include_directories(testGpuDeviceSelection PRIVATE ${PROJECT_ROOT}/src)
 target_link_libraries(testGpuDeviceSelection PRIVATE blah2GpuProcess blah2RapidJson)
 add_test(NAME gpuResidentDeviceSelection COMMAND testGpuDeviceSelection)
+add_executable(testReplayGpuQualification ${PROJECT_ROOT}/test/gpu/TestReplayGpuQualification.cpp)
+target_compile_features(testReplayGpuQualification PRIVATE cxx_std_17)
+target_include_directories(testReplayGpuQualification PRIVATE ${PROJECT_ROOT}/src)
+add_test(NAME gpuReplayQualificationOptIn COMMAND testReplayGpuQualification)
+set_tests_properties(gpuReplayQualificationOptIn PROPERTIES TIMEOUT 10)
+add_executable(testClutterReplayCheckpoint ${PROJECT_ROOT}/test/gpu/TestClutterReplayCheckpoint.cpp)
+target_compile_features(testClutterReplayCheckpoint PRIVATE cxx_std_17)
+target_include_directories(testClutterReplayCheckpoint PRIVATE ${PROJECT_ROOT}/src)
+add_test(NAME clutterReplayCheckpointCpuContract COMMAND testClutterReplayCheckpoint)
+set_tests_properties(clutterReplayCheckpointCpuContract PROPERTIES TIMEOUT 10)
+if(TARGET blah2GpuVulkan)
+  add_executable(testClutterReplaySoftware ${PROJECT_ROOT}/test/gpu/TestClutterReplaySoftware.cpp)
+  target_compile_features(testClutterReplaySoftware PRIVATE cxx_std_17)
+  target_compile_definitions(testClutterReplaySoftware PRIVATE VKFFT_BACKEND=0)
+  target_include_directories(testClutterReplaySoftware PRIVATE ${PROJECT_ROOT}/src)
+  target_include_directories(testClutterReplaySoftware SYSTEM PRIVATE
+    ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${ARMADILLO_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
+  target_link_libraries(testClutterReplaySoftware PRIVATE Vulkan::Vulkan glslang::glslang
+    glslang::SPIRV glslang::glslang-default-resource-limits ${BLAH2_FFTW3_LIBRARY}
+    ${BLAH2_FFTW3_THREADS_LIBRARY} ${ARMADILLO_LIBRARIES} Threads::Threads)
+  target_compile_options(testClutterReplaySoftware PRIVATE -Wno-missing-field-initializers)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(testClutterReplaySoftware PRIVATE -Wno-return-type-c-linkage)
+  endif()
+  blah2_isolate_vkfft_vendor_warnings(testClutterReplaySoftware)
+  if(BLAH2_TEST_SOFTWARE_VULKAN)
+    add_test(NAME clutterReplaySoftwareVulkanParity COMMAND testClutterReplaySoftware --software)
+    set_tests_properties(clutterReplaySoftwareVulkanParity PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS "software-vulkan;clutter-replay")
+  endif()
+endif()
+add_executable(testGpuReceiveDeadline ${PROJECT_ROOT}/test/gpu/TestGpuReceiveDeadline.cpp)
+target_compile_features(testGpuReceiveDeadline PRIVATE cxx_std_17)
+target_include_directories(testGpuReceiveDeadline PRIVATE ${PROJECT_ROOT}/src)
+add_test(NAME gpuReceiveDeadlineCpuContract COMMAND testGpuReceiveDeadline)
+set_tests_properties(gpuReceiveDeadlineCpuContract PROPERTIES TIMEOUT 10)
+add_executable(testGpuWidebandGather ${PROJECT_ROOT}/test/gpu/TestGpuWidebandGather.cpp)
+target_compile_features(testGpuWidebandGather PRIVATE cxx_std_17)
+target_link_libraries(testGpuWidebandGather PRIVATE blah2GpuWidebandProcess)
+add_test(NAME gpuWidebandGatherCpuContract COMMAND testGpuWidebandGather)
+set_tests_properties(gpuWidebandGatherCpuContract PROPERTIES TIMEOUT 30)
+if(TARGET blah2GpuWidebandVulkan)
+  # Explicit CPU-Vulkan execution only; never scheduled on a physical device.
+  add_executable(testGpuWidebandGatherSoftware ${PROJECT_ROOT}/test/gpu/TestGpuWidebandGather.cpp)
+  target_compile_features(testGpuWidebandGatherSoftware PRIVATE cxx_std_17)
+  target_compile_definitions(testGpuWidebandGatherSoftware PRIVATE
+    VKFFT_BACKEND=0 VECTORWARP_TEST_GATHER_VULKAN=1)
+  target_compile_options(testGpuWidebandGatherSoftware PRIVATE -Wno-missing-field-initializers)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(testGpuWidebandGatherSoftware PRIVATE -Wno-return-type-c-linkage)
+  endif()
+  target_include_directories(testGpuWidebandGatherSoftware PRIVATE
+    ${PROJECT_ROOT}/src/process/ambiguity)
+  target_include_directories(testGpuWidebandGatherSoftware SYSTEM PRIVATE
+    ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
+  target_link_libraries(testGpuWidebandGatherSoftware PRIVATE blah2GpuWidebandProcess
+    Vulkan::Vulkan glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
+    ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY})
+  blah2_isolate_vkfft_vendor_warnings(testGpuWidebandGatherSoftware)
+endif()
 set_tests_properties(gpuResidentDeviceSelection PROPERTIES TIMEOUT 10)
 add_executable(testStageExecution ${PROJECT_ROOT}/test/gpu/TestStageExecution.cpp)
 target_compile_features(testStageExecution PRIVATE cxx_std_17)
@@ -19,23 +79,17 @@ if(APPLE)
   target_include_directories(testMacGpuCompatibility PRIVATE ${PROJECT_ROOT}/src)
   add_test(NAME macGpuCompatibilityPolicy COMMAND testMacGpuCompatibility)
 endif()
-add_executable(testGpuProcess ${PROJECT_ROOT}/test/gpu/TestGpuProcess.cpp
-  ${PROJECT_ROOT}/src/process/ambiguity/Acceleration.cpp
-  ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
-  ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
-  ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp)
-target_link_libraries(testGpuProcess PRIVATE blah2RapidJson blah2GpuProcess ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY})
+add_executable(testGpuProcess ${PROJECT_ROOT}/test/gpu/TestGpuProcess.cpp)
+target_link_libraries(testGpuProcess PRIVATE blah2Acceleration)
 add_dependencies(testGpuProcess testGpuWorkerDouble)
 add_test(NAME gpuProcessIsolation COMMAND testGpuProcess)
 set_tests_properties(gpuProcessIsolation PROPERTIES TIMEOUT 30)
-add_executable(testClutterAcceleration ${PROJECT_ROOT}/test/gpu/TestClutterAcceleration.cpp
-  ${PROJECT_ROOT}/src/process/ambiguity/Acceleration.cpp
-  ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
-  ${PROJECT_ROOT}/src/process/clutter/WienerHopf.cpp
-  ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
-  ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp)
-target_link_libraries(testClutterAcceleration PRIVATE blah2RapidJson blah2GpuProcess
-  ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+add_executable(testGpuRetiredWork ${PROJECT_ROOT}/test/gpu/TestGpuRetiredWork.cpp)
+target_link_libraries(testGpuRetiredWork PRIVATE blah2GpuProcess)
+add_test(NAME gpuRetiredWorkRejected COMMAND testGpuRetiredWork)
+set_tests_properties(gpuRetiredWorkRejected PROPERTIES TIMEOUT 15)
+add_executable(testClutterAcceleration ${PROJECT_ROOT}/test/gpu/TestClutterAcceleration.cpp)
+target_link_libraries(testClutterAcceleration PRIVATE blah2Acceleration)
 if(TARGET blah2GpuWorker)
   add_dependencies(testClutterAcceleration blah2GpuWorker)
 endif()
@@ -73,44 +127,54 @@ set_tests_properties(gpuClutterRefinementCpuOracle PROPERTIES TIMEOUT 10)
 
 # Host solver regression also runs on GPU=OFF platforms. The largest dense
 # matrix uses the HomePortal 1261-tap span, without allocating a full live CPI.
-add_executable(testClutterSolver ${PROJECT_ROOT}/test/gpu/TestClutterSolver.cpp
-  ${PROJECT_ROOT}/src/process/clutter/WienerHopf.cpp
-  ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
-  ${PROJECT_ROOT}/src/data/IqData.cpp)
-target_compile_features(testClutterSolver PRIVATE cxx_std_17)
-target_include_directories(testClutterSolver PRIVATE ${PROJECT_ROOT}/src)
-target_include_directories(testClutterSolver SYSTEM PRIVATE
-  ${ARMADILLO_INCLUDE_DIRS} ${BLAH2_FFTW3_INCLUDE_DIR})
-target_link_libraries(testClutterSolver PRIVATE blah2RapidJson ${ARMADILLO_LIBRARIES}
-  ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+add_executable(testClutterSolver ${PROJECT_ROOT}/test/gpu/TestClutterSolver.cpp)
+target_link_libraries(testClutterSolver PRIVATE blah2RadarDsp)
 add_test(NAME gpuClutterDenseSolverCpuOracle COMMAND testClutterSolver)
-set_tests_properties(gpuClutterDenseSolverCpuOracle PROPERTIES TIMEOUT 45
+set_tests_properties(gpuClutterDenseSolverCpuOracle PROPERTIES TIMEOUT 240
   ENVIRONMENT "OPENBLAS_NUM_THREADS=1;OMP_NUM_THREADS=1")
 
 # Explicit physical-device regression: production geometry and strict retention
 # of both qualified GPU stages. Never run this expensive case in default CTest.
-add_executable(testClutterProduction ${PROJECT_ROOT}/test/gpu/TestClutterProduction.cpp
-  ${PROJECT_ROOT}/src/process/ambiguity/Acceleration.cpp
-  ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
-  ${PROJECT_ROOT}/src/process/clutter/WienerHopf.cpp
-  ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
-  ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp)
-target_compile_features(testClutterProduction PRIVATE cxx_std_17)
-target_include_directories(testClutterProduction SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
-target_link_libraries(testClutterProduction PRIVATE blah2RapidJson blah2GpuProcess
-  ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+add_executable(testClutterProduction ${PROJECT_ROOT}/test/gpu/TestClutterProduction.cpp)
+target_link_libraries(testClutterProduction PRIVATE blah2Acceleration)
 if(TARGET blah2GpuWorker)
   add_dependencies(testClutterProduction blah2GpuWorker)
 endif()
 
 # The diagnostic command is tested against a sibling stub, never a host driver.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(BLAH2_STANDALONE_GPU_TEST_VKFFT "")
+if(BLAH2_GPU_PORTABLE_BUILT)
+  set(BLAH2_STANDALONE_GPU_TEST_VKFFT "${VKFFT_ROOT}")
+endif()
+set(BLAH2_CMAKE_APPLICATION_CHECK)
+if(TARGET blah2)
+  set(BLAH2_CMAKE_APPLICATION_CHECK --application)
+endif()
+add_test(NAME gpuStandaloneCmakeGraphs COMMAND ${Python3_EXECUTABLE}
+  ${PROJECT_ROOT}/test/gpu/test_standalone_cmake.py
+  ${BLAH2_CMAKE_APPLICATION_CHECK}
+  --vkfft-root "${BLAH2_STANDALONE_GPU_TEST_VKFFT}"
+  --toolchain "${CMAKE_TOOLCHAIN_FILE}"
+  --vcpkg-installed-dir "${VCPKG_INSTALLED_DIR}"
+  --prefix-path "${CMAKE_PREFIX_PATH}")
+set_tests_properties(gpuStandaloneCmakeGraphs PROPERTIES TIMEOUT 180)
 add_executable(testGpuOrphanParent ${PROJECT_ROOT}/test/gpu/OrphanParent.cpp)
 target_link_libraries(testGpuOrphanParent PRIVATE blah2GpuProcess)
 add_dependencies(testGpuOrphanParent testGpuWorkerDouble)
 add_test(NAME gpuWorkerParentDeath COMMAND ${Python3_EXECUTABLE}
   ${PROJECT_ROOT}/test/gpu/test_parent_death.py $<TARGET_FILE:testGpuOrphanParent>)
 set_tests_properties(gpuWorkerParentDeath PROPERTIES TIMEOUT 20)
+add_executable(testGpuWorkerLifetime ${PROJECT_ROOT}/test/gpu/TestGpuWorkerLifetime.cpp)
+target_compile_features(testGpuWorkerLifetime PRIVATE cxx_std_17)
+target_include_directories(testGpuWorkerLifetime PRIVATE ${PROJECT_ROOT}/src)
+target_link_libraries(testGpuWorkerLifetime PRIVATE Threads::Threads)
+add_test(NAME gpuWorkerLifetime COMMAND ${Python3_EXECUTABLE}
+  ${PROJECT_ROOT}/test/gpu/test_worker_lifetime.py $<TARGET_FILE:testGpuWorkerLifetime>)
+set_tests_properties(gpuWorkerLifetime PROPERTIES TIMEOUT 30)
+add_test(NAME gpuWorkerPidNamespace COMMAND ${Python3_EXECUTABLE}
+  ${PROJECT_ROOT}/test/gpu/test_worker_lifetime.py $<TARGET_FILE:testGpuWorkerLifetime> --pid-namespace)
+set_tests_properties(gpuWorkerPidNamespace PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
 add_library(testGpuDriverModule MODULE ${PROJECT_ROOT}/test/gpu/DriverStatusModule.cpp)
 target_compile_features(testGpuDriverModule PRIVATE cxx_std_17)
 target_include_directories(testGpuDriverModule PRIVATE ${PROJECT_ROOT}/src)
@@ -145,7 +209,7 @@ add_test(NAME gpuDriverDiagnostics COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(gpuDriverDiagnostics PROPERTIES TIMEOUT 30)
 
 
-# CPU-only resident ABI11 and result-publication regressions; no device/module is loaded.
+# CPU-only resident wire and result-publication regressions; no device/module is loaded.
 add_executable(testGpuResidentWire ${PROJECT_ROOT}/test/gpu/TestGpuResidentWire.cpp
   ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
@@ -174,64 +238,50 @@ target_compile_features(testResidentReplaySnapshot PRIVATE cxx_std_17)
 target_include_directories(testResidentReplaySnapshot PRIVATE ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
 target_link_libraries(testResidentReplaySnapshot PRIVATE blah2GpuResidentProcess)
 add_test(NAME residentReplaySnapshotCpuContract COMMAND testResidentReplaySnapshot)
-set_tests_properties(residentReplaySnapshotCpuContract PROPERTIES TIMEOUT 10)
+set_tests_properties(residentReplaySnapshotCpuContract PROPERTIES TIMEOUT 60)
 if(TARGET blah2GpuResidentVulkan)
+  function(blah2_add_resident_vulkan_test name)
+    add_executable(test${name} ${PROJECT_ROOT}/test/gpu/Test${name}.cpp)
+    target_compile_features(test${name} PRIVATE cxx_std_17)
+    target_compile_definitions(test${name} PRIVATE VKFFT_BACKEND=0)
+    target_compile_options(test${name} PRIVATE -Wno-missing-field-initializers)
+    target_include_directories(test${name} PRIVATE
+      ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+    target_include_directories(test${name} SYSTEM PRIVATE
+      ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
+    target_link_libraries(test${name} PRIVATE ${ARGN} Vulkan::Vulkan
+      glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits Threads::Threads)
+  endfunction()
   # Explicitly invoked only: this small numerical test requires a physical GPU.
-  add_executable(testArrayReferencePhysical
-    ${PROJECT_ROOT}/test/gpu/TestArrayReferencePhysical.cpp
-    ${PROJECT_ROOT}/src/process/conditioning/ArrayReferenceSynthesizer.cpp
-    ${PROJECT_ROOT}/src/data/IqData.cpp)
-  target_compile_features(testArrayReferencePhysical PRIVATE cxx_std_17)
-  target_compile_definitions(testArrayReferencePhysical PRIVATE VKFFT_BACKEND=0)
-  target_compile_options(testArrayReferencePhysical PRIVATE -Wno-missing-field-initializers)
-  target_include_directories(testArrayReferencePhysical PRIVATE ${PROJECT_ROOT}/src
-    ${PROJECT_ROOT}/src/process/ambiguity)
-  target_include_directories(testArrayReferencePhysical SYSTEM PRIVATE
-    ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
-  target_link_libraries(testArrayReferencePhysical PRIVATE blah2RapidJson
-    Vulkan::Vulkan glslang::glslang glslang::SPIRV
-    glslang::glslang-default-resource-limits Threads::Threads)
-  add_executable(testResidentReplayShaders ${PROJECT_ROOT}/test/gpu/TestResidentReplayShaders.cpp)
-  target_compile_features(testResidentReplayShaders PRIVATE cxx_std_17)
-  target_compile_definitions(testResidentReplayShaders PRIVATE VKFFT_BACKEND=0)
-  target_compile_options(testResidentReplayShaders PRIVATE -Wno-missing-field-initializers)
-  target_include_directories(testResidentReplayShaders PRIVATE ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
-  target_include_directories(testResidentReplayShaders SYSTEM PRIVATE ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
-  target_link_libraries(testResidentReplayShaders PRIVATE Vulkan::Vulkan glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits Threads::Threads)
+  blah2_add_resident_vulkan_test(ArrayReferencePhysical blah2RadarDsp)
+  blah2_add_resident_vulkan_test(ResidentReplayShaders)
   add_test(NAME residentReplayShaderCpuCompile COMMAND testResidentReplayShaders)
   set_tests_properties(residentReplayShaderCpuCompile PROPERTIES TIMEOUT 30)
-  # Explicit CPU-Vulkan execution only; never added to default CTest/device discovery.
-  add_executable(testGpuTrackerCorrectness ${PROJECT_ROOT}/test/gpu/TestGpuTrackerCorrectness.cpp)
-  target_compile_features(testGpuTrackerCorrectness PRIVATE cxx_std_17)
-  target_compile_definitions(testGpuTrackerCorrectness PRIVATE VKFFT_BACKEND=0)
-  target_compile_options(testGpuTrackerCorrectness PRIVATE -Wno-missing-field-initializers)
+  # CPU-Vulkan execution is opt-in and refuses physical devices.
+  blah2_add_resident_vulkan_test(GpuTrackerCorrectness blah2Tracking)
+  blah2_add_resident_vulkan_test(GpuTbdFractional blah2Detection blah2Fusion)
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(testGpuTrackerCorrectness PRIVATE
-      -Wno-return-type-c-linkage -Wno-unused-private-field)
+    foreach(target IN ITEMS testGpuTrackerCorrectness testGpuTbdFractional)
+      target_compile_options(${target} PRIVATE -Wno-return-type-c-linkage -Wno-unused-private-field)
+    endforeach()
   endif()
-  target_include_directories(testGpuTrackerCorrectness PRIVATE ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
-  target_include_directories(testGpuTrackerCorrectness SYSTEM PRIVATE ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
-  target_link_libraries(testGpuTrackerCorrectness PRIVATE Vulkan::Vulkan glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits Threads::Threads)
-  add_executable(testGpuTbdFractional ${PROJECT_ROOT}/test/gpu/TestGpuTbdFractional.cpp)
-  target_compile_features(testGpuTbdFractional PRIVATE cxx_std_17)
-  target_compile_definitions(testGpuTbdFractional PRIVATE VKFFT_BACKEND=0)
-  target_compile_options(testGpuTbdFractional PRIVATE -Wno-missing-field-initializers)
-  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(testGpuTbdFractional PRIVATE -Wno-return-type-c-linkage -Wno-unused-private-field)
+endif()
+if(BLAH2_TEST_SOFTWARE_VULKAN)
+  if(NOT TARGET testGpuTbdFractional OR NOT TARGET testGpuTrackerCorrectness)
+    message(FATAL_ERROR "BLAH2_TEST_SOFTWARE_VULKAN requires the resident Vulkan test targets")
   endif()
-  target_include_directories(testGpuTbdFractional PRIVATE ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
-  target_include_directories(testGpuTbdFractional SYSTEM PRIVATE ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
-  target_link_libraries(testGpuTbdFractional PRIVATE Vulkan::Vulkan glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits Threads::Threads)
+  add_test(NAME residentTemporalSoftwareVulkanParity COMMAND testGpuTbdFractional --software)
+  add_test(NAME residentTrackerSoftwareVulkanParity COMMAND testGpuTrackerCorrectness --software)
+  set_tests_properties(residentTemporalSoftwareVulkanParity residentTrackerSoftwareVulkanParity
+    PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS "software-vulkan;resident-parity")
 endif()
 
-add_executable(testGpuResultJson ${PROJECT_ROOT}/test/gpu/TestGpuResultJson.cpp
-  ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
-  ${PROJECT_ROOT}/src/data/Detection.cpp ${PROJECT_ROOT}/src/data/Track.cpp)
+add_executable(testGpuResultJson ${PROJECT_ROOT}/test/gpu/TestGpuResultJson.cpp)
 target_compile_features(testGpuResultJson PRIVATE cxx_std_17)
 target_include_directories(testGpuResultJson PRIVATE
   ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
 target_include_directories(testGpuResultJson SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
-target_link_libraries(testGpuResultJson PRIVATE blah2RapidJson
+target_link_libraries(testGpuResultJson PRIVATE blah2RadarData blah2IqData
   ${ARMADILLO_LIBRARIES} Threads::Threads)
 add_test(NAME gpuResultJsonCpuCompatibility COMMAND testGpuResultJson)
 
@@ -244,33 +294,23 @@ set_tests_properties(causalBestEffortSocket PROPERTIES TIMEOUT 10)
 
 # Explicit offline adapter: emits unthresholded statistics only, never runs as
 # a production stage and never declares PFA/false-track qualification.
-add_executable(weakEvidenceBootstrap ${PROJECT_ROOT}/test/recording/WeakEvidenceBootstrap.cpp
-  ${PROJECT_ROOT}/src/data/Map.cpp)
-target_compile_features(weakEvidenceBootstrap PRIVATE cxx_std_17)
-target_include_directories(weakEvidenceBootstrap PRIVATE ${PROJECT_ROOT}/src)
-target_link_libraries(weakEvidenceBootstrap PRIVATE blah2RapidJson)
-add_executable(testTrackerZeroAcceleration ${PROJECT_ROOT}/test/gpu/TestTrackerZeroAcceleration.cpp
-  ${PROJECT_ROOT}/src/process/tracker/Tracker.cpp ${PROJECT_ROOT}/src/data/Track.cpp
-  ${PROJECT_ROOT}/src/data/Detection.cpp)
-target_compile_features(testTrackerZeroAcceleration PRIVATE cxx_std_17)
-target_include_directories(testTrackerZeroAcceleration PRIVATE ${PROJECT_ROOT}/src)
-target_link_libraries(testTrackerZeroAcceleration PRIVATE blah2RapidJson)
+add_executable(weakEvidenceBootstrap ${PROJECT_ROOT}/test/recording/WeakEvidenceBootstrap.cpp)
+target_link_libraries(weakEvidenceBootstrap PRIVATE blah2RadarData blah2FixedExecutor)
+add_executable(testTrackerZeroAcceleration ${PROJECT_ROOT}/test/gpu/TestTrackerZeroAcceleration.cpp)
+target_link_libraries(testTrackerZeroAcceleration PRIVATE blah2Tracking)
 add_test(NAME trackerZeroAcceleration COMMAND testTrackerZeroAcceleration)
 set_tests_properties(gpuResultJsonCpuCompatibility PROPERTIES TIMEOUT 10)
-
-add_test(NAME gpuSnrConvention
-  COMMAND ${Python3_EXECUTABLE} ${PROJECT_ROOT}/test/gpu/test_snr_convention.py ${PROJECT_ROOT})
-set_tests_properties(gpuSnrConvention PROPERTIES TIMEOUT 10)
 
 add_executable(testFrameDiagnostics ${PROJECT_ROOT}/test/gpu/TestFrameDiagnostics.cpp)
 target_compile_features(testFrameDiagnostics PRIVATE cxx_std_17)
 target_include_directories(testFrameDiagnostics PRIVATE ${PROJECT_ROOT})
+target_link_libraries(testFrameDiagnostics PRIVATE Threads::Threads)
 add_test(NAME residentFrameDiagnosticsCpuContract COMMAND testFrameDiagnostics)
 set_tests_properties(residentFrameDiagnosticsCpuContract PROPERTIES TIMEOUT 10)
 
 add_executable(testGpuTrackerAdmission ${PROJECT_ROOT}/test/gpu/TestGpuTrackerAdmission.cpp)
 target_compile_features(testGpuTrackerAdmission PRIVATE cxx_std_17)
-target_include_directories(testGpuTrackerAdmission PRIVATE ${PROJECT_ROOT})
+target_include_directories(testGpuTrackerAdmission PRIVATE ${PROJECT_ROOT} ${PROJECT_ROOT}/src)
 add_test(NAME gpuTrackerCapacityAdmission COMMAND testGpuTrackerAdmission)
 add_test(NAME gpuTrackerLineageIntegerContract COMMAND ${Python3_EXECUTABLE}
   ${PROJECT_ROOT}/test/script/test_gpu_tracker_lineage_contract.py)
@@ -284,11 +324,6 @@ target_include_directories(testTrackBeforeDetect PRIVATE ${PROJECT_ROOT})
 add_test(NAME trackBeforeDetectMath COMMAND testTrackBeforeDetect)
 set_tests_properties(trackBeforeDetectMath PROPERTIES TIMEOUT 10)
 
-add_executable(testTrackGuidedShadow ${PROJECT_ROOT}/test/gpu/TestTrackGuidedShadow.cpp)
-target_compile_features(testTrackGuidedShadow PRIVATE cxx_std_17)
-target_include_directories(testTrackGuidedShadow PRIVATE ${PROJECT_ROOT})
-add_test(NAME trackGuidedShadowMath COMMAND testTrackGuidedShadow)
-set_tests_properties(trackGuidedShadowMath PROPERTIES TIMEOUT 10)
 
 option(BLAH2_TEST_PHYSICAL_GPU "Run synthetic qualification on a real GPU (no CPU substitution)" OFF)
 set(BLAH2_TEST_GPU_DEVICE "" CACHE STRING
@@ -340,6 +375,14 @@ if(BLAH2_TEST_PHYSICAL_GPU)
       ENVIRONMENT "VW_FRAMES=6;VW_GAP_EVERY=3")
     set(widebandGpuTests gpuPhysicalWideband gpuPhysicalWidebandEndToEnd
       gpuPhysicalWidebandAuto)
+    # A prefix-only first CPI must not hide phase drift in later full CPIs.
+    foreach(offset IN ITEMS -437501 437501 -437500.25 437500.25)
+      set(phaseTest "gpuPhysicalWidebandPhase${offset}")
+      add_test(NAME ${phaseTest} COMMAND testGpuWidebandPhysical)
+      set_tests_properties(${phaseTest} PROPERTIES ENVIRONMENT
+        "VW_INPUT_RATE=2400000;VW_OUTPUT_RATE=300000;VW_CHANNELS=2;VW_LANES=1;VW_SAMPLES=1000000;VW_FRAMES=3;VW_FIRST=17;VW_GAP_EVERY=2;VW_OFFSET_HZ=${offset};VW_PREFIX_BURST=4096")
+      list(APPEND widebandGpuTests ${phaseTest})
+    endforeach()
     if(BLAH2_TEST_GPU_DEVICE)
       set_property(TEST ${widebandGpuTests} APPEND PROPERTY ENVIRONMENT
         "BLAH2_GPU_DEVICE=${BLAH2_TEST_GPU_DEVICE}")

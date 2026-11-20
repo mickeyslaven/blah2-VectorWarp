@@ -69,7 +69,7 @@ paired detection, track continuity and unmatched/false-track burden.
 HomePortal is running the hashed Display2 GPU artifact from
 `/opt/vectorwarp/releases/20261113T1914-shadow-score-ledger` (processor SHA-256
 `fef634f92b4e3e3e9718a6d4f880c5c042737e890c6bc1658133f7e23110e5de`).
-The WPXI observer has
+The selected observer (portable channel alias TX-C) has
 `score_tracks: true` and `max_cpis: 8`; production detection/tracking remains
 unchanged. After activation it reached all 1/2/4/8 banks with the portable GPU
 path active. At 442 accepted observations it remained enabled with zero

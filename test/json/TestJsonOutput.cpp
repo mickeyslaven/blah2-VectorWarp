@@ -1,9 +1,15 @@
 #include "LegacyJson.h"
 #include "data/Detection.h"
+#include <array>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <random>
 #include <time.h>
@@ -52,7 +58,56 @@ Map<Complex> fixture(uint32_t rows, uint32_t columns = 256) {
   source.set_metrics();
   return source;
 }
+void saveCompatibility() {
+  char pattern[] = "/tmp/vectorwarp-json-save-XXXXXX";
+  const char* directory = mkdtemp(pattern);
+  require(directory, "Cannot create save-test directory");
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+  } cleanup{directory};
+  Detection detection(1, 2, 3);
+  Map<double> real(1, 1);
+  Map<Complex> complex(1, 1);
+  const std::vector<std::function<bool(std::string, std::string)>> saves{
+    [&](auto value, auto path) { return detection.save(value, path); },
+    [&](auto value, auto path) { return real.save(value, path); },
+    [&](auto value, auto path) { return complex.save(value, path); }};
+  const auto read = [](const auto& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), {});
+  };
+  unsigned sequence = 0;
+  const std::array<std::string, 10> initialValues{
+    "", "[", "]", "{}", " []", "[]\n", "[]", "[1]", "[ ]", "[invalid]"};
+  for (const auto& save : saves) {
+    for (const std::string& payload : {std::string{}, std::string("{\"n\":1.2300}"),
+        std::string("NaN"), std::string("null\0tail", 9)}) {
+      for (const std::string& initial : initialValues) {
+        const auto path = cleanup.path / std::to_string(++sequence);
+        { std::ofstream file(path, std::ios::binary); file << initial; }
+        const bool accepted = initial == "[]" || initial == "[1]" ||
+          initial == "[ ]" || initial == "[invalid]";
+        require(save(payload, path.string()) == accepted, "Save boundary acceptance changed");
+        const std::string expected = !accepted ? initial :
+          initial.substr(0, initial.size() - 1) + (initial == "[]" ? "" : ",") + payload + "]";
+        same(expected, read(path), "save exact payload bytes");
+      }
+      const auto path = cleanup.path / std::to_string(++sequence);
+      require(save(payload, path.string()), "Save did not initialize a missing file");
+      same("[" + payload + "]", read(path), "new save file");
+      require(save("null", path.string()), "Save could not append a second value");
+      same(payload.empty() ? "[null]" : "[" + payload + ",null]", read(path), "second append");
+    }
+    const std::string alias = (cleanup.path / std::to_string(++sequence)).string();
+    require(save(alias, alias), "Aliased payload/filename failed");
+    same("[" + alias + "]", read(alias), "aliased save strings");
+    require(!save("null", cleanup.path.string()), "Directory accepted as JSON file");
+    require(!save("null", (cleanup.path / "absent" / "file").string()), "Missing parent accepted");
+  }
+}
 void correctness() {
+  saveCompatibility();
   auto source = fixture(3, 7);
   source.delay = {-10, -5, -1, 0, 1, 245, std::numeric_limits<int>::max()};
   source.doppler = {-4800.1234567, -0.0, 1e-300};

@@ -28,15 +28,24 @@ public:
   // caller supplies private nonzero IQ and must not publish these frames.
   bool startupPending() const;
   void prepareStartup(const std::function<void(unsigned)>& processFrame);
+  // Poll transient worker recovery before the caller selects CPU/GPU stage
+  // ownership for a new CPI. This must happen outside processClutter(): after
+  // a clutter-worker fault the safe CPU borrowed path intentionally stops
+  // calling that method, but still needs a route back to the GPU.
+  void beginFrame();
   void process(const std::deque<std::complex<double>>& reference,
     const std::vector<IqData*>& surveillance, const std::vector<Ambiguity*>& cpu,
     const CpuRun& cpuRun);
+  void process(IqSampleView reference, const std::vector<IqData*>& surveillance,
+    const std::vector<Ambiguity*>& cpu, const CpuRun& cpuRun);
   void processBorrowed(const std::complex<double>* rotatedReference,
     const std::vector<const std::complex<double>*>& filteredSurveillance,
     uint32_t fullSamples, int32_t referenceRotation,
     const std::vector<Ambiguity*>& cpu, const CpuRun& cpuRun);
   bool processClutter(const IqData& reference, const std::vector<IqData*>& surveillance,
     const ClutterCpuRun& cpuRun);
+  bool processClutter(const IqData& reference, const std::vector<IqData*>& surveillance,
+    const ClutterCpuRun& cpuRun, const CpuRun& hostWork);
   const AccelerationStatus& status() const { return status_; }
   const AccelerationStatus& clutterStatus() const { return clutterStatus_; }
   const ClutterTiming& clutterTiming() const { return clutterTiming_; }
@@ -48,10 +57,18 @@ public:
   }
   bool ambiguityGpuExecuted() const { return ambiguityGpuExecuted_; }
   bool ambiguityCpuExecuted() const { return ambiguityCpuExecuted_; }
+  // Diagnostic ownership only; proves a retired backend does not keep large
+  // staging allocations resident for the remainder of a live session.
+  std::size_t retainedScratchBytes() const {
+    return (reference_.capacity() + surveillance_.capacity() + output_.capacity()) *
+      sizeof(std::complex<float>) + cpuClutter_.capacity() * sizeof(cpuClutter_[0]);
+  }
 private:
   void fallback(const std::string& message);
+  void recoverWorkerIfPending();
+  static bool recoverableWorkerFailure(const std::string& message);
   void disableAmbiguity(const std::string& message);
-  void processInput(const std::deque<std::complex<double>>& reference,
+  void processInput(IqSampleView reference,
     const std::vector<IqData*>& surveillance,
     const std::complex<double>* borrowedReference,
     const std::vector<const std::complex<double>*>& borrowedSurveillance,
@@ -62,6 +79,8 @@ private:
   uint32_t correlation_, sampleRate_;
   double middle_;
   std::unique_ptr<GpuBackend> gpu_;
+  BackendFactory backendFactory_;
+  std::string deviceSelector_;
   AccelerationStatus status_;
   AccelerationStatus clutterStatus_;
   unsigned checks_ = 0;
@@ -78,5 +97,8 @@ private:
   ClutterTiming clutterTiming_;
   bool ambiguityGpuExecuted_ = false;
   bool ambiguityCpuExecuted_ = false;
+  bool recoveryPending_ = false;
+  unsigned recoveryFailures_ = 0;
+  unsigned recoveryCooldownFrames_ = 0;
 };
 }

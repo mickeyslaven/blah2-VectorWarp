@@ -33,10 +33,8 @@ const TRACKER_DIAGNOSTIC_KEYS = new Set(['no_op', 'detections', 'tracks_before',
   'pair_delay_rejected', 'pair_doppler_rejected', 'pair_innovation_rejected',
   'pair_in_gate', 'associations', 'misses', 'promotions', 'tentative_expired',
   'inactivity_deleted', 'birth_candidates', 'birth_snr_rejected',
-  'birth_ridge_rejected', 'birth_exclusive_rejected', 'initiated',
-  'weak_support_candidates', 'weak_support_in_gate', 'weak_support_accepted',
-  'weak_support_credited_cpis',
-  'weak_support_lineage_rejected']);
+  'birth_ridge_rejected', 'initiated',
+]);
 const STAGES = new Set(['input', 'candidate_generation', 'candidate_pruning', 'association', 'branch_survival', 'track_publication', 'tracker_frame']);
 const REASONS = new Set(['interval', 'no_candidates', 'candidate_admitted', 'candidate_rejected',
   'branch_continues', 'branch_terminated', 'not_emitted', 'reset_input', 'duplicate']);
@@ -82,9 +80,12 @@ function validateFrame(frame) {
     for (const key of ['input_epoch', 'first_sample', 'end_sample'])
       if (frame.lineage[key] !== undefined && !exactUint64(frame.lineage[key]))
         throw new Error('Invalid capture sample lineage');
-    if ((frame.lineage.first_sample === undefined) !== (frame.lineage.end_sample === undefined) ||
+    // Raw capture bounds are half-open; lane bounds below keep their native
+    // inclusive last-sample convention and may describe a single sample.
+    if ((frame.lineage.input_epoch === undefined) !== (frame.lineage.first_sample === undefined) ||
+        (frame.lineage.first_sample === undefined) !== (frame.lineage.end_sample === undefined) ||
         (frame.lineage.first_sample !== undefined &&
-          BigInt(frame.lineage.end_sample) < BigInt(frame.lineage.first_sample)))
+          BigInt(frame.lineage.end_sample) <= BigInt(frame.lineage.first_sample)))
       throw new Error('Invalid capture sample interval');
     if (frame.channel !== undefined &&
         (typeof frame.channel !== 'string' ||
@@ -188,6 +189,11 @@ function canonicalEpoch(config) {
       api_ingest_enabled: options.api_ingest_enabled === true}};
 }
 
+function encodeEpoch(epoch) {
+  return JSON.stringify({...epoch, fingerprint: crypto.createHash('sha256')
+    .update(JSON.stringify(epoch)).digest('hex')}) + '\n';
+}
+
 class CausalFunnelRecorder {
   constructor(config, {fileSystem = fs, now = () => Date.now()} = {}) {
     this.options = {...(config.process?.evidence?.causal_funnel || {})};
@@ -201,8 +207,11 @@ class CausalFunnelRecorder {
     // Native socket tracing and API-ingested multi-illuminator tracing are
     // separate capabilities. The latter must not make a non-resident native
     // processor attempt the resident-only diagnostic path.
-    this.enabled = this.options.enabled === true || this.options.api_ingest_enabled === true;
+    this.nativeEnabled = this.options.enabled === true;
+    this.apiIngestEnabled = this.options.api_ingest_enabled === true;
+    this.enabled = this.nativeEnabled || this.apiIngestEnabled;
     this.state = {schema: 'vectorwarp-causal-funnel-status-v1', enabled: this.enabled,
+      native_enabled: this.nativeEnabled, api_ingest_enabled: this.apiIngestEnabled,
       active: false, epoch_id: this.options.epoch_id || null, truth_blind: true,
       synthetic_only: false, queued: 0, queued_bytes: 0, accepted: 0, written: 0, dropped: 0,
       rejected: 0, native_received: 0, rotations: 0, retained_files: 0, last_write_at: null, error: null};
@@ -210,7 +219,7 @@ class CausalFunnelRecorder {
 
   status() { return {...this.state, queued: this.queue.length, queued_bytes: this.queueBytes, active: this.writing}; }
 
-  accept(text) {
+  accept(text, {nativeTransport = false} = {}) {
     if (!this.enabled) return false;
     let frame, record, bytes;
     try {
@@ -232,7 +241,7 @@ class CausalFunnelRecorder {
       this.state.dropped += 1; return false;
     }
     this.queue.push({record, bytes}); this.queueBytes += bytes; this.state.accepted += 1;
-    if (frame.source === 'native') this.state.native_received += 1;
+    if (nativeTransport) this.state.native_received += 1;
     if (!this.writing) void this.drain();
     return true;
   }
@@ -243,13 +252,21 @@ class CausalFunnelRecorder {
 
   async prepareEpoch() {
     await this.fs.promises.mkdir(this.options.path, {recursive: true, mode: 0o700});
-    const manifest = JSON.stringify({...this.epoch, fingerprint: crypto.createHash('sha256')
-      .update(JSON.stringify(this.epoch)).digest('hex')}) + '\n';
+    const manifest = encodeEpoch(this.epoch);
     try { await this.fs.promises.writeFile(this.manifestFile(), manifest, {flag: 'wx', mode: 0o600}); }
     catch (error) {
       if (error.code !== 'EEXIST') throw error;
       const existing = await this.fs.promises.readFile(this.manifestFile(), 'utf8');
-      if (existing !== manifest) throw new Error('Causal funnel epoch manifest is immutable and does not match this configuration');
+      // Older v2 native-only epochs omitted this subsequently added false
+      // default. Accept exactly that prior signed representation, preserving
+      // its bytes. Enabled API ingestion or any other change remains a new
+      // contract and must not reuse the immutable epoch.
+      if (existing !== manifest) {
+        const nativeOnly = {...this.epoch, config: {...this.epoch.config}};
+        delete nativeOnly.config.api_ingest_enabled;
+        if (this.epoch.config.api_ingest_enabled !== false || existing !== encodeEpoch(nativeOnly))
+          throw new Error('Causal funnel epoch manifest is immutable and does not match this configuration');
+      }
     }
     await this.fs.promises.chmod(this.manifestFile(), 0o600);
     if (!this.epochPrepared) {

@@ -9,11 +9,95 @@ namespace
 {
 void normalize(std::vector<std::complex<double>>& values)
 {
+  // Normalize direction, never absolute IQ energy. Scaling first also avoids
+  // squaring a finite subnormal/large covariance iterate into zero/infinity.
+  double scale = 0;
+  for (const auto& value : values) {
+    if (!std::isfinite(value.real()) || !std::isfinite(value.imag()))
+      throw std::invalid_argument("Nonfinite array-reference iterate");
+    scale = std::max({scale, std::abs(value.real()), std::abs(value.imag())});
+  }
+  if (scale == 0) return;
   double power = 0;
-  for (const auto& value : values) power += std::norm(value);
-  const double norm = std::sqrt(std::max(power, 1e-30));
+  for (auto& value : values) { value /= scale; power += std::norm(value); }
+  const double norm = std::sqrt(power);
   for (auto& value : values) value /= norm;
 }
+}
+
+std::optional<std::complex<double>> ArrayReferenceSynthesizer::direct_path_pilot(
+  const IqData& reference, const std::vector<std::unique_ptr<IqData>>& surveillance,
+  const std::vector<uint32_t>& surveillanceChannels,
+  const std::vector<uint32_t>& referenceChannels,
+  const std::vector<std::complex<double>>& referenceWeights)
+{
+  const auto referenceSamples = reference.sample_view();
+  if (referenceSamples.empty() || surveillance.size() != surveillanceChannels.size())
+    return std::nullopt;
+  std::complex<double> pilot{};
+  for (std::size_t path = 0; path < surveillance.size(); ++path)
+  {
+    const auto samples = surveillance[path]->sample_view();
+    if (samples.size() != referenceSamples.size()) return std::nullopt;
+    std::complex<double> correlation{};
+    double referenceEnergy = 0, surveillanceEnergy = 0;
+    for (std::size_t sample = 0; sample < samples.size(); ++sample)
+    {
+      correlation += samples[sample] * std::conj(referenceSamples[sample]);
+      referenceEnergy += std::norm(referenceSamples[sample]);
+      surveillanceEnergy += std::norm(samples[sample]);
+    }
+    const double normalization = std::sqrt(referenceEnergy * surveillanceEnergy);
+    if (!(normalization > 1e-30) || !std::isfinite(normalization)) continue;
+    auto weight = std::complex<double>{1, 0};
+    const auto found = std::find(referenceChannels.begin(), referenceChannels.end(),
+      surveillanceChannels[path]);
+    if (found != referenceChannels.end())
+    {
+      const std::size_t index = std::distance(referenceChannels.begin(), found);
+      if (index < referenceWeights.size()) weight = std::conj(referenceWeights[index]);
+    }
+    pilot += weight * correlation / normalization;
+  }
+  if (!std::isfinite(pilot.real()) || !std::isfinite(pilot.imag()) ||
+      std::abs(pilot) <= 1e-30) return std::nullopt;
+  return pilot;
+}
+
+std::optional<std::complex<double>>
+ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+  const IqData& reference,
+  const std::vector<std::unique_ptr<IqData>>& surveillance,
+  const std::vector<uint32_t>& surveillanceChannels,
+  uint32_t anchorChannelId)
+{
+  const auto found = std::find(surveillanceChannels.begin(),
+    surveillanceChannels.end(), anchorChannelId);
+  if (found == surveillanceChannels.end() ||
+      surveillance.size() != surveillanceChannels.size()) return std::nullopt;
+  const auto index = std::size_t(std::distance(surveillanceChannels.begin(), found));
+  const auto referenceSamples = reference.sample_view();
+  const auto anchorSamples = surveillance[index]->sample_view();
+  if (referenceSamples.empty() || anchorSamples.size() != referenceSamples.size())
+    return std::nullopt;
+  std::complex<double> correlation{};
+  double referenceEnergy = 0, anchorEnergy = 0;
+  for (std::size_t sample = 0; sample < referenceSamples.size(); ++sample)
+  {
+    const auto r = referenceSamples[sample], a = anchorSamples[sample];
+    if (!std::isfinite(r.real()) || !std::isfinite(r.imag()) ||
+        !std::isfinite(a.real()) || !std::isfinite(a.imag())) return std::nullopt;
+    correlation += a * std::conj(r);
+    referenceEnergy += std::norm(r); anchorEnergy += std::norm(a);
+  }
+  const double normalization = std::sqrt(referenceEnergy * anchorEnergy);
+  if (!(normalization > 1e-30) || !std::isfinite(normalization))
+    return std::nullopt;
+  const auto pilot = correlation / normalization;
+  if (!std::isfinite(pilot.real()) || !std::isfinite(pilot.imag()) ||
+      !(std::norm(pilot) > 0) || std::norm(pilot) > 1 + 1e-9)
+    return std::nullopt;
+  return pilot;
 }
 
 ArrayReferenceSynthesizer::ArrayReferenceSynthesizer()
@@ -48,8 +132,8 @@ void ArrayReferenceSynthesizer::decorrelate_surveillance_into(
 {
   if (&output == &reference || &output == &surveillance)
     throw std::invalid_argument("Common-mode output aliases an input");
-  const auto& referenceSamples = reference.view_data();
-  const auto& surveillanceSamples = surveillance.view_data();
+  const auto& referenceSamples = reference.sample_view();
+  const auto& surveillanceSamples = surveillance.sample_view();
   if (referenceSamples.empty() || referenceSamples.size() != surveillanceSamples.size() ||
       surveillanceSamples.size() > output.get_n())
     throw std::invalid_argument("Common-mode samples are not aligned");
@@ -72,7 +156,7 @@ void ArrayReferenceSynthesizer::decorrelate_surveillance_into(
     config.commonModeDecorrelation : 0;
   const auto coefficient = fraction > 0 ? fraction * cross / referencePower :
     std::complex<double>{};
-  auto& result = output.resize_for_write(static_cast<uint32_t>(surveillanceSamples.size()));
+  auto& result = output.resize_contiguous_for_write(static_cast<uint32_t>(surveillanceSamples.size()));
   for (std::size_t index = 0; index < result.size(); ++index)
     result[index] = surveillanceSamples[index] - coefficient * referenceSamples[index];
   metrics.commonModeCoherence = coherence;
@@ -102,20 +186,20 @@ void ArrayReferenceSynthesizer::process_into(
     throw std::invalid_argument("Array reference requires two to eight channels");
   if (!channels.front())
     throw std::invalid_argument("Array-reference channel is null");
-  const std::size_t samples = channels.front()->view_data().size();
+  const std::size_t samples = channels.front()->sample_view().size();
   if (!samples) throw std::invalid_argument("Array-reference CPI is empty");
   for (const auto *channel : channels)
-    if (!channel || channel->view_data().size() != samples)
+    if (!channel || channel->sample_view().size() != samples)
       throw std::invalid_argument("Array-reference channels are not aligned");
   if (samples > output.get_n())
     throw std::invalid_argument("Array-reference output capacity is too small");
-  std::vector<const std::deque<std::complex<double>>*> input;
+  std::vector<IqSampleView> input;
   input.reserve(channels.size());
   for (const auto *channel : channels)
   {
     if (channel == &output)
       throw std::invalid_argument("Array-reference output aliases an input");
-    input.push_back(&channel->view_data());
+    input.push_back(channel->sample_view());
   }
 
   const std::size_t count = channels.size();
@@ -137,8 +221,8 @@ void ArrayReferenceSynthesizer::process_into(
     {
       for (std::size_t left = 0; left < count; left++)
         for (std::size_t right = 0; right < count; right++)
-          covariance[left][right] += (*input[left])[sample] *
-            std::conj((*input[right])[sample]);
+          covariance[left][right] += input[left][sample] *
+            std::conj(input[right][sample]);
       observations++;
     }
     double trace = 0;
@@ -153,6 +237,10 @@ void ArrayReferenceSynthesizer::process_into(
       throw std::invalid_argument("Nonfinite array-reference covariance");
     for (std::size_t channel = 0; channel < count; channel++)
       covariance[channel][channel] += loading;
+    metrics.covariance.clear();
+    metrics.covariance.reserve(count * count);
+    for (const auto& row : covariance)
+      metrics.covariance.insert(metrics.covariance.end(), row.begin(), row.end());
 
     const auto beamPower = [&](const std::vector<std::complex<double>>& w) {
       std::complex<double> value{};
@@ -265,7 +353,7 @@ void ArrayReferenceSynthesizer::process_into(
     metrics.updates++;
   }
 
-  auto& combined = output.resize_for_write(static_cast<uint32_t>(samples));
+  auto& combined = output.resize_contiguous_for_write(static_cast<uint32_t>(samples));
   double inputPower = 0;
   double outputPower = 0;
   double directOutputPower = 0;
@@ -275,7 +363,7 @@ void ArrayReferenceSynthesizer::process_into(
     std::complex<double> directCombined{};
     for (std::size_t channel = 0; channel < count; channel++)
     {
-      const auto value = (*input[channel])[sample];
+      const auto value = input[channel][sample];
       if (!std::isfinite(value.real()) || !std::isfinite(value.imag()))
         throw std::invalid_argument("Nonfinite array-reference IQ");
       combined[sample] += std::conj(metrics.weights[channel]) *
@@ -299,7 +387,7 @@ void ArrayReferenceSynthesizer::process_into(
     for (std::size_t channel = 0; channel < count; ++channel)
     {
       double power = 0;
-      for (const auto value : *input[channel]) power += std::norm(value);
+      for (const auto value : input[channel]) power += std::norm(value);
       if (power > strongestPower) { strongest = channel; strongestPower = power; }
     }
     metrics.directPathWeights.assign(count, {});
@@ -312,7 +400,7 @@ void ArrayReferenceSynthesizer::process_into(
     if (!config.protectionRelativeSteering.empty())
       throw std::runtime_error(
         "Target protection cannot preserve its null after direct-path fallback");
-    std::copy(input[strongest]->begin(), input[strongest]->end(), combined.begin());
+    input[strongest].copy_to(combined.begin(), samples);
     metrics.weights = metrics.directPathWeights;
   }
   else if (!metrics.hasSignal)

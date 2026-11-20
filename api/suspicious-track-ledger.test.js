@@ -70,4 +70,25 @@ for (let index = 0; index < 8; index += 1) totalBounded.accept(frame('a', 509_00
 assert.ok(totalBounded.snapshot().counters.evicted_active_tracks > 0,
   'the total sample bound must apply even when every sample is still active');
 
+// Regression: coincidence formation must use a one-pass inverse index rather
+// than scanning every retained event for every candidate pair.  Overriding
+// Array.includes makes the old quadratic event scan fail deterministically
+// without relying on a machine-specific wall-clock threshold.
+const indexed = new SuspiciousTrackLedger(definitions.slice(0, 2), {
+  minimumDurationMs: 0, minimumMeasuredSamples: 1, minimumMeasuredFraction: 0,
+  minimumAbsoluteDopplerHz: 0, minimumDelayMotionKm: 0,
+  minimumDopplerMotionHz: 0, coincidenceIntervalMs: Number.MAX_SAFE_INTEGER});
+indexed.accept(frame('a', 509_000_000, 0));
+indexed.accept(frame('b', 515_000_000, 0, .2, 515 / 509));
+indexed.events = Array.from({length: 64}, (_, index) => {
+  const keys = [`historical-${index}`];
+  Object.defineProperty(keys, 'includes', {value: () => {
+    throw new Error('quadratic event scan');
+  }});
+  return {event_id: `historical-event-${index}`, track_keys: keys,
+    channels: ['historical'], distinct_transmitter_sites: [], same_site_consistency: []};
+});
+assert.doesNotThrow(() => indexed.findCoincidences());
+assert.ok(indexed.events.some(item => item.channels.includes('a') && item.channels.includes('b')));
+
 console.log('Suspicious-track bounded truth-blind retention tests passed.');

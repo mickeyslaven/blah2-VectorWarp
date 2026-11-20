@@ -275,11 +275,9 @@ exit 0
     def test_current_receiver_guidance_agrees_with_policy(self):
         helper = (ROOT / "script/vectorwarp-receiver-helper.py").read_text()
         self.assertRegex(helper, r"\(4,\s*1(?:,\s*0)?\)")
-        guide = (ROOT / "api/receiver-setup-guide.js").read_text()
-        self.assertIn("UHD 4.1 or newer", guide)
-        self.assertNotIn("UHD 4.8", guide)
         for relative in ("docs/INSTALL.md", "docs/SETUP.md"):
             self.assertIn("UHD 4.1", (ROOT / relative).read_text())
+            self.assertNotIn("UHD 4.8", (ROOT / relative).read_text())
         rsp = (ROOT / "src/capture/rspduo/README.md").read_text()
         self.assertIn("gainReduction", rsp)
         self.assertIn("two values", rsp)

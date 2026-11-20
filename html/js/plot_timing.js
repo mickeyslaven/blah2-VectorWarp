@@ -1,9 +1,5 @@
 var plottedKeys = '';
 
-// setup API
-var urlTiming = liveApiUrl(radarPresentationUrl('/stash/timing'));
-var urlPresentationTiming = liveApiUrl('/api/presentation/status');
-
 function timingTraceKeys(data) {
   const singleStreamDurations = new Set(['extract_buffer', 'spectrum', 'clutter_filter',
     'ambiguity_processing', 'detector', 'tracker', 'output_radar_data']);
@@ -24,7 +20,7 @@ async function updatePresentationTiming() {
   const target = typeof document === 'undefined' ? null : document.getElementById('presentation-timing');
   if (!target) return;
   try {
-    const status = await fetchRadarJson(urlPresentationTiming);
+    const status = await readRadarDisplay('network', '/api/presentation/status', {awaitFresh: true});
     const cadence = status.cadence || {};
     const percent = Number.isFinite(cadence.within_100ms_fraction) ?
       `${Math.round(cadence.within_100ms_fraction * 100)}%` : 'Measuring';
@@ -55,62 +51,8 @@ async function updatePresentationTiming() {
 }
 
 // setup plotly
-var layout = {
-  font: {color: '#f3eee9'},
-  autosize: true,
-  margin: {
-    l: 92,
-    r: 50,
-    b: 50,
-    t: 10,
-    pad: 0
-  },
-  hoverlabel: {
-    namelength: 0
-  },
-  plot_bgcolor: "rgba(0,0,0,0)",
-  paper_bgcolor: "rgba(0,0,0,0)",
-  annotations: [],
-  // Live points should not reset a zoomed timing investigation.
-  uirevision: 'vectorwarp-timing',
-  displayModeBar: false,
-  xaxis: {
-    gridcolor: '#47362e', zerolinecolor: '#47362e',
-    title: {
-      text: xTitle,
-      font: {
-        size: 18
-      }
-    },
-    showgrid: false,
-    ticks: '',
-    side: 'bottom'
-  },
-  yaxis: {
-    gridcolor: '#47362e', zerolinecolor: '#47362e',
-    title: {
-      text: yTitle,
-      font: {
-        size: 18
-      }
-    },
-    showgrid: false,
-    ticks: '',
-    ticksuffix: ' ',
-    categoryorder: "total descending"
-  },
-  legend: {
-    orientation: "h",
-    bgcolor: "#29201c",
-    bordercolor: "#47362e",
-    borderwidth: 1
-  }
-};
-var config = {
-  responsive: true,
-  displayModeBar: false,
-  scrollZoom: true
-}
+var layout = VectorWarpPlotTheme.cartesianLayout('vectorwarp-timing', xTitle, yTitle, {legend: true});
+var config = VectorWarpPlotTheme.config(true);
 
 // setup plotly data
 var data = [
@@ -124,19 +66,14 @@ var data = [
 Plotly.react('data', data, layout, config);
 
 // callback function
-var radarUpdates = startRadarPlot(urlTiming, async function (data) {
+var vectorwarpTimingReady = startRadarDisplay('timing', async function (data) {
   void updatePresentationTiming();
   const keys = timingTraceKeys(data);
   const signature = JSON.stringify(keys);
+  data.timestamp = data.timestamp.map(value => new Date(value));
 
   // case draw new plot
   if (signature !== plottedKeys) {
-
-    // timestamp posix to js
-    for (let i = 0; i < data["timestamp"].length; i++)
-    {
-      data["timestamp"][i] = new Date(data["timestamp"][i]);
-    }
 
     var data_trace = [];
     for (let i = 0; i < keys.length; i++) {
@@ -161,11 +98,6 @@ var radarUpdates = startRadarPlot(urlTiming, async function (data) {
   }
   // case update plot
   else {
-    // timestamp posix to js
-    for (let i = 0; i < data["timestamp"].length; i++)
-    {
-      data["timestamp"][i] = new Date(data["timestamp"][i]);
-    }
     var xVec = [];
     var yVec = [];
     for (let i = 0; i < keys.length; i++) {

@@ -4,18 +4,17 @@ import json
 import re
 import subprocess
 import unittest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def artifact_matrix():
+    return json.loads(subprocess.check_output(["python3", str(ROOT / "script/artifact-plan.py"), "matrix"], text=True))["include"]
+
+
 def workflow_document():
-    # Reuse the API's existing YAML dependency; no extra Python package needed.
-    result = subprocess.run(['node', '-e',
-        "const fs=require('fs'),yaml=require('js-yaml'); "
-        "process.stdout.write(JSON.stringify(yaml.load(fs.readFileSync(process.argv[1],'utf8'))));",
-        str(ROOT / '.github/workflows/release-packages.yml')],
-        cwd=str(ROOT / 'api'), check=True, text=True, capture_output=True, timeout=10)
-    return json.loads(result.stdout)
+    return yaml.safe_load((ROOT / '.github/workflows/release-packages.yml').read_text())
 
 
 class DistributionTests(unittest.TestCase):
@@ -23,6 +22,8 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(list((ROOT / 'lib').rglob('SDRplay*.run')), [])
         self.assertEqual(list((ROOT / 'lib').rglob('libsdrplay*')), [])
         self.assertEqual(list((ROOT / 'lib').rglob('sdrplay_api*.h')), [])
+        self.assertFalse((ROOT / 'script/prepare-sdrplay-build-sdk.sh').exists(),
+                         'The retired vendor-SDK staging path must not return')
 
     def test_public_verification_does_not_take_sdk_inputs(self):
         workflow = workflow_document()
@@ -38,7 +39,7 @@ class DistributionTests(unittest.TestCase):
         package = workflow['jobs']['package']
         self.assertNotIn('environment', package)
         text = str(package)
-        self.assertEqual(text.count('--backend all'), 3)
+        self.assertEqual(text.count('script/artifact-plan.py native-package'), 3)
         self.assertNotIn('prepare-sdrplay-build-sdk.sh', text)
         self.assertNotIn('vectorwarp-sdrplay-sdk', text)
         self.assertNotIn('VECTORWARP_SDRPLAY', text)
@@ -57,11 +58,12 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(upgrade['if'], 'always()')
         self.assertTrue(upgrade['with']['name'].startswith('package-upgrade-'))
         packager = (ROOT / 'script/package-native.sh').read_text()
-        self.assertIn('release artifact must not contain the SDRplay vendor SDK or runtime', packager)
+        self.assertIn('script/artifact-plan.py" validate', packager)
+        self.assertIn('--level package', packager)
 
     def test_pr_matrix_builds_the_same_local_kit_contract(self):
         package = workflow_document()['jobs']['package']
-        matrix = package['strategy']['matrix']['include']
+        matrix = artifact_matrix()
         expected = [('ubuntu' + version, 'deb', arch)
                     for version in ('22.04', '24.04', '26.04')
                     for arch in ('amd64', 'arm64')]
@@ -73,10 +75,10 @@ class DistributionTests(unittest.TestCase):
         self.assertCountEqual([(row['distro'], row['format'], row['arch'])
                                for row in matrix], expected)
         pr_steps = [step for step in package['steps']
-                    if '--backend all' in step.get('run', '')]
+                    if 'script/artifact-plan.py native-package' in step.get('run', '')]
         self.assertEqual(len(pr_steps), 3)
         text = str(pr_steps)
-        self.assertEqual(text.count('--backend all'), 3)
+        self.assertEqual(text.count('script/artifact-plan.py native-package'), 3)
         self.assertNotIn('--test-only', text)
         self.assertNotIn('vectorwarp-sdrplay-sdk', text)
         self.assertNotIn('VECTORWARP_SDRPLAY', text)
@@ -93,7 +95,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_signed_asset_count_matches_build_matrix(self):
         workflow = workflow_document()
-        matrix = workflow['jobs']['package']['strategy']['matrix']['include']
+        matrix = artifact_matrix()
         signing = workflow['jobs']['sign-and-draft-release']
         collection = next(step for step in signing['steps']
                           if step.get('name') == 'Collect final signed release assets and checksums')

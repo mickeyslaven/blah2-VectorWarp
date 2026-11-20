@@ -4,6 +4,7 @@
 #include "HeimdallFrame.h"
 #include "HostArrivalClock.h"
 #include "capture/IqClip.h"
+#include "capture/RecordingAcquisition.h"
 
 #include <array>
 #include <atomic>
@@ -22,7 +23,8 @@ namespace blah2
 {
 // Keeps compact, raw Heimdall frames on the receive side and performs all
 // filesystem work on a bounded background queue. Ingress never waits for the
-// queue mutex: contention is an explicit clip failure and starts a new epoch.
+// queue mutex: contention is an explicit clip failure, never an acquisition
+// epoch change. Skipped recorder copies still advance the source sample count.
 class KrakenClipRecorder
 {
 public:
@@ -61,6 +63,7 @@ public:
 
   void request(const IqClipRequest& request);
   IqClipStatus status() const;
+  void set_recording_context(RecordingContext context);
   void discontinuity(const std::string& reason);
 
   // Ownership of metadata/payload moves into the bounded ring. False means
@@ -73,6 +76,9 @@ public:
   Position position() const;
 
 private:
+  // The fixture holds the real queue mutex from another thread to exercise
+  // nonblocking ingress deterministically, without a production test switch.
+  friend struct KrakenClipRecorderTestAccess;
   struct Frame;
   struct Active;
   struct Job;
@@ -82,6 +88,7 @@ private:
   uint32_t sampleRate;
   uint32_t frequency;
   Options options;
+  RecordingContext recordingContext;
   uint64_t ringSamples;
 
   mutable std::mutex mutex;
@@ -98,10 +105,12 @@ private:
   uint64_t nextSample = 0;
   uint64_t epoch = 0;
   uint64_t fileSequence = 0;
+  uint64_t ingressSequence = 0;
   kraken_timing::HostArrivalClock hostArrivalClock;
   kraken_timing::Estimate hostArrivalEstimate;
   bool hostArrivalDiscontinuity = false;
-  std::atomic<bool> ingressContention{false};
+  std::atomic<bool> pendingDiscontinuity{false};
+  std::atomic<uint64_t> skippedIngressSamples{0};
 
   int64_t now_nanoseconds() const;
   int64_t sample_for_time(int64_t timeNanoseconds) const;

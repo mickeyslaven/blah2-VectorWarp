@@ -32,6 +32,8 @@ assert.equal(defaultProvisionalEvidenceStatisticsPath(config,
   {BLAH2_PROVISIONAL_STATISTICS_PATH: '/custom/operational.json'}),
   '/custom/operational.json');
 const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'TEST1',
+  doppler_method: 'reported-kinematic', doppler_position_fit_hz: 104,
+  doppler_kinematic_hz: 100, doppler_estimator_difference_hz: -4,
   delay_rate_km_s: .1, doppler_rate_hz_s: 7,
   position: {latitude: 1.1, longitude: 2.1, altitude_geom_ft: 12000,
     altitude_baro_ft: 11800, ground_speed_kt: 300, track_deg_true: 90,
@@ -44,6 +46,22 @@ const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'T
   geometry: {bearing_deg_true: 91, elevation_deg: 12, ground_range_km: 9,
     slant_range_km: 10, transmitter_range_km: 20}};
 const source = {async get() { return {abc123: {...prediction, timestamp: clock / 1000}}; }};
+const nativeReplayCoordinates = {sample_rate_hz: 6144000, frequency_hz: 539e6};
+const replayCoordinateConfig = {...config, capture: {...config.capture,
+  replay: {state: true, sample_rate_hz: 2e6, frequency_hz: 100e6}},
+  process: {...config.process, delay_reference_sample_rate_hz: 2e6}};
+require('../test/helpers/trusted-replay-sites')(replayCoordinateConfig);
+const nativeReplayLimits = limits(replayCoordinateConfig, nativeReplayCoordinates);
+assert.equal(nativeReplayLimits.sampleRate, 6144000);
+assert.equal(nativeReplayLimits.frequency, 539e6);
+assert.equal(nativeReplayLimits.kmPerBin, 299792.458 / 6144000);
+assert.equal(nativeReplayLimits.delayMaxBin, 1536);
+assert.equal(limits(replayCoordinateConfig).frequency, 100e6);
+assert.equal(limits({...config, capture: {...config.capture, replay: {state: true}}}), null);
+for (const bad of [null, false, 0, -1, NaN, Infinity, '6144000'])
+  assert.equal(limits(config, {...nativeReplayCoordinates, sample_rate_hz: bad}), null);
+assert.equal(limits(config, [nativeReplayCoordinates,
+  {...nativeReplayCoordinates, frequency_hz: 100e6}]), null);
 
 const unmappedTiming = {timestamp: clock, captureSamplePositionAvailable: true,
   eventTime: {source: 'usrp_uhd_device_time', exact: false,
@@ -82,6 +100,92 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   'physical site geometry must start a separate statistics identity');
 
 (async () => {
+  // Native replay coordinates drive both the supplied truth carrier and track
+  // bin conversion. The live receiver and saved reference bins deliberately differ.
+  let suppliedFrames;
+  const nativeStats = new EvidenceStatistics(replayCoordinateConfig, {
+    async getAt(_kind, at, frames) { suppliedFrames = frames; return {abc123: {
+      ...prediction, timestamp: at / 1000, frequency_hz: 539e6}}; }
+  }, {filename: path.join(directory, 'native-replay-coordinates.json'), now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  nativeStats.acceptTracker({...nativeReplayCoordinates, timestamp: clock,
+    data: [{id: 'native', state: 'ACTIVE', n: 4, associations: 4,
+      delay: 10 / nativeReplayLimits.kmPerBin, doppler: 100}]});
+  nativeStats.acceptDetection({...nativeReplayCoordinates, timestamp: clock,
+    delay: [10], doppler: [100], snr: [7]});
+  nativeStats.acceptTiming({timestamp: clock, eventTime: {exact: true,
+    uncertaintyBounded: true, uncertaintyNs: 0}, captureSamplePositionAvailable: true,
+    captureEpoch: 12, captureFirstEpochSample: 0, captureEndEpochSample: 3072000});
+  while (nativeStats.running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(suppliedFrames.length, 2);
+  assert.equal(nativeStats.state.active.abc123.trackedFrames, 1);
+  assert.deepEqual(nativeStats.state.active.abc123.observation_coordinates,
+    {sample_rate_hz: 6144000, frequency_hz: 539e6});
+  nativeStats.adsbSource = {async getAt() { return {abc123: {...prediction, frequency_hz: 100e6}}; }};
+  await nativeStats.sample(clock);
+  assert.match(nativeStats.state.error, /Truth carrier differs/);
+  assert.equal(nativeStats.state.active.abc123.trackedFrames, 1,
+    'Wrong-carrier truth must not score or retroactively alter accepted evidence');
+  nativeStats.close();
+  const lowAngleStats = new EvidenceStatistics(config, source, {
+    filename: path.join(directory, 'low-angle-eligibility.json'), now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  lowAngleStats.observe('lowangle', {...prediction,
+    geometry: {...prediction.geometry, elevation_deg: .1}}, clock, null, null);
+  const lowAnglePass = lowAngleStats.state.active.lowangle;
+  assert.equal(lowAnglePass.detectorEligibleFrames, 1,
+    'Low elevation alone must never remove a searchable aircraft CPI');
+  assert.equal(lowAnglePass.elevationBands['0-2'].eligibleFrames, 1,
+    'Low-angle failures must remain visible in the evaluation strata');
+  lowAngleStats.close();
+  const restartFilename = path.join(directory, 'restart-continuity.json');
+  const restartStats = new EvidenceStatistics(config, source, {filename: restartFilename,
+    now: () => clock, setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  restartStats.observe('abc123', prediction, clock, null, null);
+  restartStats.close();
+  let restartState = JSON.parse(fs.readFileSync(restartFilename, 'utf8'));
+  assert.equal(restartState.passes.length, 0,
+    'API shutdown must not finalize an in-progress pass as a radar miss');
+  assert.ok(restartState.active.abc123,
+    'API shutdown must persist an in-progress pass for restart continuity');
+  const resumedStats = new EvidenceStatistics(config, source, {filename: restartFilename,
+    now: () => clock + 1000, setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  assert.ok(resumedStats.state.active.abc123,
+    'a brief restart under the same scoring contract must resume the pass');
+  resumedStats.state.active.abc123.associationEligibleFrames = 3;
+  resumedStats.finish('abc123');
+  assert.equal(resumedStats.associationPasses().length, 1);
+  resumedStats.state.liveScoreContract.startedAt = clock + 1;
+  assert.equal(resumedStats.associationPasses().length, 0,
+    'federation must not mix finalized passes from an earlier scoring contract');
+  resumedStats.close();
+  const endpointFilename = path.join(directory, 'truth-endpoint-retention.json');
+  const endpointStats = new EvidenceStatistics(config, source, {filename: endpointFilename,
+    now: () => clock, setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const endpointBase = clock + 100000;
+  for (let index = 1; index <= 40; ++index) endpointStats.observe('endpoint', {
+    ...prediction, timestamp: (endpointBase + index * 1000) / 1000,
+    position: {...prediction.position, altitude_geom_ft: 12000 + index}
+  }, endpointBase + index * 1000, null, null);
+  endpointStats.observe('endpoint', {
+    ...prediction, timestamp: endpointBase / 1000,
+    position: {...prediction.position, altitude_geom_ft: 11000},
+    geometry: {...prediction.geometry, elevation_deg: 35}
+  }, endpointBase, null, null);
+  const endpointPass = endpointStats.state.active.endpoint;
+  assert.equal(endpointPass.truthHistory.length, 30,
+    'The diagnostic truth tail must remain bounded');
+  assert.equal(endpointPass.truthHistory[0].timestamp_ms, endpointBase + 11000,
+    'Trimming must retain only the newest diagnostic truth samples');
+  assert.equal(endpointPass.firstTruth.timestamp_ms, endpointBase,
+    'The immutable pass beginning must survive history trimming and late arrival');
+  assert.equal(endpointPass.firstTruth.altitude_geom_ft, 11000);
+  assert.equal(endpointPass.lastTruth.timestamp_ms, endpointBase + 40000,
+    'The immutable pass end must remain the latest observation');
+  assert.equal(endpointPass.lastTruth.altitude_geom_ft, 12040);
+  assert.equal(endpointPass.elevationBands['30-90'].eligibleFrames, 1,
+    'An out-of-order CPI must be stratified by its own geometry, not the latest endpoint');
+  endpointStats.close();
   const orderStats = new EvidenceStatistics(config, source, {
     filename: path.join(directory, 'ordered-live-status.json'), now: () => clock,
     setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
@@ -172,6 +276,11 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   const stored = JSON.parse(fs.readFileSync(filename, 'utf8'));
   assert.equal(stored.schema, 'vectorwarp-evidence-statistics-v2');
   assert.equal(stored.passes[0].firstTruth.altitude_geom_ft, 12000);
+  assert.equal(stored.passes[0].firstTruth.doppler_method, 'reported-kinematic');
+  assert.equal(stored.passes[0].firstTruth.doppler_estimator_difference_hz, -4);
+  assert.equal(stored.passes[0].truthDopplerDiagnostics.comparableFrames, 3);
+  assert.equal(stored.passes[0].truthDopplerDiagnostics.maximumAbsDifferenceHz, 4);
+  assert.equal(stored.passes[0].truthDopplerDiagnostics.searchableDisagreements, 0);
   assert.equal(stored.passes[0].lastTruth.bearing_deg_true, 91);
   assert.equal(stored.passes[0].maxAbsDopplerRateHzS, 7);
   assert.equal(stored.passes[0].azimuthSectors45[2], 3);
@@ -449,6 +558,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(floorStats.state.active.abc123.maxSlantRangeKm, 10);
   assert.equal(floorStats.state.active.abc123.maxTransmitterRangeKm, 20);
   assert.equal(floorStats.state.active.abc123.maxBistaticRangeProductKm2, 200);
+  floorStats.expire(Infinity);
   floorStats.close();
   const floorStatus = floorStats.status().windows.lifetime;
   assert.equal(floorStatus.map_eligible_passes, 1);
@@ -499,6 +609,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     'Even a supplied match inside the notch must not become a scored detection');
   assert.equal(notchPass.dopplerNotchFrames, 3);
   assert.equal(notchPass.outsideDopplerFrames, 1);
+  notchStats.expire(Infinity);
   notchStats.close();
   assert.equal(notchStats.status().windows.lifetime.out_of_span.inside_detection_doppler_notch, 3);
   for (const minimum of [undefined, 0]) {
@@ -685,26 +796,125 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   uncertaintyConfig.truth.adsb.uncertainty_association = {enable: true};
   const uncertaintyStats = new EvidenceStatistics(uncertaintyConfig, source, {
     filename: path.join(directory, 'uncertainty-state.json'), timingPolicy: 'provisional',
+    now: () => clock,
     setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
   const uncertaintyPrediction = {...prediction, timestamp: clock / 1000,
     provenance: {...prediction.provenance, observation_time_offset_s: 2.9},
     truth_uncertainty: {valid: true}};
   uncertaintyStats.observe('abc123', uncertaintyPrediction, clock, null, null, null,
     {valid: false, reason: 'uncertainty-exceeds-hard-cap'});
-  assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 0,
-    'an over-wide truth comparison must abstain, not become a radar miss');
-  assert.equal(uncertaintyStats.state.active.abc123.cpiAudit.at(-1).truth_reason,
-    'uncertainty-exceeds-hard-cap');
-  uncertaintyStats.observe('abc123', uncertaintyPrediction, clock + 1000, null, null, null,
-    {valid: true});
   assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 1,
+    'over-wide association uncertainty cannot erase fresh aircraft presence');
+  assert.equal(uncertaintyStats.state.active.abc123.cpiAudit.at(-1).truth_valid, true);
+  assert.equal(uncertaintyStats.state.active.abc123.cpiAudit.at(-1).association_reason,
+    'uncertainty-exceeds-hard-cap');
+  uncertaintyStats.observe('abc123', {...uncertaintyPrediction, timestamp: (clock + 1000) / 1000},
+    clock + 1000, null, null, null,
+    {valid: true});
+  assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 2,
     'opt-in source-age support preserves provisional SDR operation without a hardware clock receipt');
   uncertaintyStats.observe('abc123', {...uncertaintyPrediction,
+    timestamp: (clock + 2000) / 1000,
     provenance: {...uncertaintyPrediction.provenance, disagreement: true}}, clock + 2000,
   null, null, null, {valid: true});
-  assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 1,
-    'source disagreement cannot inflate the accepted denominator');
+  assert.equal(uncertaintyStats.state.active.abc123.eligibleFrames, 2,
+    'incompatible source clusters still cannot inflate the accepted denominator');
+  for (const [index, reason] of ['truth-not-at-requested-frame',
+    'position-accuracy-or-integrity-unavailable'].entries()) {
+    const at = clock + 3000 + index * 1000;
+    const candidate = {frame_timestamp_ms: at, cell_index: 0, kind: 'detection'};
+    uncertaintyStats.observe('abc123', {...uncertaintyPrediction,
+      timestamp: (at - (index ? 0 : 50)) / 1000,
+      truth_uncertainty: {valid: false, reason}}, at, candidate, candidate, null,
+    {valid: false, reason});
+    assert.equal(uncertaintyStats.state.active.abc123.cpiAudit.at(-1).association_reason, reason);
+  }
+  const presencePass = uncertaintyStats.state.active.abc123;
+  assert.equal(presencePass.eligibleFrames, 4);
+  assert.equal(presencePass.associationEligibleFrames, 1);
+  assert.equal(presencePass.associationAbstainedFrames, 3);
+  assert.equal(presencePass.detectedFrames, 0, 'presence or abstention cannot manufacture a detection');
+  assert.equal(presencePass.trackedFrames, 0, 'presence or abstention cannot manufacture a track');
+  const presenceExposure = uncertaintyStats.summarize(Infinity, clock + 4000).cpi_exposure;
+  assert.equal(presenceExposure.eligible_cpis, 4);
+  assert.equal(presenceExposure.association_abstained_cpis, 3);
+  assert.equal(presenceExposure.association_eligible_cpis, 1);
+  assert.equal(presenceExposure.detected_cpis, 0);
+  assert.equal(presenceExposure.missed_detection_cpis, 1,
+    'association abstention is unresolved evidence, never a radar miss');
+  assert.equal(presenceExposure.operationally_untracked_cpis, 1);
+  assert.equal(presenceExposure.counter_invariants_valid, true);
+  assert.equal(uncertaintyStats.liveStatus().active_passes[0].status, 'provisional_association_unresolved',
+    'presence-only passes must never enter the live detected/tracked identity feed');
+  assert.equal(uncertaintyStats.liveStatus().active_passes[0].track_quality.observed_cpis, 1);
+  uncertaintyStats.observe('abc123', uncertaintyPrediction, clock + 5000, null, null, null,
+    {valid: false, reason: 'truth-not-at-requested-frame'});
+  assert.equal(presencePass.eligibleFrames, 4,
+    'cached projections cannot extend the original observation freshness horizon');
+  assert.equal(presencePass.cpiAudit.at(-1).truth_reason, 'stale-observation');
+  uncertaintyStats.finish('abc123');
+  const unresolved = uncertaintyStats.summarize(Infinity, clock + 5000);
+  assert.equal(unresolved.eligible_passes, 1);
+  assert.equal(unresolved.association_eligible_passes, 0);
+  assert.equal(unresolved.association_unresolved_passes, 1);
+  assert.equal(unresolved.missed_passes, 0);
+  assert.equal(unresolved.eligible_no_radar_return, 0);
+  assert.equal(unresolved.detection_yield, null);
+  assert.equal(unresolved.tracking_yield, null);
+  assert.equal(unresolved.delay_strata.bands[delayBand(uncertaintyStats.limits, 10).id].detection_yield, null);
+  assert.equal(uncertaintyStats.liveStatus().recent_finalized_passes[0].outcome, 'association_unresolved');
+  assert.equal(uncertaintyStats.associationPasses().length, 0);
+  // Eviction must preserve presence versus association coverage in lifetime
+  // totals, including an entirely unscorable pass at the archive boundary.
+  for (let index = 0; index < 500; ++index) {
+    const hex = index.toString(16).padStart(6, '0');
+    uncertaintyStats.state.active[hex] = {...presencePass, id: `unresolved-${index}`, hex,
+      eligibleFrames: 4, associationEligibleFrames: 0, associationAbstainedFrames: 4};
+    uncertaintyStats.finish(hex);
+  }
+  const archivedUnresolved = uncertaintyStats.summarize(Infinity, clock + 5000);
+  assert.equal(archivedUnresolved.eligible_passes, 501);
+  assert.equal(archivedUnresolved.association_eligible_passes, 0);
+  assert.equal(archivedUnresolved.missed_passes, 0);
+  assert.equal(archivedUnresolved.cpi_exposure.association_eligible_cpis, 1);
+  assert.equal(archivedUnresolved.cpi_exposure.association_abstained_cpis, 2003);
+  assert.equal(archivedUnresolved.cpi_exposure.missed_detection_cpis, 1);
+  assert.equal(archivedUnresolved.cpi_exposure.counter_invariants_valid, true);
   uncertaintyStats.close();
+  let uncertaintyCaptureRequests = 0;
+  const sampledUncertainty = new EvidenceStatistics(uncertaintyConfig, {
+    async getAt(_kind, at) { return {abc123: {...prediction, timestamp: at / 1000,
+      truth_uncertainty: {schema: 'vectorwarp-truth-uncertainty-v1', valid: true,
+        covariance: at < clock + 3000 ? [1, 0, 0, 1e6] : [.001, 0, 0, .1],
+        delay_rate_km_s: .1, geometric_doppler_rate_hz_s: 1, doppler_rate_bound_hz_s: 1}}}; }
+  }, {filename: path.join(directory, 'sampled-uncertainty-state.json'),
+    timingPolicy: 'provisional', now: () => clock,
+    onEligibilityEvent() { uncertaintyCaptureRequests += 1; },
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  for (let index = 0; index < 4; ++index) {
+    const at = clock + index * 1000;
+    sampledUncertainty.recentTiming.push({timestamp_ms: at, exact_event_time: false,
+      event_time_uncertainty_s: 1, event_time_source: 'radar_host_arrival_estimate'});
+    sampledUncertainty.detectionHistory.set(at, {timestamp: at, delay: [10], doppler: [100], snr: [7]});
+    sampledUncertainty.trackerHistory.set(at, {timestamp: at, data: [{id: 'candidate',
+      state: 'ACTIVE', n: 4, associations: 4,
+      delay: 10 / sampledUncertainty.limits.kmPerBin, doppler: 100}]});
+    await sampledUncertainty.sample(at);
+    assert.equal(sampledUncertainty.state.error, null);
+    const pass = sampledUncertainty.state.active.abc123;
+    assert.equal(pass.eligibleFrames, index + 1, JSON.stringify(pass.cpiAudit.at(-1)));
+    assert.equal(pass.detectedFrames, index === 3 ? 1 : 0);
+    assert.equal(pass.trackedFrames, index === 3 ? 1 : 0);
+    assert.equal(uncertaintyCaptureRequests, index === 3 ? 1 : 0,
+      'presence-only exposure cannot broaden automatic capture admission');
+    const exposure = sampledUncertainty.summarize(Infinity, at).cpi_exposure;
+    assert.equal(exposure.missed_detection_cpis, 0);
+    assert.equal(exposure.operationally_untracked_cpis, 0);
+    assert.equal(exposure.detected_percent, index === 3 ? 100 : null);
+    assert.equal(exposure.counter_invariants_valid, true);
+  }
+  assert.equal(sampledUncertainty.state.active.abc123.associationAbstainedFrames, 3);
+  sampledUncertainty.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -2,6 +2,7 @@
 #include "process/conditioning/CanonicalChannelizedIq.h"
 
 #include <iostream>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 
@@ -16,11 +17,11 @@ void require(bool ok, const char* message)
   if (!ok) throw std::runtime_error(message);
 }
 
-template <class Function> void rejects(Function&& function)
+template <class Error = std::invalid_argument, class Function> void rejects(Function&& function)
 {
   try { function(); }
-  catch (const std::invalid_argument&) { return; }
-  throw std::runtime_error("Invalid canonical lineage was accepted");
+  catch (const Error&) { return; }
+  throw std::runtime_error("Invalid canonical input was accepted");
 }
 
 CanonicalLineage block(uint64_t first = 101, uint64_t end = 133)
@@ -203,14 +204,107 @@ void adapter()
   spurious.samples.hasFirstInputSample = true;
   rejects([&] { canonicalLineage(spurious, provenance); });
 }
+
+// Standalone native coverage for the canonical precision/lifetime contract;
+// the DSP suite compares the same borrowed inputs through complete products.
+void sampleStorage()
+{
+  using namespace blah2::iq;
+  using Complex = std::complex<double>;
+  const std::vector<Complex> precise{
+    {std::nextafter(1.0, 2.0), std::nextafter(-1.0, -2.0)},
+    {std::numeric_limits<double>::denorm_min(), -0.0},
+    {std::numeric_limits<double>::max() / 4, -std::numeric_limits<double>::min()},
+    {std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}};
+  const auto sameBits = [](double actual, double expected) {
+    return std::memcmp(&actual, &expected, sizeof(double)) == 0;
+  };
+  const auto compare = [&](const CoherentSamples& input) {
+    input.validateStorage();
+    require(input.isDouble() && input.channelCount() == 1, "FP64 tag was lost");
+    std::vector<Complex> copied(precise.size());
+    input.copyChannelTo(0, copied.data(), copied.size());
+    for (std::size_t i = 0; i < copied.size(); ++i)
+      require(sameBits(copied[i].real(), precise[i].real()) &&
+        sameBits(copied[i].imag(), precise[i].imag()), "FP64 sample bits changed");
+    input.copyChannelTo(0, copied.data(), 2, 1);
+    require(sameBits(copied[0].real(), precise[1].real()), "FP64 slice changed");
+    rejects<std::bad_variant_access>([&] { input.channel(0); });
+    rejects<std::out_of_range>([&] { input.copyChannelTo(1, copied.data(), 1); });
+    rejects<std::out_of_range>([&] { input.copyChannelTo(0, copied.data(), 2, precise.size()-1); });
+    rejects<std::out_of_range>([&] { input.copyChannelTo(0, nullptr, 0, SIZE_MAX); });
+    rejects([&] { input.copyChannelTo(0, nullptr, 1); });
+    input.copyChannelTo(0, nullptr, 0, precise.size());
+  };
+  auto storage = std::make_shared<const std::vector<Complex>>(precise);
+  std::weak_ptr<const void> lifetime = storage;
+  CoherentSamples input{};
+  input.borrowed = BorrowedSamples{storage,
+    BorrowedSamples::DoubleChannels{IqSampleView(storage->data(), storage->size())}};
+  auto retained = input;
+  storage.reset(); input.borrowed.reset();
+  require(!lifetime.expired(), "Canonical sample owner did not survive handoff");
+  compare(retained);
+  retained.borrowed.reset();
+  require(lifetime.expired(), "Canonical sample owner was leaked");
+  auto deque = std::make_shared<const std::deque<Complex>>(precise.begin(), precise.end());
+  input.borrowed = BorrowedSamples{deque, BorrowedSamples::DoubleChannels{IqSampleView(*deque)}};
+  compare(input); // Noncontiguous FP64 remains a reader, never a float pointer.
+  input.channels.resize(1);
+  rejects([&] { input.validateStorage(); });
+  input.channels.clear(); input.borrowed->owner.reset();
+  rejects([&] { input.validateStorage(); });
+  input.borrowed = BorrowedSamples{deque, BorrowedSamples::DoubleChannels{IqSampleView{}}};
+  input.validateStorage(); input.copyChannelTo(0, nullptr, 0);
+  rejects([&] { IqSampleView(nullptr, 1); });
+  rejects<std::overflow_error>([&] { IqSampleView(precise.data(), SIZE_MAX); });
+  input.borrowed = BorrowedSamples{deque, BorrowedSamples::FloatChannels{{nullptr, 1}}};
+  rejects([&] { input.validateStorage(); });
+  const std::complex<float> value(1.25f, -0.0f);
+  input.borrowed = BorrowedSamples{deque, BorrowedSamples::FloatChannels{{&value, SIZE_MAX}}};
+  rejects<std::overflow_error>([&] { input.validateStorage(); });
+  // Existing aggregate FP32 producers and typed access retain their contract.
+  const CoherentSamples owned{{{value}}, 104, true, 8, 96.5, std::nullopt};
+  Complex widened;
+  owned.validateStorage(); owned.copyChannelTo(0, &widened, 1);
+  require(!owned.isDouble() && owned.channel(0)[0] == value &&
+    widened.real() == 1.25 && std::signbit(widened.imag()), "FP32 compatibility changed");
+}
+
+void borrowedLineage()
+{
+  using namespace blah2;
+  const auto provenance = block();
+  for (const bool doubleInput : {false, true}) {
+    auto output = outputFor(provenance);
+    if (doubleInput) {
+      auto owner = std::make_shared<const std::vector<std::complex<double>>>(4);
+      output.samples.borrowed = iq::BorrowedSamples{owner,
+        iq::BorrowedSamples::DoubleChannels(2, IqSampleView(owner->data(), owner->size()))};
+    } else {
+      auto owner = std::make_shared<const std::vector<std::complex<float>>>(4);
+      output.samples.borrowed = iq::BorrowedSamples{owner,
+        iq::BorrowedSamples::FloatChannels(2, iq::SampleView{owner->data(), owner->size()})};
+    }
+    output.samples.channels.clear();
+    const auto actual = channelizer::canonicalLineage(output, provenance);
+    require(actual.firstInputSample == provenance.firstInputSample &&
+      actual.outputSamples == provenance.outputSamples &&
+      actual.channelIds == provenance.channelIds &&
+      actual.groupDelayInputSamples == provenance.groupDelayInputSamples,
+      "Borrowed precision changed physical sample lineage");
+    output.samples.borrowed->owner.reset();
+    rejects([&] { channelizer::canonicalLineage(output, provenance); });
+  }
+}
 }
 
 int main()
 {
   try
   {
-    geometry(); invalidGeometry(); continuity(); adapter();
-    std::cout << "Canonical IQ lineage and channelizer adapter tests passed\n";
+    geometry(); invalidGeometry(); continuity(); adapter(); sampleStorage(); borrowedLineage();
+    std::cout << "Canonical IQ precision, lifetime, lineage and adapter tests passed\n";
     return 0;
   }
   catch (const std::exception& error)

@@ -2,6 +2,10 @@
 #define _GNU_SOURCE
 #endif
 #include "GpuProcess.h"
+#include "GpuArtifactBinding.h"
+#include "ReplayGpuQualification.h"
+#include "GpuWorkerLifetime.h"
+#include "data/meta/StreamProfile.h"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -30,16 +34,16 @@
 #include <unistd.h>
 
 extern char** environ;
+#include "GpuWorkerTransport.private.h"
 namespace blah2 {
 namespace {
 using Clock = std::chrono::steady_clock;
 using Complex = std::complex<float>;
 constexpr uint32_t protocol = 0x42475004;
 enum Operation : uint32_t { initialize = 1, frame = 2, ready = 3, failure = 4,
-  quit = 5, clutterFrame = 6, clutterRejected = 7, firReference = 8,
-  firFinal = 9 };
+  quit = 5, clutterFrame = 6, clutterRejected = 7 };
+// Operations 8/9 and capability bit 2 are reserved for the retired FIR route.
 constexpr uint32_t clutterCapability = 1;
-constexpr uint32_t firCapability = 2;
 struct Message {
   uint32_t version = protocol, operation = 0, capabilities = 0;
   uint64_t sequence = 0, memoryBytes = 0;
@@ -50,41 +54,11 @@ struct Layout {
   size_t reference, surveillance, output;
   size_t clutterReference = 0, clutterSurveillance = 0, clutterOutput = 0;
   size_t clutterOffset = 0, bytes;
-  size_t firReference = 0, firWeights = 0, firOutput = 0;
-  size_t firOffset = 0;
   explicit Layout(GpuGeometry g) {
-    if (g.kind == GpuWorkKind::fir) {
-      if (g.range || g.doppler || g.delays || g.channels || g.delayMin ||
-          g.clutterSamples || g.clutterBins || g.clutterDelayMin ||
-          !g.firSamples || g.firSamples > 10000000 || !g.firTaps ||
-          g.firTaps > g.firSamples || g.firTaps > 2048 ||
-          g.firFft != 2048 || g.firTaps > g.firFft || g.firPercent != 50)
-        throw std::runtime_error("GPU FIR dimensions are unsupported; using CPU");
-      const uint64_t hop = uint64_t(g.firFft) - g.firTaps + 1;
-      const uint64_t totalBlocks = (uint64_t(g.firSamples) + hop - 1) / hop;
-      const uint64_t gpuBlocks = std::max<uint64_t>(1, totalBlocks / 2);
-      const uint64_t prefix = std::min<uint64_t>(g.firSamples, gpuBlocks * hop);
-      const uint64_t totalElements = prefix * 2 + g.firTaps;
-      const uint64_t total = totalElements * sizeof(Complex);
-      if (total > (512ULL << 20) || prefix > SIZE_MAX)
-        throw std::runtime_error("GPU FIR shared-memory budget exceeded; using CPU");
-      reference = surveillance = output = 0;
-      firReference = firOutput = size_t(prefix);
-      firWeights = g.firTaps;
-      firOffset = 0;
-      bytes = size_t(total);
-#ifdef __APPLE__
-      // Darwin reports POSIX shared-memory lengths rounded to a VM page. Use the
-      // same explicit size in both processes so the exact fstat check stays useful.
-      const long page = sysconf(_SC_PAGESIZE);
-      if (page <= 0) throw std::runtime_error("Cannot size GPU shared memory; using CPU");
-      bytes = ((bytes + size_t(page) - 1) / size_t(page)) * size_t(page);
-#endif
-      return;
-    }
-    if (g.kind != GpuWorkKind::radar || g.firSamples || g.firTaps ||
-        g.firFft || g.firPercent)
-      throw std::runtime_error("GPU radar dimensions are unsupported; using CPU");
+    if (g.kind != GpuWorkKind::radar)
+      throw std::runtime_error("GPU work kind is retired or unsupported; using CPU");
+    if (g.firSamples || g.firTaps || g.firFft || g.firPercent)
+      throw std::runtime_error("GPU reserved geometry fields must be zero; using CPU");
     if (!g.range || g.range > 65535 || !g.doppler || g.doppler > 65535 ||
         !g.delays || g.delays > 65535 || !g.channels || g.channels > 8)
       throw std::runtime_error("GPU radar dimensions are unsupported; using CPU");
@@ -131,14 +105,18 @@ Message receiveMessage(int fd, unsigned timeoutMs, const char* phase) {
   size_t received = 0;
 #endif
   for (;;) {
-    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
-    if (left <= 0) throw std::runtime_error(std::string("GPU worker ") + phase +
-      " timed out after " + std::to_string(timeoutMs) + " ms; using CPU");
+    const auto left = std::max<int64_t>(0,
+      std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count());
     pollfd descriptor{fd, POLLIN, 0};
     const int result = poll(&descriptor, 1, std::min<int64_t>(left, INT_MAX));
     if (result < 0 && errno == EINTR) continue;
     if (result < 0) throw std::runtime_error("GPU worker communication failed; using CPU");
-    if (!result) continue;
+    if (!result) {
+      if (Clock::now() >= deadline)
+        throw std::runtime_error(std::string("GPU worker ") + phase +
+          " timed out after " + std::to_string(timeoutMs) + " ms; using CPU");
+      continue;
+    }
 #ifdef __APPLE__
     const auto count = recv(fd, reinterpret_cast<char*>(&message) + received,
       sizeof(message) - received, MSG_DONTWAIT);
@@ -161,267 +139,69 @@ Message receiveMessage(int fd, unsigned timeoutMs, const char* phase) {
     return message;
   }
 }
-void reap(pid_t process) noexcept {
-  if (process <= 0) return;
-  int status;
-  pid_t result;
-  do { result = waitpid(process, &status, WNOHANG); } while (result < 0 && errno == EINTR);
-  if (result != 0) return;
-  kill(process, SIGKILL);
-  // Never wait indefinitely for a broken kernel driver. The shared mapping stays
-  // alive in the child/kernel until it exits; parent input is independent.
-  const auto deadline = Clock::now() + std::chrono::milliseconds(100);
-  do {
-    result = waitpid(process, &status, WNOHANG);
-    if (result == process || (result < 0 && errno != EINTR)) return;
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  } while (Clock::now() < deadline);
-  try {
-    std::thread([process] {
-      int code;
-      while (waitpid(process, &code, 0) < 0 && errno == EINTR) {}
-    }).detach();
-  } catch (...) {} // SIGKILL was already sent; parent must still recover.
-}
 class Process final : public GpuBackend, public GpuFrameBackend,
-    public GpuClutterFrameBackend, public GpuFirFrameBackend {
+    public GpuClutterFrameBackend, public GpuClutterHostWorkBackend {
   Layout layout_;
   GpuProcessOptions options_;
-  int socket_ = -1, memory_ = -1;
-  pid_t process_ = -1;
-  Complex* shared_ = nullptr;
+  std::unique_ptr<gpu_worker_transport::Child> child_;
+  Complex* shared() const { return reinterpret_cast<Complex*>(child_->data()); }
   GpuDevice device_;
   uint64_t sequence_ = 0;
-  bool clutterSupported_ = false, firSupported_ = false, firActive_ = false,
-    firFinalSubmitted_ = false;
-  void stop() noexcept {
-    if (socket_ >= 0) { close(socket_);
-    socket_ = -1; }
-    reap(process_);
-    process_ = -1;
-    if (shared_) { munmap(shared_, layout_.bytes);
-    shared_ = nullptr; }
-    if (memory_ >= 0) { close(memory_);
-    memory_ = -1; }
+  bool clutterSupported_ = false;
+  const bool profileDrain_ = stream_profile::frameLimit()!=0;
+  stream_profile::Worker streamProfile_{"portable-parent",2};
+  // Snapshot once per worker. Default-off isolates host projection from worker
+  // FP64 refinement; only the exact opt-in "1" enables their CPU overlap.
+  const bool clutterHostWorkOverlap_ = [] {
+    const char* value = std::getenv("BLAH2_GPU_CLUTTER_HOST_WORK_OVERLAP");
+    return value && std::strcmp(value, "1") == 0;
+  }();
+  void stop(bool offlineDrain=false) noexcept {
+    if (child_) child_->stop(offlineDrain);
   }
 public:
   Process(GpuGeometry geometry, const std::string& device, GpuProcessOptions options)
     : layout_(geometry), options_(std::move(options)) {
-    int childSocket = -1, childMemory = -1;
-    posix_spawn_file_actions_t actions;
-    bool actionsReady = false;
-#ifdef __APPLE__
-    posix_spawnattr_t attributes;
-    bool attributesReady = false;
-    // Capture this before allocating IPC: closed standard descriptors may be
-    // reused by socketpair/shm_open and must not then be inherited as logging.
-    const bool standardOpen[] = {fcntl(0, F_GETFD) >= 0,
-      fcntl(1, F_GETFD) >= 0, fcntl(2, F_GETFD) >= 0};
-#endif
     try {
       if (device.size() >= sizeof(Message::id) || !options_.startupMs || !options_.frameMs)
         throw std::invalid_argument("Invalid GPU worker options");
-      int sockets[2];
-#ifdef __APPLE__
-      // Darwin UNIX sockets do not support SOCK_SEQPACKET. The receiver above
-      // assembles exactly one fixed-size protocol record under a single deadline.
-      if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets))
-#else
-      if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets))
-#endif
-        throw std::runtime_error("Cannot create GPU worker connection; using CPU");
-      socket_ = sockets[0];
-#ifdef __APPLE__
-      if (fcntl(sockets[0], F_SETFD, FD_CLOEXEC) || fcntl(sockets[1], F_SETFD, FD_CLOEXEC)) {
-        close(sockets[1]);
-        throw std::runtime_error("Cannot isolate GPU connection; using CPU");
-      }
-#endif
-      childSocket = fcntl(sockets[1], F_DUPFD_CLOEXEC, 10);
-      close(sockets[1]);
-#ifdef __APPLE__
-      // A private POSIX shared-memory object is unlinked before it can escape
-      // this constructor. Only the two explicit descriptors name the mapping.
-      for (unsigned attempt = 0; attempt < 16 && memory_ < 0; ++attempt) {
-        char name[32];
-        std::snprintf(name, sizeof(name), "/vw-gpu-%08x%08x", arc4random(), arc4random());
-        memory_ = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
-        if (memory_ >= 0 && shm_unlink(name)) {
-          close(memory_);
-          memory_ = -1;
-          throw std::runtime_error("Cannot unlink GPU shared memory; using CPU");
-        }
-        if (memory_ < 0 && errno != EEXIST) break;
-      }
-      if (childSocket < 0 || memory_ < 0 || fcntl(memory_, F_SETFD, FD_CLOEXEC) ||
-          ftruncate(memory_, layout_.bytes))
-#else
-      memory_ = memfd_create("blah2-gpu-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING);
-      if (childSocket < 0 || memory_ < 0 || ftruncate(memory_, layout_.bytes) ||
-          fcntl(memory_, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) < 0)
-#endif
-        throw std::runtime_error("Cannot allocate GPU shared memory; using CPU");
-      void* mapping = mmap(nullptr, layout_.bytes, PROT_READ | PROT_WRITE, MAP_SHARED, memory_, 0);
-      if (mapping == MAP_FAILED) throw std::runtime_error("Cannot map GPU shared memory; using CPU");
-      shared_ = static_cast<Complex*>(mapping);
-      childMemory = fcntl(memory_, F_DUPFD_CLOEXEC, 10);
-      if (childMemory < 0 || posix_spawn_file_actions_init(&actions))
-        throw std::runtime_error("Cannot prepare GPU worker; using CPU");
-      actionsReady = true;
-      if (posix_spawn_file_actions_adddup2(&actions, childSocket, 3) ||
-          posix_spawn_file_actions_adddup2(&actions, childMemory, 4))
-        throw std::runtime_error("Cannot prepare GPU worker descriptors; using CPU");
-      // Close inherited descriptors after installing our two endpoints. This also
-      // prevents a GPU worker from accidentally keeping capture/listening sockets alive.
-#if defined(__APPLE__)
-      // Kernel-enforced allowlisting also closes descriptors opened by another
-      // thread during spawn, unlike a user-space /dev/fd snapshot.
-      if (posix_spawnattr_init(&attributes))
-        throw std::runtime_error("Cannot isolate GPU worker; using CPU");
-      attributesReady = true;
-      if (posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT))
-        throw std::runtime_error("Cannot isolate GPU worker descriptors; using CPU");
-      for (int fd = 0; fd < 3; ++fd)
-        if (standardOpen[fd] && posix_spawn_file_actions_addinherit_np(&actions, fd))
-          throw std::runtime_error("Cannot inherit GPU worker logging; using CPU");
-#elif defined(__GLIBC__) && defined(__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
-      if (posix_spawn_file_actions_addclosefrom_np(&actions, 5))
-        throw std::runtime_error("Cannot isolate GPU worker descriptors; using CPU");
-#else
-      DIR* descriptors = opendir("/proc/self/fd");
-      if (!descriptors) throw std::runtime_error("Cannot inspect GPU worker descriptors; using CPU");
-      while (const auto* entry = readdir(descriptors)) {
-        const int fd = std::atoi(entry->d_name);
-        if (fd > 4) posix_spawn_file_actions_addclose(&actions, fd);
-      }
-      closedir(descriptors);
-#endif
-      std::string executable = options_.executable.empty() ? gpuSiblingPath("blah2-gpu-worker") : options_.executable;
-      char* argv[] = {executable.data(), options_.argument.empty() ? nullptr : options_.argument.data(), nullptr};
-      // Do not mutate a shared process environment while other lanes start.
-      // The caller's reservation replaces any inherited allocation override.
-      std::vector<std::string> childEnvironment;
-      for (char** item = environ; *item; ++item)
-        if (std::string(*item).rfind("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=", 0) != 0)
-          childEnvironment.emplace_back(*item);
-      if (options_.allocationLimitBytes)
-        childEnvironment.push_back("BLAH2_GPU_ALLOCATION_LIMIT_BYTES=" +
-          std::to_string(options_.allocationLimitBytes));
-      std::vector<char*> childEnvironmentPointers;
-      for (auto& item : childEnvironment) childEnvironmentPointers.push_back(item.data());
-      childEnvironmentPointers.push_back(nullptr);
-      const int error = posix_spawn(&process_, executable.c_str(), &actions,
-#ifdef __APPLE__
-        &attributes,
-#else
-        nullptr,
-#endif
-        argv, childEnvironmentPointers.data());
-      if (error) { process_ = -1;
-      throw std::runtime_error("GPU worker is unavailable; using CPU"); }
-      close(childSocket);
-      childSocket = -1;
-      close(childMemory);
-      childMemory = -1;
-      posix_spawn_file_actions_destroy(&actions);
-      actionsReady = false;
-#ifdef __APPLE__
-      posix_spawnattr_destroy(&attributes);
-      attributesReady = false;
-#endif
+      child_=std::make_unique<gpu_worker_transport::Child>(
+        gpu_worker_transport::portable,layout_.bytes,options_,
+        [](uint8_t*,uint64_t){},device,profileDrain_);
       Message init;
       init.operation = initialize;
       init.geometry = geometry;
       std::snprintf(init.id, sizeof(init.id), "%s", device.c_str());
-      sendMessage(socket_, init);
-      const auto response = receiveMessage(socket_, options_.startupMs, "startup");
+      sendMessage(child_->fd(), init);
+      const auto response = receiveMessage(child_->fd(), options_.startupMs, "startup");
       if (response.operation == failure) throw std::runtime_error(response.reason);
       if (response.operation != ready || response.sequence)
         throw std::runtime_error("GPU worker initialization response is invalid; using CPU");
       device_ = {response.id, response.name, response.memoryBytes};
       clutterSupported_ = response.capabilities & clutterCapability;
-      firSupported_ = response.capabilities & firCapability;
     } catch (...) {
-#ifdef __APPLE__
-      if (attributesReady) posix_spawnattr_destroy(&attributes);
-#endif
-      if (actionsReady) posix_spawn_file_actions_destroy(&actions);
-      if (childSocket >= 0) close(childSocket);
-      if (childMemory >= 0) close(childMemory);
       stop();
       throw;
     }
   }
-  ~Process() override { stop(); }
+  ~Process() override { stop(options_.offlineTransportTrace); }
   GpuDevice device() const override { return device_; }
   GpuFrameBuffers frameBuffers() override {
     if (!layout_.reference)
       throw std::runtime_error("GPU radar processing is unavailable; using CPU");
-    if (socket_ < 0 || !shared_)
+    if (child_->fd() < 0 || !shared())
       throw std::runtime_error("GPU worker is no longer available; using CPU");
-    return {shared_, layout_.reference,
-      shared_ + layout_.reference, layout_.surveillance,
-      shared_ + layout_.reference + layout_.surveillance, layout_.output};
+    return {shared(), layout_.reference,
+      shared() + layout_.reference, layout_.surveillance,
+      shared() + layout_.reference + layout_.surveillance, layout_.output};
   }
   bool clutterAvailable() const override { return clutterSupported_; }
-  bool firAvailable() const override { return firSupported_; }
-  GpuFirBuffers firBuffers() override {
-    if (!firSupported_ || !layout_.firReference)
-      throw std::runtime_error("GPU FIR processing is unavailable; using CPU");
-    if (socket_ < 0 || !shared_)
-      throw std::runtime_error("GPU worker is no longer available; using CPU");
-    auto* start = shared_ + layout_.firOffset;
-    return {start, layout_.firReference,
-      start + layout_.firReference, layout_.firWeights,
-      start + layout_.firReference + layout_.firWeights, layout_.firOutput};
-  }
-  void submitFirReference() override {
-    if (!firSupported_ || !layout_.firReference)
-      throw std::runtime_error("GPU FIR processing is unavailable; using CPU");
-    if (socket_ < 0 || !shared_)
-      throw std::runtime_error("GPU worker is no longer available; using CPU");
-    if (firActive_) throw std::logic_error("GPU FIR frame is already active");
-    try {
-      Message request;
-      request.operation = firReference;
-      request.sequence = ++sequence_;
-      sendMessage(socket_, request);
-      firActive_ = true;
-      firFinalSubmitted_ = false;
-    } catch (...) { stop();
-    throw; }
-  }
-  void submitFirWeights() override {
-    if (!firActive_ || firFinalSubmitted_)
-      throw std::logic_error("GPU FIR reference was not submitted exactly once");
-    try {
-      Message request;
-      request.operation = firFinal;
-      request.sequence = sequence_;
-      sendMessage(socket_, request);
-      firFinalSubmitted_ = true;
-    } catch (...) { stop();
-    throw; }
-  }
-  void finishFir() override {
-    if (!firActive_ || !firFinalSubmitted_)
-      throw std::logic_error("GPU FIR final phase was not submitted");
-    try {
-      const auto response = receiveMessage(socket_, options_.frameMs, "FIR execution");
-      if (response.operation == failure) throw std::runtime_error(response.reason);
-      if (response.operation != ready || response.sequence != sequence_)
-        throw std::runtime_error("GPU worker returned the wrong FIR frame; using CPU");
-      firActive_ = false;
-      firFinalSubmitted_ = false;
-    } catch (...) { stop();
-    throw; }
-  }
   GpuClutterBuffers clutterBuffers() override {
     if (!clutterSupported_ || !layout_.clutterReference)
       throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");
-    if (socket_ < 0 || !shared_)
+    if (child_->fd() < 0 || !shared())
       throw std::runtime_error("GPU worker is no longer available; using CPU");
-    auto* start = shared_ + layout_.clutterOffset;
+    auto* start = shared() + layout_.clutterOffset;
     return {start, layout_.clutterReference,
       start + layout_.clutterReference, layout_.clutterSurveillance,
       start + layout_.clutterReference + layout_.clutterSurveillance,
@@ -430,35 +210,61 @@ public:
   void processFrame() override {
     if (!layout_.reference)
       throw std::runtime_error("GPU radar processing is unavailable; using CPU");
-    if (socket_ < 0 || !shared_)
+    if (child_->fd() < 0 || !shared())
       throw std::runtime_error("GPU worker is no longer available; using CPU");
     try {
       Message request;
       request.operation = frame;
       request.sequence = ++sequence_;
-      sendMessage(socket_, request);
-      const auto response = receiveMessage(socket_, options_.frameMs, "frame execution");
+      stream_profile::WorkScope profile(streamProfile_,sequence_,frame,child_->pid());
+      sendMessage(child_->fd(), request);
+      profile.mark(1); // dispatch completed
+      const auto response = receiveMessage(child_->fd(), options_.frameMs, "frame execution");
+      profile.mark(2); // response received, before validation
       if (response.operation == failure) throw std::runtime_error(response.reason);
       if (response.operation != ready || response.sequence != sequence_)
         throw std::runtime_error("GPU worker returned the wrong frame; using CPU");
+      profile.completed();
     } catch (...) { stop();
     throw; }
   }
   bool processClutterFrame() override {
+    return processClutterFrameWithHostWork({});
+  }
+  bool processClutterFrameWithHostWork(const std::function<void()>& hostWork) override {
     if (!clutterSupported_ || !layout_.clutterReference)
       throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");
-    if (socket_ < 0 || !shared_)
+    if (child_->fd() < 0 || !shared())
       throw std::runtime_error("GPU worker is no longer available; using CPU");
     try {
+      // Non-overlapped host work precedes submission and therefore does not
+      // consume the worker's frame deadline. Input/result ownership and the
+      // caller's exactly-once exception/fallback handling remain unchanged.
+      if (hostWork && !clutterHostWorkOverlap_) hostWork();
       Message request;
       request.operation = clutterFrame;
       request.sequence = ++sequence_;
-      sendMessage(socket_, request);
-      const auto response = receiveMessage(socket_, options_.frameMs, "clutter execution");
+      stream_profile::WorkScope profile(streamProfile_,sequence_,clutterFrame,child_->pid());
+      sendMessage(child_->fd(), request);
+      profile.mark(1);
+      unsigned remainingMs = options_.frameMs;
+      if (hostWork && clutterHostWorkOverlap_) {
+        const auto start = Clock::now();
+        hostWork();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count();
+        // Host scheduling may outlast a completed GPU frame. A zero-time poll
+        // still drains its ready reply; unfinished work receives no new budget.
+        remainingMs = elapsed >= options_.frameMs ? 0 :
+          options_.frameMs - unsigned(elapsed);
+      }
+      const auto response = receiveMessage(child_->fd(), remainingMs, "clutter execution");
+      profile.mark(2);
       if (response.operation == failure) throw std::runtime_error(response.reason);
       if ((response.operation != ready && response.operation != clutterRejected) ||
           response.sequence != sequence_)
         throw std::runtime_error("GPU worker returned the wrong clutter frame; using CPU");
+      replay_gpu_qualification::acceptClutterProof(response.reason);
+      profile.completed();
       return response.operation == ready;
     } catch (...) { stop();
     throw; }
@@ -467,16 +273,16 @@ public:
       std::vector<Complex>& output) override {
     if (!layout_.reference)
       throw std::runtime_error("GPU radar processing is unavailable; using CPU");
-    if (socket_ < 0) throw std::runtime_error("GPU worker is no longer available; using CPU");
+    if (child_->fd() < 0) throw std::runtime_error("GPU worker is no longer available; using CPU");
     if (reference.size() != layout_.reference || surveillance.size() != layout_.surveillance)
       throw std::invalid_argument("GPU input dimensions changed");
     try {
-      std::memcpy(shared_, reference.data(), reference.size() * sizeof(Complex));
-      std::memcpy(shared_ + layout_.reference, surveillance.data(), surveillance.size() * sizeof(Complex));
+      std::memcpy(shared(), reference.data(), reference.size() * sizeof(Complex));
+      std::memcpy(shared() + layout_.reference, surveillance.data(), surveillance.size() * sizeof(Complex));
       processFrame();
-      output.assign(shared_ + layout_.reference + layout_.surveillance,
-        shared_ + layout_.reference + layout_.surveillance + layout_.output);
-    } catch (...) { if (socket_ >= 0) stop();
+      output.assign(shared() + layout_.reference + layout_.surveillance,
+        shared() + layout_.reference + layout_.surveillance + layout_.output);
+    } catch (...) { if (child_->fd() >= 0) stop();
     throw; }
   }
 };
@@ -517,7 +323,7 @@ std::string queryGpuDriverStatus(const GpuProcessOptions& options) {
 #ifdef __APPLE__
     if (attributesReady) posix_spawnattr_destroy(&attributes);
 #endif
-    reap(child);
+    gpu_worker_transport::reap(child,false);
   };
   try {
     if (pipe(descriptors)) throw std::runtime_error("Cannot open GPU driver query pipe");
@@ -535,6 +341,11 @@ std::string queryGpuDriverStatus(const GpuProcessOptions& options) {
     if (posix_spawn_file_actions_adddup2(&actions, childOutput, STDOUT_FILENO) ||
         posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
       throw std::runtime_error("Cannot prepare GPU driver query descriptors");
+    gpu_artifact_binding::spawnActions(actions,true); // fd 5 is explicitly closed below.
+    if(gpu_artifact_binding::active())for(int fd=3;fd<6;++fd)
+      if(posix_spawn_file_actions_addclose(&actions,fd))
+        throw std::runtime_error("Cannot isolate GPU driver query descriptors");
+    const int closeFrom=gpu_artifact_binding::active()?7:3;
 #ifdef __APPLE__
     if (posix_spawnattr_init(&attributes))
       throw std::runtime_error("Cannot isolate GPU driver query");
@@ -543,20 +354,30 @@ std::string queryGpuDriverStatus(const GpuProcessOptions& options) {
         (stderrOpen && posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO)))
       throw std::runtime_error("Cannot isolate GPU driver query descriptors");
 #elif defined(__GLIBC__) && defined(__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
-    if (posix_spawn_file_actions_addclosefrom_np(&actions, 3))
+    if (posix_spawn_file_actions_addclosefrom_np(&actions, closeFrom))
       throw std::runtime_error("Cannot isolate GPU driver query descriptors");
 #else
     DIR* inherited = opendir("/proc/self/fd");
     if (!inherited) throw std::runtime_error("Cannot inspect GPU driver query descriptors");
     while (const auto* entry = readdir(inherited)) {
       const int fd = std::atoi(entry->d_name);
-      if (fd >= 3) posix_spawn_file_actions_addclose(&actions, fd);
+      if (fd >= closeFrom) posix_spawn_file_actions_addclose(&actions, fd);
     }
     closedir(inherited);
 #endif
     std::string executable = options.executable.empty() ? gpuSiblingPath("blah2-gpu-worker") : options.executable;
     std::string argument = options.argument.empty() ? "--driver-status" : options.argument;
     char* argv[] = {executable.data(), argument.data(), nullptr};
+    std::vector<std::string> childEnvironment;
+    for(char** item=environ;*item;++item)
+      if(!gpu_artifact_binding::inherited(*item)&&!replay_gpu_qualification::inherited(*item))
+        childEnvironment.emplace_back(*item);
+    gpu_artifact_binding::appendEnvironment(childEnvironment);
+    gpu_offline_diagnostics::appendEnvironment(childEnvironment,false);
+    gpu_worker_lifetime::bindParent(childEnvironment);
+    std::vector<char*> childEnvironmentPointers;
+    for(auto& item:childEnvironment)childEnvironmentPointers.push_back(item.data());
+    childEnvironmentPointers.push_back(nullptr);
     const auto deadline = Clock::now() + std::chrono::milliseconds(options.startupMs);
     const int error = posix_spawn(&child, executable.c_str(), &actions,
 #ifdef __APPLE__
@@ -564,8 +385,9 @@ std::string queryGpuDriverStatus(const GpuProcessOptions& options) {
 #else
       nullptr,
 #endif
-      argv, environ);
+      argv, childEnvironmentPointers.data());
     if (error) { child = -1; throw std::runtime_error("GPU driver query worker is unavailable"); }
+    gpu_artifact_binding::spawned(child,executable);
     close(childOutput); childOutput = -1;
     std::string result;
     bool eof = false, exited = false;
@@ -612,51 +434,14 @@ uint64_t gpuProcessMappingBytes(const GpuGeometry& geometry) {
   // length. Reserve that physical padding without changing the IPC protocol.
   return ((bytes + uint64_t(page) - 1) / uint64_t(page)) * uint64_t(page);
 }
-std::unique_ptr<GpuBackend> createGpuFirProcess(uint32_t samples, uint32_t taps,
-    const std::string& device, const GpuProcessOptions& options) {
-  GpuGeometry geometry{};
-  geometry.kind = GpuWorkKind::fir;
-  geometry.firSamples = samples;
-  geometry.firTaps = taps;
-  geometry.firFft = 2048;
-  geometry.firPercent = 50;
-  return std::make_unique<Process>(geometry, device, options);
-}
 int runGpuWorker(const GpuFactory& factory) {
-  const pid_t parent = getppid();
-#ifdef __APPLE__
-  // EOF cannot stop a driver stuck inside an initialization/frame call. Watch
-  // the parent's exact process lifetime independently and exit even then.
-  if (parent == 1) return 1;
-  const int watcher = kqueue();
-  if (watcher < 0) return 1;
-  struct kevent change;
-  EV_SET(&change, parent, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
-  if (fcntl(watcher, F_SETFD, FD_CLOEXEC) ||
-      kevent(watcher, &change, 1, nullptr, 0, nullptr) < 0 || getppid() != parent) {
-    close(watcher);
-    return 1;
-  }
-  try {
-    std::thread([watcher] {
-      struct kevent event;
-      int result;
-      do { result = kevent(watcher, nullptr, 0, &event, 1, nullptr); }
-      while (result < 0 && errno == EINTR);
-      // Failure of the lifetime guard is fail-closed as well.
-      _exit(1);
-    }).detach();
-  } catch (...) { close(watcher);
-  return 1; }
-#else
-  if (parent == 1 || prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent) return 1;
-  prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
-#endif
-  const rlimit noCore{0, 0};
-  setrlimit(RLIMIT_CORE, &noCore);
+  if (!gpu_worker_lifetime::protectWorker()) return 1;
   void* mapping = MAP_FAILED;
   size_t bytes = 0;
+  std::unique_ptr<GpuBackend> backend;
   try {
+    gpu_artifact_binding::workerStart();
+    replay_gpu_qualification::Worker qualification("portable");
     const auto init = receiveMessage(3, 30000, "initialization request");
     if (init.operation != initialize || init.sequence) throw std::runtime_error("Invalid GPU worker initialization");
     const Layout layout(init.geometry);
@@ -673,17 +458,25 @@ int runGpuWorker(const GpuFactory& factory) {
     close(4);
 #endif
     const auto* shared = static_cast<const Complex*>(mapping);
-    auto backend = factory(init.geometry, init.id);
+    qualification.device(init.id);
+    if(qualification.hit("startup"))throw std::runtime_error("Replay qualification startup rejection");
+    qualification.hit("allocation"); // The real allocator receives a one-byte ceiling.
+    backend = factory(init.geometry, init.id);
     if (!backend) throw std::runtime_error("GPU module did not create a processor");
     const auto device = backend->device();
+    qualification.device(device.id);
     auto* buffers = dynamic_cast<GpuBufferBackend*>(backend.get());
     auto* clutter = dynamic_cast<GpuClutterBufferBackend*>(backend.get());
-    auto* fir = dynamic_cast<GpuFirBufferBackend*>(backend.get());
+    auto* replayClutter = dynamic_cast<clutter_replay::Backend*>(backend.get());
+    if(qualification.clutter().active()){
+      if(!gpu_artifact_binding::active()||!replayClutter||!clutter)
+        throw std::runtime_error("Replay clutter checkpoint lacks authenticated portable backend");
+      replayClutter->configureClutterReplay(qualification.clutter(),[&qualification]{return qualification.binding();});
+    }
     Message response;
     response.operation = ready;
     response.memoryBytes = device.memoryBytes;
     if (clutter && layout.clutterReference) response.capabilities |= clutterCapability;
-    if (fir && layout.firReference) response.capabilities |= firCapability;
     std::snprintf(response.id, sizeof(response.id), "%s", device.id.c_str());
     std::snprintf(response.name, sizeof(response.name), "%s", device.name.c_str());
     sendMessage(3, response);
@@ -692,41 +485,19 @@ int runGpuWorker(const GpuFactory& factory) {
       reference.resize(layout.reference);
       surveillance.resize(layout.surveillance);
     }
-    uint64_t sequence = 0, firSequence = 0;
-    bool firActive = false;
+    uint64_t sequence = 0;
+    stream_profile::Worker streamProfile("portable-worker",2);
     for (;;) {
       // Idle waits are not GPU work. Parent death closes the socket or kills us.
       const auto request = receiveMessage(3, INT_MAX, "idle request");
       if (request.operation == quit) break;
       auto* writable = static_cast<Complex*>(mapping);
-      if (request.operation == firReference) {
-        if (!fir || !layout.firReference || firActive ||
-            request.sequence != sequence + 1)
-          throw std::runtime_error("Invalid GPU worker FIR reference request");
-        const auto* start = shared + layout.firOffset;
-        fir->submitFirReferenceBuffers(start, layout.firReference);
-        firSequence = request.sequence;
-        firActive = true;
-        continue; // Deliberately no acknowledgement: CPU correlation overlaps.
-      }
-      if (request.operation == firFinal) {
-        if (!fir || !layout.firReference || !firActive ||
-            request.sequence != firSequence)
-          throw std::runtime_error("Invalid GPU worker FIR final request");
-        auto* start = writable + layout.firOffset;
-        fir->processFirWeightsBuffers(start + layout.firReference,
-          layout.firWeights, start + layout.firReference + layout.firWeights,
-          layout.firOutput);
-        sequence = firSequence;
-        firActive = false;
-        response.operation = ready;
-        response.sequence = sequence;
-        sendMessage(3, response);
-        continue;
-      }
-      if (firActive || (request.operation != frame && request.operation != clutterFrame) ||
+      if ((request.operation != frame && request.operation != clutterFrame) ||
           request.sequence != ++sequence)
         throw std::runtime_error("Invalid GPU worker frame request");
+      if(request.operation==frame)qualification.beforeFrame(sequence,sequence);
+      stream_profile::WorkScope profile(streamProfile,sequence,request.operation,getppid(),true);
+      response.reason[0]='\0';
       if (request.operation == clutterFrame) {
         if (!clutter || !layout.clutterReference)
           throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");
@@ -736,6 +507,11 @@ int runGpuWorker(const GpuFactory& factory) {
           start + layout.clutterReference + layout.clutterSurveillance,
           layout.clutterOutput);
         response.operation = accepted ? ready : clutterRejected;
+        if(qualification.clutter().active()){
+          const auto proof=replayClutter->clutterReplayProof();const auto text=proof.encode();
+          if(!accepted||text.size()>=sizeof(response.reason))throw std::runtime_error("Replay clutter checkpoint execution failed");
+          std::memcpy(response.reason,text.c_str(),text.size()+1);qualification.clutterComplete(proof);
+        }
       } else if (buffers) {
         response.operation = ready;
         buffers->processBuffers(shared, layout.reference,
@@ -751,8 +527,14 @@ int runGpuWorker(const GpuFactory& factory) {
         std::memcpy(writable + layout.reference + layout.surveillance,
           output.data(), layout.output * sizeof(Complex));
       }
+      if(request.operation==frame&&qualification.hit("numeric-rejection",sequence,sequence))
+        writable[layout.reference+layout.surveillance]={std::numeric_limits<float>::quiet_NaN(),0};
+      if(request.operation==frame)qualification.complete("frame-computed",sequence,sequence);
       response.sequence = sequence;
+      profile.mark(1); // computation complete
       sendMessage(3, response);
+      profile.mark(2); // response sent
+      profile.completed();
     }
     munmap(mapping, bytes);
     return 0;

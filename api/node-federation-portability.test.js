@@ -3,7 +3,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const {configuredApiPort, defaultRegistryPath} = require('./node-federation');
+const {configuredApiPort, defaultRegistryPath, nodeCapabilities} = require('./node-federation');
+
+test('node capabilities distinguish offline ATSC diagnostics from live raw selection', () => {
+  const processing = nodeCapabilities().processing;
+  assert.deepEqual(processing.atsc_reference_modes, ['automatic', 'raw']);
+  assert.deepEqual(processing.atsc_replay_reference_modes, ['automatic', 'raw', 'pilot_aided']);
+  assert.equal(processing.reference_reconstruction.atsc_8vsb.live_selectable, false);
+  assert.equal(processing.reference_reconstruction.atsc_8vsb.status, 'experimental-offline');
+  assert.equal(processing.reference_reconstruction.atsc3_ofdm.live_selectable, false);
+});
 
 test('federation uses the same configured API port as the server', () => {
   assert.equal(configuredApiPort({network: {ports: {api: 43821}}}, {}), 43821);

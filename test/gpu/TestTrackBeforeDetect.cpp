@@ -3,6 +3,8 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace {
 unsigned checks = 0;
@@ -17,6 +19,32 @@ bool close(double left, double right, double tolerance = 1e-10) {
 
 int main() try {
   using namespace track_before_detect;
+  const double nextAmplitude=std::nextafter(1.0,2.0);
+  for(uint32_t depth:{2u,4u,8u}){
+    const double first=(4.0+1.0)/depth;
+    const double later=(4.0+nextAmplitude*nextAmplitude)/depth;
+    check(nextAmplitude*nextAmplitude>1.0&&first==later,
+      "Nextafter fixture did not produce distinct samples with tied path means");
+    check(!temporalPathBetter(later,first,false)&&temporalPathBetter(first,later,true),
+      "Temporal path tie did not retain canonical first-path order");
+    check(temporalPathBetter(std::nextafter(first,2*first),first,false)&&
+      !temporalPathBetter(std::nextafter(first,0.0),first,true),
+      "Path order overrode a strictly better rounded mean");
+  }
+  for(uint32_t depth:{1u,2u,4u,8u}){
+    validateRefinementGrid(depth,12);
+    validateRefinementGrid(depth,31);
+    validateRefinementGrid(depth,127,127);
+    for(const auto pair:std::vector<std::pair<uint32_t,uint32_t>>{{32,0},{128,128},{12,127},{0,0}}){
+      bool rejected=false;
+      try{validateRefinementGrid(depth,pair.first,pair.second);}
+      catch(const std::invalid_argument& error){
+        rejected=true;check(std::string(error.what()).find("at most 31")!=std::string::npos,
+          "Refinement refusal lacks an actionable default-grid bound");
+      }
+      check(rejected==(depth>2),"Refinement boundary silently changed the requested grid/depth");
+    }
+  }
   check(fractionalDelayTableWords(17,8,16,-.566)==17*33*8&&
     fractionalDelayTableWords(17,4,4,0)==0&&
     fractionalDelayTableWords(65535,8,16,-1)==65535*33*8,
@@ -95,6 +123,20 @@ int main() try {
     previousSumThreshold = double(cpis) * alpha;
   }
   bool rejected = false;
+  for (double probability : {1e-30, 1e-300}) {
+    const double threshold = cfarAlpha(probability, 1, 2);
+    const double x = 1 / (1 + threshold);
+    // Independent closed form for Beta(2,2); unlike x^3-first recurrence,
+    // this remains representable when the leading recurrence term underflows.
+    const double tail = (x * x) * (3 - 2 * x);
+    check(std::isfinite(threshold) && threshold > 1e12 &&
+      std::abs(tail / probability - 1) < 2e-12,
+      "Extreme accepted PFA was not bracketed to its actual beta tail");
+  }
+  try { (void)cfarAlpha(std::numeric_limits<double>::denorm_min(), 1, 1); }
+  catch (const std::overflow_error&) { rejected = true; }
+  check(rejected, "Unrepresentable CFAR threshold did not fail closed");
+  rejected = false;
   try { (void)bankCount(6); } catch (const std::invalid_argument&) { rejected = true; }
   check(rejected, "Invalid bank maximum was accepted");
   std::cout << "TRACK_BEFORE_DETECT_MATH_PASS checks=" << checks

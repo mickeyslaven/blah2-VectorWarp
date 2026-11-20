@@ -742,7 +742,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_release_matrix_requires_every_target_once(self):
         entries = []
-        for format, distro, version, arch in repository.RELEASE_TARGETS:
+        for format, distro, version, arch in repository.release_targets_for_version("1.2.3"):
             entries.append({"format": format, "distro": distro, "distro_version": version,
                             "arch": arch})
         repository.verify_release_matrix(entries, "0.1.10")

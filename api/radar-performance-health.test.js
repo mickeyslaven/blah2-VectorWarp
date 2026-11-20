@@ -68,7 +68,7 @@ test('reports sustained birth rejection as conversion attention, not radar failu
     inactivity_deleted: 0};
   for (let index = 0; index < 2; index += 1)
     health.accept({timestamp: index + 1, n: 1, nTentative: 1, nAssociated: 0,
-      nActive: 0, nConfirmed: 0, nCoasting: 0}, {channel: 'WPXI', diagnostics});
+      nActive: 0, nConfirmed: 0, nCoasting: 0}, {channel: 'TX-C', diagnostics});
   const result = health.snapshot();
   assert.equal(result.status, 'attention');
   assert.equal(result.channels[0].conversion.status, 'attention');
@@ -88,10 +88,10 @@ test('reset establishes a new producer ordering generation', () => {
     freshnessMs: Number.MAX_SAFE_INTEGER});
   const frame = timestamp => ({timestamp, n: 0, nTentative: 0,
     nAssociated: 0, nActive: 0, nCoasting: 0});
-  assert.equal(health.accept(frame(100), {channel: 'WPXI'}), true);
-  assert.equal(health.accept(frame(1), {channel: 'WPXI'}), false);
+  assert.equal(health.accept(frame(100), {channel: 'TX-C'}), true);
+  assert.equal(health.accept(frame(1), {channel: 'TX-C'}), false);
   health.reset();
-  assert.equal(health.accept(frame(1), {channel: 'WPXI'}), true);
+  assert.equal(health.accept(frame(1), {channel: 'TX-C'}), true);
 });
 
 test('an explicit first-frame regression starts a new single-lane generation', () => {

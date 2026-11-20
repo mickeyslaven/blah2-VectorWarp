@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert/strict');
-const {IlluminatorFrameHistory} = require('./illuminator-frame-history');
+const {IlluminatorFrameHistory} = require('./presentation-history');
 const frame = (id, timestamp, first = timestamp * 10) => ({id, timestamp,
   first_input_sample: first, end_input_sample: first + 9});
 const history = new IlluminatorFrameHistory({maxFramesPerIlluminator: 2, maxBytes: 100});

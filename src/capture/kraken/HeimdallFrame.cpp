@@ -129,12 +129,18 @@ std::size_t HeimdallFrame::payload_size(const Header& header)
 }
 
 std::vector<std::vector<std::complex<float>>> HeimdallFrame::decode_payload(
-  const Header& header, const std::vector<uint8_t>& bytes)
+  const Header& header, const std::vector<uint8_t>& bytes,
+  const std::vector<double>& originalMeanIq)
 {
   if (bytes.size() != payload_size(header))
     throw std::runtime_error("Incomplete Heimdall V2 payload");
   if (header.gains.size() != header.numChannels)
     throw std::runtime_error("Heimdall V2 gain metadata is unavailable");
+  if (!originalMeanIq.empty() && originalMeanIq.size() != header.numChannels * 2)
+    throw std::runtime_error("Heimdall original frame conditioning dimensions are invalid");
+  for (double mean : originalMeanIq)
+    if (!std::isfinite(mean) || mean < 0 || mean > 255)
+      throw std::runtime_error("Heimdall original frame conditioning is invalid");
 
   // Suite reports the actual tuner gain for every channel.  Refer all IQ
   // amplitudes to the least-amplified channel so covariance, reference
@@ -162,13 +168,17 @@ std::vector<std::vector<std::complex<float>>> HeimdallFrame::decode_payload(
       header.samplesPerChannel * 2;
     double meanI = 0;
     double meanQ = 0;
-    for (uint32_t sample = 0; sample < header.samplesPerChannel; sample++)
-    {
-      meanI += bytes[start + sample * 2];
-      meanQ += bytes[start + sample * 2 + 1];
+    if (originalMeanIq.empty()) {
+      for (uint32_t sample = 0; sample < header.samplesPerChannel; sample++)
+      {
+        meanI += bytes[start + sample * 2];
+        meanQ += bytes[start + sample * 2 + 1];
+      }
+      meanI /= header.samplesPerChannel;
+      meanQ /= header.samplesPerChannel;
+    } else {
+      meanI = originalMeanIq[channel * 2]; meanQ = originalMeanIq[channel * 2 + 1];
     }
-    meanI /= header.samplesPerChannel;
-    meanQ /= header.samplesPerChannel;
     for (uint32_t sample = 0; sample < header.samplesPerChannel; sample++)
     {
       channels[channel][sample] = {

@@ -2,7 +2,7 @@ set(BLAH2_GPU_DEFAULT "AUTO")
 set(BLAH2_GPU "${BLAH2_GPU_DEFAULT}" CACHE STRING "Build GPU module: AUTO, ON or OFF")
 set_property(CACHE BLAH2_GPU PROPERTY STRINGS AUTO ON OFF)
 set(BLAH2_GPU_ADVANCED "AUTO" CACHE STRING
-  "Build native resident/wideband/mixed GPU modules: AUTO, ON (required) or OFF")
+  "Build native resident/wideband GPU modules: AUTO, ON (required) or OFF")
 set_property(CACHE BLAH2_GPU_ADVANCED PROPERTY STRINGS AUTO ON OFF)
 include(${CMAKE_CURRENT_LIST_DIR}/GpuPlatformPolicy.cmake)
 blah2_gpu_platform_policy("${CMAKE_SYSTEM_NAME}" "${BLAH2_GPU}" "${BLAH2_GPU_ADVANCED}"
@@ -23,6 +23,7 @@ function(blah2_isolate_vkfft_vendor_warnings target)
 endfunction()
 add_library(blah2GpuProcess STATIC ${PROJECT_ROOT}/src/process/ambiguity/GpuProcess.cpp)
 target_compile_features(blah2GpuProcess PUBLIC cxx_std_17)
+target_include_directories(blah2GpuProcess PUBLIC ${PROJECT_ROOT}/src)
 add_library(blah2GpuWidebandProcess STATIC
   ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandChannelizer.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandProcess.cpp)
@@ -46,7 +47,7 @@ if(TARGET blah2)
   target_link_libraries(blah2 PRIVATE blah2GpuResidentProcess)
 endif()
 
-target_link_libraries(blah2GpuProcess PUBLIC Threads::Threads)
+target_link_libraries(blah2GpuProcess PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 if(TARGET blah2)
   target_link_libraries(blah2 PRIVATE blah2GpuProcess)
 endif()
@@ -99,8 +100,8 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     endif()
     set(BLAH2_GPU_WORKER_SOURCES ${PROJECT_ROOT}/src/process/ambiguity/GpuWorker.cpp)
     if(APPLE)
-      # CMake 3.8 does not reliably enable an OBJCXX project language. Compile
-      # this one worker-only source with AppleClang's explicit language flag.
+      # Keep the project CXX-only and compile this one worker-only source with
+      # AppleClang's explicit Objective-C++ language flag.
       set(BLAH2_MAC_GPU_COMPATIBILITY ${PROJECT_ROOT}/src/process/ambiguity/MacGpuCompatibility.mm)
       set_source_files_properties(${BLAH2_MAC_GPU_COMPATIBILITY} PROPERTIES
         LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
@@ -170,24 +171,9 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
         set_target_properties(testGpuWidebandPhysical PROPERTIES
           RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_DIR}")
         add_executable(testGpuWidebandEndToEnd
-          ${PROJECT_ROOT}/test/gpu/TestGpuWidebandEndToEnd.cpp
-          ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
-          ${PROJECT_ROOT}/src/process/clutter/WienerHopf.cpp
-          ${PROJECT_ROOT}/src/process/conditioning/ArrayReferenceSynthesizer.cpp
-          ${PROJECT_ROOT}/src/process/fusion/Noncoherent.cpp
-          ${PROJECT_ROOT}/src/process/detection/CfarDetector1D.cpp
-          ${PROJECT_ROOT}/src/process/detection/Centroid.cpp
-          ${PROJECT_ROOT}/src/process/detection/Interpolate.cpp
-          ${PROJECT_ROOT}/src/process/tracker/Tracker.cpp
-          ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
-          ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
-          ${PROJECT_ROOT}/src/data/Detection.cpp ${PROJECT_ROOT}/src/data/Track.cpp)
-        target_include_directories(testGpuWidebandEndToEnd SYSTEM PRIVATE
-          ${ARMADILLO_INCLUDE_DIRS})
+          ${PROJECT_ROOT}/test/gpu/TestGpuWidebandEndToEnd.cpp)
         target_link_libraries(testGpuWidebandEndToEnd PRIVATE
-          blah2GpuWidebandProcess blah2MultiIlluminatorRadar blah2RapidJson
-          ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
-          ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+          blah2GpuWidebandProcess blah2MultiIlluminatorRadar blah2Channelizer)
         target_compile_definitions(testGpuWidebandEndToEnd PRIVATE
           GPU_WIDEBAND_WORKER="$<TARGET_FILE:blah2GpuWorker>")
         add_dependencies(testGpuWidebandEndToEnd blah2GpuWorker
@@ -198,6 +184,9 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     endif()
     if(BLAH2_GPU_RESIDENT_ELIGIBLE)
       set(BLAH2_GPU_RESIDENT_BUILT TRUE)
+      if(TARGET blah2MultiIlluminatorRadar)
+        target_compile_definitions(blah2MultiIlluminatorRadar PRIVATE VECTORWARP_RESIDENT_GPU=1)
+      endif()
       add_library(blah2GpuResidentVulkan MODULE
         ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentModule.cpp
         ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp

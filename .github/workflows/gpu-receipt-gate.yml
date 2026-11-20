@@ -24,7 +24,7 @@ jobs:
         with:
           ref: ${{ inputs.source-sha }}
           persist-credentials: false
-      - name: Fetch only successful trusted dispatch evidence for this exact SHA
+      - name: Fetch complete baseline and supplemental evidence from the exact trusted SHA
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -40,7 +40,7 @@ jobs:
               '--status', 'success', '--limit', '20', '--json', 'databaseId,headSha,event,conclusion']))
           runs = [run for run in runs if run['headSha'] == sha and run['event'] == 'workflow_dispatch'
                   and run['conclusion'] == 'success']
-          assert runs, 'No qualified Linux GPU receipt for exact source SHA; dispatch trusted GPU qualification first'
+          assert runs, 'No complete unified GPU receipts for exact source SHA; baseline-only dispatches cannot qualify'
           for feature in ('fp32', 'fp64'):
               subprocess.run(['gh', 'run', 'download', str(runs[0]['databaseId']),
                   '--name', f'gpu-product-parity-{feature}-{sha}', '--dir', f'build/gpu-receipts/{feature}'], check=True)

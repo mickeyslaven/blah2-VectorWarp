@@ -222,12 +222,23 @@ if (typeof document !== 'undefined') {
 }
 var adsb = {};
 var remoteId = {};
-function exactFrameUrl(path, timestamp) {
-  const url = new URL(path, typeof window === 'undefined' ?
-    'http://vectorwarp.invalid' : window.location.href);
-  url.searchParams.set('frame_timestamp', String(timestamp));
-  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
-    `${url.pathname}${url.search}`;
+function adsbOverlay(data, channel, graceMs) {
+  const overlay = {delay: [], doppler: [], flight: [], customdata: [], hover: [], colors: [], ids: []};
+  const stable = stabilizeAircraftSnapshots(Object.entries(data || {})
+    .map(([hex, record]) => record?.hex ? record : {...record, hex}),
+  {scope: `delay-doppler:${channel || 'single'}`, graceMs});
+  for (const aircraft of stable) {
+    if (!aircraft || !('doppler' in aircraft)) continue;
+    overlay.delay.push(aircraft.delay);
+    overlay.doppler.push(aircraft.doppler);
+    overlay.flight.push(aircraftLabel(aircraft));
+    overlay.customdata.push(aircraftPlotData(aircraft));
+    overlay.colors.push(radarSemantics.aircraftColor(aircraft));
+    overlay.ids.push(`aircraft:${aircraftIdentity(aircraft)}`);
+    overlay.hover.push(aircraftHoverText(aircraft,
+      {delay: aircraft.delay, doppler: aircraft.doppler}));
+  }
+  return overlay;
 }
 
 function trackerOverlay(frame, runningConfig) {
@@ -289,7 +300,6 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 }
 
 // callback function
-var radarUpdates = null;
 async function renderRadarMap(data) {
   const frameChannel = selectedIlluminator;
   const atomicFrame = data?.schema === 'vectorwarp-radar-display-frame-v1' ? data : null;
@@ -310,14 +320,14 @@ async function renderRadarMap(data) {
     marker.hidden = !remoteIdEnabled;
   });
   const adsbRequest = adsbEnabled ?
-    fetchRadarJson(exactFrameUrl(urlAdsbData, data.timestamp)).catch(() => null) :
+    fetchRadarJson(radarFrameUrl(urlAdsbData, data.timestamp)).catch(() => null) :
     Promise.resolve(null);
   const [detected, trackerFrame, data_remote_id] = await Promise.all([
     atomicFrame ? Promise.resolve(atomicFrame.detections) :
-      detectionEnabled && visible.detections ? fetchRadarJson(exactFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
+      detectionEnabled && visible.detections ? fetchRadarJson(radarFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
     atomicFrame ? Promise.resolve(atomicFrame.tracks) :
-      fetchRadarJson(exactFrameUrl(urlTracker, data.timestamp)).catch(() => null),
-    remoteIdEnabled ? fetchRadarJson(exactFrameUrl(urlRemoteIdData, data.timestamp)).catch(() => null) : null
+      fetchRadarJson(radarFrameUrl(urlTracker, data.timestamp)).catch(() => null),
+    remoteIdEnabled ? fetchRadarJson(radarFrameUrl(urlRemoteIdData, data.timestamp)).catch(() => null) : null
   ]);
   if (frameChannel !== selectedIlluminator) return false;
   // Never advance the heatmap while replacing a failed exact-frame radar
@@ -337,25 +347,9 @@ async function renderRadarMap(data) {
   // truth overlay. Preserve the last confirmed visualization and refresh trace
   // 2 independently when ADS-B arrives; scoring/association remains server-side
   // and still uses exact event-time data.
-  const data_adsb = atomicFrame ? null : await adsbRequest;
-  if (!atomicFrame || !Array.isArray(adsb.delay))
+  if (!atomicFrame) adsb = adsbOverlay(await adsbRequest, selectedIlluminator, adsbEnabled ? 10000 : 0);
+  else if (!Array.isArray(adsb.delay))
     adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: [], colors: [], ids: []};
-  const stableAircraft = atomicFrame ? [] : stabilizeAircraftSnapshots(Object.entries(data_adsb || {})
-      .map(([hex, record]) => record?.hex ? record : {...record, hex}),
-    {scope: `delay-doppler:${selectedIlluminator || 'single'}`,
-      graceMs: adsbEnabled ? 10000 : 0});
-  for (const aircraft of stableAircraft) {
-      if (aircraft && 'doppler' in aircraft) {
-        adsb.delay.push(aircraft.delay);
-        adsb.doppler.push(aircraft.doppler);
-        adsb.flight.push(aircraftLabel(aircraft));
-        adsb.customdata.push(aircraftPlotData(aircraft));
-        adsb.colors.push(radarSemantics.aircraftColor(aircraft));
-        adsb.ids.push(`aircraft:${aircraftIdentity(aircraft)}`);
-        adsb.hover.push(aircraftHoverText(aircraft,
-          {delay: aircraft.delay, doppler: aircraft.doppler}));
-      }
-  }
   remoteId = {delay: [], doppler: [], customdata: [], hover: [], ids: []};
   const stableDrones = stabilizeAircraftSnapshots(Object.entries(data_remote_id || {})
       .map(([id, record]) => record?.hex ? record : {...record, hex: id}),
@@ -501,21 +495,7 @@ async function renderRadarMap(data) {
   if (selectedDelayDopplerTarget) await refreshDelayDopplerSelection();
   if (atomicFrame && adsbEnabled) void adsbRequest.then(dataAdsb => {
     if (frameChannel !== selectedIlluminator || dataAdsb === null) return;
-    const next = {delay: [], doppler: [], flight: [], customdata: [], hover: [], colors: [], ids: []};
-    const stable = stabilizeAircraftSnapshots(Object.entries(dataAdsb || {})
-        .map(([hex, record]) => record?.hex ? record : {...record, hex}),
-      {scope: `delay-doppler:${frameChannel || 'single'}`, graceMs: 10000});
-    for (const aircraft of stable) {
-      if (!aircraft || !('doppler' in aircraft)) continue;
-      next.delay.push(aircraft.delay);
-      next.doppler.push(aircraft.doppler);
-      next.flight.push(aircraftLabel(aircraft));
-      next.customdata.push(aircraftPlotData(aircraft));
-      next.colors.push(radarSemantics.aircraftColor(aircraft));
-      next.ids.push(`aircraft:${aircraftIdentity(aircraft)}`);
-      next.hover.push(aircraftHoverText(aircraft,
-        {delay: aircraft.delay, doppler: aircraft.doppler}));
-    }
+    const next = adsbOverlay(dataAdsb, frameChannel, 10000);
     adsb = next;
     delayDopplerSelectionTraces[0].ids = next.ids;
     const selection = delayDopplerSelectionStyle(delayDopplerSelectionTraces[0]);
@@ -530,30 +510,22 @@ function configureMapChannel(context) {
   selectedIlluminator = context?.id || '';
   selectedIlluminatorSynthetic = context?.item?.api_illuminator === false;
   selectedIlluminatorSampleRate = Number(context?.item?.output_sample_rate_hz);
-  const product = path => selectedIlluminatorUrl(path, context);
-  urlDetection = liveApiUrl(radarPresentationUrl(product('/api/detection')));
-  urlTracker = liveApiUrl(radarPresentationUrl(product('/api/tracker')));
-  urlAdsbData = liveApiUrl(radarPresentationUrl(product('/api/adsb/delay-doppler?overlay=1')));
+  urlDetection = radarDisplayUrl('detection', undefined, context);
+  urlTracker = radarDisplayUrl('map', '/api/tracker', context);
+  urlAdsbData = radarDisplayUrl('map', '/api/adsb/delay-doppler?overlay=1', context);
   const liveMapPath = context?.enabled && context.id && context.item?.api_illuminator !== false ?
     '/api/radar/frame' : mapProductPath;
-  urlMap = liveApiUrl(radarPresentationUrl(mapPresentationUrl(product(liveMapPath),
-    typeof window === 'undefined' ? 1280 : window.innerWidth)));
+  urlMap = radarDisplayUrl('map', mapPresentationUrl(liveMapPath,
+    typeof window === 'undefined' ? 1280 : window.innerWidth), context);
   maxHoldGrid = null;
   gridSignature = '';
   selectedDelayDopplerTarget = null;
   delayDopplerSelectionTraces = [];
   adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: [], colors: [], ids: []};
 }
-window.addEventListener('vectorwarp:illuminator-change', event => configureMapChannel(event.detail));
-var vectorwarpMapReady = getIlluminatorContext().then(context => {
-  configureMapChannel(context);
-  window.startVectorWarpChannelRadar = () => {
-    if (!radarUpdates) radarUpdates = startRadarPlot(() => urlMap, renderRadarMap);
-    return radarUpdates;
-  };
-  window.stopVectorWarpChannelRadar = () => {
-    radarUpdates?.stop(); radarUpdates = null;
-  };
-  radarUpdates = window.startVectorWarpChannelRadar();
-  return radarUpdates;
+var vectorwarpMapReady = startRadarDisplay('map', renderRadarMap,
+  {url: () => urlMap, configure: configureMapChannel}).then(controller => {
+  window.startVectorWarpChannelRadar = controller.start;
+  window.stopVectorWarpChannelRadar = controller.stop;
+  return controller;
 });

@@ -1,6 +1,7 @@
 #pragma once
 #include <fftw3.h>
 #include "process/utility/FftwThreads.h"
+#include "data/IqSampleView.h"
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -18,8 +19,7 @@ class RangeRowWorker {
 public:
   using Complex = std::complex<double>;
   struct Job {
-    const std::deque<Complex>* x = nullptr;
-    const std::deque<Complex>* y = nullptr;
+    IqSampleView x, y;
     std::vector<Complex>* rows = nullptr;
     uint32_t first = 0, last = 0, corr = 0, fft = 0, delays = 0, fs = 0;
     int32_t delayMin = 0;
@@ -42,13 +42,13 @@ private:
   bool pending_ = false, busy_ = false, done_ = false, stopping_ = false;
 
   void execute(const Job& job) {
-    if (!job.x || !job.y || !job.rows || job.fft != fftLength_ ||
+    if (!job.rows || job.fft != fftLength_ ||
         !job.corr || !job.delays ||
         job.first >= job.last || job.corr > job.fft || !job.fs ||
         job.delayMin <= -int64_t(job.fft) ||
         int64_t(job.delayMin)+job.delays-1 >= job.fft ||
-        (!job.rotatedX && job.last * uint64_t(job.corr) > job.x->size()) ||
-        (!job.filteredY && job.last * uint64_t(job.corr) > job.y->size()) ||
+        (!job.rotatedX && job.last * uint64_t(job.corr) > job.x.size()) ||
+        (!job.filteredY && job.last * uint64_t(job.corr) > job.y.size()) ||
         ((job.rotatedX || job.filteredY) &&
           (!job.fullSamples || job.last * uint64_t(job.corr) > job.fullSamples)) ||
         job.last * uint64_t(job.delays) > job.rows->size())
@@ -62,12 +62,12 @@ private:
         rotatedIndex = uint32_t(at < 0 ? at + job.fullSamples : at);
       }
       for (uint32_t j = 0; j < job.corr; ++j) {
-        input_[j] = job.rotatedX ? job.rotatedX[rotatedIndex] : (*job.x)[base+j];
+        input_[j] = job.rotatedX ? job.rotatedX[rotatedIndex] : job.x[base+j];
         if (job.rotatedX && ++rotatedIndex == job.fullSamples) rotatedIndex = 0;
         if (job.dopplerMiddle != 0)
           input_[j] *= std::exp(imaginary * 2.0 * M_PI * job.dopplerMiddle *
             (static_cast<double>(base+j) / job.fs));
-        input_[job.fft+j] = job.filteredY ? job.filteredY[base+j] : (*job.y)[base+j];
+        input_[job.fft+j] = job.filteredY ? job.filteredY[base+j] : job.y[base+j];
       }
       std::fill(input_.begin()+job.corr, input_.begin()+job.fft, Complex{});
       std::fill(input_.begin()+job.fft+job.corr, input_.end(), Complex{});

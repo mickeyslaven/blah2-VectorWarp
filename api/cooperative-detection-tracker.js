@@ -43,7 +43,13 @@ function geometryCatalog(sources, radiusM = DEFAULTS.coLocationRadiusM) {
   const groups = [];
   for (const source of sources.filter(item => validLocation(item?.receiver) &&
       validLocation(item?.transmitter))) {
-    let group = groups.find(item => compatibleGeometry(item.representative, source, radiusM));
+    // Geometry groups must remain pairwise compatible. A source without an
+    // explicit site ID may be spatially compatible with either of two sources
+    // whose explicit IDs conflict; comparing only with the first source would
+    // let that incomplete source bridge the conflicting geometries and make
+    // grouping depend on input order.
+    let group = groups.find(item => item.sources.every(member =>
+      compatibleGeometry(member, source, radiusM)));
     if (!group) {
       group = {id: `geometry-${groups.length + 1}`, representative: source, sources: []};
       groups.push(group);

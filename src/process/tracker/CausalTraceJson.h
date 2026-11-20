@@ -47,12 +47,12 @@ inline std::string json(const uint32_t* data,size_t size,double rangeKm,
  w.Key("truncated");w.Bool(!reset&&(nc<data[1]||nt<data[2]));w.EndObject();
  const char* reasons[]={"invalid","associated","minimum_snr","doppler_comb","range_comb",
   "persistent_occupancy","boundary","capacity","seeded","miss","tentative_expired",
-  "inactivity_deleted","confirmed","retained"};
+  "inactivity_deleted","confirmed","retained","lineage_overlap"};
  auto candidateId=[&](uint32_t i){return "c"+std::to_string(generation)+"-"+std::to_string(i);};
  w.Key("candidates");w.StartArray();
  for(uint32_t i=0;i<nc+nt;++i){const bool track=i>=nc;
   const auto* r=data+headerWords+recordWords*(track?prefix+i-nc:i);
-  require(r[1]>0&&r[1]<14&&r[2]<4&&r[3]<4);
+  require(r[1]>0&&r[1]<15&&r[2]<4&&r[3]<4);
   const uint32_t depth=r[5]>>8;require(depth==0||depth==1||depth==2||depth==4||depth==8);
   const std::string id=track?"t"+std::to_string(r[0]):candidateId(r[0]);
   w.StartObject();w.Key("id");w.String(id.c_str());w.Key("kind");w.String(track?"track":"candidate");

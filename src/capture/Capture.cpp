@@ -51,8 +51,9 @@ Capture::SamplePosition Capture::live_sample_position() const
     // provenance contract. Do not discard that relative source clock.
     if (!value.contractValid && !value.sourceSampleAvailable) return {};
     const uint64_t base=value.sourceSampleAvailable ? value.sourceFirstSample : 0;
-    if (replayProgress.samples>UINT64_MAX-base) return {};
-    return {true,value.epoch,base+replayProgress.samples,0,0,0,0,0,
+    const uint64_t queuedSamples = replayQueuedSamples.load(std::memory_order_acquire);
+    if (queuedSamples>UINT64_MAX-base) return {};
+    return {true,value.epoch,base+queuedSamples,0,0,0,0,0,
       value.deviceTimeEpochTick,replayProgress.sampleRate,value.clockSource,
       value.deviceTimeSource,value.motherboard,value.subdevices};
   }
@@ -111,6 +112,7 @@ void Capture::process(const std::vector<IqData *>& buffers,
     try {
       device = factory_source(type, config, buffers.size());
       if (!device) throw std::runtime_error("Capture backend is unavailable in this build");
+      device->set_recording_context(recordingContext);
       if (automaticClips && type != "Kraken")
         device->configure_portable_clips(clipPreSeconds, clipMaximumSeconds);
       if (pairedCpiQueue) {
@@ -259,7 +261,9 @@ void Capture::process(const std::vector<IqData *>& buffers,
           replayProgress = value; replayGeneration.store(value.generation);
         }, [&] { return processingBusy.load(); }, [&] {
           return replayControl.snapshot();
-        }, true);
+        }, true, [&](uint64_t samples) {
+          replayQueuedSamples.store(samples, std::memory_order_release);
+        });
     } else if (device) {
       device->start();
       device->process(buffers);
@@ -269,7 +273,7 @@ void Capture::process(const std::vector<IqData *>& buffers,
       }
     }
   } catch (const std::exception& error) {
-    processing_error(error.what()); request_input_failure();
+    processing_failure_or_stop(error.what());
   }
   if (pairedCpiQueueActive.exchange(false) && pairedCpiQueue)
     pairedCpiQueue->close();
@@ -335,6 +339,15 @@ void Capture::processing_error(const std::string& error) {
   std::cerr << "Radar input: " << error << '\n';
 }
 
+void Capture::processing_failure_or_stop(const std::string& error) {
+  if (STOP_SIGNAL) {
+    request_stop();
+    return;
+  }
+  processing_error(error);
+  request_input_failure();
+}
+
 std::string Capture::status_json() const {
   std::lock_guard<std::mutex> lock(statusMutex);
   rapidjson::Document document(rapidjson::kObjectType);
@@ -361,6 +374,20 @@ std::string Capture::status_json() const {
   provenance.AddMember("uncertaintyBounded",replayProgress.provenance.uncertaintyBounded,a);
   provenance.AddMember("configurationFingerprintValid",replayProgress.provenance.configurationFingerprintValid,a);
   provenance.AddMember("codeFingerprintMatches",replayProgress.provenance.codeFingerprintMatches,a);
+  provenance.AddMember("acquisitionIntegrityValid",replayProgress.provenance.acquisitionIntegrityValid,a);
+  provenance.AddMember("acquisitionHashTrusted",replayProgress.provenance.acquisitionHashTrusted,a);
+  provenance.AddMember("exactAcquisition",replayProgress.provenance.exactAcquisition,a);
+  provenance.AddMember("geographicSitesAvailable",replayProgress.provenance.geographicSitesAvailable,a);
+  provenance.AddMember("geographicSitesReason",rapidjson::Value(replayProgress.provenance.geographicSitesReason.c_str(),a),a);
+  rapidjson::Document sites;
+  sites.Parse<rapidjson::kParseFullPrecisionFlag>(replayProgress.provenance.geographicSitesAvailable ?
+    replayProgress.provenance.acquisitionContext.geographicSitesJson.c_str() : "null");
+  rapidjson::Value sitesValue; sitesValue.CopyFrom(sites,a);
+  provenance.AddMember("geographicSites",sitesValue,a);
+  provenance.AddMember("gainProvenance",rapidjson::Value(replayProgress.provenance.gainProvenance.c_str(),a),a);
+  provenance.AddMember("acquisitionReason",rapidjson::Value(replayProgress.provenance.acquisitionReason.c_str(),a),a);
+  provenance.AddMember("recordingSha256",rapidjson::Value(replayProgress.provenance.recordingSha256.c_str(),a),a);
+  provenance.AddMember("acquisitionSha256",rapidjson::Value(replayProgress.provenance.acquisitionSha256.c_str(),a),a);
   provenance.AddMember("schema",rapidjson::Value(replayProgress.provenance.schema.c_str(),a),a);
   provenance.AddMember("backend",rapidjson::Value(replayProgress.provenance.backend.c_str(),a),a);
   provenance.AddMember("timeSource",rapidjson::Value(replayProgress.provenance.timeSource.c_str(),a),a);
@@ -480,7 +507,8 @@ blah2::ReceiverSource Capture::factory_source(const std::string& type,
 }
 
 void Capture::set_replay(bool _loop, std::string _file, std::string format,
-    uint32_t legacyBlockSamples, std::string provenanceMode)
+    uint32_t legacyBlockSamples, std::string provenanceMode,
+    uint64_t startSample)
 {
   replay = true;
   loop = _loop;
@@ -488,4 +516,8 @@ void Capture::set_replay(bool _loop, std::string _file, std::string format,
   replayOptions.format = std::move(format);
   replayOptions.legacyBlockSamples = legacyBlockSamples;
   replayOptions.provenanceMode = std::move(provenanceMode);
+  // Seed the mailbox before playback starts. The player observes revision 1
+  // before exposing any samples, so a bounded replay can begin on an exact
+  // historical CPI boundary without a startup/control-thread race.
+  if (startSample) replayControl.publish({false, startSample, 1});
 }

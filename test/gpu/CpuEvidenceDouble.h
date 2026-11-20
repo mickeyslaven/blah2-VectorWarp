@@ -60,6 +60,8 @@ struct CpuEvidenceDouble {
   w.u32(h+52,2048);w.u32(h+60,128);w.u32(h+68,1);w.u32(h+72,5);w.f64(h+80,.01);
  }
  void control(const Packet&p,Phase phase){Writer w{m.bytes(Section::controlEvidence)};w.zero();w.u32(0,1);w.u32(4,512);w.u32(8,uint32_t(phase));
+  std::fill_n(m.bytes(Section::controlEvidence).data+112,16,0x11);
+  std::fill_n(m.bytes(Section::controlEvidence).data+488,16,0x11);
   w.u64(16,p.session[0]);w.u64(24,p.session[1]);const uint64_t fields[]={p.requestId,p.frame.logicalId,p.epoch,p.frame.consumedSequence,p.tracker.transaction,p.tracker.generation,p.tracker.consumedSequence,p.tracker.epoch};
   for(size_t i=0;i<8;++i){w.u64(32+8*i,fields[i]);}
   uint64_t mask=32;uint32_t capture=0;const bool duplicate=p.op==Op::commit&&p.phase==Phase::committed;

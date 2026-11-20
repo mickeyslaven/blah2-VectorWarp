@@ -26,6 +26,10 @@ capture:
 
 process:
   delay_reference_sample_rate_hz: 2000000
+  performance:
+    surveillance_workers: 0
+    fft_threads: 0
+    acceleration: auto
   evidence:
     # Phase 1/2 API-only, truth-blind synthetic collector. No C++ producer is wired.
     causal_funnel:
@@ -39,12 +43,11 @@ process:
       max_files: 8
   multi_illuminator:
     enabled: false
-    input_phase_correction: off
     transmitter_site_grouping: automatic
     co_location_radius_m: 100
     illuminators: []
   data:
-    cpi: 0.75
+    cpi: 0.5
     buffer: 2
   ambiguity:
     delayMin: -10
@@ -66,7 +69,10 @@ process:
     minDelay: 5
     minDoppler: 15
     nCentroid: 6
-    # Optional GPU-resident noncoherent power integration; 1 preserves legacy behavior.
+    # Canonical backend-independent power-motion processing: 2 CPI here,
+    # or 4/8 CPI via track_before_detect below. 1 preserves legacy behavior.
+    # Explicit beam-history gates and advanced coherent refinements require
+    # a qualified resident backend; ordinary temporal power does not.
     integration_cpis: 1
     integration_motion_bins: 0
     track_before_detect:
@@ -74,55 +80,9 @@ process:
       fractional_delay: false # Opt-in Doppler-derived nearest-cell power alignment.
       max_cpis: 8
       motion_bins: 1
-    # One truth-blind offline-replay lane. It consumes the same unthresholded
-    # fused map as production and is rejected for live acquisition.
-    temporal_shadow:
-      enabled: false
-      input_statistic: fused
-      bootstrap_covariance: diagonal
-      max_cpis: 8
-      delay_motion_bins: 2
-      doppler_motion_bins: 4
-      # Required only when enabled. Full-precision, bounded binary replay
-      # output; score maps and compact lineage are not sent through the UI.
-      artifact_path: ""
-      artifact_max_mb: 4096
-    # Optional single-lane CPU/resident observer. No detector/tracker feedback.
-    # One worker, no queue; drops reset warmup and budget failures latch it off.
-    live_temporal_shadow:
-      enabled: false
-      score_tracks: false
-      association_sustain: false
-      association_sustain_cpis: 4
-      maximum_candidates: 256
-      # Optional experiment override. Omit to inherit the production tracker.
-      # minimum_initiation_snr_db: 7
-      bootstrap_covariance: diagonal
-      max_cpis: 8
-      delay_motion_bins: 2
-      doppler_motion_bins: 4
-      max_cells: 524288
-      max_work_ms: 20
-      min_interval_ms: 100
-    doppler_ridge_scrubber:
-      mode: off
-      persistence_cpis: 12
-      minimum_excess_db: 3
-      maximum_subtraction_db: 12
-      doppler_tolerance_hz: 4
-      neighborhood_rows: 8
-      delay_stride: 4
   tracker:
-    enable: false
+    enable: true
     profile: balanced
-    track_guided_shadow:
-      enable: false
-      promote: false
-      sustain: false
-      max_tracks: 64
-      max_truth_age_s: 3
-      max_file_mb: 10
-      max_files: 3
     initiate:
       M: 3
       N: 6
@@ -139,17 +99,6 @@ process:
     enable: false
     min_consistent: 3
     min_peak_separation_db: 3
-    frequency_resolved_shadow:
-      enabled: false
-      fft_size: 2048
-      subbands: 24
-      bandwidth_fraction: 0.9
-      diagonal_loading: 0.01
-      capture_seconds: 0.25
-      interval_s: 300
-      timeout_ms: 15000
-    manifold_automation:
-      auto_promote: true
     manifold_recorder:
       enabled: auto
       path: "/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl"
@@ -176,7 +125,6 @@ network:
     timestamp: 4000
     timing: 4001
     iqdata: 4002
-    config: 4003
 
 truth:
   adsb:
@@ -211,10 +159,17 @@ location:
     name: "Set transmitter site"
 
 save:
-  iq: false
+  complex_cutout:
+    state: false
+    path: ""
+    delay_km: 0
+    doppler_hz: 0
+    delay_radius_bins: 3
+    doppler_radius_bins: 3
+    max_frames: 32
+    max_mb: 64
   map: false
   detection: false
-  timing: false
   path: "/var/lib/vectorwarp/recordings/"
   retention:
     automatic_cleanup: false

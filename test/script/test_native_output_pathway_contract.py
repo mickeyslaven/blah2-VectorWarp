@@ -6,6 +6,18 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class NativeOutputPathwayContract(unittest.TestCase):
+    def test_cycle_timing_closes_after_publication_and_next_loop_cleanup(self):
+        main = (ROOT / "src/blah2.cpp").read_text()
+        start = main.index("const auto residentWholeStart=")
+        close = main.index("timing->complete_processing_cycle(residentWholeStart);", start)
+        self.assertLess(close, main.index("bool ready = false;", start))
+        pipeline_end = main.index("const auto pipelineEnd=", close)
+        publication = main.index('event("publication-complete")', pipeline_end)
+        record = main.index("timing->record_processing_cycle(", publication)
+        self.assertEqual(main.count("timing->record_processing_cycle("), 1)
+        self.assertLess(record, main.index("continue;", publication))
+        self.assertIn("milliseconds(pipelineEnd,pipelineStart)};", main)
+
     def test_replay_is_not_gated_on_a_live_device(self):
         capture = (ROOT / "src/capture/Capture.cpp").read_text()
         self.assertIn("if ((replay || device) && !inputStopped.load())", capture)
@@ -29,9 +41,14 @@ class NativeOutputPathwayContract(unittest.TestCase):
         main = (ROOT / "src/blah2.cpp").read_text()
         self.assertEqual(main.count("processMultiFrames(std::move("), 2)
         self.assertEqual(main.count("saveMultiProducts(frame,"), 2)
-        save = main.split("const auto saveMultiProducts =", 1)[1].split("  };", 1)[0]
+        save = main.split("const auto saveMultiProducts =", 1)[1].split(
+            "// Finish first-use CPU/GPU qualification", 1)[0]
         self.assertIn("frame.map->to_json_km", save)
-        self.assertIn("frame.detections->to_json_km", save)
+        self.assertIn("multi_detection_json(frame, publication.timestampMs)", save)
+        detection = main.split("std::string multi_detection_json(", 1)[1].split(
+            "std::string multi_track_json(", 1)[0]
+        self.assertIn("frame.detections->to_json_km", detection)
+        self.assertIn("frame.sampleRateHz", detection)
         self.assertNotIn("to_json_presentation", save)
         self.assertIn("if (multiRadar && complexCutout.enabled())", main)
         self.assertIn("identity.channelIds = view.channelIds", main)
@@ -44,15 +61,17 @@ class NativeOutputPathwayContract(unittest.TestCase):
         self.assertIn("event_time_json(identity.eventTime", identity)
         cutout = (ROOT / "src/process/analysis/ComplexCutoutRecorder.cpp").read_text()
         self.assertNotIn("SetMaxDecimalPlaces", cutout)
-        self.assertIn("frames_ >= config_.maxFrames", cutout)
+        header = (ROOT / "src/process/analysis/ComplexCutoutRecorder.h").read_text()
+        self.assertIn("return capacityReached_ || frames_ >= config_.maxFrames", header)
+        self.assertEqual(cutout.count("if (!config_.enabled || complete()) return;"), 2)
         self.assertIn("restricted to replay input", cutout)
 
     def test_observer_is_only_at_success_boundary_and_failure_is_latched(self):
-        radar = (ROOT / "src/process/analysis/MultiIlluminatorRadar.cpp").read_text()
+        radar = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
         finish = radar.index("RadarFrame finish_processed_cpi")
         callback = radar.index("nativeObserver(view)")
         self.assertLess(finish, callback)
-        self.assertLess(callback, radar.index("fusion.process_into", finish))
+        self.assertLess(callback, radar.index("pipeline::fuseMaps", finish))
         self.assertEqual(radar.count("nativeObserver(view)"), 1)
         self.assertIn("nativeObserverFailed = true;\n      nativeObserver(view);", radar)
         self.assertIn('throw std::logic_error("Cannot reuse a lane', radar)
@@ -61,8 +80,17 @@ class NativeOutputPathwayContract(unittest.TestCase):
         main = (ROOT / "src/blah2.cpp").read_text()
         self.assertIn("multiPipelineState.startup_fallback(", main)
         self.assertIn("Optional GPU channelizer unavailable", main)
-        self.assertIn("if (residentMode && multiIlluminatorEnabled)", main)
-        self.assertIn("does not provide GPU-resident semantics", main)
+        # The unified multi-lane route now supports qualified resident lanes;
+        # retain explicit capability/refusal checks, not the deleted blanket
+        # rejection of every multi-illuminator resident configuration.
+        self.assertIn("This cohort does not provide the current resident GPU route", main)
+        resident_guard = main.split("#ifndef VECTORWARP_RESIDENT_GPU", 1)[1].split("#endif", 1)[0]
+        self.assertTrue("if(residentMode)throw" in resident_guard)
+        self.assertIn("if (residentMode) multiConfig.residentProductTemplate = residentConfig", main)
+        radar = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
+        self.assertIn("if (residentRequired && !residentProductRoute)", radar)
+        self.assertIn("requires a qualified resident backend", radar)
+        self.assertIn('throw std::runtime_error("No selectable FP64 resident device")', radar)
         self.assertIn("multiConfig.accelerationMode = accelerationMode;", main)
         self.assertEqual(main.count("aggregate_status(frames)"), 2)
         self.assertEqual(main.count("aggregate.ambiguityGpuExecuted, aggregate.ambiguityCpuExecuted"), 2)

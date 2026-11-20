@@ -346,11 +346,14 @@ int main() {
     assert(recoveredReader.read(replayed) && replayed[0].size() == 2 &&
       replayed[1].size() == 2);
     assert(!recoveredReader.read(replayed));
+    assert(std::filesystem::exists(recoveredPath + ".acquisition.json"));
     receiver.stop();
     std::filesystem::remove(path);
     std::filesystem::remove(path + ".provenance.json");
+    std::filesystem::remove(path + ".acquisition.json");
     std::filesystem::remove(recoveredPath);
     std::filesystem::remove(recoveredPath + ".provenance.json");
+    std::filesystem::remove(recoveredPath + ".acquisition.json");
     std::filesystem::remove(directory);
   }
   unsigned failureCases = 0;

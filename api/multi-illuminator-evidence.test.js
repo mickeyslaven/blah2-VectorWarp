@@ -2,8 +2,16 @@
 
 const assert = require('node:assert/strict');
 const path = require('path');
-const {laneConfig, statisticsFilename, MultiIlluminatorEvidence} =
+const {laneConfig, statisticsFilename, associationStatistics, MultiIlluminatorEvidence} =
   require('./multi-illuminator-evidence');
+
+const associationSummary = associationStatistics({current_setup_lifetime: {
+  eligible_passes: 2, association_eligible_passes: 1,
+  detected_passes: 1, tracked_passes: 1}});
+assert.equal(associationSummary.eligible_adsb_passes, 1,
+  'association yields must exclude unresolved presence-only passes');
+assert.equal(associationSummary.detection.yield, 1);
+assert.equal(associationSummary.tracking.tracked_of_eligible_yield, 1);
 
 const config = {capture: {fc: 100000000, fs: 2400000}, location: {
   rx: {latitude: 40, longitude: -80, altitude: 300},

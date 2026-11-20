@@ -26,8 +26,8 @@ void fractionalDiagnosticGeometry(){
  c.detector.integrationMotionBins=track_before_detect::encodeMotionBins(2,4,true);
  c.detector.integrationBeamTolerance=UINT32_MAX;rr::test::enable(c);validateConfig(c);
  auto s=rr::test::fixture(c);auto& metadata=s.blocks[uint32_t(rr::BlockKind::postprocessMetadata)-1].bytes;
- // Production Stage allocation: 17,280-byte prefix plus 601*9*8 signed offsets.
- check(metadata.size()==190368,"Diagnostic fractional metadata allocation differs");
+ // Prefix + 601*9*8 signed offsets + valid-population alphas/bank noise.
+ check(metadata.size()==190560,"Diagnostic fractional metadata allocation differs");
  check(s.blocks[uint32_t(rr::BlockKind::refinementWeights)-1].bytes.size()==1920,
   "Disabled angle gate removed allocated refinement weights");
  check(s.blocks[uint32_t(rr::BlockKind::angleHistory)-1].bytes.empty(),
@@ -40,7 +40,7 @@ void fractionalDiagnosticGeometry(){
  const auto decoded=rr::decode(encoded.data(),encoded.size(),c,s.identity);
  check(decoded.blocks[4].bytes==metadata,"Fractional offset table changed in round trip");
  const wire::Reader envelope{{encoded.data(),encoded.size()}};
- check(envelope.u64(512+24*4+16)==190368,"Metadata descriptor omitted fractional table");
+ check(envelope.u64(512+24*4+16)==190560,"Metadata descriptor omitted temporal tables");
  auto corrupted=encoded;const auto tableByte=size_t(envelope.u64(512+24*4+8))+17280;
  corrupted[tableByte]^=1;reject([&]{rr::decode(corrupted.data(),corrupted.size(),c,s.identity);});
  auto truncated=metadata;metadata.resize(17280);reject([&]{rr::encode(s,c);});metadata=std::move(truncated);
@@ -82,25 +82,27 @@ int main(){try{
  auto trackedSnapshot=rr::test::fixture(tracked,1,{1,101,1001},1);
  auto& trackerBlock=trackedSnapshot.blocks.at(uint32_t(rr::BlockKind::trackerCheckpoint)-1).bytes;
  wire::Writer trackerWriter{{trackerBlock.data(),trackerBlock.size()}};
- for(uint32_t schema:{1u,2u,3u}){trackerWriter.u32(0,schema);
-  const auto encoded=rr::encode(trackedSnapshot,tracked);
-  check(rr::encode(rr::decode(encoded.data(),encoded.size(),tracked,trackedSnapshot.identity),tracked)==encoded,
-    "Tracker checkpoint replay v1/v2/v3 round trip differs");}
- trackerWriter.u32(0,4);reject([&]{rr::encode(trackedSnapshot,tracked);});
+ const auto encoded=rr::encode(trackedSnapshot,tracked);
+ check(rr::encode(rr::decode(encoded.data(),encoded.size(),tracked,trackedSnapshot.identity),tracked)==encoded,
+   "Tracker checkpoint replay schema5 round trip differs");
+ for(uint32_t schema:{1u,2u,3u,4u}){trackerWriter.u32(0,schema);
+  reject([&]{rr::encode(trackedSnapshot,tracked);});}
+ trackerWriter.u32(0,5);trackerWriter.u32(108,1);
+ reject([&]{rr::encode(trackedSnapshot,tracked);});
  auto promoted=configuration(4,true);promoted.tracker=tracked.tracker;
- promoted.tracker.n=7;promoted.tracker.trackGuidedShadow=true;
- promoted.tracker.trackGuidedShadowMaxTracks=2;
- promoted.tracker.trackGuidedPromote=true;rr::test::enable(promoted);validateConfig(promoted);
+ promoted.tracker.n=13;rr::test::enable(promoted);validateConfig(promoted);
  auto promotedSnapshot=rr::test::fixture(promoted,1,{1,101,1001},1);
  auto& promotedTracker=promotedSnapshot.blocks.at(
   uint32_t(rr::BlockKind::trackerCheckpoint)-1).bytes;
  wire::Writer promotedWriter{{promotedTracker.data(),promotedTracker.size()}};
- promotedWriter.u32(0,4);
  const auto promotedBytes=rr::encode(promotedSnapshot,promoted);
  check(rr::encode(rr::decode(promotedBytes.data(),promotedBytes.size(),promoted,
   promotedSnapshot.identity),promoted)==promotedBytes,
-  "Tracker checkpoint replay v4 round trip differs");
- promotedWriter.u32(0,3);reject([&]{rr::encode(promotedSnapshot,promoted);});
+  "Tracker checkpoint replay disjoint schema5 round trip differs");
+ for(uint32_t schema:{1u,2u,3u,4u}){promotedWriter.u32(0,schema);
+  reject([&]{rr::encode(promotedSnapshot,promoted);});}
+ promotedWriter.u32(0,5);promotedWriter.u32(108,0);
+ reject([&]{rr::encode(promotedSnapshot,promoted);});
  auto off=configuration(1,false);off.replay={};off.presence=wire::mandatoryPresence(off);validateConfig(off);
  auto fractional=configuration(8,true);
  fractional.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,1,true);

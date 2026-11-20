@@ -33,6 +33,9 @@ private:
 
   /// @brief Curent track position.
   std::vector<Detection> current;
+  // Set by the detector update or prediction, never inferred from ACTIVE or
+  // COASTING. Only detector updates carry a measured position.
+  std::vector<uint8_t> currentSource;
 
   /// @brief Current acceleration (Hz/s).
   std::vector<double> acceleration;
@@ -45,6 +48,10 @@ private:
 
   /// State assigned to each measured association; predictions are excluded.
   std::vector<std::vector<std::string>> associatedState;
+  // Measured trail entries retain their update ordinal. The public trail is
+  // measurements from the last 100 updates, not the last 100 measurements.
+  std::vector<std::vector<uint64_t>> associatedUpdates;
+  std::vector<uint64_t> totalUpdates;
 
   // Retain the entire supported M-of-N window, but send only the last 100
   // points to the browser. Lifetime counts do not shrink with the history.
@@ -78,6 +85,8 @@ private:
   static const std::string STATE_ASSOCIATED;
 
 public:
+  enum class Source : uint8_t { prediction=0, detector=1 };
+  Source get_current_source(uint64_t index) const {return Source(currentSource.at(index));}
   /// @brief Constructor.
   /// @return The object.
   Track();
@@ -107,7 +116,8 @@ public:
 
   /// @brief Advance current state with a kinematic prediction only.
   /// @details Does not append measured history or increment association count.
-  void set_predicted_current(uint64_t index, Detection predicted);
+  void set_predicted_current(uint64_t index, Detection predicted,
+    Source source=Source::prediction);
 
   /// @brief Set the current acceleration.
   /// @param index Index of track to change.
@@ -161,12 +171,6 @@ public:
   /// @brief Number of tracker update states retained for M-of-N lifetime.
   uint64_t get_nUpdates(uint64_t index) const;
 
-  /// @brief Update an associated detection.
-  /// @param index Index of track to change.
-  /// @param update New associated detection.
-  /// @return Void.
-  void update(uint64_t index, Detection update);
-
   /// @brief Add track to the track set.
   /// @param initial Initial Detection.
   /// @details ID is incremented automatically. 
@@ -190,11 +194,6 @@ public:
   /// @return JSON string.
   std::string to_json(uint64_t timestamp);
 
-  /// @brief Append the map to a save file.
-  /// @param json JSON string of map and metadata.
-  /// @param path Path of file to save.
-  /// @return True is save is successful.
-  bool save(std::string json, std::string path);
 };
 
 #endif

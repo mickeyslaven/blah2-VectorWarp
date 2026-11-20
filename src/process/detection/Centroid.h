@@ -23,9 +23,6 @@ private:
   /// @brief Doppler resolution to convert Hz to bins (Hz).
   double resolutionDoppler;
 
-  /// @brief Pointer to detection data to store result.
-  Detection *detection;
-
 public:
   /// @brief Constructor.
   /// @param nDelay Number of delay bins to check.

@@ -23,6 +23,7 @@ Environment="BLAH2_SDRPLAY_BUILD_HELPER=@PREFIX@/libexec/vectorwarp-build-sdrpla
 Environment="BLAH2_RECEIVER_HELPER=@PREFIX@/libexec/vectorwarp-receiver-helper"
 Environment="BLAH2_CONFIG_RESTART_COMMAND=[\"@PREFIX@/libexec/vectorwarp-receiver-helper\",\"request-restart\"]"
 ExecCondition=/usr/bin/node @PREFIX@/libexec/vectorwarp-check-node-version
+ExecCondition=+/usr/bin/python3 @PREFIX@/libexec/vectorwarp-cohort-check --preflight --release @PREFIX@/current --config @SYSCONFDIR@/config.yml
 ExecStart=/usr/bin/node @PREFIX@/current/api/server.js @SYSCONFDIR@/config.yml
 Restart=on-failure
 RestartSec=3s

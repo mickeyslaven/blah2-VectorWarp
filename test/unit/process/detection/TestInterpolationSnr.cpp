@@ -6,6 +6,7 @@
 #include <cmath>
 #include <complex>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -36,6 +37,14 @@ void check(Map<std::complex<double>>& map, bool delay, bool doppler,
 }
 int main() {
   try {
+    // Fixed physical amplitudes pin the production display convention, including
+    // complex magnitude, sign and finite silence, without inspecting source text.
+    Map<std::complex<double>> levels(1, 5);
+    levels.data[0] = {{1, 0}, {3, 4}, {0, 10}, {-100, 0}, {0, 0}};
+    const std::unique_ptr<Map<double>> db(levels.get_map_db());
+    const double expectedLevels[] = {0, 6.989700043360188, 10, 20, -300};
+    for (unsigned column = 0; column < 5; ++column)
+      near(db->data[0][column], expectedLevels[column]);
     // Delay peak 20+2/3 is higher than Doppler peak 20+1/8.
     // Upstream's Doppler assignment bug produces 17.125 instead of 17+2/3.
     auto map = makeCross();
@@ -54,7 +63,7 @@ int main() {
     for (auto& row : map.data) for (auto& z : row) z *= std::complex<double>(0, 100);
     map.set_metrics();
     check(map, true, true, snr, 1. + 1./3., .5);
-    std::cout << "PASS: 8 interpolation SNR cases\n";
+    std::cout << "PASS: 5 map levels and 8 interpolation SNR cases\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "FAIL: " << e.what() << '\n'; return 1;

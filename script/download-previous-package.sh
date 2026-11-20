@@ -35,15 +35,9 @@ manifest_url=$(jq -er '.assets[] | select(.name == "package-manifest.json") | .u
 manifest="$output/previous-package-manifest.json"
 gh api -H 'Accept: application/octet-stream' "$manifest_url" >"$manifest"
 
-case "$distro" in
-  ubuntu22.04) family=ubuntu; version=22.04; format=deb ;;
-  ubuntu24.04) family=ubuntu; version=24.04; format=deb ;;
-  ubuntu26.04) family=ubuntu; version=26.04; format=deb ;;
-  debian12) family=debian; version=12; format=deb ;;
-  debian13) family=debian; version=13; format=deb ;;
-  fedora44) family=fedora; version=44; format=rpm ;;
-  *) die "unsupported distro: $distro" ;;
-esac
+artifact_plan=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/artifact-plan.py
+distribution=$(python3 "$artifact_plan" distribution "$distro") || exit 1
+read -r family version format <<<"$distribution"
 filename=$(jq -er --arg format "$format" --arg family "$family" --arg version "$version" --arg arch "$arch" '
   [.packages[] | select(.format == $format and .distro == $family and
     .distro_version == $version and .arch == $arch)] |

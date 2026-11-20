@@ -10,11 +10,10 @@ const {spawn} = require('child_process');
 const yaml = require('js-yaml');
 const {encodeId} = require('./recording-library');
 
-const source = path.join(__dirname, '..', 'config', 'config-kraken.yml');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-api-test-'));
 const filename = path.join(directory, 'config.yml');
 const restartMarker = path.join(directory, 'restart-called');
-const config = yaml.load(fs.readFileSync(source, 'utf8'));
+const config = require('./config-store').configurationForReceiver('Kraken');
 // Generic API validation does not exercise the separately covered automatic-
 // gain transaction; keep this fixture fixed so unrelated validation failures
 // are returned before any receiver lifecycle work.

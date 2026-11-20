@@ -4,6 +4,7 @@ const path = require('path');
 const {createEvidenceStatisticsLanes, provisionalTimingFrame, defaultEvidenceStatisticsPath} =
   require('./evidence-statistics');
 const {DelayDopplerHistory} = require('./adsb-geometry');
+const {forGeographicLane} = require('./replay-geographic-sites');
 const {effectiveDelayConfig} = require('../html/js/config_profiles');
 const {SuspiciousTrackLedger} = require('./suspicious-track-ledger');
 
@@ -22,8 +23,8 @@ function laneConfig(config, illuminator) {
   value.capture.fs = illuminator.output_sample_rate_hz;
   value.location ||= {};
   value.location.tx = clone(illuminator.transmitter);
-  return effectiveDelayConfig(value, illuminator.output_sample_rate_hz,
-    {scaleNeighborhoods: true});
+  return forGeographicLane(effectiveDelayConfig(value, illuminator.output_sample_rate_hz,
+    {scaleNeighborhoods: true}), illuminator.id);
 }
 
 function statisticsFilename(base, id, timing) {
@@ -47,7 +48,7 @@ function identity(illuminator, statistics) {
 
 function associationStatistics(value) {
   const window = value?.current_setup_lifetime || value?.windows?.lifetime || {};
-  const eligible = Number(window.eligible_passes) || 0;
+  const eligible = Number(window.association_eligible_passes ?? window.eligible_passes) || 0;
   const detected = Number(window.detected_passes) || 0;
   const tracked = Number(window.tracked_passes) || 0;
   const audited = Number(value?.data_quality?.audited_aircraft_cpis) || 0;

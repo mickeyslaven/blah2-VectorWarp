@@ -6,7 +6,6 @@ const os = require('node:os');
 const path = require('node:path');
 const {primaryRadarContext, laneConfig} = require('./multi-illuminator-evidence');
 const {limits, associationGates} = require('./evidence-statistics');
-const {externalTrack} = require('./tracker-publication');
 const {OprsEventRecorder} = require('./oprs-event-recorder');
 const {DelayDopplerHistory} = require('./adsb-geometry');
 
@@ -50,10 +49,8 @@ const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9
     close(gates.delayKm, 3 * 299792.458 / rate);
     assert.equal(gates.dopplerHz, 8, 'Doppler resolution depends on CPI, not sample rate');
 
-    const event = {track_id: 'track', timestamp: 101000,
-      detections: [{delay: 10, doppler: 20}]};
-    const track = externalTrack(event, primary.config.capture.fs);
-    close(track.delay, 10 * rate / 299792.458);
+    const track = {id: 'track', state: 'ACTIVE', n: 3,
+      delay: 10 * rate / 299792.458, doppler: 20};
     const filename = path.join(directory, `${rate}.ndjson`);
     const recorder = new OprsEventRecorder(primary.config, {filename});
     recorder.acceptTracker({timestamp: 101000, data: [track]});

@@ -1,5 +1,32 @@
 const DISTANCE_VIEW_KEY = 'vectorwarp-distance-view';
 
+// Shared defaults for the legacy Plotly displays. Individual views retain
+// their axes and responsive presentation, while colors and viewport behavior
+// remain identical everywhere.
+const vectorwarpPlotTheme = {
+  layout(uirevision) {
+    return {font: {color: '#f3eee9'}, autosize: true,
+      margin: {l: 92, r: 50, b: 50, t: 10, pad: 0},
+      hoverlabel: {namelength: 0}, plot_bgcolor: 'rgba(0,0,0,0)',
+      paper_bgcolor: 'rgba(0,0,0,0)', annotations: [], uirevision,
+      displayModeBar: false};
+  },
+  cartesianLayout(uirevision, xTitle, yTitle, {legend = false} = {}) {
+    return {...this.layout(uirevision),
+      xaxis: {gridcolor: '#47362e', zerolinecolor: '#47362e',
+        title: {text: xTitle, font: {size: 18}}, showgrid: false, ticks: '', side: 'bottom'},
+      yaxis: {gridcolor: '#47362e', zerolinecolor: '#47362e',
+        title: {text: yTitle, font: {size: 18}}, showgrid: false, ticks: '', ticksuffix: ' ',
+        categoryorder: 'total descending'},
+      ...(legend ? {legend: {orientation: 'h', bgcolor: '#29201c', bordercolor: '#47362e',
+        borderwidth: 1}} : {})};
+  },
+  config(scrollZoom = false) {
+    return {responsive: true, displayModeBar: false, ...(scrollZoom ? {scrollZoom: true} : {})};
+  }
+};
+if (typeof window !== 'undefined') window.VectorWarpPlotTheme = vectorwarpPlotTheme;
+
 function initializeDistanceView() {
   if (typeof window === 'undefined' || typeof document === 'undefined' ||
       !document.body?.classList?.toggle) return;
@@ -836,74 +863,6 @@ function selectedNode() {
   catch (_) { return 'local'; }
 }
 
-async function initializeNodeSelector(target, active) {
-  const node = selectedNode();
-  const aggregate = node === 'aggregate';
-  if (node !== 'local') {
-    document.body.classList.add('federated-read-only');
-    if (active === 'settings' || active === 'controller') {
-      const content = target.parentElement;
-      Array.from(content.children).forEach(child => { if (child !== target) child.hidden = true; });
-    }
-    document.addEventListener('click', event => {
-      if (event.target.closest?.('.recording-replay, .recording-share, .recording-delete, .recording-import-controls, a[href="/controller"], a[href="/display/configuration"]')) {
-        event.preventDefault(); event.stopImmediatePropagation();
-      }
-    }, true);
-  }
-  const container = document.createElement('div');
-  container.className = 'node-selector';
-  const label = document.createElement('label'); label.textContent = 'Node ';
-  const select = document.createElement('select'); select.setAttribute('aria-label', 'Radar node');
-  label.appendChild(select); container.appendChild(label);
-  const status = document.createElement('span'); status.setAttribute('role', 'status');
-  container.appendChild(status); target.appendChild(container);
-  const add = (id, name) => { const option = document.createElement('option'); option.value = id; option.textContent = name; select.appendChild(option); };
-  add('local', 'Local'); if (node !== 'local') add(node, node + ' (unavailable)'); select.value = node;
-  select.addEventListener('change', () => {
-    try { window.sessionStorage.setItem('vectorwarp-node', select.value); } catch (_) { return; }
-    const url = new URL(window.location.href); url.searchParams.delete('federationNode');
-    window.location.assign(url.href);
-  });
-  try {
-    await discoverApiEndpoint();
-    const response = await readResponse(`${apiEndpoint || ''}/api/federation/nodes`, {cache: 'no-store'});
-    const list = (await response.json()).nodes;
-    if (!response.ok || !Array.isArray(list)) throw new Error('Unavailable');
-    select.replaceChildren();
-    list.forEach(item => add(item.id, item.label));
-    if (list.length > 1) add('aggregate', 'Aggregate');
-    if (!aggregate && !list.some(item => item.id === node)) add(node, node + ' (unavailable)');
-    select.value = node;
-    if (aggregate) {
-      const shell = target.parentElement;
-      Array.from(shell.children).forEach(child => { if (child !== target) child.hidden = true; });
-      const section = document.createElement('section'); section.className = 'federation-aggregate';
-      const heading = document.createElement('h1'); heading.textContent = 'Aggregate node views'; section.appendChild(heading);
-      heading.title = 'Separate geographic layers per node. Tracks are not merged across nodes.';
-      const summary = document.createElement('p'); summary.textContent = 'Loading node status…'; section.appendChild(summary);
-      for (const item of list) {
-        const panel = document.createElement('section');
-        const title = document.createElement('h2'); title.textContent = item.label + ' · separate map and tracks'; panel.appendChild(title);
-        const frame = document.createElement('iframe'); frame.title = item.label + ' geographic layer';
-        frame.src = `/display/locations?federationNode=${encodeURIComponent(item.id)}&federationEmbed=1`;
-        panel.appendChild(frame); section.appendChild(panel);
-      }
-      shell.appendChild(section);
-      try {
-        const aggregateResponse = await readResponse(`${apiEndpoint || ''}/api/federation/aggregate`, {cache: 'no-store'}, 20000);
-        const data = await aggregateResponse.json();
-        summary.textContent = data.nodes.map(item => `${item.label}: ${item.available ? `radar ${item.status.radar || 'unknown'}, ADS-B ${item.status.adsbEnabled ? 'enabled' : 'disabled'}, processor ${item.status.processor?.state || 'unknown'}` : 'unavailable'}`).join(' · ');
-      } catch (_) { summary.textContent = 'Aggregate status unavailable'; }
-    }
-    const results = await Promise.all(list.map(async item => {
-      const path = item.local ? '/api/system/status?summary=1' : `/api/federation/nodes/${encodeURIComponent(item.id)}/api/system/status?summary=1`;
-      try { const result = await readResponse(`${apiEndpoint || ''}${path}`, {cache: 'no-store'}, 6000); return `${item.label}: ${result.ok ? 'reachable' : 'unavailable'}`; }
-      catch (_) { return `${item.label}: unavailable`; }
-    }));
-    status.textContent = ` Fleet status (connectivity): ${results.join(' · ')}${node !== 'local' ? ' · Remote read-only' : ''}`;
-  } catch (_) { status.textContent = node !== 'local' ? ' Remote read-only · node list unavailable' : ' Node list unavailable'; }
-}
 
 function pageOrigin() {
   return window.location.origin || `${window.location.protocol}//${window.location.hostname}${window.location.port ? `:${window.location.port}` : ''}`;
@@ -1432,6 +1391,288 @@ function radarFrameUrl(path, timestamp) {
     `${url.pathname}${url.search}`;
 }
 
+// One display transport contract. Renderers retain their coordinate/trace math;
+// a page or channel must not introduce another alignment or cache policy.
+const radarDisplayLanes = Object.freeze({
+  map: {scope: 'selected', aligned: true, fresh: true},
+  detection: {path: '/api/detection', scope: 'selected', aligned: true, fresh: true},
+  timing: {path: '/stash/timing', scope: 'global', aligned: true, fresh: true},
+  spectrum: {path: '/stash/iqdata', scope: 'global', aligned: true, fresh: true, startup: 'wideband'},
+  geographic: {scope: 'view', aligned: 'products', resources: {
+    config: () => readRadarDisplayConfig('geographic'), tracker: '/api/tracker',
+    coverage: ({coverage, altitude}) => coverage ? readRadarDisplay('geographic',
+      `/api/radar/coverage?hours=24&bins=72&altitude=${encodeURIComponent(altitude)}`).catch(() => null) : null,
+    laneContext: () => getIlluminatorContext(), fused: ['/api/tracker/fused', null]
+  }},
+  network: {scope: 'global', intervalMs: 1000,
+    history: {fused: new Map(), adsb: new Map(), trails: new Map()}, resources: {
+    result: ['/api/tracker/fused', {available: false}], config: () => getRadarRuntimeConfig(),
+    cooperative: ['/api/federation/cooperative', null], adsbData: ['/api/adsb', null],
+    associationData: ['/api/federation/live-aircraft-associations', null]
+  }}
+});
+
+function selectedDisplayProduct(lane, path) {
+  return lane.scope === 'selected' || lane.scope === 'view' &&
+    illuminatorDisplayScope() === 'selected' &&
+    /^\/api\/(?:detection|tracker|bearing|locations|adsb\/delay-doppler|live-scorecard(?:\/provisional)?|statistics|radar\/coverage)(?:[/?]|$)/.test(path);
+}
+
+function radarDisplayUrl(name, path = radarDisplayLanes[name].path,
+    context = illuminatorContext, timestamp = undefined) {
+  const lane = radarDisplayLanes[name];
+  let url = selectedDisplayProduct(lane, path) ? selectedIlluminatorUrl(path, context) : path;
+  if (lane.aligned === true || lane.aligned === 'products' &&
+      /^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing|iqdata)(?:[/?]|$)/.test(url))
+    url = radarPresentationUrl(url);
+  return liveApiUrl(radarFrameUrl(url, timestamp));
+}
+
+async function readRadarDisplay(name, path = radarDisplayLanes[name].path,
+    {awaitFresh = radarDisplayLanes[name].fresh, timestamp} = {}) {
+  const lane = radarDisplayLanes[name];
+  const context = lane.scope === 'global' ? null : await getIlluminatorContext();
+  const result = await fetchCachedJsonResource(radarDisplayUrl(name, path, context, timestamp), {},
+    awaitFresh ? {freshMs: 0, awaitFresh: true} : {});
+  if (selectedDisplayProduct(lane, path) && (await getIlluminatorContext()).id !== context.id)
+    throw new Error('Channel changed during refresh');
+  return result;
+}
+
+async function readRadarDisplayConfig(name) {
+  const config = await getRadarRuntimeConfig();
+  return radarDisplayLanes[name].scope === 'view' && illuminatorDisplayScope() === 'selected' ?
+    selectedIlluminatorConfig(config) : config;
+}
+
+async function readRadarDisplayBundle(name, options = {}) {
+  const entries = await Promise.all(Object.entries(radarDisplayLanes[name].resources).map(async ([key, resource]) => {
+    const value = typeof resource === 'function' ? await resource(options) :
+      await readRadarDisplay(name, Array.isArray(resource) ? resource[0] : resource, {awaitFresh: true})
+        .catch(error => { if (Array.isArray(resource)) return resource[1]; throw error; });
+    return [key, value];
+  }));
+  const bundle = Object.fromEntries(entries);
+  if (name === 'geographic') {
+    bundle.frameTimestamp = Number.isSafeInteger(Number(bundle.tracker?.timestamp)) ? Number(bundle.tracker.timestamp) : null;
+    bundle.detection = await readRadarDisplay(name, '/api/detection', {awaitFresh: true, timestamp: bundle.frameTimestamp});
+  }
+  return bundle;
+}
+
+function appendRadarTrail(histories, id, sample, {gap, slack, speed, count, age = Infinity, replace = false}) {
+  let history = histories.get(id) || [];
+  const last = history.at(-1), dt = last ? (sample.stamp - last.stamp) / 1000 : null;
+  if (last && replace && last.stamp === sample.stamp) history[history.length - 1] = sample;
+  else {
+    if (last && (!(dt > 0) || dt > gap ||
+        Math.hypot(sample.point[0] - last.point[0], sample.point[1] - last.point[1]) > slack + speed * dt)) history = [];
+    history.push(sample);
+  }
+  history = (Number.isFinite(age) ? history.filter(point => sample.stamp - point.stamp <= age) : history).slice(-count);
+  histories.set(id, history);
+  return history;
+}
+
+// The network lane owns temporal state. Projection and operational-track
+// qualification remain the existing renderer/model adapters.
+function updateNetworkDisplayHistory(bundle, {project, model, fusedTracks = model.operationalTracks(bundle.result, bundle.config?.location?.rx)}) {
+  const {result, config, adsbData, associationData} = bundle;
+  const {fused, adsb, trails} = radarDisplayLanes.network.history;
+  const receiver = config?.location?.rx, now = Date.now(), current = new Set();
+  const associations = new Map((associationData?.associations || []).filter(item => item?.hex)
+    .map(item => [String(item.hex).trim().toLowerCase(), item]));
+  (Array.isArray(adsbData?.aircraft) ? adsbData.aircraft : []).forEach((item, index) => {
+    const key = String(item.hex || item.flight || `anonymous-${index}`).trim().toLowerCase();
+    const point = project(item, receiver);
+    if (!point || Math.hypot(...point) > 65) return;
+    current.add(key);
+    adsb.set(key, {item, point, lastSeen: now});
+  });
+  bundle.adsbAircraft = [];
+  for (const [key, entry] of adsb) {
+    if (now - entry.lastSeen > 20000) { adsb.delete(key); trails.delete(key); continue; }
+    const ageSeconds = Math.max(0, (now - entry.lastSeen) / 1000), point = [...entry.point];
+    const finite = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+    if (ageSeconds > 0 && finite(entry.item.gs) && finite(entry.item.track)) {
+      const distance = Number(entry.item.gs) * 1.852 / 3600 * ageSeconds;
+      const heading = Number(entry.item.track) * Math.PI / 180;
+      point[0] += distance * Math.sin(heading);
+      point[1] += distance * Math.cos(heading);
+    }
+    if (Math.hypot(...point) > 60) continue;
+    const association = associations.get(key) || null, coasting = !current.has(key);
+    const trail = appendRadarTrail(trails, key, {point: [...point], stamp: now, coasting, association},
+      {gap: 25, slack: .5, speed: .65, count: 60, age: 60000});
+    bundle.adsbAircraft.push({key, item: entry.item, point, trail, association, coasting, ageSeconds});
+  }
+  bundle.fusedTracks = fusedTracks;
+  bundle.trackPoints = bundle.fusedTracks.map(item => model.radarPoint(item, receiver));
+  const active = new Set(bundle.fusedTracks.map(item => item.id));
+  if (result?.available !== true) fused.clear();
+  for (const id of fused.keys()) if (!active.has(id)) fused.delete(id);
+  bundle.fusedTracks.forEach((item, index) => {
+    if (bundle.trackPoints[index]) appendRadarTrail(fused, item.id,
+      {point: bundle.trackPoints[index], stamp: Number(item.measurement_timestamp ?? item.timestamp ?? result.timestamp)},
+      {gap: 3, slack: .25, speed: .55, count: 20, replace: true});
+  });
+  bundle.fusedHistory = fused;
+}
+
+// Position feeds and lane geometry join only at the tracker frame. A failed
+// truth source never discards a successful source or borrows its geometry.
+async function readRadarDisplayTruth(config, timestamp) {
+  const finite = value => value !== null && value !== undefined && value !== '' &&
+    typeof value !== 'boolean' && Number.isFinite(Number(value));
+  const results = await Promise.allSettled(['adsb', 'remote-id'].map(async source => {
+    if (config?.truth?.[source.replace('-', '_')]?.enabled !== true) return [];
+    const base = `/api/${source}`, options = {awaitFresh: true, timestamp};
+    const [feed, geometry] = await Promise.all([
+      readRadarDisplay('geographic', base, options),
+      source === 'adsb' || !window.vectorwarpIlluminatorContext?.enabled ?
+        readRadarDisplay('geographic', `${base}/delay-doppler?overlay=1`, options) : {}
+    ]);
+    const byId = new Map(Object.entries(geometry || {}).map(([id, item]) =>
+      [String(item?.hex || id || '').toUpperCase(), item]));
+    return (feed?.disabledForReplay || !Array.isArray(feed?.aircraft) ? [] : feed.aircraft)
+      .filter(item => finite(item.lat) && finite(item.lon) && (finite(item.seen_pos) ? Number(item.seen_pos) : 0) < 120)
+      .map(item => {
+        const row = byId.get(String(item.hex || '').toUpperCase());
+        return {...item, ...row, _lane_geometry_current: finite(row?.delay) && finite(row?.doppler)};
+      });
+  }));
+  const aircraft = results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+  const failed = results.filter(result => result.status === 'rejected');
+  if (!aircraft.length && failed.length) throw failed[0].reason;
+  return {aircraft, aircraftError: failed.length ? 'Some aircraft sources are temporarily unavailable' : null};
+}
+
+function ensureRadarDisplayMap(name, graph, viewport, style, ready) {
+  if (graph._vectorwarpMapReady) return graph._vectorwarpMapReady;
+  graph._vectorwarpMapReady = create().catch(error => {
+    graph._vectorwarpMap?.remove?.();
+    delete graph._vectorwarpMap;
+    delete graph._vectorwarpMapReady;
+    throw error;
+  });
+  return graph._vectorwarpMapReady;
+  async function create() {
+    const maplibre = await (window.vectorwarpMapLibreReady || Promise.resolve(window.maplibregl));
+    if (!maplibre?.Map) throw new Error('Map renderer could not load');
+    let imageryManifest = {};
+    try { imageryManifest = await readRadarDisplay(name, '/api/map/imagery'); } catch (_) {}
+    let savedCamera = null;
+    try {
+      const candidate = JSON.parse(localStorage.getItem('vectorwarp-map-camera-v1') || 'null');
+      if (candidate?.key === viewport.key && Array.isArray(candidate.center) &&
+          candidate.center.length === 2 && candidate.center.every(Number.isFinite)) savedCamera = candidate;
+    } catch (_) { /* Camera persistence is optional. */ }
+    const map = new maplibre.Map({
+      container: graph,
+      style: style(imageryManifest),
+      center: savedCamera?.center || [viewport.center.lon, viewport.center.lat],
+      zoom: Number.isFinite(savedCamera?.zoom) ? savedCamera.zoom : viewport.zoom,
+      pitch: Number.isFinite(savedCamera?.pitch) ? savedCamera.pitch : 0,
+      bearing: Number.isFinite(savedCamera?.bearing) ? savedCamera.bearing : 0,
+      minPitch: 0,
+      maxPitch: 85,
+      attributionControl: true,
+      cooperativeGestures: false,
+      renderWorldCopies: false,
+      dragRotate: true,
+      touchPitch: true,
+      // Keep several neighboring zoom rings resident so turning the camera
+      // reuses tiles instead of unloading and fetching the same view again.
+      // The explicit cap remains suitable for mobile memory budgets.
+      maxTileCacheZoomLevels: 8,
+      maxTileCacheSize: 192,
+      fadeDuration: 220
+    });
+    graph._vectorwarpMap = map;
+    map.on('moveend', () => {
+      try {
+        const center = map.getCenter();
+        localStorage.setItem('vectorwarp-map-camera-v1', JSON.stringify({key: viewport.key,
+          center: [center.lng, center.lat], zoom: map.getZoom(), pitch: map.getPitch(),
+          bearing: map.getBearing(), at: Date.now()}));
+      } catch (_) { /* Camera persistence is optional. */ }
+    });
+    graph.dataset.mapRenderer = 'maplibre-terrain';
+    if (maplibre.NavigationControl && map.addControl) {
+      const compass = new maplibre.NavigationControl({
+        showCompass: true, showZoom: false, visualizePitch: true
+      });
+      map.addControl(compass, 'top-left');
+      graph.dataset.mapCompass = 'bearing-and-pitch';
+    }
+    await new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('Map renderer timed out')), 15000);
+      map.once('load', () => { window.clearTimeout(timeout); resolve(); });
+      map.once('error', event => {
+        // A missing terrain tile must not prevent the base map and live radar
+        // overlays from loading. Only fail before the style itself exists.
+        if (!map.isStyleLoaded?.() && !map.getStyle?.()) {
+          window.clearTimeout(timeout);
+          reject(event?.error || new Error('Map renderer failed'));
+        }
+      });
+    });
+    ready(map);
+    return map;
+  }
+}
+
+async function readFederatedRadar(path, fleet) {
+  const nodes = fleet?.nodes?.length ? fleet.nodes : [{id: 'local', label: 'Local', local: true}];
+  const settled = await Promise.allSettled(nodes.map(async node => {
+    const prefix = node.local ? '' : `/api/federation/nodes/${encodeURIComponent(node.id)}`;
+    const [status, value] = await Promise.all([
+      readRadarDisplay('network', `${prefix}/api/system/status?summary=1`),
+      readRadarDisplay('network', `${prefix}${path}`)
+    ]);
+    // A reachable API can retain old scorecards after observation stops.
+    if (status?.radar !== 'receiving' || status?.processorFresh !== true)
+      throw new Error(`${node.label || node.id} is not receiving fresh radar frames`);
+    return {node, value};
+  }));
+  return settled.filter(result => result.status === 'fulfilled').map(result => result.value);
+}
+
+async function startRadarDisplay(name, render, {url, configure, unavailable, paused = false} = {}) {
+  const lane = radarDisplayLanes[name];
+  if (lane.scope === 'selected') {
+    window.addEventListener('vectorwarp:illuminator-change', event => { void configure(event.detail); });
+    await configure(await getIlluminatorContext());
+  }
+  if (!lane.intervalMs) url ??= radarDisplayUrl(name);
+  if (lane.startup === 'wideband') {
+    const runtime = await getRadarRuntimeConfig();
+    if (runtime?.process?.multi_illuminator?.enabled === true) {
+      try {
+        const first = await fetchRadarJson(url);
+        const latest = Array.isArray(first?.timestamp) ? Number(first.timestamp.at(-1)) : Number(first?.timestamp);
+        const timestampMs = latest < 1e11 ? latest * 1000 : latest;
+        const freshnessMs = Math.max(10000, Number(runtime?.process?.data?.cpi || 1) * 3000);
+        if (!first?.frequency?.[0]?.length || !Array.isArray(first?.spectrum) ||
+            !Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > freshnessMs)
+          throw new Error('Wideband spectrum unavailable');
+        await render(first);
+      } catch (_) { unavailable(); return null; }
+    }
+  }
+  let updates;
+  const controller = {
+    start() {
+      if (updates && lane.intervalMs) updates.start();
+      return updates ||= lane.intervalMs ? startRadarUpdates(render, lane.intervalMs, {fixed: true}) : startRadarPlot(url, render);
+    },
+    stop() { updates?.stop(); if (!lane.intervalMs) updates = null; },
+    refresh() { return updates?.refresh(); }
+  };
+  if (!paused) controller.start();
+  return controller;
+}
+
 async function getRadarRuntimeConfig() {
   if (radarRuntimeCache && Date.now() - radarRuntimeReadAt < 2000) return radarRuntimeCache;
   if (!radarRuntimePending) {
@@ -1452,7 +1693,7 @@ function radarFrameIntervalMs(config) {
     Math.min(2147483647, Math.max(16, seconds * 1000)) : 1000;
 }
 
-function startRadarUpdates(update, minimumIntervalMs = 16) {
+function startRadarUpdates(update, minimumIntervalMs = 16, {fixed = false} = {}) {
   let stopped = false;
   let running = false;
   let timer;
@@ -1464,15 +1705,15 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
     // Background tabs cannot paint a useful radar frame.  Pausing here avoids
     // redundant heatmap compression, transfer and Plotly work while another
     // visible tab continues normally. Resume immediately when shown again.
-    if (typeof document !== 'undefined' && document.hidden) {
+    if (!fixed && typeof document !== 'undefined' && document.hidden) {
       timer = window.setTimeout(tick, 1000);
       return;
     }
     running = true;
     try {
-      try { loadedConfig = await getRadarRuntimeConfig(); } catch (_) { /* Retry after an API restart. */ }
+      if (!fixed) try { loadedConfig = await getRadarRuntimeConfig(); } catch (_) { /* Retry after an API restart. */ }
       if (stopped) return;
-      const nextInterval = Math.max(minimumIntervalMs, radarFrameIntervalMs(loadedConfig));
+      const nextInterval = fixed ? minimumIntervalMs : Math.max(minimumIntervalMs, radarFrameIntervalMs(loadedConfig));
       if (interval !== nextInterval) { interval = nextInterval; due = 0; }
       if (Date.now() >= due) {
         due = Date.now() + interval;
@@ -1484,27 +1725,28 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
     } finally {
       running = false;
       // Account for request/render time; never run overlapping updates or queue
-      // missed frames. If a slow network/render ran past the deadline, start a
-      // fresh interval now instead of issuing catch-up requests back-to-back.
-      // Check for restarted config even during very long CPIs.
-      if (interval !== null && due <= Date.now()) due = Date.now() + interval;
+      // missed frames. Slow CPI renders start a fresh interval; a fixed clock
+      // resumes at its next beat. Long CPIs still check for restarted config.
+      if (interval !== null && due <= Date.now()) due = fixed ?
+        due + (Math.floor((Date.now() - due) / interval) + 1) * interval : Date.now() + interval;
       if (!stopped) timer = window.setTimeout(tick,
         Math.max(16, Math.min(2000, due - Date.now())));
     }
   }
-  const visibilityChanged = () => {
-    if (stopped || document.hidden) return;
+  const refresh = () => {
+    if (stopped || fixed && running) return;
     due = 0;
     window.clearTimeout(timer);
-    void tick();
+    return tick();
   };
-  if (typeof document !== 'undefined')
+  const visibilityChanged = () => { if (!document.hidden) void refresh(); };
+  if (!fixed && typeof document !== 'undefined')
     document.addEventListener?.('visibilitychange', visibilityChanged);
   tick();
-  return {stop() {
+  return {refresh, start() { if (stopped) { stopped = false; void refresh(); } }, stop() {
     stopped = true;
     window.clearTimeout(timer);
-    if (typeof document !== 'undefined')
+    if (!fixed && typeof document !== 'undefined')
       document.removeEventListener?.('visibilitychange', visibilityChanged);
   }};
 }
@@ -1951,6 +2193,8 @@ if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, radarFrameUrl,
+    radarDisplayLanes, radarDisplayUrl, readRadarDisplay, readFederatedRadar, startRadarDisplay,
+    readRadarDisplayBundle, readRadarDisplayConfig, readRadarDisplayTruth, ensureRadarDisplayMap, selectedNode,
     discoverApiEndpoint, fetchStatusResource,
     fetchCachedJsonResource, clientJsonCachePolicy,
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
@@ -1961,4 +2205,5 @@ if (typeof module !== 'undefined')
     selectedIlluminatorUrl, selectedIlluminatorConfig, initializeIlluminatorDisplay,
     independentTransmitterSiteCount, liveRadarCardPresentation,
     receiverChannelCount,
-    stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft};
+    stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft,
+    vectorwarpPlotTheme};

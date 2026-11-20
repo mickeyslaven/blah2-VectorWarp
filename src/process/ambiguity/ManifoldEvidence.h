@@ -32,6 +32,7 @@ inline std::string cpu(uint64_t timestamp,double frequencyHz,double sampleRate,
  // value and make VectorWarp reject its own calibration on reload.
  rapidjson::StringBuffer b;Writer w(b);
  w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v1");
+ w.Key("precision_contract");w.String("binary64-json-roundtrip-v1");
  w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(uint32_t(maps.size()));
  w.Key("actual_gain_db");w.StartArray();for(double gain:actualGainDb){finite(gain);w.Double(gain);}w.EndArray();

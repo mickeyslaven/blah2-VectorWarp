@@ -45,20 +45,21 @@ function availablePort(usedPorts) {
   let child;
   const conflict = net.createServer();
   try {
-    for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml',
-      'config-kraken.yml']) {
-      const shipped = readConfig(path.join(__dirname, '..', 'config', name));
+    for (const name of ['config.yml', 'HackRF', 'Usrp', 'Kraken', 'RspDuo']) {
+      const source = name === 'config.yml' ? path.join(__dirname, '..', 'config', name) : file;
+      if (name !== 'config.yml') fs.writeFileSync(file, yaml.dump(configurationForReceiver(name)));
+      const shipped = readConfig(source);
       assert.deepEqual(shipped.suppliedDefaults, [],
         `${name} omits required defaults: ${shipped.suppliedDefaults.join(', ')}`);
       if (name === 'config.yml') assert.equal(shipped.setupRequired, true,
         'the canonical first-run config must require an explicit receiver choice');
-      else if (name !== 'config-hackrf.yml') assert.equal(shipped.setupRequired, false,
+      else if (name !== 'HackRF') assert.equal(shipped.setupRequired, false,
         `${name} should remain a complete compatibility fixture`);
     }
-    const legacyUsrp = yaml.load(fs.readFileSync(
-      path.join(__dirname, '..', 'config', 'config-usrp.yml'), 'utf8'));
+    const legacyUsrp = configurationForReceiver('Usrp');
     legacyUsrp.capture.device.address = 'localhost';
     fs.writeFileSync(file, yaml.dump(legacyUsrp), {mode: 0o640});
+    fs.chmodSync(file, 0o640);
     assert.equal(readConfig(file).validation.valid, false,
       'the public validator must continue rejecting a bare UHD hostname');
     assert.equal(migrateKnownDefaults(file), true);
@@ -70,6 +71,46 @@ function availablePort(usedPorts) {
     assert.equal(readConfig(file).validation.valid, true);
     assert.equal(migrateKnownDefaults(file), false,
       'the migration must be one-shot and leave current selectors untouched');
+    for (const gainControl of ['measured', 'measured_per_channel']) {
+      for (const selection of ['recorder', 'bearing', 'detection']) {
+        const configured = configurationForReceiver('Kraken');
+        Object.assign(configured.capture.device.heimdall, {gain_control: gainControl,
+          gain: 14.4, channel_gains: [3.7, 3.7, 14.4, 3.7, 3.7]});
+        if (selection === 'recorder') configured.process.bearing.manifold_recorder.enabled = 'on';
+        if (selection === 'bearing') configured.process.bearing.manifold_file = '/tmp/measured-bearing.json';
+        if (selection === 'detection') configured.process.surveillance_fusion.manifold_file = '/tmp/measured-detection.json';
+        const raw = yaml.dump(configured);
+        fs.writeFileSync(file, raw, {mode: 0o640});
+        assert.equal(migrateKnownDefaults(file), false,
+          `${gainControl}/${selection}: startup must preserve explicit hardware intent`);
+        const loaded = readConfig(file);
+        assert.equal(fs.readFileSync(file, 'utf8'), raw,
+          'migration and read must preserve the complete configuration bytes');
+        assert.deepEqual(loaded.config.capture.device.heimdall, configured.capture.device.heimdall);
+        assert.equal(loaded.config.process.bearing.manifold_file, configured.process.bearing.manifold_file);
+        assert.equal(loaded.config.process.surveillance_fusion.manifold_file,
+          configured.process.surveillance_fusion.manifold_file);
+        if (selection !== 'recorder') {
+          assert.equal(loaded.validation.valid, false,
+            'invalid measured-manifold gain identity requires explicit operator repair');
+          assert.ok(loaded.validation.errors.some(error => /manifold.*fixed/.test(error)),
+            'refusal must identify the gain identity, not an unrelated setting');
+        }
+      }
+    }
+    const automaticKraken = configurationForReceiver('Kraken');
+    automaticKraken.capture.device.heimdall.gain_control = 'measured_per_channel';
+    automaticKraken.capture.device.heimdall.channel_gains =
+      [3.7, 3.7, 14.4, 3.7, 3.7];
+    automaticKraken.process.bearing.manifold_recorder.enabled = 'off';
+    fs.writeFileSync(file, yaml.dump(automaticKraken));
+    assert.equal(migrateKnownDefaults(file), false,
+      'automatic gain remains automatic when no measured manifold is active');
+    automaticKraken.process.bearing.manifold_recorder.enabled = 'on';
+    automaticKraken.capture.device.heimdall.channel_gains = [3.7, 3.7];
+    fs.writeFileSync(file, yaml.dump(automaticKraken));
+    assert.equal(migrateKnownDefaults(file), false,
+      'an incomplete requested gain vector fails closed instead of being frozen');
     assert.equal(preserveConfigBytesDuringUpgrade(
       {VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME: '1120'}, 1000), true);
     for (const value of ['999', '1301', 'not-a-time', '1120.5'])
@@ -141,7 +182,7 @@ function availablePort(usedPorts) {
 
     // Kraken gain is a declared string/number union: a "keep" profile default
     // must not replace a persisted Suite gain while recovering a document.
-    const kraken = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
+    const kraken = configurationForReceiver('Kraken');
     // Suite AGC (-1) is intentionally invalid with measured-per-channel gain:
     // the latter needs stable fixed starting gains for reproducible probes.
     for (const gain of [0, 28.7, 49.6, 50]) {

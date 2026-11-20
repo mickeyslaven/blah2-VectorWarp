@@ -1,5 +1,5 @@
 #include "process/fusion/CoherentBeamBank.h"
-#include "process/ambiguity/GpuResidentHash.h"
+#include "capture/Sha256.h"
 #include "../../../core/TrackBeforeDetect.private.h"
 
 #include <rapidjson/document.h>
@@ -101,12 +101,12 @@ std::string candidateBankHash(const Value& responses,
       directResponse.Empty())
     throw std::invalid_argument("Invalid native replay bank hash dimensions");
   const uint32_t beams = responses.Size(), channels = directResponse.Size();
-  blah2::resident::Sha256 hash;
-  hash.add(contract, sizeof(contract) - 1);
+  blah2::Sha256 hash;
+  hash.update(contract, sizeof(contract) - 1);
   const auto add32 = [&](uint32_t value) {
     std::array<uint8_t, 4> bytes{};
     for (unsigned index = 0; index < 4; ++index) bytes[index] = uint8_t(value >> (8 * index));
-    hash.add(bytes.data(), bytes.size());
+    hash.update(bytes.data(), bytes.size());
   };
   const auto addDouble = [&](double value) {
     uint64_t bits = 0;
@@ -114,7 +114,7 @@ std::string candidateBankHash(const Value& responses,
     if (value != 0) std::memcpy(&bits, &value, sizeof(bits));
     std::array<uint8_t, 8> bytes{};
     for (unsigned index = 0; index < 8; ++index) bytes[index] = uint8_t(bits >> (8 * index));
-    hash.add(bytes.data(), bytes.size());
+    hash.update(bytes.data(), bytes.size());
   };
   add32(beams); add32(channels);
   const auto addRow = [&](const Value& row) {
@@ -127,7 +127,7 @@ std::string candidateBankHash(const Value& responses,
   };
   addRow(directResponse);
   for (const auto& response : responses.GetArray()) addRow(response);
-  const auto digest = hash.finish();
+  const auto digest = hash.finishBytes();
   static constexpr char hex[] = "0123456789abcdef";
   std::string result(64, '0');
   for (size_t index = 0; index < digest.size(); ++index) {

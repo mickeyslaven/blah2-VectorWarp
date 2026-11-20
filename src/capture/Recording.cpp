@@ -1,5 +1,6 @@
 #include "Recording.h"
 #include "Sha256.h"
+#include "RecordingAcquisitionJson.h"
 #include "kraken/HeimdallFrame.h"
 #include <algorithm>
 #include <array>
@@ -289,7 +290,7 @@ void read_portable_sidecar(const std::string& path,
   std::ifstream input(sidecar,std::ios::binary);
   const std::string json(std::istreambuf_iterator<char>(input),{});
   if(input.bad())fail("Cannot read portable clip sidecar");
-  rapidjson::Document document;document.Parse(json.c_str());
+  rapidjson::Document document;document.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
   if(document.HasParseError()||!document.IsObject())
     fail("Portable clip sidecar is invalid JSON");
   const auto unsigned_value=[&](const char* name)->uint64_t{
@@ -324,14 +325,268 @@ void read_portable_sidecar(const std::string& path,
     const auto count=static_cast<std::size_t>(std::min<uint64_t>(remaining,bytes.size()));
     file.read(bytes.data(),count);digest.update(bytes.data(),count);remaining-=count;
   }
-  if(file.size()!=fileSize||digest.finish()!=expected)
+  const auto actualDigest = digest.finish();
+  if(file.size()!=fileSize||actualDigest!=expected)
     fail("Portable clip sidecar SHA-256 differs from recording");
+  result.recordingSha256 = actualDigest;
+  // Applied gains are optional, frame-wide source metadata, never a requested
+  // receiver setting. Only admit them after this sidecar is bound to the exact
+  // completed IQ file. Older clips remain explicitly uncalibrated.
+  if(document.HasMember("perChannelGainDb")) {
+    const auto& values=document["perChannelGainDb"];
+    if(!values.IsArray()||values.Size()!=metadata.channels)
+      fail("Portable clip sidecar perChannelGainDb has invalid channel count");
+    std::vector<double> gains;
+    for(const auto& value:values.GetArray()) {
+      if(!value.IsNumber()||!std::isfinite(value.GetDouble()))
+        fail("Portable clip sidecar perChannelGainDb must contain finite numbers");
+      gains.push_back(value.GetDouble());
+    }
+    if(!result.perChannelGainDb.empty()&&result.perChannelGainDb!=gains)
+      fail("Portable clip gains conflict with recording provenance");
+    result.perChannelGainDb=std::move(gains);
+  }
   // This authenticates relative sample identity only. Keep all exact-time,
   // decision-grade and v2-contract qualification flags unchanged.
   result.epoch=epoch;
   result.sourceFirstSample=first;
   result.sourceSampleAvailable=true;
 }
+
+std::string read_acquisition_manifest(const std::string& path, RecordingProvenance& result,
+    std::string& expectedDataHash) {
+  const auto name = path + ".acquisition.json";
+  if (!std::filesystem::exists(name)) return {};
+  File manifest(name); const auto size = manifest.size();
+  if (!size || size > acquisition::maximumJsonBytes + 2048)
+    fail("Acquisition manifest exceeds bounded size");
+  std::string json(size, '\0'); manifest.read(json.data(), json.size());
+  if (manifest.size() != size) fail("Acquisition manifest changed during read");
+  rapidjson::Document doc; doc.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+  if (doc.HasParseError() || !doc.IsObject() ||
+      json_string(doc, "schema") != "vectorwarp-acquisition-manifest-v1" ||
+      !doc.HasMember("complete") || !doc["complete"].IsBool())
+    fail("Invalid acquisition manifest contract");
+  expectedDataHash = json_string(doc, "recordingSha256");
+  if (!acquisition::sha256(expectedDataHash)) fail("Invalid acquisition manifest recording hash");
+  if (!doc["complete"].GetBool()) {
+    result.acquisitionReason = json_string(doc, "reason"); return {};
+  }
+  if (!doc.HasMember("acquisition") || !doc["acquisition"].IsObject()) fail("Acquisition manifest metadata missing");
+  const auto acquisitionJson = acquisition::encode(doc["acquisition"]);
+  result.acquisitionSha256 = json_string(doc, "acquisitionSha256");
+  if (result.acquisitionSha256 != acquisition::digest(acquisitionJson))
+    fail("Acquisition manifest metadata digest mismatch");
+  return acquisitionJson;
+}
+
+void read_acquisition(const RecordingMetadata& metadata, RecordingProvenance& result) {
+  if (metadata.acquisitionJson.empty()) return;
+  rapidjson::Document doc;
+  doc.Parse<rapidjson::kParseFullPrecisionFlag>(metadata.acquisitionJson.c_str());
+  if (doc.HasParseError() || !doc.IsObject() ||
+      json_string(doc, "schema") != "vectorwarp-recording-acquisition-v1")
+    fail("Recording acquisition schema is invalid");
+  const auto boolean = [&](const rapidjson::Value& object, const char* name) {
+    if (!object.HasMember(name) || !object[name].IsBool())
+      fail(std::string("Recording acquisition is missing ") + name);
+    return object[name].GetBool();
+  };
+  for (const auto& item : {std::pair<const char*, uint32_t>{"channels", metadata.channels},
+      {"sampleRateHz", metadata.sampleRate}, {"frequencyHz", metadata.frequency}})
+    if (!doc.HasMember(item.first) || !doc[item.first].IsUint() || doc[item.first].GetUint() != item.second)
+      fail("Recording acquisition RF dimensions differ from IQ header");
+  const auto receiver = json_string(doc, "receiver");
+  if (receiver != "Kraken" && receiver != "Usrp" && receiver != "HackRF" && receiver != "RspDuo")
+    fail("Recording acquisition receiver is unsupported");
+  if (receiver != "Kraken" && metadata.channels != 2)
+    fail("Recording acquisition receiver topology requires two input channels");
+  const auto epoch = decimal(doc, "epoch"), first = decimal(doc, "firstSample"), end = decimal(doc, "endSample");
+  if (end <= first || end - first != metadata.samples)
+    fail("Recording acquisition sample interval differs from IQ payload");
+  if (result.sourceSampleAvailable && (result.epoch != epoch || result.sourceFirstSample != first))
+    fail("Recording acquisition sample identity conflicts with sidecar");
+  const bool positions = boolean(doc, "sourcePositionAvailable");
+  if (json_string(doc, "frameSequenceSource") != "recorder-ingress" ||
+      !doc.HasMember("frames") || !doc["frames"].IsArray() || doc["frames"].Empty() ||
+      doc["frames"].Size() > acquisition::maximumFrames)
+    fail("Recording acquisition frame lineage is missing or unbounded");
+  uint64_t written = 0, previous = 0;
+  for (const auto& frame : doc["frames"].GetArray()) {
+    if (!frame.IsObject()) fail("Invalid acquisition frame lineage");
+    RecordingFrameLineage value{decimal(frame, "sequence"), decimal(frame, "sourceFirst"),
+      decimal(frame, "sourceCount"), decimal(frame, "sliceOffset"), decimal(frame, "count")};
+    if (!value.ingressSequence || (previous && (previous == UINT64_MAX || value.ingressSequence != previous + 1)) ||
+        !value.count || !value.sourceCount || value.sourceCount > (metadata.format == "mchq" ? (1U << 24) : maxBlock) ||
+        value.sourceFirst > UINT64_MAX - value.sourceCount ||
+        value.sliceOffset > value.sourceCount || value.count > value.sourceCount - value.sliceOffset ||
+        value.sourceFirst > UINT64_MAX - value.sliceOffset ||
+        value.sourceFirst + value.sliceOffset != first + written || value.count > metadata.samples - written)
+      fail("Recording acquisition frame lineage is discontinuous");
+    if (frame.HasMember("originalMeanIq")) {
+      const auto& means = frame["originalMeanIq"];
+      if (metadata.format != "mchq" || !means.IsArray() || means.Size() != metadata.channels * 2)
+        fail("Recording original frame conditioning dimensions are invalid");
+      for (const auto& mean : means.GetArray()) {
+        if (!mean.IsNumber() || !std::isfinite(mean.GetDouble()) || mean.GetDouble() < 0 || mean.GetDouble() > 255)
+          fail("Recording original frame conditioning is invalid");
+        value.originalMeanIq.push_back(mean.GetDouble());
+      }
+    }
+    if (metadata.format == "mchq" && value.count != value.sourceCount && value.originalMeanIq.empty())
+      fail("Trimmed native recording is missing original full-frame conditioning");
+    written += value.count; previous = value.ingressSequence; result.frames.push_back(value);
+  }
+  if (written != metadata.samples) fail("Recording acquisition frame count differs from IQ payload");
+  result.epoch = epoch; result.sourceFirstSample = first;
+  result.sourceSampleAvailable = positions || result.sourceSampleAvailable;
+  result.receiver = receiver; result.acquisitionJson = metadata.acquisitionJson;
+  result.acquisitionSha256 = acquisition::digest(metadata.acquisitionJson);
+  result.acquisitionIntegrityValid = true;
+  // Geographic declarations have their own capability/trust gate. This also
+  // permits explicitly non-hardware synthetic fixtures without claiming gain
+  // readback, calibrated geometry, or exact acquisition capability.
+  if (doc.HasMember("geographicSites") || doc.HasMember("geographicSitesSha256")) {
+    if (!doc.HasMember("geographicSites") ||
+        (!doc["geographicSites"].IsNull() && !acquisition::validGeographicSites(doc["geographicSites"])))
+      fail("Recording geographic sites contract is invalid");
+    result.acquisitionContext.geographicSitesJson = acquisition::encode(doc["geographicSites"]);
+    if (result.acquisitionContext.geographicSitesJson.size() > 16384 ||
+        json_string(doc, "geographicSitesSha256") != acquisition::digest(result.acquisitionContext.geographicSitesJson))
+      fail("Recording geographic sites digest is invalid");
+  }
+  if (!boolean(doc, "metadataAvailable")) {
+    result.acquisitionReason = "Acquisition metadata unavailable; ordinary playback only";
+    return;
+  }
+  result.gainProvenance = json_string(doc, "gainProvenance");
+  if (result.gainProvenance != "sample-aligned-readback" &&
+      result.gainProvenance != "sample-aligned-receiver-header" &&
+      result.gainProvenance != "requested-settings-only" && result.gainProvenance != "unavailable")
+    fail("Recording acquisition gain provenance strength is invalid");
+  if (!doc.HasMember("perChannelGainDb") || !doc["perChannelGainDb"].IsArray() ||
+      (!doc["perChannelGainDb"].Empty() && doc["perChannelGainDb"].Size() != metadata.channels))
+    fail("Recording acquisition gains have invalid dimensions");
+  std::vector<double> gains;
+  for (const auto& value : doc["perChannelGainDb"].GetArray()) {
+    if (!value.IsNumber() || !std::isfinite(value.GetDouble())) fail("Recording acquisition gain is nonfinite");
+    gains.push_back(value.GetDouble());
+  }
+  if (!result.perChannelGainDb.empty() && result.perChannelGainDb != gains)
+    fail("Recording acquisition gains conflict with sidecar");
+  // Requested-only gains are retained in acquisitionJson but cannot become
+  // applied-gain correction input to the radar pipeline.
+  const bool appliedGains = result.gainProvenance == "sample-aligned-readback" ||
+    result.gainProvenance == "sample-aligned-receiver-header";
+  result.perChannelGainDb = appliedGains ? gains : std::vector<double>{};
+  // Optional for old recordings. Missing requests must stay unavailable,
+  // never be reconstructed from quantized/coerced hardware readback.
+  if (doc.HasMember("requestedChannelGainDb")) {
+    const auto& requested = doc["requestedChannelGainDb"];
+    if (!requested.IsArray() || (!requested.Empty() && requested.Size() != metadata.channels))
+      fail("Recording requested gains have invalid dimensions");
+    for (const auto& value : requested.GetArray()) {
+      if (!value.IsNumber() || !std::isfinite(value.GetDouble()))
+        fail("Recording requested gain is nonfinite");
+      result.acquisitionContext.requestedChannelGainDb.push_back(value.GetDouble());
+    }
+  }
+  if (!doc.HasMember("receiverDetails") || !doc["receiverDetails"].IsObject() ||
+      !doc.HasMember("topology") || !doc["topology"].IsObject())
+    fail("Recording acquisition receiver details/topology are missing");
+  const auto& topology = doc["topology"];
+  auto& context = result.acquisitionContext;
+  if (!topology.HasMember("referenceMode") || !topology["referenceMode"].IsString())
+    fail("Recording acquisition reference mode is missing");
+  context.referenceMode = topology["referenceMode"].GetString();
+  context.coherent = boolean(topology, "coherent");
+  const auto channels = [&](const char* name, std::vector<uint32_t>& output) {
+    if (!topology.HasMember(name) || !topology[name].IsArray()) fail("Recording acquisition channel roles are missing");
+    std::set<uint32_t> unique;
+    for (const auto& id : topology[name].GetArray()) {
+      if (!id.IsUint() || id.GetUint() >= metadata.channels || !unique.insert(id.GetUint()).second)
+        fail("Recording acquisition channel roles are invalid");
+      output.push_back(id.GetUint());
+    }
+  };
+  channels("referenceChannels", context.referenceChannels);
+  channels("surveillanceChannels", context.surveillanceChannels);
+  bool topologyComplete = !context.surveillanceChannels.empty();
+  if (context.referenceMode == "dedicated") {
+    if (context.referenceChannels.size() != 1 ||
+        std::find(context.surveillanceChannels.begin(), context.surveillanceChannels.end(),
+          context.referenceChannels.front()) != context.surveillanceChannels.end())
+      fail("Recording acquisition dedicated reference roles overlap");
+  } else if (context.referenceMode == "array_eigenbeam") {
+    if (!context.coherent || context.referenceChannels.size() < 2)
+      fail("Recording acquisition array reference requires coherent channels");
+  } else if (!context.referenceMode.empty()) fail("Recording acquisition reference mode is unsupported");
+  else topologyComplete = false;
+  if (!doc.HasMember("geometry") || (!doc["geometry"].IsObject() && !doc["geometry"].IsNull()))
+    fail("Recording acquisition geometry identity is missing");
+  context.geometryJson = acquisition::encode(doc["geometry"]);
+  if (json_string(doc, "geometrySha256") != acquisition::digest(context.geometryJson))
+    fail("Recording acquisition geometry digest is invalid");
+  context.geometryConfirmed = boolean(doc, "geometryConfirmed");
+  if (!doc.HasMember("manifoldSha256") || !doc["manifoldSha256"].IsObject() || doc["manifoldSha256"].MemberCount() > 32)
+    fail("Recording acquisition manifold identities are missing or unbounded");
+  for (auto it = doc["manifoldSha256"].MemberBegin(); it != doc["manifoldSha256"].MemberEnd(); ++it) {
+    if (!it->value.IsString() || !it->name.GetStringLength() || it->name.GetStringLength() > 128 ||
+        !acquisition::sha256(it->value.GetString()) ||
+        !context.manifoldSha256.emplace(it->name.GetString(), it->value.GetString()).second)
+      fail("Recording acquisition manifold identity is invalid");
+  }
+  const auto fingerprint = [&](const char* name) {
+    if (!doc.HasMember(name) || !doc[name].IsString()) fail("Recording acquisition fingerprints are missing");
+    return std::string(doc[name].GetString(), doc[name].GetStringLength());
+  };
+  context.configurationSha256 = fingerprint("configurationSha256"); context.codeSha256 = fingerprint("codeSha256");
+  bool arrayGeometryComplete = context.geometryConfirmed && doc["geometry"].IsObject();
+  if (arrayGeometryComplete) {
+    const auto& geometry = doc["geometry"];
+    arrayGeometryComplete = geometry.HasMember("units") && geometry["units"].IsString() &&
+      std::string(geometry["units"].GetString()) == "m" &&
+      geometry.HasMember("x_axis_bearing_deg_true") && geometry["x_axis_bearing_deg_true"].IsNumber() &&
+      std::isfinite(geometry["x_axis_bearing_deg_true"].GetDouble()) &&
+      geometry.HasMember("elements") && geometry["elements"].IsArray() &&
+      geometry["elements"].Size() >= 2 && geometry["elements"].Size() <= metadata.channels;
+    std::set<unsigned> located;
+    if (arrayGeometryComplete) for (const auto& element : geometry["elements"].GetArray()) {
+      if (!element.IsObject() || !element.HasMember("daq_channel") || !element["daq_channel"].IsUint() ||
+          element["daq_channel"].GetUint() >= metadata.channels || !located.insert(element["daq_channel"].GetUint()).second ||
+          !element.HasMember("position") || !element["position"].IsArray() || element["position"].Size() != 3) {
+        arrayGeometryComplete = false; break;
+      }
+      for (const auto& coordinate : element["position"].GetArray())
+        if (!coordinate.IsNumber() || !std::isfinite(coordinate.GetDouble())) arrayGeometryComplete = false;
+    }
+    for (const auto id : context.referenceChannels) arrayGeometryComplete = arrayGeometryComplete && located.count(id);
+    for (const auto id : context.surveillanceChannels) arrayGeometryComplete = arrayGeometryComplete && located.count(id);
+  }
+  const bool geometryComplete = context.referenceMode != "array_eigenbeam" || arrayGeometryComplete;
+  result.exactAcquisition = positions && topologyComplete && geometryComplete &&
+    appliedGains && gains.size() == metadata.channels &&
+    !doc["receiverDetails"].ObjectEmpty() && acquisition::sha256(context.configurationSha256) &&
+    acquisition::sha256(context.codeSha256);
+  result.acquisitionReason.clear();
+  const auto missing = [&](bool available, const char* reason) {
+    if (!available) { if (!result.acquisitionReason.empty()) result.acquisitionReason += "; "; result.acquisitionReason += reason; }
+  };
+  missing(positions, "Source-aligned sample/frame lineage unavailable");
+  missing(topologyComplete, "Configured channel roles unavailable");
+  missing(geometryComplete, "Confirmed array geometry unavailable");
+  missing(appliedGains && gains.size() == metadata.channels, "Applied sample-aligned gain readback unavailable");
+  missing(!doc["receiverDetails"].ObjectEmpty(), "Receiver identity/details unavailable");
+  missing(acquisition::sha256(context.configurationSha256) && acquisition::sha256(context.codeSha256),
+    "Configuration/code SHA-256 identity unavailable");
+}
+}
+
+const std::vector<double>& RecordingProvenance::requested_gains_for_manifold() const {
+  if (!acquisitionIntegrityValid || !acquisitionHashTrusted ||
+      acquisitionContext.requestedChannelGainDb.empty())
+    throw std::runtime_error("Measured replay manifold requires authenticated acquisition-time requested gains; applied gains cannot substitute");
+  return acquisitionContext.requestedChannelGainDb;
 }
 
 struct RecordingWriter::Impl {
@@ -348,10 +603,19 @@ struct RecordingWriter::Impl {
   Impl(const std::string& path,RecordingMetadata m):file(path,true),metadata(std::move(m)) {
     valid(metadata); metadata.samples=0;
     std::array<uint8_t,64> header{}; std::copy(magic.begin(),magic.end(),header.begin());
-    put32(header.data()+8,1); put32(header.data()+12,64); put32(header.data()+16,metadata.channels);
+    const bool acquisition = !metadata.acquisitionJson.empty();
+    if (metadata.acquisitionJson.size() > acquisition::maximumJsonBytes)
+      fail("Recording acquisition metadata exceeds bound");
+    put32(header.data()+8,acquisition ? 2 : 1); put32(header.data()+12,acquisition ? 128 : 64); put32(header.data()+16,metadata.channels);
     put32(header.data()+20,metadata.sampleRate); put32(header.data()+24,metadata.frequency);
     put32(header.data()+28,1); // IEEE float32, little endian, channel-major blocks.
+    if (acquisition) put32(header.data()+32,metadata.acquisitionJson.size());
     file.write(header.data(),header.size());
+    if (acquisition) {
+      const auto hash = acquisition::digest(metadata.acquisitionJson);
+      file.write(hash.data(), hash.size());
+      file.write(metadata.acquisitionJson.data(), metadata.acquisitionJson.size());
+    }
     worker=std::thread([this] {
       for (;;) {
         std::vector<uint8_t> payload;
@@ -513,12 +777,24 @@ struct RecordingReader::Impl {
     metadata={options.channels,options.sampleRate,options.frequency,0,format};
     if(format=="blah2") {
       std::array<uint8_t,64> h{}; file.read(h.data(),h.size());
-      if(!std::equal(magic.begin(),magic.end(),h.begin()) || u32(h.data()+8)!=1 || u32(h.data()+12)!=64 || u32(h.data()+28)!=1)
+      const bool embedded = u32(h.data()+8) == 2 && u32(h.data()+12) == 128;
+      if(!std::equal(magic.begin(),magic.end(),h.begin()) ||
+          (!embedded && (u32(h.data()+8)!=1 || u32(h.data()+12)!=64)) || u32(h.data()+28)!=1)
         fail("Recording header/version is unsupported");
       metadata.channels=u32(h.data()+16); metadata.sampleRate=u32(h.data()+20); metadata.frequency=u32(h.data()+24);
       valid(metadata);
       if(u64(h.data()+48)!=1) fail("Recording was not finished cleanly; choose a completed recording");
       const uint64_t expected=u64(h.data()+40); start=64;
+      if (embedded) {
+        const auto length = u32(h.data()+32);
+        if (!length || length > acquisition::maximumJsonBytes || uint64_t(length) + 128 > fileSize)
+          fail("Recording embedded acquisition metadata has invalid size");
+        std::array<char,64> digest{}; file.read(digest.data(),digest.size());
+        metadata.acquisitionJson.resize(length); file.read(metadata.acquisitionJson.data(),length);
+        if (acquisition::digest(metadata.acquisitionJson) != std::string(digest.data(),digest.size()))
+          fail("Recording embedded acquisition SHA-256 is invalid");
+        start = 128 + length;
+      }
       while(file.position()<fileSize) {
         const auto offset=file.position();
         std::array<uint8_t,16> b{}; file.read(b.data(),b.size()); const auto n=u32(b.data());
@@ -568,15 +844,76 @@ struct RecordingReader::Impl {
     if(format=="mchq") {
       provenance.perChannelGainDb.assign(firstMchq.gains.begin(),firstMchq.gains.end());
       read_native_mchq_sidecar(path,metadata,fileSize,provenance);
-      // Native MCHT clips retain their original coherent sample epoch in every
-      // frame. This is relative sample provenance, not exact UTC and not a v2
-      // decision-grade recording contract. Preserve it so offline replay can
-      // join processor output to the separately authenticated clip sidecar.
       if(allMchqFramesTimed && firstMchq.timing.available) {
         provenance.epoch=firstMchq.timing.epoch;
         provenance.sourceFirstSample=firstMchq.timing.firstSample;
         provenance.sourceSampleAvailable=true;
       }
+    }
+    const bool embeddedAcquisition = !metadata.acquisitionJson.empty();
+    std::string manifestDataHash;
+    const auto manifestJson = read_acquisition_manifest(path,provenance,manifestDataHash);
+    if (!manifestJson.empty()) {
+      if (embeddedAcquisition && manifestJson != metadata.acquisitionJson)
+        fail("Embedded acquisition metadata conflicts with manifest");
+      metadata.acquisitionJson = manifestJson;
+    }
+    read_acquisition(metadata, provenance);
+    if (format == "mchq" && !provenance.frames.empty()) {
+      if (provenance.frames.size() != segments.size()) fail("Native acquisition lineage does not match stored frames");
+      for (size_t index = 0; index < segments.size(); ++index)
+        if (provenance.frames[index].count != segments[index].count)
+          fail("Native acquisition lineage frame boundary mismatch");
+    }
+    if (!options.expectedRecordingSha256.empty() || !metadata.acquisitionJson.empty() || !manifestDataHash.empty()) {
+      if (provenance.recordingSha256.empty()) {
+        Sha256 digest; std::array<uint8_t,65536> bytes{}; file.seek(0);
+        for (uint64_t remaining = fileSize; remaining;) {
+          const auto count = static_cast<size_t>(std::min<uint64_t>(remaining,bytes.size()));
+          file.read(bytes.data(),count); digest.update(bytes.data(),count); remaining -= count;
+        }
+        if (file.size() != fileSize) fail("Recording changed while verifying acquisition integrity");
+        provenance.recordingSha256 = digest.finish();
+      }
+      if (!options.expectedRecordingSha256.empty() &&
+          (!acquisition::sha256(options.expectedRecordingSha256) ||
+           options.expectedRecordingSha256 != provenance.recordingSha256))
+        fail("Recording SHA-256 differs from trusted replay acquisition identity");
+      if (!manifestDataHash.empty() && manifestDataHash != provenance.recordingSha256)
+        fail("Acquisition manifest is bound to different recording bytes");
+      if (!options.expectedAcquisitionSha256.empty() &&
+          (!acquisition::sha256(options.expectedAcquisitionSha256) ||
+           options.expectedAcquisitionSha256 != provenance.acquisitionSha256))
+        fail("Acquisition SHA-256 differs from trusted replay metadata identity");
+      provenance.acquisitionHashTrusted = !options.expectedRecordingSha256.empty() &&
+        (embeddedAcquisition || !options.expectedAcquisitionSha256.empty());
+    }
+    provenance.geographicSitesAvailable = provenance.acquisitionIntegrityValid &&
+      provenance.acquisitionHashTrusted && provenance.acquisitionContext.geographicSitesJson != "null";
+    if (provenance.geographicSitesAvailable)
+      provenance.geographicSitesReason = "Authenticated operator-configured acquisition sites; not surveyed or hardware-attested";
+    else if (provenance.acquisitionContext.geographicSitesJson != "null")
+      provenance.geographicSitesReason = "Recorded geographic sites lack externally trusted acquisition hashes; replay geography disabled";
+    if (options.requireExactAcquisition &&
+        (!provenance.exactAcquisition || !provenance.acquisitionHashTrusted))
+      fail("Exact acquisition replay requires trusted IQ and acquisition SHA-256 identities, applied sample-aligned gains, topology, geometry and lineage");
+    if (options.requireExactAcquisition && options.validateAcquisitionContext) {
+      const auto& recorded = provenance.acquisitionContext;
+      const auto& configured = options.expectedAcquisitionContext;
+      // Acquisition identities constrain the explicit replay configuration;
+      // they never select receiver-specific radar algorithms. Full YAML/code
+      // hashes identify the recording, but cannot equal a replay config whose
+      // input path, acceleration selection or qualification controls differ.
+      if (recorded.referenceMode != configured.referenceMode ||
+          recorded.referenceChannels != configured.referenceChannels ||
+          recorded.surveillanceChannels != configured.surveillanceChannels ||
+          recorded.coherent != configured.coherent ||
+          (!configured.requestedChannelGainDb.empty() &&
+           recorded.requestedChannelGainDb != configured.requestedChannelGainDb) ||
+          recorded.geometryConfirmed != configured.geometryConfirmed ||
+          recorded.geometryJson != configured.geometryJson ||
+          recorded.manifoldSha256 != configured.manifoldSha256)
+        fail("Exact acquisition replay configuration differs from recorded channel roles, requested gains, coherence, geometry or manifold identities");
     }
     if(options.provenanceMode!="legacy-unqualified" && options.provenanceMode!="decision-grade")
       fail("Replay provenance mode must be legacy-unqualified or decision-grade");
@@ -636,7 +973,14 @@ bool RecordingReader::read(IqBlock& block) {
          h.timing.firstSample!=s.provenance.sourceFirstSample+s.position))
       fail("Kraken replay sample provenance changed during playback");
     std::vector<uint8_t> payload(HeimdallFrame::payload_size(h)); s.file.read(payload.data(),payload.size());
-    block=HeimdallFrame::decode_payload(h,payload);
+    if (!s.provenance.frames.empty()) {
+      const auto segment = std::lower_bound(s.segments.begin(), s.segments.end(), s.position,
+        [](const Impl::Segment& value, uint64_t sample) { return value.sample < sample; });
+      if (segment == s.segments.end() || segment->sample != s.position)
+        fail("Native acquisition frame position mismatch");
+      block=HeimdallFrame::decode_payload(h,payload,
+        s.provenance.frames[std::distance(s.segments.begin(),segment)].originalMeanIq);
+    } else block=HeimdallFrame::decode_payload(h,payload);
   } else {
     if(s.metadata.format=="blah2") {
       std::array<uint8_t,16> h{}; s.file.read(h.data(),h.size()); count=u32(h.data());

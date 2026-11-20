@@ -1,6 +1,9 @@
 """No-build wiring and independent coordinate tests; not GPU qualification."""
 import math
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +19,77 @@ def offset(scale, newest, older, age):
 
 
 class GpuEfficiencyContract(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("c++"), "C++ compiler required for the bounded VkFFT mock")
+    def test_shared_fft_plan_precision_binding_and_failure_cleanup(self):
+        source = (ROOT / "src/process/ambiguity/VulkanResources.private.h").read_text()
+        plan = "struct NativePlan {" + source.split("struct NativePlan {", 1)[1].split(
+            "#ifdef __APPLE__", 1)[0]
+        fixture = r'''
+#include <cassert>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
+using VkCommandBuffer = uint64_t;
+using VkFFTResult = int;
+constexpr int VKFFT_SUCCESS = 0;
+struct VkFFTApplication {};
+struct VkFFTConfiguration {
+  uint64_t FFTdim = 0, size[1]{}, numberBatches = 0, doublePrecision = 0, useLUT = 0;
+  uint64_t *device = nullptr, *queue = nullptr, *fence = nullptr, *commandPool = nullptr;
+  uint64_t *physicalDevice = nullptr, *bufferSize = nullptr, *buffer = nullptr;
+  int isCompilerInitialized = 0;
+};
+struct VkFFTLaunchParams { VkCommandBuffer* commandBuffer = nullptr; uint64_t* buffer = nullptr; };
+struct Context { uint64_t device = 1, queue = 2, fence = 3, pool = 4;
+  struct { uint64_t physical = 5; } candidate; };
+struct Buffer { uint64_t bytes = 4096, handle = 6; };
+VkFFTConfiguration captured;
+int initResult = 0, appendResult = 0, releases = 0, appendedDirection = 0;
+uint64_t appendedBuffer = 0, appendedCommand = 0;
+int initializeVkFFT(VkFFTApplication*, VkFFTConfiguration config) { captured = config; return initResult; }
+void deleteVkFFT(VkFFTApplication*) { ++releases; }
+int VkFFTAppend(VkFFTApplication*, int direction, VkFFTLaunchParams* params) {
+  appendedDirection = direction; appendedBuffer = *params->buffer;
+  appendedCommand = *params->commandBuffer; return appendResult;
+}
+void startupTrace(const char*) {}
+void checkFft(int result) { if (result) throw std::runtime_error("mock VkFFT failure"); }
+'''
+        checks = r'''
+int main() {
+  Context context; Buffer buffer;
+  for (bool fp64 : {false, true}) for (bool lut : {false, true}) {
+    NativePlan plan(context, buffer, 29, 3, lut, fp64);
+    assert(captured.FFTdim == 1 && captured.size[0] == 29 && captured.numberBatches == 3);
+    assert(captured.doublePrecision == fp64 && captured.useLUT == lut);
+    assert(captured.device == &context.device && captured.queue == &context.queue);
+    assert(captured.fence == &context.fence && captured.commandPool == &context.pool);
+    assert(captured.physicalDevice == &context.candidate.physical);
+    assert(captured.bufferSize == &buffer.bytes && captured.buffer == nullptr);
+    assert(captured.isCompilerInitialized == 1);
+    for (int direction : {-1, 1}) {
+      ++buffer.handle; plan.append(17, direction);
+      assert(appendedDirection == direction && appendedCommand == 17 && appendedBuffer == buffer.handle);
+    }
+  }
+  assert(releases == 4);
+  initResult = 4;
+  try { NativePlan failed(context, buffer, 29, 3); assert(false); }
+  catch (const std::runtime_error&) {}
+  assert(releases == 5);
+  initResult = 0; appendResult = 9;
+  try { NativePlan failed(context, buffer, 29, 3); failed.append(17, -1); assert(false); }
+  catch (const std::runtime_error&) {}
+  assert(releases == 6);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="vectorwarp-fft-plan-") as directory:
+            executable = str(Path(directory) / "test")
+            subprocess.run([shutil.which("c++"), "-std=c++17", "-x", "c++", "-", "-o", executable],
+                           input=fixture + plan + checks, text=True, check=True,
+                           capture_output=True, timeout=20)
+            subprocess.run([executable], check=True, capture_output=True, timeout=5)
+
     def test_exact_coordinate_factorization(self):
         axes = list(range(-8, 9))
         cases = 0

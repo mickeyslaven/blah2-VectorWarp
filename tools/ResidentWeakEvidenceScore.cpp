@@ -32,9 +32,9 @@ std::string executableHash(const char* argument) {
   const char* path = std::getenv("PATH");
   std::ifstream input(contract::runningExecutablePath(argument, path ? path : ""), std::ios::binary);
   require(bool(input), "Cannot bind running scorer executable");
-  blah2::resident::Sha256 hash; std::array<char, 65536> bytes{};
-  while (input.read(bytes.data(), bytes.size()) || input.gcount()) hash.add(bytes.data(), size_t(input.gcount()));
-  require(input.eof(), "Cannot read running scorer executable"); return hex(hash.finish());
+  blah2::Sha256 hash; std::array<char, 65536> bytes{};
+  while (input.read(bytes.data(), bytes.size()) || input.gcount()) hash.update(bytes.data(), size_t(input.gcount()));
+  require(input.eof(), "Cannot read running scorer executable"); return hex(hash.finishBytes());
 }
 std::string field(const rapidjson::Value& v, const char* key) {
   require(v.IsObject() && v.HasMember(key) && v[key].IsString(), "Evaluation string field missing");
@@ -51,7 +51,7 @@ Labels labels(const std::string& path) {
   std::ifstream input(path, std::ios::binary); std::string bytes(size, '\0');
   require(bool(input.read(bytes.data(), std::streamsize(size))) && input.peek() == EOF,
     "Evaluation file read incomplete");
-  blah2::resident::Sha256 digest; digest.add(bytes.data(), bytes.size()); out.hash = hex(digest.finish());
+  blah2::Sha256 digest; digest.update(bytes.data(), bytes.size()); out.hash = hex(digest.finishBytes());
   rapidjson::Document document; document.Parse(bytes.data(), bytes.size());
   require(!document.HasParseError() && document.IsObject() && document.HasMember("version") &&
     document["version"].IsUint() && document["version"].GetUint() == 1 &&

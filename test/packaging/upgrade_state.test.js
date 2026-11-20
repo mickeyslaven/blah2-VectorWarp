@@ -7,7 +7,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {readConfig} = require('../../api/config-store');
+const {readConfig, configurationForReceiver} = require('../../api/config-store');
+const {createRequire} = require('module');
+const yaml = createRequire(path.join(__dirname, '../../api/package.json'))('js-yaml');
 const {createReceiverJournal} = require('../../api/receiver-journal');
 const {evaluateConfigRevision} = require('../../api/config-revision-guard');
 
@@ -17,7 +19,7 @@ try {
   // Model an existing configured SDRplay installation. config.yml is now the
   // deliberately invalid, unconfigured first-run form, which must remain a
   // higher-priority config-invalid failure rather than reach journal checks.
-  fs.copyFileSync(path.join(__dirname, '../../config/config-pi4-rspduo.yml'), filename);
+  fs.writeFileSync(filename, yaml.dump(configurationForReceiver('RspDuo')));
   fs.appendFileSync(filename, '\n# operator-owned pre-journal configuration\n');
   const hash = () => crypto.createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
   const before = hash();

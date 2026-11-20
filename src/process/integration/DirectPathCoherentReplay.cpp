@@ -1,5 +1,5 @@
 #include "DirectPathCoherentReplay.h"
-#include "process/ambiguity/GpuResidentHash.h"
+#include "capture/Sha256.h"
 #include "process/ambiguity/GpuResidentWire.h"
 
 #include <algorithm>
@@ -20,17 +20,7 @@ using resident_replay::Hash;
 constexpr uint32_t magic = 0x4c525744; // DWRL, little-endian
 constexpr size_t hashOffset = 400, digestOffset = 432;
 bool nonzero(const Hash& value) { return std::any_of(value.begin(), value.end(), [](uint8_t b) { return b != 0; }); }
-Hash digest(const uint8_t* data, size_t size) { resident::Sha256 h; h.add(data, size); return h.finish(); }
-bool same(const Sidecar& a, const Sidecar& b) {
-  return a.captureEpoch == b.captureEpoch && a.identity.epoch == b.identity.epoch &&
-    a.identity.configHash == b.identity.configHash &&
-    a.identity.moduleHash == b.identity.moduleHash &&
-    a.identity.deviceHash == b.identity.deviceHash &&
-    a.sourceHash == b.sourceHash && a.rfHash == b.rfHash &&
-    a.tuningHz == b.tuningHz &&
-    a.gainCalibrationEpoch == b.gainCalibrationEpoch &&
-    a.sampleRateHz == b.sampleRateHz && a.actualGainDb == b.actualGainDb;
-}
+Hash digest(const uint8_t* data, size_t size) { blah2::Sha256 h; h.update(data, size); return h.finishBytes(); }
 resident::ConstBytes block(const Reader& r, uint32_t kind) {
   const size_t descriptor = 512 + 24 * (kind - 1);
   require(r.u32(descriptor) == kind && !r.u32(descriptor + 4), "Replay snapshot block descriptor invalid");
@@ -52,24 +42,6 @@ resident::Config snapshotConfig(const std::vector<uint8_t>& bytes) {
   m.range(doppler, size_t(rows) * 8); m.range(delays, size_t(columns) * 4);
   return resident::decodeConfig(block(r, uint32_t(resident_replay::BlockKind::configuration)),
     {metadata.data + delays, size_t(columns) * 4}, {metadata.data + doppler, size_t(rows) * 8});
-}
-DirectPathCoherentShadow::ComplexMap channelMap(const resident_replay::ResidentReplaySnapshot& snapshot,
-  const resident::Config& config, uint32_t channel) {
-  const uint32_t rows = config.geometry.doppler, columns = config.geometry.delays;
-  const uint64_t cells = uint64_t(rows) * columns;
-  require(channel < config.geometry.channels && cells <= (1u << 20), "Replay channel map bounds invalid");
-  const auto& bytes = snapshot.blocks.at(uint32_t(resident_replay::BlockKind::channelMaps) - 1).bytes;
-  const Reader r{{bytes.data(), bytes.size()}};
-  DirectPathCoherentShadow::ComplexMap result(rows, columns);
-  result.delay.assign(config.delayAxis.begin(), config.delayAxis.end());
-  result.doppler.assign(config.dopplerAxis.begin(), config.dopplerAxis.end());
-  for (uint32_t row = 0; row < rows; ++row) for (uint32_t column = 0; column < columns; ++column) {
-    const uint64_t index = uint64_t(channel) * cells + uint64_t(column) * rows + ((row + rows / 2 + 1) % rows);
-    const auto real = r.f32(size_t(index) * 8), imag = r.f32(size_t(index) * 8 + 4);
-    require(std::isfinite(real) && std::isfinite(imag), "Replay complex channel map is nonfinite");
-    result.data[row][column] = {real, imag};
-  }
-  return result;
 }
 }
 
@@ -159,44 +131,4 @@ ValidatedSnapshot loadValidatedSnapshot(const std::filesystem::path& path) {
     config, sidecar.identity)};
 }
 
-ShadowReader::ShadowReader(DirectPathCoherentShadow::Config config)
-  : shadow_(config, true), anchorChannel_(config.anchorChannelId) {}
-DirectPathCoherentShadow::Result ShadowReader::append(const std::filesystem::path& path) {
-  return append(loadValidatedSnapshot(path));
-}
-std::vector<DirectPathCoherentShadow::ComplexMap> channelMaps(const ValidatedSnapshot& frame) {
-  std::vector<DirectPathCoherentShadow::ComplexMap> result;
-  result.reserve(frame.config.geometry.channels);
-  for (uint32_t channel = 0; channel < frame.config.geometry.channels; ++channel)
-    result.push_back(channelMap(frame.snapshot, frame.config, channel));
-  return result;
-}
-DirectPathCoherentShadow::Result ShadowReader::append(const ValidatedSnapshot& validated) {
-  const auto& sidecar = validated.sidecar; const auto& config = validated.config;
-  const auto& snapshot = validated.snapshot;
-  if (previous_) { require(same(*previous_, sidecar), "Replay coherent lineage identity changed"); require(sidecar.identity.logicalFrame == previous_->identity.logicalFrame + 1 && sidecar.identity.generation == previous_->identity.generation + 1 && sidecar.identity.consumedSequence > previous_->identity.consumedSequence && sidecar.firstSample > previous_->firstSample, "Replay coherent sidecars reordered or discontinuous"); }
-  auto maps = channelMaps(validated); std::vector<DirectPathCoherentShadow::ComplexMap*> mapPointers;
-  mapPointers.reserve(maps.size()); for (auto& map : maps) mapPointers.push_back(&map);
-  fallback_ = std::make_unique<DirectPathCoherentShadow::ComplexMap>(config.geometry.doppler, config.geometry.delays);
-  fallback_->delay.assign(config.delayAxis.begin(), config.delayAxis.end());
-  fallback_->doppler.assign(config.dopplerAxis.begin(), config.dopplerAxis.end());
-  const auto& currentPower = snapshot.blocks.at(
-    uint32_t(resident_replay::BlockKind::currentPower) - 1).bytes;
-  const Reader powerReader{{currentPower.data(), currentPower.size()}};
-  for (uint32_t row = 0; row < config.geometry.doppler; ++row)
-    for (uint32_t column = 0; column < config.geometry.delays; ++column)
-      fallback_->data[row][column] = DirectPathCoherentShadow::Complex(
-        powerReader.f64((size_t(row) * config.geometry.delays + column) * 8), 0);
-  const DirectPathCoherentShadow::Frame frame{sidecar.captureEpoch,sidecar.identity.logicalFrame,sidecar.firstSample,sidecar.endSample,sidecar.tuningHz,sidecar.gainCalibrationEpoch,sidecar.sampleRateHz,true,true};
-  const auto anchor = std::find(config.surveillanceChannels.begin(), config.surveillanceChannels.end(), anchorChannel_);
-  require(anchor != config.surveillanceChannels.end(), "Replay shadow anchor channel unavailable");
-  const auto anchorIndex = size_t(std::distance(config.surveillanceChannels.begin(), anchor));
-  const auto& raw = snapshot.blocks.at(uint32_t(resident_replay::BlockKind::rawIq) - 1).bytes;
-  const auto& reference = snapshot.blocks.at(uint32_t(resident_replay::BlockKind::referenceIq) - 1).bytes;
-  const auto samples = config.geometry.clutterSamples; require(raw.size() == size_t(samples) * config.geometry.channels * 16 && reference.size() == size_t(samples) * 16, "Replay IQ pilot layout differs");
-  const Reader rawReader{{raw.data(), raw.size()}}, referenceReader{{reference.data(), reference.size()}}; std::vector<DirectPathCoherentShadow::Complex> pilotReference(samples), pilotAnchor(samples);
-  for (uint32_t sample = 0; sample < samples; ++sample) { pilotReference[sample] = {referenceReader.f64(size_t(sample) * 16), referenceReader.f64(size_t(sample) * 16 + 8)}; const size_t offset = (anchorIndex * size_t(samples) + sample) * 16; pilotAnchor[sample] = {rawReader.f64(offset), rawReader.f64(offset + 8)}; }
-  previous_ = sidecar; return shadow_.process(mapPointers, config.surveillanceChannels, frame,
-    DirectPathCoherentShadow::estimatePilot(pilotReference.data(), pilotAnchor.data(), samples, frame, anchorChannel_), *fallback_);
-}
 } // namespace blah2::integration::coherent_replay

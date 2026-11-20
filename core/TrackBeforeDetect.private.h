@@ -6,7 +6,34 @@
 #include <vector>
 #include "process/detection/IntegratedCfar.h"
 
+// Rank complete, rounded mean-power paths at every depth. Ordered scans retain
+// the first path on a tie; parallel reductions supply the same canonical order.
+// Comparing an older sample before adding the common newest sample is not
+// equivalent: the addition can round distinct powers to the same path mean.
+#define BLAH2_TEMPORAL_PATH_RANKING(Q) \
+ Q bool temporalPathBetter(double candidateMean,double bestMean,bool candidateEarlier) { \
+  return candidateMean>bestMean || (candidateMean==bestMean && candidateEarlier); }
+
 namespace track_before_detect {
+BLAH2_TEMPORAL_PATH_RANKING(inline)
+#define BLAH2_TEMPORAL_RANK_STRINGIFY_IMPL(...) #__VA_ARGS__
+#define BLAH2_TEMPORAL_RANK_STRINGIFY(...) BLAH2_TEMPORAL_RANK_STRINGIFY_IMPL(__VA_ARGS__)
+inline constexpr const char* pathRankingShaderSource =
+  BLAH2_TEMPORAL_RANK_STRINGIFY(BLAH2_TEMPORAL_PATH_RANKING());
+#undef BLAH2_TEMPORAL_RANK_STRINGIFY
+#undef BLAH2_TEMPORAL_RANK_STRINGIFY_IMPL
+#undef BLAH2_TEMPORAL_PATH_RANKING
+
+inline void validateBeamHistory(uint32_t depth,uint32_t tolerance){
+  if(depth==2&&tolerance!=UINT32_MAX)
+    throw std::invalid_argument("Two-CPI beam compatibility history is unsupported; select four/eight-CPI temporal integration or disable the explicit beam gate");
+}
+inline void validateRefinementGrid(uint32_t depth,uint32_t beams,uint32_t scanBeams=0){
+  if(depth<=2)return;
+  const uint64_t fine=scanBeams?scanBeams:4ULL*beams;
+  if(!beams||fine<beams||fine>127||fine%beams)
+    throw std::invalid_argument("Resident four/eight-CPI refinement requires a beam-count multiple through 127; default 4x refinement requires at most 31 surveillance beams, or enable bearing with a compatible scan_beams <= 127");
+}
 constexpr uint32_t splitMotionFlag = 0x80000000u;
 constexpr uint32_t fractionalDelayFlag = 0x40000000u;
 struct MotionBins { uint32_t delay=0,doppler=0; bool fractionalDelay=false; };

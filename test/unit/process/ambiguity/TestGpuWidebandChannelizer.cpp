@@ -1,6 +1,7 @@
 #include "process/ambiguity/GpuWidebandChannelizer.h"
 #include "process/ambiguity/GpuWidebandFallback.h"
 #include "process/conditioning/SubbandChannelizer.h"
+#include "process/conditioning/SamplePhase.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <fftw3.h>
@@ -11,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstring>
 
 namespace
 {
@@ -165,6 +167,26 @@ struct QualificationFixture
 };
 }
 
+TEST_CASE("bounded portable mixer anchors preserve long CPI phase at either sign")
+{
+  using blah2::channelizer::mixerTurn;
+  constexpr uint32_t rate = 2400000, overlap = 128;
+  for (double offset : {-437501.0, 437501.0, -437500.25, 437500.25})
+    for (uint64_t first : {uint64_t(17), uint64_t(1000017), (uint64_t(1)<<54)+17}) {
+      const auto origin = mixerTurn(first, offset, rate)*std::conj(mixerTurn(overlap, offset, rate));
+      for (uint32_t at : {0u, 127u, 128u, 4095u, 4096u, 4097u, 999999u, 1000127u}) {
+        if (first + at < overlap) continue;
+        const std::complex<float> base(origin*mixerTurn(uint64_t(at>>12)*4096, offset, rate));
+        const std::complex<float> turn(mixerTurn(at&4095, offset, rate));
+        // Match the production shader's FP32 complex multiply.
+        const std::complex<float> actual(base.real()*turn.real()-base.imag()*turn.imag(),
+          base.real()*turn.imag()+base.imag()*turn.real());
+        const auto expected = mixerTurn(first + at - overlap, offset, rate);
+        REQUIRE(std::abs(std::complex<double>(actual)-expected) < 2e-7);
+      }
+    }
+}
+
 TEST_CASE("sampled wideband oracle matches full CPU FIR across phases and gaps")
 {
   using namespace blah2::wideband_gpu;
@@ -283,7 +305,7 @@ TEST_CASE("sampled wideband oracle rejects phase coefficient and boundary faults
     ++damaged[0].firstInputSample;
     SelectedOutputQualifier oracle(fixture.config);
     REQUIRE_FALSE(oracle.check(input, first, damaged, 1, 250).accepted);
-    REQUIRE_FALSE(oracle.check(input, first, good, 251, 250).accepted);
+    REQUIRE(oracle.check(input, first, good, 251, 250).accepted);
   }
 }
 
@@ -374,6 +396,43 @@ TEST_CASE("sampled wideband oracle times full CPI geometry", "[.wideband-full-cp
   // Wall time is diagnostic, not a machine-specific correctness threshold.
 }
 
+TEST_CASE("wideband GPU plan shares exact absolute fractional CPU phase")
+{
+  using namespace blah2::wideband_gpu;
+  constexpr uint32_t rate = 131070;
+  constexpr uint64_t base = (uint64_t(1) << 63) + 71;
+  for (double offset : {-1., 1., -.5, .5, -.1, .1, 1e-10}) {
+    Config config{rate, 2, 256, {{100000000, 2, offset,
+      designFilter(rate, rate / 2, 40000, 4)}}};
+    Plan plan(config);
+    SelectedOutputQualifier oracle(config);
+    std::vector<std::unique_ptr<blah2::channelizer::SubbandChannelizer>> cpu;
+    cpu.push_back(std::make_unique<blah2::channelizer::SubbandChannelizer>(
+      blah2::channelizer::SubbandChannelizer::Config{rate, rate / 2, offset,
+        40000, 4}, 2));
+    uint64_t previous = 0;
+    for (uint64_t first : {base, base + 31, base + 1001, base - 500}) {
+      const auto dispatch = plan.prepare(first, 31);
+      REQUIRE(dispatch.resetHistory == (first != previous + 31));
+      previous = first;
+      float real = 0, imaginary = 0;
+      std::memcpy(&real, &dispatch.lanes[0].baseReal, sizeof(real));
+      std::memcpy(&imaginary, &dispatch.lanes[0].baseImaginary, sizeof(imaginary));
+      const auto expected = std::polar(1., 2 * pi *
+        blah2::channelizer::mixerPhaseCycles(first, offset, rate));
+      REQUIRE(std::abs(std::complex<double>(real, imaginary) - expected) < 1e-7);
+      if (std::trunc(offset) != offset)
+        REQUIRE(dispatch.lanes[0].padding3 == 0); // No rounded integer period.
+      const auto input = qualificationInput(2, 31, 73);
+      const auto output = cpuQualificationOutputs(config, cpu, input, first);
+      const auto result = oracle.check(input, first, output, 1, 250);
+      INFO(result.reason);
+      REQUIRE(result.accepted);
+      REQUIRE(result.worstRms < 1e-5);
+    }
+  }
+}
+
 TEST_CASE("wideband GPU plan packs five channels and all illuminators once")
 {
   using namespace blah2::wideband_gpu;
@@ -408,7 +467,7 @@ TEST_CASE("wideband GPU plan packs five channels and all illuminators once")
   for (const auto& lane : gap.lanes) REQUIRE(lane.inputPrefix == 0);
 }
 
-TEST_CASE("wideband GPU admits a bounded small-decimation direct envelope")
+TEST_CASE("wideband GPU admits high-rate generic FFT geometry without a folding veto")
 {
   using namespace blah2::wideband_gpu;
   constexpr uint32_t input = 24576000;
@@ -420,10 +479,18 @@ TEST_CASE("wideband GPU admits a bounded small-decimation direct envelope")
   REQUIRE(plan.runtimeSelectable());
   REQUIRE(std::string(plan.runtimeBlockReason()).empty());
 
-  auto excessive = configuration();
-  excessive.inputRateHz = input;
-  excessive.lanes.front().taps.resize(1033);
-  REQUIRE_FALSE(Plan(std::move(excessive)).runtimeSelectable());
+  auto generic = configuration();
+  generic.inputRateHz = input;
+  generic.lanes.front().taps.resize(1033);
+  REQUIRE(Plan(std::move(generic)).runtimeSelectable());
+  Config mixed{3200000, 2, 4096, {
+    {100000000, 8, -.25, filter(3200000, 400000, 200000, 16)},
+    {101000000, 10, 100000.25, filter(3200000, 320000, 200000, 16)}}};
+  Plan mixedPlan(mixed);
+  REQUIRE(mixedPlan.runtimeSelectable());
+  REQUIRE(mixedPlan.prepare(11, 4096).lanes.size() == 2);
+  mixed.maxInputSamples = UINT32_MAX;
+  REQUIRE_THROWS(Plan(mixed)); // No weakening of checked layout/memory bounds.
 }
 
 TEST_CASE("wideband GPU plan preserves independent lane metadata")
@@ -468,7 +535,7 @@ TEST_CASE("wideband GPU ABI qualifies full B210-width folded filter quality")
   REQUIRE_THROWS(Plan(std::move(odd)));
   Config hostile{input,1,65536,{{101100000,input/output,1,
     filter(input,output,200000,24)}}};
-  REQUIRE_FALSE(Plan(std::move(hostile)).runtimeSelectable());
+  REQUIRE(Plan(std::move(hostile)).runtimeSelectable());
 
   constexpr uint32_t mimoInput=30720000,mimoOutput=320000;
   Config mimo{mimoInput,2,65536,{}};

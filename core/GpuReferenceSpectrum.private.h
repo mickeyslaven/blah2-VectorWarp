@@ -1,8 +1,8 @@
 #pragma once
 // Private GPU-only captured reference/spectrum stage; no public/wire ABI.
-enum class ReferenceMode : uint32_t { supplied=0, capturedArray=1, capturedDedicated=2 };
+enum class ReferenceMode : uint32_t { capturedArray=1, capturedDedicated=2 };
 struct ReferenceSpectrumConfig {
- ReferenceMode mode=ReferenceMode::supplied;
+ ReferenceMode mode=ReferenceMode::capturedArray;
  std::vector<uint32_t> referenceChannels;
  uint32_t analysisSamples=32768,analysisInterval=10,powerIterations=12;
  double covarianceSmoothing=.8,diagonalLoading=.001;
@@ -134,9 +134,12 @@ void main(){
 )glsl";
 const char* weightsBody=R"glsl(
 void normalizeWeights(inout dvec2 w[8],uint count){
- precise double power=0.0LF;for(uint c=0u;c<count;++c)power=power+normZ(w[c]);
- if(!finiteD(power)||power<0.0LF){reject(112u);return;}
- double lengthValue=sqrt(max(power,1e-30LF));
+ // Same scale-safe direction normalization as ArrayReferenceSynthesizer.
+ double scale=0.0LF;for(uint c=0u;c<count;++c){
+  if(!finiteZ(w[c])){reject(112u);return;}scale=max(scale,max(abs(w[c].x),abs(w[c].y)));}
+ if(scale==0.0LF)return;
+ precise double power=0.0LF;for(uint c=0u;c<count;++c){w[c]=w[c]/scale;power=power+normZ(w[c]);}
+ double lengthValue=sqrt(power);
  if(!finiteD(lengthValue)||!(lengthValue>0.0LF)){reject(112u);return;}
  for(uint c=0u;c<count;++c)w[c]=w[c]/lengthValue;
 }
@@ -281,11 +284,8 @@ void main(){uint i=indexOf();if(i>=m[23])return;
 const char* commitBody=R"glsl(
 void main(){uint i=indexOf();if(i<52u)m[128u+i]=m[64u+i];if(i==0u)m[10]=1u;}
 )glsl";
-const char* logProbeBody=R"glsl(
-void main(){uint i=indexOf();if(i<p.count)result[32u+i]=positiveLog10(result[i]);}
-)glsl";
 inline std::vector<std::pair<std::string,std::string>> shaderSources(){
- const std::pair<const char*,const char*> bodies[]={{"schedule",schedule},{"covariance",covarianceBody},{"weights",weightsBody},{"combine",combineBody},{"scale",scaleBody},{"normalize",normalizeBody},{"spectrum",spectrumBody},{"readout",readoutBody},{"commit",commitBody},{"positive-log-probe",logProbeBody}};
+ const std::pair<const char*,const char*> bodies[]={{"schedule",schedule},{"covariance",covarianceBody},{"weights",weightsBody},{"combine",combineBody},{"scale",scaleBody},{"normalize",normalizeBody},{"spectrum",spectrumBody},{"readout",readoutBody},{"commit",commitBody}};
  std::vector<std::pair<std::string,std::string>> result;
  for(const auto& b:bodies)result.emplace_back(b.first,std::string(common)+b.second);
  return result;
@@ -360,7 +360,7 @@ class Stage {
  std::unique_ptr<NativePlan> spectrumPlan_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
- CommandOwner commitCommand_,probeCommand_; // Freed before kernels/borrowed storage.
+ CommandOwner commitCommand_; // Freed before kernels/borrowed storage.
  std::vector<double> frequencies_;
  bool covarianceValid_=false;
  std::array<std::complex<double>,64> covarianceCache_{};
@@ -398,7 +398,7 @@ public:
  const auto& evidenceStatus()const{return evidenceStatus_;}
  const gpu_native::Timestamps& evidenceTimes()const{return *timestamps_;}
  Stage(Context& context,const ReferenceSpectrumConfig& c,uint32_t n,uint32_t channels,double sampleRate,Buffer& reference,Buffer& work)
-  :context_(context),config_(c),samples_(n),channels_(channels),sampleRate_(sampleRate),shape_(validate(c,n,channels,sampleRate)),reference_(reference),work_(work),covariance_(covarianceLayout(shape_.observations,uint32_t(c.referenceChannels.size()),work.bytes)),commitCommand_(context),probeCommand_(context){
+  :context_(context),config_(c),samples_(n),channels_(channels),sampleRate_(sampleRate),shape_(validate(c,n,channels,sampleRate)),reference_(reference),work_(work),covariance_(covarianceLayout(shape_.observations,uint32_t(c.referenceChannels.size()),work.bytes)),commitCommand_(context){
   if(reference.bytes<uint64_t(n)*16||work.bytes<std::max(uint64_t(shape_.chunks)*16,uint64_t(shape_.transform)*16)||
    context.candidate.properties.limits.maxPerStageDescriptorStorageBuffers<6||context.candidate.properties.limits.maxDescriptorSetStorageBuffers<6)
    throw std::runtime_error("Reference/spectrum storage unsupported");
@@ -409,7 +409,7 @@ public:
   if(phaseCount*16>context.candidate.properties.limits.maxStorageBufferRange)throw std::runtime_error("Spectrum phase storage unsupported");
   phases_=std::make_unique<Buffer>(context,phaseCount*16,host,preferred);
   output_=std::make_unique<Buffer>(context,std::max(uint64_t(shape_.bins)*24,uint64_t(512)),host,preferred);
-  spectrumPlan_=std::make_unique<NativePlan>(context,work_,shape_.transform,1,true,false,true);
+  spectrumPlan_=std::make_unique<NativePlan>(context,work_,shape_.transform,1,true,true);
   std::array<uint32_t,metaWords> words{};
   words[cfgN]=n;
   words[cfgChannels]=channels;
@@ -455,7 +455,6 @@ public:
   read.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
   vkCmdPipelineBarrier(commitCommand_.command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&read,0,nullptr,0,nullptr);
   check(vkEndCommandBuffer(commitCommand_.command),"reference commit recording");
-  probeCommand_.allocate();
  }
  void append(VkCommandBuffer command){
   vkCmdFillBuffer(command,metadata_->handle,0,16*4,0);
@@ -561,35 +560,6 @@ public:
    <<" device_covariance_partials="<<s[11]<<" device_covariance_reductions="<<s[12]<<" covariance_tile_observations="<<covariance_.tileObservations<<" covariance_tiles="<<covariance_.tiles<<" covariance_scratch_bytes="<<covariance_.bytes
    <<" frames="<<cp.frames<<" updates="<<cp.updates<<" gpu_analysis_ms="<<timestamps_->milliseconds(0)<<" gpu_combine_scale_ms="<<timestamps_->milliseconds(1)<<" gpu_spectrum_ms="<<timestamps_->milliseconds(2)
    <<" cpu_synthesis_calls=0 cpu_spectrum_calls=0 cpu_normalization_calls=0 cpu_log_calls=0\n";
- }
- // Test-only scalar contract, no state commit and no device creation. All math is GPU.
- bool probePositiveLog(const double* values,size_t count,double* results){
-  if(!values||!results||!count||count>32)throw std::invalid_argument("Invalid positive-log probe count");
-  std::memcpy(output_->mapped,values,count*8);
-  output_->flush(0,count*8);
-  // Individual command reset is unavailable on the shared pool: free/reallocate.
-  if(probeCommand_.command){vkFreeCommandBuffers(context_.device,context_.pool,1,&probeCommand_.command);
-  probeCommand_.command=VK_NULL_HANDLE;}probeCommand_.allocate();
-  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-  check(vkBeginCommandBuffer(probeCommand_.command,&begin),"log probe recording");
-  VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-  host.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;
-  host.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT;
-  vkCmdPipelineBarrier(probeCommand_.command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1,&host,0,nullptr,0,nullptr);
-  vkCmdFillBuffer(probeCommand_.command,metadata_->handle,0,16*4,0);
-  barrier(probeCommand_.command);
-  kernels_[9]->append(probeCommand_.command,{uint32_t(count),0,0,0,0});
-  barrier(probeCommand_.command);
-  host.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT;
-  host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
-  vkCmdPipelineBarrier(probeCommand_.command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);
-  check(vkEndCommandBuffer(probeCommand_.command),"log probe recording");
-  submit(probeCommand_.command);
-  metadata_->invalidate(0,64);
-  if(static_cast<const uint32_t*>(metadata_->mapped)[0])return false;
-  output_->invalidate(256,count*8);
-  std::memcpy(results,static_cast<const double*>(output_->mapped)+32,count*8);
-  return true;
  }
 };
 } // namespace gpu_reference

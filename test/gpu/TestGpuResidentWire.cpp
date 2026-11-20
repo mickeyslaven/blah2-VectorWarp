@@ -1,4 +1,5 @@
 #include "GpuResidentWire.h"
+#include "TemporalCandidateCell.h"
 #include "GpuResidentInput.h"
 #include "ResidentReplayFixture.h"
 #include "../../core/TrackBeforeDetect.private.h"
@@ -9,9 +10,19 @@
 
 using namespace blah2::resident;
 namespace {
+// Keep ABI17 module layout while the retired experimental slots stay zero.
+static_assert(offsetof(TrackerConfig,reservedPolicy)==80&&
+ offsetof(TrackerConfig,normalizedInnovationGate)==83&&
+ offsetof(TrackerConfig,reservedLimit)==84&&sizeof(TrackerConfig)==88,
+ "Resident tracker ABI17 layout changed");
+static_assert(offsetof(OutputViews,causalTrace)==offsetof(OutputViews,reservedOutput)+
+ sizeof(Span<const uint32_t>),"Resident output ABI17 padding changed");
 unsigned checked=0, rejected=0;
 void check(bool ok,const char* label){++checked;if(!ok)throw std::runtime_error(label);}
-template<class F>void reject(F f,const char*label){bool failed=false;try{f();}catch(const std::invalid_argument&){failed=true;}check(failed,label);++rejected;}
+template<class F>void reject(F f,const char*label,const char*reason=nullptr){bool failed=false;
+ try{f();}catch(const std::invalid_argument& error){failed=true;
+  if(reason)check(std::string(error.what())==reason,"Wrong refusal reason");}
+ check(failed,label);++rejected;}
 template<size_t N>ConstBytes bytes(const std::array<uint8_t,N>& a){return {a.data(),a.size()};}
 Config config(){
  Config c;c.inputChannels=2;auto&g=c.geometry;g.kind=blah2::GpuWorkKind::radar;
@@ -30,6 +41,14 @@ Config config(){
  return c;
 }
 void packetCases(){
+ static_assert(moduleAbi==17&&protocol==0x42475211,"Tracker elapsed ABI/protocol changed without test review");
+ validateModuleAbi(17);
+ for(unsigned abi:{0u,14u,15u,16u,18u})reject([&]{validateModuleAbi(abi);},"Legacy/unknown module ABI accepted tracker elapsed semantics");
+ for(uint32_t depth:{1u,2u,4u,8u}){
+  track_before_detect::validateBeamHistory(depth,UINT32_MAX);
+  if(depth==2)reject([&]{track_before_detect::validateBeamHistory(depth,0);},"Two-CPI beam history silently disabled");
+  else track_before_detect::validateBeamHistory(depth,0);
+ }
  Packet p;p.op=Op::restore;p.session={7,8};p.requestId=UINT64_C(0x100000009);
  p.frame={UINT64_C(0x200000005),UINT64_C(0x300000006),UINT64_C(0x400000007)};
  p.epoch=9;p.mappedBytes=4096;p.descriptorCount=29;p.presence=bit(Section::canonical);
@@ -40,7 +59,7 @@ void packetCases(){
  auto withDiagnostic=p;withDiagnostic.op=Op::begin;withDiagnostic.restoreTrackerSlot=0;withDiagnostic.presence|=bit(Section::filtered);withDiagnostic.diagnosticPresence=bit(Section::filtered);
  check(decode(bytes(encode(withDiagnostic))).diagnosticPresence==bit(Section::filtered),"Requested diagnostic mask did not round trip");
  auto bad32=[&](size_t at,uint32_t value){auto b=raw;wire::Writer{{b.data(),b.size()}}.u32(at,value);reject([&]{decode(bytes(b));},"Malformed packet accepted");};
- bad32(0,0x42475004);bad32(0,0x4247520c);bad32(0,0x4247520e);bad32(4,159);bad32(8,0);bad32(8,21);bad32(12,1);
+ bad32(0,0x42475004);bad32(0,0x4247520c);bad32(0,0x4247520e);bad32(0,0x4247520f);bad32(4,159);bad32(8,0);bad32(8,21);bad32(12,1);
  bad32(80,33);bad32(84,6);bad32(128,8);bad32(132,2);bad32(136,1);bad32(140,513);bad32(144,1);bad32(144,uint32_t(bit(Section::filtered)));bad32(152,1);
  auto b=raw;wire::Writer w{{b.data(),b.size()}};w.u64(16,0);w.u64(24,0);reject([&]{decode(bytes(b));},"Zero nonce accepted");
  b=raw;w.u32(8,uint32_t(Op::begin));reject([&]{decode(bytes(b));},"Non-restore input slot accepted");
@@ -63,6 +82,8 @@ void configCases(){
  check(encodeConfig(decoded)==canonical&&decoded.delayAxis==c.delayAxis&&decoded.dopplerAxis==c.dopplerAxis,"Config/axes did not preserve canonical values");
  auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
  coherent.detector.integrationMotionBins=1;coherent.detector.integrationBeamTolerance=1;
+ reject([&]{validateConfig(coherent);},"Unsupported two-CPI beam gate silently ignored");
+ coherent.detector.integrationCpis=4;coherent.tracker.n=5;coherent.tracker.nDelete=4;
  const auto coherentBytes=encodeConfig(coherent);
  const auto coherentDecoded=decodeConfig(bytes(coherentBytes),bytes(d),bytes(f));
  check(encodeConfig(coherentDecoded)==coherentBytes&&
@@ -91,6 +112,7 @@ void configCases(){
  check(wire::configHash(changedAnchor)!=wire::configHash(measuredFusion),
   "Measured surveillance direct anchor did not bind config identity");
  auto tbd=coherent;tbd.detector.integrationCpis=8;
+ tbd.tracker.n=9;tbd.tracker.nDelete=7;
  tbd.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,4);
  const auto tbdBytes=encodeConfig(tbd);
  const auto tbdDecoded=decodeConfig(bytes(tbdBytes),bytes(d),bytes(f));
@@ -131,6 +153,37 @@ void configCases(){
   "Adaptive bearing configuration did not round trip");
  check(wire::configHash(bearing)!=wire::configHash(tbd),
   "Bearing method/mapping is not bound to config identity");
+ for(uint32_t depth:{4u,8u}){
+  auto boundary=tbd;boundary.detector.integrationCpis=depth;
+  boundary.fusion.beams=31;validateConfig(boundary);
+  check(decodeConfig(bytes(encodeConfig(boundary)),bytes(d),bytes(f)).fusion.beams==31,
+    "Default refinement boundary was silently clamped");
+  boundary.fusion.beams=32;
+  reject([&]{validateConfig(boundary);},"Default128-beam refinement admitted");
+  boundary=bearing;boundary.detector.integrationCpis=depth;
+  boundary.fusion.beams=127;boundary.bearing.scanBeams=127;validateConfig(boundary);
+  check(decodeConfig(bytes(encodeConfig(boundary)),bytes(d),bytes(f)).bearing.scanBeams==127,
+    "Explicit127-beam refinement was silently clamped");
+  boundary.fusion.beams=128;boundary.bearing.scanBeams=128;
+  reject([&]{validateConfig(boundary);},"Explicit128-beam refinement admitted");
+ }
+ for(uint32_t depth:{1u,2u}){
+  auto ordinary=coherent;ordinary.detector.integrationCpis=depth;
+  ordinary.detector.integrationMotionBins=0;ordinary.detector.integrationBeamTolerance=UINT32_MAX;
+  ordinary.fusion.beams=360;validateConfig(ordinary);
+  ordinary.bearing=bearing.bearing;
+  reject([&]{validateConfig(ordinary);},"Bearing output without4/8-CPI candidate maps admitted");
+ }
+ // Temporal admission belongs to the wire boundary even when detection is off.
+ // The preceding round trips cover coherent1/8-CPI and motion(2,16) acceptance.
+ const char* temporalReason="Production replay temporal/TBD contract is invalid";
+ for(bool enabled:{false,true}){
+  auto invalid=c;invalid.detector.enabled=enabled;invalid.tracker={};
+  invalid.detector.integrationCpis=1;invalid.detector.integrationMotionBins=1;
+  reject([&]{validateConfig(invalid);},"Single-CPI motion accepted at wire boundary",temporalReason);
+  invalid.detector.integrationCpis=4;invalid.detector.integrationMotionBins=0;
+  reject([&]{validateConfig(invalid);},"Noncoherent4-CPI resident configuration accepted",temporalReason);
+ }
  auto measured=bearing;for(uint32_t beam=0;beam<60;++beam)for(uint32_t channel=0;channel<2;++channel)
   measured.bearing.manifoldResponses.push_back(std::polar(1.0f,float(.1*beam+.2*channel)));
  const auto measuredBytes=encodeConfig(measured);const auto measuredDecoded=decodeConfig(bytes(measuredBytes),bytes(d),bytes(f));
@@ -162,26 +215,24 @@ void configCases(){
   "Persistent clutter initiation configuration did not round trip");
  check(wire::configHash(clutterAware)!=wire::configHash(adaptive),
   "Persistent clutter initiation is not bound to config identity");
- auto guided=tbd;guided.tracker.trackGuidedShadow=true;guided.tracker.trackGuidedPromote=true;
- guided.tracker.trackGuidedSustain=true;guided.tracker.normalizedInnovationGate=true;
- guided.tracker.trackGuidedShadowMaxTracks=4;
- guided.tracker.m=2;guided.tracker.n=3;
- guided.presence|=bit(Section::guidedRecoveries);
- const auto guidedBytes=encodeConfig(guided);
- const auto guidedDecoded=decodeConfig(bytes(guidedBytes),bytes(d),bytes(f));
- check(guidedDecoded.tracker.trackGuidedShadow&&
-  guidedDecoded.tracker.trackGuidedPromote&&
-  guidedDecoded.tracker.trackGuidedSustain&&
-  guidedDecoded.tracker.normalizedInnovationGate&&
-  guidedDecoded.tracker.trackGuidedShadowMaxTracks==4&&
-  encodeConfig(guidedDecoded)==guidedBytes,
-  "Track-guided shadow configuration did not round trip");
- check(wire::configHash(guided)!=wire::configHash(tbd),
-  "Track-guided shadow is not bound to config identity");
- auto impossibleGuided=guided;impossibleGuided.tracker.m=4;impossibleGuided.tracker.n=6;
- reject([&]{encodeConfig(impossibleGuided);},"experimental disjoint 4-of-6 accepted");
- impossibleGuided.tracker.trackGuidedPromote=false;encodeConfig(impossibleGuided);
- impossibleGuided.tracker.trackGuidedPromote=true;impossibleGuided.tracker.n=7;encodeConfig(impossibleGuided);
+ auto normalized=tbd;normalized.tracker.normalizedInnovationGate=true;
+ const auto normalizedBytes=encodeConfig(normalized);
+ const auto normalizedDecoded=decodeConfig(bytes(normalizedBytes),bytes(d),bytes(f));
+ check(normalizedDecoded.tracker.normalizedInnovationGate&&
+  encodeConfig(normalizedDecoded)==normalizedBytes,
+  "Normalized tracker gate did not preserve its ABI17 encoding");
+ const wire::Reader normalizedWire{bytes(normalizedBytes)};
+ check(moduleAbi==17&&protocol==0x42475211&&normalizedWire.u32(604)==0&&
+  normalizedWire.u32(608)==0&&normalizedWire.u32(612)==4,
+  "Retired tracker wire slots or supported policy offset changed");
+ for(const auto offset:{604u,608u,612u})for(const auto flag:{1u,2u}){
+  auto retired=normalizedBytes;wire::Writer{{retired.data(),retired.size()}}.u32(offset,flag);
+  reject([&]{decodeConfig(bytes(retired),bytes(d),bytes(f));},
+   "Retired guided tracker wire flag accepted");}
+ auto impossible=tbd;impossible.tracker.m=4;impossible.tracker.n=6;
+ reject([&]{encodeConfig(impossible);},"detector-only disjoint 4-of-6 accepted");
+ impossible.tracker.n=25;encodeConfig(impossible);impossible.tracker.nDelete=6;
+ reject([&]{encodeConfig(impossible);},"eight-CPI bank admitted an incompatible coast horizon");
  auto whitened=coherent;
  whitened.fusion.mode=FusionMode::noiseWhitenedRegularPolygon;
  const auto whitenedBytes=encodeConfig(whitened);
@@ -190,6 +241,9 @@ void configCases(){
   whitenedDecoded.fusion.mode==FusionMode::noiseWhitenedRegularPolygon,
   "Noise-whitened resident fusion configuration did not round trip");
  auto mutate=[&](const std::function<void(Config&)>&change){auto v=c;change(v);reject([&]{validateConfig(v);},"Invalid config admitted");};
+ mutate([](auto&v){v.tracker.reservedPolicy[0]=1;});
+ mutate([](auto&v){v.tracker.reservedLimit=1;});
+ mutate([](auto&v){v.presence|=bit(Section::reserved30);});
  mutate([](auto&v){v.surveillanceChannels={1,0};});mutate([](auto&v){v.delayAxis[1]=1;});
  mutate([](auto&v){v.dopplerAxis[1]=v.dopplerAxis[0];});mutate([](auto&v){v.reference.channels={1,0};});
  mutate([](auto&v){v.dopplerAxis.back()+=.5;}); // Still increasing, but not the true-CPI axis.
@@ -201,11 +255,6 @@ void configCases(){
  mutate([](auto&v){v.tracker.initiationMode=TrackerInitiationMode(2);});
  mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=0;v.tracker.stationaryMaxDopplerHz=15;});
  mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=1;v.tracker.stationaryMaxDopplerHz=15;});
- mutate([](auto&v){v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=1;});
- mutate([](auto&v){v.tracker.trackGuidedPromote=true;});
- mutate([](auto&v){v.tracker.trackGuidedSustain=true;});
- mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=0;});
- mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=v.tracker.capacity+1;});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
  mutate([](auto&v){v.detector.integrationCpis=3;});
  mutate([](auto&v){v.detector.integrationCpis=6;});
@@ -214,7 +263,7 @@ void configCases(){
  mutate([](auto&v){v.detector.integrationCpis=1;v.detector.integrationMotionBins=1;});
  mutate([](auto&v){v.detector.integrationBeamTolerance=0;});
  mutate([](auto&v){v.presence&=~bit(Section::canonical);});mutate([](auto&v){v.presence|=uint64_t(1)<<63;});
- mutate([](auto&v){v.device=std::string(96,'x');});mutate([](auto&v){v.geometry.kind=blah2::GpuWorkKind::fir;});
+ mutate([](auto&v){v.device=std::string(96,'x');});mutate([](auto&v){v.geometry.kind=blah2::GpuWorkKind::retiredFir;});
  mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
  mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses={{1,0}};});
  mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses.assign(24,{1,0});});
@@ -241,13 +290,13 @@ void configCases(){
 }
 void mappingCases(){
  auto c=config();const auto l=makeLayout(c,4096);check(l.count==29&&l.bytes%4096==0&&l.bytes<=sharedLimit,"Layout shape invalid");
- check(trackerHistoryCapacity(c.tracker)==100&&trackerRecordWords(c.tracker)==816&&
-  l.at(Section::tracker0).capacityBytes==128+uint64_t(c.tracker.capacity)*3264,
+ check(trackerHistoryCapacity(c.tracker)==100&&trackerRecordWords(c.tracker)==820&&
+  l.at(Section::tracker0).capacityBytes==128+uint64_t(c.tracker.capacity)*3280,
   "Short confirmation window did not use compact tracker history");
  auto longHistory=c;longHistory.tracker.n=255;longHistory.tracker.m=2;
  const auto longLayout=makeLayout(longHistory,4096);
- check(trackerHistoryCapacity(longHistory.tracker)==255&&trackerRecordWords(longHistory.tracker)==2056&&
-  longLayout.at(Section::tracker0).capacityBytes==128+uint64_t(c.tracker.capacity)*8224,
+ check(trackerHistoryCapacity(longHistory.tracker)==255&&trackerRecordWords(longHistory.tracker)==2060&&
+  longLayout.at(Section::tracker0).capacityBytes==128+uint64_t(c.tracker.capacity)*8240,
   "Maximum confirmation window did not retain the full tracker history");
  check(l.at(Section::readyEvidence).capacityBytes==4096&&l.at(Section::preparedEvidence).capacityBytes==61888&&l.at(Section::controlEvidence).capacityBytes==512,"Evidence maximum capacity missing");
  uint64_t end=1280;for(uint32_t i=0;i<l.count;++i){auto d=l.sections[i];check(!d.capacityBytes||d.offset%64==0,"Misaligned section");check(!d.capacityBytes||d.offset>=end,"Overlapping section");if(d.capacityBytes)end=d.offset+d.capacityBytes;}
@@ -344,25 +393,45 @@ void outputCases(){
  p.phase=Phase::prepared;p.tracker={c.epoch,3,p.frame.logicalId,p.frame.consumedSequence};wire::Writer m{map.bytes(Section::metrics)};
  const uint32_t recordWords=trackerRecordWords(c.tracker),history=trackerHistoryCapacity(c.tracker);
  m.u32(0,1);m.u32(4,128);m.u64(8,p.frame.logicalId);m.u64(16,p.frame.consumedSequence);m.f64(24,-5);m.f64(32,20);m.u64(40,3);m.u64(48,2);m.u64(56,1);m.u64(64,trackerHeaderWords+recordWords);m.u32(72,1);m.u32(76,0);m.u32(80,c.stages());m.u32(84,c.stages());
- wire::Writer bank{map.bytes(Section::tracker1)};bank.zero();bank.u32(0,1);bank.u32(4,recordWords*4);bank.u32(8,c.tracker.capacity);bank.u32(12,history);bank.u64(16,1);bank.u64(40,c.epoch);bank.u64(48,p.frame.logicalId);bank.u64(56,p.frame.consumedSequence);
+ m.u32(96,3);m.u32(100,2);m.u32(104,2);
+ wire::Writer flags{map.bytes(Section::flags)};flags.u32(0,7u|8u|(130u<<17));
+ wire::Writer bank{map.bytes(Section::tracker1)};bank.zero();bank.u32(0,5);bank.u32(108,1);bank.u32(4,recordWords*4);bank.u32(8,c.tracker.capacity);bank.u32(12,history);bank.u64(16,1);bank.u64(40,c.epoch);bank.u64(48,p.frame.logicalId);bank.u64(56,p.frame.consumedSequence);
  auto prepared=views(map,c,p);check(prepared.detections.size==1&&prepared.detectionCells.size==1&&prepared.cfar.size==3&&prepared.centroid.size==2&&prepared.trackerCheckpoint.size==trackerHeaderWords+recordWords&&prepared.trackerSlot==1,"Prepared prefixes/slot differ");
  check(prepared.causalTrace.data&&prepared.causalTrace.size==2064,"Prepared causal trace fixed view missing");
- bank.u32(0,2);check(views(map,c,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
-  "Measured-history checkpoint v2 rejected by resident envelope");
- bank.u32(0,3);check(views(map,c,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
-  "Native support-provenance schema3 rejected by resident envelope");
- bank.u32(0,4);reject([&]{views(map,c,p);},"Experimental schema4 accepted by ordinary policy");
- auto experimental=c;experimental.tracker.trackGuidedPromote=true;
- check(views(map,experimental,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
-  "Experimental support-credit schema4 rejected by matching policy");
- bank.u32(0,3);reject([&]{views(map,experimental,p);},"Ordinary schema3 accepted by experimental policy");
- experimental.tracker.trackGuidedPromote=false;experimental.tracker.trackGuidedSustain=true;
- bank.u32(0,4);check(views(map,experimental,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
-  "Sustain support-credit schema4 rejected by matching policy");
- bank.u32(0,5);reject([&]{views(map,c,p);},"Unknown tracker checkpoint schema accepted");bank.u32(0,2);
- auto minimal=p;minimal.diagnosticPresence=0;auto hidden=views(map,c,minimal);check(!hidden.filtered.data&&!hidden.reference.data&&!hidden.cfar.data&&!hidden.centroid.data&&!hidden.levels.data&&!hidden.detectionCells.data&&hidden.detections.size==1&&hidden.maps.size==prepared.maps.size,"Unrequested optional diagnostics exposed or mandatory results removed");
+ check(!prepared.reservedOutput.data&&!prepared.reservedOutput.size,
+  "Retired resident output padding was populated");
+ for(uint32_t i=0;i<l.count;++i)check(l.sections[i].id!=30,
+  "Retired resident section was allocated");
+ auto ordinary=c;ordinary.detector.integrationCpis=1;
+ const auto ordinaryViews=[&]{m.u32(104,1);try{auto result=views(map,ordinary,p);m.u32(104,2);return result;}catch(...){m.u32(104,2);throw;}};
+ for(uint32_t schema:{1u,2u,3u,4u}){bank.u32(0,schema);
+  reject([&]{ordinaryViews();},"Legacy checkpoint without exact elapsed interval accepted");
+  reject([&]{views(map,c,p);},"Temporal detector accepted legacy checkpoint");}
+ bank.u32(0,5);reject([&]{ordinaryViews();},"Disjoint lineage accepted by single-CPI policy");
+ bank.u32(108,0);check(ordinaryViews().trackerCheckpoint.size==prepared.trackerCheckpoint.size,
+  "Ordinary schema5 rejected by matching policy");
+ reject([&]{views(map,c,p);},"Temporal detector accepted ordinary lineage");bank.u32(108,1);
+ check(views(map,c,p).trackerCheckpoint.size==prepared.trackerCheckpoint.size,
+  "Temporal detector rejected disjoint schema5 history");
+ bank.u32(0,6);reject([&]{views(map,c,p);},"Unknown tracker checkpoint schema accepted");bank.u32(0,5);
+ auto minimal=p;minimal.diagnosticPresence=0;auto hidden=views(map,c,minimal);check(!hidden.filtered.data&&!hidden.reference.data&&!hidden.cfar.data&&!hidden.centroid.data&&!hidden.levels.data&&hidden.detectionCells.size==1&&hidden.flags.size==21&&hidden.detections.size==1&&hidden.maps.size==prepared.maps.size,"Optional diagnostics leaked or mandatory temporal lineage removed");
+ m.u32(104,0);reject([&]{views(map,c,p);},"ABI15 metrics without acknowledged readiness accepted");
+ m.u32(104,1);reject([&]{views(map,c,p);},"Warmup frame published a two-CPI candidate");m.u32(104,2);
+ flags.u32(0,7u|24u|(130u<<17));reject([&]{views(map,c,p);},"Ambiguous OR-of-banks lineage accepted");
+ flags.u32(0,7u|32u|(130u<<17));reject([&]{views(map,c,p);},"Unwarmed originating bank accepted");flags.u32(0,7u|8u|(130u<<17));
+ auto merged=c;merged.detector.integrationCpis=4;
+ reject([&]{views(map,merged,p);},"Merged candidate omitted its originating-cell offset");
+ flags.u32(0,7u|8u|(130u<<17)|(6u<<26));
+ const auto sourceView=views(map,merged,p);
+ check(sourceView.flags.data[0]==(7u|8u|(130u<<17)|(6u<<26))&&
+  blah2::temporal_candidate::sourceCell(sourceView.detectionCells.data[0],sourceView.flags.data[0],7,3,4)==1,
+  "ABI16 source-cell offset did not survive wire publication");
+ flags.u32(0,7u|8u|(130u<<17)|(4u<<26));reject([&]{views(map,merged,p);},"Source-cell offset outside grid accepted");
+ flags.u32(0,7u|8u|(130u<<17)|(10u<<26));reject([&]{views(map,merged,p);},"Unknown source-cell offset accepted");
+ flags.u32(0,7u|8u|(130u<<17));
+ auto missing=c;missing.presence&=~bit(Section::flags);reject([&]{validateConfig(missing);},"Temporal flags treated as optional diagnostics");
  auto bad=[&](size_t at,uint64_t value){const auto before=wire::Reader{map.read(Section::metrics)}.u64(at);m.u64(at,value);reject([&]{views(map,c,p);},"Invalid output metadata accepted");m.u64(at,before);};
- bad(8,p.frame.logicalId-1);bad(16,18);bad(40,25);bad(48,4);bad(56,3);bad(64,33);bad(72,2);bad(88,1);
+ bad(8,p.frame.logicalId-1);bad(16,18);bad(40,25);bad(48,4);bad(56,3);bad(64,33);bad(72,2);bad(88,1);bad(92,6);
  auto wrong=p;wrong.tracker.generation--;reject([&]{views(map,c,wrong);},"Stale prepared token accepted");wrong=p;wrong.phase=Phase::idle;reject([&]{views(map,c,wrong);},"Idle exposed outputs");wrong=p;wrong.presence^=bit(Section::canonical);reject([&]{views(map,c,wrong);},"Output presence substitution accepted");
 }
 }

@@ -1,4 +1,5 @@
 #include "Detection.h"
+#include "JsonArrayFile.h"
 #include "data/meta/Constants.h"
 #include <iostream>
 #include <cstdlib>
@@ -10,7 +11,6 @@
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
-#include "rapidjson/filewritestream.h"
 
 // constructor
 Detection::Detection(std::vector<double> _delay, std::vector<double> _doppler, std::vector<double> _snr)
@@ -170,73 +170,5 @@ std::string Detection::delay_bin_to_km(std::string json, uint32_t fs)
 
 bool Detection::save(std::string _json, std::string filename)
 {
-  using namespace rapidjson;
-
-  rapidjson::Document document;
-
-  // create file if it doesn't exist
-  if (FILE *fp = fopen(filename.c_str(), "r"); fp)
-  {
-    if (std::fclose(fp) != 0)
-      return false;
-  }
-  else
-  {
-    if (fp = fopen(filename.c_str(), "w"); !fp)
-      return false;
-    const bool initialized = std::fputs("[]", fp) >= 0;
-    if (std::fclose(fp) != 0 || !initialized)
-      return false;
-  }
-
-  // add the document to the file
-  if (FILE *fp = fopen(filename.c_str(), "rb+"); fp)
-  {
-    // check if first is [
-    if (std::fseek(fp, 0, SEEK_SET) != 0)
-    {
-      std::fclose(fp);
-      return false;
-    }
-    if (getc(fp) != '[')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // is array empty?
-    bool isEmpty = false;
-    if (getc(fp) == ']')
-      isEmpty = true;
-
-    // check if last is ]
-    if (std::fseek(fp, -1, SEEK_END) != 0)
-    {
-      std::fclose(fp);
-      return false;
-    }
-    if (getc(fp) != ']')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // replace ] by ,
-    if (std::fseek(fp, -1, SEEK_END) != 0 ||
-        (!isEmpty && std::fputc(',', fp) == EOF))
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // add json element
-    const bool wroteJson = std::fwrite(_json.data(), sizeof(char),
-      _json.size(), fp) == _json.size();
-
-    // close the array
-    const bool closedArray = wroteJson && std::fputc(']', fp) != EOF;
-    const bool flushed = closedArray && std::fflush(fp) == 0;
-    return std::fclose(fp) == 0 && flushed;
-  }
-  return false;
+  return blah2::data::appendJsonArray(_json, filename);
 }

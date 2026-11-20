@@ -45,11 +45,7 @@ function diagnosticCounts(value) {
     if (count === null) return null;
     result[field] = count;
   }
-  const exclusive = value.birth_exclusive_rejected === undefined ? 0 :
-    finiteCount(value.birth_exclusive_rejected);
-  if (exclusive === null) return null;
-  result.birth_exclusive_rejected = exclusive;
-  if (result.birth_snr_rejected + result.birth_ridge_rejected + exclusive >
+  if (result.birth_snr_rejected + result.birth_ridge_rejected >
       result.birth_candidates)
     return null;
   return result;

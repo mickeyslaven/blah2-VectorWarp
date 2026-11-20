@@ -2,7 +2,6 @@
 
 #include "process/analysis/ResidentReplaySnapshot.h"
 #include "process/ambiguity/GpuResidentBackend.h"
-#include "process/integration/DirectPathCoherentShadow.h"
 
 #include <filesystem>
 #include <memory>
@@ -47,20 +46,4 @@ struct ValidatedSnapshot {
   resident_replay::ResidentReplaySnapshot snapshot;
 };
 ValidatedSnapshot loadValidatedSnapshot(const std::filesystem::path& snapshot);
-// Shared decoder preserves the native channel-major, shifted-Doppler layout.
-std::vector<DirectPathCoherentShadow::ComplexMap> channelMaps(const ValidatedSnapshot&);
-
-// CPU-only parser and adapter.  No detector/PFA state is accepted or emitted.
-class ShadowReader {
-public:
-  explicit ShadowReader(DirectPathCoherentShadow::Config);
-  DirectPathCoherentShadow::Result append(const std::filesystem::path& snapshot);
-  DirectPathCoherentShadow::Result append(const ValidatedSnapshot& snapshot);
-private:
-  DirectPathCoherentShadow shadow_;
-  uint32_t anchorChannel_ = 0;
-  std::unique_ptr<DirectPathCoherentShadow::ComplexMap> fallback_;
-  std::optional<Sidecar> previous_;
-};
-
 } // namespace blah2::integration::coherent_replay

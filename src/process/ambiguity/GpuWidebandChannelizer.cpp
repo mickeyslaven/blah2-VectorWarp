@@ -1,4 +1,5 @@
 #include "process/ambiguity/GpuWidebandChannelizer.h"
+#include "process/conditioning/SamplePhase.h"
 
 #include <algorithm>
 #include <cmath>
@@ -137,8 +138,8 @@ Dispatch Plan::prepare(uint64_t firstInputSample, uint32_t inputSamples)
       throw std::overflow_error("Wideband GPU output offset overflow");
     uint64_t centerBits = 0;
     std::memcpy(&centerBits, &lane.centerOffsetHz, sizeof(centerBits));
-    const double phase = std::remainder(-2 * pi * lane.centerOffsetHz *
-      double(firstInputSample) / config_.inputRateHz, 2 * pi);
+    const double phase = 2 * pi * channelizer::mixerPhaseCycles(firstInputSample,
+      lane.centerOffsetHz, config_.inputRateHz);
     const float baseReal = float(std::cos(phase));
     const float baseImaginary = float(std::sin(phase));
     const float phaseStep = float(std::remainder(
@@ -150,7 +151,7 @@ Dispatch Plan::prepare(uint64_t firstInputSample, uint32_t inputSamples)
       sizeof(baseImaginaryBits));
     std::memcpy(&phaseStepBits, &phaseStep, sizeof(phaseStepBits));
     const int64_t integerCenter = std::llround(lane.centerOffsetHz);
-    if (std::abs(lane.centerOffsetHz - double(integerCenter)) <= 1e-9)
+    if (lane.centerOffsetHz == double(integerCenter))
     {
       const uint64_t magnitude = integerCenter < 0 ?
         uint64_t(-(integerCenter + 1)) + 1 : uint64_t(integerCenter);
@@ -182,62 +183,16 @@ void Plan::reset()
 
 bool Plan::runtimeSelectable() const noexcept
 {
-  if(config_.inputRateHz<=2400000)return true;
-  if(config_.lanes.empty())return false;
-  // The isolated worker has two qualified execution envelopes.  Large
-  // decimations use the shared FFT/PFB path below.  A bounded direct-FIR path
-  // is also practical for wide captures with short filters (for example a
-  // small-decimation broadcast channelizer).  Admit it by operation count,
-  // not by receiver type or a site-specific sample rate; the first real block
-  // is still compared with the CPU oracle before GPU output is published.
-  uint64_t directWork=0;
-  bool direct=true;
-  for(const auto& lane:config_.lanes)
-  {
-    if(lane.decimation<2||lane.taps.empty()||lane.taps.size()>1025)
-    {direct=false;break;}
-    const uint64_t outputs=(uint64_t(config_.maxInputSamples)+
-      lane.decimation-1)/lane.decimation;
-    const uint64_t perChannel=outputs*uint64_t(lane.taps.size());
-    if(perChannel>UINT64_MAX/config_.channels||
-       directWork>UINT64_MAX-perChannel*config_.channels)
-    {direct=false;break;}
-    directWork+=perChannel*config_.channels;
-  }
-  if(direct&&directWork<=uint64_t(8'000'000'000ULL))return true;
-  if(config_.lanes.front().decimation<2)return false;
-  const uint32_t decimation=config_.lanes.front().decimation;
-  uint32_t maximumTaps=0;uint64_t period=decimation;
-  for(const auto& lane:config_.lanes)
-  {
-    if(lane.decimation!=decimation||!std::isfinite(lane.centerOffsetHz)||
-       std::abs(lane.centerOffsetHz-std::round(lane.centerOffsetHz))>1e-9)
-      return false;
-    maximumTaps=std::max(maximumTaps,uint32_t(lane.taps.size()));
-    const int64_t center=std::llround(lane.centerOffsetHz);
-    const uint64_t magnitude=center<0?uint64_t(-(center+1))+1:uint64_t(center);
-    const uint64_t needed=config_.inputRateHz/
-      std::gcd<uint64_t>(config_.inputRateHz,magnitude%config_.inputRateHz);
-    const uint64_t divisor=std::gcd(period,needed);
-    if(period>UINT32_MAX/(needed/divisor))return false;
-    period*=needed/divisor;
-  }
-  if(!maximumTaps||(maximumTaps-1)%decimation||period>(1u<<20))return false;
-  const auto smooth=[](uint64_t value){
-    for(uint64_t prime:{2,3,5,7})
-      while(value%prime==0)value/=prime;
-    return value==1;
-  };
-  const uint64_t first=(uint64_t(maximumTaps)*2+period-1)/period;
-  for(uint64_t multiplier=first;multiplier*period<=(1u<<24);++multiplier)
-    if(smooth(multiplier*period))return true;
-  return false;
+  // Construction already validates geometry, arithmetic and the shared-memory
+  // ceiling. Non-folded and mixed-decimation plans use the generic FFT path;
+  // hardware storage/allocation limits and output parity decide eligibility.
+  return !config_.lanes.empty() && layout_.totalBytes <= (512ULL << 20);
 }
 
 const char* Plan::runtimeBlockReason() const noexcept
 {
   return runtimeSelectable()?"":
-    "wideband GPU geometry is outside the qualified shared FFT/PFB envelope";
+    "wideband GPU geometry exceeds the validated shared-memory layout";
 }
 
 const char* Plan::qualificationShaderSource()

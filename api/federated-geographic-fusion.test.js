@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const {FederatedGeographicFusion} = require('./federated-geographic-fusion');
 const {localPoint3d, excessPath3d} = require('./multi-illuminator-track-fusion');
-const {channelObservation} = require('./radar-observation-bundle');
+const {channelObservation, compactTrack, buildObservationBundle} = require('./radar-observation-bundle');
 
 const C = 299792.458;
 const receiver = {latitude: 40, longitude: -80, altitude: 250};
@@ -22,6 +22,50 @@ assert.equal(channelObservation({nodeId: 'hp', serverSessionId: 'session',
   frequencyHz: 500e6, sampleRateHz: 2.4e6, cpiSeconds: .5,
   frame: JSON.stringify({timestamp: 1, eventTime: {epoch: 'e', firstSample: '0', endSample: '1'},
     data: []})}).source_key, 'hp:primary', 'Native publication strings are normalized atomically');
+
+const primaryConfig = {capture: {fs: 2400000, fc: 204640000},
+  process: {data: {cpi: .5}, delay_reference_sample_rate_hz: 2000000},
+  location: {rx: receiver, tx: transmitters[0]}};
+const primaryFrame = {timestamp: 1, sample_rate_hz: 2400000, frequency_hz: 204640000,
+  capture_sample_position_available: true,
+  capture_epoch: 9007199254740992, capture_first_input_sample: 9007199254740992,
+  capture_end_input_sample: 9007199255740992,
+  input_lineage: {available: true, sampleInterval: 'half-open',
+    captureEpochExact: '9007199254740993', firstInputSampleExact: '9007199254740993',
+    endInputSampleExact: '9007199255740993'},
+  data: [{id: 'target', state: 'ACTIVE', delay: 480, doppler: -200}]};
+const primaryBundle = (settings = primaryConfig, frame = primaryFrame) => buildObservationBundle({
+  nodeId: 'kraken', serverSessionId: 'session', configRevision: 'revision',
+  config: settings, primaryTracks: frame});
+const primaryObservation = primaryBundle().channels[0];
+assert.equal(primaryObservation.delay_reference_sample_rate_hz, 2400000,
+  'Native tracker bins are not saved 2MHz configuration coordinates');
+assert.ok(Math.abs(primaryObservation.tracks.data[0].delay * C /
+  primaryObservation.delay_reference_sample_rate_hz - 400 * C / 2000000) < 1e-10,
+  'Kraken range must not be inflated by twenty percent');
+assert.equal(primaryObservation.lineage.epoch, '9007199254740993');
+assert.equal(primaryObservation.lineage.first_sample, '9007199254740993');
+assert.equal(primaryObservation.lineage.end_sample, '9007199255740993');
+const replayConfig = structuredClone(primaryConfig);
+replayConfig.capture.replay = {state: true, sample_rate_hz: 2000000, frequency_hz: 100000000};
+const replayFrame = {...primaryFrame, sample_rate_hz: 6144000, frequency_hz: 539000000};
+assert.equal(primaryBundle(replayConfig, JSON.stringify(replayFrame)).channels.length, 0,
+  'Replay geographic observations require authenticated recorded sites');
+require('../test/helpers/trusted-replay-sites')(replayConfig);
+const replayObservation = primaryBundle(replayConfig, JSON.stringify(replayFrame)).channels[0];
+assert.equal(replayObservation.delay_reference_sample_rate_hz, 6144000);
+assert.equal(replayObservation.frequency_hz, 539000000,
+  'Recorded native frame carrier wins over stale live/configured replay carrier');
+for (const value of [null, 0, -1, true, Infinity, NaN]) {
+  assert.equal(primaryBundle(primaryConfig, {...primaryFrame, sample_rate_hz: value}).channels.length, 0);
+  assert.equal(primaryBundle(primaryConfig, {...primaryFrame, frequency_hz: value}).channels.length, 0);
+}
+const legacyFrame = {...primaryFrame}; delete legacyFrame.input_lineage;
+assert.equal(primaryBundle(primaryConfig, legacyFrame).channels[0].lineage.first_sample, null,
+  'Rounded compatibility integers cannot masquerade as exact sample lineage');
+for (const value of [-1, null, true, NaN, Infinity])
+  assert.equal(compactTrack({...primaryFrame.data[0], delay_sigma_bins: value}), null,
+    'Invalid uncertainty must not disappear and become a precise observation');
 
 function channel(node, id, transmitter, timestamp, index) {
   const sampleRate = 2.4e6, local = localPoint3d(receiver, target);
@@ -218,5 +262,32 @@ const consumedTargetResult = consumedTargetFusion.update(consumedTargetValues, 1
 assert.equal(consumedTargetResult.available, true, JSON.stringify(consumedTargetResult));
 assert.ok(!consumedTargetResult.lanes.includes('home:north'),
   'Alignment is requalified after an excluded preliminary target changes the target bound');
+
+for (const badCase of ['empty', 'too-few', 'invalid-uncertainty', 'stale', 'out-of-order']) {
+  const guarded = new FederatedGeographicFusion(config);
+  let active;
+  for (let index = 1; index <= 3; index += 1) active = guarded.update(bundles(index), 100000 + index * 1000 + 210);
+  assert.ok(active.tracks.some(item => item.state === 'FUSED_ACTIVE'));
+  let values = bundles(4), now = 104210;
+  if (badCase === 'empty') values = [];
+  if (badCase === 'too-few') { values = [values[0]]; values[0].channels.length = 1; }
+  if (badCase === 'invalid-uncertainty')
+    for (const bundle of values) for (const item of bundle.channels) item.tracks.data[0].delay_sigma_bins = -1;
+  if (badCase === 'stale') now += 30000;
+  if (badCase === 'out-of-order') {
+    values = bundles(2);
+    for (const bundle of values) for (const item of bundle.channels) {
+      item.lineage.first_sample = '4000'; item.lineage.end_sample = '5000';
+    }
+  }
+  const unavailable = guarded.update(values, now);
+  assert.equal(unavailable.available, false, badCase);
+  assert.equal(unavailable.operational_localization, false, badCase);
+  assert.deepEqual(unavailable.tracks, [], badCase);
+  assert.deepEqual(guarded.snapshot(now).tracks, [], `${badCase}: snapshot cannot revive prior operational result`);
+  const recovered = guarded.update(bundles(5), 105210);
+  assert.equal(recovered.available, true, `${badCase}: fresh valid observations recover`);
+  assert.ok(recovered.tracks.some(item => item.state === 'FUSED_ACTIVE'), badCase);
+}
 
 console.log('Federated fusion alignment, lineage, freshness and geometry contracts passed.');

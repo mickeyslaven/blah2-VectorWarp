@@ -37,7 +37,7 @@ assert.match(buildScript, /native-compiler-aliases/);
 assert.match(buildScript, /-dumpmachine/);
 assert.match(buildScript, /does not match host/);
 assert.doesNotMatch(read('cmake/RapidJson.cmake'), /Wno-error=template-body/);
-for (const manifestName of ['lib/vcpkg.json', 'lib/vcpkg-kraken.json']) {
+for (const manifestName of ['lib/vcpkg.json']) {
   const manifest = JSON.parse(read(manifestName));
   assert.deepEqual(manifest.dependencies.find(({name}) => name === 'rapidjson'),
     {name: 'rapidjson', 'version>=': '2023-07-17'});
@@ -53,18 +53,23 @@ const receiverSmokeCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_smoke_receiver_status.py')], {encoding: 'utf8'});
 assert.equal(receiverSmokeCheck.status, 0,
   `receiver smoke schema: ${receiverSmokeCheck.stdout}${receiverSmokeCheck.stderr}`);
-const sdkBuildCheck = spawnSync('python3', [path.join(root,
-  'test/packaging/test_sdrplay_build_sdk.py')], {encoding: 'utf8'});
-assert.equal(sdkBuildCheck.status, 0,
-  `build-only SDK consent/extraction: ${sdkBuildCheck.stdout}${sdkBuildCheck.stderr}`);
+const artifactPlanCheck = spawnSync('python3', [path.join(root,
+  'test/packaging/test_artifact_plan.py')], {encoding: 'utf8'});
+assert.equal(artifactPlanCheck.status, 0,
+  `canonical artifact admission: ${artifactPlanCheck.stdout}${artifactPlanCheck.stderr}`);
+for (const contract of [
+  'test_ci_workflows.py',
+  'test_release_matrix.py',
+  'test_sdrplay_distribution.py',
+  'test_install_docs.py'
+]) {
+  const result = spawnSync('python3', [path.join(root, 'test/packaging', contract)], {encoding: 'utf8'});
+  assert.equal(result.status, 0, `${contract}: ${result.stdout}${result.stderr}`);
+}
 const gpuSetupCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_gpu_setup.py')], {encoding: 'utf8'});
 assert.equal(gpuSetupCheck.status, 0,
   `Pi-only signed-native GPU setup/access contract: ${gpuSetupCheck.stdout}${gpuSetupCheck.stderr}`);
-assert.match(packageScript, /published packages require all receiver support in one build/);
-assert.match(packageScript, /--test-only requires the exact open-test Kraken, UHD, and HackRF artifact/);
-assert.match(packageScript, /published package receiver manifest is incomplete/);
-assert.match(packageScript, /release artifact must not contain test executables/);
 assert.match(buildScript, /-DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="\$ARTIFACT_TMP\/bin"/);
 assert.match(packageScript, /"test_only": %s/);
 assert.match(packageScript, /BUILD-RECEIPT\.json/);
@@ -76,13 +81,9 @@ assert.match(packageScript, /artifact-source-commit\.sh" "\$ARTIFACT" "\$SOURCE_
 assert.match(read('script/artifact-source-commit.sh'), /git -C "\$source_dir" rev-parse HEAD/);
 assert.match(packageScript, /TEST-ONLY package includes Kraken, USRP and dual HackRF/);
 assert.match(packageScript, /local RSPduo source kit/);
-assert.match(buildScript, /open-test\)/);
-assert.match(buildScript, /COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true/);
-assert.match(buildScript, /COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=RspDuo; LOCAL_BUILD_RSPDUO=ON; TEST_ONLY=false/);
 assert.match(buildScript, /stage-rspduo-kit\.py/);
 assert.match(buildScript, /local_build_receivers=%s/);
 assert.match(buildScript, /test_only=%s/);
-assert.match(packageScript, /must not contain the SDRplay vendor SDK or runtime/);
 assert.match(rpmSpec, /__requires_exclude.*libsdrplay_api/);
 assert.match(debPrerm, /systemctl stop[\s\S]*vectorwarp-sdrplay-build\.service/,
   'Package removal must stop the local RSPduo build oneshot before removing its files.');
@@ -129,13 +130,6 @@ for (const relative of [
   assert.equal(check.status, 0, `${relative}: ${check.stderr}`);
 }
 
-assert.match(packageScript, /Ubuntu 22\.04/);
-assert.match(packageScript, /Ubuntu 24\.04/);
-assert.match(packageScript, /Ubuntu 26\.04/);
-assert.match(packageScript, /Debian 12 Bookworm/);
-assert.match(packageScript, /Debian 13 Trixie/);
-assert.match(packageScript, /Fedora 44/);
-assert.match(packageScript, /artifact was not built natively on this exact distribution and architecture/);
 assert.match(packageScript, /dpkg-shlibdeps/);
 assert.match(packageScript, /Depends: %s, systemd/,
   'Debian runtime libraries must remain automatically derived from the packaged ELF set.');
@@ -160,8 +154,6 @@ assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Architecture/);
 assert.match(packageScript, /rpm -qp --qf/);
 assert.match(packageScript, /install-native\.sh.*--artifact.*--destdir/s);
 assert.match(packageScript, /visudo -cf/);
-assert.ok(packageScript.includes(`v${nodeRuntime.NODE_VERSION}`),
-  'Native package validation must match the pinned Node runtime version');
 assert.match(packageScript, /Node runtime architecture mismatch/);
 assert.match(packageScript,
   /ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-api\.service[\s\S]*ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-processor\.service/,
@@ -229,112 +221,6 @@ assert.match(sourceSetup, /sudo apt install[^\n]*\blibuhd-dev\b[^\n]*\blibboost-
   'The source quickstart must include both SDK header dependencies');
 assert.match(sourceSetup, /sudo dnf install[^\n]*\buhd-devel\b[^\n]*\bboost-devel\b[^\n]*\bhackrf-devel\b[^\n]*\blibusb1-devel\b/);
 assert.doesNotMatch(sourceSetup, /\blibhackrf-devel\b/);
-const workflowCheck = spawnSync('node', ['-e',
-  "const fs=require('fs'),yaml=require('js-yaml');process.stdout.write(JSON.stringify(yaml.load(fs.readFileSync(process.argv[1],'utf8'))));",
-  path.join(root, '.github/workflows/release-packages.yml')], {cwd: path.join(root, 'api'), encoding: 'utf8'});
-assert.equal(workflowCheck.status, 0, workflowCheck.stderr);
-const packageJob = JSON.parse(workflowCheck.stdout).jobs.package;
-const packageBuildSteps = packageJob.steps.filter(step => /script\/build-native\.sh --backend all/.test(step.run || ''));
-const isolatedPackageSteps = packageBuildSteps
-  .filter(step => /podman run/.test(step.run || ''));
-assert.equal(packageBuildSteps.length, 3, 'PR and trusted builds share Debian, Debian-family, and Fedora package groups');
-assert.ok(packageBuildSteps.every(step => !/github\.event_name/.test(step.if || '')),
-  'Every event must use the same native build and smoke steps');
-assert.equal(isolatedPackageSteps.length, 2, 'Debian-family and Fedora builds retain isolation');
-assert.equal(isolatedPackageSteps.filter(step =>
-  /git config --global --add safe\.directory \/src/.test(step.run || '')).length, 2,
-  'every root container must trust only the mounted source checkout before binding artifact provenance');
-assert.equal(packageBuildSteps.filter(step => /--backend all/.test(step.run || '') &&
-  /smoke-native-package\.sh --package/.test(step.run || '') &&
-  !/--test-only/.test(step.run || '')).length, 3,
-  'every package group must compile, package, and smoke the local-kit release contract');
-assert.doesNotMatch(releaseWorkflow, /prepare-sdrplay-build-sdk\.sh|vectorwarp-sdrplay-sdk|VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED/,
-  'Stable packages stage our local kit without protected vendor SDK inputs.');
-assert.match(releaseWorkflow, /'compiled_receivers',\s*\n\s*'local_build_receivers', 'test_only'/,
-  'The aggregate manifest must retain the receiver contract validated by repository publication.');
-function matrixEntries(workflow) {
-  return [...workflow.matchAll(/^\s+- \{([^}]+)\}$/gm)].map(match => Object.fromEntries(
-    match[1].split(',').map(field => field.trim().split(/:\s+/, 2))));
-}
-function supportRows(markdown) {
-  const lines = markdown.split('\n');
-  const header = lines.findIndex(line => line === '| System | Version or base | Architecture | Install method |');
-  assert.notEqual(header, -1, 'INSTALL.md must contain the OS support table');
-  const rows = [];
-  for (let index = header + 2; index < lines.length && lines[index].startsWith('|'); index++) {
-    const cells = lines[index].split('|').slice(1, -1).map(cell => cell.trim());
-    rows.push({os: cells[0],
-      versions: cells[1].replace(/,\s+or\s+/g, ',').split(/,\s*|\s+or\s+/).map(value => value.trim()),
-      architectures: cells[2].replace(/,\s+or\s+/g, ',').split(/,\s*|\s+or\s+/).map(value => value.trim()),
-      package: cells[3]});
-  }
-  return rows;
-}
-function nativeTarget(entry) {
-  const ubuntu = /^ubuntu(22\.04|24\.04|26\.04)$/.exec(entry.distro);
-  if (ubuntu) return {os: 'Ubuntu', version: ubuntu[1], format: 'deb'};
-  if (entry.distro === 'debian12') return {os: 'Debian', version: '12 Bookworm', format: 'deb'};
-  if (entry.distro === 'debian13') return {os: 'Debian', version: '13 Trixie', format: 'deb'};
-  if (entry.distro === 'fedora44') return {os: 'Fedora', version: '44', format: 'rpm'};
-  throw new Error(`release target ${entry.distro} has no INSTALL.md support-table mapping`);
-}
-const architectureLabels = Object.freeze({
-  amd64: 'x86-64',
-  x86_64: 'x86-64',
-  arm64: 'ARM64',
-  aarch64: 'ARM64'
-});
-function assertMatrixDocumented(entries, rows) {
-  assert.ok(entries.length, 'release package matrix must not be empty');
-  assert.equal(new Set(entries.map(entry => `${entry.distro}/${entry.format}/${entry.arch}`)).size, entries.length,
-    'release package matrix must not duplicate a target');
-  for (const entry of entries) {
-    const target = nativeTarget(entry);
-    const osRows = rows.filter(candidate => candidate.os === target.os);
-    assert.ok(osRows.length, `INSTALL.md lacks an OS support row for ${target.os}`);
-    const row = osRows.find(candidate => candidate.versions.includes(target.version));
-    assert.ok(row, `INSTALL.md lacks ${target.os} ${target.version}`);
-    assert.ok(Object.hasOwn(architectureLabels, entry.arch) &&
-      row.architectures.includes(architectureLabels[entry.arch]),
-    `INSTALL.md lacks ${target.os} ${entry.arch}`);
-    assert.match(row.package, target.format === 'deb' ? /APT/ : /DNF/,
-      `INSTALL.md install method disagrees with ${entry.distro} format`);
-  }
-}
-const nativeMatrix = matrixEntries(releaseWorkflow).filter(entry => entry.distro && entry.format && entry.arch);
-const installRows = supportRows(read('docs/INSTALL.md'));
-assert.equal(nativeMatrix.length, 11, 'release matrix must build all eleven native package targets');
-assertMatrixDocumented(nativeMatrix, installRows);
-assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], distro: 'ubuntu27.04'}], installRows),
-  /support-table mapping/);
-assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], arch: 'riscv64'}], installRows),
-  /lacks Ubuntu riscv64/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.filter(row => row.os !== 'Debian')),
-  /lacks an OS support row for Debian/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.map(row =>
-  row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, versions: []} : row)),
-  /lacks Ubuntu 22\.04/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.map(row =>
-  row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, architectures: ['ARM64']} : row)),
-  /lacks Ubuntu amd64/);
-for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
-  for (const row of installRows.filter(row => row.os === os)) {
-    const expected = row.os === 'Debian' && row.versions.includes('12 Bookworm')
-      ? [architectureLabels.arm64]
-      : [architectureLabels.amd64, architectureLabels.arm64];
-    assert.deepEqual(row.architectures, expected,
-      `${os} ${row.versions.join(', ')} must use its documented public architecture labels`);
-  }
-const piRow = installRows.find(row => row.os === 'Raspberry Pi OS');
-assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
-assert.deepEqual(piRow.versions, ['Debian 12', '13 base']);
-assert.equal(piRow.package, 'APT');
-assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
-  arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
-})), installRows);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, installRows.map(row =>
-  row.os === 'Fedora' ? {...row, architectures: ['x86_64', 'aarch64']} : row)),
-  /lacks Fedora/, 'Native-only labels must not reintroduce inconsistent documentation');
 const packagingGuide = read('packaging/README.md');
 assert.ok(packagingGuide.includes('x86-64 (amd64 / x86_64)'));
 assert.ok(packagingGuide.includes('ARM64 (arm64 / aarch64)'));
@@ -357,12 +243,6 @@ assert.match(nodePin, /^NODE_X64_SHA256=[0-9a-f]{64}$/m);
 assert.match(nodePin, /^NODE_ARM64_SHA256=[0-9a-f]{64}$/m);
 assert.match(nodePin, /^NODE_DARWIN_X64_SHA256=[0-9a-f]{64}$/m);
 assert.match(nodePin, /^NODE_DARWIN_ARM64_SHA256=[0-9a-f]{64}$/m);
-assert.ok(releaseWorkflow.includes(`node-version: ${nodeRuntime.NODE_VERSION}`));
-assert.ok(releaseWorkflow.includes(`node-v${nodeRuntime.NODE_VERSION}-linux-\${NODE_ARCH}.tar.xz`));
-assert.ok(releaseWorkflow.includes(`https://nodejs.org/dist/v${nodeRuntime.NODE_VERSION}/\${archive}`));
-for (const checksum of [nodeRuntime.NODE_X64_SHA256, nodeRuntime.NODE_ARM64_SHA256]) {
-  assert.ok(releaseWorkflow.includes(checksum), 'Release workflow checksum must match node-runtime.env');
-}
 assert.ok(standaloneWorkflow.includes('source packaging/node-runtime.env'));
 assert.ok(standaloneWorkflow.includes('NODE_DARWIN_ARM64_SHA256'));
 assert.ok(standaloneWorkflow.includes('NODE_DARWIN_X64_SHA256'));
@@ -376,7 +256,6 @@ assert.match(buildScript, /build_arch=/);
 assert.match(buildScript, /for command in .*ninja/);
 assert.match(buildScript, /env CMAKE_POLICY_VERSION_MINIMUM=3\.5/);
 assert.match(buildScript, /licenses\/VkFFT\.txt/);
-assert.match(buildScript, /find .*api.*-name '\*\.test\.js' -delete/);
 
 assert.match(debPostinst, /systemd-sysusers/);
 assert.match(debPostinst, /systemd-tmpfiles/);

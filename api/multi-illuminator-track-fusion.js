@@ -1,6 +1,7 @@
 'use strict';
+const {geographicContext, geographicConfig} = require('./replay-geographic-sites');
 
-const {inverse, destination} = require('./bistatic-geolocation');
+const {inverse} = require('./bistatic-geolocation');
 const {envelopeCandidates, constrainWithBearing, EnvelopePersistence} = require('./altitude-envelope-fusion');
 const {boundedMotionTrajectory} = require('./bounded-motion-feasibility');
 
@@ -18,7 +19,7 @@ const statePriority = Object.freeze({CONFIRMED: 4, ACTIVE: 4, COASTING: 3, ASSOC
 const DEFAULT_GEOMETRY = Object.freeze({siteSeparationKm: .1, rangeNoiseSigmaKm: .05,
   maximumCondition: 100, maximumHorizontalSigmaKm: 2, maximumVerticalSigmaKm: 2,
   minimumAltitudeM: 0, maximumAltitudeM: 20000, maximumReceiverRangeKm: 300, maximumSpeedMps:450});
-const numeric = value => value !== null && value !== '' && value !== undefined && finite(Number(value));
+const numeric = value => typeof value !== 'boolean' && value !== null && value !== '' && value !== undefined && finite(Number(value));
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const dot = (a, b) => a.reduce((sum, value, index) => sum + value * b[index], 0);
 const norm = a => Math.hypot(...a);
@@ -150,66 +151,6 @@ function siteCatalog(definitions, receiver, minimumSeparationKm, groupingMode = 
   return catalog;
 }
 
-function localPoint(origin, point) {
-  const polar = inverse(origin, point), bearing = radians(polar.bearingDeg);
-  return {x: Math.sin(bearing) * polar.distanceM / 1000,
-    y: Math.cos(bearing) * polar.distanceM / 1000};
-}
-
-function geographicPoint(origin, point) {
-  const distanceKm = Math.hypot(point.x, point.y);
-  const bearing = (degrees(Math.atan2(point.x, point.y)) + 360) % 360;
-  return destination(origin, bearing, distanceKm * 1000);
-}
-
-function excessPath(point, transmitter) {
-  return Math.hypot(point.x, point.y) +
-    Math.hypot(point.x - transmitter.x, point.y - transmitter.y) -
-    Math.hypot(transmitter.x, transmitter.y);
-}
-
-function ellipse(transmitter, excessKm) {
-  const baseline = Math.hypot(transmitter.x, transmitter.y);
-  if (!(baseline > 0) || !(excessKm > 0)) return null;
-  const a = (baseline + excessKm) / 2, c = baseline / 2;
-  const b2 = a * a - c * c;
-  if (!(b2 > 0)) return null;
-  const ux = transmitter.x / baseline, uy = transmitter.y / baseline;
-  return {point(theta) {
-    const major = a * Math.cos(theta), minor = Math.sqrt(b2) * Math.sin(theta);
-    return {x: transmitter.x / 2 + ux * major - uy * minor,
-      y: transmitter.y / 2 + uy * major + ux * minor};
-  }};
-}
-
-function ellipseIntersections(first, second, toleranceKm, samples = 720) {
-  const curve = ellipse(first.transmitter, first.excessKm);
-  if (!curve) return [];
-  const residual = theta => excessPath(curve.point(theta), second.transmitter) - second.excessKm;
-  const roots = [];
-  const add = theta => {
-    const point = curve.point(theta);
-    if (Math.abs(residual(theta)) > toleranceKm) return;
-    if (!roots.some(candidate => Math.hypot(candidate.x - point.x, candidate.y - point.y) <=
-        Math.max(.01, toleranceKm * 2))) roots.push(point);
-  };
-  let priorTheta = 0, prior = residual(0);
-  for (let index = 1; index <= samples; index += 1) {
-    const theta = 2 * Math.PI * index / samples, value = residual(theta);
-    if (Math.abs(value) <= toleranceKm / 2) add(theta);
-    if (finite(prior) && finite(value) && prior * value < 0) {
-      let low = priorTheta, high = theta, lowValue = prior;
-      for (let iteration = 0; iteration < 40; iteration += 1) {
-        const middle = (low + high) / 2, middleValue = residual(middle);
-        if (lowValue * middleValue <= 0) high = middle;
-        else { low = middle; lowValue = middleValue; }
-      }
-      add((low + high) / 2);
-    }
-    priorTheta = theta; prior = value;
-  }
-  return roots;
-}
 
 function laneMeasurements(frame, definition, receiver, limit = DEFAULT_LIMITS.measurementsPerLane,
     site = null, geometry = DEFAULT_GEOMETRY) {
@@ -225,6 +166,10 @@ function laneMeasurements(frame, definition, receiver, limit = DEFAULT_LIMITS.me
   return (Array.isArray(frame?.tracks?.data) ? frame.tracks.data : [])
     .filter(track => operationalStates.has(String(track?.state || '').toUpperCase()) &&
       numeric(track?.delay) && numeric(track?.doppler) && Number(track.delay) > 0 &&
+      (track.delay_sigma_bins === undefined ||
+        numeric(track.delay_sigma_bins) && Number(track.delay_sigma_bins) >= 0) &&
+      (track.federated_propagation_sigma_km === undefined ||
+        numeric(track.federated_propagation_sigma_km) && Number(track.federated_propagation_sigma_km) >= 0) &&
       track.id !== undefined && track.id !== null)
     .map(track => ({lane: frame.id, trackId: String(track.id), state: String(track.state).toUpperCase(),
       delayBins: Number(track.delay), excessKm: Number(track.delay) * resolutionKm,
@@ -429,6 +374,10 @@ function refinePoint(seed, lanes, acquisitionGateSigma = 3) {
 }
 
 function fuseTrackCohort(frames, config, requestedLimits = {}, {bearingConstraints=[]} = {}) {
+  const geographic = geographicContext(config);
+  if (!geographic.available) return {schema: 'vectorwarp-multi-illuminator-track-fusion-v1',
+    available: false, operational_localization: false, reason: geographic.reason, hypotheses: [], tracks: []};
+  config = geographicConfig(config);
   const limits = Object.fromEntries(Object.entries(DEFAULT_LIMITS).map(([key, maximum]) =>
     [key, Number.isSafeInteger(requestedLimits[key]) && requestedLimits[key] > 0 ?
       Math.min(maximum, requestedLimits[key]) : maximum]));
@@ -730,6 +679,9 @@ class CrossFrequencySupportTracker {
       contributors: track.misses ? [] : track.contributors};
   }
   update(frames) {
+    const geographic = geographicContext(this.config);
+    if (!geographic.available) { this.reset(); return this.invalid(geographic.reason); }
+    this.config = geographicConfig(this.config);
     const cohort = cohortIdentity(frames);
     if (!cohort || !cohort.capture_epoch_verified ||
         !Number.isSafeInteger(cohort.capture_epoch) || cohort.capture_epoch < 0)
@@ -909,7 +861,7 @@ class MultiIlluminatorTrackFuser {
     this.deleteAfter = Math.max(1, Number(config?.process?.tracker?.delete) || 3);
     this.tracks = new Map(); this.nextId = 1; this.lastKey = null; this.lastResult = null;
     this.seenEpochs = new Set();
-    this.seenCaptureIntervals = new Set(); this.seenEvidenceItems = new Set();
+    this.seenCaptureIntervals = new Map(); this.seenEvidenceItems = new Set();
     this.lastCaptureEnd = null;
     this.lastReceiptAt = null;
     this.crossFrequencySupport = new CrossFrequencySupportTracker(config);
@@ -931,8 +883,9 @@ class MultiIlluminatorTrackFuser {
       Math.max(0, (now - this.lastReceiptAt) / 1000);
     const staleAfterSeconds = Math.max(.1,
       2 * (Number(this.config?.process?.data?.cpi) || .5));
-    if (ageSeconds <= staleAfterSeconds) return {...this.lastResult,
-      cross_frequency_support: crossFrequencySupport};
+    if (ageSeconds <= staleAfterSeconds) return crossFrequencySupport ===
+      this.lastResult.cross_frequency_support ? this.lastResult : {...this.lastResult,
+        cross_frequency_support: crossFrequencySupport};
     if (ageSeconds > this.maximumCoastSeconds) return {...this.lastResult,
       available: false, operational_localization: false,
       reason: 'Fused input cohorts stopped; stale tracks expired.', tracks: [],
@@ -942,6 +895,8 @@ class MultiIlluminatorTrackFuser {
         diagnostic_reasons: [...new Set([...(item.diagnostic_reasons || []), 'stale-input-cohort'])]}))};
     return {...this.lastResult, operational_localization: false,
       reason: 'Fused input cohorts are stale; last tracks are diagnostic coasts.',
+      hypotheses: (this.lastResult.hypotheses || []).map(item => ({...item, resolved: false,
+        diagnostic_reasons: [...new Set([...(item.diagnostic_reasons || []), 'stale-input-cohort'])]})),
       position_candidates: (this.lastResult.position_candidates || []).map(item => ({...item,
         state:'ENVELOPE_STALE',temporal_support:{...item.temporal_support,stale_input_seconds:ageSeconds}})),
       cross_frequency_support: crossFrequencySupport,
@@ -950,8 +905,22 @@ class MultiIlluminatorTrackFuser {
         contributors: [], support: 0, geometric_support: 0,
         stale_input_seconds: ageSeconds}))};
   }
+  unavailable(reason, source = this.lastResult) {
+    this.lastResult = {...source, available: false, operational_localization: false,
+      reason, tracks: [], hypotheses: [], position_candidates: []};
+    return this.lastResult;
+  }
   update(frames, {bearingConstraints=[]} = {}) {
+    const geographic = geographicContext(this.config);
+    const identity = JSON.stringify(geographic);
+    if (this.geographicIdentity !== identity) { this.reset(); this.geographicIdentity = identity; }
+    if (!geographic.available) return this.unavailable(geographic.reason);
+    this.config = geographicConfig(this.config);
     const crossFrequencySupport = this.crossFrequencySupport.update(frames);
+    if ((frames || []).some(frame => (frame?.tracks?.data || []).some(track =>
+      ['delay_sigma_bins', 'federated_propagation_sigma_km'].some(field =>
+        track?.[field] !== undefined && (!numeric(track[field]) || Number(track[field]) < 0)))))
+      return this.unavailable('Invalid source measurement uncertainty.');
     const result = fuseTrackCohort(frames, this.config, {}, {bearingConstraints});
     if (result.available && result.evidence_lineage_verified && !result.alignment_qualified) {
       this.tracks.clear(); this.envelopePersistence.reset();
@@ -966,33 +935,42 @@ class MultiIlluminatorTrackFuser {
       this.lastKey = result.key; this.lastResult = diagnostic; this.lastReceiptAt = Date.now();
       return diagnostic;
     }
-    if (!result.available || result.key === this.lastKey) return result.key === this.lastKey ?
-      this.lastResult : {...result, tracks: [], cross_frequency_support: crossFrequencySupport};
+    if (!result.available) return this.unavailable(result.reason || 'Invalid fusion input.',
+      {...this.lastResult, cross_frequency_support: crossFrequencySupport});
+    if (result.key === this.lastKey && result.timestamp === this.lastResult?.timestamp)
+      return this.snapshot();
     const timestamp = result.timestamp;
     if (this.lastResult && this.lastResult.capture_epoch !== result.capture_epoch) {
-      if (this.seenEpochs.has(result.capture_epoch)) return this.lastResult;
+      if (this.seenEpochs.has(result.capture_epoch))
+        return this.unavailable('Previously consumed capture epoch was replayed.');
       this.tracks.clear(); this.lastResult = null;
       this.envelopePersistence.reset();
       this.seenCaptureIntervals.clear(); this.seenEvidenceItems.clear(); this.lastCaptureEnd = null;
     }
+    const interval = `${result.capture_first_input_sample}:${result.capture_end_input_sample}`;
+    // Re-delivery of an accepted observation is a no-op, including an older
+    // CPI. Keep receipt age unchanged so replay cannot revive stale support.
+    if (this.seenCaptureIntervals.get(interval) === timestamp) return this.snapshot();
     if (this.lastResult && finite(this.lastResult.timestamp) &&
-        timestamp <= this.lastResult.timestamp) return this.lastResult;
+        timestamp <= this.lastResult.timestamp)
+      return this.unavailable('Fusion observation time did not advance.');
     if (result.evidence_lineage_verified && result.alignment_qualified) {
       if (!Array.isArray(result.evidence_items) || !result.evidence_items.length ||
-          result.evidence_items.some(item => this.seenEvidenceItems.has(item))) return this.lastResult;
+          result.evidence_items.some(item => this.seenEvidenceItems.has(item)))
+        return this.unavailable('Fusion source evidence was missing or already consumed.');
       for (const item of result.evidence_items) this.seenEvidenceItems.add(item);
       while (this.seenEvidenceItems.size > 512)
         this.seenEvidenceItems.delete(this.seenEvidenceItems.values().next().value);
     } else {
-      const interval = `${result.capture_first_input_sample}:${result.capture_end_input_sample}`;
       // Raw capture evidence can vote only once, regardless of later presentation
       // timestamps. The end watermark also rejects old intervals after eviction
       // from the bounded ledger and prevents overlapping windows reusing samples.
       if (this.seenCaptureIntervals.has(interval) || this.lastCaptureEnd !== null &&
-          result.capture_first_input_sample < this.lastCaptureEnd) return this.lastResult;
-      this.seenCaptureIntervals.add(interval);
+          result.capture_first_input_sample < this.lastCaptureEnd)
+        return this.unavailable('Fusion source intervals overlap previously consumed evidence.');
+      this.seenCaptureIntervals.set(interval, timestamp);
       if (this.seenCaptureIntervals.size > 128)
-        this.seenCaptureIntervals.delete(this.seenCaptureIntervals.values().next().value);
+        this.seenCaptureIntervals.delete(this.seenCaptureIntervals.keys().next().value);
       this.lastCaptureEnd = result.capture_end_input_sample;
     }
     this.seenEpochs.add(result.capture_epoch);
@@ -1155,7 +1133,6 @@ class MultiIlluminatorTrackFuser {
   }
 }
 
-module.exports = {localPoint, geographicPoint, excessPath, ellipseIntersections,
-  localPoint3d, geographicPoint3d, excessPath3d, tripleRoots,
+module.exports = {localPoint3d, geographicPoint3d, excessPath3d, tripleRoots,
   cohortIdentity, siteCatalog, laneMeasurements, geometryGroups, fuseTrackCohort, validateFusionAgainstAdsb,
   rawDetectionMeasurements, CrossFrequencySupportTracker, MultiIlluminatorTrackFuser};

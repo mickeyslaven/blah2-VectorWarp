@@ -234,7 +234,7 @@ inline std::string annotate_event_time(std::string json,
 {
   if (!value.present || json.empty()) return json;
   rapidjson::Document document;
-  document.Parse(json.c_str());
+  document.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
   if (document.HasParseError() || !document.IsObject())
     throw std::runtime_error("Cannot attach event-time provenance to invalid JSON");
   if (document.HasMember("eventTime"))
@@ -243,7 +243,9 @@ inline std::string annotate_event_time(std::string json,
     document.GetAllocator());
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-  writer.SetMaxDecimalPlaces(2);
+  // Annotation must preserve the producer's numerical payload. In particular,
+  // truncating float-derived applied gains here invalidates exact manifold
+  // identity and rounds weak complex array coefficients to zero.
   document.Accept(writer);
   return {buffer.GetString(), buffer.GetSize()};
 }

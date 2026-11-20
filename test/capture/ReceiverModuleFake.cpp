@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 #ifndef FIXTURE_RECEIVER
 #define FIXTURE_RECEIVER "Usrp"
@@ -34,7 +35,12 @@ public:
   void start() override { event("started"); }
   void stop() override { event("stopped"); }
   void process(IqData* a, IqData* b) override {
+#ifdef FIXTURE_PROCESS_ERROR
+    (void)a;(void)b;
+    throw std::runtime_error("fixture live receive failure");
+#else
     a->push_back({6, 1}); b->push_back({6, -1}); event("processed");
+#endif
   }
 };
 Source* create(const Blah2ReceiverConfig* config, char* error, std::size_t capacity) noexcept {

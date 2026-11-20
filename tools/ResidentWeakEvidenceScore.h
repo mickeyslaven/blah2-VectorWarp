@@ -5,7 +5,7 @@
 #include <numeric>
 
 namespace blah2::resident_weak_score {
-using ComplexMap = integration::DirectPathCoherentShadow::ComplexMap;
+using ComplexMap = integration::DirectPathCoherentExperiment::ComplexMap;
 using Bootstrap = detection::PostClutterBootstrap;
 using Frame = integration::coherent_replay::ValidatedSnapshot;
 constexpr uint32_t maximumFrames = 20, maximumCells = 65536;
@@ -91,7 +91,7 @@ inline Summary summarize(const Surface& baseline, const Surface& arm) {
 }
 
 class Scorer {
-  std::unique_ptr<integration::coherent_replay::ShadowReader> coherent_;
+  std::unique_ptr<integration::coherent_replay::ExperimentReader> coherent_;
   integration::cancellation_replay::Cohort cohort_;
   integration::EvidenceWorkBudget budget_{std::chrono::steady_clock::now() + std::chrono::seconds(60)};
   uint32_t anchor_;
@@ -106,13 +106,13 @@ public:
       throw std::invalid_argument("Scorer exceeds 65536 cells or 2M pilot samples");
     cohort_.append(frame.sidecar, g.clutterSamples);
     if (!coherent_) {
-      integration::DirectPathCoherentShadow::Config config;
+      integration::DirectPathCoherentExperiment::Config config;
       config.channelIds = frame.config.surveillanceChannels;
       config.anchorChannelId = anchor_; config.maximumCells = maximumCells;
       config.temporal.delayMotionBins = 0; config.temporal.dopplerMotionBins = 0;
       config.spatialCoefficients.assign(config.channelIds.size(),
         {1 / std::sqrt(double(config.channelIds.size())), 0});
-      coherent_ = std::make_unique<integration::coherent_replay::ShadowReader>(config);
+      coherent_ = std::make_unique<integration::coherent_replay::ExperimentReader>(config);
     }
     // Compute every complete surface before the caller evaluates any labels.
     auto coherent = coherent_->append(frame); coherentReason = coherent.reason;

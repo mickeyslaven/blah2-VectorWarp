@@ -27,10 +27,16 @@ public:
 
   explicit CoherentBeamBank(const Config& config);
 
-  void calibrate(const std::vector<std::complex<double>>& directPathWeights);
+  void calibrate(const std::vector<std::complex<double>>& directPathWeights,
+    const double* channelScale = nullptr);
 
   std::unique_ptr<Map<std::complex<double>>> process(
     const std::vector<Map<std::complex<double>> *>& maps) const;
+
+  // Reuse an exclusively owned product matrix across CPIs. The numerical
+  // operation and axis propagation are identical to process().
+  void process_into(const std::vector<Map<std::complex<double>> *>& maps,
+    Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams = nullptr) const;
 
   // Offline diagnostics may retain the complete bank, while the production
   // map path below continues to expose only the maximum. Both paths use the

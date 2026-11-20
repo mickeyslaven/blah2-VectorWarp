@@ -16,18 +16,22 @@ import math
 import os
 from pathlib import Path
 import re
-import socket
 import statistics
-import subprocess
 import tempfile
 import time
 
 
-HERE = Path(__file__).resolve().parents[1]
-HARNESS_PATH = HERE / "test/recording/processor_replay_test.py"
-SPEC = importlib.util.spec_from_file_location("vectorwarp_processor_replay", HARNESS_PATH)
-HARNESS = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(HARNESS)
+SESSION_SPEC = importlib.util.spec_from_file_location(
+    "vectorwarp_replay_session", Path(__file__).with_name("replay_session.py"))
+SESSION = importlib.util.module_from_spec(SESSION_SPEC)
+SESSION_SPEC.loader.exec_module(SESSION)
+
+# Admission truth is shared evaluation logic, never a processor input.
+SCORE_SPEC = importlib.util.spec_from_file_location(
+    "protection_replay_score", Path(__file__).with_name("score-iq-protection-replay.py"))
+SCORE = importlib.util.module_from_spec(SCORE_SPEC)
+SCORE_SPEC.loader.exec_module(SCORE)
+file_sha256 = SCORE.file_sha256
 
 # Match ResidentReplaySnapshot.h. max_bytes bounds EACH snapshot, not the run.
 RESIDENT_SNAPSHOT_FRAME_LIMIT = 128
@@ -36,75 +40,83 @@ RESIDENT_SNAPSHOT_HEADER_BYTES = 2048
 RESIDENT_LINEAGE_BYTES = 512
 
 
-class ScientificSinkGroup(HARNESS.SinkGroup):
-    def __init__(self, retain_maps=False):
-        super().__init__()
-        self.payloads["detection"] = bytearray()
-        self.payloads["track"] = bytearray()
-        self.payload_limits = {name: 1 << 20 for name in self.payloads}
-        if retain_maps:
-            self.payload_limits["map"] = 128 << 20
-
-    def _serve(self, name, listener):
-        while not self.stop.is_set():
-            try:
-                connection, _ = listener.accept()
-            except socket.timeout:
-                continue
-            except OSError:
-                return
-            with connection:
-                connection.settimeout(.2)
-                while not self.stop.is_set():
-                    try:
-                        block = connection.recv(65536)
-                    except socket.timeout:
-                        continue
-                    except OSError:
-                        break
-                    if not block:
-                        break
-                    self.bytes[name] += len(block)
-                    if name in self.payloads:
-                        limit = self.payload_limits[name]
-                        remaining = limit - len(self.payloads[name])
-                        if remaining > 0:
-                            self.payloads[name].extend(block[:remaining])
+def process_identity(process):
+    """Exact configured intent, not a substitute for a native RadarPlan receipt."""
+    return hashlib.sha256(json.dumps(process, sort_keys=True, separators=(",", ":"),
+                                     allow_nan=False).encode()).hexdigest()
 
 
-def json_values(payload, name):
-    if not payload:
-        return []
-    return HARNESS.json_values(payload, name)
+def require_process_identity(config, expected):
+    if process_identity(config["process"]) != expected:
+        raise ValueError("replay processing configuration changed after admission")
+
+
+def selected_backend(profile, requested=None):
+    backend = requested if requested is not None else profile["process"]["performance"]["acceleration"]
+    if backend not in ("cpu", "gpu", "gpu-resident", "auto"):
+        raise ValueError("replay profile has no supported explicit acceleration setting")
+    return backend
+
+
+def parse_tracker_diagnostics(output):
+    """Bounded diagnostic aggregation, never a physical qualification receipt."""
+    if len(output) > 16 << 20:
+        raise ValueError("tracker diagnostic log exceeds bounded size")
+    totals, seen = {}, set()
+    for line in output.splitlines():
+        if not re.search(r"(?:^|\s)GPU_TRACKER_PREPARED(?:\s|$)", line):
+            continue
+        fields = {key: int(value) for key, value in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)=(-?\d+)", line)}
+        if "frame" not in fields or any(value < 0 for value in fields.values()):
+            raise ValueError("invalid tracker diagnostic frame/counter")
+        identity = tuple(fields.get(key, 0) for key in ("frame", "generation", "transaction"))
+        if identity in seen:
+            raise ValueError("duplicate prepared tracker diagnostic frame")
+        seen.add(identity)
+        for key, value in fields.items():
+            if key not in ("frame", "generation", "transaction"):
+                totals[key] = totals.get(key, 0) + value
+    return {"frames": len(seen), "totals": totals}
 
 
 def admitted_truth(admission):
-    points = {}
-    for capture in admission.get("captures", {}).values():
-        if not capture.get("valid"):
-            continue
-        admitted = {row.get("timestamp_ms") for row in capture.get("cpis", [])}
-        if None in admitted:
-            raise ValueError("admitted CPI has no timestamp")
-        for row in capture.get("truth_samples", []):
-            delay, doppler = row.get("delay_km"), row.get("doppler_hz")
-            if all(isinstance(value, (int, float)) and math.isfinite(value)
-                   for value in (delay, doppler)):
-                timestamp = row.get("timestamp_ms")
-                if not isinstance(timestamp, int):
-                    raise ValueError("admitted truth sample has no integer timestamp")
-                if timestamp not in admitted:
-                    continue
-                value = (float(delay), float(doppler))
-                if timestamp in points and points[timestamp] != value:
-                    raise ValueError("conflicting admitted truth at one CPI endpoint")
-                points[timestamp] = value
-        missing = admitted - points.keys()
-        if missing:
-            raise ValueError("admitted CPI has no exact evaluation truth sample")
-    if not points:
-        raise ValueError("map diagnostics require valid admission truth samples")
-    return points
+    return SCORE.admitted_truth(admission,
+        empty_error="map diagnostics require valid admission truth samples")
+
+
+def align_product_timeline(products, timeline):
+    """Bind complete CPI products to the trailing timeline boundaries.
+
+    A duration-N capture timeline legitimately contains N+1 sample boundaries
+    while the processor emits N complete CPI products.  Positional/count-only
+    comparison previously rejected complete HP clips. Legacy MCHQ product
+    timestamps describe replay execution rather than recording identity, so
+    they must not be used to join recorded truth.  The first complete CPI ends
+    at boundary one; therefore one extra leading boundary is discarded.
+    """
+    endpoints = timeline.get("frames", [])
+    by_timestamp = {}
+    for endpoint in endpoints:
+        timestamp = endpoint.get("timestamp_ms") if isinstance(endpoint, dict) else None
+        if not isinstance(timestamp, int) or timestamp in by_timestamp:
+            raise ValueError("timeline has missing or duplicate integer CPI endpoints")
+        by_timestamp[timestamp] = endpoint
+    counts = {}
+    for name, frames in products.items():
+        if not isinstance(frames, list) or not frames:
+            raise ValueError(f"{name} products are empty")
+        counts[name] = len(frames)
+    reference = counts.get("detection", 0)
+    if not reference or any(count != reference for count in counts.values()):
+        raise ValueError("detection/track/timing CPI counts differ")
+    boundary_difference = len(endpoints) - reference
+    if boundary_difference not in (0, 1):
+        raise ValueError("timeline/product CPI count differs by more than one boundary")
+    # With one extra boundary, a complete first CPI ends at frames[1].  The
+    # independently serialized product and timeline clocks can differ by a
+    # small constant number of milliseconds, so verify cadence/constant offset
+    # rather than demanding byte-identical integer timestamps.
+    return endpoints[boundary_difference:]
 
 
 def map_diagnostics(maps, timeline, truth):
@@ -156,14 +168,6 @@ def map_diagnostics(maps, timeline, truth):
             "maximum_contrast_db": max(contrasts)}
 
 
-def file_sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def validate_resident_snapshot(snapshot):
     required = {"enabled", "output_directory", "max_frames", "max_bytes",
                 "source_sha256", "rf_profile_file", "rf_profile_sha256"}
@@ -199,15 +203,11 @@ def resident_snapshot_options(args):
     values = {name: getattr(args, "resident_snapshot_"+name, None) for name in names}
     present = [value is not None for value in values.values()]
     if not any(present):
-        if args.acceleration == "gpu-resident":
-            raise ValueError("gpu-resident requires the complete resident snapshot export")
         return None
     if not all(present):
         raise ValueError("all five --resident-snapshot-* options are required together")
     if args.acceleration != "gpu-resident":
         raise ValueError("resident snapshot export requires --acceleration gpu-resident")
-    if args.diagnostic_cpu_fusion or args.protection_beams:
-        raise ValueError("resident export cannot use CPU-fusion or CPU-only target-protection overrides")
     snapshot = {
         "enabled": True, "output_directory": str(values["directory"]),
         "max_frames": values["max_frames"], "max_bytes": values["max_bytes"],
@@ -260,79 +260,28 @@ def resident_snapshot_receipt(snapshot, expected_frames):
             "validation": "file-pair/bounds/hashes only; native snapshot decoding still required"}
 
 
-def configuration(recording, profile, status_port, ports, acceleration,
-                  protection_beams, protection_index, diagnostic_cpu_fusion,
-                  diagnostic_delay_max, diagnostic_doppler_min,
-                  diagnostic_doppler_max, diagnostic_clutter_delay_max,
-                  resident_snapshot=None):
-    if (acceleration == "gpu-resident") != (resident_snapshot is not None):
-        raise ValueError("gpu-resident and exact resident snapshot export must be selected together")
+def configuration(recording, profile, status_port, ports, acceleration=None, *,
+                  resident_snapshot=None, recording_sha256=None,
+                  acquisition_sha256=None, complex_cutout=None,
+                  manifold_evidence_export=False):
+    backend = selected_backend(profile, acceleration)
     if resident_snapshot is not None:
         validate_resident_snapshot(resident_snapshot)
-        if diagnostic_cpu_fusion or protection_beams:
-            raise ValueError("resident export cannot use CPU-only diagnostic overrides")
+        if backend != "gpu-resident":
+            raise ValueError("resident snapshot export requires gpu-resident acceleration")
         if profile.get("configuration_complete") is not True:
             raise ValueError("resident export requires a complete replay profile")
         if profile["process"].get("multi_illuminator", {}).get("enabled"):
             raise ValueError("resident export requires single-lane replay")
     capture = profile["capture"]
     process = copy.deepcopy(profile["process"])
-    # Portable profiles can carry the live artifact-only observer. Native
-    # replay rejects that live-capture contract, and it is not an input to the
-    # production detector or tracker. Disable only that observer offline.
-    live_shadow = process.get("detection", {}).get("live_temporal_shadow")
-    if isinstance(live_shadow, dict):
-        live_shadow["enabled"] = False
-        live_shadow["artifact_only"] = False
-    causal_funnel = process.get("evidence", {}).get("causal_funnel")
-    if isinstance(causal_funnel, dict):
-        causal_funnel["enabled"] = False
-    process["performance"] = {
-        "surveillance_workers": 1,
-        "fft_threads": 1,
-        "acceleration": acceleration,
-    }
-    if diagnostic_delay_max is not None:
-        process.setdefault("ambiguity", {})["delayMax"] = diagnostic_delay_max
-    if diagnostic_doppler_min is not None:
-        process.setdefault("ambiguity", {})["dopplerMin"] = diagnostic_doppler_min
-    if diagnostic_doppler_max is not None:
-        process.setdefault("ambiguity", {})["dopplerMax"] = diagnostic_doppler_max
-    if diagnostic_clutter_delay_max is not None:
-        clutter = process.setdefault("clutter", {})
-        clutter["delayMax"] = diagnostic_clutter_delay_max
-        clutter["followAmbiguity"] = False
-    if diagnostic_cpu_fusion:
-        # Preserve the complete spatial beam bank and array geometry while
-        # replacing only the resident-only noise whitening for this bounded
-        # CPU diagnostic. Every compared arm uses this identical fusion path.
-        original_fusion = process.get("surveillance_fusion", {})
-        process["surveillance_fusion"] = {
-            "mode": "coherent_beam_bank",
-            "beams": original_fusion.get("beams", 12),
-            "effective_beam_trials": original_fusion.get(
-                "effective_beam_trials", original_fusion.get("beams", 12)),
-            "direct_path_null_db": original_fusion.get("direct_path_null_db", 0),
-        }
-        tbd = process.setdefault("detection", {}).setdefault("track_before_detect", {})
-        tbd["enable"] = False
-        tbd["fractional_delay"] = False
-        live_shadow = process["detection"].setdefault("live_temporal_shadow", {})
-        live_shadow["enabled"] = False
-        live_shadow["artifact_only"] = False
-        process.setdefault("tracker", {}).setdefault("track_guided_shadow", {})["enable"] = False
-        process["tracker"]["track_guided_shadow"]["promote"] = False
-        process["tracker"]["track_guided_shadow"]["sustain"] = False
-        process["tracker"].setdefault("initiate", {}).setdefault(
-            "stationary_clutter", {})["enable"] = False
-        process.setdefault("evidence", {}).setdefault("causal_funnel", {})["enabled"] = False
-    reference = process.setdefault("reference_synthesis", {})
-    if protection_beams:
-        reference["target_protection_beams"] = protection_beams
-        reference["target_protection_beam_index"] = protection_index
-    else:
-        reference.pop("target_protection_beams", None)
-        reference.pop("target_protection_beam_index", None)
+    # A backend comparison is explicit. Omission preserves the recorded choice;
+    # no replay-only math, scheduling defaults or missing stage blocks are added.
+    if acceleration is not None:
+        process.setdefault("performance", {})["acceleration"] = backend
+    if manifold_evidence_export:
+        recorder = process.setdefault("bearing", {}).setdefault("manifold_recorder", {})
+        recorder["enabled"] = "on"
     device = {
         "type": capture["source_receiver"],
         "channel_count": capture["channel_count"],
@@ -340,6 +289,9 @@ def configuration(recording, profile, status_port, ports, acceleration,
         "surveillance_channels": capture["surveillance_channels"],
         "array_geometry": capture["array_geometry"],
     }
+    for name in ("reference_mode", "reference_channels"):
+        if name in capture:
+            device[name] = copy.deepcopy(capture[name])
     config = {
         "capture": {
             "fs": capture["sample_rate_hz"],
@@ -348,28 +300,102 @@ def configuration(recording, profile, status_port, ports, acceleration,
             "replay": {
                 "state": True,
                 "loop": False,
-                "file": str(recording),
+                # The processor runs in an isolated temporary directory. A
+                # caller-relative path would validate here, then fail only
+                # after processor startup changed working directories.
+                "file": str(recording.resolve(strict=True)),
                 "format": "auto",
                 "provenance": "legacy-unqualified",
             },
         },
         "process": process,
-        "location": profile["location"],
-        "network": {"ip": HARNESS.HOST,
+        # Optional historical convenience only. Native replay resolves sites
+        # from the externally pinned acquisition contract, never this profile.
+        "location": copy.deepcopy(profile.get("location", {})),
+        "network": {"ip": SESSION.HOST,
                     "ports": dict(api=status_port, **ports)},
         "save": {"iq": False, "map": False, "detection": False,
-                 "timing": False, "path": str(recording.parent)},
+                 "timing": False,
+                 "path": str(recording.resolve(strict=True).parent)},
     }
+    if complex_cutout is not None:
+        config["save"]["complex_cutout"] = copy.deepcopy(complex_cutout)
     if resident_snapshot is not None:
         config["capture"]["replay"]["resident_snapshot"] = copy.deepcopy(resident_snapshot)
+    for name, digest in (("recording_sha256", recording_sha256), ("acquisition_sha256", acquisition_sha256)):
+        if digest is not None:
+            if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                raise ValueError(f"{name} must be an externally trusted lowercase SHA-256")
+            config["capture"]["replay"][name] = digest
+    if acquisition_sha256 is not None and recording_sha256 is None:
+        raise ValueError("acquisition_sha256 requires the trusted recording SHA-256")
     return config
+
+
+def complex_cutout_options(args):
+    values = (getattr(args, "complex_cutout", None),
+              getattr(args, "complex_cutout_delay_km", None),
+              getattr(args, "complex_cutout_doppler_hz", None))
+    if not any(value is not None for value in values):
+        return None
+    if not all(value is not None for value in values):
+        raise ValueError("all complex-cutout path/delay/Doppler options are required")
+    path, delay, doppler = values
+    if not path.is_absolute() or not path.parent.is_dir() or path.exists():
+        raise ValueError(
+            "complex-cutout path must be absolute, new, and have an existing parent")
+    if not (math.isfinite(delay) and math.isfinite(doppler)):
+        raise ValueError("complex-cutout coordinates must be finite")
+    return {"state": True, "path": str(path), "delay_km": delay,
+            "doppler_hz": doppler, "delay_radius_bins": 8,
+            "doppler_radius_bins": 8, "max_frames": 128, "max_mb": 64}
+
+
+def manifold_export_options(args):
+    path = getattr(args, "manifold_evidence_export", None)
+    if path is None:
+        return None
+    if not path.is_absolute() or not path.parent.is_dir() or path.exists():
+        raise ValueError(
+            "manifold evidence export path must be absolute, new, and have an existing parent")
+    if getattr(args, "acquisition_sha256", None) is None:
+        raise ValueError("manifold evidence export requires an authenticated acquisition SHA-256")
+    if not re.fullmatch(r"[a-f0-9]{64}", getattr(args, "binary_sha256", None) or ""):
+        raise ValueError("manifold evidence export requires an independently pinned native binary SHA-256")
+    return {"path": path, "max_bytes": 64 << 20}
+
+
+def write_manifold_export(rows, options):
+    # The marker must originate in the corrected native producer, not be
+    # manufactured here from old rounded output or a caller's desired config.
+    if not rows or any(row.get("precision_contract") != "binary64-json-roundtrip-v1" or
+            row.get("schema") not in ("vectorwarp-manifold-evidence-v1",
+                "vectorwarp-manifold-evidence-v2", "vectorwarp-manifold-evidence-v3")
+            for row in rows):
+        raise ValueError("native manifold evidence lacks its full-precision producer contract")
+    payload = b"".join((json.dumps(row, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False) + "\n").encode() for row in rows)
+    if not 0 < len(payload) <= options["max_bytes"]:
+        raise ValueError("manifold evidence export exceeds its 64 MiB bound")
+    # Refuse a competing creation or symlink after the preflight path check.
+    with options["path"].open("xb") as output:
+        output.write(payload)
+    return payload
 
 
 def run(args):
     snapshot = resident_snapshot_options(args)
+    manifold_export = manifold_export_options(args)
     profile = json.loads(args.profile.read_text())
+    acceleration = selected_backend(profile, args.acceleration)
     if profile.get("configuration_complete") is False:
         raise ValueError("recording replay profile is incomplete")
+    multi = profile.get("process", {}).get("multi_illuminator", {})
+    enabled_lanes = [lane.get("id") for lane in multi.get("illuminators", [])
+                     if lane.get("enabled", True)] if multi.get("enabled") is True else []
+    if len(enabled_lanes) > 1:
+        raise ValueError("single-lane protection replay cannot score a multi-illuminator "
+                         "recording; use run-isolated-iq-replay.py and lane-bound scoring")
     metadata = json.loads(args.metadata.read_text())
     if metadata.get("dataSha256") != args.sha256:
         raise ValueError("recording digest does not match declared metadata")
@@ -379,81 +405,39 @@ def run(args):
         device = os.environ.get("BLAH2_GPU_DEVICE", "").strip()
         if not device or device == "auto":
             raise ValueError("resident export requires an explicit BLAH2_GPU_DEVICE")
-    status = HARNESS.StatusServer()
-    sinks = ScientificSinkGroup(args.map_diagnostics)
-    processor = None
+    retained = {name: 1 << 20 for name in ("detection", "track", "timing")}
+    if args.map_diagnostics:
+        retained["map"] = 128 << 20
+    if manifold_export is not None:
+        retained["manifold"] = manifold_export["max_bytes"]
+    experiment = SESSION.Experiment(args.binary, args.timeout, gpu=acceleration != "cpu",
+        binary_sha256=getattr(args, "binary_sha256", None), required=tuple(retained), retained=retained)
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="vectorwarp-iq-protection-") as temporary:
         root = Path(temporary)
-        try:
-            status.start()
-            sinks.start()
+        with SESSION.ReplaySession(experiment, root) as session:
+            status, sinks = session.status, session.sinks
             config = configuration(args.recording, profile, status.port,
                                    sinks.ports(), args.acceleration,
-                                   args.protection_beams, args.protection_index,
-                                   args.diagnostic_cpu_fusion,
-                                   args.diagnostic_delay_max,
-                                   args.diagnostic_doppler_min,
-                                   args.diagnostic_doppler_max,
-                                   args.diagnostic_clutter_delay_max,
-                                   resident_snapshot=snapshot)
-            config_path = root / "config.json"
-            config_path.write_text(json.dumps(config))
-            process_env = os.environ.copy()
-            process_env.update({
-                "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
-                "BLIS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
-                "VECLIB_MAXIMUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1",
-                "VECTORWARP_FFTW_PLAN": "estimate",
-            })
-            processor = subprocess.Popen(
-                ["stdbuf", "-oL", "-eL", str(args.binary), "-c", str(config_path)], cwd=root,
-                env=process_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                start_new_session=True)
-            deadline = time.monotonic() + args.timeout
-            complete = False
-            while time.monotonic() < deadline:
-                if any(item.get("state") == "complete" for item in status.snapshot()):
-                    complete = True
-                    break
-                if processor.poll() is not None:
-                    output = processor.stdout.read() if processor.stdout else ""
-                    raise RuntimeError(
-                        f"processor exited before completion ({processor.returncode}): "
-                        f"{output[-12000:]}")
-                time.sleep(.05)
-            if not complete:
-                HARNESS.stop_process(processor, timeout=10)
-                output = processor.stdout.read() if processor.stdout else ""
-                raise RuntimeError(
-                    f"replay did not complete: {status.snapshot()[-3:]}; "
-                    f"processor tail: {output[-12000:]}")
-            forced = HARNESS.stop_process(processor, timeout=10)
-            output = processor.stdout.read() if processor.stdout else ""
-            if forced or processor.returncode != 0:
-                raise RuntimeError(
-                    f"processor stop failed ({processor.returncode}): {output[-12000:]}")
-            frames = {
-                name: json_values(sinks.payloads[name], name)
-                for name in ("detection", "track", "timing")
-            }
-            maps = json_values(sinks.payloads["map"], "map") if args.map_diagnostics else []
+                                   resident_snapshot=snapshot, recording_sha256=args.sha256,
+                                   acquisition_sha256=getattr(args, "acquisition_sha256", None),
+                                   complex_cutout=complex_cutout_options(args),
+                                   manifold_evidence_export=manifold_export is not None)
+            process_sha256 = process_identity(config["process"])
+            products = session.execute(config)
+            require_process_identity(config, process_sha256)
+            require_process_identity(json.loads((root / "config.json").read_text()), process_sha256)
+            frames = {name: products[name] for name in ("detection", "track", "timing")}
+            maps = products.get("map", [])
+            output = (root / "processor.log").read_text(errors="replace")
             timeline = json.loads(args.timeline.read_text())
-            endpoints = timeline.get("frames", [])
+            endpoints = align_product_timeline(frames, timeline)
             expected_frames = len(endpoints)
-            for name, values in frames.items():
-                if len(values) != expected_frames:
-                    raise RuntimeError(
-                        f"{name}/timeline endpoint count differs: {len(values)} != {expected_frames}")
             map_result = None
             if args.map_diagnostics:
-                if sinks.bytes["map"] > sinks.payload_limits["map"]:
-                    raise RuntimeError("map diagnostic payload exceeded its declared bound")
                 map_result = map_diagnostics(maps, endpoints,
                     admitted_truth(json.loads(args.admission.read_text())))
             final = status.snapshot()[-1]
-            if any(final.get("captureDroppedSamples", [])):
-                raise RuntimeError("lossless replay dropped capture samples")
             result = {
                 "schema": "vectorwarp-iq-protection-replay-v1",
                 "recording": str(args.recording),
@@ -473,50 +457,71 @@ def run(args):
                 "resolved_config": config,
                 "runner_sha256": file_sha256(Path(__file__)),
                 "runner": str(Path(__file__).resolve()),
-                "arm": {
-                    "kind": "target_protection" if args.protection_beams else "baseline",
-                    "beams": args.protection_beams,
-                    "index": args.protection_index if args.protection_beams else None,
-                },
-                "acceleration": args.acceleration,
-                "diagnostic_cpu_fusion": args.diagnostic_cpu_fusion,
-                "diagnostic_window": {
-                    "delay_max_bins": args.diagnostic_delay_max,
-                    "doppler_min_hz": args.diagnostic_doppler_min,
-                    "doppler_max_hz": args.diagnostic_doppler_max,
-                    "clutter_delay_max_bins": args.diagnostic_clutter_delay_max,
-                },
+                "arm": {"kind": "baseline", "beams": 0, "index": None},
+                "acceleration": acceleration,
+                "process_config_sha256": process_sha256,
+                "profile_process_sha256": process_identity(profile["process"]),
                 "elapsed_seconds": time.monotonic() - started,
                 "frames": frames,
                 "map_diagnostics": map_result,
                 "processor_log_tail": output[-12000:],
+                "tracker_diagnostics": parse_tracker_diagnostics(output),
                 "final_status": final,
+                "session": session.receipt,
+                "session_sources": {str(path): file_sha256(path) for path in
+                    (Path(SESSION.__file__), Path(SESSION.ARTIFACTS.__file__))},
             }
             if snapshot is not None:
                 result["resident_snapshot_export"] = resident_snapshot_receipt(
                     snapshot, expected_frames)
-            args.output.write_text(json.dumps(result, indent=2) + "\n")
-            return result
-        finally:
-            if processor is not None:
-                HARNESS.stop_process(processor)
-                if processor.stdout:
-                    processor.stdout.close()
-            sinks.close()
-            status.close()
+            if args.complex_cutout is not None:
+                if not args.complex_cutout.is_file():
+                    raise ValueError(
+                        "processor did not produce the requested complex cutout")
+                size = args.complex_cutout.stat().st_size
+                if not 0 < size <= (64 << 20):
+                    raise ValueError(
+                        "complex cutout is empty or exceeds its 64 MiB bound")
+                result["complex_cutout"] = {
+                    "path": str(args.complex_cutout), "bytes": size,
+                    "sha256": file_sha256(args.complex_cutout)}
+            if manifold_export is not None:
+                rows = products.get("manifold", [])
+                payload = write_manifold_export(rows, manifold_export)
+                result["manifold_evidence_export"] = {
+                    "schema": "vectorwarp-native-manifold-evidence-export-v1",
+                    "path": str(manifold_export["path"]), "rows": len(rows),
+                    "bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "native_stream_sha256": hashlib.sha256(
+                        bytes(sinks.payloads["manifold"])).hexdigest(),
+                    "recording_sha256": args.sha256,
+                    "acquisition_sha256": args.acquisition_sha256,
+                    "binary_sha256": args.binary_sha256,
+                    "precision_contract": "binary64-json-roundtrip-v1",
+                    "identity_qualified": True,
+                    "scientific_qualification": False,
+                    "selection": "detected-positive-cells-only; not independent miss or target-free exposure",
+                }
+        args.output.write_text(json.dumps(result, indent=2) + "\n")
+        return result
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--binary-sha256", help="optional externally pinned processor digest")
     parser.add_argument("--recording", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--timeline", type=Path, required=True)
     parser.add_argument("--admission", type=Path)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--acquisition-sha256",
+                        help="externally pinned adjacent acquisition manifest hash; required for recorded geographic sites when metadata is not embedded")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--acceleration", choices=("cpu", "gpu", "gpu-resident"), default="cpu")
+    parser.add_argument("--acceleration", choices=("cpu", "gpu", "gpu-resident", "auto"),
+                        help="explicit backend comparison; omission preserves the profile")
     parser.add_argument("--resident-snapshot-directory", type=Path,
                         help="existing absolute empty export directory; never created by this runner")
     parser.add_argument("--resident-snapshot-max-frames", type=int,
@@ -527,32 +532,23 @@ def parse_args(argv=None):
                         help="existing absolute file byte-identical to --profile")
     parser.add_argument("--resident-snapshot-rf-profile-sha256",
                         help="pinned RF profile SHA-256; --sha256 already pins the source IQ")
-    parser.add_argument("--diagnostic-cpu-fusion", action="store_true",
-                        help="replace resident-only noise whitening with the same CPU coherent beam bank in every arm")
     parser.add_argument("--map-diagnostics", action="store_true")
-    parser.add_argument("--diagnostic-delay-max", type=int)
-    parser.add_argument("--diagnostic-doppler-min", type=int)
-    parser.add_argument("--diagnostic-doppler-max", type=int)
-    parser.add_argument("--diagnostic-clutter-delay-max", type=int)
-    parser.add_argument("--protection-beams", type=int, default=0)
-    parser.add_argument("--protection-index", type=int, default=0)
+    parser.add_argument("--complex-cutout", type=Path,
+                        help="new absolute replay-only complex CAF cutout path")
+    parser.add_argument("--complex-cutout-delay-km", type=float)
+    parser.add_argument("--complex-cutout-doppler-hz", type=float)
+    parser.add_argument("--manifold-evidence-export", type=Path,
+                        help="new absolute bounded JSONL path for identity-qualified native array evidence")
     parser.add_argument("--timeout", type=float, default=900)
     args = parser.parse_args(argv)
-    if args.protection_beams and not (4 <= args.protection_beams <= 360 and
-                                      0 <= args.protection_index < args.protection_beams):
-        parser.error("invalid target-protection beam bank/index")
-    if not args.protection_beams and args.protection_index:
-        parser.error("baseline cannot select a protection index")
+    if args.acquisition_sha256 is not None and not re.fullmatch(r"[a-f0-9]{64}", args.acquisition_sha256):
+        parser.error("--acquisition-sha256 must be an externally trusted lowercase SHA-256")
     if args.map_diagnostics and not args.admission:
         parser.error("--map-diagnostics requires --admission")
-    if ((args.diagnostic_doppler_min is None) !=
-            (args.diagnostic_doppler_max is None)):
-        parser.error("diagnostic Doppler bounds must be supplied together")
-    if (args.diagnostic_doppler_min is not None and
-            args.diagnostic_doppler_min >= args.diagnostic_doppler_max):
-        parser.error("diagnostic Doppler bounds are empty")
     try:
         resident_snapshot_options(args)
+        complex_cutout_options(args)
+        manifold_export_options(args)
     except (ValueError, OSError, TypeError) as error:
         parser.error(str(error))
     return args

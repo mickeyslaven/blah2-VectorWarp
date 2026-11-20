@@ -98,6 +98,31 @@ void verifyCircularReference() {
     require(rejected,"Invalid circular reference dimensions accepted");
   }
 }
+void verifyDirectBatchPadding() {
+  std::vector<Sample> storage(23, Sample{99, -99});
+  auto* destination = storage.data() + 1;
+  for (size_t count : {21u, 7u, 14u, 21u}) {
+    for (size_t i = 0; i < count; ++i) destination[i] = Sample(float(i), -float(i));
+    blah2::padClutterBatch(destination, 21, count);
+    for (size_t i = 0; i < count; ++i)
+      require(destination[i] == Sample(float(i), -float(i)), "Padding changed active samples");
+    for (size_t i = count; i < 21; ++i)
+      require(destination[i] == Sample{}, "Direct batch retained inactive samples");
+    require(storage.front() == Sample{99, -99} && storage.back() == Sample{99, -99},
+      "Direct padding crossed the mapped batch bounds");
+  }
+  for (size_t count : {0u, 22u}) {
+    const auto before = storage;
+    bool rejected = false;
+    try { blah2::padClutterBatch(destination, 21, count); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected && storage == before, "Invalid direct padding mutated storage");
+  }
+  bool rejected = false;
+  try { blah2::padClutterBatch<Sample>(nullptr, 21, 7); }
+  catch (const std::invalid_argument&) { rejected = true; }
+  require(rejected, "Null direct padding destination accepted");
+}
 }
 
 int main() try {
@@ -105,7 +130,8 @@ int main() try {
     for (uint32_t batch = 1; batch <= channels; ++batch) verifyChannels(channels, batch);
   verifyFailureAndShapes();
   verifyCircularReference();
-  std::cout << "PASS clutter channel batches, circular references, partial padding, rejection and shapes\n";
+  verifyDirectBatchPadding();
+  std::cout << "PASS clutter channel batches, circular references, copied/direct partial padding, rejection and shapes\n";
   return 0;
 } catch (const std::exception& error) {
   std::cerr << "FAIL: " << error.what() << '\n';

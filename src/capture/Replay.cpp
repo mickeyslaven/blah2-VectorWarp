@@ -19,7 +19,7 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
     const std::vector<IqData*>& buffers,uint32_t frameSamples,bool loop,
     const std::atomic<bool>& stopped,const Progress& publish,
     const std::function<bool()>& consumerBusy,const Control& control,
-    bool awaitControlsAtEof) {
+    bool awaitControlsAtEof,const QueuePosition& queuePosition) {
   if(!frameSamples || buffers.size()!=options.channels) throw std::invalid_argument("Invalid playback channel/frame configuration");
   for(auto* buffer:buffers) if(!buffer || buffer->get_n()<frameSamples)
     throw std::invalid_argument("Playback buffer must hold at least one radar frame");
@@ -42,6 +42,7 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
     // new epoch. Queues are empty, so no new old-generation CPI can start.
     while(consumerBusy() && !stopped.load()) rest();
     progress.samples=std::min(command.seekSample,progress.total);
+    queuePosition(progress.samples);
     progress.trailingSamples=0;
     ++progress.generation; progress.state=command.paused?"paused":"playing";publish(progress);
     start=Clock::now()-std::chrono::duration_cast<Clock::duration>(
@@ -76,9 +77,17 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
           // File playback must not: consume only the space available on EVERY channel.
           for(size_t ch=0;ch<buffers.size();++ch)
             for(size_t i=0;i<count;++i) buffers[ch]->push_back(block[ch][offset+i]);
+          if(count) {
+            offset+=count; progress.samples+=count;
+            // This callback is intentionally atomic-only. Publish the source
+            // position while the queue is locked, before these samples become
+            // visible to a consumer; the general progress callback may inspect
+            // queues and therefore remains outside the lock.
+            queuePosition(progress.samples);
+          }
         }
         if(!count) { rest(); continue; }
-        offset+=count; progress.samples+=count; publish(progress);
+        publish(progress);
       }
     }
     if(stopped.load()) break;
@@ -112,6 +121,7 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
     } else {
       ++progress.loops; ++progress.generation; reader.rewind();
       progress.samples=0; progress.trailingSamples=0;
+      queuePosition(0);
       progress.state="playing"; start=Clock::now(); publish(progress);
     }
   } while(!stopped.load());

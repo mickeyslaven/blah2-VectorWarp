@@ -50,6 +50,9 @@ private:
   std::vector<std::complex<double>> blockPhase;
   std::vector<std::complex<double>> binPhase;
 
+  template<class Samples>
+  void processSamples(const Samples& samples, IqData* output);
+
 public:
   /// @brief Constructor.
   /// @param n Number of samples on input.
@@ -67,6 +70,11 @@ public:
   /// @param x Reference samples.
   /// @return Void.
   void process(IqData *x);
+
+  // Borrow the current native capture CPI only for this call. Widen each
+  // sample at its existing FP64 arithmetic use, without materializing an
+  // entire FP64 CPI. Only output's spectrum/frequency fields are updated.
+  void process(const std::vector<std::complex<float>>& samples, IqData* output);
 };
 
 #endif

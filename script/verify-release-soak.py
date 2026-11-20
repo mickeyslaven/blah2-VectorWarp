@@ -107,6 +107,14 @@ def receipt(envelope, run, source):
     latest = summary.get("latest", {})
     require(latest.get("epoch") == last and latest.get("healthy") is True
             and latest.get("failures") == [], "latest soak sample did not qualify")
+    require(set(latest.get("nodes", {})) == set(binding["nodes"]),
+            "latest soak node set differs from the reviewed topology")
+    require(monitor.counter(latest.get("monitorFreeBytes")) and
+            latest["monitorFreeBytes"] >= binding["monitorMinimumFreeBytes"],
+            "latest monitor disk reserve did not qualify")
+    require(not monitor.verify_regression(latest.get("regressionEvidence", {}), bound,
+                last, checked_number(summary.get("startedEpoch"), "cohort start")),
+            "latest regression evaluation did not qualify")
     for name, node in binding["nodes"].items():
         filename = node.get("packageFilename", "")
         require(re.fullmatch(r"vectorwarp[-_][A-Za-z0-9_.+-]+\.(deb|rpm)", filename),

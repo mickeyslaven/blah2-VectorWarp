@@ -52,7 +52,7 @@ replay::ValidatedSnapshot frame(uint64_t sequence) {
     }
   power.f64(0, 9.25);
   const auto& rawBytes = snapshot.blocks.at(unsigned(rr::BlockKind::rawIq) - 1).bytes;
-  blah2::resident::Sha256 hash; hash.add(rawBytes.data(), rawBytes.size()); snapshot.identity.rawIqHash = hash.finish();
+  blah2::Sha256 hash; hash.update(rawBytes.data(), rawBytes.size()); snapshot.identity.rawIqHash = hash.finishBytes();
   replay::Sidecar sidecar; sidecar.identity = snapshot.identity;
   sidecar.sourceHash = c.replay.sourceHash; sidecar.rfHash = c.replay.rfHash;
   sidecar.captureEpoch = 3; sidecar.firstSample = 100 + sequence * 32; sidecar.endSample = sidecar.firstSample + 64;

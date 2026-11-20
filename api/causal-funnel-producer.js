@@ -6,10 +6,8 @@ const diagnosticKeys = ['no_op', 'detections', 'tracks_before', 'tracks_after',
   'pair_doppler_rejected', 'pair_innovation_rejected', 'pair_in_gate',
   'associations', 'misses', 'promotions', 'tentative_expired',
   'inactivity_deleted', 'birth_candidates', 'birth_snr_rejected',
-  'birth_ridge_rejected', 'birth_exclusive_rejected', 'initiated',
-  'weak_support_candidates', 'weak_support_in_gate', 'weak_support_accepted',
-  'weak_support_credited_cpis',
-  'weak_support_lineage_rejected'];
+  'birth_ridge_rejected', 'initiated',
+];
 
 function createMultiIlluminatorCausalFrame(value, maximum = 32) {
   if (!value || typeof value.id !== 'string' ||
@@ -54,13 +52,15 @@ function createMultiIlluminatorCausalFrame(value, maximum = 32) {
   const tracks = Number.isSafeInteger(trackerDiagnostics.tracks_after) ?
     trackerDiagnostics.tracks_after : 0;
   const capture = value.capture_sample_position_available === true;
-  const epoch = capture && Number.isSafeInteger(value.capture_epoch) && value.capture_epoch >= 0 ?
-    value.capture_epoch : 0;
+  if (capture && (!Number.isSafeInteger(value.capture_epoch) || value.capture_epoch < 0 ||
+      !Number.isSafeInteger(value.capture_first_input_sample) || value.capture_first_input_sample < 0 ||
+      !Number.isSafeInteger(value.capture_end_input_sample) ||
+      value.capture_end_input_sample <= value.capture_first_input_sample))
+    throw new Error('Invalid multi-illuminator capture lineage');
+  const epoch = capture ? value.capture_epoch : 0;
   const lineage = {epoch: encodeUint64(epoch), generation: encodeUint64(sequence),
     consumed_sequence: encodeUint64(sequence), clock_precision_ns: '1000000'};
-  if (capture && Number.isSafeInteger(value.capture_first_input_sample) &&
-      Number.isSafeInteger(value.capture_end_input_sample) &&
-      value.capture_end_input_sample >= value.capture_first_input_sample) {
+  if (capture) {
     lineage.input_epoch = encodeUint64(epoch);
     lineage.first_sample = encodeUint64(value.capture_first_input_sample);
     lineage.end_sample = encodeUint64(value.capture_end_input_sample);

@@ -26,6 +26,9 @@ public:
   };
 private:
   std::vector<Evidence> evidence;
+  // Radar-only spatial evidence: coarse code 1..B, zero unknown, or the
+  // resident packed three-fine-peak word. Kept out of public detection JSON.
+  std::vector<uint32_t> spatial;
   /// @brief Detections in delay (bins).
   std::vector<double> delay;
 
@@ -36,6 +39,12 @@ private:
   std::vector<double> snr;
 
 public:
+  const std::vector<uint32_t>& get_spatial() const { return spatial; }
+  void set_spatial(std::vector<uint32_t> value) {
+    if (!value.empty() && value.size() != delay.size())
+      throw std::invalid_argument("Detection spatial dimensions differ");
+    spatial = std::move(value);
+  }
   const std::vector<Evidence>& get_evidence() const { return evidence; }
   void set_evidence(std::vector<Evidence> value) {
     if (!value.empty() && value.size() != delay.size())

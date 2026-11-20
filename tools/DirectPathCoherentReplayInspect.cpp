@@ -1,4 +1,4 @@
-#include "process/integration/DirectPathCoherentReplay.h"
+#include "process/integration/DirectPathCoherentExperiment.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,7 +36,7 @@ int main(int argc,char** argv)try {
       "--max-cpis 4|8 --delay-motion N --doppler-motion N FRAME.vwrps...\n";
     return 2;
   }
-  integration::DirectPathCoherentShadow::Config config;
+  integration::DirectPathCoherentExperiment::Config config;
   config.channelIds=channels(argv[2]); config.anchorChannelId=number(argv[4],"anchor");
   config.temporal.maximumCpis=number(argv[6],"maximum CPI count");
   config.temporal.delayMotionBins=number(argv[8],"delay motion");
@@ -45,7 +45,7 @@ int main(int argc,char** argv)try {
   config.maximumCells=1u<<20;
   config.spatialCoefficients.assign(config.channelIds.size(),
     {1/std::sqrt(double(config.channelIds.size())),0});
-  integration::coherent_replay::ShadowReader reader(config);
+  integration::coherent_replay::ExperimentReader reader(config);
   uint64_t ready=0,valid=0; double peak=0,coherence=0;
   for(int argument=11;argument<argc;++argument) {
     const auto result=reader.append(argv[argument]);

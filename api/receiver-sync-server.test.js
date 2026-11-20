@@ -16,8 +16,7 @@ const {emptyRecord} = require('../html/js/kraken_geometry');
 const clone = value => JSON.parse(JSON.stringify(value));
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-receiver-sync-'));
 const filename = path.join(directory, 'config.yml');
-const original = yaml.load(fs.readFileSync(path.join(
-  __dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
+const original = require('./config-store').configurationForReceiver('Kraken');
 // Receiver synchronization is independent of the Linux-only automatic-gain
 // restart receipt, so use the fixed/manual path in this isolated API fixture.
 original.capture.device.heimdall.gain_control = 'fixed';

@@ -1,6 +1,6 @@
-// Adjacent resident ABI15 module. Older cohorts are separate targets.
+// Adjacent resident ABI17 module. Older cohorts are rejected at admission.
 #include "GpuResidentWire.h"
-#include "GpuResidentHash.h"
+#include "capture/Sha256.h"
 #include "GpuResidentEvidenceLayout.h"
 #include <dlfcn.h>
 #include <fstream>
@@ -18,15 +18,15 @@ static resident::Hash moduleImageHash(){
  if(!dladdr(reinterpret_cast<void*>(&blah2_gpu_create_resident),&info)||!info.dli_fname)throw std::runtime_error("Resident module image identity unavailable");
  std::ifstream file(info.dli_fname,std::ios::binary);
  if(!file)throw std::runtime_error("Resident module image cannot be read");
- resident::Sha256 sha;
+ ::blah2::Sha256 sha;
  std::array<char,65536> buffer{};
  uint64_t bytes=0;
  while(file){file.read(buffer.data(),buffer.size());
  const auto n=file.gcount();
  if(n<0||uint64_t(n)>(256ULL<<20)-bytes)throw std::runtime_error("Resident module image exceeds identity bound");
  bytes+=uint64_t(n);
- sha.add(buffer.data(),size_t(n));}if(!file.eof()||!bytes)throw std::runtime_error("Resident module image identity read failed");
- return sha.finish();
+ sha.update(buffer.data(),size_t(n));}if(!file.eof()||!bytes)throw std::runtime_error("Resident module image identity read failed");
+ return sha.finishBytes();
 }
 static ResidentFrameConfig privateConfig(const resident::Config& c){
  ResidentFrameConfig v;
@@ -87,8 +87,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
   t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
   t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.minInitiationSnrDb,t.stationaryClutter,
   t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,
-  t.trackGuidedShadow,t.trackGuidedPromote,t.trackGuidedSustain,
-  t.normalizedInnovationGate,t.trackGuidedShadowMaxTracks,c.epoch,
+  t.normalizedInnovationGate,c.epoch,
   bool(c.presence&resident::bit(resident::Section::causalTrace))};
  return v;
 }
@@ -311,6 +310,9 @@ class ResidentModule final:public resident::Backend {
  for(size_t i=0;i<8;++i)w.u64(32+8*i,fields[i]);
  w.u64(96,valid|32);
  w.u64(104,++event_);
+ // ABI17 initialization/reset ACK binds the loaded image without consuming IQ.
+ w.copy(112,imageHash_.data(),16);
+ w.copy(488,imageHash_.data()+16,16);
  if((valid&1)&&pipeline_->tracker_){const auto& status=pipeline_->tracker_->evidenceControl();
   // The control envelope reserves exactly 64 words before timing at byte 384.
   // New tracker-only diagnostics remain available in prepared evidence.
@@ -350,11 +352,12 @@ public:
  reference_=pipeline_->exportReferenceCheckpoint();
  referenceCheckpoint(p);
  if(config_.tracker.enabled)pipeline_->copyTrackerCommitted({pointer<uint32_t>(Section::tracker0),count<uint32_t>(Section::tracker0),
-  config_.tracker.trackGuidedShadow?pointer<uint32_t>(Section::guidedRecoveries):nullptr,
-  config_.tracker.trackGuidedShadow?count<uint32_t>(Section::guidedRecoveries):0,&trackerResult_});
+  &trackerResult_});
  control(p,resident::Phase::idle,config_.tracker.enabled?2:0,config_.tracker.enabled?1:0);}
  bool prepareReference(const Packet& p)override{rw::require(!ready_&&!prepared_,"Resident module already owns a frame");
  outputPresence_=resident::outputPresence(config_.presence,p.diagnosticPresence);
+ pipeline_->work_->postprocessStage->observeDetector(
+  config_.detector.enabled&&bool(p.diagnosticPresence&resident::bit(Section::fullReference)));
  pipeline_->generation_=p.frame.logicalId-1;
  pipeline_->work_->clutter->generation_=p.frame.logicalId-1;
  committed_=false;
@@ -397,8 +400,7 @@ public:
   if(config_.tracker.enabled){preparedSlot_=1-committedSlot_;
   const auto slot=preparedSlot_?Section::tracker1:Section::tracker0;
   out.tracker={pointer<uint32_t>(slot),count<uint32_t>(slot),
-   config_.tracker.trackGuidedShadow?pointer<uint32_t>(Section::guidedRecoveries):nullptr,
-   config_.tracker.trackGuidedShadow?count<uint32_t>(Section::guidedRecoveries):0,&trackerResult_};
+  &trackerResult_};
   out.trackerTimestamp=p.frame.signalTimestampMs;
   out.consumedInputSequence=p.frame.consumedSequence;}
   if(!pipeline_->finishResidentRadar(out)){return false;}
@@ -422,8 +424,11 @@ public:
    w.u32(76,trackerResult_.noOp);
    w.u32(80,config_.stages());
    w.u32(84,config_.stages());
-   w.u32(88,trackerResult_.guidedRecoveries);
-   w.u32(92,config_.tracker.trackGuidedShadow?6:0);
+   w.u32(96,metrics_.cfarDiagnosticCount);
+   w.u32(100,metrics_.centroidDiagnosticCount);
+   w.u32(104,metrics_.availableCpis);
+   w.u32(108,metrics_.detectorObserved?1u:0u);
+   w.u64(112,metrics_.evaluatedCells);
    preparedEvidence(p);
    prepared_=true;
    return true;
@@ -472,11 +477,11 @@ public:
    std::memcpy(tracker.data(),source.data,trackerResult_.checkpointWords*4);}
   const auto config=resident::encodeConfig(config_);
   bytes(rr::BlockKind::configuration).assign(config.begin(),config.end());
-  resident::Sha256 rawHash;const auto& raw=bytes(rr::BlockKind::rawIq);rawHash.add(raw.data(),raw.size());
+  ::blah2::Sha256 rawHash;const auto& raw=bytes(rr::BlockKind::rawIq);rawHash.update(raw.data(),raw.size());
   s.identity={config_.epoch,p.frame.logicalId,pipeline_->generation_,p.frame.consumedSequence,
-   p.frame.signalTimestampMs,token_.transaction,configHash_,imageHash_,rawHash.finish()};
-  const auto device=map_.read(Section::device);resident::Sha256 deviceHash;
-  deviceHash.add(device.data,device.size);s.identity.deviceHash=deviceHash.finish();
+   p.frame.signalTimestampMs,token_.transaction,configHash_,imageHash_,rawHash.finishBytes()};
+  const auto device=map_.read(Section::device);::blah2::Sha256 deviceHash;
+  deviceHash.update(device.data,device.size);s.identity.deviceHash=deviceHash.finishBytes();
   // Validate the complete temporary object before publishing a single byte.
   const auto encoded=rr::encode(s,config_);const auto output=map_.bytes(Section::replaySnapshot);
   rw::require(output.size==encoded.size(),"Replay snapshot section shape differs");
@@ -492,8 +497,7 @@ public:
   referenceCheckpoint(p);metrics_={};trackerResult_={};token_={};committed_=false;
   committedSlot_=0;preparedSlot_=1;outputPresence_=resident::outputPresence(config_.presence,0);
   if(config_.tracker.enabled){pipeline_->copyTrackerCommitted({pointer<uint32_t>(Section::tracker0),count<uint32_t>(Section::tracker0),
-   config_.tracker.trackGuidedShadow?pointer<uint32_t>(Section::guidedRecoveries):nullptr,
-   config_.tracker.trackGuidedShadow?count<uint32_t>(Section::guidedRecoveries):0,&trackerResult_});
+  &trackerResult_});
    rw::require(trackerResult_.checkpointWords==resident::trackerHeaderWords&&
     !rw::Reader{map_.read(Section::tracker0)}.u64(16),"Resident tracker input reset not acknowledged");}
   control(p,resident::Phase::idle,64|(config_.tracker.enabled?2:0),config_.tracker.enabled?1:0);
@@ -534,7 +538,8 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI15 mismatch");}
+ blah2::resident::validateModuleAbi(abi);
+ if(!config||!map){throw std::runtime_error("Resident module ABI17 configuration/mapping absent");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

@@ -226,8 +226,8 @@ class AgentPolicyTest(unittest.TestCase):
             assets = agent.release_files({"team_id": "DJGHPX8T7R"},
                 {"tag": "v0.1.11", "commit": "b" * 40}, work, package, archive,
                 "00000000-0000-0000-0000-000000000000",
-                {"build_source_review": review})
-            self.assertEqual(json.loads(assets[-1].read_text())["build_source_review"], review)
+                {"input_review": review})
+            self.assertEqual(json.loads(assets[-1].read_text())["input_review"], review)
 
     def test_cached_inputs_repeat_gates_using_trusted_tooling(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -245,27 +245,19 @@ class AgentPolicyTest(unittest.TestCase):
             candidate = {"tag": "v0.1.11", "commit": "b" * 40}
             review = {"metadata": {"sha256": "a" * 64, "source_id": candidate["commit"],
                                    "reviewed_source_id": "c" * 40}}
-            dependency_review = {"metadata": {"sha256": "d" * 64,
-                                              "source_id": candidate["commit"],
-                                              "run_id": "123"}}
-            receipt = {"schema": 1, "version": "0.1.11", "source_id": candidate["commit"],
+            receipt = {"schema": 2, "version": "0.1.11", "source_id": candidate["commit"],
                        "source_archive": archive.name, "source_archive_size": archive.stat().st_size,
                        "source_archive_sha256": agent.digest(archive),
                        "notices_sha256": agent.digest(output / "notices/notices.json"),
-                       "build_source_review": review["metadata"],
-                       "dependency_source_review": dependency_review["metadata"]}
+                       "input_review": review["metadata"]}
             (output / "receipt.json").write_text(json.dumps(receipt))
-            settings = {key: work / key for key in ("checkout", "baseline_notices",
-                "baseline_source_archive", "baseline_arm64_inventory", "baseline_x86_64_inventory")}
+            settings = {key: work / key for key in ("checkout", "current_notices", "input_manifest")}
             helper = mock.Mock()
-            helper.verify_inputs.return_value = (runtimes, candidate["commit"], review,
-                                                 dependency_review)
+            helper.verify_inputs.return_value = (runtimes, candidate["commit"], review)
             with mock.patch.object(agent.importlib.util, "spec_from_file_location") as spec, \
                     mock.patch.object(agent.importlib.util, "module_from_spec", return_value=helper):
                 result = agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
-                self.assertEqual(result[2]["build_source_review"], review["metadata"])
-                self.assertEqual(result[2]["dependency_source_review"],
-                                 dependency_review["metadata"])
+                self.assertEqual(result[2]["input_review"], review["metadata"])
                 self.assertEqual(spec.call_args.args[1], settings["checkout"] / "script/prepare-macos-release-inputs.py")
                 helper.prepare.assert_not_called()
                 helper.package.validated_notices.assert_called_once()
@@ -276,12 +268,12 @@ class AgentPolicyTest(unittest.TestCase):
                 for bad_review in (None, {"sha256": "c" * 64},
                         {**review["metadata"], "reviewed_source_id": "d" * 40},
                         {"sha256": "a" * 64, "source_id": candidate["commit"]}):
-                    receipt["build_source_review"] = bad_review
+                    receipt["input_review"] = bad_review
                     (output / "receipt.json").write_text(json.dumps(receipt))
                     with self.assertRaisesRegex(ValueError, "release input receipt differs"):
                         agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
-                receipt["build_source_review"] = review["metadata"]
-                receipt["dependency_source_review"] = None
+                receipt["input_review"] = review["metadata"]
+                receipt["schema"] = 1
                 (output / "receipt.json").write_text(json.dumps(receipt))
                 with self.assertRaisesRegex(ValueError, "release input receipt differs"):
                     agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
@@ -300,31 +292,21 @@ class SourceReuseTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             inputs.source_claims({"schema": 1, "components": [self.component("")]})
 
-    def test_header_version_change_fails_closed(self):
+    def test_current_header_and_formula_bytes_bind_both_architectures(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "headers.txt"
-            path.write_text("asio 1.38.2\ncpp-httplib 0.54.1\nrapidjson 1.1.0\n"
-                            "vulkan-headers 1.4.357.0\neigen 5.0.1\n")
-            self.assertEqual(inputs.parse_header_versions(path, "arm64")["cpp-httplib"], "0.54.1")
-            path.write_text(path.read_text().replace("0.54.1", "0.53.1"))
-            self.assertEqual(inputs.parse_header_versions(path, "x86_64")["cpp-httplib"], "0.53.1")
-            path.write_text(path.read_text().replace("0.53.1", "0.56.0"))
-            with self.assertRaisesRegex(ValueError, "new source review"):
-                inputs.parse_header_versions(path, "arm64")
-
-    def test_intel_formula_pins_reviewed_source(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "formula.rb"
-            version, checksum = inputs.CPP_HEADER["x86_64"]
-            formula = ("class CppHttplib < Formula\n"
-                       f'  url "https://github.com/yhirose/cpp-httplib/archive/refs/tags/v{version}.tar.gz"\n'
-                       f'  sha256 "{checksum}"\n'
-                       '  license "MIT"\nend\n')
-            path.write_text(formula)
-            self.assertTrue(inputs.verify_cpp_formula(path, "x86_64").endswith("v0.53.1.tar.gz"))
-            path.write_text(formula.replace(checksum, "a" * 64))
-            with self.assertRaisesRegex(ValueError, "formula source"):
-                inputs.verify_cpp_formula(path, "x86_64")
+            path = Path(directory) / "formula.rb"; path.write_text("current reviewed recipe")
+            headers = {name: "9.8.7" for name in inputs.HEADER_INPUT_NAMES}
+            closure = {"formula_inputs": {"formulas": [
+                {"id": f"{name}|{version}", "formula": name, "version": version,
+                 "usage": ["compile-header"], "recipe": {"sha256": inputs.sha256(path)}}
+                for name, version in headers.items()]}}
+            for arch in inputs.package.ARCHES:
+                inputs.verify_reviewed_headers_in_closure(headers, path, closure, arch)
+                with self.assertRaises(ValueError):
+                    inputs.verify_reviewed_headers_in_closure({**headers, "eigen": "changed"}, path, closure, arch)
+            path.write_text("changed recipe")
+            with self.assertRaises(ValueError):
+                inputs.verify_reviewed_headers_in_closure(headers, path, closure, "arm64")
 
 
 if __name__ == "__main__":

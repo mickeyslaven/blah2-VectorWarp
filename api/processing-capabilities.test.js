@@ -1,13 +1,10 @@
 'use strict';
 
 const assert = require('assert/strict');
-const fs = require('fs');
-const path = require('path');
-const yaml = require('js-yaml');
-const {processingCapabilities} = require('./processing-capabilities');
+const {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon} = require('./processing-capabilities');
 const {validateConfig} = require('./config-manager');
 
-const load = name => yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', name), 'utf8'));
+const load = type => require('./config-store').configurationForReceiver(type);
 function coherentPair(name) {
   const config = load(name);
   config.capture.device.array_geometry = {
@@ -22,11 +19,11 @@ function coherentPair(name) {
     covariance_smoothing: .8, diagonal_loading: .001};
   config.process.performance.acceleration = 'cpu';
   config.process.surveillance_fusion = {mode: 'coherent_beam_bank', beams: 12};
-  config.process.bearing = load('config-usrp.yml').process.bearing;
+  config.process.bearing = load('Usrp').process.bearing;
   return config;
 }
 
-for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml']) {
+for (const profile of ['Usrp', 'RspDuo']) {
   const config = coherentPair(profile);
   const result = validateConfig(config);
   assert.equal(result.valid, true, `${profile}: ${result.errors.join('; ')}`);
@@ -44,7 +41,6 @@ for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml']) {
     value => { value.process.surveillance_fusion.mode = 'noise_whitened_beam_bank'; },
     value => { value.process.bearing.enable = true; },
     value => { value.process.bearing.manifold_recorder.enabled = true; value.truth.adsb.enabled = true; },
-    value => { value.process.bearing.frequency_resolved_shadow.enabled = true; }
   ]) {
     const invalid = structuredClone(config); mutate(invalid);
     assert.equal(validateConfig(invalid).valid, false,
@@ -52,7 +48,7 @@ for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml']) {
   }
 }
 
-const noncoherent = coherentPair('config-hackrf.yml');
+const noncoherent = coherentPair('HackRF');
 noncoherent.capture.device.serial = ['0001', '0002'];
 assert.equal(processingCapabilities(noncoherent).coherent, false);
 assert.equal(validateConfig(noncoherent).valid, false,
@@ -61,23 +57,23 @@ noncoherent.process.surveillance_fusion.mode = 'noncoherent';
 assert.equal(validateConfig(noncoherent).valid, false,
   'A noncoherent adapter must not silently reinterpret array_eigenbeam as a dedicated reference');
 
-const replay = coherentPair('config-usrp.yml');
+const replay = coherentPair('Usrp');
 replay.capture.replay = {...replay.capture.replay, state: true, channel_count: 2,
   reference_mode: 'array_eigenbeam', reference_channels: [0, 1], surveillance_channels: [0, 1]};
 assert.equal(validateConfig(replay).valid, true);
-const contradictoryDedicated = load('config-usrp.yml');
+const contradictoryDedicated = load('Usrp');
 contradictoryDedicated.capture.replay = {...contradictoryDedicated.capture.replay,
   state: true, channel_count: 2, reference_mode: 'dedicated', reference_channel: 0,
   reference_channels: [1], surveillance_channels: [1]};
 assert.equal(processingCapabilities(contradictoryDedicated).coherent, false);
 assert.equal(validateConfig(contradictoryDedicated).valid, false,
   'Dedicated replay role declarations must have one canonical interpretation');
-const unconfigured = load('config-usrp.yml');
+const unconfigured = load('Usrp');
 assert.equal(processingCapabilities(unconfigured).coherentSurveillance, false,
   'A dedicated reference plus one surveillance input cannot form a beam bank');
 
-for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml',
-  'config-hackrf.yml', 'config-kraken.yml']) {
+for (const profile of ['Usrp', 'RspDuo',
+  'HackRF', 'Kraken']) {
   for (const acceleration of ['cpu', 'auto', 'gpu']) {
     const config = load(profile);
     if (config.capture.device.type === 'HackRF') config.capture.device.serial = ['0001', '0002'];
@@ -107,4 +103,46 @@ for (const profile of ['config-usrp.yml', 'config-pi4-rspduo.yml',
   assert.deepEqual(array.surveillanceChannels, [0, 1, 2]);
   assert.deepEqual(recorded.capture.replay.reference_channels, [2, 0, 1]);
 }
-console.log('Processing capabilities: coherent pairs and replay accepted; topology, geometry, transport, gain and GPU prerequisites fail closed.');
+// Geometry admission is shared by the API validator and browser. Preserve the
+// native contract's physical channel order, planar/radial/angular tolerances,
+// and rejection of a label that does not describe the actual coordinates.
+for (const count of [3, 4, 5, 8]) {
+  const channels = Array.from({length: count}, (_, channel) => channel);
+  for (const direction of [-1, 1]) {
+    const geometry = {shape: 'regular_polygon', elements: channels.map(daq_channel => {
+      const phase = direction * 2 * Math.PI * daq_channel / count + .37;
+      return {daq_channel, position: [2 + .5 * Math.cos(phase), -3 + .5 * Math.sin(phase), .8]};
+    })};
+    assert.equal(regularSurveillancePolygon(geometry, channels), true);
+    assert.equal(regularSurveillancePolygon(geometry, [...channels].reverse()), true);
+    const near = structuredClone(geometry); near.elements[0].position[0] += 1e-7;
+    assert.equal(regularSurveillancePolygon(near, channels), true);
+    for (const mutate of [
+      value => { value.shape = 'custom'; },
+      value => { value.elements.pop(); },
+      value => { value.elements[0].position[0] += .001; },
+      value => { value.elements[0].position[2] += .001; },
+      value => { value.elements[0].position[0] = Infinity; },
+      value => { value.elements[0].position = value.elements[1].position; }
+    ]) {
+      const invalid = structuredClone(geometry); mutate(invalid);
+      assert.equal(regularSurveillancePolygon(invalid, channels), false);
+    }
+    assert.equal(regularSurveillancePolygon(geometry, channels.slice(0, 2)), false);
+    const topology = {referenceMode: 'array_eigenbeam', coherent: true,
+      referenceChannels: channels, surveillanceChannels: channels, channelCount: count};
+    assert.equal(residentReferenceCompatible(topology), true);
+    assert.equal(residentReferenceCompatible({...topology, coherent: false}), false);
+    assert.equal(residentReferenceCompatible({...topology, referenceChannels: channels.slice(1)}), false);
+    assert.equal(residentReferenceCompatible({...topology, surveillanceChannels: [...channels].reverse()}), false);
+  }
+}
+assert.equal(regularSurveillancePolygon(undefined, []), false);
+for (const reference of [0, 2]) {
+  const topology = {referenceMode: 'dedicated', coherent: false, channelCount: 3,
+    referenceChannels: [reference], surveillanceChannels: [0, 1, 2].filter(channel => channel !== reference)};
+  assert.equal(residentReferenceCompatible(topology), true);
+  assert.equal(residentReferenceCompatible({...topology, surveillanceChannels: [reference]}), false);
+  assert.equal(residentReferenceCompatible({...topology, surveillanceChannels: []}), false);
+}
+console.log('Processing capabilities: topology, shared admission geometry, transport, gain and GPU prerequisites fail closed.');

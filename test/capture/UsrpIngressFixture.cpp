@@ -69,6 +69,7 @@ int main() {
         assert(std::string(health["recovery"]["discardedBlocks"].GetString()) == "1");
         assert(std::string(health["recovery"]["discardedSamplesPerChannel"].GetString()) == "21");
         const auto position = radio.sample_time_position();
+        assert(radio.recording_applied_gain_db() == std::vector<double>({10,20}));
         assert(position.available && position.epoch == 1 &&
           position.nextSample == 21 && position.sampleRate == rate &&
           position.deviceTimeEpochTick == static_cast<int64_t>(rate * 20) + 21);
@@ -309,10 +310,15 @@ int main() {
       assert(!replay.read(replayed));
       assert(replay.provenance().contractValid && !replay.provenance().decisionGrade &&
         !replay.provenance().exactTime && replay.provenance().sourceFirstSample == 0);
+      assert(replay.provenance().acquisitionIntegrityValid &&
+        replay.provenance().gainProvenance == "sample-aligned-readback" &&
+        replay.provenance().perChannelGainDb == std::vector<double>({10,20}) &&
+        replay.provenance().frames.size() == 2);
       std::filesystem::remove(path);
       std::filesystem::remove(path + ".provenance.json");
       std::filesystem::remove(status.file);
       std::filesystem::remove(status.file + ".provenance.json");
+      std::filesystem::remove(status.file + ".acquisition.json");
       std::filesystem::remove(directory);
     }
     std::cout << "USRP actual receive-loop fixtures passed (fake UHD; no hardware opened)\n";

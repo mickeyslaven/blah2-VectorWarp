@@ -40,12 +40,15 @@ source in `tracker_birth`. Detector maps, detections, CFAR PFA, M-of-N confirmat
 and other lanes remain governed by their existing settings. This field supports
 externally calibrated values; setting it is not itself a claim of calibration.
 
+Channel names in this public note use portable aliases; substitute the enabled
+runtime lane ID when configuring an installation.
+
 For the first HomePortal measurement, keep all birth thresholds at their
-existing values, select `WPXI-RF23`, and use a four-CPI
+existing values, select `TX-C-RF23`, and use a four-CPI
 observer with diagonal bootstrap, zero delay/Doppler motion bins, the existing
 524,288-cell cap, a 100 ms work limit and at least 400 ms offer spacing. This is
 a bounded performance/lineage qualification setting, not an accepted sensitivity
-change. The observer may latch off if the existing 2 ms producer-copy or work
+change. The observer may latch off if its configured producer-copy or work
 deadline cannot be met; inspect its counters and production cadence before
 increasing any algorithmic work. At CPI rates faster than the spacing, dropped
 offers deliberately prevent a multi-CPI window from warming. Do not claim a
@@ -58,7 +61,7 @@ process:
   detection:
     live_temporal_shadow:
       enabled: true
-      illuminator_id: WPXI-RF23
+      illuminator_id: TX-C-RF23
       bootstrap_covariance: diagonal
       max_cpis: 4
       delay_motion_bins: 0
@@ -71,7 +74,7 @@ process:
 ```
 
 Apply only this nested setting to the existing configuration. Keep all current
-lane settings, including the absent WPXI birth override (global 7 dB), intact.
+lane settings, including the absent TX-C birth override (global 7 dB), intact.
 The 301-by-631, one-channel geometry has a conservative scoring memory bound
 of 79,023,920 bytes, below the unchanged 256 MiB hard ceiling.
 
@@ -137,8 +140,8 @@ The path must be absolute with an existing parent directory. Creation is
 exclusive: an existing file is preserved and the export latches off. Default
 limits are 512 MiB and 16 frames; configurable limits are 1–1,024 MiB and 1–128
 frames. Creation reserves the entire configured byte cap above 128 GiB of free
-disk, and every record rechecks the 128 GiB reserve. The existing 2 ms producer
-copy cutoff and cooperative worker budget remain in force. Reaching a cap
+disk, and every record rechecks the 128 GiB reserve. The configured producer
+copy limits and cooperative worker budget remain in force. Reaching a cap
 stops collection; errors disable export, never detection/tracking. Failed or
 partial artifacts remain available for inspection and are not deleted.
 
@@ -174,13 +177,19 @@ storage latency, radar cadence and shutdown before enabling collection.
   (189,931 cells, one surveillance channel) and HP 601×511 (307,111 cells,
   five surveillance channels). Unit tests verify admission and byte accounting
   for both. This is a memory admission check, not target performance acceptance.
-- Offers are spaced at least four times the configured 1–100 ms work budget;
-  defaults are 100 ms spacing and 20 ms work. Bootstrap and temporal loops check
-  a cooperative deadline every 32 cells. A copy exceeding 2 ms, a worker budget
+- The worker budget is 1–150 ms. `min_interval_ms` is an overload backoff, not
+  mandatory spacing between successful idle-worker offers; defaults are 100 ms
+  backoff and 20 ms work. Bootstrap and temporal loops check
+  a cooperative deadline every 32 cells. Copies use the configured soft limit,
+  capped to 1% of the CPI, and a hard limit capped to 2% of the CPI or 10 ms. A
+  three-overrun soft streak or one hard overrun stops the observer; a worker budget
   failure, invalid numeric input or worker exception latches off the observer.
   A single overrun can occur before the latch: these are cooperative safeguards,
   not hard realtime scheduling guarantees. Allocation, metrics and OS scheduling
-  still require target measurement before enabling the setting.
+  still require target measurement before enabling the setting. `max_copy_ms`
+  accepts 0.001–10 ms and defaults to 2 ms. With the setting omitted, the CPI
+  caps intentionally tighten the soft limit below 200 ms CPIs and the hard
+  limit below 500 ms CPIs.
 - Exact half-open capture intervals must be contiguous, equal in duration, and
   sequence-consecutive. Epoch, capture-processing generation, tuning or rate
   changes reset the banks. Gaps, duplicates, backpressure/pacing drops, invalid

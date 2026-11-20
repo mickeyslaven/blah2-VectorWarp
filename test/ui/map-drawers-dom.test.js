@@ -6,6 +6,7 @@ const vm = require('vm');
 const {JSDOM} = require('./jsdom');
 
 const source = fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8');
+const display = fs.readFileSync(require.resolve('../../html/js/common.js'), 'utf8');
 assert.match(source, /locationToScreenPoint\(LngLat\.convert\(\[longitude, latitude\]\), null\)/,
   'radar ellipses project on a flat reference plane instead of terrain');
 assert.doesNotMatch(source, /location-radar-track-slice|location-radar-track-ribs|sliceAltitudes/,
@@ -18,11 +19,11 @@ assert.match(source, /setPaintProperty\('vectorwarp-basemap', 'raster-opacity', 
   'aerial mode never exposes mismatched street tiles beyond the local pack');
 assert.match(source, /_vectorwarpBackgroundSyncPending[\s\S]*requestAnimationFrame/,
   'rapid background changes coalesce into one paint-only update per animation frame');
-assert.match(source, /maxTileCacheZoomLevels: 8[\s\S]*maxTileCacheSize: 192/,
+assert.match(display, /maxTileCacheZoomLevels: 8[\s\S]*maxTileCacheSize: 192/,
   'map retains a bounded neighboring tile cache while rotating');
 assert.match(source, /if \(onScreen\) modelInstances\.push/,
   '3D renderer culls offscreen aircraft during map interaction');
-assert.match(source, /NavigationControl[\s\S]*showCompass: true, showZoom: false, visualizePitch: true/,
+assert.match(display, /NavigationControl[\s\S]*showCompass: true, showZoom: false, visualizePitch: true/,
   'map exposes a lightweight bearing and pitch compass');
 
 const dom = new JSDOM(`<!doctype html><body data-insight-view="locations">
@@ -35,11 +36,16 @@ const context = vm.createContext({
   addFullscreenControl: () => {}, addRecordingControl: () => {},
   liveApiUrl: path => path, radarPresentationUrl: path => path,
   getRadarRuntimeConfig: async () => ({location: {rx: {}, tx: {}}}),
+  getIlluminatorContext: async () => ({enabled: false, id: null, illuminators: []}),
+  fetchCachedJsonResource: async url => (await context.fetchStatusResource(url)).text().then(JSON.parse),
   startRadarUpdates: callback => { refresh = callback; return {stop() {}}; },
   fetchStatusResource: async url => ({ok: true, status: 200, text: async () =>
     JSON.stringify(url.includes('/tracker') ? {data: []} : {})})
 });
+require('./display-fixture')(context);
 dom.window.matchMedia = () => ({matches: true, addEventListener() {}, removeEventListener() {}});
+vm.runInContext(fs.readFileSync(require.resolve('../../html/js/locations-map-layers.js'), 'utf8'),
+  context, {filename: 'locations-map-layers.js'});
 vm.runInContext(source, context,
   {filename: 'insights.js'});
 

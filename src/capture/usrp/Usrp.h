@@ -92,6 +92,7 @@ public:
   std::string startup_receipt_json() const;
   std::string health_json() const;
   std::string recording_provenance_json() const override;
+  std::vector<double> recording_applied_gain_db() const override;
 
 
 };

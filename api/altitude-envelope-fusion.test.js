@@ -8,7 +8,7 @@ const C=299792.458;
 const receiver={latitude:40.4421967375442,longitude:-80.05656014497772,altitude:349.65};
 const towerA={latitude:40.495278,longitude:-80.004444,altitude:691.8};
 const towerB={latitude:40.46325,longitude:-80.0043056,altitude:615};
-const definitions=[['WPGH',509e6,towerA],['WPNT',515e6,towerA],['WPXI',527e6,towerB]].map(
+const definitions=[['TX-A',509e6,towerA],['TX-B',515e6,towerA],['TX-C',527e6,towerB]].map(
   ([id,frequency_hz,transmitter])=>({id,frequency_hz,transmitter,enabled:true,output_sample_rate_hz:6.144e6}));
 const config={location:{rx:receiver},process:{data:{cpi:1},multi_illuminator:{enabled:true,illuminators:definitions},
   tracker:{initiate:{M:3,N:5}}}};
@@ -129,6 +129,15 @@ assert.equal(tracked.tracks.length,0);assert.equal(tracked.operational_localizat
 const replay=fuser.update(frames(2));
 assert.equal(replay,tracked,'Duplicate CPI cannot increase temporal evidence');
 const old=fuser.update(frames(1));assert.equal(old,tracked);
+const receiptAt=fuser.lastReceiptAt, realNow=Date.now;
+try {
+  Date.now=()=>receiptAt+3000;
+  assert.ok(fuser.update(frames(2)).position_candidates.every(c=>c.state==='ENVELOPE_STALE'),
+    'Replaying the latest accepted CPI cannot revive stale envelope support');
+  assert.ok(fuser.update(frames(1)).position_candidates.every(c=>c.state==='ENVELOPE_STALE'),
+    'Replaying an older accepted CPI cannot revive stale envelope support');
+  assert.equal(fuser.lastReceiptAt,receiptAt,'Duplicate evidence cannot refresh its receipt age');
+} finally { Date.now=realNow; }
 const stale=fuser.snapshot(fuser.lastReceiptAt+3000);
 assert.ok(stale.position_candidates.every(c=>c.state==='ENVELOPE_STALE'));
 assert.equal(fuser.snapshot(fuser.lastReceiptAt+11000).position_candidates.length,0);

@@ -1,0 +1,12 @@
+{
+  "schema": "vectorwarp-pre-soak-policy-v1",
+  "status": "awaiting-approved-measured-bounds",
+  "minimumEchoRetention": null,
+  "minimumRecordedNegativeSeconds": null,
+  "minimumEvaluatedCells": null,
+  "maximumObservedFalseAlarmFraction": null,
+  "maximumPfaUpperBound": null,
+  "minimumPfaConfidence": null,
+  "maximumFalseTracksPerHour": null,
+  "note": "Fail closed. Set and approve these bounds before collecting the exact-candidate physical replay evidence. Synthetic nulls do not estimate operational PFA."
+}

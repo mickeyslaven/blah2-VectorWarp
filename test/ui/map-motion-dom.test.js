@@ -24,7 +24,7 @@ assert.match(source, /render\(modelInstances, \{fast: !settled\}\)/,
   'camera motion uses the lightweight 3D paint path and restores full detail when settled');
 assert.match(source, /const endMapTransform = \(\) => layer\._schedulePositionUpdate\(true\)/,
   'camera movement always ends with an exact settled overlay pass');
-assert.match(page, /insights\.js\?v=map-motion-2/,
+assert.match(page, /insights\.js\?v=ui-consistency-30/,
   'the map requests the corrected motion renderer instead of a cached script');
 assert.match(page, /map-3d-models\.js\?v=rotation-performance-2/,
   'the map requests the lightweight moving 3D renderer');

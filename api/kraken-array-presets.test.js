@@ -1,18 +1,45 @@
 'use strict';
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
-const yaml = require('js-yaml');
 const geometryUi = require('../html/js/kraken_geometry');
 const {evaluateKrakenArray} = require('./kraken-array');
 const {validateConfig} = require('./config-manager');
 const {getSettingsMapping} = require('./receiver-manager');
 
-const base = yaml.load(fs.readFileSync(
-  path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
+const base = require('./config-store').configurationForReceiver('Kraken');
 const clone = value => JSON.parse(JSON.stringify(value));
 const C = 299792458;
+
+for (const depth of [2, 4, 8]) {
+  const temporal = clone(base);
+  temporal.process.detection.integration_cpis = 2;
+  temporal.process.detection.integration_motion_bins = 1;
+  Object.assign(temporal.process.detection.track_before_detect,
+    {enable: depth > 2, max_cpis: Math.max(4, depth), fractional_delay: depth > 2});
+  temporal.process.tracker.initiate.N = 1 + depth * (temporal.process.tracker.initiate.M - 1);
+  temporal.process.tracker.delete = Math.max(temporal.process.tracker.delete, depth - 1);
+  const requested = clone(temporal.process.detection);
+  for (const change of [
+    config => geometryUi.applyPreset(config, 'cross4ref'),
+    config => geometryUi.applyPreset(config, 'ula5'),
+    config => geometryUi.applyChannelRole(config, 4, 'dedicated_reference'),
+    config => geometryUi.applyReferenceMode(config, 'dedicated')
+  ]) {
+    const config = clone(temporal);
+    geometryUi.applyPreset(config, 'pentagon5');
+    config.process.tracker.beam_tolerance = 1;
+    change(config);
+    assert.deepEqual(config.process.detection, requested,
+      `${depth}-CPI detector must survive every topology-edit helper call site`);
+    assert.equal(config.process.tracker.beam_tolerance, undefined,
+      'incompatible beam gate is removed explicitly with coherent array features');
+    assert.deepEqual(config.process.tracker, temporal.process.tracker,
+      'reference topology preserves canonical confirmation/recovery policy');
+    assert.deepEqual(config.process.performance, temporal.process.performance,
+      'reference topology preserves the selected backend policy');
+    assert.equal(validateConfig(config).valid, true, validateConfig(config).errors.join('; '));
+  }
+}
 
 for (const preset of geometryUi.layoutPresets()) {
   const config = clone(base);

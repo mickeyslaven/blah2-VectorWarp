@@ -1,5 +1,6 @@
 #pragma once
 #include "data/IqData.h"
+#include "data/meta/StreamProfile.h"
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
@@ -14,15 +15,24 @@ struct UsrpIngressTiming {
   Clock::time_point previousReturn{};
   std::uint64_t blocks = 0, samples = 0;
   double maxServiceGapMs = 0, maxQueueWaitMs = 0, maxQueueWriteMs = 0;
+  blah2::stream_profile::Receiver profile;
+  Clock::time_point receiveStart{};
+  double serviceGapMs=0,receiveMs=0;
 
   static double milliseconds(Clock::time_point start, Clock::time_point end) {
     return std::chrono::duration<double, std::milli>(end - start).count();
   }
   void before_receive(Clock::time_point now = Clock::now()) {
-    if (previousReturn != Clock::time_point{})
-      maxServiceGapMs = std::max(maxServiceGapMs, milliseconds(previousReturn, now));
+    if (previousReturn != Clock::time_point{}) {
+      serviceGapMs=milliseconds(previousReturn, now);
+      maxServiceGapMs = std::max(maxServiceGapMs, serviceGapMs);
+    }
+    if(profile.enabled())receiveStart=now;
   }
-  void received(Clock::time_point now = Clock::now()) { previousReturn = now; }
+  void received(Clock::time_point now = Clock::now()) {
+    previousReturn = now;
+    if(profile.enabled())receiveMs=milliseconds(receiveStart,now);
+  }
   std::string summary() const {
     std::ostringstream out;
     out << std::fixed << std::setprecision(3)
@@ -57,11 +67,39 @@ void append_usrp_block_committed(IqData& first, IqData& second,
       std::to_string(count) + "). Input stopped before dropping samples. "
       "Check processing load, recording speed and host stalls; reduce the workload "
       "if processing cannot keep up, then restart.");
+  const bool profiling=timing.profile.enabled(),sampled=timing.profile.sample();
+  blah2::stream_profile::ReceiveRecord profile;
+  auto probeStart=profiling?UsrpIngressTiming::Clock::now():UsrpIngressTiming::Clock::time_point{};
+  profile.begin=blah2::stream_profile::Activity::capture(sampled);
+  const auto appendStart=profiling?UsrpIngressTiming::Clock::now():UsrpIngressTiming::Clock::time_point{};
+  profile.queued=size;profile.capacity=first.get_n();profile.count=count;
+  profile.accepted=timing.samples;profile.sampled=sampled;
   first.append_unlocked(a, count);
+  const auto firstEnd=profiling?UsrpIngressTiming::Clock::now():UsrpIngressTiming::Clock::time_point{};
   second.append_unlocked(b, count);
+  const auto secondEnd=profiling?UsrpIngressTiming::Clock::now():UsrpIngressTiming::Clock::time_point{};
   commit();
+  const auto writeEnd=UsrpIngressTiming::Clock::now();
+  profile.end=blah2::stream_profile::Activity::capture(sampled);
+  const auto probeEnd=profiling?UsrpIngressTiming::Clock::now():UsrpIngressTiming::Clock::time_point{};
+  // Commit stays atomic under both queue locks. Diagnostic aggregation and
+  // eventual formatting never extend that paired critical section.
+  secondLock.unlock();firstLock.unlock();
   timing.maxQueueWriteMs = std::max(timing.maxQueueWriteMs,
-    UsrpIngressTiming::milliseconds(locked, UsrpIngressTiming::Clock::now()));
+    UsrpIngressTiming::milliseconds(locked, writeEnd));
+  if(profiling){
+    profile.when=blah2::stream_profile::micros(writeEnd);
+    profile.phases={timing.serviceGapMs,timing.receiveMs,
+      UsrpIngressTiming::milliseconds(start,locked),
+      // Include validation/setup and the first probe in append A's wall
+      // segment, so the three write segments exactly cover locked->writeEnd.
+      // Otherwise a deschedule before appendStart could disappear from tails.
+      UsrpIngressTiming::milliseconds(locked,firstEnd),
+      UsrpIngressTiming::milliseconds(firstEnd,secondEnd),
+      UsrpIngressTiming::milliseconds(secondEnd,writeEnd)};
+    timing.profile.record(profile,UsrpIngressTiming::milliseconds(probeStart,appendStart)+
+      UsrpIngressTiming::milliseconds(writeEnd,probeEnd));
+  }
   if (count) { ++timing.blocks; timing.samples += count; }
 }
 

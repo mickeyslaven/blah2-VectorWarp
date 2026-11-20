@@ -15,6 +15,8 @@ import sys
 import tempfile
 import time
 import urllib.request
+from urllib.parse import urlsplit
+import shlex
 
 
 DEFAULT_STATE = Path("/var/lib/home-portal/vectorwarp-two-node-soak")
@@ -27,36 +29,100 @@ IDENTITY_PROBE = Path(__file__).with_name("vectorwarp_soak_identity.py")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate binding key")
+        result[key] = value
+    return result
+
+
 def load_binding(filename: str) -> dict:
     """An operator-reviewed binding is mandatory for release acceptance."""
-    binding = json.loads(Path(filename).read_text())
-    if binding.get("schema") != 1 or set(binding.get("nodes", {})) != {"homeportal", "hp"}:
-        raise ValueError("release binding must contain both live nodes")
-    if not re.fullmatch(r"[0-9a-f]{40}", binding.get("sourceCommit", "")):
+    raw = Path(filename).read_bytes()
+    if len(raw) > 32768:
+        raise ValueError("oversized release binding")
+    binding = json.loads(raw, object_pairs_hook=unique_object)
+    if not isinstance(binding, dict):
+        raise ValueError("release binding must be an object")
+    nodes = binding.get("nodes")
+    if binding.get("schema") != 3 or not isinstance(nodes, dict) or not nodes:
+        raise ValueError("release requires schema 3 reviewed node bindings; start a fresh cohort")
+    if not counter(binding.get("monitorMinimumFreeBytes")) or binding["monitorMinimumFreeBytes"] == 0:
+        raise ValueError("release binding requires a positive monitor disk reserve")
+    if not isinstance(binding.get("sourceCommit"), str) or not re.fullmatch(r"[0-9a-f]{40}", binding["sourceCommit"]):
         raise ValueError("release binding requires a full source commit")
-    for node in binding["nodes"].values():
-        for key in ("artifactSha256", "configSha256"):
-            if not SHA256.fullmatch(node.get(key, "")):
+    if not isinstance(binding.get("regressionPolicySha256"), str) or not SHA256.fullmatch(binding["regressionPolicySha256"]):
+        raise ValueError("release binding requires the reviewed regression policy digest")
+    for name, node in nodes.items():
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name) or not isinstance(node, dict):
+            raise ValueError("invalid node binding")
+        if not isinstance(node.get("endpoint"), str):
+            raise ValueError("node endpoint must be an HTTP origin")
+        endpoint = urlsplit(node["endpoint"])
+        if (endpoint.scheme not in ("http", "https") or not endpoint.hostname or
+                endpoint.username or endpoint.password or endpoint.query or endpoint.fragment or
+                endpoint.path not in ("", "/")):
+            raise ValueError("node endpoint must be an HTTP origin")
+        destination = node.get("ssh")
+        if "ssh" not in node or (destination is not None and (not isinstance(destination, str) or
+                not re.fullmatch(r"[A-Za-z0-9_.@:\[\]-]+", destination) or destination.startswith("-"))):
+            raise ValueError("node requires an explicit local/null or safe SSH identity probe")
+        disk = node.get("disk", {})
+        if (not isinstance(disk, dict) or not isinstance(disk.get("path"), str) or
+                not disk["path"].startswith("/") or "\x00" in disk["path"] or
+                not counter(disk.get("minimumFreeBytes")) or disk["minimumFreeBytes"] == 0):
+            raise ValueError("node requires a reviewed disk path and positive reserve")
+        qualifications = node.get("qualifications", {})
+        if (not isinstance(qualifications, dict) or "radar-behavior" not in qualifications or
+                any(not re.fullmatch(r"[a-z][a-z0-9-]*", key) or not isinstance(value, str) or
+                    not SHA256.fullmatch(value) for key, value in qualifications.items())):
+            raise ValueError("node requires exact reviewed qualification evidence")
+        if not finite_number(node.get("maximumCadenceMs"), 1) or node["maximumCadenceMs"] > 600:
+            raise ValueError("release binding requires a reviewed cadence limit of at most 600 ms")
+        for key in ("acceleration", "clutterAcceleration"):
+            if node.get(key) not in ("cpu", "vulkan", "vulkan-resident"):
+                raise ValueError(f"release binding requires an explicit {key} backend")
+        if any(node[key] != "cpu" for key in ("acceleration", "clutterAcceleration")) and \
+                "physical-gpu" not in qualifications:
+            raise ValueError("GPU stages require physical GPU qualification")
+        for key in ("artifactSha256", "configSha256", "hostIdSha256", "packageSha256"):
+            if not isinstance(node.get(key), str) or not SHA256.fullmatch(node[key]):
                 raise ValueError(f"release binding requires {key}")
         if not isinstance(node.get("release"), str) or not node["release"].startswith("/"):
             raise ValueError("release binding requires the resolved artifact path")
+        if not isinstance(node.get("packageFilename"), str) or not re.fullmatch(r"vectorwarp[-_][A-Za-z0-9_.+-]+\.(deb|rpm)", node["packageFilename"]):
+            raise ValueError("release binding requires the exact candidate package filename")
         executables = node.get("runtimeExecutables", {})
-        if set(executables) != {"vectorwarp-api.service", "vectorwarp-processor.service"}:
+        if not isinstance(executables, dict) or set(executables) != {"vectorwarp-api.service", "vectorwarp-processor.service"}:
             raise ValueError("release binding requires both running executables")
         for executable in executables.values():
-            if not SHA256.fullmatch(executable.get("sha256", "")) or not executable.get("path"):
+            if (not isinstance(executable, dict) or not isinstance(executable.get("sha256"), str) or
+                    not SHA256.fullmatch(executable["sha256"]) or not isinstance(executable.get("path"), str) or
+                    not executable["path"].startswith("/")):
                 raise ValueError("invalid runtime executable binding")
+        modules = node.get("runtimeModules", {})
+        if not isinstance(modules, dict) or set(modules) != set(executables):
+            raise ValueError("release binding requires loaded modules for both services")
+        for group in modules.values():
+            if not isinstance(group, dict) or any(
+                    not str(path).startswith(node["release"] + "/bin/") or
+                    not SHA256.fullmatch(digest) for path, digest in group.items()):
+                raise ValueError("invalid loaded module binding")
+    if len({node["hostIdSha256"] for node in nodes.values()}) != len(nodes):
+        raise ValueError("release binding requires distinct measured hosts")
     return binding
 
 
-def measured_process(ssh_destination: str | None = None) -> dict:
+def measured_process(ssh_destination: str | None = None, disk_path: str = "/var/lib") -> dict:
     if ssh_destination is None:
-        args, payload = [sys.executable, str(IDENTITY_PROBE)], None
+        args, payload = [sys.executable, str(IDENTITY_PROBE), "--disk-path", disk_path], None
     else:
         if not re.fullmatch(r"[A-Za-z0-9_.@:\[\]-]+", ssh_destination) or ssh_destination.startswith("-"):
             raise ValueError("invalid identity SSH destination")
         args = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--",
-                ssh_destination, "python3", "-"]
+                ssh_destination, "python3 - --disk-path " + shlex.quote(disk_path)]
         payload = IDENTITY_PROBE.read_text()
     result = subprocess.run(args, input=payload, capture_output=True, text=True,
                             timeout=45, check=True)
@@ -71,13 +137,51 @@ def verify_binding(name: str, status: dict, process: dict, binding: dict) -> lis
     expected = binding["nodes"][name]
     if status.get("build", {}).get("commit") != binding["sourceCommit"]:
         failures.append(f"{name}:source-binding")
-    for field in ("release", "artifactSha256", "configSha256", "runtimeExecutables"):
+    for field in ("release", "artifactSha256", "configSha256", "hostIdSha256",
+                  "runtimeExecutables", "runtimeModules"):
         if process.get(field) != expected[field]:
             failures.append(f"{name}:artifact-binding:{field}")
     if any(status.get(key) != expected["configSha256"]
            for key in ("loadedRevision", "configRevision")):
         failures.append(f"{name}:config-binding")
+    disk = process.get("disk", {})
+    if (disk.get("path") != expected["disk"]["path"] or
+            not counter(disk.get("freeBytes")) or
+            disk["freeBytes"] < expected["disk"]["minimumFreeBytes"]):
+        failures.append(f"{name}:disk-reserve")
     return failures
+
+
+def verify_regression(receipt: dict, binding_receipt: dict, now: float,
+                      cohort_epoch: float) -> list[str]:
+    """External evaluation owns pass selection/statistics; never invent a policy.
+
+    ADS-B-derived metrics enter only this offline acceptance receipt, never the
+    processor. The reviewed policy and evaluator evidence are cryptographically
+    tied to every declared package/config/qualification and the observed cohort.
+    """
+    valid = (receipt.get("schema") == 1 and
+             receipt.get("bindingSha256") == binding_receipt["sha256"] and
+             receipt.get("policySha256") == binding_receipt["expected"]["regressionPolicySha256"] and
+             isinstance(receipt.get("nodes"), dict) and
+             set(receipt["nodes"]) == set(binding_receipt["expected"]["nodes"]) and
+             all(receipt["nodes"][name].get("qualifications") == node["qualifications"]
+                 for name, node in binding_receipt["expected"]["nodes"].items()
+                 if isinstance(receipt["nodes"][name], dict)) and
+             all(isinstance(node, dict) and all(counter(node.get(key))
+                 for key in ("retiredCpis", "retiredSamples")) for node in receipt["nodes"].values()) and
+             SHA256.fullmatch(receipt.get("evidenceSha256", "")) and
+             finite_number(receipt.get("evaluationStartEpoch")) and
+             finite_number(receipt.get("evaluatedThroughEpoch")) and
+             receipt["evaluationStartEpoch"] <= cohort_epoch and
+             receipt["evaluationStartEpoch"] <= receipt["evaluatedThroughEpoch"] and
+             0 <= now - receipt["evaluatedThroughEpoch"] <= DEFAULT_MAX_SAMPLE_GAP_SECONDS and
+             type(receipt.get("regressionDetected")) is bool)
+    if not valid:
+        return ["soak:regression-evidence-invalid"]
+    if any(node[key] for node in receipt["nodes"].values() for key in ("retiredCpis", "retiredSamples")):
+        return ["soak:regression-retired-work"]
+    return ["soak:regression-detected"] if receipt["regressionDetected"] else []
 
 
 def fetch(url: str) -> dict:
@@ -184,7 +288,7 @@ def compact_timing(timing: dict) -> dict:
         "captureBoundaryDiscardedSamples", "captureStopDiscardedSamples",
         "gpu_resident_ready", "output_radar_data", "multi_capture_prepare",
         "multi_channelizer_wall", "multi_illuminator_radar", "multi_serialize",
-        "multi_output", "multi_pipeline_advance",
+        "multi_output", "multi_pipeline_advance", "processingCycle",
     }
     return {key: timing.get(key) for key in retained if key in timing}
 
@@ -198,7 +302,10 @@ def node_identity(status: dict, process: dict) -> dict:
         "release": process.get("release"),
         "bootId": process.get("bootId"),
         "artifactSha256": process.get("artifactSha256"),
+        "hostIdSha256": process.get("hostIdSha256"),
         "runtimeExecutables": process.get("runtimeExecutables"),
+        "runtimeModules": process.get("runtimeModules"),
+        "runtimeChildren": process.get("runtimeChildren"),
         "units": {name: {key: values.get(key) for key in
                          ("MainPID", "NRestarts", "ExecMainStartTimestampMonotonic")}
                   for name, values in process.get("units", {}).items()},
@@ -207,7 +314,7 @@ def node_identity(status: dict, process: dict) -> dict:
 
 def evaluate(name: str, status: dict, timing: dict, process: dict,
              previous: dict | None, acceleration: str,
-             clutter: str | None = None) -> tuple[list[str], dict]:
+             clutter: str | None = None, maximum_cadence_ms: float = 600) -> tuple[list[str], dict]:
     failures = []
     now_ms = time.time() * 1000
     frame = status.get("lastFrameAt")
@@ -234,6 +341,10 @@ def evaluate(name: str, status: dict, timing: dict, process: dict,
         failures.append(f"{name}:capture-backlog")
     if timing.get("inputDiscontinuity") is True or timing.get("captureTerminal") is True:
         failures.append(f"{name}:capture-discontinuity")
+    capture_epoch = timing.get("captureEpoch")
+    if ("captureEpoch" in timing and not counter(capture_epoch)) or (
+            previous and previous.get("captureEpoch") != capture_epoch):
+        failures.append(f"{name}:capture-epoch-reset")
 
     counters = {
         "drops": numeric_list(timing.get("captureDroppedSamples")),
@@ -263,7 +374,7 @@ def evaluate(name: str, status: dict, timing: dict, process: dict,
                     failures.append(f"{name}:cpi-not-advancing")
                 elif elapsed > 0:
                     cadence_ms = 1000 * elapsed / advancement
-                    if cadence_ms > 600:
+                    if cadence_ms > maximum_cadence_ms:
                         failures.append(f"{name}:cadence")
                 if elapsed <= 0:
                     failures.append(f"{name}:invalid-observation-clock")
@@ -286,6 +397,7 @@ def evaluate(name: str, status: dict, timing: dict, process: dict,
 
     observation = {
         "epoch": time.time(), "identity": identity, "nCpi": timing.get("nCpi"),
+        "captureEpoch": capture_epoch,
         "counters": counters, "advancement": advancement,
         "cadenceMs": round(cadence_ms, 3) if cadence_ms is not None else None,
         "restarted": restarted,
@@ -318,7 +430,7 @@ def advance_acceptance(started: dict, sample: dict,
     # A restart/loss/counter discontinuity anywhere in the cohort invalidates
     # its zero-loss startup claim, even after that row leaves the bounded log.
     startup_failures.update(failure for failure in failures if
-                           "capture-" in failure or "-binding" in failure or
+                           "capture-" in failure or "-binding" in failure or "regression" in failure or
                            failure.endswith("process-restarted"))
     continuing = (prior and prior.get("policy") == policy and
                   prior.get("cleanSinceEpoch") is not None and sample["healthy"])
@@ -342,10 +454,12 @@ def summarize(lines: list[str], started: dict, sample: dict) -> dict:
     binding = started.get("releaseBinding")
     release_accepted = bool(binding and acceptance.get("startupAccepted") and
                             acceptance.get("steadyStateAccepted") and
+                            acceptance.get("policy", {}).get("maximumSampleGapSeconds", math.inf) <=
+                            DEFAULT_MAX_SAMPLE_GAP_SECONDS and
                             acceptance.get("policy", {}).get("cleanWindowSeconds", 0) >=
                             DEFAULT_CLEAN_WINDOW_SECONDS)
     performance = {}
-    for name in ("homeportal", "hp"):
+    for name in (binding["expected"]["nodes"] if binding else sample["nodes"]):
         rows = [row.get("nodes", {}).get(name, {}) for row in decoded]
         cpis = [row.get("timing", {}).get("cpi") for row in rows]
         cadence = [row.get("observation", {}).get("cadenceMs") for row in rows]
@@ -376,7 +490,6 @@ def summarize(lines: list[str], started: dict, sample: dict) -> dict:
 
 
 def run_sample(state: Path) -> int:
-    hp_host = os.environ.get("VECTORWARP_SOAK_HP_HOST", "100.126.186.65")
     clean_window_seconds = float(os.environ.get("VECTORWARP_SOAK_CLEAN_WINDOW_SECONDS",
                                                DEFAULT_CLEAN_WINDOW_SECONDS))
     max_sample_gap_seconds = float(os.environ.get("VECTORWARP_SOAK_MAX_SAMPLE_GAP_SECONDS",
@@ -384,10 +497,7 @@ def run_sample(state: Path) -> int:
     binding_path = os.environ.get("VECTORWARP_SOAK_BINDING")
     binding = load_binding(binding_path) if binding_path else None
     binding_receipt = None
-    hp_ssh = os.environ.get("VECTORWARP_SOAK_HP_SSH")
     if binding:
-        if not hp_ssh:
-            raise ValueError("release soak requires VECTORWARP_SOAK_HP_SSH for measured identity")
         binding_receipt = {"expected": binding,
                            "sha256": hashlib.sha256(Path(binding_path).read_bytes()).hexdigest(),
                            "monitorSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -415,20 +525,18 @@ def run_sample(state: Path) -> int:
 
     failures: list[str] = []
     sample = {"epoch": time.time(), "nodes": {}, "failures": failures}
-    nodes = (
-        ("homeportal", "http://127.0.0.1:3000", measured_process if binding else local_process, "vulkan", "cpu"),
-        ("hp", f"http://{hp_host}:3000", (lambda: measured_process(hp_ssh)) if binding else remote_process,
-         "vulkan-resident", "vulkan-resident"),
-    )
-    for name, base, process_fn, acceleration, clutter in nodes:
+    nodes = binding["nodes"] if binding else diagnostic_nodes()
+    for name, node in nodes.items():
         try:
             # Identity hashing may take seconds; acquire freshness-sensitive
             # telemetry afterwards so the probe itself cannot stale a frame.
-            process = process_fn()
+            process = (measured_process(node["ssh"], node["disk"]["path"]) if binding else
+                       local_process() if node["ssh"] is None else remote_process())
+            base = node["endpoint"].rstrip("/")
             status, timing = (fetch(base + "/api/system/status"), fetch(base + "/api/timing"))
             node_failures, observation = evaluate(
                 name, status, timing, process, started["previous"].get(name),
-                acceleration, clutter)
+                node["acceleration"], node["clutterAcceleration"], node["maximumCadenceMs"])
             failures.extend(node_failures)
             if binding:
                 failures.extend(verify_binding(name, status, process, binding))
@@ -441,10 +549,19 @@ def run_sample(state: Path) -> int:
             sample["nodes"][name] = {"error": f"{type(error).__name__}: {error}"[:300]}
             failures.append(f"{name}:unreachable")
 
-    free_gb = os.statvfs(state).f_bavail * os.statvfs(state).f_frsize / 1e9
-    sample["homeportalFreeGb"] = round(free_gb, 3)
-    if free_gb < 200:
-        failures.append("homeportal:disk-reserve")
+    sample["epoch"] = time.time()
+    if binding:
+        try:
+            regression = json.loads(Path(os.environ["VECTORWARP_SOAK_REGRESSION_RECEIPT"]).read_text())
+            failures.extend(verify_regression(regression, binding_receipt, sample["epoch"], started["epoch"]))
+            sample["regressionEvidence"] = regression
+        except (KeyError, OSError, ValueError, TypeError):
+            failures.append("soak:regression-evidence-unavailable")
+
+    disk = os.statvfs(state)
+    sample["monitorFreeBytes"] = disk.f_bavail * disk.f_frsize
+    if sample["monitorFreeBytes"] < (binding["monitorMinimumFreeBytes"] if binding else 200_000_000_000):
+        failures.append("soak:monitor-disk-reserve")
     advance_acceptance(started, sample, clean_window_seconds, max_sample_gap_seconds)
     atomic(started_path, started)
     ledger = state / "samples.jsonl"
@@ -455,6 +572,22 @@ def run_sample(state: Path) -> int:
     atomic(state / "latest.json", summarize(lines, started, sample))
     print(json.dumps({"healthy": sample["healthy"], "failures": failures}, sort_keys=True))
     return 0
+
+
+def diagnostic_nodes():
+    """Keep the existing operator CLI defaults; unbound diagnostics never qualify.
+
+    The historical HP environment spelling and script/state paths are consumed
+    by deployed timers. Release topology comes exclusively from schema 3 bindings.
+    """
+    host = os.environ.get("VECTORWARP_SOAK_HP_HOST", "").strip()
+    if not host:
+        raise ValueError("set VECTORWARP_SOAK_HP_HOST or a reviewed VECTORWARP_SOAK_BINDING")
+    return {name: {"endpoint": endpoint, "ssh": ssh, "acceleration": backend,
+                   "clutterAcceleration": backend, "maximumCadenceMs": 600}
+            for name, endpoint, ssh, backend in (
+                ("local", "http://127.0.0.1:3000", None, "vulkan"),
+                ("remote", f"http://{host}:3000", host, "vulkan-resident"))}
 
 
 def main() -> int:

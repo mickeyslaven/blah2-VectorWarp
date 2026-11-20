@@ -120,7 +120,7 @@ public:
     uint32_t delayMotionBins = 2;
     uint32_t dopplerMotionBins = 4;
     double delayDriftPerHz = 0;
-    bool retainRecentPower = false;
+    uint32_t beamCount = 0, beamTolerance = UINT32_MAX;
   };
 
   struct BankResult
@@ -129,14 +129,23 @@ public:
     uint32_t depth = 0;
     bool ready = false;
     std::unique_ptr<Map<std::complex<double>>> map;
+    // CFAR consumes the exact FP64 mean, not norm(sqrt(mean)): that extra
+    // rounding can reverse a strict threshold decision by one ULP. The map
+    // remains an amplitude representation for display/interpolation only.
+    std::vector<double> detectorPower;
     // Epoch and CPI window are identical for every cell in a bank. Store them
     // once and retain only the per-cell selected motion.
     EvidenceLineage window;
     std::vector<EvidenceMotion> motion;
+    // Empty means every cell is valid. Allocate only if a complete motion
+    // path is unavailable; invalid cells are not measured zero-power noise.
+    std::vector<uint8_t> validCells;
 
     EvidenceLineage lineageAt(uint64_t cell) const
     {
-      if (!ready || cell >= motion.size()) return {};
+      if (!ready || cell >= motion.size() ||
+          (!validCells.empty() &&
+            (cell >= validCells.size() || !validCells[cell]))) return {};
       auto result = window;
       result.delayMotion = motion[cell].delay;
       result.dopplerMotion = motion[cell].doppler;
@@ -155,10 +164,6 @@ public:
     uint64_t epoch = 0;
     uint64_t sequence = 0;
     uint32_t availableCpis = 0;
-    // Optional FP64 current/prior snapshots for one pre-registered tracker
-    // path. Observation-only users do not pay for these copies.
-    std::array<std::vector<double>, 2> recentPower;
-
     EvidenceLineage lineageAt(uint64_t cell) const
     {
       if (cell >= selectedBank.size()) return {};
@@ -179,7 +184,9 @@ public:
     if ((config_.maximumCpis != 2 && config_.maximumCpis != 4 &&
          config_.maximumCpis != 8) ||
         config_.delayMotionBins > 2 || config_.dopplerMotionBins > 16 ||
-        !std::isfinite(config_.delayDriftPerHz) || config_.delayDriftPerHz > 0)
+        !std::isfinite(config_.delayDriftPerHz) || config_.delayDriftPerHz > 0 ||
+        (config_.beamTolerance != UINT32_MAX && (!config_.beamCount ||
+          config_.beamTolerance > config_.beamCount / 2 || config_.maximumCpis == 2)))
       throw std::invalid_argument("Temporal evidence configuration invalid");
   }
 
@@ -192,7 +199,8 @@ public:
   }
 
   Result process(Map<std::complex<double>>& map, uint64_t epoch,
-    uint64_t sequence, const EvidenceWorkBudget* budget = nullptr)
+    uint64_t sequence, const EvidenceWorkBudget* budget = nullptr,
+    const std::vector<uint32_t>* beams = nullptr)
   {
     const uint32_t rows = map.get_nRows(), columns = map.get_nCols();
     if (!rows || !columns || (!frames_.empty() &&
@@ -208,16 +216,26 @@ public:
     if (config_.delayDriftPerHz)
       track_before_detect::validateDelayDrift(config_.delayDriftPerHz,
         std::vector<double>(doppler_.begin(), doppler_.end()));
+    const bool beamGated = config_.beamTolerance != UINT32_MAX;
+    if (beamGated && (!beams || beams->size() != uint64_t(rows) * columns ||
+        std::any_of(beams->begin(), beams->end(), [&](uint32_t beam) {
+          return beam > config_.beamCount;
+        })))
+      throw std::invalid_argument("Temporal beam history is absent or outside the configured bank");
     Frame current{epoch, sequence,
-      std::vector<double>(uint64_t(rows) * columns)};
-    for (uint32_t row = 0; row < rows; ++row)
+      std::vector<double>(uint64_t(rows) * columns), beamGated ? *beams : std::vector<uint32_t>{}};
+    const auto copyPower = [&](std::size_t row) {
       for (uint32_t column = 0; column < columns; ++column)
       {
+        if (budget && column % 32 == 0) budget->check();
         const double power = std::norm(map.data[row][column]);
         if (!(power >= 0) || !std::isfinite(power))
           throw std::invalid_argument("Temporal evidence input is not finite");
         current.power[uint64_t(row) * columns + column] = power;
       }
+    };
+    if (budget && budget->executor) budget->forEach(rows, copyPower);
+    else for (uint32_t row = 0; row < rows; ++row) copyPower(row);
     frames_.push_back(std::move(current));
     while (frames_.size() > config_.maximumCpis) frames_.pop_front();
 
@@ -225,9 +243,6 @@ public:
     result.epoch = epoch;
     result.sequence = sequence;
     result.availableCpis = static_cast<uint32_t>(frames_.size());
-    if (config_.retainRecentPower)
-      for (std::size_t age = 0; age < std::min<std::size_t>(2, frames_.size()); ++age)
-        result.recentPower[age] = frames_[frames_.size() - 1 - age].power;
     result.map = makeMap(rows, columns);
     result.selectedBank.resize(uint64_t(rows) * columns, 0);
     const std::array<const char*, 4> names{
@@ -243,71 +258,117 @@ public:
       if (output.ready)
       {
         output.map = makeMap(rows, columns);
+        output.detectorPower.resize(uint64_t(rows) * columns);
         output.window = lineage(output.depth, 0, 0);
         output.motion.resize(uint64_t(rows) * columns);
       }
     }
 
+    std::array<const double*, 8> powerByAge{};
+    std::array<const uint32_t*, 8> beamByAge{};
+    for (std::size_t age = 0; age < frames_.size(); ++age)
+    {
+      powerByAge[age] = frames_[frames_.size() - 1 - age].power.data();
+      beamByAge[age] = frames_[frames_.size() - 1 - age].beams.data();
+    }
+    const auto compatible = [&](uint64_t cell, uint32_t age, uint64_t older) {
+      if (!beamGated) return true;
+      const uint32_t left = beamByAge[0][cell], right = beamByAge[age][older];
+      if (!left || !right) return true;
+      const uint32_t delta = left > right ? left - right : right - left;
+      return std::min(delta, config_.beamCount - delta) <= config_.beamTolerance;
+    };
+    const uint32_t readyDepth = frames_.size() >= 8 ? 8 : frames_.size() >= 4 ? 4 : 2;
+    const bool stationary = !config_.delayMotionBins &&
+      !config_.dopplerMotionBins && config_.delayDriftPerHz == 0 && !beamGated;
+    if (stationary && result.banks[0].ready) {
+      writeStationary(result, powerByAge, rows, columns, budget);
+      return result;
+    }
+    using Metrics = Map<std::complex<double>>::MetricAccumulator;
+    Metrics selectedMetrics;
+    std::array<Metrics, 4> bankMetrics{};
     for (uint32_t row = 0; row < rows; ++row)
+    {
       for (uint32_t column = 0; column < columns; ++column)
       {
         const uint64_t cell = uint64_t(row) * columns + column;
         if (budget && column % 32 == 0) budget->check();
-        double selected = frames_.back().power[cell];
+        double selected = powerByAge[0][cell];
         uint8_t selectedBank = 0;
+        std::array<double, 4> bankLevels{};
         if (result.banks[0].ready)
         {
-          const double baseline = .5 * (frames_.back().power[cell] +
-            frames_[frames_.size() - 2].power[cell]);
+          const bool valid = compatible(cell, 1, cell);
+          const double baseline = valid ? .5 * (powerByAge[0][cell] + powerByAge[1][cell]) : 0;
+          if (!std::isfinite(baseline))
+            throw std::logic_error("Temporal evidence bank is not finite");
           write(result.banks[0], cell, row, column, baseline,
-            lineage(2, 0, 0));
+            {});
+          bankLevels[0] = Metrics::level(result.banks[0].map->data[row][column]);
+          if (valid) bankMetrics[0].addLevel(bankLevels[0]);
+          else {
+            auto& validity = result.banks[0].validCells;
+            if (validity.empty()) validity.resize(uint64_t(rows) * columns, 1);
+            validity[cell] = 0;
+          }
           selected = std::max(0.0, baseline);
           selectedBank = 1;
         }
-        for (std::size_t bank = 1; bank < result.banks.size(); ++bank)
-        {
-          auto& output = result.banks[bank];
-          if (!output.ready) continue;
-          const uint32_t depth = output.depth;
-          double best = -1;
-          EvidenceLineage bestLineage;
+        // A path's 2/4/8-CPI statistics share the same newest-to-oldest
+        // prefix. Sum each source sample once, in exactly the former order,
+        // and snapshot its mean at each depth. Do not use rolling subtraction:
+        // that would change rounding and strict-threshold decisions.
+        std::array<double, 3> bestPower{-1, -1, -1};
+        std::array<EvidenceMotion, 3> bestMotion{};
+        if (result.banks[1].ready)
           for (int dr = -int(config_.dopplerMotionBins);
                dr <= int(config_.dopplerMotionBins); ++dr)
             for (int dc = -int(config_.delayMotionBins);
                  dc <= int(config_.delayMotionBins); ++dc)
             {
               double sum = 0;
-              bool valid = true;
-              for (uint32_t age = 0; age < depth; ++age)
+              for (uint32_t age = 0; age < readyDepth; ++age)
               {
                 const int rr = int(row) - dr * int(age);
-                if (rr < 0 || rr >= int(rows)) {
-                  valid = false;
-                  break;
-                }
+                if (rr < 0 || rr >= int(rows)) break;
                 const int cc = track_before_detect::delayPathColumn(int(column),
                   dc, age, config_.delayDriftPerHz, doppler_[row], doppler_[rr]);
-                if (cc < 0 || cc >= int(columns))
-                {
-                  valid = false;
-                  break;
+                if (cc < 0 || cc >= int(columns)) break;
+                if (!compatible(cell, age, uint64_t(rr) * columns + uint32_t(cc))) break;
+                sum += powerByAge[age][uint64_t(rr) * columns + uint32_t(cc)];
+                const uint32_t depth = age + 1;
+                if (depth == 2 || depth == 4 || depth == 8) {
+                  const std::size_t bank = depth == 2 ? 0 : depth == 4 ? 1 : 2;
+                  const double mean = sum / depth;
+                  if (track_before_detect::temporalPathBetter(mean, bestPower[bank], false)) {
+                    bestPower[bank] = mean;
+                    bestMotion[bank] = {int8_t(dc), int8_t(dr)};
+                  }
                 }
-                sum += frames_[frames_.size() - 1 - age].power[
-                  uint64_t(rr) * columns + uint32_t(cc)];
-              }
-              const double mean = valid ? sum / depth : -1;
-              if (mean > best)
-              {
-                best = mean;
-                bestLineage = lineage(depth, dc, dr);
               }
             }
-          // Fractional drift can leave every path outside the map. A zero
-          // invalid cell cannot acquire a shorter, miscalibrated history.
-          if (best < 0) best = 0;
+        for (std::size_t bank = 1; bank < result.banks.size(); ++bank)
+        {
+          auto& output = result.banks[bank];
+          if (!output.ready) continue;
+          double best = bestPower[bank - 1];
+          // Fractional drift can leave every complete path outside the map.
+          // Retain a finite placeholder, but exclude it from metrics, CFAR,
+          // and lineage rather than treating it as measured background.
+          if (best < 0) {
+            if (output.validCells.empty())
+              output.validCells.resize(uint64_t(rows) * columns, 1);
+            output.validCells[cell] = 0;
+            best = 0;
+          }
           if (!std::isfinite(best))
             throw std::logic_error("Temporal evidence bank is not finite");
-          write(output, cell, row, column, best, bestLineage);
+          write(output, cell, row, column, best, bestMotion[bank - 1]);
+          if (output.validCells.empty() || output.validCells[cell]) {
+            bankLevels[bank] = Metrics::level(output.map->data[row][column]);
+            bankMetrics[bank].addLevel(bankLevels[bank]);
+          }
           if (best > selected)
           {
             selected = best;
@@ -317,19 +378,115 @@ public:
         result.map->data[row][column] =
           {std::sqrt(std::max(0.0, selected)), 0};
         result.selectedBank[cell] = selectedBank;
+        // Selection copies one complete bank cell, so its level is exactly
+        // that bank's level. Each map still reduces in row-major order.
+        selectedMetrics.addLevel(selectedBank ? bankLevels[selectedBank - 1] :
+          Metrics::level(result.map->data[row][column]));
       }
-    result.map->set_metrics();
-    for (auto& bank : result.banks)
-      if (bank.ready) bank.map->set_metrics();
+    }
+    selectedMetrics.apply(*result.map);
+    for (std::size_t bank = 0; bank < result.banks.size(); ++bank)
+      if (result.banks[bank].ready) bankMetrics[bank].apply(*result.banks[bank].map);
     return result;
   }
 
 private:
+  static void writeStationary(Result& result,
+      const std::array<const double*, 8>& power, uint32_t rows,
+      uint32_t columns, const EvidenceWorkBudget* budget) {
+    // Zero motion makes baseline2 and motion2 identical. Reuse their exact
+    // value/metric, and the selected bank's value, without approximating sums
+    // or adding a cache whose contents could survive a failed CPI.
+    using Metrics = Map<std::complex<double>>::MetricAccumulator;
+    Metrics selectedMetrics, twoMetrics, fourMetrics, eightMetrics;
+    const bool four = result.banks[2].ready, eight = result.banks[3].ready;
+    const auto compute = [&](uint32_t begin, uint32_t end, double* levels) {
+    for (uint32_t row = begin; row < end; ++row) {
+      if (!std::isfinite(result.map->doppler[row]))
+        throw std::invalid_argument("Fractional delay path invalid");
+      auto* selectedRow = result.map->data[row].data();
+      auto* baselineRow = result.banks[0].map->data[row].data();
+      auto* twoRow = result.banks[1].map->data[row].data();
+      auto* fourRow = four ? result.banks[2].map->data[row].data() : nullptr;
+      auto* eightRow = eight ? result.banks[3].map->data[row].data() : nullptr;
+      for (uint32_t column = 0; column < columns; ++column) {
+        if (budget && column % 32 == 0) budget->check();
+        const uint64_t cell = uint64_t(row) * columns + column;
+        double sum = power[0][cell] + power[1][cell];
+        double selectedPower = sum / 2;
+        if (!std::isfinite(selectedPower))
+          throw std::logic_error("Temporal evidence bank is not finite");
+        std::complex<double> selected{std::sqrt(std::max(0.0, selectedPower)), 0};
+        double selectedLevel = Metrics::level(selected);
+        const uint64_t levelCell = (uint64_t(row - begin) * columns + column) * 3;
+        if (levels) levels[levelCell] = selectedLevel;
+        else twoMetrics.addLevel(selectedLevel);
+        baselineRow[column] = twoRow[column] = selected;
+        result.banks[0].detectorPower[cell] = selectedPower;
+        result.banks[1].detectorPower[cell] = selectedPower;
+        uint8_t selectedBank = 1;
+        if (four) {
+          sum += power[2][cell]; sum += power[3][cell];
+          const double mean = sum / 4;
+          if (!std::isfinite(mean))
+            throw std::logic_error("Temporal evidence bank is not finite");
+          const std::complex<double> value{std::sqrt(std::max(0.0, mean)), 0};
+          const double level = Metrics::level(value);
+          if (levels) levels[levelCell + 1] = level;
+          else fourMetrics.addLevel(level);
+          fourRow[column] = value;
+          result.banks[2].detectorPower[cell] = mean;
+          if (mean > selectedPower) {
+            selected = value; selectedPower = mean;
+            selectedLevel = level; selectedBank = 3;
+          }
+        }
+        if (eight) {
+          for (uint32_t age = 4; age < 8; ++age) sum += power[age][cell];
+          const double mean = sum / 8;
+          if (!std::isfinite(mean))
+            throw std::logic_error("Temporal evidence bank is not finite");
+          const std::complex<double> value{std::sqrt(std::max(0.0, mean)), 0};
+          const double level = Metrics::level(value);
+          if (levels) levels[levelCell + 2] = level;
+          else eightMetrics.addLevel(level);
+          eightRow[column] = value;
+          result.banks[3].detectorPower[cell] = mean;
+          if (mean > selectedPower) {
+            selected = value; selectedLevel = level; selectedBank = 4;
+          }
+        }
+        selectedRow[column] = selected;
+        result.selectedBank[cell] = selectedBank;
+        if (!levels) selectedMetrics.addLevel(selectedLevel);
+      }
+    }
+    };
+    if (budget && budget->executor)
+      orderedRowTiles(rows, columns, 3, *budget, compute,
+        [&](uint32_t begin, uint32_t end, const double* levels) {
+          for (uint64_t cell = 0; cell < uint64_t(end - begin) * columns; ++cell) {
+            const auto selected = result.selectedBank[uint64_t(begin) * columns + cell];
+            selectedMetrics.addLevel(levels[3 * cell + (selected == 1 ? 0 : selected - 2)]);
+            twoMetrics.addLevel(levels[3 * cell]);
+            if (four) fourMetrics.addLevel(levels[3 * cell + 1]);
+            if (eight) eightMetrics.addLevel(levels[3 * cell + 2]);
+          }
+        });
+    else compute(0, rows, nullptr);
+    selectedMetrics.apply(*result.map);
+    twoMetrics.apply(*result.banks[0].map);
+    twoMetrics.apply(*result.banks[1].map);
+    if (four) fourMetrics.apply(*result.banks[2].map);
+    if (eight) eightMetrics.apply(*result.banks[3].map);
+  }
+
   struct Frame
   {
     uint64_t epoch;
     uint64_t sequence;
     std::vector<double> power;
+    std::vector<uint32_t> beams;
   };
 
   std::unique_ptr<Map<std::complex<double>>> makeMap(
@@ -356,10 +513,11 @@ private:
   }
 
   static void write(BankResult& output, uint64_t cell, uint32_t row,
-    uint32_t column, double power, const EvidenceLineage& evidence)
+    uint32_t column, double power, const EvidenceMotion& motion)
   {
     output.map->data[row][column] = {std::sqrt(std::max(0.0, power)), 0};
-    output.motion[cell] = {evidence.delayMotion, evidence.dopplerMotion};
+    output.detectorPower[cell] = power;
+    output.motion[cell] = motion;
   }
 
   Config config_;

@@ -129,9 +129,11 @@ immediate.requestWithEvidence(() => ++reconciled);
 assert.equal(reconciled, 1);
 
 // The server binds both synchronous expiry and native errors to the same
-// single/multi-lane owner; disk admission stays upstream of every trigger.
+// single/multi-lane owner; one shared readiness/storage gate owns every trigger.
 const source = require('node:fs').readFileSync(require.resolve('./server'), 'utf8');
 assert.match(source, /requestWithEvidence\(records =>\s*captureAdmissionEvidence\.acceptCaptureEvents\(records\)/);
 assert.doesNotMatch(source, /captureEvidenceStatistics\.acceptCaptureEvents\(/);
-assert.equal((source.match(/recordingLibrary\.canRecord\(\)\.allowed \?/g) || []).length, 4);
+assert.equal((source.match(/function admitAutomaticCapture\(/g) || []).length, 1);
+assert.equal((source.match(/!recordingLibrary\.canRecord\(\)\.allowed/g) || []).length, 1);
+assert.equal((source.match(/=> admitAutomaticCapture\(/g) || []).length, 4);
 console.log('bounded late capture claims, terminal reconciliation and lane ownership passed');

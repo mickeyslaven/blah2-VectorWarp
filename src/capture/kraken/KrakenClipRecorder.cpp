@@ -1,4 +1,6 @@
 #include "KrakenClipRecorder.h"
+#include "capture/Sha256.h"
+#include "capture/RecordingAcquisitionJson.h"
 #include "data/meta/EventTime.h"
 
 #include <algorithm>
@@ -54,99 +56,6 @@ std::string system_error(const std::string& prefix)
   return prefix + ": " + std::strerror(errno);
 }
 
-class Sha256
-{
-public:
-  void update(const void* source, std::size_t count)
-  {
-    const auto* bytes = static_cast<const uint8_t*>(source);
-    total += count;
-    while (count)
-    {
-      const std::size_t copied = std::min(count, block.size() - used);
-      std::copy(bytes, bytes + copied, block.begin() + used);
-      used += copied;
-      bytes += copied;
-      count -= copied;
-      if (used == block.size()) { transform(block.data()); used = 0; }
-    }
-  }
-
-  std::string finish()
-  {
-    const uint64_t bits = total * 8;
-    block[used++] = 0x80;
-    if (used > 56)
-    {
-      std::fill(block.begin() + used, block.end(), 0);
-      transform(block.data());
-      used = 0;
-    }
-    std::fill(block.begin() + used, block.begin() + 56, 0);
-    for (unsigned index = 0; index < 8; ++index)
-      block[63 - index] = static_cast<uint8_t>(bits >> (index * 8));
-    transform(block.data());
-    const char hex[] = "0123456789abcdef";
-    std::string result;
-    result.reserve(64);
-    for (uint32_t word : state)
-      for (int shift : {28, 24, 20, 16, 12, 8, 4, 0})
-        result.push_back(hex[(word >> shift) & 15]);
-    return result;
-  }
-
-private:
-  static uint32_t rotate(uint32_t value, unsigned count)
-  {
-    return (value >> count) | (value << (32 - count));
-  }
-  void transform(const uint8_t* input)
-  {
-    static constexpr std::array<uint32_t, 64> constants{{
-      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2}};
-    uint32_t words[64]{};
-    for (unsigned index = 0; index < 16; ++index)
-      words[index] = uint32_t(input[index * 4]) << 24 |
-        uint32_t(input[index * 4 + 1]) << 16 |
-        uint32_t(input[index * 4 + 2]) << 8 | input[index * 4 + 3];
-    for (unsigned index = 16; index < 64; ++index)
-    {
-      const uint32_t s0 = rotate(words[index - 15], 7) ^
-        rotate(words[index - 15], 18) ^ (words[index - 15] >> 3);
-      const uint32_t s1 = rotate(words[index - 2], 17) ^
-        rotate(words[index - 2], 19) ^ (words[index - 2] >> 10);
-      words[index] = words[index - 16] + s0 + words[index - 7] + s1;
-    }
-    uint32_t a=state[0], b=state[1], c=state[2], d=state[3];
-    uint32_t e=state[4], f=state[5], g=state[6], h=state[7];
-    for (unsigned index = 0; index < 64; ++index)
-    {
-      const uint32_t s1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
-      const uint32_t choose = (e & f) ^ (~e & g);
-      const uint32_t first = h + s1 + choose + constants[index] + words[index];
-      const uint32_t s0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
-      const uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
-      const uint32_t second = s0 + majority;
-      h=g; g=f; f=e; e=d+first; d=c; c=b; b=a; a=first+second;
-    }
-    state[0]+=a; state[1]+=b; state[2]+=c; state[3]+=d;
-    state[4]+=e; state[5]+=f; state[6]+=g; state[7]+=h;
-  }
-
-  std::array<uint32_t, 8> state{{0x6a09e667,0xbb67ae85,0x3c6ef372,
-    0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19}};
-  std::array<uint8_t, 64> block{};
-  std::size_t used = 0;
-  uint64_t total = 0;
-};
-
 class OutputFile
 {
 public:
@@ -201,6 +110,7 @@ struct KrakenClipRecorder::Frame
   uint64_t firstSample = 0;
   uint32_t samples = 0;
   uint64_t epoch = 0;
+  uint64_t ingressSequence = 0;
 };
 
 struct KrakenClipRecorder::Active
@@ -229,6 +139,14 @@ KrakenClipRecorder::KrakenClipRecorder(std::string directory,
   : KrakenClipRecorder(std::move(directory), channels, sampleRate, frequency,
       Options{})
 {
+}
+
+void KrakenClipRecorder::set_recording_context(RecordingContext context)
+{
+  std::lock_guard<std::mutex> lock(mutex);
+  if (!ring.empty() || active || !jobs.empty() || !writerRevisions.empty())
+    throw std::logic_error("Kraken recording context must be set before acquisition");
+  recordingContext = std::move(context);
 }
 
 KrakenClipRecorder::KrakenClipRecorder(std::string directory,
@@ -315,12 +233,14 @@ void KrakenClipRecorder::reset_epoch_locked(const std::string& reason)
 
 void KrakenClipRecorder::discontinuity(const std::string& reason)
 {
+  skippedIngressSamples.store(0, std::memory_order_release);
   if (!mutex.try_lock())
   {
-    ingressContention.store(true, std::memory_order_release);
+    pendingDiscontinuity.store(true, std::memory_order_release);
     return;
   }
   std::unique_lock<std::mutex> lock(mutex, std::adopt_lock);
+  pendingDiscontinuity.store(false, std::memory_order_release);
   reset_epoch_locked(reason.empty() ? "Kraken clip input discontinuity" : reason);
 }
 
@@ -332,12 +252,25 @@ bool KrakenClipRecorder::ingest(
 {
   if (!mutex.try_lock())
   {
-    ingressContention.store(true, std::memory_order_release);
+    // The recorder copy is optional; the receiver still publishes these IQ
+    // samples. Account for them without changing the inference sample epoch.
+    auto skipped = skippedIngressSamples.load(std::memory_order_relaxed);
+    do {
+      if (skipped > UINT64_MAX - header.samplesPerChannel)
+        throw std::overflow_error("Kraken skipped recorder samples exhausted");
+    } while (!skippedIngressSamples.compare_exchange_weak(skipped,
+      skipped + header.samplesPerChannel, std::memory_order_release,
+      std::memory_order_relaxed));
     return false;
   }
   std::unique_lock<std::mutex> lock(mutex, std::adopt_lock);
-  if (ingressContention.exchange(false, std::memory_order_acq_rel))
-    reset_epoch_locked("Kraken clip ring was saturated; recorder copy dropped");
+  if (pendingDiscontinuity.exchange(false, std::memory_order_acq_rel))
+    reset_epoch_locked("Kraken input discontinuity while recorder was busy");
+  const uint64_t skipped = skippedIngressSamples.exchange(0, std::memory_order_acq_rel);
+  if (skipped) {
+    fail_active_locked("Kraken clip ring was saturated; recorder copy dropped");
+    ring.clear();
+  }
   if (header.numChannels != channels || header.samplesPerChannel == 0 ||
       metadata.size() != HeimdallFrame::metadata_size(header) ||
       payload.size() != HeimdallFrame::payload_size(header))
@@ -357,6 +290,10 @@ bool KrakenClipRecorder::ingest(
   if (header.timing.available)
     receiptNanoseconds = static_cast<int64_t>(header.timing.realtimeNanoseconds);
   if (!haveEpoch) { nextSample = 0; haveEpoch = true; }
+  if (nextSample > UINT64_MAX - skipped ||
+      nextSample + skipped > UINT64_MAX - header.samplesPerChannel)
+    throw std::overflow_error("Kraken recorder sample position exhausted");
+  nextSample += skipped;
   hostArrivalDiscontinuity = false;
   auto timing = hostArrivalClock.observe(nextSample + header.samplesPerChannel,
     receiptNanoseconds);
@@ -375,6 +312,7 @@ bool KrakenClipRecorder::ingest(
   frame->payload = std::move(payload);
   frame->firstSample = nextSample;
   frame->samples = header.samplesPerChannel;
+  frame->ingressSequence = ++ingressSequence;
   frame->epoch = epoch;
   nextSample += header.samplesPerChannel;
   ring.push_back(frame);
@@ -582,6 +520,7 @@ IqClipStatus KrakenClipRecorder::write_job(const Job& job)
   std::string partial;
   std::string metadataPartial;
   bool dataPublished = false;
+  bool acquisitionPublished = false;
   try
   {
     const auto stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -631,6 +570,49 @@ IqClipStatus KrakenClipRecorder::write_job(const Job& job)
       throw std::runtime_error("Kraken clip contains no Heimdall frames");
     auto firstHeader = HeimdallFrame::decode_header(job.frames.front()->fixed);
     HeimdallFrame::decode_metadata(firstHeader, job.frames.front()->metadata);
+
+    RecordingBlockMetadata acquisitionMetadata;
+    acquisitionMetadata.context = recordingContext;
+    acquisitionMetadata.perChannelGainDb.assign(firstHeader.gains.begin(), firstHeader.gains.end());
+    acquisitionMetadata.gainProvenance = "sample-aligned-receiver-header";
+    acquisitionMetadata.receiverDetailsJson =
+      "{\"source\":\"Heimdall-frame-header\",\"gainReadback\":\"receiver-reported\","
+      "\"deviceIdentityAvailable\":false,\"deviceIdentityReason\":\"Heimdall V2 does not expose Kraken serial identity\"}";
+    std::vector<RecordingFrameLineage> acquisitionFrames;
+    bool acquisitionPositions = firstHeader.timing.available;
+    uint64_t acquisitionFirst = job.firstSample, acquisitionEpoch = job.epoch;
+    if (firstHeader.timing.available) {
+      acquisitionFirst = firstHeader.timing.firstSample + job.firstSample - job.frames.front()->firstSample;
+      acquisitionEpoch = firstHeader.timing.epoch;
+    }
+    uint64_t recordedOffset = 0;
+    bool acquisitionOverflow = false;
+    for (const auto& frame : job.frames) {
+      const auto begin = std::max(job.firstSample, frame->firstSample);
+      const auto end = std::min(job.endSample, frame->firstSample + frame->samples);
+      if (end <= begin) continue;
+      if (acquisitionFrames.size() >= acquisition::maximumFrames) { acquisitionOverflow = true; break; }
+      auto header = HeimdallFrame::decode_header(frame->fixed); HeimdallFrame::decode_metadata(header, frame->metadata);
+      acquisitionPositions = acquisitionPositions && header.timing.available && header.timing.epoch == acquisitionEpoch;
+      const auto sourceFirst = header.timing.available ? header.timing.firstSample : frame->firstSample;
+      acquisitionFrames.push_back({frame->ingressSequence, sourceFirst, frame->samples, begin - frame->firstSample, end - begin});
+      auto& means = acquisitionFrames.back().originalMeanIq;
+      means.assign(channels * 2, 0);
+      for (uint32_t channel = 0; channel < channels; ++channel) {
+        const auto start = static_cast<size_t>(channel) * frame->samples * 2;
+        for (uint32_t sample = 0; sample < frame->samples; ++sample) {
+          means[channel * 2] += frame->payload[start + sample * 2];
+          means[channel * 2 + 1] += frame->payload[start + sample * 2 + 1];
+        }
+        means[channel * 2] /= frame->samples; means[channel * 2 + 1] /= frame->samples;
+      }
+      recordedOffset += end - begin;
+    }
+    std::string acquisitionJson;
+    if (!acquisitionOverflow && acquisitionFirst <= UINT64_MAX - recordedOffset)
+      acquisitionJson = acquisition::serialize(&acquisitionMetadata, "Kraken", channels,
+        sampleRate, frequency, acquisitionEpoch, acquisitionFirst, acquisitionFirst + recordedOffset,
+        acquisitionPositions, acquisitionFrames);
 
     rapidjson::Document document(rapidjson::kObjectType);
     auto& allocator = document.GetAllocator();
@@ -717,6 +699,9 @@ IqClipStatus KrakenClipRecorder::write_job(const Job& job)
     if (::rename(partial.c_str(), base.c_str()) != 0)
       throw std::runtime_error(system_error("Cannot finalize clip"));
     dataPublished = true;
+    acquisition::writeManifest(base, acquisitionJson, dataSha256,
+      acquisitionJson.empty() ? "Acquisition frame lineage exceeded bounded capacity" : "");
+    acquisitionPublished = true;
     if (::rename(metadataPartial.c_str(), (base + ".json").c_str()) != 0)
       throw std::runtime_error(system_error("Cannot finalize clip metadata"));
     result.file = base;
@@ -728,6 +713,7 @@ IqClipStatus KrakenClipRecorder::write_job(const Job& job)
     // The sidecar is the completion marker. If publishing it fails after the
     // IQ rename, remove the otherwise orphaned data artifact as well.
     if (dataPublished && !base.empty()) (void)::unlink(base.c_str());
+    if (acquisitionPublished) (void)::unlink((base + ".acquisition.json").c_str());
     result.error = error.what();
     result.samples = 0;
   }

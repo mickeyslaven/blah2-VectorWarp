@@ -1,5 +1,6 @@
 #pragma once
-#include "process/integration/DirectPathCoherentReplay.h"
+#include "process/integration/DirectPathCoherentExperiment.h"
+#include <cstring>
 #include <optional>
 #include <stdexcept>
 #include <cstdlib>
@@ -7,17 +8,17 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
-#include "process/ambiguity/GpuResidentHash.h"
+#include "capture/Sha256.h"
 
 namespace blah2::integration::cancellation_replay {
 // Canonical little-endian identity includes ALL decoded sidecar fields and the
 // snapshot hash. Binding only the snapshot would allow a resealed sidecar to
 // change sample lineage between validation and solve without changing the IQ.
 inline resident_replay::Hash frameIdentity(const coherent_replay::Sidecar& s) {
-  resident::Sha256 hash;
+  blah2::Sha256 hash;
   const auto integer = [&](uint64_t value) {
     uint8_t bytes[8]; for (unsigned i = 0; i < 8; ++i) bytes[i] = uint8_t(value >> (8 * i));
-    hash.add(bytes, sizeof(bytes));
+    hash.update(bytes, sizeof(bytes));
   };
   const auto& id = s.identity;
   for (const auto value : {id.epoch, id.logicalFrame, id.generation, id.consumedSequence,
@@ -25,19 +26,18 @@ inline resident_replay::Hash frameIdentity(const coherent_replay::Sidecar& s) {
       s.endSample, s.tuningHz, s.gainCalibrationEpoch, uint64_t(s.sampleRateHz),
       uint64_t(s.actualGainDb.size())}) integer(value);
   for (const auto* value : {&id.configHash, &id.moduleHash, &id.rawIqHash, &id.deviceHash,
-      &s.sourceHash, &s.rfHash, &s.snapshotHash}) hash.add(value->data(), value->size());
+      &s.sourceHash, &s.rfHash, &s.snapshotHash}) hash.update(value->data(), value->size());
   for (double gain : s.actualGainDb) {
     uint64_t bits; std::memcpy(&bits, &gain, sizeof(bits)); integer(bits);
   }
-  return hash.finish();
+  return hash.finishBytes();
 }
 inline void requireFrozen(const coherent_replay::Sidecar& actual,
     const resident_replay::Hash& frozen) {
   if (frameIdentity(actual) != frozen)
     throw std::invalid_argument("Missing evidence: snapshot or sidecar lineage changed after cohort freeze");
 }
-inline std::filesystem::path executablePath(const std::string& argument,
-    const std::string& searchPath) {
+inline std::filesystem::path executablePath(const std::string& argument,const std::string& searchPath) {
   const auto executable = [](const std::filesystem::path& path) {
     return std::filesystem::is_regular_file(path) && ::access(path.c_str(), X_OK) == 0;
   };

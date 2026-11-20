@@ -125,7 +125,53 @@ TEST_CASE("single-channel diagonal fast path preserves the scalar covariance con
     const double expected = std::norm(map.data[0][column] /
       std::sqrt(covariance.real())) / (1.0 + config.diagonalLoading);
     REQUIRE(result.statisticFamily[column] == 1);
-    REQUIRE(std::norm(result.map->data[0][column]) ==
-      Catch::Approx(expected).epsilon(1e-14));
+    REQUIRE(result.map->data[0][column] ==
+      std::complex<double>{std::sqrt(expected), 0});
   }
+}
+
+TEST_CASE("scalar covariance rings retain invalid and guard-cell families")
+{
+  using Bootstrap = blah2::detection::PostClutterBootstrap;
+  auto map = bootstrapMap(65);
+  for (auto& value : map.data[0]) value = {1, 0};
+  map.data[0][32] = {std::numeric_limits<double>::quiet_NaN(), 0};
+  const auto result = Bootstrap{}.process({&map});
+  REQUIRE(result.statisticFamily[0] == 1);
+  REQUIRE(result.statisticFamily[29] == 0); // Invalid right training sample.
+  REQUIRE(result.statisticFamily[32] == 0); // Invalid CUT.
+  REQUIRE(result.statisticFamily[33] == 1); // Excluded guard sample.
+  REQUIRE(result.statisticFamily[35] == 0); // Invalid left training sample.
+  for (auto& value : map.data[0]) value = {0, 0};
+  const auto silent = Bootstrap{}.process({&map});
+  REQUIRE(silent.trainedCells == 0);
+  REQUIRE(silent.invalidCells == 65);
+  auto narrow = bootstrapMap(3);
+  REQUIRE(Bootstrap{}.process({&narrow}).invalidCells == 3);
+}
+
+TEST_CASE("interleaved training sums preserve each CUT addition order exactly")
+{
+  using blah2::detection::integrated_cfar::orderedTrainingSums;
+  for (const int columns : {1, 3, 33, 545}) {
+    std::vector<double> power(columns), actual;
+    for (int column = 0; column < columns; ++column)
+      power[column] = std::ldexp(1 + double(column % 17) / 17,
+        (column * 31) % 1201 - 600);
+    for (const int guard : {0, 2, 128})
+      for (const int training : {1, 12, 256}) {
+        orderedTrainingSums(power, guard, training, actual);
+        for (int column = 0; column < columns; ++column) {
+          double expected = 0;
+          for (int index = column - guard - training; index < column - guard; ++index)
+            if (index >= 0 && index < columns) expected += power[index];
+          for (int index = column + guard + 1; index < column + guard + training + 1; ++index)
+            if (index >= 0 && index < columns) expected += power[index];
+          REQUIRE(actual[column] == expected);
+        }
+      }
+  }
+  std::vector<double> power(33, 1), sums;
+  const blah2::integration::EvidenceWorkBudget expired{std::chrono::steady_clock::now()};
+  REQUIRE_THROWS(orderedTrainingSums(power, 2, 12, sums, &expired));
 }

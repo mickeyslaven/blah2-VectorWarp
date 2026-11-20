@@ -50,6 +50,12 @@ void Kraken::request_clip(const blah2::IqClipRequest& request)
   clipRecorder->request(request);
 }
 
+void Kraken::set_recording_context(blah2::RecordingContext context)
+{
+  Source::set_recording_context(context);
+  clipRecorder->set_recording_context(std::move(context));
+}
+
 blah2::IqClipStatus Kraken::clip_status() const
 {
   return clipRecorder->status();

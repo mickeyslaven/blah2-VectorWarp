@@ -13,6 +13,10 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PostDopplerStapTest(unittest.TestCase):
+    def test_small_linear_algebra_uses_calibrated_owner(self):
+        for name in ("inverse", "multiply", "dot"):
+            self.assertIs(getattr(MODULE, name), getattr(MODULE.CAL, name))
+
     def test_complex_inverse(self):
         matrix = [[4 + 0j, 1 + 1j], [1 - 1j, 3 + 0j]]
         result = MODULE.inverse(matrix)

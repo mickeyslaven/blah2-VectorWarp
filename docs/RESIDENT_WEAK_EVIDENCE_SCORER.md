@@ -21,7 +21,7 @@ Missing sidecars, duplicates, gaps and lineage drift fail closed.
 
 The six methods are the exported **single-CPI current power**, the actual
 `PostClutterBootstrap` diagonal and fixed-0.75 shrinkage implementations, and the
-actual `DirectPathCoherentReplay`/`DirectPathCoherentShadow` 2/4/8-CPI banks.
+actual `ExperimentReader`/`DirectPathCoherentExperiment` 2/4/8-CPI banks.
 Current power is already squared and is not squared again. Bootstrap and coherent
 map amplitudes are converted to power once. Bootstrap uses guard 2, training 12
 per side and diagonal loading 0.001. Coherent scoring fixes equal unit-norm

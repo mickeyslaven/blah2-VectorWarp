@@ -75,12 +75,24 @@ restart for a newer-glibc ABI dependency. Receiver and acceleration capability
 reports matched v9 before restart. At 168 accepted CPIs after warmup, v10 had
 zero drops of every reason, zero rejections, zero budget exhaustion, one initial
 `input_discontinuity` reset, eight CPIs available, and GPU execution true on all
-three illuminators. The new bounded ledger is
-`/var/lib/vectorwarp-api/temporal-pairs/homeportal-wpxi-20261114-v10.jsonl`.
+three illuminators. The new bounded ledger is under
+`/var/lib/vectorwarp-api/temporal-pairs/` (private basename omitted).
 The collector was initially capped at 1 GiB, then raised to 32 GiB after the
 observed ledger rate showed that 1 GiB would not cover the required multi-day
 exposure. At roughly 2.7 GiB/day, 32 GiB provides about 11 days while the
 filesystem had 271 GiB free. HP remained live on its existing guided
 build; no HP detector policy was changed by this observer repair.
+
+The portable collector required an explicit `--illuminator` runtime lane ID.
+The recorded deployment used two explicit environment values equivalent to:
+
+```ini
+VECTORWARP_TEMPORAL_ILLUMINATOR=TX-C-RF23
+VECTORWARP_TEMPORAL_OUTPUT=/var/lib/vectorwarp-api/temporal-pairs/node-a-tx-c-v10.jsonl
+```
+
+These are illustrative values retained to explain the evidence provenance, not
+an installation template. The supported experimental controls now live in the
+normal configuration and UI rather than a dated service override.
 
 Oppositional review: `docs/SHADOW_REPAIR_OPPOSITION_REVIEW_20261114.md`.

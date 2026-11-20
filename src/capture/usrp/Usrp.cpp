@@ -219,6 +219,13 @@ std::string Usrp::recording_provenance_json() const
   return {buffer.GetString(), buffer.GetSize()};
 }
 
+std::vector<double> Usrp::recording_applied_gain_db() const
+{
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  if (!appliedSettingsAvailable || !coherenceAvailable || timingState != "qualified") return {};
+  return {appliedSettings.gainDb[0], appliedSettings.gainDb[1]};
+}
+
 void Usrp::process(IqData *buffer1, IqData *buffer2)
 {
     if (!buffer1 || !buffer2 || buffer1 == buffer2)
@@ -275,6 +282,8 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
     std::vector<std::complex<float>*> buff_ptrs;
     buff_ptrs.push_back(&usrpBuffer1.front());
     buff_ptrs.push_back(&usrpBuffer2.front());
+    // Allocate optional bounded diagnostic storage before streaming starts.
+    UsrpIngressTiming ingressTiming;
 
     // setup stream
     uhd::rx_metadata_t metadata;
@@ -294,7 +303,6 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       ~MonitorStream() { active = false; }
     } monitorStream{monitoring};
     monitoring = true;
-    UsrpIngressTiming ingressTiming;
     struct StagedBlock {
       UsrpDeviceTime::Observation timing;
       blah2::IqBlock samples;

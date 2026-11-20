@@ -54,7 +54,7 @@ case "$1" in
       printf 'preserve-config=%s\n' "$(cat "$PRESERVE_CONFIG_FILE")" >>"$UPGRADE_TEST_LOG"
     fi
     [ "$2" != "${FAIL_START:-none}" ] ;;
-  stop|daemon-reload) exit 0 ;;
+  stop|daemon-reload|is-active) exit 0 ;;
   --job-mode=ignore-dependencies)
     [ "$*" = '--job-mode=ignore-dependencies --no-block stop vectorwarp-receiver.socket' ] || exit 9
     echo inactive > "$SOCKET_STATE_FILE" ;;
@@ -67,6 +67,10 @@ esac
                         '[ "${NODE_DELAY:-0}" = 0 ] || sleep "$NODE_DELAY"\n'
                         '[ "${FAIL_NODE:-0}" != 1 ]\n')
         node.chmod(0o755)
+        cohort = self.tools / 'cohort-check.py'
+        cohort.write_text('import os, sys\n'
+                          'with open(os.environ["UPGRADE_TEST_LOG"], "a") as stream: stream.write("cohort-preflight\\n")\n'
+                          'sys.exit(int(os.environ.get("FAIL_COHORT", "0")))\n')
         self.env = os.environ | {'PATH': f'{self.tools}:{os.environ["PATH"]}',
                                  'UPGRADE_TEST_LOG': str(self.log),
                                  'SOCKET_UNIT': str(self.socket_unit),
@@ -84,6 +88,7 @@ esac
                                 str(self.base / 'preserve-config.env'))
         source = source.replace('/usr/lib/systemd/system/vectorwarp-receiver.socket', str(self.socket_unit))
         source = source.replace('/opt/vectorwarp/runtime/node/bin/node', str(self.tools / 'node'))
+        source = source.replace('/opt/vectorwarp/libexec/vectorwarp-cohort-check', str(self.tools / 'cohort-check.py'))
         source = source.replace('/opt/vectorwarp', str(self.package_prefix))
         script = self.base / Path(relative).name
         script.write_text(source)
@@ -156,6 +161,14 @@ esac
         self.assertNotIn('start vectorwarp-processor.service', self.log.read_text())
         self.assertFalse(self.state.exists())
         self.assertFalse((self.base / 'preserve-config.env').exists())
+
+    def test_mixed_cohort_never_starts_any_service(self):
+        post = self.script('packaging/activate-upgrade')
+        self.state.write_text('api=1\nprocessor=1\nsocket=1\nbroker=1\n')
+        self.state.chmod(0o600)
+        result = self.call(post, FAIL_COHORT='78')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.log.read_text().splitlines(), ['cohort-preflight'])
 
     def test_api_unit_scopes_and_cleans_the_upgrade_only_environment(self):
         unit = (ROOT / 'contrib/systemd/vectorwarp-api.service.in').read_text()

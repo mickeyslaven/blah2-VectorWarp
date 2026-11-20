@@ -38,6 +38,13 @@ async function check(advertised, editable = true) {
     await w.renderConfiguration();
     const input = key => w.document.querySelector(`[data-path="process.bearing.${key}"] input, [data-path="process.bearing.${key}"] select`);
     const enabled = input('enable'), method = input('method');
+    for (const key of ['manifold_recorder.enabled']) {
+      const experiment = input(key);
+      assert.ok(experiment, `${key} must be manageable, not hidden`);
+      assert.ok(experiment.closest('.experimental-settings'), `${key} belongs in Experimental`);
+    }
+    const automation = w.document.querySelector('[data-path^="process.bearing.manifold_automation"]');
+    assert.equal(automation, null, 'retired fitting automation must not appear as a setting');
     assert.ok(enabled && method, 'Saved bearing settings remain visible');
     assert.equal(enabled.checked, true, 'Unavailable bearing does not erase the saved enable value');
     assert.equal(method.value, config.process.bearing.method, 'Saved method is preserved');

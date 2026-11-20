@@ -3,7 +3,6 @@
 const assert = require('node:assert/strict');
 const {CrossFrequencySupportTracker, MultiIlluminatorTrackFuser} =
   require('./multi-illuminator-track-fusion');
-const {MultiSiteMapSupportTracker} = require('./multi-site-map-support');
 
 const config = {capture: {fs: 2400000}, location: {rx: {
   latitude: 40, longitude: -80, altitude: 300}}, process: {
@@ -20,24 +19,24 @@ assert.equal(cross.lastResult, null);
 
 const fusion = new MultiIlluminatorTrackFuser(config);
 fusion.tracks.set('old', {}); fusion.lastKey = 'old'; fusion.lastCaptureEnd = 9000;
-fusion.seenEpochs.add(0); fusion.seenCaptureIntervals.add('1:2');
+fusion.seenEpochs.add(0); fusion.seenCaptureIntervals.set('1:2', 100000);
 fusion.crossFrequencySupport.lastEpoch = 0; fusion.reset();
 assert.equal(fusion.tracks.size, 0); assert.equal(fusion.lastKey, null);
 assert.equal(fusion.lastCaptureEnd, null); assert.equal(fusion.seenEpochs.size, 0);
 assert.equal(fusion.seenCaptureIntervals.size, 0);
 assert.equal(fusion.crossFrequencySupport.lastEpoch, null);
 
-const maps = new MultiSiteMapSupportTracker(config);
-maps.tracks.set('old', {}); maps.lastKey = 'old';
-maps.lastCohort = {capture_epoch: 0, capture_end_input_sample: 9000};
-maps.lastResult = {available: false}; maps.reset();
-assert.equal(maps.tracks.size, 0); assert.equal(maps.lastKey, null);
-assert.equal(maps.lastCohort, null); assert.equal(maps.lastResult, null);
-maps.tracks.set('scientific', {});
-const unavailable = maps.unavailable('Presentation-only map transport.');
-assert.equal(unavailable.available, false);
-assert.equal(unavailable.reason, 'Presentation-only map transport.');
-assert.equal(unavailable.diagnostic_only, true);
-assert.equal(maps.tracks.size, 0);
+// The fusion owners retain unsuccessful outcomes too. HTTP adapters can read
+// their snapshots without maintaining a second cache or a separate reset lane.
+for (const owner of [fusion]) {
+  owner.reset();
+  assert.equal(owner.snapshot(), null);
+  const rejected = owner.unavailable('Incomplete capture cohort.');
+  assert.equal(rejected.available, false);
+  assert.equal(owner.lastResult, rejected);
+  assert.equal(owner.snapshot().available, false);
+  owner.reset();
+  assert.equal(owner.snapshot(), null, 'Reset cannot resurrect a retained failure');
+}
 
 console.log('Producer session reset clears every capture-interval watermark.');

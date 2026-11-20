@@ -78,7 +78,7 @@ assert.match(common, /capture\/status\?summary=1/,
 
 for (const script of new Set(plotPages.values())) {
   const source = fs.readFileSync(path.join(root, 'html/js', script), 'utf8');
-  assert.match(source, /startRadarPlot\(/,
+  assert.match(source, /startRadarDisplay\(/,
     `${script} must preserve the last valid plot on fetch failure`);
 }
 

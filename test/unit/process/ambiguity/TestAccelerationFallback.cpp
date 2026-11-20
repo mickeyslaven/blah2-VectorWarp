@@ -1,4 +1,5 @@
 #include "process/ambiguity/Acceleration.h"
+#include "process/ambiguity/GpuLaneLease.h"
 #include "process/analysis/StartupIq.h"
 #include <cmath>
 #include <memory>
@@ -7,6 +8,9 @@
 #include <stdexcept>
 #include <vector>
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <thread>
 
 using Complex = std::complex<double>;
 void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -25,9 +29,15 @@ struct Backend : blah2::GpuBackend {
     ++state->calls;
     if (state->fault == "throw" || (state->fault == "later" && state->calls > 3))
       throw std::runtime_error("GPU device lost; using CPU");
+    if (state->fault == "transient" && state->calls > 3)
+      throw std::runtime_error("GPU worker stopped unexpectedly; using CPU");
     output = state->output;
     if (state->fault == "wrong") for (auto& item : output) item *= 2;
     if (state->fault == "nan") output[0] = {std::numeric_limits<float>::quiet_NaN(), 0};
+    // Preserve the retired full-map guard's unique tail coverage in the
+    // canonical accelerator: a prefix-only oracle must not accept these.
+    if (state->fault == "nan-tail") output.back() = {std::numeric_limits<float>::quiet_NaN(), 0};
+    if (state->fault == "wrong-tail") output.back() += std::complex<float>(1e6f, 0);
     if (state->fault == "shape") output.clear();
   }
 };
@@ -74,6 +84,8 @@ struct CombinedBackend : blah2::GpuBackend, blah2::GpuClutterFrameBackend {
       const std::vector<std::complex<float>>&,
       std::vector<std::complex<float>>& output) override {
     ++state->calls;
+    if(state->fault=="ambiguity-transient")
+      throw std::runtime_error("GPU worker stopped unexpectedly; using CPU");
     if(state->fault=="ambiguity-throw") throw std::runtime_error("Injected ambiguity worker failure");
     output=state->output;
     if(state->fault=="wrong") for(auto& value:output) value*=2;
@@ -95,6 +107,114 @@ struct CombinedBackend : blah2::GpuBackend, blah2::GpuClutterFrameBackend {
     return true;
   }
 };
+// Deterministic ordering oracle: host reference work must run between submission
+// and completion, exactly once across rejection/failure and before CPU mutation.
+void testClutterHostWork() {
+  struct OverlapBackend : CombinedBackend, blah2::GpuClutterHostWorkBackend {
+    std::vector<std::string>& events;
+    OverlapBackend(blah2::GpuGeometry geometry, std::shared_ptr<State> state,
+        std::vector<std::string>& order)
+      : CombinedBackend(geometry, std::move(state)), events(order) {}
+    bool processClutterFrameWithHostWork(const std::function<void()>& hostWork) override {
+      events.push_back("submitted");
+      if (state->fault == "before-host") throw std::runtime_error("Injected submission failure");
+      hostWork();
+      events.push_back("completed");
+      return processClutterFrame();
+    }
+  };
+  const blah2::GpuGeometry geometry{8, 4, 3, 1, 0, 32, 1, 0};
+  for (const std::string fault : {"", "cpu", "legacy", "before-host", "clutter-reject",
+      "clutter-throw", "host-throw"}) {
+    auto state = std::make_shared<State>(); state->fault = fault;
+    std::vector<std::string> events;
+    auto factory = [&](const blah2::GpuGeometry& shape, const std::string&)
+        -> std::unique_ptr<blah2::GpuBackend> {
+      std::unique_ptr<blah2::GpuBackend> backend;
+      if (fault == "legacy") backend = std::make_unique<CombinedBackend>(shape, state);
+      else backend = std::make_unique<OverlapBackend>(shape, state, events);
+      return blah2::leaseGpuLane(std::move(backend),
+        std::make_shared<blah2::resident::LaneBudget>(1));
+    };
+    blah2::Acceleration acceleration(fault == "cpu" ? "cpu" : "auto",
+      geometry, 8, 64, 0, "auto", factory);
+    IqData reference(32), input(32);
+    const std::deque<Complex> original(32, Complex(1, .5));
+    reference.replace(std::deque<Complex>(original));
+    input.replace(std::deque<Complex>(original));
+    unsigned hostCalls = 0, cpuCalls = 0;
+    bool threw = false;
+    try {
+      check(acceleration.processClutter(reference, {&input}, [&] {
+        check(hostCalls == 1, "CPU clutter ran before host reference work");
+        ++cpuCalls; events.push_back("cpu"); return true;
+      }, [&] {
+        ++hostCalls; events.push_back("host");
+        check(input.view_data() == original && reference.view_data() == original,
+          "Host reference work observed committed clutter");
+        if (fault == "host-throw") throw std::runtime_error("Injected host reference failure");
+      }), "Clutter host-work fixture rejected");
+    } catch (const std::runtime_error& error) {
+      threw = true;
+      check(fault == "host-throw" && std::string(error.what()) == "Injected host reference failure",
+        "Host reference exception was swallowed or relabelled");
+    }
+    check(hostCalls == 1 && threw == (fault == "host-throw"),
+      "Host reference work was skipped/retried");
+    check(input.view_data() == original, "Failed or zero clutter changed input");
+    if (fault == "host-throw") {
+      check(cpuCalls == 0 && state->clutterCalls == 1 && acceleration.available(),
+        "Host failure retried CPU or retired a drained healthy worker");
+      check(events == std::vector<std::string>{"submitted", "host", "completed"},
+        "Host exception escaped before worker completion");
+      state->fault.clear();
+      check(acceleration.processClutter(reference, {&input}, [&] {
+        ++cpuCalls; return true;
+      }, [&] { ++hostCalls; }), "Drained worker could not process the next frame");
+      check(cpuCalls == 1 && hostCalls == 2 && state->clutterCalls == 2,
+        "Host failure left a stale callback or repeated the previous frame");
+    } else {
+      check(cpuCalls == 1, "First-frame qualification/fallback count changed");
+      if (fault != "cpu" && fault != "legacy" && fault != "before-host")
+        check(events == std::vector<std::string>{"submitted", "host", "completed", "cpu"},
+          "Clutter overlap ordering differs");
+    }
+  }
+}
+void testIndependentPortableLanesCanOverlap() {
+  struct Gate {
+    std::mutex mutex;
+    std::condition_variable changed;
+    unsigned entered = 0, active = 0, maximum = 0;
+  } gate;
+  struct OverlapBackend final : blah2::GpuBackend {
+    Gate& gate;
+    explicit OverlapBackend(Gate& value) : gate(value) {}
+    blah2::GpuDevice device() const override { return {"overlap", "Synthetic lane", 0}; }
+    void process(const std::vector<std::complex<float>>&,
+        const std::vector<std::complex<float>>&,
+        std::vector<std::complex<float>>&) override {
+      std::unique_lock<std::mutex> lock(gate.mutex);
+      ++gate.entered; ++gate.active;
+      gate.maximum = std::max(gate.maximum, gate.active);
+      gate.changed.notify_all();
+      gate.changed.wait_for(lock, std::chrono::milliseconds(500),
+        [&] { return gate.entered == 2; });
+      --gate.active;
+    }
+  };
+  auto budget = std::make_shared<blah2::resident::LaneBudget>(2);
+  auto first = blah2::leaseGpuLane(std::make_unique<OverlapBackend>(gate), budget);
+  auto second = blah2::leaseGpuLane(std::make_unique<OverlapBackend>(gate), budget);
+  const std::vector<std::complex<float>> input;
+  std::vector<std::complex<float>> firstOutput, secondOutput;
+  std::thread left([&] { first->process(input, input, firstOutput); });
+  std::thread right([&] { second->process(input, input, secondOutput); });
+  left.join(); right.join();
+  check(gate.maximum == 2,
+    "Independent portable lanes were serialized despite separate worker transactions");
+}
+
 void testPackedFrames() {
   constexpr unsigned samples = 4800, fs = 48000;
   for (unsigned channels : {1, 4, 8}) for (int middle : {0, 110, -110}) {
@@ -226,10 +346,49 @@ void testStartupPreparation() {
   std::cout << "PASS pre-capture qualification, fallback, steady admission and bound\n";
 }
 
+void testTransientWorkerRecovery() {
+  constexpr unsigned samples = 4800;
+  Ambiguity cpu(-5, 20, -100, 100, 48000, samples, true);
+  IqData reference(samples), input(samples);
+  const unsigned doppler = cpu.get_n_doppler_bins(), delays = cpu.get_n_delay_bins();
+  auto failed = std::make_shared<State>(); failed->fault = "transient";
+  auto replacement = std::make_shared<State>();
+  unsigned creations = 0, cpuCalls = 0;
+  blah2::Acceleration acceleration("gpu", {cpu.get_nfft(), doppler, delays, 1, -5},
+    cpu.get_n_corr(), 48000, 0, "auto",
+    [&](const blah2::GpuGeometry&, const std::string&) -> std::unique_ptr<blah2::GpuBackend> {
+      ++creations;
+      return std::make_unique<Backend>(creations == 1 ? failed : replacement);
+    });
+  for (unsigned frame = 0; frame < 6; ++frame) {
+    blah2::startup::fillIq({&reference, &input}, samples, frame);
+    const auto raw = input.get_data();
+    cpu.process(reference.view_data(), &input);
+    std::vector<std::complex<float>> output(size_t(doppler) * delays);
+    for (unsigned d = 0; d < doppler; ++d) for (unsigned r = 0; r < delays; ++r)
+      output[r * doppler + (d + doppler / 2 + 1) % doppler] = cpu.result()->data[d][r];
+    failed->output = output; replacement->output = output;
+    input.replace(std::deque<Complex>(raw));
+    acceleration.process(reference.view_data(), {&input}, {&cpu}, [&] {
+      ++cpuCalls; cpu.process(reference.view_data(), &input);
+    });
+  }
+  check(creations == 2, "Transient worker recovery spawned more than one replacement");
+  check(cpuCalls == 5, "Recovered worker skipped one-frame numerical requalification or retained CPU fallback");
+  check(acceleration.status().active == "vulkan" && acceleration.status().state == "ready",
+    "Recovered worker did not return to qualified GPU execution");
+  check(acceleration.ambiguityGpuExecuted() && !acceleration.ambiguityCpuExecuted(),
+    "Recovered steady frame did not execute exclusively on GPU");
+  std::cout << "PASS transient worker self-recovery and numerical requalification\n";
+}
+
 int main(int argc, char**) {
   try {
     testPackedFrames();
+    testClutterHostWork();
+    testIndependentPortableLanesCanOverlap();
     testStartupPreparation();
+    testTransientWorkerRecovery();
     for (const std::string mode : {"cpu", "auto", "gpu"}) {
       bool rejected = false;
       try {
@@ -239,7 +398,7 @@ int main(int argc, char**) {
       }
       check(rejected, "Acceleration accepted a signed delay outside its correlation block");
     }
-    for (const std::string fault : {"throw", "wrong", "nan", "shape", "later", "init", "cpu", "missing"}) {
+    for (const std::string fault : {"throw", "wrong", "nan", "nan-tail", "wrong-tail", "shape", "later", "init", "cpu", "missing"}) {
       if (fault == "missing" && argc == 1) continue; // Explicit no-driver run only.
       constexpr unsigned samples = 4800;
       Ambiguity cpu(-5, 20, -100, 100, 48000, samples, true);
@@ -277,6 +436,8 @@ int main(int argc, char**) {
       check(calls == 5, "Expected one CPU execution per recovered frame");
       check(acceleration.status().active == "cpu", "Fault was not recovered on CPU");
       check(fault == "cpu" || acceleration.status().state == "fallback", "Fallback reason is absent");
+      check(acceleration.retainedScratchBytes() == 0,
+        "Retired GPU path retained host staging capacity");
       if (fault != "init" && fault != "cpu" && fault != "missing")
         check(state->calls <= (fault == "later" ? 4u : 1u), "Failed GPU was retried");
       std::cout << "PASS fallback=" << fault << '\n';
@@ -432,6 +593,25 @@ int main(int argc, char**) {
       hybridState->clutterCalls==hybridQualification+hybridSteadyFrames &&
       hybrid.status().active=="vulkan" && hybrid.clutterStatus().active=="vulkan",
       "Slow qualified GPU stages reran steady work on CPU");
+
+    // A portable worker may fail in ambiguity after its clutter operation.
+    // The next CPI initially selects stages from the fallback state, so worker
+    // recreation must be polled at that boundary rather than only from the
+    // now-unselected GPU clutter method.
+    hybridState->fault="ambiguity-transient";
+    runHybrid();
+    check(!hybrid.available() && hybrid.status().active=="cpu" &&
+      hybrid.clutterStatus().active=="cpu",
+      "Transient combined-worker failure did not enter same-frame CPU fallback");
+    hybridState->fault.clear();
+    hybrid.beginFrame();
+    check(hybrid.available() && hybrid.clutterAvailable() &&
+      hybrid.status().state=="checking" && hybrid.clutterStatus().state=="checking",
+      "CPI-boundary recovery did not restore the combined GPU worker for requalification");
+    runHybrid();
+    check(hybrid.status().active=="vulkan" && hybrid.clutterStatus().active=="vulkan" &&
+      hybrid.ambiguityCpuExecuted() && hybrid.clutterTiming().cpuExecuted,
+      "Recovered combined worker skipped bounded CPU numerical requalification");
 
     auto combinedState=std::make_shared<State>();
     combinedState->output=state->output; combinedState->fault="wrong";

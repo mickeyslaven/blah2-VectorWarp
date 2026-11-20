@@ -2,9 +2,6 @@
 #include "RangeRowWorker.h"
 #include "RangeFft.h"
 #include "process/utility/FftwThreads.h"
-#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
-#include "GpuPartialAmbiguity.h"
-#endif
 #include <complex>
 #include <iostream>
 #include <deque>
@@ -81,17 +78,6 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   }
   if (rangeWorkers == 2 && nDopplerBins < 2)
     throw std::invalid_argument("Two range workers require at least two Doppler rows");
-#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
-  bool usePartialGpu = false;
-  if (const char* setting = std::getenv("VECTORWARP_GPU_PARTIAL_AMBIGUITY")) {
-    const std::string mode(setting);
-    if (mode == "1") usePartialGpu = true;
-    else if (mode != "0")
-      throw std::invalid_argument("VECTORWARP_GPU_PARTIAL_AMBIGUITY must be 0 or 1");
-  }
-  if (usePartialGpu && rangeWorkers != 2)
-    throw std::invalid_argument("Partial GPU ambiguity requires two CPU range workers");
-#endif
 
   // batches constants
   const uint32_t correlationSamples = _n / nDopplerBins;
@@ -201,19 +187,11 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
         rangeThread = std::make_unique<RangeRowWorker>(nfft, planFlags,
           fftw_planner_mutex(), true);
     }
-#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
-    if (usePartialGpu)
-      gpuPartial = std::make_unique<GpuPartialAmbiguity>(_n, nDopplerBins, nCorr,
-        nfft, nDelayBins, delayMin, dopplerMiddle);
-#endif
     if (const char* path = std::getenv("VECTORWARP_BENCH_RANGE_LOG")) {
       rangeLog.open(path, std::ios::app);
       if (!rangeLog) throw std::runtime_error("Ambiguity range timing log open failed");
     }
   } catch (...) {
-#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
-    gpuPartial.reset();
-#endif
     rangeThread.reset(); rangeCaller.reset();
     plannerLock.lock();
     if (fftXi) fftw_destroy_plan(fftXi);
@@ -230,9 +208,6 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
 
 Ambiguity::~Ambiguity()
 {
-#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
-  gpuPartial.reset();
-#endif
   rangeThread.reset();
   rangeCaller.reset();
   std::lock_guard<std::mutex> plannerLock(fftw_planner_mutex());
@@ -243,17 +218,32 @@ Ambiguity::~Ambiguity()
 
 Map<std::complex<double>> *Ambiguity::process(IqData *x, IqData *y)
 {
-  return process(x->view_data(), y);
+  return process(x->sample_view(), y);
 }
 
 Map<std::complex<double>> *Ambiguity::process(
   const std::deque<Complex>& x, IqData *y, bool preserveSurveillance)
+{
+  return process(IqSampleView(x), y, preserveSurveillance);
+}
+
+Map<std::complex<double>> *Ambiguity::process(
+  IqSampleView x, IqData *y, bool preserveSurveillance)
 {
   return process_impl(x, y, nullptr, nullptr, 0, 0, preserveSurveillance);
 }
 
 Map<std::complex<double>> *Ambiguity::process_borrowed(
   const std::deque<Complex>& originalReference, IqData* surveillanceOwner,
+  const Complex* rotatedReference, const Complex* filteredSurveillance,
+  uint32_t fullSamples, int32_t clutterDelayMin, bool preserveSurveillance)
+{
+  return process_borrowed(IqSampleView(originalReference), surveillanceOwner,
+    rotatedReference, filteredSurveillance, fullSamples, clutterDelayMin, preserveSurveillance);
+}
+
+Map<std::complex<double>> *Ambiguity::process_borrowed(
+  IqSampleView originalReference, IqData* surveillanceOwner,
   const Complex* rotatedReference, const Complex* filteredSurveillance,
   uint32_t fullSamples, int32_t clutterDelayMin, bool preserveSurveillance)
 {
@@ -266,7 +256,7 @@ Map<std::complex<double>> *Ambiguity::process_borrowed(
 }
 
 Map<std::complex<double>> *Ambiguity::process_impl(
-  const std::deque<Complex>& x, IqData *y,
+  IqSampleView x, IqData *y,
   const Complex* rotatedReference, const Complex* filteredSurveillance,
   uint32_t fullSamples, int32_t clutterDelayMin, bool preserveSurveillance)
 {
@@ -276,68 +266,18 @@ Map<std::complex<double>> *Ambiguity::process_impl(
   // range processing
   nSamples = nDopplerBins * nCorr;
   if (!filteredSurveillance &&
-      (!y || y->view_data().size() < nSamples))
+      (!y || y->sample_view().size() < nSamples))
     throw std::runtime_error("Surveillance CPI is shorter than ambiguity input");
-  static const std::deque<Complex> emptySurveillance;
-  const auto& surveillanceData = y ? y->view_data() : emptySurveillance;
+  const auto surveillanceData = y ? y->sample_view() : IqSampleView{};
   auto surveillanceIt = surveillanceData.cbegin();
   uint32_t referenceIndex = 0;
   const std::complex<double> imaginary = {0, 1};
   const auto rangePhaseStarted = std::chrono::steady_clock::now();
   if (rangeWorkers) {
-#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
-    if (gpuPartial) {
-      const auto rangeStarted = std::chrono::steady_clock::now();
-      gpuPartial->start(x, surveillanceData, rotatedReference, filteredSurveillance,
-        fullSamples, clutterDelayMin);
-      const uint32_t first = GpuPartialAmbiguity::gpuRows;
-      const uint32_t split = first + (nDopplerBins-first)/2;
-      RangeRowWorker::Job caller{&x,&surveillanceData,&rangeRows,first,split,
-        nCorr,nfft,nDelayBins,fs,delayMin,dopplerMiddle};
-      caller.rotatedX=rotatedReference; caller.filteredY=filteredSurveillance;
-      caller.fullSamples=fullSamples; caller.rotation=clutterDelayMin;
-      auto second=caller; second.first=split; second.last=nDopplerBins;
-      bool started=false;
-      GpuPartialAmbiguityTiming gpuTiming{};
-      std::chrono::steady_clock::time_point submitted, callerFinished, joined;
-      try {
-        rangeThread->start(second); started=true;
-        submitted=std::chrono::steady_clock::now();
-        rangeCaller->executeCaller(caller);
-        callerFinished=std::chrono::steady_clock::now();
-        rangeThread->finish(); started=false;
-        joined=std::chrono::steady_clock::now();
-        gpuTiming=gpuPartial->finish(rangeRows);
-      } catch (...) {
-        if (started) try { rangeThread->finish(); } catch (...) {}
-        gpuPartial->abort();
-        throw;
-      }
-      for (uint32_t row=0; row<nDopplerBins; ++row)
-        std::copy_n(rangeRows.begin()+uint64_t(row)*nDelayBins,
-          nDelayBins, map->data[row].begin());
-      if (rangeLog) {
-        auto milliseconds=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
-        rangeLog << "{\"frame\":" << ++rangeFrame << ",\"workers\":2,\"gpu_rows\":" << first
-          << ",\"cpu_rows\":" << nDopplerBins-first << ",\"split\":" << split
-          << ",\"fft\":" << nfft << ",\"backend\":\"vulkan+cpu\""
-          << ",\"borrowed_y\":" << (filteredSurveillance?"true":"false")
-          << ",\"borrowed_x\":" << (rotatedReference?"true":"false")
-          << ",\"gpu_pack_submit_ms\":" << gpuTiming.packSubmitMs
-          << ",\"gpu_submit_to_fence_ms\":" << gpuTiming.submitToFenceMs
-          << ",\"gpu_fence_wait_ms\":" << gpuTiming.fenceWaitMs
-          << ",\"gpu_readback_ms\":" << gpuTiming.readbackMs
-          << ",\"cpu_caller_ms\":" << milliseconds(submitted,callerFinished)
-          << ",\"cpu_join_wait_ms\":" << milliseconds(callerFinished,joined)
-          << ",\"range_total_ms\":" << milliseconds(rangeStarted,std::chrono::steady_clock::now())
-          << "}\n" << std::flush;
-      }
-    } else
-#endif
     {
     const auto rangeStarted = std::chrono::steady_clock::now();
     const uint32_t split = rangeWorkers == 2 ? nDopplerBins/2 : nDopplerBins;
-    RangeRowWorker::Job job{&x,&surveillanceData,&rangeRows,0,split,nCorr,nfft,
+    RangeRowWorker::Job job{x,surveillanceData,&rangeRows,0,split,nCorr,nfft,
       nDelayBins,fs,delayMin,dopplerMiddle};
     job.rotatedX=rotatedReference; job.filteredY=filteredSurveillance;
     job.fullSamples=fullSamples; job.rotation=clutterDelayMin;
@@ -420,7 +360,7 @@ Map<std::complex<double>> *Ambiguity::process_impl(
   }
 
   if (!preserveSurveillance) {
-    if (y && y->view_data().size() >= nSamples) y->discard_front(nSamples);
+    if (y && y->sample_view().size() >= nSamples) y->discard_front(nSamples);
     // The legacy path retains the filtered short tail after consuming the
     // ambiguity rows. Copy only that tail; the next CPI replaces this deque.
     if (filteredSurveillance && y)

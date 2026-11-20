@@ -13,6 +13,7 @@
 #include <complex>
 #include <mutex>
 #include "FloatCaptureBlocks.h"
+#include "IqSampleView.h"
 
 class IqData
 {
@@ -25,6 +26,13 @@ private:
 
   /// @brief Pointer to IQ data.
   std::deque<std::complex<double>> *data;
+
+  // Canonical DSP opts into retained contiguous FP64 storage. Legacy mutable
+  // deque access materializes once and transfers authority back to the FIFO.
+  mutable bool contiguousActive = false;
+  std::vector<std::complex<double>> contiguousData;
+  std::size_t contiguousCount = 0;
+  void materialize_deque() const;
 
   // Live wideband GPU capture is received as FP32 and consumed as FP32.
   // Keeping that queue native avoids a lossless-but-expensive FP32->FP64->FP32
@@ -51,6 +59,20 @@ private:
   std::vector<double> frequency;
 
 public:
+  struct StorageMetrics {
+    uint64_t allocations = 0, materializations = 0, materializedSamples = 0;
+    double materializationMs = 0;
+  };
+private:
+  mutable StorageMetrics storageMetrics;
+public:
+  IqSampleView sample_view() const;
+  // Preserves existing samples, including partial CPIs. Retired storage stays
+  // initialized; callers overwrite newly admitted samples and must not resize
+  // the returned vector. Views expire on mutation or legacy deque access.
+  // Capture FIFOs never opt into this mode.
+  std::vector<std::complex<double>>& resize_contiguous_for_write(uint32_t count);
+  StorageMetrics take_storage_metrics();
   /// @brief Constructor.
   /// @param n Number of samples.
   /// @return The object.
@@ -90,7 +112,8 @@ public:
   /// @return IQ data.
   std::deque<std::complex<double>> get_data();
 
-  /// @brief Read-only access without copying. Caller must prevent mutation.
+  /// @brief Legacy read-only FIFO access; contiguous DSP storage materializes
+  /// once. Caller must prevent concurrent access and subsequent mutation.
   const std::deque<std::complex<double>>& view_data() const;
 
   /// @brief Remove and return a block from the front of the queue.
@@ -101,7 +124,6 @@ public:
   std::deque<std::complex<double>> take_all();
 
   /// @brief Opt an empty producer FIFO into native FP32 capture storage.
-  /// @details Optionally first-touch bounded warmBlocks before recv begins.
   /// @warning Must be called before the capture producer starts.
   void enable_float_capture(uint32_t blockSamples = 0, uint32_t warmBlocks = 0);
 
@@ -115,6 +137,8 @@ public:
   FloatCaptureBlockBatch take_float_blocks(std::size_t minimumSamples = 0);
 
   FloatCaptureBlockPool::Stats float_capture_pool_stats() const;
+  void prepare_float_capture_reserve();
+  FloatCaptureBlockPool::ReserveStats float_capture_reserve_stats() const;
 
   /// @brief Discard a processed block without returning or copying samples.
   /// @warning Caller must prevent concurrent mutation.

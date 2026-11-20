@@ -420,6 +420,7 @@ class CaptureTriggerQueue {
     if (!records.length || windows.some(window => !window || window.preRollRetries >= 1)) return null;
     const clip = {revision: ++this.revision, eventIds: [...prior.eventIds], captureIds: {...prior.captureIds},
       passIds: [...prior.passIds], requestedEventTime,
+      exposureClass: 'pre-roll-retry',
       preSeconds: this.preSeconds, postSeconds: this.postSeconds,
       windowStart: requestedEventTime - this.preSeconds * 1000,
       windowEnd: requestedEventTime + this.postSeconds * 1000,
@@ -522,7 +523,7 @@ class CaptureTriggerQueue {
     // channels share this queue, so applying the ADS-B exposure cooldown here
     // caused valid motion windows to wait until their RF pre-roll expired.
     // The native recorder remains serialized by the pending/exposed clip.
-    if (expose && clip?.exposureClass !== 'unmatched-motion' &&
+    if (expose && !['unmatched-motion', 'pre-roll-retry'].includes(clip?.exposureClass) &&
         this.now() < this.nextExposureAt)
       return {clipRevision: 0, eventIds: [], passIds: [],
         requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
@@ -535,7 +536,7 @@ class CaptureTriggerQueue {
       clip.claimedAt = this.now();
       clip.staleAtClaim = clip.claimedAt > clip.windowEnd;
       clip.exposed = true;
-      if (clip.exposureClass !== 'unmatched-motion')
+      if (!['unmatched-motion', 'pre-roll-retry'].includes(clip.exposureClass))
         this.nextExposureAt = clip.claimedAt + this.minimumExposureIntervalMs;
     }
     return compact(clip) || {clipRevision: 0, eventIds: [], passIds: [],

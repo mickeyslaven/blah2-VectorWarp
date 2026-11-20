@@ -95,8 +95,8 @@ public:
   const std::vector<double>& packedTaps() const { return packedTaps_; }
   uint32_t historySamples() const { return historySamples_; }
 
-  // Automatic selection is restricted to physically-qualified geometries.
-  // The Vulkan module performs the final device/bin-compatibility check.
+  // Valid geometry is offered to the GPU regardless of sample rate or folding.
+  // The Vulkan module checks actual device capacity; output must qualify.
   bool runtimeSelectable() const noexcept;
   const char* runtimeBlockReason() const noexcept;
 
@@ -156,6 +156,28 @@ public:
   virtual void reset() = 0;
   virtual std::string deviceName() const = 0;
   virtual Timing lastTiming() const noexcept { return {}; }
+};
+
+// Optional worker-local capability: expose completed lane/channel-major FP32
+// samples without first materializing LaneOutput vectors. The view remains
+// valid until the next process/reset call or backend destruction. The worker
+// must validate its dispatch and copy it before acknowledging the frame; the
+// parent still owns its returned vectors while the next frame is in flight.
+// Keep this separate from Backend so existing module-v1 vtables and owned
+// output consumers remain compatible. A backend without this capability uses
+// the existing processView path.
+struct BorrowedOutput
+{
+  Dispatch dispatch;
+  const std::complex<float>* data = nullptr;
+};
+
+class BorrowedOutputBackend
+{
+public:
+  virtual ~BorrowedOutputBackend() = default;
+  virtual BorrowedOutput processBorrowed(const Backend::InputView& input,
+    uint64_t firstInputSample) = 0;
 };
 
 constexpr unsigned moduleAbi = 1;

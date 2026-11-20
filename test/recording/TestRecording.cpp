@@ -1,6 +1,7 @@
 #include "capture/Recording.h"
 #include "capture/Replay.h"
 #include "capture/Sha256.h"
+#include "capture/RecordingAcquisitionJson.h"
 #include "capture/Source.h"
 #include "capture/rspduo/SampleSequence.h"
 #include <cmath>
@@ -37,6 +38,9 @@ public:
     return {true,7,1000,40000000,2400000,"external","internal","B210","A:A A:B"};
   }
   std::string recording_provenance_json() const override { return details; }
+  std::vector<double> recording_applied_gain_db() const override {
+    return type == "Usrp" ? std::vector<double>{10.25, 20.5} : std::vector<double>{};
+  }
 };
 void require(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
 void rejects(const std::function<void()>& work,const char* message) {
@@ -47,12 +51,233 @@ void write(const std::filesystem::path& path,const std::vector<uint8_t>& bytes) 
   std::ofstream stream(path,std::ios::binary); stream.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());
 }
 
+void acquisition_contract_tests(const std::filesystem::path& directory) {
+  unsigned serial = 0;
+  const auto save = [&](const std::string& json, unsigned channels) {
+    const auto filename = directory / ("acquisition-" + std::to_string(++serial) + ".blah2iq");
+    RecordingWriter writer(filename, {channels, 1000, 100000000, 0, "blah2", json});
+    writer.append(IqBlock(channels, std::vector<std::complex<float>>(12, {0.125f, -0.5f})));
+    writer.close(); return filename;
+  };
+  const auto hash = [](const std::filesystem::path& filename) {
+    std::ifstream input(filename, std::ios::binary);
+    return acquisition::digest(std::string(std::istreambuf_iterator<char>(input), {}));
+  };
+  for (const std::string receiver : {"Usrp", "RspDuo", "HackRF", "Kraken"}) {
+    const unsigned channels = receiver == "Kraken" ? 5 : 2;
+    RecordingBlockMetadata metadata;
+    metadata.receiverDetailsJson = "{\"identity\":\"fixture-device\",\"requestedGain\":[12,13]}";
+    metadata.perChannelGainDb.assign(channels, 14.199999809265137);
+    metadata.context.requestedChannelGainDb.assign(channels, 14.2);
+    const bool readback = receiver == "Usrp" || receiver == "Kraken";
+    metadata.gainProvenance = readback ? "sample-aligned-readback" : "requested-settings-only";
+    metadata.context.referenceMode = channels == 5 ? "array_eigenbeam" : "dedicated";
+    metadata.context.coherent = true;
+    if (channels == 5) {
+      metadata.context.referenceChannels = {0,1,2,3,4};
+      metadata.context.surveillanceChannels = {0,1,2,3,4};
+      metadata.context.geometryJson = "{\"units\":\"m\",\"x_axis_bearing_deg_true\":0,\"elements\":[{\"daq_channel\":0,\"position\":[0,0,0]},{\"daq_channel\":1,\"position\":[1,0,0]},{\"daq_channel\":2,\"position\":[0,1,0]},{\"daq_channel\":3,\"position\":[-1,0,0]},{\"daq_channel\":4,\"position\":[0,-1,0]}]}";
+      metadata.context.geometryConfirmed = true;
+    } else { metadata.context.referenceChannels = {0}; metadata.context.surveillanceChannels = {1}; }
+    metadata.context.manifoldSha256 = {{"bearing", std::string(64, 'c')}, {"detection", std::string(64, 'd')}};
+    metadata.context.configurationSha256 = std::string(64, 'a'); metadata.context.codeSha256 = std::string(64, 'b');
+    metadata.context.geographicSitesJson = R"({"schema":"vectorwarp-recorded-geographic-sites-v1","provenance":"operator-configured-at-acquisition","rx":{"latitude":40.1,"longitude":-80.2,"altitude":300.0,"site_id":"recorded-rx"},"tx":{"latitude":40.5,"longitude":-80.0,"altitude":450.0},"illuminators":{"lane-a":{"frequencyHz":100000000,"transmitter":{"latitude":40.5,"longitude":-80.0,"altitude":450.0,"site_id":"tower-a"}},"lane-b":{"frequencyHz":101000000,"transmitter":{"latitude":40.6,"longitude":-79.5,"altitude":500.0}}}})";
+    const uint64_t first = 9007199254740993ULL;
+    const auto json = acquisition::serialize(&metadata, receiver, channels, 1000, 100000000,
+      9007199254740995ULL, first, first + 12, true, {{17, first - 2, 16, 2, 12}});
+    const auto filename = save(json, channels);
+    ReplayOptions options{"blah2", "HackRF", channels, 1000, 100000000, 0};
+    options.expectedRecordingSha256 = hash(filename);
+    RecordingReader ordinary(filename, options);
+    require(ordinary.provenance().requested_gains_for_manifold() == metadata.context.requestedChannelGainDb,
+      "Requested acquisition gains did not round trip separately from applied readback");
+    require(ordinary.provenance().geographicSitesAvailable &&
+      ordinary.provenance().acquisitionContext.geographicSitesJson == metadata.context.geographicSitesJson,
+      "Authenticated geographic sites did not round trip across receiver topology");
+    auto untrusted = options; untrusted.expectedRecordingSha256.clear();
+    rejects([&] { (void)RecordingReader(filename, untrusted).provenance().requested_gains_for_manifold(); },
+      "Untrusted requested gains became measured-manifold replay identity");
+    {
+      rapidjson::Document altered; altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+      altered.RemoveMember("requestedChannelGainDb");
+      const auto legacy = save(acquisition::encode(altered), channels);
+      auto legacyOptions = options; legacyOptions.expectedRecordingSha256 = hash(legacy);
+      RecordingReader old(legacy, legacyOptions);
+      require(old.provenance().acquisitionContext.requestedChannelGainDb.empty(),
+        "Old recording invented requested gains from readback");
+      rejects([&] { (void)old.provenance().requested_gains_for_manifold(); },
+        "Missing requested gains did not fail measured-manifold replay closed");
+      altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+      altered["requestedChannelGainDb"].PopBack();
+      const auto invalid = save(acquisition::encode(altered), channels);
+      rejects([&] { RecordingReader bad(invalid, untrusted); }, "Partial requested gain vector was accepted");
+      altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+      altered["requestedChannelGainDb"][0].SetString("14.2");
+      const auto malformed = save(acquisition::encode(altered), channels);
+      rejects([&] { RecordingReader bad(malformed, untrusted); }, "Nonnumeric requested gain was accepted");
+    }
+    require(!RecordingReader(filename, untrusted).provenance().geographicSitesAvailable,
+      "Self-declared geographic metadata became trusted");
+    {
+      rapidjson::Document altered; altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+      altered.RemoveMember("geographicSites"); altered.RemoveMember("geographicSitesSha256");
+      const auto old = save(acquisition::encode(altered), channels);
+      auto oldOptions = options; oldOptions.expectedRecordingSha256 = hash(old);
+      require(!RecordingReader(old, oldOptions).provenance().geographicSitesAvailable,
+        "Old acquisition contract inherited geographic claims");
+      altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+      altered["geographicSites"]["rx"]["latitude"].SetDouble(41.0);
+      const auto tampered = save(acquisition::encode(altered), channels);
+      auto tamperedOptions = options; tamperedOptions.expectedRecordingSha256 = hash(tampered);
+      rejects([&] { RecordingReader bad(tampered, tamperedOptions); }, "Tampered geographic site hash was accepted");
+      altered["geographicSitesSha256"].SetString(acquisition::digest(acquisition::encode(altered["geographicSites"])).c_str(), altered.GetAllocator());
+      const auto rehashed = save(acquisition::encode(altered), channels);
+      rejects([&] { RecordingReader bad(rehashed, options); }, "Rehashed site tamper bypassed trusted IQ identity");
+      altered["geographicSites"]["rx"].RemoveMember("altitude");
+      const auto missing = save(acquisition::encode(altered), channels);
+      rejects([&] { RecordingReader bad(missing, untrusted); }, "Incomplete recorded site was accepted");
+    }
+    require(ordinary.provenance().sourceFirstSample == first, "Acquisition sample position lost integer precision");
+    require(ordinary.provenance().epoch == 9007199254740995ULL, "Acquisition epoch lost integer precision");
+    require(ordinary.provenance().frames.front().sourceCount == 16, "Acquisition lost original source frame size");
+    require(ordinary.provenance().acquisitionContext.manifoldSha256 == metadata.context.manifoldSha256,
+      "Acquisition lost manifold identities");
+    require(ordinary.provenance().acquisitionContext.referenceMode == metadata.context.referenceMode &&
+      ordinary.provenance().acquisitionContext.referenceChannels == metadata.context.referenceChannels &&
+      ordinary.provenance().acquisitionContext.surveillanceChannels == metadata.context.surveillanceChannels &&
+      ordinary.provenance().acquisitionContext.coherent == metadata.context.coherent,
+      "Receiver-independent acquisition channel topology did not round trip");
+    if (ordinary.provenance().exactAcquisition != readback)
+      throw std::runtime_error("Acquisition gain/geometry strength mismatch for " + receiver);
+    if (!readback) require(ordinary.provenance().acquisitionReason.find("sample-aligned gain") != std::string::npos,
+      "Unknown applied gain capability did not expose an exact-admission reason");
+    require(ordinary.provenance().perChannelGainDb == (readback ? metadata.perChannelGainDb : std::vector<double>{}),
+      "Applied gain path consumed requested-only settings");
+    options.requireExactAcquisition = true;
+    if (readback) {
+      options.validateAcquisitionContext = true; options.expectedAcquisitionContext = metadata.context;
+      RecordingReader strict(filename, options);
+      auto wrongRequested = options;
+      wrongRequested.expectedAcquisitionContext.requestedChannelGainDb[0] += .01;
+      rejects([&] { RecordingReader bad(filename, wrongRequested); },
+        "Exact replay accepted a conflicting requested gain declaration");
+      require(strict.provenance().acquisitionHashTrusted, "Missing trusted hash status");
+      auto changedLiveSites = options;
+      changedLiveSites.expectedAcquisitionContext.geographicSitesJson = "null";
+      require(RecordingReader(filename, changedLiveSites).provenance().geographicSitesAvailable,
+        "Current live sites overrode authenticated recorded geography");
+      auto wrongRoute = options; wrongRoute.expectedAcquisitionContext.surveillanceChannels.clear();
+      rejects([&] { RecordingReader invalid(filename, wrongRoute); }, "Exact replay accepted different configured channel roles");
+      wrongRoute = options; wrongRoute.expectedAcquisitionContext.manifoldSha256.clear();
+      rejects([&] { RecordingReader invalid(filename, wrongRoute); }, "Exact replay accepted different configured manifolds");
+      wrongRoute = options; wrongRoute.expectedAcquisitionContext.geometryJson = "{}";
+      rejects([&] { RecordingReader invalid(filename, wrongRoute); }, "Exact replay accepted different configured geometry");
+    }
+    else rejects([&] { RecordingReader invalid(filename, options); }, "Requested-only backend passed exact admission");
+    // Rehashing malformed metadata cannot bypass semantic admission, even when
+    // a fixture deliberately provides its new hash as the external trust root.
+    for (const char* field : {"perChannelGainDb", "topology", "geometry", "manifoldSha256", "frames", "codeSha256"}) {
+      rapidjson::Document altered; altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str()); altered.RemoveMember(field);
+      const auto missing = save(acquisition::encode(altered), channels);
+      rejects([&] { RecordingReader invalid(missing, ReplayOptions{"blah2",receiver,channels,1000,100000000,0}); },
+        "Missing acquisition field was accepted");
+    }
+    {
+      rapidjson::Document altered; altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+      altered["topology"]["referenceChannels"][0].SetUint(channels);
+      const auto invalid = save(acquisition::encode(altered), channels);
+      rejects([&] { RecordingReader bad(invalid, ReplayOptions{"blah2",receiver,channels,1000,100000000,0}); },
+        "Out-of-range acquisition channel role was accepted");
+    }
+    {
+      rapidjson::Document altered; altered.Parse<rapidjson::kParseFullPrecisionFlag>(json.c_str());
+      altered["frames"][0]["count"].SetString("11");
+      const auto invalid = save(acquisition::encode(altered), channels);
+      rejects([&] { RecordingReader bad(invalid, ReplayOptions{"blah2",receiver,channels,1000,100000000,0}); },
+        "Acquisition frame count mismatch was accepted");
+    }
+    // Embedded metadata corruption is rejected without any sidecar or trusted
+    // hash. IQ corruption is rejected against the separately pinned full hash.
+    {
+      std::fstream tamper(filename, std::ios::binary | std::ios::in | std::ios::out);
+      tamper.seekp(128 + json.find("fixture-device")); tamper.put('X'); tamper.close();
+      rejects([&] { RecordingReader invalid(filename, options); }, "Tampered embedded metadata was accepted");
+    }
+    const auto changedIq = save(json, channels); options.expectedRecordingSha256 = hash(changedIq);
+    { std::fstream tamper(changedIq, std::ios::binary | std::ios::in | std::ios::out);
+      tamper.seekp(-1, std::ios::end); tamper.put('X'); }
+    rejects([&] { RecordingReader invalid(changedIq, options); }, "Tampered IQ passed external provenance hash");
+  }
+  const auto legacy = directory / "legacy-acquisition.blah2iq";
+  { RecordingWriter writer(legacy, {2,1000,100000000,0,"blah2"});
+    writer.append(IqBlock(2, std::vector<std::complex<float>>(12))); writer.close(); }
+  ReplayOptions options{"blah2","Usrp",2,1000,100000000,0};
+  { RecordingReader ordinary(legacy, options); require(!ordinary.provenance().exactAcquisition, "Legacy file gained acquisition claims"); }
+  options.requireExactAcquisition = true; options.expectedRecordingSha256 = hash(legacy);
+  rejects([&] { RecordingReader invalid(legacy, options); }, "Legacy playback passed exact-acquisition admission");
+}
+
+void sha256_contract_tests() {
+  // Independent hashlib SHA-256 vectors cover both padding blocks, binary
+  // input, recording-sized writes, empty updates and copy/stream equivalence.
+  const std::pair<std::size_t, const char*> vectors[] = {
+{0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    {1, "e7cf46a078fed4fafd0b5e3aff144802b853f8ae459a4f0c14add3314b7cc3a6"},
+    {55, "2900465fcb533e05a158fd2b3be0e5e3b03740d83060aa3580e0d98a96bf2384"},
+    {56, "31454ff48ef36af2f08fd511bdc37d9d5855ac23e992e5ff5445cb6b7674a674"},
+    {63, "5f6401b96532c36de4e65beec0409b69b1d181864c8009b7a04f43e5d56350d1"},
+    {64, "94eb5de4943613fd048dc93393ab06877405faa39c11f53e9386083339833e7e"},
+    {65, "fc518669b6eb4b4dd91827ecacef86689c725bd5bab888fd3b26dbb196eec954"},
+    {119, "b0dc41b1a384e2f1203f0351b38fbeaafceef577ce1191d5bfc25da39f721eae"},
+    {120, "5df24dd802ac26132ce608dcb5f09841eef039ee0f152acf98d26d17fe4e88e6"},
+    {127, "0fe729ff19257bd6fec853acc2ea355f6b34b58e6c0f684c3e188fcdfcd9baae"},
+    {128, "0aedd4856f8eba0963627336ad5144a9a7dbe12498e6066f0165fc97d8ddee4c"},
+    {4097, "042a02b55ba342cdd30322331816b6e4bca073f33bdb80149dc74a6f949802f4"},
+    {65536, "6fc179cfd193754e6109ad043f56d146c7e7d7c3623ffceae318266286f58388"},
+  };
+  for (const auto& vector : vectors) {
+    std::vector<uint8_t> input(vector.first);
+    for (std::size_t i = 0; i < input.size(); ++i) input[i] = uint8_t(i * 37 + 11);
+    Sha256 whole;
+    whole.update(nullptr, 0);
+    whole.update(input.data(), input.size());
+    auto binary = whole;
+    require(whole.finish() == vector.second, "SHA-256 known-answer mismatch");
+    std::string encoded;
+    for (uint8_t byte : binary.finishBytes()) {
+      encoded += "0123456789abcdef"[byte >> 4];
+      encoded += "0123456789abcdef"[byte & 15];
+    }
+    require(encoded == vector.second, "GPU and recording identity encodings differ");
+    for (std::size_t step : {std::size_t(1), std::size_t(7), std::size_t(64), std::size_t(4096)}) {
+      Sha256 streamed;
+      for (std::size_t at = 0; at < input.size(); at += step) {
+        streamed.update(input.data() + at, std::min(step, input.size() - at));
+        streamed.update(nullptr, 0);
+      }
+      require(streamed.finish() == vector.second, "SHA-256 stream partition changed identity");
+    }
+  }
+  if (std::numeric_limits<std::size_t>::max() > UINT64_MAX / 8) {
+    Sha256 bounded;
+    bool overflow = false;
+    try { bounded.update(nullptr, std::numeric_limits<std::size_t>::max()); }
+    catch (const std::overflow_error&) { overflow = true; }
+    require(overflow, "SHA-256 oversized input was not rejected before access");
+    bounded.update("abc", 3);
+    require(bounded.finish() == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "SHA-256 rejection mutated the prior identity state");
+  }
+}
+
 int main() try {
+  sha256_contract_tests();
   char temporary[]="/tmp/blah2-recording-tests.XXXXXX";
   require(mkdtemp(temporary),"Cannot create test directory");
   const auto directory=std::filesystem::path(temporary), path=directory/"fixture.iq";
   auto cleanup=[&] { std::filesystem::remove_all(directory); };
   try {
+    acquisition_contract_tests(directory);
     const uint32_t maxSample=std::numeric_limits<uint32_t>::max();
     require(rspduo_sequence::continues(maxSample,maxSample) &&
       rspduo_sequence::next(maxSample,1)==0 &&
@@ -113,14 +338,14 @@ int main() try {
       Sha256 digest;digest.update(data.data(),data.size());const auto hash=digest.finish();
       const auto sidecar=clipPath.string()+".json";
       const auto metadata=[&](const std::string& sha,uint64_t end,uint64_t bytes,
-          unsigned channels=2) {
+          unsigned channels=2,const std::string& gains="") {
         std::ofstream output(sidecar);
         output<<"{\"schema\":\"vectorwarp-portable-iq-clip-v1\","
           "\"format\":\"blah2iq\",\"encoding\":\"float32-complex-channel-major-blocks\","
           "\"channels\":"<<channels<<",\"sampleRate\":2400000,\"frequency\":527000000,"
           "\"samplesPerChannel\":3,\"epoch\":7,\"firstEpochSample\":1000,"
           "\"endEpochSample\":"<<end<<",\"dataBytes\":"<<bytes<<","
-          "\"dataSha256\":\""<<sha<<"\"}";
+          "\"dataSha256\":\""<<sha<<"\""<<gains<<"}";
       };
       metadata(hash,1003,data.size());
       RecordingReader qualified(clipPath,options);
@@ -133,6 +358,23 @@ int main() try {
       IqBlock actual;
       require(qualified.read(actual)&&actual==original&&!qualified.read(actual),
         "Portable sidecar verification changed replay position or samples");
+      require(provenance.perChannelGainDb.empty(),
+        "Portable clip without applied gains invented calibration");
+      metadata(hash,1003,data.size(),2,",\"perChannelGainDb\":[12.25,-3.5]");
+      RecordingReader calibrated(clipPath,options);
+      require(calibrated.provenance().perChannelGainDb==std::vector<double>({12.25,-3.5}),
+        "Portable clip did not preserve exact applied gains");
+      metadata(hash,1003,data.size(),2,",\"perChannelGainDb\":[14.199999809265137,0.10000000000000002]");
+      RecordingReader preciseGains(clipPath,options);
+      require(preciseGains.provenance().perChannelGainDb==
+        std::vector<double>({double(float(14.2)),0.10000000000000002}),
+        "Portable clip rounded applied gains used for exact manifold identity");
+      for(const auto& invalidGains:{"null","[]","[1]","[1,2,3]","[1,\"2\"]","[1,1e999]"}) {
+        metadata(hash,1003,data.size(),2,std::string(",\"perChannelGainDb\":")+invalidGains);
+        rejects([&] { RecordingReader invalid(clipPath,options); },
+          "Portable clip accepted malformed applied gains");
+      }
+      metadata(hash,1003,data.size());
       auto decisionGrade=options;decisionGrade.provenanceMode="decision-grade";
       rejects([&] { RecordingReader invalid(clipPath,decisionGrade); },
         "Portable relative identity was accepted as decision-grade provenance");
@@ -233,11 +475,27 @@ int main() try {
     };
     for(const auto& fixture:backendDetails) {
       BackendFixtureSource live(fixture.first,directory.string(),&save,fixture.second);
+      RecordingContext context; context.referenceMode = "dedicated";
+      context.referenceChannels = {0}; context.surveillanceChannels = {1};
+      context.configurationSha256 = std::string(64, 'a'); context.codeSha256 = std::string(64, 'b');
+      live.set_recording_context(context);
       const auto recorded=live.open_file();
-      live.record_block({{{1,2},{3,4}},{{5,6},{7,8}}});
+      live.record_block({{{1,2},{3,4}},{{5,6},{7,8}}}, live.sample_time_position());
       live.close_file();
       ReplayOptions qualified{"auto",fixture.first,2,2400000,527000000,0};
       RecordingReader replay(recorded,qualified);
+      require(std::filesystem::exists(recorded + ".acquisition.json"), "Manual source omitted acquisition manifest");
+      auto exact = qualified; exact.requireExactAcquisition = true;
+      exact.expectedRecordingSha256 = replay.provenance().recordingSha256;
+      exact.expectedAcquisitionSha256 = replay.provenance().acquisitionSha256;
+      if (fixture.first == "Usrp") {
+        RecordingReader bound(recorded, exact);
+        require(bound.provenance().perChannelGainDb == std::vector<double>({10.25,20.5}), "Manual applied gains did not round trip");
+        auto missingAnchor = exact; missingAnchor.expectedAcquisitionSha256.clear();
+        rejects([&] { RecordingReader invalid(recorded, missingAnchor); }, "Manual manifest trusted its self-declared metadata digest");
+        auto wrongAnchor = exact; wrongAnchor.expectedAcquisitionSha256 = std::string(64, 'f');
+        rejects([&] { RecordingReader invalid(recorded, wrongAnchor); }, "Manual manifest accepted mismatched metadata identity");
+      } else rejects([&] { RecordingReader invalid(recorded, exact); }, "Unknown applied gains passed manual exact admission");
       IqBlock replayed;
       require(replay.read(replayed) && replayed[0][1]==std::complex<float>(3,4),
         "Backend v2 round trip changed samples");
@@ -348,11 +606,15 @@ int main() try {
       writer.append(replayBlock); writer.close();
       IqData first(4), second(4); std::vector<IqData*> queues{&first,&second};
       std::atomic<bool> stopped{false}, consume{true};
+      std::atomic<uint64_t> committedSamples{0};
+      std::atomic<bool> consumedAheadOfCommit{false};
       std::vector<std::complex<double>> observed;
       std::thread consumer([&] {
         while (consume.load()) {
           first.lock(); second.lock();
           if (first.get_length()>=4 && second.get_length()>=4) {
+            if (committedSamples.load(std::memory_order_acquire) < 4)
+              consumedAheadOfCommit = true;
             auto frame=first.drain_front(4); second.drain_front(4);
             observed.insert(observed.end(),frame.begin(),frame.end());
           }
@@ -361,12 +623,17 @@ int main() try {
       });
       ReplayPlayer player; ReplayProgress last; unsigned updates=0;
       player.run(path,{"auto","Mock",2,1000000,100000000,0},queues,4,false,stopped,
-        [&](const ReplayProgress& progress) { last=progress; ++updates; }, [] { return false; });
+        [&](const ReplayProgress& progress) { last=progress; ++updates; }, [] { return false; },
+        [] { return ReplayCommand{}; }, false, [&](uint64_t samples) {
+          committedSamples.store(samples, std::memory_order_release);
+        });
       consume=false; consumer.join();
       require(last.state=="complete" && !last.controlsAvailable && last.samples==6 && last.trailingSamples==2 && updates>2,
         "Replay did not reach bounded EOF completion");
       require(observed.size()==4 && observed[0]==std::complex<double>(0,0) &&
         observed[3]==std::complex<double>(0,3),"Replay changed frame ordering under backpressure");
+      require(!consumedAheadOfCommit.load(),
+        "Replay exposed a full CPI before publishing its source position");
 
       stopped=false; consume=true;
       std::thread loopConsumer([&] {
@@ -539,6 +806,11 @@ int main() try {
     RecordingReader kraken(path,{"auto","Kraken",2,2400000,527000000,0});
     require(kraken.metadata().samples==4 && kraken.read(block),"MCHQ recording read");
     require(std::abs(block[0][0]-std::complex<float>(-1.5/127.5,1.5/127.5))<1e-7,"MCHQ normalization");
+    ReplayOptions strictKraken{"auto","Kraken",2,2400000,527000000,0};
+    strictKraken.requireExactAcquisition = true;
+    strictKraken.expectedRecordingSha256 = acquisition::digest(std::string(raw.begin(), raw.end()));
+    rejects([&] { RecordingReader invalid(path, strictKraken); },
+      "MCHQ without configured geometry/manifold identities passed exact acquisition qualification");
     raw.back()=128; raw[15]=3; write(path,raw); // Phase no longer calibrated.
     rejects([&] { RecordingReader invalid(path,{"auto","Kraken",2,2400000,527000000,0}); },"Accepted calibration frame");
     cleanup();
