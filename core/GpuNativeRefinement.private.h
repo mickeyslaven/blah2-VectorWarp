@@ -347,7 +347,6 @@ void main() {
 )glsl";
 
 class Refinement {
-  Context& context_;
   uint32_t samples_, bins_, channels_, hop_, blocks_;
   std::unique_ptr<Buffer> status_, cache_, work_, suffix_, lower_, solution_, initial_, weights_;
   std::unique_ptr<NativePlan> workPlan_, weightPlan_;
@@ -365,7 +364,7 @@ public:
   }
   Refinement(Context& context,uint32_t samples,uint32_t bins,uint32_t channels,
       Buffer& reference,Buffer& correlations,Buffer& originalAndEstimate,Buffer& surveillance,Buffer& rounded)
-    : context_(context),samples_(samples),bins_(bins),channels_(channels),
+    : samples_(samples),bins_(bins),channels_(channels),
       hop_(bins && bins<=fft?fft-bins+1:1),blocks_(uint32_t((uint64_t(samples)+hop_-1)/hop_)) {
     const char* solver=std::getenv("BLAH2_GPU_TOEPLITZ_SOLVER");
     const bool forceToeplitz=solver && std::string(solver)=="levinson";

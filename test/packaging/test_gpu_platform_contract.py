@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build policy checks only: no compiler, GPU, SDR, or installed service needed."""
+"""Build policy and bounded compiler checks; no GPU, SDR, or installed service."""
 import pathlib
 import shutil
 import subprocess
@@ -80,6 +80,56 @@ class GpuPlatformPolicyTest(unittest.TestCase):
 
 
 class GpuBuildContractTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("clang++"), "Clang required for private-field diagnostics")
+    def test_submit_context_probe_compiles_and_refuses_unsupported_platform(self):
+        prelude = r'''
+#include <array>
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#if defined(__linux__)
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+'''
+        fixture = r'''
+#include "core/GpuSubmitContextProbe.private.h"
+int main() {
+#if defined(__linux__)
+  static_assert(SubmitContextProbe::supported());
+#else
+  static_assert(!SubmitContextProbe::supported());
+  SubmitContextProbe probe(nullptr);
+  auto record = probe.start(); record.after = probe.take();
+  if (record.supported || record.schedulerEnabled != -1 ||
+      record.before.schedulerError != ENOSYS || record.before.processError != ENOSYS ||
+      record.before.cgroupError != ENOSYS) return 1;
+  std::ostringstream output; SubmitContextProbe::write(output, 0, 0, record);
+  for (const char* field : {"supported=0", "scheduler_valid=0", "process_valid=0",
+                            "cgroup_valid=0", "own_membership_verified=0"})
+    if (output.str().find(field) == std::string::npos) return 2;
+#endif
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="vectorwarp-submit-context-") as directory:
+            executable = str(pathlib.Path(directory) / "probe")
+            for platform in ("native", "unsupported"):
+                with self.subTest(platform=platform):
+                    source = prelude + ("\n#undef __linux__\n" if platform == "unsupported" else "") + fixture
+                    result = subprocess.run([shutil.which("clang++"), "-std=c++17", "-Wall", "-Werror",
+                                             "-Wunused-private-field", "-I", str(ROOT), "-x", "c++", "-",
+                                             "-o", executable], input=source, text=True,
+                                            capture_output=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    subprocess.run([executable], check=True, capture_output=True, timeout=5)
+
     def test_replay_qualification_declares_its_darwin_entropy_primitive(self):
         source = (ROOT / "src/process/ambiguity/ReplayGpuQualification.h").read_text()
         self.assertRegex(source, r"#ifdef __APPLE__\s+#include <sys/random.h>\s+#endif")

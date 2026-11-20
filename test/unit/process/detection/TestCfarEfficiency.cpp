@@ -111,7 +111,7 @@ size_t integratedRegression() {
         if (mask == 2)
           for (size_t i = 0; i < validCells.size(); ++i)
             validCells[i] = (i % 3) != 0;
-        for (const auto window : {std::pair<int, int>{0, 1}, {1, 3}, {7, 16}}) {
+        for (const auto& window : {std::pair<int, int>{0, 1}, {1, 3}, {7, 16}}) {
           CfarDetector1D detector(.001, window.first, window.second, -10, 0, cpis);
           auto expected = maskedReference(map, validCells, cpis,
             window.first, window.second, .001);

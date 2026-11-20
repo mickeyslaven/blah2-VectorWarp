@@ -5453,6 +5453,110 @@
           43219
         ]
       }
+    },
+    {
+      "owner": "Canonical tracker binary64 rounding and existing GPU portability boundaries",
+      "purpose": "2026-11-20 root-reviewed combined portability and FMA-parity repair. src/process/tracker/AssociationContract.h owns explicit noncontracted binary64 product/sum boundaries and the shared delay/Doppler prediction used by Tracker.cpp and core/GpuTracker.private.h; duplicated prediction expressions are removed. Same equations, operation order, policies and tolerances; optimized CPU FMA no longer diverges from GLSL precise. Root reports independent Astra Ultra final PASS. Repair receipt SHA256 6a614be53e752bf86a44041e5788461f8db2198463f61a3b4e3954165b7e2c54 pins exact-source actual CPU-Vulkan shader execution, 3748 exact association/prediction cases, unchanged 3300 pre-repair noncontracted host outputs, GCC/Clang FMA-enabled golden tests and 42 host tracker cases/10679 assertions. Existing portability changes remove unused Refinement context storage, restrict Linux-only SubmitContextProbe fields to Linux, and brace checkpoint control flow without behavior changes. Combined production delta is 15 lines/1275 characters/242 lexical tokens: 22 exact growth metrics and two mandatory direct-contract line reductions.",
+      "rejected_reuse": "Relaxing byte comparisons, changing thresholds, disabling FMA process-wide, forking per-architecture numerical formulas, or suppressing compiler warnings would hide the original mismatch. Reuse one generated C++/GLSL owner with explicit local rounding boundaries and preserve the independent noncontracted oracle. Retain existing platform descriptor/probe contracts instead of creating new platform implementations. All range-loop, prebuild compiler-failure, receipt oversize/backpressure/path-alias and new probe regressions remain; test-only changes provide no production budget headroom.",
+      "cleanup_plan": "Keep original snapshots and all123 sealed entries unchanged; current exact ceilings are reviewed exception debt, not preferred-size achievement. Remove obsolete private storage and duplicated numerical expressions as in this patch, propagate every future reduction through all direct consumers, and require new review for growth. Continue native hosted ARM/macOS warning-as-error and exact-parity confirmation; CPU-Vulkan and local bounded probes are not physical GPU/radar/cadence qualification. No backend policy, tolerance, live setting, ABI or physical evidence gate is weakened.",
+      "changes": {
+        "context_characters:build-integration/contracts": [
+          1356941,
+          1356995
+        ],
+        "context_characters:native-ambiguity": [
+          643104,
+          643110
+        ],
+        "context_characters:native-analysis/contracts": [
+          95161,
+          95167
+        ],
+        "context_characters:native-tracker": [
+          72146,
+          73378
+        ],
+        "context_characters:production": [
+          6769965,
+          6771240
+        ],
+        "context_characters:qualified-private-gpu": [
+          345887,
+          345924
+        ],
+        "context_characters:qualified-private-gpu/contracts": [
+          84610,
+          85788
+        ],
+        "context_characters:replay-evidence-tools/contracts": [
+          160197,
+          160251
+        ],
+        "context_lines:build-integration/contracts": [
+          27679,
+          27678
+        ],
+        "context_lines:native-ambiguity": [
+          11973,
+          11974
+        ],
+        "context_lines:native-analysis/contracts": [
+          2135,
+          2136
+        ],
+        "context_lines:native-tracker": [
+          1512,
+          1523
+        ],
+        "context_lines:production": [
+          125769,
+          125784
+        ],
+        "context_lines:qualified-private-gpu": [
+          5915,
+          5918
+        ],
+        "context_lines:qualified-private-gpu/contracts": [
+          1627,
+          1639
+        ],
+        "context_lines:replay-evidence-tools/contracts": [
+          3247,
+          3246
+        ],
+        "context_tokens:native-ambiguity": [
+          176026,
+          176028
+        ],
+        "context_tokens:native-analysis/contracts": [
+          24438,
+          24440
+        ],
+        "context_tokens:native-tracker": [
+          18464,
+          18703
+        ],
+        "context_tokens:production": [
+          1699481,
+          1699723
+        ],
+        "context_tokens:qualified-private-gpu": [
+          101591,
+          101592
+        ],
+        "context_tokens:qualified-private-gpu/contracts": [
+          22465,
+          22704
+        ],
+        "lines:core": [
+          5915,
+          5918
+        ],
+        "lines:src": [
+          43219,
+          43231
+        ]
+      }
     }
   ],
   "context_snapshot": {

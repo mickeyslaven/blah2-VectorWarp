@@ -361,7 +361,7 @@ void topologyCases(){
  bad([](auto&v){v.reference.channels={};});bad([](auto&v){v.reference.mode=ReferenceMode(3);});
  bad([](auto&v){v.reference.mode=ReferenceMode::capturedArray;});
  bad([](auto&v){blah2::resident_replay::test::enable(v);});
- for(const auto field:std::array<std::pair<size_t,uint32_t>,5>{{{0,6},{32,0},{112,3},{168,2},{200,2}}}){
+ for(const auto& field:std::array<std::pair<size_t,uint32_t>,5>{{{0,6},{32,0},{112,3},{168,2},{200,2}}}){
   auto raw=encodeConfig(c);wire::Writer{{raw.data(),raw.size()}}.u32(field.first,field.second);
   reject([&]{decodeConfig(bytes(raw),mapping.read(Section::delayAxis),mapping.read(Section::dopplerAxis));},"Malformed topology wire accepted");
  }

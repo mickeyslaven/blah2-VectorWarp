@@ -1,8 +1,10 @@
 #include "core/GpuTrackerAdmission.private.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 static void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 static bool adaptiveCompatible(double delayDelta,double dopplerDelta,double span,double elapsed,
@@ -17,7 +19,31 @@ static double adaptiveElapsed(double frameElapsed,unsigned inactiveFrames){
  return frameElapsed*double(inactiveFrames+1);
 }
 
+static void associationRoundingContract(){
+ // ARM Release enables FMA without an extra ISA flag. These exact distances
+ // must retain the same separately rounded operations on every architecture.
+ // Volatile inputs ensure this checks runtime arithmetic, not constant folding.
+ volatile double delay=-1.125,cpi=.5,elapsed=.5,span=8,q=.125;
+ for(const auto& sample:{std::pair<double,uint64_t>{0,0x3ff0333333333334ULL},
+                        std::pair<double,uint64_t>{3.5,0x3fa9999999999999ULL}}){
+  const auto result=tracker_association::associationDecision(delay,sample.first,0,0,cpi,
+   true,elapsed,span,q,false,9.210340371976184);
+  uint64_t bits=0;std::memcpy(&bits,&result.distance,sizeof(bits));
+  require(result.valid&&result.accepted&&result.rejection==0&&bits==sample.second,
+   "association binary64 rounding contracted or cross-architecture distance changed");
+ }
+ volatile double position=.24,velocity=48,acceleration=4,time=.8,wavelength=2,resolution=100;
+ const double predictedDelay=tracker_association::predictionDelay(position,velocity,acceleration,time,wavelength,resolution),
+  predictedDoppler=tracker_association::predictionDoppler(velocity,acceleration,time);
+ uint64_t delayBits=0,dopplerBits=0;
+ std::memcpy(&delayBits,&predictedDelay,sizeof(delayBits));
+ std::memcpy(&dopplerBits,&predictedDoppler,sizeof(dopplerBits));
+ require(delayBits==0xbfe1b71758e21966ULL&&dopplerBits==0x404999999999999aULL,
+  "kinematic prediction binary64 rounding changed");
+}
+
 int main()try{
+ associationRoundingContract();
  require(gpu_tracker::persistenceBytes(false,0)==48&&
   gpu_tracker::persistenceBytes(false,1000)==48&&
   gpu_tracker::persistenceBytes(true,1000)==24056,

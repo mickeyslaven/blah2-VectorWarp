@@ -385,6 +385,11 @@ void associationContractParity(Context& context){
  cases.push_back({1,0,.5,.5,0,.125,9.210340371976184,true,false,0,0,0,1,UINT32_MAX});
  cases.push_back({2,0,1,1,0,0,4,false,true,0,0,0,1,UINT32_MAX});
  cases.push_back({std::nextafter(2.,3.),0,1,1,0,0,4,false,true,0,0,0,1,UINT32_MAX});
+ // Non-power-of-two factors exercise every product/sum rounding boundary, not
+ // only the final squared norm that first failed on FMA-enabled ARM Release.
+ for(int d=-8;d<=8;++d)for(int v=-8;v<=8;++v)
+  cases.push_back({double(d)/7,double(v)/3,.37,.43,7.3,.17,9.210340371976184,
+   true,false,0,0,0,1,UINT32_MAX});
  Buffer metadata(context,512,host,preferred),bankA(context,512,host,preferred),bankB(context,512,host,preferred),
   scratch(context,uint64_t(cases.size())*64*4,host,preferred),post(context,512,host,preferred),clutter(context,512,host,preferred);
  for(Buffer* b:{&metadata,&bankA,&bankB,&scratch,&post,&clutter})clear(*b);
@@ -397,7 +402,10 @@ void main(){uint i=indexOf();if(i>=p.count)return;uint at=64u*i;
   sd(at+4u),s[at+14u]!=0u,sd(at+6u),sd(at+8u),sd(at+10u),s[at+15u]!=0u,sd(at+12u));
  s[at+32u]=uint(value.valid);s[at+33u]=uint(value.accepted);s[at+34u]=value.rejection;
  uvec2 distance=unpackDouble2x32(value.distance);s[at+35u]=distance.x;s[at+36u]=distance.y;
- s[at+37u]=uint(spatialCompatible(s[at+16u],s[at+17u],s[at+18u],s[at+19u],s[at+20u]));}
+ s[at+37u]=uint(spatialCompatible(s[at+16u],s[at+17u],s[at+18u],s[at+19u],s[at+20u]));
+ uvec2 delay=unpackDouble2x32(predictionDelay(sd(at),sd(at+2u),sd(at+8u),sd(at+6u),sd(at+4u),1.0LF));
+ uvec2 doppler=unpackDouble2x32(predictionDoppler(sd(at+2u),sd(at+8u),sd(at+6u)));
+ s[at+38u]=delay.x;s[at+39u]=delay.y;s[at+40u]=doppler.x;s[at+41u]=doppler.y;}
 )glsl";
  Kernel probe(context,shader.c_str(),{&metadata,&bankA,&bankB,&scratch,&post,&clutter});
  auto* data=words(scratch);
@@ -411,10 +419,22 @@ void main(){uint i=indexOf();if(i>=p.count)return;uint at=64u*i;
    c.adaptive,c.elapsed,c.span,c.q,c.normalized,c.nis);
   require(actual[0]==expected.valid&&actual[1]==expected.accepted&&actual[2]==expected.rejection,
    "association contract decision bytes differ");
-  require(std::memcmp(actual+3,&expected.distance,8)==0,"association fitted distance bytes differ");
+  if(std::memcmp(actual+3,&expected.distance,8)!=0){
+   double distance=0;std::memcpy(&distance,actual+3,sizeof(distance));
+   std::cerr<<"association case="<<i<<" delay="<<std::hexfloat<<c.delay
+    <<" doppler="<<c.doppler<<" cpi="<<c.cpi<<" elapsed="<<c.elapsed
+    <<" span="<<c.span<<" q="<<c.q<<" nis="<<c.nis
+    <<" host_distance="<<expected.distance<<" shader_distance="<<distance<<std::defaultfloat
+    <<" adaptive="<<c.adaptive<<" normalized="<<c.normalized<<'\n';
+   require(false,"association fitted distance bytes differ");}
   require(actual[5]==tracker_association::spatialCompatible(c.left,c.right,c.beams,c.factor,c.tolerance),
-   "multi-peak spatial decision bytes differ");}
- std::cout<<"PASS association shared_cpp_glsl byte_parity="<<cases.size()<<" acceleration=1 multipeak=1 boundaries=1\n";
+   "multi-peak spatial decision bytes differ");
+  const double delay=tracker_association::predictionDelay(c.delay,c.doppler,c.span,c.elapsed,c.cpi,1),
+   doppler=tracker_association::predictionDoppler(c.doppler,c.span,c.elapsed);
+  require(std::memcmp(actual+6,&delay,8)==0&&std::memcmp(actual+8,&doppler,8)==0,
+   "shared kinematic prediction bytes differ");}
+ std::cout<<"PASS association shared_cpp_glsl byte_parity="<<cases.size()
+  <<" acceleration=1 multipeak=1 boundaries=1 prediction_bytes=1 binary64_noncontracted=1\n";
 }
 
 // resident shader stages. This is backend parity, not an RF false-alarm claim.
@@ -462,7 +482,11 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
   tracker_qualification::compareCheckpoint(portable,checkpoint.data(),result.checkpointWords);
   const auto residentJson=gpu_result_json::trackerCheckpoint(stamp,{checkpoint.data(),size_t(result.checkpointWords)},
     {config.capacity,config.epoch,frame,frame,spatialMotion?12u:0u,spatialMotion?48u:0u});
-  require(residentJson==tracks->to_json(stamp),"temporal public JSON byte parity differs");
+  const auto portableJson=tracks->to_json(stamp);
+  if(residentJson!=portableJson){
+   std::cerr<<"temporal depth="<<depth<<" spatial_motion="<<spatialMotion<<" frame="<<frame
+    <<" host_json="<<portableJson<<" shader_json="<<residentJson<<'\n';
+   require(false,"temporal public JSON byte parity differs");}
   require(checkpoint[4]==tracks->get_n(),"temporal backend track count differs");
   const std::array<std::string,4> names{"TENTATIVE","ASSOCIATED","ACTIVE","COASTING"};
   for(uint32_t i=0;i<checkpoint[4];++i){const uint32_t r=32+i*(checkpoint[1]/4);
@@ -871,7 +895,7 @@ int main(int argc,char** argv){try{
    stationaryBackendParity(context,maximum,sign,outside);
   for(uint32_t capacity:{26u,27u,28u,65536u})stationaryCapacityBackendParity(context,capacity);
   for(uint32_t depth:{1u,2u,4u,8u})for(uint32_t capacity:{27u,65536u})stationaryLifecycleParity(context,depth,capacity);
-  if(std::string(argv[1])=="--policy-parity"){clutterParity(context);
+  if(std::string(argv[1])=="--policy-parity"){associationContractParity(context);clutterParity(context);
    std::cout<<"COMPLETE tracker policy parity production_shader_execution=1 lifecycle=1\n";return 0;}
  }
  if(std::string(argv[1])=="--temporal-parity"){associationContractParity(context);

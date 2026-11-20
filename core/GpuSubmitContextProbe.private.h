@@ -15,9 +15,13 @@ struct SubmitContextRecord {
  SubmitContextSnapshot before{},after{};
 };
 class SubmitContextProbe {
+#if defined(__linux__)
  int schedulerFd_=-1,cgroupFd_=-1,schedulerOpenError_=0;
+#endif
  int schedulerEnabled_=-1,schedulerFlagError_=0;
+#if defined(__linux__)
  uint64_t tid_=0;
+#endif
  static uint64_t now()noexcept{
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
  }

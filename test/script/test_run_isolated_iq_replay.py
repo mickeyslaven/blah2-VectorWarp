@@ -1,5 +1,6 @@
 """Isolated replay safety/acceptance regressions; fake children and sinks only."""
 import copy
+import errno
 import importlib.util
 import io
 import json
@@ -161,13 +162,19 @@ class IsolatedReplay(unittest.TestCase):
         self.assertIn("backend construction preceded module receipt", result["error"])
 
     def test_complete_eight_cpi_three_lane_receipt_and_isolation(self):
+        # Exercise a directory alias on Linux too: Darwin's /var temporary
+        # directory is an alias of /private/var, and launch pins are canonical.
+        alias = self.root / "directory-alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.binary = alias / self.binary.name
+        self.args.binary = self.binary
         result, start, stop = self.execute()
         self.assertTrue(result["passed"], result)
         self.assertEqual(result["acceptance"]["capture_cpis"], 8)
         self.assertEqual(result["acceptance"]["terminal_records"], 1)
         self.assertEqual(set(result["acceptance"]["lanes"]), {"one", "two", "three"})
         command = start.call_args.args[0]
-        self.assertEqual(command, [str(self.binary), "-c", str(self.args.output / "config.json")])
+        self.assertEqual(command, [str(self.binary.resolve(strict=True)), "-c", str(self.args.output / "config.json")])
         self.assertTrue(start.call_args.kwargs["start_new_session"])
         self.assertEqual(start.call_args.kwargs["cwd"], self.args.output)
         self.assertEqual(start.call_args.kwargs["env"]["OMP_NUM_THREADS"], "1")
@@ -619,7 +626,8 @@ class GpuArtifactBinding(unittest.TestCase):
 
     def test_peer_reset_cannot_erase_malformed_receipt_or_hide_other_socket_errors(self):
         for payloads, error in (([b"invalid\n", ConnectionResetError("peer closed")], "malformed"),
-                                ([OSError("unrelated socket failure")], "unrelated socket failure")):
+                                ([OSError("unrelated socket failure")], "unrelated socket failure"),
+                                ([OSError(errno.ENOBUFS, "No buffer space available")], "No buffer space available")):
             receiver, sender = Mock(), Mock()
             sender.fileno.return_value = 42
             receiver.recv.side_effect = payloads
@@ -630,12 +638,23 @@ class GpuArtifactBinding(unittest.TestCase):
 
     def test_private_channel_rejects_hostile_and_oversize_datagrams(self):
         for payload in (b"not json\n", b"VECTORWARP_GPU_ARTIFACT {}\nsecond line\n",
-                        b"x" * (RUN.ARTIFACTS.MAX_RECEIPT + 1),
                         b"VECTORWARP_GPU_ARTIFACT \xff\n"):
             with self.subTest(payload=payload[:32]):
                 channel, _ = self.channel()
                 channel.sender.send(payload, socket.MSG_DONTWAIT)
                 with self.assertRaises(ValueError): channel.finish()
+        # Darwin can reject MAX_RECEIPT+1 at send() with EMSGSIZE before the
+        # collector sees it. Inject that exact receive result to exercise the
+        # unchanged production bound independently of the kernel datagram cap.
+        receiver, sender = Mock(), Mock()
+        sender.fileno.return_value = 42
+        receiver.recv.side_effect = [b"x" * (RUN.ARTIFACTS.MAX_RECEIPT + 1),
+                                    ConnectionResetError("closed datagram peer")]
+        with patch.object(RUN.ARTIFACTS.socket, "socketpair", return_value=(receiver, sender)), \
+             patch.object(RUN.ARTIFACTS.select, "select", return_value=([], [], [])):
+            channel, _ = self.channel()
+            with self.assertRaisesRegex(ValueError, "exceeded its bound"): channel.finish()
+        self.assertEqual(channel.records, [])
 
     def test_receipt_retention_is_bounded(self):
         with patch.object(RUN.ARTIFACTS, "MAX_RECEIPTS", 2):
@@ -644,29 +663,47 @@ class GpuArtifactBinding(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exceeded its bound"): channel.finish()
             self.assertLessEqual(len(channel.records), 2)
 
+    def assert_stalled_sender_backpressure(self, sender):
+        payload = b"x" * 128  # Fit beneath Darwin's per-datagram kernel ceiling.
+        sent = 0
+        with self.assertRaises(OSError) as raised:
+            for _ in range(10000):
+                self.assertEqual(sender.send(payload, socket.MSG_DONTWAIT), len(payload))
+                sent += 1
+        self.assertIn(raised.exception.errno, {errno.EAGAIN, errno.EWOULDBLOCK, errno.ENOBUFS})
+        self.assertGreater(sent, 0)  # An initial EMSGSIZE/error is not queue backpressure.
+
     def test_stalled_runner_datagram_send_fails_without_waiting(self):
         # Exercise the exact nonblocking transport contract without any GPU or
         # C++ build: a receiver that never drains cannot stall its producer.
         sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.addCleanup(sender.close); self.addCleanup(receiver.close)
         sender.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
-        sent = 0
-        with self.assertRaises(BlockingIOError):
-            for _ in range(10000):
-                sender.send(b"x" * 4096, socket.MSG_DONTWAIT)
-                sent += 1
-        self.assertGreater(sent, 0)
+        self.assert_stalled_sender_backpressure(sender)
+        # Deterministically exercise Darwin ENOBUFS and Linux EAGAIN on either
+        # host. This assertion is test-only; collector errors remain fatal.
+        for number in {errno.EAGAIN, errno.EWOULDBLOCK, errno.ENOBUFS}:
+            with self.subTest(backpressure=number):
+                fake = Mock(send=Mock(side_effect=[128, OSError(number, "queue full")]))
+                self.assert_stalled_sender_backpressure(fake)
+        for responses in ([128, OSError(errno.EMSGSIZE, "oversize")],
+                          [128, OSError(errno.EPIPE, "closed")],
+                          [OSError(errno.ENOBUFS, "no successful send")], [127]):
+            with self.subTest(invalid=responses), self.assertRaises(AssertionError):
+                self.assert_stalled_sender_backpressure(Mock(send=Mock(side_effect=responses)))
 
     def test_modules_are_resolved_beside_the_actual_symlinked_worker(self):
         actual = self.root / "actual"
         actual.mkdir()
         (actual / "blah2-gpu-worker").write_bytes(b"resolved worker")
         (actual / "blah2-gpu-vulkan.so").write_bytes(b"resolved module")
+        alias = self.root / "actual-alias"
+        alias.symlink_to(actual, target_is_directory=True)
         (self.root / "blah2-gpu-worker").unlink()
-        (self.root / "blah2-gpu-worker").symlink_to(actual / "blah2-gpu-worker")
+        (self.root / "blah2-gpu-worker").symlink_to(alias / "blah2-gpu-worker")
         binding = RUN.ARTIFACTS.prepare(self.binary, True)
-        self.assertEqual(binding["artifacts"]["worker"]["path"], str(actual / "blah2-gpu-worker"))
-        self.assertEqual(binding["artifacts"]["portable"]["path"], str(actual / "blah2-gpu-vulkan.so"))
+        self.assertEqual(binding["artifacts"]["worker"]["path"], str((alias / "blah2-gpu-worker").resolve(strict=True)))
+        self.assertEqual(binding["artifacts"]["portable"]["path"], str((alias / "blah2-gpu-vulkan.so").resolve(strict=True)))
         self.assertNotIn("resident", binding["artifacts"])
 
     def test_loader_receipts_precede_factory_call_without_an_abi_change(self):

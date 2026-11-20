@@ -35,7 +35,7 @@ int main() try {
     validateRefinementGrid(depth,12);
     validateRefinementGrid(depth,31);
     validateRefinementGrid(depth,127,127);
-    for(const auto pair:std::vector<std::pair<uint32_t,uint32_t>>{{32,0},{128,128},{12,127},{0,0}}){
+    for(const auto& pair:std::vector<std::pair<uint32_t,uint32_t>>{{32,0},{128,128},{12,127},{0,0}}){
       bool rejected=false;
       try{validateRefinementGrid(depth,pair.first,pair.second);}
       catch(const std::invalid_argument& error){

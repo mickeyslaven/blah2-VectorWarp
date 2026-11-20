@@ -56,6 +56,29 @@ class PrebuildAcceptanceTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertIn("native changes require", receipt["error"])
 
+    def test_strict_native_warning_blocks_tests_and_preserves_diagnostic(self):
+        calls = []
+        diagnostic = "error: loop variable creates a copy [-Werror=range-loop-construct]"
+        def command(line, root):
+            calls.append(line)
+            compiling = line[:2] == ("cmake", "--build")
+            return {"command": list(line), "returncode": int(compiling),
+                    "stdout": "", "stderr": diagnostic if compiling else ""}
+        with tempfile.TemporaryDirectory() as temporary:
+            build = Path(temporary)
+            (build / "CMakeCache.txt").write_text("CMAKE_COMPILE_WARNING_AS_ERROR:BOOL=ON\n")
+            receipt = build / "receipt.json"
+            code = GATE.main(["--build-dir", temporary, "--receipt", str(receipt),
+                              "--native-target", "testCfarEfficiency",
+                              "--native-test", "cfarExactOutput"], ROOT, command,
+                             lambda root: ["test/unit/process/detection/TestCfarEfficiency.cpp"])
+            result = json.loads(receipt.read_text())
+        self.assertEqual(code, 1)
+        self.assertEqual(result["outcome"], "failed")
+        self.assertEqual(result["commands"][-1]["name"], "native_target:testCfarEfficiency")
+        self.assertEqual(result["commands"][-1]["stderr"], diagnostic)
+        self.assertFalse(any(line[0] == "ctest" for line in calls))
+
     def test_untracked_native_files_are_changed_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

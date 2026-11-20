@@ -127,6 +127,12 @@ class RepositoryBudgetControls(unittest.TestCase):
                          "98d7f7c5eaa7e74521720ca8a4b3b640f8245c15be3e5a0d64dd1bcdd7a207f2")
         self.assertEqual(len(adjustments[122]["changes"]), 23)
         self.assertTrue(all(after > before for before, after in adjustments[122]["changes"].values()))
+        # Shared tracker rounding and platform fixes retain both exact reductions.
+        self.assertGreaterEqual(len(adjustments), 124)
+        self.assertEqual(BUDGET.digest(adjustments[:124]),
+                         "d95931291a081aa777b1cbdfed947d82ff973454c3b2dd43330565dfe0edc55a")
+        self.assertEqual(sum(after > before for before, after in adjustments[123]["changes"].values()), 22)
+        self.assertEqual(sum(after < before for before, after in adjustments[123]["changes"].values()), 2)
 
     def test_checkout_line_endings_do_not_change_metrics(self):
         before = BUDGET.measure(self.root, self.paths(), {})

@@ -1,12 +1,24 @@
 #pragma once
-// One mathematical association policy compiled as C++ and GLSL. The adaptive
+// One prediction/association policy compiled as C++ and GLSL. The adaptive
 // envelope/ranking is the resident acceleration-fit policy, not a larger box.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vector>
 
-#define BLAH2_ASSOCIATION_FUNCTIONS(Q,P) \
+// Products feeding sums have explicit binary64 rounding boundaries. C++ volatile
+// prevents FMA contraction even in an FMA-enabled Release build; GLSL precise
+// gives the same noncontracted operations without changing process-wide flags.
+#define BLAH2_ASSOCIATION_FUNCTIONS(Q,P,R) \
+ Q double associationProduct(double left,double right) {R double value=left*right;return value;} \
+ Q double associationSquaredNorm(double left,double right) { \
+   R double a=left*left,b=right*right;R double value=a+b;return value;} \
+ Q double predictionDelay(double delay,double doppler,double acceleration,double time,double wavelength,double rangeResolution) { \
+   R double correction=wavelength*(associationProduct(doppler,time)+ \
+     associationProduct(0.5*acceleration*time,time))/rangeResolution; \
+   P double value=delay-correction;return value;} \
+ Q double predictionDoppler(double doppler,double acceleration,double time) { \
+   P double value=doppler+associationProduct(acceleration,time);return value;} \
  Q double associationElapsed(double gap,double missed) { return gap+missed; } \
  Q double associationMissed(double gap,double missed,bool measured) { \
    return measured?0.0:associationElapsed(gap,missed); } \
@@ -28,7 +40,7 @@
    AssociationDecision result;result.valid=false;result.accepted=false;result.rejection=1u;result.distance=0.0; \
    P double delayMargin=normalized&&!adaptive?sqrt(maximumNis):1.0; \
    P double dopplerMargin=delayMargin/cpi; \
-   if(adaptive){delayMargin+=q*span;dopplerMargin+=span*elapsed;} \
+   if(adaptive){delayMargin+=associationProduct(q,span);dopplerMargin+=associationProduct(span,elapsed);} \
    P double lowDelay=dp-delayMargin,highDelay=dp+delayMargin; \
    P double lowDoppler=vp-dopplerMargin,highDoppler=vp+dopplerMargin; \
    result.valid=!isnan(lowDelay)&&!isinf(lowDelay)&&!isnan(highDelay)&&!isinf(highDelay)&& \
@@ -38,7 +50,7 @@
        !isnan(span)&&!isinf(span)&&span>=0.0)); \
    if(!result.valid){return result;} \
    P double dd=delay-dp,dv=doppler-vp,nd=dv*cpi; \
-   if(normalized&&!adaptive) {if(!(dd*dd+nd*nd<=maximumNis)){result.rejection=8u;return result;}} \
+   if(normalized&&!adaptive) {if(!(associationSquaredNorm(dd,nd)<=maximumNis)){result.rejection=8u;return result;}} \
    else {if(!(delay>lowDelay&&delay<highDelay)){result.rejection=2u;return result;} \
      if(!(doppler>lowDoppler&&doppler<highDoppler)){result.rejection=4u;return result;}} \
    P double fit=0.0; \
@@ -46,10 +58,10 @@
      P double low=max(-span,max((dv-unit)/elapsed,(-1.0-dd)/q)); \
      P double high=min(span,min((dv+unit)/elapsed,(1.0-dd)/q)); \
      if(isnan(low)||isinf(low)||isnan(high)||isinf(high)||!(low<high)){result.rejection=8u;return result;} \
-     P double denominator=q*q+elapsed*elapsed*cpi*cpi; \
-     fit=clamp((elapsed*cpi*cpi*dv-q*dd)/denominator,low,high); \
-     dd+=q*fit;nd=(doppler-vp-fit*elapsed)*cpi; } \
-   result.distance=dd*dd+nd*nd; \
+     P double denominator=associationProduct(q,q)+associationProduct(elapsed*elapsed*cpi,cpi); \
+     fit=clamp((associationProduct(elapsed*cpi*cpi,dv)-associationProduct(q,dd))/denominator,low,high); \
+     dd+=associationProduct(q,fit);nd=(doppler-vp-associationProduct(fit,elapsed))*cpi; } \
+   result.distance=associationSquaredNorm(dd,nd); \
    if(isnan(result.distance)||isinf(result.distance)){result.valid=false;result.rejection=1u;return result;} \
    result.accepted=true;result.rejection=0u;return result; }
 
@@ -57,11 +69,11 @@ namespace tracker_association {
 using uint=uint32_t;
 using std::min;using std::max;using std::clamp;using std::sqrt;
 using std::isnan;using std::isinf;
-BLAH2_ASSOCIATION_FUNCTIONS(inline,)
+BLAH2_ASSOCIATION_FUNCTIONS(inline,,volatile)
 #define BLAH2_ASSOCIATION_STRINGIFY_IMPL(...) #__VA_ARGS__
 #define BLAH2_ASSOCIATION_STRINGIFY(...) BLAH2_ASSOCIATION_STRINGIFY_IMPL(__VA_ARGS__)
 inline constexpr const char* shaderSource =
-  BLAH2_ASSOCIATION_STRINGIFY(BLAH2_ASSOCIATION_FUNCTIONS(,precise));
+  BLAH2_ASSOCIATION_STRINGIFY(BLAH2_ASSOCIATION_FUNCTIONS(,precise,precise));
 #undef BLAH2_ASSOCIATION_STRINGIFY
 #undef BLAH2_ASSOCIATION_STRINGIFY_IMPL
 }

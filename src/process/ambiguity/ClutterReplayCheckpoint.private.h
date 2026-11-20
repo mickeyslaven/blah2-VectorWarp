@@ -202,8 +202,9 @@ public:
   if(frame_.frame==plan_.warmFrame){pending_.prefix=prefix_.finish();const auto bytes=pending_.encode(plan_);
    digest_=hash(bytes.data(),bytes.size());prefixDigest_=pending_.prefix;
    if(plan_.mode=="export"){write(plan_.path,bytes);checkpoint_=pending_;}
-   else require(digest_==plan_.expectedSha&&pending_.prefix==checkpoint_.prefix,
-    "Replay clutter checkpoint warm prefix/solved coefficients differ");ready_=true;}
+   else {require(digest_==plan_.expectedSha&&pending_.prefix==checkpoint_.prefix,
+    "Replay clutter checkpoint warm prefix/solved coefficients differ");}
+   ready_=true;}
   previous_=frame_.frame;inFrame_=false;
  }
  void poison(){poisoned_=true;}

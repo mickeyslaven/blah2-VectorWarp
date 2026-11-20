@@ -119,7 +119,7 @@ TEST_CASE("Nondivisible and odd spectrum geometry retain the full transform", "[
 
 TEST_CASE("Native float spectrum exactly matches widened input without owning samples", "[spectrum][regression]")
 {
-  for (const auto geometry : std::vector<std::pair<uint32_t, double>>{
+  for (const auto& geometry : std::vector<std::pair<uint32_t, double>>{
       {1, 128}, {8, 64}, {64, 512}, {72, 512}, {81, 576},
       {65, 512}, {63, 504}, {128, 65536}, {257, 64}}) {
     const auto count = geometry.first;

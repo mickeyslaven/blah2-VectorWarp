@@ -298,8 +298,8 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
   if(!finiteD(sd(at))||!finiteD(sd(at+2u))||!finiteD(sd(at+4u))||cell>=m[4]||beam>post[75])reject(303u);
   atomicAdd(m[57],1u);}
  if(i>=m[18])return;uint r=record(i),w=work(i);double delay=sourceD(r),doppler=sourceD(r+2u),acc=sourceD(r+6u),time=md(50u);
- precise double delayPredict=delay-md(46u)*(doppler*time+0.5LF*acc*time*time)/md(44u);
- precise double dopplerPredict=doppler+(acc*time);
+ precise double delayPredict=predictionDelay(delay,doppler,acc,time,md(46u),md(44u));
+ precise double dopplerPredict=predictionDoppler(doppler,acc,time);
  if(!finiteD(delayPredict)||!finiteD(dopplerPredict)){reject(304u);return;}
  writeM(w,delayPredict);writeM(w+2u,dopplerPredict);atomicAdd(m[26],1u);
 }

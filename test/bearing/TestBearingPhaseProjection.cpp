@@ -149,7 +149,7 @@ unsigned winningBeam(const Vector& response, const Vector& weights, bool project
 
 TEST_CASE("actual CAF preserves physical surveillance phase without array projection", "[bearing][caf][regression]") {
   for (unsigned beam : {0u, 20u, 40u}) {
-    for (auto mode : {std::pair<bool, bool>{false, false}, {false, true}, {true, false}}) {
+    for (const auto& mode : {std::pair<bool, bool>{false, false}, {false, true}, {true, false}}) {
       CAPTURE(beam, mode.first, mode.second);
       const auto observed = actualCaf(beam, mode.first, mode.second);
       const auto raw = rawSteering(2 * Pi * beam / Beams);

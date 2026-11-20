@@ -622,9 +622,8 @@ Detection Tracker::predict(Detection current, double acc, double T)
   double dopplerTrack = current.get_doppler().front();
   // Positive Doppler is decreasing bistatic path length. Acceleration is in
   // Hz/s, so both terms need wavelength before conversion to delay bins.
-  double delayPredict = delayTrack - lambda * (dopplerTrack*T +
-    0.5*acc*T*T) / rangeRes;
-  double dopplerPredict = dopplerTrack+(acc*T);
+  double delayPredict = tracker_association::predictionDelay(delayTrack,dopplerTrack,acc,T,lambda,rangeRes);
+  double dopplerPredict = tracker_association::predictionDoppler(dopplerTrack,acc,T);
   Detection prediction(delayPredict, dopplerPredict, 0);
   return prediction;
 }
