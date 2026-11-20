@@ -121,6 +121,12 @@ class RepositoryBudgetControls(unittest.TestCase):
                          "a8a8f177773cb5f18acbdd3aa4e875e1749e21efcae0f0c6b0451ab6893bc132")
         self.assertEqual(len(adjustments[121]["changes"]), 14)
         self.assertTrue(all(after > before for before, after in adjustments[121]["changes"].values()))
+        # Platform declarations and peer-close handling retain canonical owners.
+        self.assertGreaterEqual(len(adjustments), 123)
+        self.assertEqual(BUDGET.digest(adjustments[:123]),
+                         "98d7f7c5eaa7e74521720ca8a4b3b640f8245c15be3e5a0d64dd1bcdd7a207f2")
+        self.assertEqual(len(adjustments[122]["changes"]), 23)
+        self.assertTrue(all(after > before for before, after in adjustments[122]["changes"].values()))
 
     def test_checkout_line_endings_do_not_change_metrics(self):
         before = BUDGET.measure(self.root, self.paths(), {})

@@ -14,6 +14,9 @@
 #include <spawn.h>
 #include <stdexcept>
 #include <string>
+#ifdef __APPLE__
+#include <sys/random.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>

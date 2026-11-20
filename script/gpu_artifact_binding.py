@@ -109,6 +109,11 @@ class ReceiptChannel:
                 for _ in range(MAX_RECEIPTS + 1):
                     try:
                         data = self.receiver.recv(MAX_RECEIPT + 1)
+                    except ConnectionResetError:
+                        # Darwin reports a closed datagram peer as a reset.
+                        # Preserve drained receipts and any earlier parse error;
+                        # validate() still rejects missing receipts or changed pins.
+                        return
                     except BlockingIOError:
                         if self.stopping.is_set():
                             return

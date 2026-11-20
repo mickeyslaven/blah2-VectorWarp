@@ -345,7 +345,9 @@ std::string queryGpuDriverStatus(const GpuProcessOptions& options) {
     if(gpu_artifact_binding::active())for(int fd=3;fd<6;++fd)
       if(posix_spawn_file_actions_addclose(&actions,fd))
         throw std::runtime_error("Cannot isolate GPU driver query descriptors");
+#ifndef __APPLE__
     const int closeFrom=gpu_artifact_binding::active()?7:3;
+#endif
 #ifdef __APPLE__
     if (posix_spawnattr_init(&attributes))
       throw std::runtime_error("Cannot isolate GPU driver query");

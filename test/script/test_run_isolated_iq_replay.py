@@ -596,6 +596,38 @@ class GpuArtifactBinding(unittest.TestCase):
             with self.subTest(state=state, format=format), self.assertRaisesRegex(ValueError, "offline replay"):
                 self.channel({"capture": {"replay": {"state": state, "format": format}}})
 
+    def test_datagram_peer_reset_preserves_receipts_and_fail_closed_validation(self):
+        for events in (self.events, [], self.events[:1]):
+            with self.subTest(events=len(events)):
+                receiver, sender = Mock(), Mock()
+                sender.fileno.return_value = 42
+                receiver.recv.side_effect = [artifact_log([event]).encode() for event in events] + [
+                    ConnectionResetError("closed datagram peer")]
+                with patch.object(RUN.ARTIFACTS.socket, "socketpair", return_value=(receiver, sender)), \
+                     patch.object(RUN.ARTIFACTS.select, "select", return_value=([], [], [])):
+                    channel, _ = self.channel()
+                    output = channel.finish()
+                self.assertEqual(output, artifact_log(events))
+                if events == self.events:
+                    self.assertTrue(RUN.ARTIFACTS.validate(self.binding, output, 987654)["passed"])
+                    with patch.object(RUN.ARTIFACTS, "verify_files", side_effect=ValueError("pinned artifact changed")):
+                        with self.assertRaisesRegex(ValueError, "pinned artifact changed"):
+                            RUN.ARTIFACTS.validate(self.binding, output, 987654)
+                else:
+                    with self.assertRaisesRegex(ValueError, "missing GPU worker"):
+                        RUN.ARTIFACTS.validate(self.binding, output, 987654)
+
+    def test_peer_reset_cannot_erase_malformed_receipt_or_hide_other_socket_errors(self):
+        for payloads, error in (([b"invalid\n", ConnectionResetError("peer closed")], "malformed"),
+                                ([OSError("unrelated socket failure")], "unrelated socket failure")):
+            receiver, sender = Mock(), Mock()
+            sender.fileno.return_value = 42
+            receiver.recv.side_effect = payloads
+            with patch.object(RUN.ARTIFACTS.socket, "socketpair", return_value=(receiver, sender)), \
+                 patch.object(RUN.ARTIFACTS.select, "select", return_value=([], [], [])):
+                channel, _ = self.channel()
+                with self.assertRaisesRegex(ValueError, error): channel.finish()
+
     def test_private_channel_rejects_hostile_and_oversize_datagrams(self):
         for payload in (b"not json\n", b"VECTORWARP_GPU_ARTIFACT {}\nsecond line\n",
                         b"x" * (RUN.ARTIFACTS.MAX_RECEIPT + 1),

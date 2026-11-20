@@ -80,6 +80,22 @@ class GpuPlatformPolicyTest(unittest.TestCase):
 
 
 class GpuBuildContractTest(unittest.TestCase):
+    def test_replay_qualification_declares_its_darwin_entropy_primitive(self):
+        source = (ROOT / "src/process/ambiguity/ReplayGpuQualification.h").read_text()
+        self.assertRegex(source, r"#ifdef __APPLE__\s+#include <sys/random.h>\s+#endif")
+        self.assertLess(source.index("#include <sys/random.h>"), source.index("getentropy("))
+        self.assertIn("getentropy(&s.control.nonce,sizeof(s.control.nonce))||!s.control.nonce", source)
+        self.assertIn("#include <unistd.h>", source)  # Linux declaration remains self-contained.
+
+    def test_driver_query_close_threshold_is_only_declared_for_consuming_platforms(self):
+        source = (ROOT / "src/process/ambiguity/GpuProcess.cpp").read_text()
+        self.assertRegex(source, r"#ifndef __APPLE__\s+const int closeFrom="
+                                r"gpu_artifact_binding::active\(\)\?7:3;\s+#endif")
+        self.assertEqual(source.count("const int closeFrom="), 1)
+        self.assertIn("posix_spawn_file_actions_addclosefrom_np(&actions, closeFrom)", source)
+        self.assertIn("if (fd >= closeFrom) posix_spawn_file_actions_addclose(&actions, fd)", source)
+        self.assertIn("posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT)", source)
+
     def test_vulkan_resources_are_shared_but_backend_policy_stays_local(self):
         ambiguity = ROOT / "src/process/ambiguity"
         shared = (ambiguity / "VulkanResources.private.h").read_text()

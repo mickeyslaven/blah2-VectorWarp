@@ -5353,6 +5353,106 @@
           27825
         ]
       }
+    },
+    {
+      "owner": "Canonical GPU process portability and offline artifact receipt collection",
+      "purpose": "2026-11-20 root-reviewed portability repairs in src/process/ambiguity/ReplayGpuQualification.h, GpuProcess.cpp and script/gpu_artifact_binding.py. The Apple entropy primitive receives its platform declaration; closeFrom is declared only on non-Apple branches that consume it, while Darwin descriptor isolation remains POSIX_SPAWN_CLOEXEC_DEFAULT. Offline AF_UNIX datagram peer reset terminates collection without discarding earlier receipts or parse errors. Production delta is exactly ten lines, 395 characters and 56 lexical tokens, with no new first-party files, imports, dependencies, backend route or radar equation. Existing direct-contract consumers retain the full changed shared owner. Regression consumers: test/packaging/test_gpu_platform_contract.py verifies entropy declaration and platform-specific descriptor guards; test/script/test_run_isolated_iq_replay.py exercises complete/absent/partial receipts followed by reset, changed artifact pins, malformed receipt then reset, and unrelated socket errors.",
+      "rejected_reuse": "A duplicate platform entropy or spawn implementation would fork canonical qualification/descriptor policy. Reuse the same getentropy nonce and existing per-platform spawn actions with correct declarations. Treating every Darwin peer reset as malformed loses otherwise authenticated receipts; ignoring general OSError or clearing prior parse failures would weaken provenance. Catch only ConnectionResetError at recv, preserve bounded records and sticky errors, and retain required-worker/launch/pinned-file validation unchanged.",
+      "cleanup_plan": "Keep the original snapshots and all 122 sealed entries unchanged. These 23 exact current ceilings remain reviewed exception debt, not achievement of preferred packet sizes. No behavioral test is deleted or skipped and no physical qualification gate changes. Consolidate only redundant wrapper bookkeeping while preserving platform declaration/descriptor ownership and fail-closed artifact validation; every future reduction ratchets downward. Hosted Darwin warning-as-error native build and AF_UNIX runtime qualification remain separate acceptance obligations; source/static and mocked-reset tests do not claim native macOS execution.",
+      "changes": {
+        "context_characters:build-integration/contracts": [
+          1356916,
+          1356941
+        ],
+        "context_characters:native-ambiguity": [
+          643031,
+          643104
+        ],
+        "context_characters:native-pipeline/contracts": [
+          204980,
+          205028
+        ],
+        "context_characters:native-runtime/contracts": [
+          270580,
+          270628
+        ],
+        "context_characters:operational-tools": [
+          597819,
+          598141
+        ],
+        "context_characters:production": [
+          6769570,
+          6769965
+        ],
+        "context_characters:qualified-private-gpu/contracts": [
+          84562,
+          84610
+        ],
+        "context_lines:build-integration/contracts": [
+          27677,
+          27679
+        ],
+        "context_lines:native-ambiguity": [
+          11968,
+          11973
+        ],
+        "context_lines:native-pipeline/contracts": [
+          4181,
+          4184
+        ],
+        "context_lines:native-runtime/contracts": [
+          5964,
+          5967
+        ],
+        "context_lines:operational-tools": [
+          11200,
+          11205
+        ],
+        "context_lines:production": [
+          125759,
+          125769
+        ],
+        "context_lines:qualified-private-gpu/contracts": [
+          1624,
+          1627
+        ],
+        "context_tokens:build-integration/contracts": [
+          333964,
+          333969
+        ],
+        "context_tokens:native-ambiguity": [
+          176007,
+          176026
+        ],
+        "context_tokens:native-pipeline/contracts": [
+          53069,
+          53083
+        ],
+        "context_tokens:native-runtime/contracts": [
+          68770,
+          68784
+        ],
+        "context_tokens:operational-tools": [
+          145833,
+          145870
+        ],
+        "context_tokens:production": [
+          1699425,
+          1699481
+        ],
+        "context_tokens:qualified-private-gpu/contracts": [
+          22451,
+          22465
+        ],
+        "lines:script": [
+          27825,
+          27830
+        ],
+        "lines:src": [
+          43214,
+          43219
+        ]
+      }
     }
   ],
   "context_snapshot": {
