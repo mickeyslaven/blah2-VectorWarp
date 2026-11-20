@@ -57,23 +57,37 @@ TEST_CASE("fixed executor completes a failed batch and remains reusable")
 
 TEST_CASE("borrowed executor work cancels and joins without growing its worker set")
 {
-  blah2::utility::FixedExecutor executor(3);
-  std::atomic<unsigned> inFlight{0}, visits{0};
-  std::atomic<bool> failed{false};
-  REQUIRE_THROWS_AS(executor.borrow(512, [&](std::size_t index) {
-    ++inFlight; ++visits;
-    if (!index) { failed.store(true); --inFlight; throw std::runtime_error("injected tile"); }
-    while (!failed.load()) std::this_thread::yield();
-    --inFlight;
-  }, [] {}), std::runtime_error);
-  REQUIRE(inFlight.load() == 0);
-  REQUIRE(visits.load() < 512);
-  REQUIRE(executor.size() == std::size_t(3));
-  std::atomic<unsigned> completed{0};
-  REQUIRE_NOTHROW(executor.borrow(31, [&](std::size_t) { ++completed; }, [] {}));
-  REQUIRE(completed.load() == 31);
-  auto nested = executor.submit([&] { executor.borrow(1, [](std::size_t) {}, [] {}); });
-  REQUIRE_THROWS_AS(nested.get(), std::logic_error);
+  for (unsigned attempt = 0; attempt < 64; ++attempt) {
+    CAPTURE(attempt);
+    blah2::utility::FixedExecutor executor(3);
+    std::atomic<unsigned> inFlight{0}, visits{0};
+    std::promise<void> release;
+    auto gate = release.get_future().share();
+    std::future<void> releaseTask;
+    REQUIRE_THROWS_AS(executor.borrow(512, [&](std::size_t index) {
+      ++inFlight; ++visits;
+      if (!index) {
+        while (inFlight.load() != executor.size()) std::this_thread::yield();
+        // Both peers wait below, so only this worker can run the queued release
+        // after its exception has reached the executor's cancellation handler.
+        releaseTask = executor.submit([&] { release.set_value(); });
+        --inFlight;
+        throw std::runtime_error("injected tile");
+      }
+      gate.wait();
+      --inFlight;
+    }, [] {}), std::runtime_error);
+    releaseTask.get();
+    REQUIRE(inFlight.load() == 0);
+    REQUIRE(visits.load() < 512);
+    REQUIRE(visits.load() == executor.size());
+    REQUIRE(executor.size() == std::size_t(3));
+    std::atomic<unsigned> completed{0};
+    REQUIRE_NOTHROW(executor.borrow(31, [&](std::size_t) { ++completed; }, [] {}));
+    REQUIRE(completed.load() == 31);
+    auto nested = executor.submit([&] { executor.borrow(1, [](std::size_t) {}, [] {}); });
+    REQUIRE_THROWS_AS(nested.get(), std::logic_error);
+  }
 }
 
 TEST_CASE("borrowed executor contention expires without enqueuing stale work")

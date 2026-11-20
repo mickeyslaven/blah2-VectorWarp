@@ -1015,7 +1015,7 @@ TEST_CASE("direct and channelized ingress share canonical products and disabled 
       }
       // The one-lane path consumes the identical normalized samples, without
       // inheriting any channelizer/receiver identity or a different DSP graph.
-      auto assignNormalized = [samples](IqData& target, const auto& input) {
+      auto assignNormalized = [](IqData& target, const auto& input) {
         auto& output = target.resize_for_write(samples);
         for (uint32_t index = 0; index < samples; ++index) output[index] = input[index];
       };
@@ -1196,7 +1196,7 @@ TEST_CASE("shared production integration binds contiguous capture windows and re
     REQUIRE_FALSE(gap.ready);
     REQUIRE(gap.historyReset);
     Tracker tracker(1, 1, 2, .1, 0, 1, 1, -100, true);
-    Detection candidate({10}, {20}, {30});
+    Detection candidate(10, 20, 30);
     REQUIRE(tracker.process(&candidate, 1000)->get_n() > 0);
     Detection empty(std::vector<double>{}, std::vector<double>{}, std::vector<double>{});
     REQUIRE(empty.get_nDetections() == 0);
@@ -1212,7 +1212,7 @@ TEST_CASE("tracker sample progress survives missing metadata and source epoch re
   using blah2::detection::SignalProgressClock;
   SignalProgressClock progress;
   Tracker tracker(4, 6, 3, .5, 10, 1, 1, -100, true);
-  Detection candidate({10}, {0}, {30});
+  Detection candidate(10, 0, 30);
   for (uint64_t frame = 1; frame <= 9; ++frame) {
     const bool positioned = frame < 3 || frame > 5;
     const uint64_t epoch = frame < 8 ? 41 : 42;

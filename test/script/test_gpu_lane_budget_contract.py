@@ -1,6 +1,9 @@
-"""Source-only guard for the aggregate GPU quota; does not compile or spawn workers."""
+"""Aggregate GPU quota contracts and a bounded CPU-only lane-interface fixture."""
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 
@@ -8,6 +11,62 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class GpuLaneBudgetContract(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("clang++"), "Clang required for strict override diagnostics")
+    def test_optional_lane_interfaces_compile_strictly_and_forward_each_capability(self):
+        fixture = r'''
+#include "process/ambiguity/GpuLaneLease.h"
+#include <cassert>
+using namespace blah2;
+std::vector<int> events;
+struct Frames : GpuFrameBackend {
+  GpuFrameBuffers frameBuffers() override { return {}; }
+  void processFrame() override { events.push_back(2); }
+};
+struct Clutter : GpuClutterFrameBackend {
+  bool clutterAvailable() const override { return true; }
+  GpuClutterBuffers clutterBuffers() override { return {}; }
+  bool processClutterFrame() override { events.push_back(3); return true; }
+};
+struct HostWork : GpuClutterHostWorkBackend {
+  bool processClutterFrameWithHostWork(const std::function<void()>& work) override {
+    events.push_back(5); if (work) work(); events.push_back(6); return false;
+  }
+};
+template<class... Capabilities> struct Mock : GpuBackend, Capabilities... {
+  GpuDevice device() const override { return {"fixture", "CPU only", 0}; }
+  void process(const std::vector<std::complex<float>>&, const std::vector<std::complex<float>>&,
+               std::vector<std::complex<float>>&) override { events.push_back(1); }
+};
+template<class Worker> void check(bool frame, bool clutter, bool overlap=false) {
+  auto budget = std::make_shared<resident::LaneBudget>(1);
+  auto wrapped = leaseGpuLane(std::make_unique<Worker>(), budget);
+  auto* f = dynamic_cast<GpuFrameBackend*>(wrapped.get());
+  auto* c = dynamic_cast<GpuClutterFrameBackend*>(wrapped.get());
+  auto* h = dynamic_cast<GpuClutterHostWorkBackend*>(wrapped.get());
+  assert(bool(f)==frame && bool(c)==clutter && bool(h)==clutter);
+  assert(wrapped->device().id=="fixture");
+  std::vector<std::complex<float>> data; events.clear(); wrapped->process(data,data,data);
+  assert((events==std::vector<int>{1}));
+  if(f){f->frameBuffers();events.clear();f->processFrame();assert((events==std::vector<int>{2}));}
+  if(c){assert(c->clutterAvailable());c->clutterBuffers();events.clear();assert(c->processClutterFrame());
+    assert((events==std::vector<int>{3}));events.clear();
+    assert(h->processClutterFrameWithHostWork([]{events.push_back(4);})==!overlap);
+    assert(events==(overlap?std::vector<int>{5,4,6}:std::vector<int>{4,3}));}
+  assert(budget->execution.try_lock()); budget->execution.unlock();
+}
+int main(){check<Mock<>>(false,false);check<Mock<Frames>>(true,false);
+  check<Mock<Clutter>>(false,true);check<Mock<Frames,Clutter>>(true,true);
+  check<Mock<Frames,Clutter,HostWork>>(true,true,true);}
+'''
+        with tempfile.TemporaryDirectory(prefix="vectorwarp-lane-interface-") as directory:
+            executable = str(Path(directory) / "fixture")
+            result = subprocess.run([shutil.which("clang++"), "-std=c++17", "-Wall", "-Werror",
+                                     "-Winconsistent-missing-override", "-pthread", "-I", str(ROOT / "src"),
+                                     "-x", "c++", "-", "-o", executable], input=fixture,
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            subprocess.run([executable], check=True, capture_output=True, timeout=5)
+
     def test_host_work_overlap_is_explicit_and_default_precedes_submission(self):
         source = (ROOT / "src/process/ambiguity/GpuProcess.cpp").read_text()
         self.assertIn('std::getenv("BLAH2_GPU_CLUTTER_HOST_WORK_OVERLAP")', source)

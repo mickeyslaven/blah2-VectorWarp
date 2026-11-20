@@ -7,9 +7,23 @@
 
 namespace blah2 {
 namespace lane_lease {
-struct NoFrame {};
-struct NoClutter {};
-struct NoHostWork {};
+// Only enabled adapters expose virtual interfaces; the shared owner below
+// keeps every transaction and fallback implementation in one place.
+template<class Owner, bool Enabled> struct FrameInterface {};
+template<class Owner> struct FrameInterface<Owner, true> : GpuFrameBackend {
+  GpuFrameBuffers frameBuffers() override { return static_cast<Owner&>(*this).leasedFrameBuffers(); }
+  void processFrame() override { static_cast<Owner&>(*this).leasedProcessFrame(); }
+};
+template<class Owner, bool Enabled> struct ClutterInterface {};
+template<class Owner> struct ClutterInterface<Owner, true>
+    : GpuClutterFrameBackend, GpuClutterHostWorkBackend {
+  bool clutterAvailable() const override { return static_cast<const Owner&>(*this).leasedClutterAvailable(); }
+  GpuClutterBuffers clutterBuffers() override { return static_cast<Owner&>(*this).leasedClutterBuffers(); }
+  bool processClutterFrame() override { return static_cast<Owner&>(*this).leasedProcessClutterFrame(); }
+  bool processClutterFrameWithHostWork(const std::function<void()>& hostWork) override {
+    return static_cast<Owner&>(*this).leasedProcessClutterFrameWithHostWork(hostWork);
+  }
+};
 // Preserve the wrapped worker's frame/clutter interfaces. Host-work scheduling
 // forwards overlap when available and otherwise runs before the clutter call.
 // Buffer copies and CPU fallback occur outside this worker-local transaction.
@@ -17,9 +31,8 @@ struct NoHostWork {};
 // the shared reservation caps memory, not the number of in-flight GPU queues.
 template<bool Frame, bool Clutter>
 class Backend final : public GpuBackend,
-    public std::conditional_t<Frame, GpuFrameBackend, NoFrame>,
-    public std::conditional_t<Clutter, GpuClutterFrameBackend, NoClutter>,
-    public std::conditional_t<Clutter, GpuClutterHostWorkBackend, NoHostWork> {
+    public FrameInterface<Backend<Frame, Clutter>, Frame>,
+    public ClutterInterface<Backend<Frame, Clutter>, Clutter> {
   std::unique_ptr<GpuBackend> backend_;
   std::shared_ptr<resident::LaneBudget> budget_;
   std::mutex transaction_;
@@ -54,31 +67,31 @@ public:
       std::vector<std::complex<float>>& output) override {
     transaction([&]{backend_->process(reference, surveillance, output);});
   }
-  GpuFrameBuffers frameBuffers() {
+  GpuFrameBuffers leasedFrameBuffers() {
     if constexpr (Frame) return dynamic_cast<GpuFrameBackend&>(*backend_).frameBuffers();
     else throw std::logic_error("GPU lane has no frame interface");
   }
-  void processFrame() {
+  void leasedProcessFrame() {
     transaction([&]{
       if constexpr (Frame) dynamic_cast<GpuFrameBackend&>(*backend_).processFrame();
       else throw std::logic_error("GPU lane has no frame interface");
     });
   }
-  bool clutterAvailable() const {
+  bool leasedClutterAvailable() const {
     if constexpr (Clutter) return dynamic_cast<GpuClutterFrameBackend&>(*backend_).clutterAvailable();
     else return false;
   }
-  GpuClutterBuffers clutterBuffers() {
+  GpuClutterBuffers leasedClutterBuffers() {
     if constexpr (Clutter) return dynamic_cast<GpuClutterFrameBackend&>(*backend_).clutterBuffers();
     else throw std::logic_error("GPU lane has no clutter interface");
   }
-  bool processClutterFrame() {
+  bool leasedProcessClutterFrame() {
     return transaction([&]() -> bool {
       if constexpr (Clutter) return dynamic_cast<GpuClutterFrameBackend&>(*backend_).processClutterFrame();
       else throw std::logic_error("GPU lane has no clutter interface");
     });
   }
-  bool processClutterFrameWithHostWork(const std::function<void()>& hostWork) {
+  bool leasedProcessClutterFrameWithHostWork(const std::function<void()>& hostWork) {
     return transaction([&]() -> bool {
       if constexpr (Clutter) {
         if (auto* overlap = dynamic_cast<GpuClutterHostWorkBackend*>(backend_.get()))

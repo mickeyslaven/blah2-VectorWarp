@@ -5557,6 +5557,54 @@
           43231
         ]
       }
+    },
+    {
+      "owner": "Canonical GPU lane optional-interface adapters and pipeline direct contract",
+      "purpose": "2026-11-20 root-reviewed strict-override portability repair in src/process/ambiguity/GpuLaneLease.h. Enabled FrameInterface/ClutterInterface specializations declare virtual overrides and forward to renamed nonvirtual helpers in the same final Backend; disabled specializations remain empty. Existing interface visibility, one wrapped worker, worker-local transaction, shared destruction lock, host-work ordering/fallback, return values and supported GPU ABI4 stay unchanged. Production delta is exactly13 lines/1038 characters/205 lexical tokens across ten owner/aggregate/direct-contract metrics, with no new first-party files or imports. Independent opposition PASS receipt SHA256 77892415a7e74fde32b0329c3eb084518c071aafa7f0310a12823388363a35d9 pins the current source and bounded strict-Clang/UBSan capability/lifetime/exception fixtures. test_gpu_lane_budget_contract.py adds the checked-in strict-override compile/runtime fixture; TestMultiIlluminatorRadar.cpp only removes unused capture/redundant scalar braces.",
+      "rejected_reuse": "Adding override unconditionally to optional methods is invalid when disabled base variants have no virtual interface; retaining implicit overrides fails the supported strict Apple compiler. Reuse thin conditional adapters and the single unchanged transaction/fallback owner instead of duplicate Backend implementations, warning suppression or expanded capabilities. Tests retain all existing quota/locking guards. The independent FixedExecutor cancellation fixture uses a queued post-catch release instead of racing a pre-catch failed flag; production executor remains byte-identical and this test-only correction grants no budget headroom.",
+      "cleanup_plan": "Preserve original snapshots and all124 sealed entries. These ten exact current ceilings remain reviewed exception debt, not preferred-size achievement. Consolidate adapter boilerplate only if all optional interface casts, callback/exception semantics and lifetime/locking evidence remain intact; propagate every future reduction and review any new growth. No new numerical route, API, module ABI, worker, allocation or physical qualification bypass. Corrected-head hosted macOS/native consumer tests and operational throughput remain separate acceptance; bounded CPU interface fixtures do not qualify GPU/RF hardware.",
+      "changes": {
+        "context_characters:native-ambiguity": [
+          643110,
+          644148
+        ],
+        "context_characters:native-pipeline/contracts": [
+          205028,
+          206066
+        ],
+        "context_characters:production": [
+          6771240,
+          6772278
+        ],
+        "context_lines:native-ambiguity": [
+          11974,
+          11987
+        ],
+        "context_lines:native-pipeline/contracts": [
+          4184,
+          4197
+        ],
+        "context_lines:production": [
+          125784,
+          125797
+        ],
+        "context_tokens:native-ambiguity": [
+          176028,
+          176233
+        ],
+        "context_tokens:native-pipeline/contracts": [
+          53083,
+          53288
+        ],
+        "context_tokens:production": [
+          1699723,
+          1699928
+        ],
+        "lines:src": [
+          43231,
+          43244
+        ]
+      }
     }
   ],
   "context_snapshot": {

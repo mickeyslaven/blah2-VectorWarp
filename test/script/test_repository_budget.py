@@ -133,6 +133,12 @@ class RepositoryBudgetControls(unittest.TestCase):
                          "d95931291a081aa777b1cbdfed947d82ff973454c3b2dd43330565dfe0edc55a")
         self.assertEqual(sum(after > before for before, after in adjustments[123]["changes"].values()), 22)
         self.assertEqual(sum(after < before for before, after in adjustments[123]["changes"].values()), 2)
+        # Optional lane overrides forward to the unchanged transaction owner.
+        self.assertGreaterEqual(len(adjustments), 125)
+        self.assertEqual(BUDGET.digest(adjustments[:125]),
+                         "9eeac02c36a946716f9e4f3a501f347375ea58d962cdeb4859b521b8a6993ab0")
+        self.assertEqual(len(adjustments[124]["changes"]), 10)
+        self.assertTrue(all(after > before for before, after in adjustments[124]["changes"].values()))
 
     def test_checkout_line_endings_do_not_change_metrics(self):
         before = BUDGET.measure(self.root, self.paths(), {})
