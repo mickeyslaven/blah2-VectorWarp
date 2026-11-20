@@ -88,6 +88,26 @@ try {
   assert.equal(saved.config.capture.device.array_geometry.mapping_confirmed, true, 'Unchanged measurements can carry operator statements');
   const confirmed = clone(saved.config);
   const confirmationFields = ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed'];
+  for (const [key, value] of Object.entries({analysis_samples: 4096, analysis_interval: 2,
+    power_iterations: 10, covariance_smoothing: .5, diagonal_loading: .002,
+    target_protection_enabled: true, target_protection_beams: 24, target_protection_beam_index: 3})) {
+    const candidate = clone(saved.config); candidate.process.reference_synthesis[key] = value;
+    saved = saveConfig(file, candidate, saved.revision);
+    for (const field of confirmationFields)
+      assert.equal(saved.config.capture.device.array_geometry[field], true,
+        `Unchanged physical topology preserves survey confirmations after ${key} save`);
+  }
+  for (const mutate of [c => { c.capture.device.serial = 'different-receiver'; },
+    c => { c.capture.device.address = 'serial=different-receiver'; },
+    c => { c.process.reference_synthesis.channels = [4, 3]; },
+    c => { c.capture.device.array_geometry.elements[0].position[0] += .01; }]) {
+    const candidate = clone(saved.config); mutate(candidate);
+    const changed = saveConfig(file, candidate, saved.revision);
+    for (const field of confirmationFields)
+      assert.equal(changed.config.capture.device.array_geometry[field], false,
+        'Changed receiver, roles or measurements invalidate confirmation on save');
+    writeConfigAtomically(file, saved.config); saved = readConfig(file);
+  }
   const fixed = clone(confirmed);
   Object.assign(fixed.capture.device.heimdall, {gain: 14, gain_control: 'fixed'});
   const gainFile = path.join(directory, 'measured-gain.yml');
@@ -132,6 +152,7 @@ try {
     c => { c.capture.device.channel_count = 4; }, c => { c.capture.device.reference_channel = 4; },
     c => { c.capture.device.surveillance_channels.reverse(); }, c => { c.process.reference_synthesis.mode = 'array_eigenbeam'; },
     c => { c.capture.device.heimdall.host = '192.0.2.1'; },
+    c => { c.capture.device.serial = 'new-receiver'; }, c => { c.capture.device.address = 'new-address'; },
     c => { c.capture.device.heimdall.port += 1; }, c => { c.capture.device.heimdall.control_port += 1; },
     c => { c.capture.device.heimdall.other_setting = true; },
     c => { c.capture.device.array_geometry.elements.reverse(); },
@@ -149,13 +170,15 @@ try {
   }
   const resized = clone(confirmed); resized.capture.device.channel_count = 2; normalizeKrakenChannels(resized, 5);
   assert.deepEqual(resized.capture.device.array_geometry.elements, confirmed.capture.device.array_geometry.elements);
-  assert.equal(validateConfig(resized).valid, true, 'Inactive measurements stay as review metadata');
+  assert.equal(validateConfig(resized).valid, false, 'Explicit out-of-range input roles remain visible for repair');
   resized.capture.device.channel_count = 5; normalizeKrakenChannels(resized, 2);
   assert.equal(resized.capture.device.array_geometry.mapping_confirmed, false);
   for (const profile of getDeviceProfiles()) {
     const candidate = applyDeviceProfile(clone(confirmed), profile);
     if (profile.type === 'HackRF') candidate.capture.device.serial = ['001', '002'];
-    assert.equal(validateConfig(candidate).valid, true, profile.type);
+    assert.deepEqual(candidate.process, confirmed.process, 'Receiver selection preserves processing intent');
+    assert.equal(validateConfig(candidate).valid, false,
+      'Profile defaults cannot silently replace the explicit dedicated-reference role: ' + profile.type);
     assert.deepEqual(candidate.capture.device.array_geometry.elements, confirmed.capture.device.array_geometry.elements);
     assert.equal(candidate.capture.device.array_geometry.mapping_confirmed, false);
   }

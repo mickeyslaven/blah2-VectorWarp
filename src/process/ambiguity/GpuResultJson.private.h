@@ -1,4 +1,5 @@
 #pragma once
+#include "TemporalCandidateCell.h"
 // GPU-result views only: validation and legacy JSON formatting; no DSP math.
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -25,11 +26,13 @@ View<double> delayKm,doppler,display;};
 struct DetectionView {uint64_t timestamp=0;
 View<double> delayKm,doppler,snr;};
 struct HistoryView {View<double> delay,doppler;
-View<uint32_t> state;};
+View<uint32_t> state,measured;};
 struct PublishedTrack {uint32_t id=0,state=0;
 double delay=0,doppler=0,acceleration=0;
 uint64_t associated=0;
-HistoryView history;};
+HistoryView history;
+bool measurementKnown=false,measured=false;
+uint32_t source=0;}; // 0 prediction/legacy, 1 detector
 struct TrackView {uint64_t timestamp=0,total=0,tentative=0,associated=0,active=0,coasting=0;
 View<PublishedTrack> published;};
 inline void require(bool yes,const char*why){if(!yes)throw std::invalid_argument(why);}
@@ -160,7 +163,10 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
  values(t.history.delay);
  values(t.history.doppler);
  shape(t.history.state);
- require(t.history.delay.count==t.history.doppler.count&&t.history.delay.count==t.history.state.count&&t.history.delay.count>0&&t.history.delay.count<=100,"GPU selected display history shape differs");
+ shape(t.history.measured);
+ require(t.history.delay.count==t.history.doppler.count&&t.history.delay.count==t.history.state.count&&t.history.delay.count<=100,"GPU selected display history shape differs");
+ require(!t.history.measured.count||t.history.measured.count==t.history.state.count,"GPU selected measurement history shape differs");
+ require(!t.measurementKnown||t.source<=1,"GPU measurement provenance invalid");
  for(size_t j=0;j<t.history.state.count;++j)stateName(t.history.state.data[j]);}
  rapidjson::StringBuffer b;
  Writer w(b);
@@ -196,6 +202,8 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
  w.Double(t.acceleration);
  w.Key("n");
  w.Uint64(t.associated);
+ if(t.measurementKnown){w.Key("measured");w.Bool(t.measured);
+  w.Key("source");w.String(t.source==1?"detector":"prediction");}
  w.Key("associated_delay");
  array(w,t.history.delay);
  w.Key("associated_doppler");
@@ -204,14 +212,57 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
  w.StartArray();
  for(size_t j=0;j<t.history.state.count;++j)w.String(stateName(t.history.state.data[j]));
  w.EndArray();
+ if(t.measurementKnown||t.history.measured.count){w.Key("associated_measured");w.StartArray();
+  for(size_t j=0;j<t.history.measured.count;++j)w.Bool(t.history.measured.data[j]!=0);
+  w.EndArray();}
  w.EndObject();}w.EndArray();
  w.EndObject();
  return {b.GetString(),b.GetSize()};}
 
 // Accept the actual ABI DetectionRecord AoS directly; copy supplied GPU km
 // metadata, never convert the delay-bin field.
-template<class Record> inline std::string detectionRecords(uint64_t timestamp,View<Record> v,
- View<uint32_t> guidedWords={},double sampleRate=0){
+inline std::vector<uint32_t> temporalSourceCells(View<uint32_t> flags,View<uint32_t> cells,
+ uint32_t rows,uint32_t columns,uint32_t maximumCpis){
+ shape(flags);shape(cells);std::vector<uint32_t> result;result.reserve(cells.count);
+ for(size_t i=0;i<cells.count;++i){const auto key=cells.data[i];uint32_t value=0;
+  if(maximumCpis>1){
+   if(key>=flags.count)throw std::invalid_argument("Resident temporal source flags absent");
+   value=flags.data[key];
+  }
+  result.push_back(temporal_candidate::sourceCell(key,value,rows,columns,maximumCpis));}
+ return result;
+}
+inline std::string temporalEvidence(std::string base,View<uint32_t> flags,
+ View<uint32_t> cells,uint64_t epoch,View<uint64_t> sequences,uint32_t maximum){
+ shape(flags);shape(cells);shape(sequences);
+ require((maximum==2||maximum==4||maximum==8)&&epoch&&sequences.count&&
+  sequences.count<=maximum,"Invalid resident temporal publication history");
+ rapidjson::Document d;d.Parse(base.c_str());require(!d.HasParseError()&&d.IsObject()&&
+  d.HasMember("snr")&&d["snr"].IsArray()&&d["snr"].Size()==cells.count,
+  "Resident temporal publication candidate count differs");
+ auto& allocator=d.GetAllocator();rapidjson::Value evidence(rapidjson::kArrayType);
+ for(size_t i=0;i<cells.count;++i){require(cells.data[i]<flags.count,"Resident temporal publication cell invalid");
+  const uint32_t value=flags.data[cells.data[i]],qualified=(value>>3)&15;
+  require((value&4)&&qualified&&!(qualified&(qualified-1)),"Resident originating bank ambiguous");
+  const uint32_t bank=(qualified&8)?4:(qualified&4)?3:(qualified&2)?2:1,
+   depth=bank>2?1u<<(bank-1):2;
+  require(depth<=maximum&&depth<=sequences.count,"Resident temporal publication support incomplete");
+  require(bank!=1||(((value>>17)&7)==2&&((value>>20)&63)==16),"Resident baseline contains motion lineage");
+  rapidjson::Value item(rapidjson::kObjectType),support(rapidjson::kArrayType);
+  item.AddMember("kind","temporal_power",allocator);
+  item.AddMember("epoch_exact",rapidjson::Value(std::to_string(epoch).c_str(),allocator),allocator);
+  item.AddMember("newest_sequence_exact",rapidjson::Value(std::to_string(sequences.data[sequences.count-1]).c_str(),allocator),allocator);
+  item.AddMember("cpis",depth,allocator);item.AddMember("bank",bank,allocator);
+  item.AddMember("delay_motion_bins",int((value>>17)&7)-2,allocator);
+  item.AddMember("doppler_motion_bins",int((value>>20)&63)-16,allocator);
+  for(size_t age=0;age<depth;++age){const size_t j=sequences.count-1-age;
+   require(sequences.data[j]&&(j==0||sequences.data[j]>sequences.data[j-1]),"Resident temporal publication sequence is not strictly increasing");
+   support.PushBack(rapidjson::Value(std::to_string(sequences.data[j]).c_str(),allocator),allocator);}
+  item.AddMember("support_sequences_exact",support,allocator);evidence.PushBack(item,allocator);}
+ if(cells.count)d.AddMember("evidence",evidence,allocator);
+ rapidjson::StringBuffer buffer;rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);d.Accept(writer);return buffer.GetString();
+}
+template<class Record> inline std::string detectionRecords(uint64_t timestamp,View<Record> v){
  shape(v);
  std::vector<double>km,doppler,snr;
  km.reserve(v.count);
@@ -224,31 +275,7 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
  km.push_back(v.data[i].delayKm);
  doppler.push_back(v.data[i].doppler);
  snr.push_back(v.data[i].snr);}
- const std::string base=detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
- if(!guidedWords.count)return base;
- shape(guidedWords);require(guidedWords.count%6==0&&std::isfinite(sampleRate)&&sampleRate>0,
-  "Invalid guided recovery view");
- rapidjson::Document d;d.Parse(base.c_str());
- require(!d.HasParseError()&&d.IsObject(),"Internal guided recovery JSON parse failed");
- auto& allocator=d.GetAllocator();rapidjson::Value records(rapidjson::kArrayType);
- constexpr char hex[]="0123456789ABCDEF";
- for(size_t i=0;i<guidedWords.count;i+=6){const uint32_t id=guidedWords.data[i],state=guidedWords.data[i+1];
-  require(id<65535&&state<4,"Invalid guided recovery identity/state");
-  const auto number=[&](size_t at){const uint64_t bits=uint64_t(guidedWords.data[at])|
-    (uint64_t(guidedWords.data[at+1])<<32);double value;std::memcpy(&value,&bits,8);return value;};
-  const double delay=number(i+2),dopplerValue=number(i+4);
-  finite(delay);finite(dopplerValue);char text[5]={hex[(id>>12)&15],hex[(id>>8)&15],hex[(id>>4)&15],hex[id&15],0};
-  rapidjson::Value record(rapidjson::kObjectType);
-  record.AddMember("track_id",rapidjson::Value(text,allocator),allocator);
-  record.AddMember("state",rapidjson::Value(stateName(state),allocator),allocator);
-  record.AddMember("maturity",rapidjson::Value(state<2?"tentative":"established",allocator),allocator);
-  record.AddMember("delay_bin",delay,allocator);
-  record.AddMember("delay_km",delay*(299792458.0/sampleRate)/1000.0,allocator);
-  record.AddMember("doppler_hz",dopplerValue,allocator);records.PushBack(record,allocator);
- }
- d.AddMember("track_guided_shadow",records,allocator);rapidjson::StringBuffer output;Writer writer(output);
- writer.SetMaxDecimalPlaces(6);require(d.Accept(writer),"Internal guided recovery JSON write failed");
- return {output.GetString(),output.GetSize()};
+ return detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
 }
 template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  double frequencyHz,double sampleRate,uint32_t rows,uint32_t columns,uint32_t channels,
@@ -284,6 +311,7 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  // the later runtime actual-gain equality check.
  rapidjson::StringBuffer b;Writer w(b);
  w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v2");
+ w.Key("precision_contract");w.String("binary64-json-roundtrip-v1");
  w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
  w.Key("actual_gain_db");w.StartArray();
@@ -360,6 +388,21 @@ inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(
 double value;
 std::memcpy(&value,&bits,sizeof(value));
 return value;}
+// History-word encoding is independent of checkpoint schema5's record layout.
+enum class HistoryEncoding {measurement,disjointCredit};
+inline HistoryEncoding historyEncoding(const uint32_t* checkpoint){
+ require(checkpoint[0]==5&&checkpoint[27]<=1,"GPU tracker history encoding invalid");
+ return checkpoint[27]?HistoryEncoding::disjointCredit:HistoryEncoding::measurement;
+}
+inline bool validHistoryMetadata(uint32_t word,HistoryEncoding encoding){
+ if(encoding!=HistoryEncoding::measurement&&encoding!=HistoryEncoding::disjointCredit)return false;
+ const bool disjoint=encoding==HistoryEncoding::disjointCredit;
+ const uint32_t evidence=word&12u,state=word&3u,depth=word>>(disjoint?5u:4u);
+ return word<=(disjoint?511u:255u)&&(evidence&8u)==0u&&
+  !(state==3u&&evidence!=0u)&&
+  !(disjoint&&(word&16u)!=0u&&evidence==0u)&&
+  (evidence==0u?depth==0u:(depth==1u||depth==2u||depth==4u||depth==8u));
+}
 // The bank is an already committed GPU checkpoint. Decode/copy only its valid
 // prefix and its GPU-selected publication slices; no tracker transition/ID,
 // prediction, count, or display-window computation occurs here.
@@ -368,25 +411,28 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
  const uint32_t recordBytes=w[1],historyCapacity=w[3];
- require(binding.capacity&&w[0]==1&&historyCapacity>=100&&historyCapacity<=255&&
-  recordBytes==(16+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
+ require(binding.capacity&&w[0]==5&&historyCapacity>=100&&historyCapacity<=255&&
+  recordBytes==(20+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
+ const auto encoding=historyEncoding(w);
  const size_t recordWords=recordBytes/4;
  const uint64_t total=wordPair(w,4),published=wordPair(w,24);
  require(total<=binding.capacity&&total<=(SIZE_MAX-32)/recordWords&&bank.count==32+recordWords*size_t(total),"GPU tracker valid prefix differs");
  require(w[8]<65535&&w[9]==0&&wordPair(w,10)==binding.epoch&&wordPair(w,12)==binding.generation&&wordPair(w,14)==binding.consumedSequence,"GPU tracker checkpoint binding differs");
- for(size_t i=26;i<32;++i)require(w[i]==0,"GPU tracker reserved header nonzero");
+ for(size_t i=28;i<32;++i)require(w[i]==0,"GPU tracker reserved header nonzero");
+ require(w[27]||w[26]==0,"GPU tracker lineage policy invalid");
+ if(w[27])require(w[26]<UINT32_MAX,"GPU tracker temporal counter invalid");
  const std::array<uint64_t,4>counts{wordPair(w,16),wordPair(w,18),wordPair(w,20),wordPair(w,22)};
  require(counts[0]<=total&&counts[1]<=total-counts[0]&&counts[2]<=total-counts[0]-counts[1]&&counts[3]==total-counts[0]-counts[1]-counts[2]&&published==total-counts[0],"GPU tracker header totals differ");
  std::vector<PublishedTrack>rows(size_t(published),PublishedTrack{});
  struct Storage {std::vector<double>d,f;
- std::vector<uint32_t>s;};
+ std::vector<uint32_t>s,m;};
  std::vector<Storage>history(size_t(published),Storage{});
  std::array<uint64_t,4>observed{};
  size_t ordinal=0;
  for(size_t i=0;i<size_t(total);++i){const size_t base=32+recordWords*i;
  const uint32_t state=w[base+14],packed=w[base+13],head=packed&255,length=(packed>>8)&255,start=(packed>>16)&255,display=packed>>24;
   const uint32_t identity=w[base+12];
-  require(state<4&&(identity&0x7fff0000u)==0u&&(identity&65535u)<65535&&head<historyCapacity&&length&&length<=historyCapacity&&start<historyCapacity&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
+  require(state<4&&(identity&0x3fff0000u)==0u&&(identity&65535u)<65535&&head<historyCapacity&&length&&length<=historyCapacity&&start<historyCapacity&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
   // Validate the supplied slice, but copy start/display directly below.
   require(display==(length>=100?100:length)&&start==(head+length-display)%historyCapacity&&(length==historyCapacity||head==0),"GPU tracker display metadata inconsistent");
   ++observed[state];
@@ -394,6 +440,9 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   finite(realPair(w,base+2));
   finite(realPair(w,base+4));
   finite(realPair(w,base+6));
+  const double missed=realPair(w,base+16+8*historyCapacity);finite(missed);
+  const auto measured=wordPair(w,base+18+8*historyCapacity);
+  require(missed>=0&&measured>0&&measured<=wordPair(w,base+8),"GPU tracker elapsed/measurement interval invalid");
   require(w[base+15]==(state?ordinal:UINT32_MAX),"GPU tracker publication ordinal differs");
   if(!state)continue;
   require(ordinal<rows.size(),"GPU tracker publication exceeds header");
@@ -401,22 +450,32 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   h.d.reserve(display);
   h.f.reserve(display);
   h.s.reserve(display);
+  h.m.reserve(display);
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
   const double d=realPair(w,at),f=realPair(w,at+2);
   finite(d);
   finite(f);
   finite(realPair(w,at+4));
-  stateName(w[at+6]);
+  const uint32_t historyState=w[at+6];
+  require(validHistoryMetadata(historyState,encoding),"GPU history measurement metadata invalid");
+  stateName(historyState&3u);
   const uint32_t spatial=w[at+7];
   if(spatial&0x80000000u){const uint32_t scan=binding.scanBeamCount?binding.scanBeamCount:binding.beamCount*4u;
    require(validFineSpatialEvidence(spatial,scan),"GPU history multi-lobe metadata invalid");}
   else{const uint32_t coarse=spatial&511u,fineBeam=(spatial>>9u)&2047u;
    require(coarse<=binding.beamCount&&fineBeam<=binding.beamCount*4u&&
     !(coarse==0&&fineBeam!=0),"GPU history beam metadata invalid");}
+  // Schema5 publishes only genuine measured points within the GPU-selected
+  // last-100-update slice. Prediction endpoints remain private state.
+  if((historyState&4u)==0u)continue;
   h.d.push_back(d);
   h.f.push_back(f);
-  h.s.push_back(w[at+6]);}
-  rows[ordinal]={identity&65535u,state,realPair(w,base),realPair(w,base+2),realPair(w,base+6),wordPair(w,base+8),{{h.d.data(),h.d.size()},{h.f.data(),h.f.size()},{h.s.data(),h.s.size()}}};
+  h.s.push_back(historyState&3u);
+  h.m.push_back(1u);}
+  const uint32_t newestPrivate=w[base+16+8*((head+length-1u)%historyCapacity)+6u];
+  rows[ordinal]={identity&65535u,state,realPair(w,base),realPair(w,base+2),realPair(w,base+6),measured,
+   {{h.d.data(),h.d.size()},{h.f.data(),h.f.size()},{h.s.data(),h.s.size()},{h.m.data(),h.m.size()}},
+   true,(newestPrivate&4u)!=0u,(newestPrivate&4u)!=0u?1u:0u};
   ++ordinal;
  }
  require(observed==counts&&ordinal==published,"GPU tracker record/header counts differ");
@@ -424,8 +483,8 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
 }
 inline double normalizeDegrees(double value){value=std::fmod(value,360.0);
  return value<0?value+360.0:value;}
-// A separate, opt-in publication keeps the legacy tracker JSON byte-for-byte
-// stable. Bearings are temporal beam-bank estimates, never ADS-B-derived.
+// Bearings are a separate, opt-in publication of temporal beam-bank estimates,
+// never ADS-B-derived.
 inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  const CheckpointBinding&binding,const BearingConfig&config){
  shape(bank);
@@ -444,8 +503,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
  const uint32_t historyCapacity=w[3],recordBytes=w[1];
- require(binding.capacity&&w[0]==1&&historyCapacity>=100&&historyCapacity<=255&&
-  recordBytes==(16+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
+ require(binding.capacity&&w[0]==5&&historyCapacity>=100&&historyCapacity<=255&&
+  recordBytes==(20+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
+ const auto encoding=historyEncoding(w);
  const size_t recordWords=recordBytes/4;
  const uint64_t total=wordPair(w,4);
  require(total<=binding.capacity&&bank.count==32+recordWords*size_t(total)&&
@@ -479,7 +539,11 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   double minimumDoppler=std::numeric_limits<double>::infinity(),maximumDoppler=-std::numeric_limits<double>::infinity();
   std::array<uint32_t,16> legacyQuality{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
-   const uint32_t historyState=w[at+6];stateName(historyState);
+   const uint32_t privateHistoryState=w[at+6];
+   require(validHistoryMetadata(privateHistoryState,encoding),"GPU bearing measurement metadata invalid");
+   const uint32_t historyState=privateHistoryState&3u;stateName(historyState);
+   // Predictions cannot create spatial measurements from a copied beam.
+   if((privateHistoryState&4u)==0u)continue;
    if(historyState!=1u&&historyState!=2u)continue;
    const uint32_t spatial=w[at+7];Lobes frame;frame.sample=j;
    const double sampleDelay=realPair(w,at),sampleDoppler=realPair(w,at+2);
@@ -505,7 +569,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    if(separated){independent.push_back(bin);if(independent.size()==3)break;}}
   const uint32_t winner=independent.front();
   std::vector<uint32_t> selected(frames.size());
-  const bool hypothesisTracking=config.maxBearingRateDegPerSecond>0&&frames.size()>1;
+  bool hypothesisTracking=config.maxBearingRateDegPerSecond>0&&frames.size()>1;
+  bool ratePathValid=true;
   if(hypothesisTracking){
    constexpr double impossible=-1e100;std::vector<std::array<double,3>>score(frames.size());
    std::vector<std::array<uint8_t,3>>previous(frames.size());
@@ -519,7 +584,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
      const double candidate=score[frame-1][p]+std::log(std::max(frames[frame].weight[k],1e-6))-.5*(delta/allowed)*(delta/allowed);
      if(candidate>score[frame][k]){score[frame][k]=candidate;previous[frame][k]=uint8_t(p);}}}
    uint32_t best=0;for(uint32_t k=1;k<3;++k)if(score.back()[k]>score.back()[best])best=k;
-   if(score.back()[best]<=impossible/2){for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}}
+   if(score.back()[best]<=impossible/2){hypothesisTracking=false;ratePathValid=false;for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}}
    else for(size_t frame=frames.size();frame-->0;){selected[frame]=best;if(frame)best=previous[frame][best];}
   }else for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}
   double x=0,y=0,selectedWeight=0,totalWeight=0,bearingRate=0;uint32_t rateSamples=0;
@@ -549,7 +614,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(temporalQuality);
   out.Key("current_peak_separation_db");out.Uint(currentQuality);
   out.Key("stationary_clutter");out.Bool(stationaryClutter);out.Key("publishable");out.Bool(!stationaryClutter);
-  out.Key("resolved");out.Bool(!stationaryClutter&&count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&
+  out.Key("resolved");out.Bool(ratePathValid&&!stationaryClutter&&count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&
    temporalQuality>=config.minPeakSeparationDb);
   out.Key("candidates");out.StartArray();uint32_t emitted=0;
   for(uint32_t bin:independent){if(emitted&&histogram[bin]*4<histogram[winner])break;

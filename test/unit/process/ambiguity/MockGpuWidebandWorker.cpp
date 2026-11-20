@@ -3,13 +3,15 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
+#include <fcntl.h>
 #include <thread>
 #include <unistd.h>
 #include <sys/socket.h>
 
 namespace {
-constexpr uint32_t magic=0x42574701;
-struct Header{uint32_t tag=magic,inputRate=0,channels=0,maxInput=0,lanes=0;uint64_t bytes=0;char device[96]{};};
+constexpr uint32_t magic=0x42574702;
+struct Header{uint32_t tag=magic,inputRate=0,channels=0,maxInput=0,lanes=0,traceFrames=0;uint64_t bytes=0;char device[96]{};};
 struct LaneWire{uint64_t frequency=0;uint32_t decimation=0,taps=0;double center=0;};
 struct Frame{uint32_t tag=magic,op=1,samples=0,reserved=0;uint64_t sequence=0,first=0;};
 struct Reply{uint32_t tag=magic,status=0,lanes=0;uint64_t sequence=0;uint32_t samples[blah2::wideband_gpu::maxLanes]{};uint64_t first[blah2::wideband_gpu::maxLanes]{};uint8_t has[blah2::wideband_gpu::maxLanes]{};char reason[256]{};char device[256]{};};
@@ -33,4 +35,82 @@ public:
     for(const auto& lane:config_.lanes){blah2::wideband_gpu::LaneOutput out;out.frequencyHz=lane.frequencyHz;out.inputSamplesPerOutput=lane.decimation;out.channels.resize(input.size());for(size_t sample=0;sample<input.front().size();++sample)if((first+sample)%lane.decimation==0){if(!out.hasFirstInputSample){out.hasFirstInputSample=true;out.firstInputSample=first+sample;}for(size_t channel=0;channel<input.size();++channel)out.channels[channel].push_back(input[channel][sample]);}result.push_back(std::move(out));}return result;
   }
 };
-int main(){const char* raw=std::getenv("VW_MOCK_WIDEBAND_FAILURE");const std::string mode=raw?raw:"";if(mode=="startup-hang")std::this_thread::sleep_for(std::chrono::milliseconds(250));if(mode=="startup-crash")_exit(8);if(mode=="partial"||mode.rfind("malformed-",0)==0)return customWorker(mode);return blah2::wideband_gpu::runWorker([](const auto& c,const auto&){return std::make_unique<Mock>(c);});}
+
+// Regression double for the optional module capability. Its owned-output entry
+// points fail, proving the isolated worker actually consumes the borrowed view.
+class BorrowedMock final:public blah2::wideband_gpu::Backend,
+  public blah2::wideband_gpu::BorrowedOutputBackend
+{
+  blah2::wideband_gpu::Plan plan_;
+  std::vector<std::complex<float>> values_;
+  unsigned calls_=0;
+public:
+  explicit BorrowedMock(const blah2::wideband_gpu::Config& c):plan_(c){}
+  std::string deviceName()const override{return "mock-wideband-borrowed";}
+  void reset()override{plan_.reset();values_.clear();}
+  std::vector<blah2::wideband_gpu::LaneOutput> process(
+    const std::vector<std::vector<std::complex<float>>>&,uint64_t)override{
+    throw std::runtime_error("Borrowed worker used owned output");
+  }
+  std::vector<blah2::wideband_gpu::LaneOutput> processView(
+    const InputView&,uint64_t)override{
+    throw std::runtime_error("Borrowed worker used owned output view");
+  }
+  blah2::wideband_gpu::BorrowedOutput processBorrowed(
+    const InputView& input,uint64_t first)override{
+    const char* raw=std::getenv("VW_MOCK_WIDEBAND_FAILURE");
+    const std::string mode=raw?raw:"";
+    ++calls_;
+    if(calls_==2&&mode=="borrowed-second-crash")_exit(7);
+    if(calls_==2&&mode=="borrowed-second-hang")
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    auto dispatch=plan_.prepare(first,input.samples);
+    values_.resize(dispatch.outputElements);
+    for(const auto& lane:dispatch.lanes)
+      for(size_t channel=0;channel<input.channels.size();++channel)
+        for(size_t sample=0;sample<lane.outputSamples;++sample)
+          values_[lane.outputOffset+channel*lane.outputSamples+sample]=
+            input.channels[channel][lane.firstRemainder+sample*lane.decimation];
+    blah2::wideband_gpu::BorrowedOutput result{std::move(dispatch),
+      values_.empty()?nullptr:values_.data()};
+    if(mode=="borrowed-null")result.data=nullptr;
+    else if(mode=="borrowed-total")result.dispatch.outputElements=UINT32_MAX;
+    else if(mode=="borrowed-first")++result.dispatch.firstInputSample;
+    else if(mode=="borrowed-input")++result.dispatch.inputSamples;
+    else if(mode=="borrowed-lanes")result.dispatch.lanes.pop_back();
+    else if(mode=="borrowed-offset")++result.dispatch.lanes[0].outputOffset;
+    else if(mode=="borrowed-count")++result.dispatch.lanes[0].outputSamples;
+    else if(mode=="borrowed-remainder")++result.dispatch.lanes[0].firstRemainder;
+    else if(mode=="borrowed-decimation")++result.dispatch.lanes[0].decimation;
+    else if(calls_==2&&mode=="borrowed-second-malformed")++result.dispatch.outputElements;
+    return result;
+  }
+};
+int main(){
+  if(const char* inherited=std::getenv("VW_MOCK_WIDEBAND_INHERITED_FD")){
+    errno=0;
+    if(fcntl(std::atoi(inherited),F_GETFD)!=-1||errno!=EBADF)return 10;
+    if(fcntl(3,F_GETFD)<0||fcntl(4,F_GETFD)<0)return 11;
+  }
+  if(std::getenv("VW_MOCK_WIDEBAND_CLOSED_STD"))
+    for(int fd=0;fd<3;++fd){errno=0;if(fcntl(fd,F_GETFD)!=-1||errno!=EBADF)return 12;}
+  const char* raw=std::getenv("VW_MOCK_WIDEBAND_FAILURE");const std::string mode=raw?raw:"";if(mode=="startup-hang")std::this_thread::sleep_for(std::chrono::milliseconds(250));if(mode=="startup-crash")_exit(8);if(mode=="partial"||mode.rfind("malformed-",0)==0)return customWorker(mode);
+  if(mode=="legacy-reply"){
+    Header header;readAll(&header,sizeof(header));
+    for(uint32_t i=0;i<header.lanes;++i){
+      LaneWire lane;readAll(&lane,sizeof(lane));
+      std::vector<double> taps(lane.taps);readAll(taps.data(),taps.size()*sizeof(double));
+    }
+    Reply reply;reply.tag=0x42574701;
+    return send(3,&reply,sizeof(reply),MSG_NOSIGNAL)==ssize_t(sizeof(reply))?0:14;
+  }
+  if(mode=="startup-no-read"){
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    return 13;
+  }
+  return blah2::wideband_gpu::runWorker([](const auto& c,const auto&)
+    ->std::unique_ptr<blah2::wideband_gpu::Backend>{
+    if(std::getenv("VW_MOCK_WIDEBAND_BORROWED"))return std::make_unique<BorrowedMock>(c);
+    return std::make_unique<Mock>(c);
+  });
+}

@@ -10,16 +10,9 @@ target=${1:-}; clean_dest=${2:-}; upgrade_dest=${3:-}; source_archive=${4:-}; ca
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 row=$(awk -F '\t' -v target="$target" '$1 == target {print; exit}' "$script_dir/release-matrix.tsv")
 [[ -n $row ]] || die "unknown target: $target"
-IFS=$'\t' read -r _ host guest expected_id expected_version expected_arch package_target memory execution <<<"$row"
-if [[ $host == strix && ${VECTORWARP_QWEN_UNLOADED:-0} != 1 ]]; then
-  die 'Strix release tests must run through vm-lab/with-qwen-unloaded.sh'
-fi
-if [[ $host == m2 ]]; then
-  [[ $memory == 2048 && $execution == lima-serial ]] || die 'M2 guests must remain serial at 2 GiB'
-  command -v limactl >/dev/null || die 'limactl is required on M2'
-  actual_memory=$(limactl list --json | jq -er --arg name "$guest" 'select(.name == $name) | .memory' | head -1)
-  [[ $actual_memory == 2147483648 ]] || die "$guest is not configured for exactly 2 GiB"
-fi
+IFS=$'\t' read -r _ expected_id expected_version expected_arch package_target extra <<<"$row"
+[[ -z ${extra:-} && -n $expected_id && -n $expected_version && -n $expected_arch && -n $package_target ]] ||
+  die "invalid release matrix row: $target"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 install -m 0755 "$script_dir/guest-release-test.sh" "$work/guest-release-test.sh"

@@ -32,8 +32,10 @@ async function checkReceiverStart(filename, options = {}) {
   if (document.config.capture?.replay?.state === true) return {state: 'replay'};
   const journalReader = options.journal || createReceiverJournal(filename);
   const journal = journalReader.load();
+  const revisionChanged = Boolean(journal.configRevision &&
+    journal.configRevision !== document.revision);
   if (journal.reconciliationRequired || journal.state === 'saved-pending' ||
-      (journal.configRevision && journal.configRevision !== document.revision))
+      (revisionChanged && document.config.capture?.device?.type !== 'Kraken'))
     throw new Error('Receiver settings are pending or unresolved. Open Settings and Apply them before starting live processing.');
   let receipt = null;
   if (document.config.capture?.device?.type === 'Kraken') {
@@ -41,9 +43,14 @@ async function checkReceiverStart(filename, options = {}) {
       (options.verifyBundledOwner || verifyBundledLocalOwner)(document.config);
     const client = options.client || createKrakenControlClient();
     receipt = await client.verify(document.config);
+    // A safe schema/default migration can change the whole-file revision while
+    // leaving every receiver setting untouched. Kraken has an authoritative
+    // upstream readback, so its read-only verification may clear this start
+    // check. The processor service intentionally cannot write /etc; the API's
+    // normal receiver transaction remains the durable journal writer.
   }
   if (read(filename).revision !== document.revision ||
-      JSON.stringify(journalReader.load()) !== JSON.stringify(journal))
+      (!revisionChanged && JSON.stringify(journalReader.load()) !== JSON.stringify(journal)))
     throw new Error('Receiver settings changed during startup verification. Apply and start again.');
   return {state: receipt ? 'upstream-verified' : 'sdk-startup-required',
     configRevision: document.revision, receipt};

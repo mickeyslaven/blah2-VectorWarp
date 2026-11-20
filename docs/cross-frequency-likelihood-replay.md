@@ -1,0 +1,43 @@
+# Cross-frequency support before lane confirmation
+
+This is an offline, radar-only **shadow** comparison. It does not install a profile, change a detector threshold, declare aircraft, or add hits to the operational pass scorecard. The existing same-transmitter tracker can maintain excess path and path rate on a single site; its output is an ellipse/range-rate constraint, never a position. The new scorer follows multi-site trajectory **branches** through unconfirmed/subthreshold map returns. It cannot create a new multi-site branch without coincident radar detections on at least two distinct sites. Two-site births retain fixed-altitude/vertical-rate assumptions and may have several branches. Three sites alone do not certify a unique aircraft.
+
+## Measurement and likelihood
+
+At a common raw sample epoch a branch has receiver-centered ENU position `p` in km and velocity `v` in km/s. With transmitter `s_i` in that frame, project
+
+    d_i = |p| + |p-s_i| - |s_i|                         [km]
+    g_i = p/|p| + (p-s_i)/|p-s_i|
+    f_i = -(carrier_i / 299792.458) * dot(g_i, v)       [Hz]
+
+Each map is read only at its own projected delay and Doppler. Co-located carriers keep their own carrier, transmitter coordinates, cells and processing identity; they do not generate independent position constraints. No carrier phases, IQ, raw map arrays or lane-track coordinates are added. Roots are proposals: their discovery CPI earns zero persistence hits. On later CPIs score the **prior predicted** state before fitting to any new root. Up to three missed CPIs coast; a gap longer than the configured coast expires a branch, and a recorder epoch change clears it. Per-branch memory and root searches are bounded; their truncation limits affect recall.
+
+Capture epoch and raw half-open interval must match across lanes. Elapsed time comes from the absolute sample indices and the configured raw sampling rate. We project to the midpoint of each lane's inclusive first/end input samples, adjusted by its signed calibrated timing bias. Births require the corrected midpoints to agree within one raw sample. Independent host-arrival timestamps never define a velocity. Absolute UTC may be unknown: it is not needed for trajectories in one sample clock, but is material when scoring against ADS-B. Score each lane at three weighted points spanning a modeled uniform relative-time error (lane/group-delay bounds, last fitted state's time uncertainty, and oscillator drift since fit). Unbounded/unknown relative timing requires withholding a profile; three nodes are an approximation and must be checked against a denser integral for large bounds. The uncalibrated default product is a descriptive site-balanced rank, not a likelihood.
+
+The feature is the projected cell's display value minus its guard-annulus median, using exactly the implementation in `sampleMap`; it is neither RF power nor a Gaussian z score. For its bin `b`, fit a smoothed null mass `q_i[b]>0` and visible-target mass `a_i[b]`. The lane's ratio is
+
+    L_i(b) = 1 + visibility_i * reliability_i * (a_i[b]/q_i[b] - 1).
+
+Visibility and reliability are fixed profile parameters in [0,1]. This is a mixture model: a faded target looks like the null. A quiet observed in-coverage cell can give L<1; an absent/out-of-coverage map is neutral (L=1), never penalized as a measured miss or counted as a hit by itself. A changed grid, channel role, carrier, processing mode or configuration rejects the profile. Calibrate observable dropouts separately if missingness depends on the scene. Average each lane ratio across its time-error samples. Average across carriers in each transmitter site, then average across sites with **fixed weights**, including neutral missing lanes. This composite measure avoids assuming any independence between carriers or sites. It is not a posterior, a joint generative model for simultaneous visibility, or a calibrated false-alarm probability. We do not multiply scores across CPIs: persistence counts comparisons above a frozen threshold (three of six) on a track selected from many branches. Trial selection, temporal dependence, and tail calibration must be measured end-to-end.
+
+## Replay contract
+
+    node script/replay-cross-frequency-likelihood.js SETUP.yml PROFILE.json COHORTS.ndjson > shadow.ndjson
+    node --test api/cross-frequency-likelihood.test.js
+
+Each input line is an array of the enabled native lane frames for one CPI, in acquisition order; use '-' for stdin. Preserve maps, native sample positions, detections, capture epoch and processing identity. Leave ADS-B and any truth labels in a **separate evaluation file**. Output is one diagnostic row per input, with branch ID, seed detection/provenance, sample interval, per-carrier cells, per-site ratios, support history, and explicit false operational/geographic claim flags. Rejected rows exit non-zero. Missing complete lane frames are rejected; an explicitly missing map within an otherwise valid frame is unavailable.
+
+The accompanying test builds a fully specified **synthetic-only** profile. There is no qualified field profile in the repository. A real profile needs:
+
+- Schema `vectorwarp-cross-frequency-profile-v1`; immutable profile ID, signal fitting and null recording IDs, setup SHA-256 and the exact feature identifier exported by `api/cross-frequency-likelihood.js`. The setup hash covers capture, processing and locations, not truth.
+- A relative sample-clock error bound (ppm), frozen per-CPI hit ratio >1, and one model per enabled lane. Model fields: `edges_db`, `null_mass`, `visible_mass`, `visibility`, `reliability`, `mode_sha256`, `grid_sha256`, signed `lane_time_bias_s`, nonnegative `lane_time_error_s`. Helpers `setupDigest`, `frameMode`, `gridDigest` compute the binding hashes. ID strings identify supplied artifacts; they do not prove calibration or independent split membership.
+- Independent background captures representative of range/Doppler, mode, interference and time-of-day, plus known injected/replayed targets with realistic fading for the visible distribution. Fit conditional models or withhold the profile if the single lane table is not valid across the tested region. Keep profile fitting/threshold choice disjoint from acceptance dates, aircraft passes and null recordings.
+
+## Acceptance
+
+The supplied historical union catches 169/301 passes (56.1%); the best individual lane caught 44.7%, and the three lanes uniquely contributed 25/23/8. These are comparator figures, **not** measured likelihood-fusion performance.
+
+1. Freeze eligible physical-pass IDs, truth timing policy, radar-only branch definition, one-to-one evaluation association, thresholds, null scenes and the acceptable false-branch/hour margin before testing. An unresolved branch may be associated for scoring, but is not an operational tracked aircraft. Report this distinction in both numerator and label. Do not merge branch yield into the operational track count. Report duplicates, branch count per pass, ID switches/fragmentation, time to first support, and long coasts. Keep exact and provisional UTC results separate.
+2. Replay identical raw capture intervals through each lane, the union, the existing diagnostic rank and the likelihood branch(es). Compare on the same eligible passes and time coverage; publish paired gains **and losses**, acquisition-site contributions and leave-one-carrier-out results. Require the predeclared paired confidence interval for net unique-pass improvement versus union to exclude zero, with clustering by pass/recording day as appropriate. If the historical frames cannot be replayed, establish a new paired union denominator.
+3. Measure false persistent branches/hour (and duplicate persistent branches/pass) on independent null/injected and manually audited controls; unassociated radar tracks are **not** automatically false. Count all searched branches, including wrong altitude/mirror solutions. Compare at a matched, predeclared false-branch/hour budget; the upper confidence bound on the difference must meet the noninferiority margin. No duplicate/co-located carrier should multiply site evidence. No unsupported geographic or aircraft claims are permitted on single-site, ambiguous or stale data.
+4. Publish bounds on runtime, dropped/truncated hypotheses, sample-clock mismatch and memory under realistic clutter loads. Resolve systematic delay, Doppler, timing and site/height biases before interpreting results. A bounded coast is not a maneuver model: branches can be lost when acceleration exceeds the short constant-velocity prediction. Operational confirmation would need separate geometry, ambiguity, clutter and temporal acceptance; there is no promotion path in this scorer.

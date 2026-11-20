@@ -5,7 +5,6 @@ Run only on the owner's Mac after this script is merged to main. The public
 repository never receives the signing identities or recipient private key.
 """
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,22 +15,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 LABEL = "com.vectorwarp.macos-release-agent"
-SOURCE_SHA256 = "193456313f51fc6d330c4e8332beec4957adfad8a80e4a4d81dea6fd7fbb19cd"
 BASE = Path.home() / "Library/Application Support/VectorWarp/ReleaseAgent"
 PLIST = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
 CACHE = Path.home() / "Library/Caches/VectorWarp/release-agent"
-ACCEPTED = Path.home() / "Library/Caches/VectorWarp/standalone-ci489-finalizer-review"
-V019 = Path.home() / "Library/Caches/VectorWarp/release-v0.1.9"
 PRIVATE = ROOT / "build/standalone-macos/private-transfer"
-DIAGNOSTICS = ROOT / "build/standalone-macos"
-
-
-def sha256(path):
-    value = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            value.update(block)
-    return value.hexdigest()
 
 
 def run(*args):
@@ -39,27 +26,29 @@ def run(*args):
                           capture_output=True, check=True).stdout.strip()
 
 
-def check():
+def check(args):
     if sys.platform != "darwin" or os.geteuid() == 0:
         raise ValueError("install this agent as the logged-in macOS user, not root")
     sources = {
         "recipient_key": PRIVATE / "recipient-key.pem",
         "recipient_certificate": PRIVATE / "recipient-cert.pem",
-        "baseline_arm64_inventory": DIAGNOSTICS / "ci489-arm-diagnostics/standalone-provenance/inventory.json",
-        "baseline_x86_64_inventory": DIAGNOSTICS / "ci489-x86-diagnostics/standalone-provenance/inventory.json",
-        "baseline_notices": ACCEPTED / "VectorWarp.app/Contents/Resources/ThirdPartyNotices",
-        "baseline_source_archive": V019 / "vectorwarp-0.1.9-macos-corresponding-source.tar.gz",
+        "input_manifest": args.input_manifest.absolute(),
+        "current_notices": args.notices.absolute(),
     }
+    if args.sources is not None:
+        sources["public_sources"] = args.sources.absolute()
     if not sources["recipient_key"].is_file() or sources["recipient_key"].stat().st_mode & 0o077:
         raise ValueError("recipient private key is missing or not owner-only")
     for name, path in sources.items():
-        if name == "baseline_notices":
+        if path.is_symlink():
+            raise ValueError("local inputs must not be symlinks")
+        if name in {"current_notices", "public_sources"}:
             if not path.is_dir():
-                raise ValueError("accepted baseline notice directory is missing")
+                raise ValueError("current reviewed input directory is missing")
         elif not path.is_file():
             raise ValueError("required local input is missing: " + name)
-    if sha256(sources["baseline_source_archive"]) != SOURCE_SHA256:
-        raise ValueError("accepted v0.1.9 source archive hash differs")
+    if sources["input_manifest"].stat().st_mode & 0o077:
+        raise ValueError("current input manifest must be owner-only")
     ids = run("security", "find-identity", "-v", "-p", "basic")
     for name in ("Developer ID Application: Mix Slaven (DJGHPX8T7R)",
                  "Developer ID Installer: Mix Slaven (DJGHPX8T7R)"):
@@ -75,7 +64,7 @@ def install(sources):
     if PLIST.exists() or BASE.exists():
         raise ValueError("agent installation already exists; refusing to overwrite it")
     BASE.mkdir(parents=True, mode=0o700)
-    (BASE / "baseline").mkdir(mode=0o700)
+    (BASE / "inputs").mkdir(mode=0o700)
     (BASE / "private").mkdir(mode=0o700)
     (BASE / "logs").mkdir(mode=0o700)
     CACHE.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -88,18 +77,12 @@ def install(sources):
         raise ValueError("merged main does not yet contain the release agent")
     staged = {}
     for name, source in sources.items():
-        target = (BASE / "private" if name.startswith("recipient_") else BASE / "baseline") / source.name
-        if name == "baseline_notices":
-            target = BASE / "baseline/notices"
+        target = (BASE / "private" if name.startswith("recipient_") else BASE / "inputs") / name
+        if name in {"current_notices", "public_sources"}:
             shutil.copytree(source, target, symlinks=False)
-        elif name == "baseline_source_archive":
-            target = BASE / "baseline/corresponding-source-v0.1.9.tar.gz"
-            os.link(source, target)
         else:
-            if target.exists():
-                target = target.with_name(name + "-" + target.name)
             shutil.copy2(source, target)
-        if name == "recipient_key":
+        if name in {"recipient_key", "input_manifest"}:
             target.chmod(0o600)
         staged[name] = str(target)
     configuration = {"checkout": str(BASE / "repo"), "cache": str(CACHE), **staged,
@@ -131,10 +114,13 @@ def install(sources):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify prerequisites without installing")
+    parser.add_argument("--input-manifest", type=Path, required=True)
+    parser.add_argument("--notices", type=Path, required=True)
+    parser.add_argument("--sources", type=Path)
     args = parser.parse_args()
-    sources = check()
+    sources = check(args)
     if args.check:
-        print("local signing, notarization, GitHub auth and accepted baseline inputs are ready")
+        print("local signing, notarization, GitHub auth and current reviewed inputs are ready")
     else:
         install(sources)
 

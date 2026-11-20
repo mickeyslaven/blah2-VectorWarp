@@ -20,6 +20,10 @@ def invoke(executable=worker, extra=None, argument='--driver-status'):
 
 code, status = invoke()
 assert code == 0 and status['qualification'] == 'not-run'
+code, stale = invoke(extra={'VECTORWARP_GPU_ARTIFACT_NONCE': 'hostile-stale',
+                           'VECTORWARP_GPU_ARTIFACT_CHANNEL': '1 forged',
+                           'VECTORWARP_GPU_ARTIFACT_WORKER_PATH': '/cannot/hash/this'})
+assert code == 0 and stale == status, 'standalone diagnostics honored stale artifact controls'
 assert status['devices'][0]['name'] == 'fixture?"GPU\\'
 assert len(status['devices'][0]['bounded']) == 240
 for environment in ['VW_FIXTURE_DRIVER_THROW', 'VW_FIXTURE_DRIVER_OVERSIZE']:

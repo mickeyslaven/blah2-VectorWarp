@@ -51,11 +51,13 @@ Capture::SamplePosition Capture::live_sample_position() const
     // provenance contract. Do not discard that relative source clock.
     if (!value.contractValid && !value.sourceSampleAvailable) return {};
     const uint64_t base=value.sourceSampleAvailable ? value.sourceFirstSample : 0;
-    if (replayProgress.samples>UINT64_MAX-base) return {};
-    return {true,value.epoch,base+replayProgress.samples,0,0,0,0,0,
+    const uint64_t queuedSamples = replayQueuedSamples.load(std::memory_order_acquire);
+    if (queuedSamples>UINT64_MAX-base) return {};
+    return {true,value.epoch,base+queuedSamples,0,0,0,0,0,
       value.deviceTimeEpochTick,replayProgress.sampleRate,value.clockSource,
       value.deviceTimeSource,value.motherboard,value.subdevices};
   }
+  if (!sourceReady.load(std::memory_order_acquire)) return {};
   const auto* kraken = dynamic_cast<const Kraken*>(device.get());
   if (kraken) {
     const auto value = kraken->sample_position();
@@ -81,6 +83,7 @@ std::vector<double> Capture::input_gain_db() const
 {
   if(replay){std::lock_guard<std::mutex> lock(statusMutex);
     return replayProgress.provenance.perChannelGainDb;}
+  if (!sourceReady.load(std::memory_order_acquire)) return {};
   const auto* kraken=dynamic_cast<const Kraken*>(device.get());
   return kraken?kraken->actual_gain_db():std::vector<double>{};
 }
@@ -88,6 +91,7 @@ std::vector<double> Capture::input_gain_db() const
 uint64_t Capture::input_generation() const
 {
   if (replay) return replayGeneration.load(std::memory_order_acquire);
+  if (!sourceReady.load(std::memory_order_acquire)) return 0;
   return device ? device->processing_epoch() : 0;
 }
 
@@ -108,6 +112,7 @@ void Capture::process(const std::vector<IqData *>& buffers,
     try {
       device = factory_source(type, config, buffers.size());
       if (!device) throw std::runtime_error("Capture backend is unavailable in this build");
+      device->set_recording_context(recordingContext);
       if (automaticClips && type != "Kraken")
         device->configure_portable_clips(clipPreSeconds, clipMaximumSeconds);
       if (pairedCpiQueue) {
@@ -118,7 +123,11 @@ void Capture::process(const std::vector<IqData *>& buffers,
           std::cerr << "RSPduo paired CPI queue unavailable in this receiver module; using FIFO capture\n";
         }
       }
-    } catch (const std::exception& error) { processing_error(error.what()); }
+      sourceReady.store(true, std::memory_order_release);
+    } catch (const std::exception& error) {
+      processing_error(error.what());
+      request_input_failure();
+    }
   }
   std::thread control([&] {
     httplib::Client cli("http://" + ip_capture + ":" + std::to_string(port_capture));
@@ -199,29 +208,32 @@ void Capture::process(const std::vector<IqData *>& buffers,
         catch (const std::exception& error) { processing_error(error.what()); }
         deviceStopped = true;
       }
-      if (device && !inputStopped.load()) {
+      // Replay intentionally has no receiver. Poll its controls independently
+      // while keeping recording/clip operations restricted to a live device.
+      if ((replay || device) && !inputStopped.load()) {
         const auto request = cli.Get("/capture/request");
         if (request && request->status == 200) {
           rapidjson::Document payload;
           payload.Parse(request->body.c_str());
-          if (!payload.HasParseError() && payload.IsObject() &&
-              payload.HasMember("recording") && payload["recording"].IsBool() &&
-              payload.HasMember("revision") && payload["revision"].IsUint64()) {
-            applyRecordingRequest(payload["recording"].GetBool(),
-              payload["revision"].GetUint64(), true);
-            if (payload.HasMember("clip")) applyClipRequest(payload["clip"]);
+          if (!payload.HasParseError() && payload.IsObject()) {
+            if (device && payload.HasMember("recording") &&
+                payload["recording"].IsBool() && payload.HasMember("revision") &&
+                payload["revision"].IsUint64()) {
+              applyRecordingRequest(payload["recording"].GetBool(),
+                payload["revision"].GetUint64(), true);
+              if (payload.HasMember("clip")) applyClipRequest(payload["clip"]);
+            }
             if (replay && payload.HasMember("replay") && payload["replay"].IsObject()) {
               const auto& command=payload["replay"];
               if(command.HasMember("revision")&&command["revision"].IsUint64()&&
                  command.HasMember("paused")&&command["paused"].IsBool()&&
                  command.HasMember("seekSample")&&command["seekSample"].IsUint64()) {
-                replayPaused.store(command["paused"].GetBool());
-                replaySeekSample.store(command["seekSample"].GetUint64());
-                replayControlRevision.store(command["revision"].GetUint64());
+                replayControl.publish({command["paused"].GetBool(),
+                  command["seekSample"].GetUint64(), command["revision"].GetUint64()});
               }
             }
           }
-        } else if (request && request->status == 404) {
+        } else if (device && request && request->status == 404) {
           const auto legacy = cli.Get("/capture");
           if (legacy && legacy->status == 200 &&
               (legacy->body == "true" || legacy->body == "false"))
@@ -248,12 +260,20 @@ void Capture::process(const std::vector<IqData *>& buffers,
           std::lock_guard<std::mutex> lock(statusMutex);
           replayProgress = value; replayGeneration.store(value.generation);
         }, [&] { return processingBusy.load(); }, [&] {
-          return blah2::ReplayCommand{replayPaused.load(),replaySeekSample.load(),
-            replayControlRevision.load()};
+          return replayControl.snapshot();
+        }, true, [&](uint64_t samples) {
+          replayQueuedSamples.store(samples, std::memory_order_release);
         });
-    } else if (device) { device->start(); device->process(buffers); }
+    } else if (device) {
+      device->start();
+      device->process(buffers);
+      if (!stopping.load()) {
+        processing_error("Live receiver stopped unexpectedly");
+        request_input_failure();
+      }
+    }
   } catch (const std::exception& error) {
-    processing_error(error.what()); request_input_stop();
+    processing_failure_or_stop(error.what());
   }
   if (pairedCpiQueueActive.exchange(false) && pairedCpiQueue)
     pairedCpiQueue->close();
@@ -319,6 +339,15 @@ void Capture::processing_error(const std::string& error) {
   std::cerr << "Radar input: " << error << '\n';
 }
 
+void Capture::processing_failure_or_stop(const std::string& error) {
+  if (STOP_SIGNAL) {
+    request_stop();
+    return;
+  }
+  processing_error(error);
+  request_input_failure();
+}
+
 std::string Capture::status_json() const {
   std::lock_guard<std::mutex> lock(statusMutex);
   rapidjson::Document document(rapidjson::kObjectType);
@@ -334,6 +363,8 @@ std::string Capture::status_json() const {
   document.AddMember("totalSamples",replayProgress.total,a);
   document.AddMember("loops",replayProgress.loops,a);
   document.AddMember("trailingSamples",replayProgress.trailingSamples,a);
+  document.AddMember("replayControlsAvailable", replay && captureError.empty() &&
+    !inputStopped.load() && replayProgress.controlsAvailable, a);
   rapidjson::Value provenance(rapidjson::kObjectType);
   provenance.AddMember("present",replayProgress.provenance.present,a);
   provenance.AddMember("contractValid",replayProgress.provenance.contractValid,a);
@@ -343,19 +374,34 @@ std::string Capture::status_json() const {
   provenance.AddMember("uncertaintyBounded",replayProgress.provenance.uncertaintyBounded,a);
   provenance.AddMember("configurationFingerprintValid",replayProgress.provenance.configurationFingerprintValid,a);
   provenance.AddMember("codeFingerprintMatches",replayProgress.provenance.codeFingerprintMatches,a);
+  provenance.AddMember("acquisitionIntegrityValid",replayProgress.provenance.acquisitionIntegrityValid,a);
+  provenance.AddMember("acquisitionHashTrusted",replayProgress.provenance.acquisitionHashTrusted,a);
+  provenance.AddMember("exactAcquisition",replayProgress.provenance.exactAcquisition,a);
+  provenance.AddMember("geographicSitesAvailable",replayProgress.provenance.geographicSitesAvailable,a);
+  provenance.AddMember("geographicSitesReason",rapidjson::Value(replayProgress.provenance.geographicSitesReason.c_str(),a),a);
+  rapidjson::Document sites;
+  sites.Parse<rapidjson::kParseFullPrecisionFlag>(replayProgress.provenance.geographicSitesAvailable ?
+    replayProgress.provenance.acquisitionContext.geographicSitesJson.c_str() : "null");
+  rapidjson::Value sitesValue; sitesValue.CopyFrom(sites,a);
+  provenance.AddMember("geographicSites",sitesValue,a);
+  provenance.AddMember("gainProvenance",rapidjson::Value(replayProgress.provenance.gainProvenance.c_str(),a),a);
+  provenance.AddMember("acquisitionReason",rapidjson::Value(replayProgress.provenance.acquisitionReason.c_str(),a),a);
+  provenance.AddMember("recordingSha256",rapidjson::Value(replayProgress.provenance.recordingSha256.c_str(),a),a);
+  provenance.AddMember("acquisitionSha256",rapidjson::Value(replayProgress.provenance.acquisitionSha256.c_str(),a),a);
   provenance.AddMember("schema",rapidjson::Value(replayProgress.provenance.schema.c_str(),a),a);
   provenance.AddMember("backend",rapidjson::Value(replayProgress.provenance.backend.c_str(),a),a);
   provenance.AddMember("timeSource",rapidjson::Value(replayProgress.provenance.timeSource.c_str(),a),a);
   provenance.AddMember("reason",rapidjson::Value(replayProgress.provenance.reason.c_str(),a),a);
   document.AddMember("replayProvenance",provenance,a);
-  const auto recording = device ? device->recording_status() : Source::RecordingStatus{};
+  const bool receiverReady = sourceReady.load(std::memory_order_acquire);
+  const auto recording = receiverReady && device ? device->recording_status() : Source::RecordingStatus{};
   document.AddMember("recording",recording.active,a);
   document.AddMember("recordingResumePending",recording.resumePending,a);
   text("recordingFile",recording.file); text("recordingError",recording.error);
   document.AddMember("recordedSamples",recording.samples,a);
   document.AddMember("recordingRequestId",recordingRequestId,a);
   blah2::IqClipStatus clip;
-  if (device) clip = device->clip_status();
+  if (receiverReady && device) clip = device->clip_status();
   if (unsupportedClipRevision > clip.revision)
     clip = {unsupportedClipRevision, true, {}, unsupportedClipError, 0};
   if (clip.terminal && clip.revision) {
@@ -371,7 +417,8 @@ std::string Capture::status_json() const {
     document.AddMember("pairedCpiDropped", queue.discardedSamples, a);
     document.AddMember("pairedCpiTrailingSamples", queue.trailingSamples, a);
   }
-  if ((type == "RspDuo" || type == "Usrp" || type == "HackRF") && device) {
+  if ((type == "RspDuo" || type == "Usrp" || type == "HackRF") &&
+      receiverReady && device) {
     const auto receiptJson = blah2::receiver_startup_receipt(device);
     rapidjson::Document receipt;
     receipt.Parse(receiptJson.c_str());
@@ -460,7 +507,8 @@ blah2::ReceiverSource Capture::factory_source(const std::string& type,
 }
 
 void Capture::set_replay(bool _loop, std::string _file, std::string format,
-    uint32_t legacyBlockSamples, std::string provenanceMode)
+    uint32_t legacyBlockSamples, std::string provenanceMode,
+    uint64_t startSample)
 {
   replay = true;
   loop = _loop;
@@ -468,4 +516,8 @@ void Capture::set_replay(bool _loop, std::string _file, std::string format,
   replayOptions.format = std::move(format);
   replayOptions.legacyBlockSamples = legacyBlockSamples;
   replayOptions.provenanceMode = std::move(provenanceMode);
+  // Seed the mailbox before playback starts. The player observes revision 1
+  // before exposing any samples, so a bounded replay can begin on an exact
+  // historical CPI boundary without a startup/control-thread race.
+  if (startSample) replayControl.publish({false, startSample, 1});
 }

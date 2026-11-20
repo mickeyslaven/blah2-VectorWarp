@@ -27,7 +27,7 @@ class WorkflowContractTests(unittest.TestCase):
                          ['ubuntu-24.04', 'ubuntu-24.04-arm'])
         self.assertIn('fedora-pam', workflow['jobs']['package']['needs'])
         package = workflow['jobs']['package']
-        self.assertEqual(package['if'], 'always()')
+        self.assertEqual(package['if'], 'always() && inputs.publish != true')
         gate = package['steps'][0]
         self.assertIn('needs.fedora-pam.result', gate['env']['PAM_RESULT'])
         self.assertIn('test "$PAM_RESULT" = success', gate['run'])
@@ -47,7 +47,7 @@ class WorkflowContractTests(unittest.TestCase):
     def test_every_package_target_requires_installed_browser_and_processor_checks(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/release-packages.yml').read_text())
         job = workflow['jobs']['package']
-        self.assertTrue(job['strategy']['matrix']['include'])
+        self.assertEqual(job['strategy']['matrix'], '${{ fromJSON(needs.validate.outputs.matrix) }}')
         steps = [step for step in job['steps']
                  if 'bash script/test-installed-package.sh' in step.get('run', '')]
         self.assertEqual(len(steps), 1)
@@ -61,7 +61,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('set -euo pipefail', wrapper)
         self.assertIn('python3 /tmp/installed_service_test.py --verify-replay', wrapper)
         self.assertIn('node "$source_root/test/browser/installed-settings.cjs"', wrapper)
-        self.assertIn('service_account_exec.py vectorwarp /usr/bin/python3 /tmp/processor_replay_test.py', wrapper)
+        self.assertIn('service_account_exec.py vectorwarp /usr/bin/env', wrapper)
+        self.assertIn('VECTORWARP_REPLAY_SESSION=/tmp/replay_session.py /usr/bin/python3 /tmp/processor_replay_test.py', wrapper)
         self.assertNotIn('runuser -u vectorwarp', wrapper)
         identity_helper = (ROOT / 'test/packaging/service_account_exec.py').read_text()
         self.assertIn("os.getresuid() == (identity.pw_uid,) * 3", identity_helper)

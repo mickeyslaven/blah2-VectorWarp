@@ -3,6 +3,8 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace {
 unsigned checks = 0;
@@ -17,6 +19,39 @@ bool close(double left, double right, double tolerance = 1e-10) {
 
 int main() try {
   using namespace track_before_detect;
+  const double nextAmplitude=std::nextafter(1.0,2.0);
+  for(uint32_t depth:{2u,4u,8u}){
+    const double first=(4.0+1.0)/depth;
+    const double later=(4.0+nextAmplitude*nextAmplitude)/depth;
+    check(nextAmplitude*nextAmplitude>1.0&&first==later,
+      "Nextafter fixture did not produce distinct samples with tied path means");
+    check(!temporalPathBetter(later,first,false)&&temporalPathBetter(first,later,true),
+      "Temporal path tie did not retain canonical first-path order");
+    check(temporalPathBetter(std::nextafter(first,2*first),first,false)&&
+      !temporalPathBetter(std::nextafter(first,0.0),first,true),
+      "Path order overrode a strictly better rounded mean");
+  }
+  for(uint32_t depth:{1u,2u,4u,8u}){
+    validateRefinementGrid(depth,12);
+    validateRefinementGrid(depth,31);
+    validateRefinementGrid(depth,127,127);
+    for(const auto& pair:std::vector<std::pair<uint32_t,uint32_t>>{{32,0},{128,128},{12,127},{0,0}}){
+      bool rejected=false;
+      try{validateRefinementGrid(depth,pair.first,pair.second);}
+      catch(const std::invalid_argument& error){
+        rejected=true;check(std::string(error.what()).find("at most 31")!=std::string::npos,
+          "Refinement refusal lacks an actionable default-grid bound");
+      }
+      check(rejected==(depth>2),"Refinement boundary silently changed the requested grid/depth");
+    }
+  }
+  check(fractionalDelayTableWords(17,8,16,-.566)==17*33*8&&
+    fractionalDelayTableWords(17,4,4,0)==0&&
+    fractionalDelayTableWords(65535,8,16,-1)==65535*33*8,
+    "Fractional table bounds or disabled allocation changed");
+  for(uint32_t depth:{0u,1u,2u,9u}){bool rejected=false;
+    try{fractionalDelayTableWords(17,depth,4,-.566);}catch(const std::invalid_argument&){rejected=true;}
+    check(rejected,"Invalid table depth admitted");}
   check(bankCount(4) == 2 && bankCount(8) == 3, "Unexpected multi-timescale bank count");
   check(detectorPassCount(4) == 3 && detectorPassCount(8) == 4,
     "Conventional detector pass is not retained");
@@ -36,8 +71,41 @@ int main() try {
     "Disabled angle consistency retained a production-size GPU allocation");
   check(angleHistoryWords(307111, 8, 1) == 2456888,
     "Enabled angle consistency history dimensions changed");
-  check(close(passPfa(.001, 8, 1, 4, 0), .001) &&
-      close(passPfa(.001, 8, 1, 4, 1), .001 / 81),
+  const auto fractional=encodeMotionBins(2,4,true);
+  check(decodeMotionBins(fractional).fractionalDelay&&
+    trialCount(8,fractional)==trialCount(8,encodeMotionBins(2,4)),
+    "Fractional paths added trials or lost mode identity");
+  check(decodeMotionBins(0).delay==0&&decodeMotionBins(1).doppler==1&&
+    decodeMotionBins(2).delay==2,"Legacy integer encoding changed");
+  const int expected[]={0,1,1,2,2,3,3,4};
+  for(uint32_t age=0;age<8;++age)for(int sign:{-1,1}){
+    check(delayPathColumn(20,0,age,-.566,-sign,-sign)==20-sign*expected[age],
+      "Fractional 0.566 trajectory or signed rounding differs");
+    for(int residual=-2;residual<=2;++residual)
+      check(delayPathColumn(20,residual,age,0,100,100)==20-residual*int(age),
+        "Disabled fractional motion changed integer coordinates");
+  }
+  check(delayPathColumn(20,0,1,-.5,-1,-1)==19&&
+    delayPathColumn(20,0,1,-.5,1,1)==21,"Nearest-cell tie policy differs");
+  // 1001 consumed samples, versus 3*333 retained samples: only the former is
+  // the actual inter-CPI stride, and this case crosses a nearest-cell boundary.
+  check(delayPathColumn(20,0,1,delayDriftPerHz(1001,2000),-1,-1)==19&&
+    delayPathColumn(20,0,1,delayDriftPerHz(999,2000),-1,-1)==20,
+    "Correlation tail was incorrectly removed from inter-CPI motion");
+  // The two Doppler endpoints account for the existing acceleration path.
+  check(delayPathColumn(20,0,4,-.25,4,0)==22,
+    "Doppler-changing path did not integrate its endpoint rates");
+  std::vector<std::vector<double>> histories(8,std::vector<double>(9,1));
+  for(uint32_t depth:{2u,4u,8u}){
+    check(pathMean(histories,9,{0},0,4,depth,0,0)==1,
+      "Constant power gain changed with depth");
+    check(pathMean(histories,9,{-1},0,0,depth,0,0,-.566)==-1,
+      "Incomplete edge path was clipped or renormalized");
+  }
+  histories[3][4]=std::numeric_limits<double>::quiet_NaN();
+  check(pathMean(histories,9,{0},0,4,8,0,0)==-1,"Nonfinite path admitted");
+  check(close(passPfa(.001, 8, 1, 4, 0), .0005) &&
+      close(passPfa(.001, 8, 1, 4, 1), .001 / 162),
     "Conventional and motion-bank PFA separation changed");
   const uint32_t training = 12;
   const double alphaOne = 7.0;
@@ -55,6 +123,20 @@ int main() try {
     previousSumThreshold = double(cpis) * alpha;
   }
   bool rejected = false;
+  for (double probability : {1e-30, 1e-300}) {
+    const double threshold = cfarAlpha(probability, 1, 2);
+    const double x = 1 / (1 + threshold);
+    // Independent closed form for Beta(2,2); unlike x^3-first recurrence,
+    // this remains representable when the leading recurrence term underflows.
+    const double tail = (x * x) * (3 - 2 * x);
+    check(std::isfinite(threshold) && threshold > 1e12 &&
+      std::abs(tail / probability - 1) < 2e-12,
+      "Extreme accepted PFA was not bracketed to its actual beta tail");
+  }
+  try { (void)cfarAlpha(std::numeric_limits<double>::denorm_min(), 1, 1); }
+  catch (const std::overflow_error&) { rejected = true; }
+  check(rejected, "Unrepresentable CFAR threshold did not fail closed");
+  rejected = false;
   try { (void)bankCount(6); } catch (const std::invalid_argument&) { rejected = true; }
   check(rejected, "Invalid bank maximum was accepted");
   std::cout << "TRACK_BEFORE_DETECT_MATH_PASS checks=" << checks

@@ -18,7 +18,8 @@ async function main() {
     multi_illuminator: {enabled: true, illuminators: [
       {id: 'fm-a', frequency_hz: 90100000, output_sample_rate_hz: 300000,
         transmitter: {latitude: 40.1, longitude: -79.9}}],
-    timeline_semantics: 'per-illuminator-truth-and-products-v2'}};
+    timeline_semantics: 'per-illuminator-truth-derived-products-v3',
+    map_storage: 'regenerated-from-full-passband-iq'}};
   fs.writeFileSync(`${recording}.replay.json`, JSON.stringify(replayProfile));
   const laneTimeline = {schema: 'vectorwarp-recording-timeline-v2', frames: [{timestamp_ms: 1000,
     illuminator: 'fm-a', truth: {aircraft: {abc:{hex:'abc'}},

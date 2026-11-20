@@ -44,8 +44,8 @@ def main():
     native = simulation.prepare(args, work)
     lifecycle = module('lifecycle', app / 'script/vectorwarp-macos.py')
     config = json.loads(subprocess.check_output([str(node), '-e',
-        'process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',
-        str(app / 'config/config-kraken.yml')], cwd=app / 'api', text=True))
+        'process.stdout.write(JSON.stringify(require("./config-store").configurationForReceiver("Kraken")))'],
+        cwd=app / 'api', text=True))
     api_port_count = len(config['network']['ports'])
     sockets = [socket.socket() for _ in range(api_port_count + 4)]
     for sock in sockets:

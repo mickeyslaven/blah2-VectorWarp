@@ -8,6 +8,12 @@ const MAX_EVENT_IDS = 4096;
 const MAX_ID_LENGTH = 256;
 const MIN_PERIODIC_INTERVAL_SECONDS = 10;
 const MAX_PERIODIC_SNAPSHOTS = 3;
+// Matches the native recorder's hard retention cap. The control loop polls at
+// 500 ms; two seconds also cover one CPI, API processing and one slow poll.
+// This is an evidence-only allowance, never an RF-time accuracy claim.
+const NATIVE_RING_SECONDS = 10;
+const CLAIM_CONTROL_MARGIN_MS = 2000;
+const CLAIM_RING_GUARD_MS = 1000;
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 
@@ -22,6 +28,13 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
   const clips = config.capture?.aircraft_clips || {};
   const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', clips.pre_seconds ?? DEFAULT_PRE_SECONDS);
   const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', clips.post_seconds ?? DEFAULT_POST_SECONDS);
+  const lagCpis = config.truth?.adsb?.association_lag_cpis ?? 0;
+  const cpiSeconds = config.process?.data?.cpi ?? .5;
+  if (!Number.isInteger(lagCpis) || lagCpis < 0 || lagCpis > 8 ||
+      !finite(cpiSeconds) || cpiSeconds <= 0)
+    throw new Error('Automatic clip association lag/CPI is invalid.');
+  const lateClaimAllowanceMs = Math.min(NATIVE_RING_SECONDS * 1000,
+    Math.max(0, lagCpis * cpiSeconds * 1000 + CLAIM_CONTROL_MARGIN_MS - postSeconds * 1000));
   const enabledValue = environment.BLAH2_CAPTURE_TRIGGER_ENABLED;
   if (enabledValue !== undefined && !['0', '1'].includes(enabledValue))
     throw new Error('BLAH2_CAPTURE_TRIGGER_ENABLED must be 0 or 1.');
@@ -58,7 +71,8 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
   return {enabled, preSeconds, postSeconds, maxClipSeconds: MAX_CLIP_SECONDS,
     periodicIntervalSeconds, periodicMaxSnapshots,
     minimumSlantRangeKm, maximumSlantRangeKm, minimumElevationDeg,
-    maximumElevationDeg, minimumExposureIntervalMs: minimumIntervalSeconds * 1000};
+    maximumElevationDeg, minimumExposureIntervalMs: minimumIntervalSeconds * 1000,
+    lateClaimAllowanceMs};
 }
 
 function validId(value) {
@@ -80,7 +94,7 @@ class CaptureTriggerQueue {
   constructor({enabled = true, preSeconds = DEFAULT_PRE_SECONDS, postSeconds = DEFAULT_POST_SECONDS,
     maxClipSeconds = MAX_CLIP_SECONDS, maxClips = MAX_CLIPS,
     maxEventIds = MAX_EVENT_IDS, periodicIntervalSeconds = 0,
-    periodicMaxSnapshots = 0, minimumExposureIntervalMs = 0,
+    periodicMaxSnapshots = 0, minimumExposureIntervalMs = 0, lateClaimAllowanceMs = 0,
     minimumSlantRangeKm = 0, maximumSlantRangeKm = 1000,
     minimumElevationDeg = 0, maximumElevationDeg = 90, now = Date.now} = {}) {
     if (!finite(preSeconds) || preSeconds < 0 || !finite(postSeconds) || postSeconds < 0)
@@ -93,6 +107,9 @@ class CaptureTriggerQueue {
       throw new Error('Capture trigger bounds must be positive integers.');
     if (!finite(minimumExposureIntervalMs) || minimumExposureIntervalMs < 0)
       throw new Error('Capture trigger exposure interval must be non-negative.');
+    if (!finite(lateClaimAllowanceMs) || lateClaimAllowanceMs < 0 ||
+        lateClaimAllowanceMs > NATIVE_RING_SECONDS * 1000)
+      throw new Error('Capture trigger late-claim allowance exceeds the native ring bound.');
     if (!finite(minimumSlantRangeKm) || !finite(maximumSlantRangeKm) ||
         minimumSlantRangeKm < 0 || maximumSlantRangeKm > 1000 ||
         minimumSlantRangeKm > maximumSlantRangeKm)
@@ -112,6 +129,10 @@ class CaptureTriggerQueue {
     this.maxClipSeconds = maxClipSeconds;
     this.maxClips = maxClips; this.maxEventIds = maxEventIds; this.now = now;
     this.minimumExposureIntervalMs = minimumExposureIntervalMs;
+    this.lateClaimAllowanceMs = lateClaimAllowanceMs;
+    // Only existing bounded event objects are retained; a failed sink leaves
+    // the notification marked for the next control poll.
+    this.terminalNotifications = new WeakSet();
     this.minimumSlantRangeKm = minimumSlantRangeKm;
     this.maximumSlantRangeKm = maximumSlantRangeKm;
     this.minimumElevationDeg = minimumElevationDeg;
@@ -127,6 +148,21 @@ class CaptureTriggerQueue {
     const record = {eventId: event.id, passId: event.pass_id,
       hex: typeof event.hex === 'string' ? event.hex.trim().toUpperCase() : '',
       flight: typeof event.flight === 'string' ? event.flight.trim().toUpperCase() : '',
+      ...(typeof event.illuminator === 'string' ? {illuminator: event.illuminator} : {}),
+      ...(typeof event.lane_event_id === 'string' ? {laneEventId: event.lane_event_id} : {}),
+      ...(typeof event.kind === 'string' ? {kind: event.kind} : {}),
+      ...(typeof event.track_id === 'string' ? {trackId: event.track_id} : {}),
+      ...(finite(event.similarity_score) ? {similarityScore: event.similarity_score} : {}),
+      ...(typeof event.scoring_basis === 'string' ? {scoringBasis: event.scoring_basis} : {}),
+      ...(Number.isInteger(event.measured_cpis) ? {measuredCpis: event.measured_cpis} : {}),
+      ...(finite(event.measured_fraction) ? {measuredFraction: event.measured_fraction} : {}),
+      ...(finite(event.delay_motion_km) ? {delayMotionKm: event.delay_motion_km} : {}),
+      ...(finite(event.net_delay_motion_km) ? {netDelayMotionKm: event.net_delay_motion_km} : {}),
+      ...(finite(event.delay_fit_rms_km) ? {delayFitRmsKm: event.delay_fit_rms_km} : {}),
+      ...(finite(event.kinematic_error_mps) ? {kinematicErrorMps: event.kinematic_error_mps} : {}),
+      ...(finite(event.duration_seconds) ? {durationSeconds: event.duration_seconds} : {}),
+      ...(finite(event.mean_absolute_doppler_hz) ?
+        {meanAbsoluteDopplerHz: event.mean_absolute_doppler_hz} : {}),
       requestedEventTime: event.observed_at, state: 'pending',
       clipRevisions: [], captureWindows: [], windowStart: null, windowEnd: null, failure: null};
     this.events.set(event.id, record);
@@ -181,6 +217,58 @@ class CaptureTriggerQueue {
     Object.assign(window, {revision: clip.revision,
       state: clip.acknowledged ? 'acknowledged' : 'failed', failure: clip.failure,
       file: clip.file, samples: clip.samples});
+    if (!clip.acknowledged) {
+      window.admissionState = 'not-recorded';
+      window.admissionReasons = clip.failure ? [clip.failure] : [];
+    }
+  }
+
+  enqueueInitial(event, eventRecord, requestedEventTime, kind = 'initial') {
+    const exposureClass = kind === 'unmatched-motion' ? 'unmatched-motion' : 'aircraft';
+    const eventStart = requestedEventTime - this.preSeconds * 1000;
+    const eventEnd = requestedEventTime + this.postSeconds * 1000;
+    const maximumMs = this.maxClipSeconds * 1000;
+    const overlapping = this.clips.filter(clip => clip.pending && !clip.exposed &&
+      eventStart <= clip.windowEnd && eventEnd >= clip.windowStart &&
+      Math.max(eventEnd, clip.windowEnd) - Math.min(eventStart, clip.windowStart) <= maximumMs);
+    let clip;
+    if (overlapping.length) {
+      clip = overlapping[0];
+      if (exposureClass === 'aircraft') clip.exposureClass = 'aircraft';
+      clip.eventIds.push(event.id); clip.passIds.push(event.pass_id);
+      clip.eventIds = [...new Set(clip.eventIds)]; clip.passIds = [...new Set(clip.passIds)];
+      clip.requestedEventTime = Math.min(clip.requestedEventTime, requestedEventTime);
+      clip.windowStart = Math.min(clip.windowStart, eventStart);
+      clip.windowEnd = Math.max(clip.windowEnd, eventEnd);
+      clip.preSeconds = (clip.requestedEventTime - clip.windowStart) / 1000;
+      clip.postSeconds = (clip.windowEnd - clip.requestedEventTime) / 1000;
+      const first = this.clips.indexOf(clip);
+      for (let index = first; index < this.clips.length; ++index) {
+        if (!this.clips[index].pending) continue;
+        this.clips[index].revision = ++this.revision;
+        this.linkRevision(this.clips[index]);
+      }
+    } else {
+      while (this.clips.length >= this.maxClips) {
+        const completed = this.clips.findIndex(item => !item.pending);
+        if (completed < 0) break;
+        this.clips.splice(completed, 1);
+      }
+      if (this.clips.length >= this.maxClips) {
+        eventRecord.state = 'dropped'; eventRecord.failure = 'queue-capacity';
+        this.droppedEvents += 1;
+        return {accepted: true, coalesced: false, dropped: true,
+          reason: 'queue-capacity', event: {...eventRecord}};
+      }
+      clip = {revision: ++this.revision, eventIds: [event.id], passIds: [event.pass_id], captureIds: {},
+        exposureClass,
+        requestedEventTime, preSeconds: this.preSeconds,
+        postSeconds: this.postSeconds, windowStart: eventStart, windowEnd: eventEnd,
+        pending: true, acknowledged: false, failure: null};
+      this.clips.push(clip);
+    }
+    this.addWindow(eventRecord, clip, kind);
+    return {accepted: true, coalesced: overlapping.length > 0, clip: compact(clip)};
   }
 
   acceptEligibilityEvent(event, requestedEventTime = event?.observed_at) {
@@ -202,56 +290,31 @@ class CaptureTriggerQueue {
       return {accepted: false, reason: 'outside-elevation'};
     if (this.events.has(event.id)) return {accepted: false, reason: 'duplicate-event'};
     const eventRecord = this.remember(event);
+    // Truth association is deliberately settled before issuance. Centre the
+    // finite raw-ring request on issuance time rather than the older truth CPI.
+    return this.enqueueInitial(event, eventRecord, requestedEventTime);
+  }
 
-    // Eligibility is deliberately settled after the ADS-B association lag.  The
-    // truth CPI remains event.observed_at, but a live recorder request must be
-    // centred on issuance time or it asks the finite raw ring for history that
-    // has already expired.
-    const eventStart = requestedEventTime - this.preSeconds * 1000;
-    const eventEnd = requestedEventTime + this.postSeconds * 1000;
-    const maximumMs = this.maxClipSeconds * 1000;
-    const overlapping = this.clips.filter(clip => clip.pending && !clip.exposed &&
-      eventStart <= clip.windowEnd && eventEnd >= clip.windowStart &&
-      Math.max(eventEnd, clip.windowEnd) - Math.min(eventStart, clip.windowStart) <= maximumMs);
-    let clip;
-    if (overlapping.length) {
-      clip = overlapping[0];
-      clip.eventIds.push(event.id); clip.passIds.push(event.pass_id);
-      clip.eventIds = [...new Set(clip.eventIds)]; clip.passIds = [...new Set(clip.passIds)];
-      clip.requestedEventTime = Math.min(clip.requestedEventTime, requestedEventTime);
-      clip.windowStart = Math.min(clip.windowStart, eventStart);
-      clip.windowEnd = Math.max(clip.windowEnd, eventEnd);
-      clip.preSeconds = (clip.requestedEventTime - clip.windowStart) / 1000;
-      clip.postSeconds = (clip.windowEnd - clip.requestedEventTime) / 1000;
-      // A queued clip can be extended before the current clip is acknowledged.
-      // Renumber it and every later pending clip so polling can never observe a
-      // lower revision after advancing through the queue.
-      const first = this.clips.indexOf(clip);
-      for (let index = first; index < this.clips.length; ++index) {
-        if (!this.clips[index].pending) continue;
-        this.clips[index].revision = ++this.revision;
-        this.linkRevision(this.clips[index]);
-      }
-    } else {
-      while (this.clips.length >= this.maxClips) {
-        const completed = this.clips.findIndex(item => !item.pending);
-        if (completed < 0) break;
-        this.clips.splice(completed, 1);
-      }
-      if (this.clips.length >= this.maxClips) {
-        eventRecord.state = 'dropped'; eventRecord.failure = 'queue-capacity';
-        this.droppedEvents += 1;
-        return {accepted: true, coalesced: false, dropped: true,
-          reason: 'queue-capacity', event: {...eventRecord}};
-      }
-      clip = {revision: ++this.revision, eventIds: [event.id], passIds: [event.pass_id], captureIds: {},
-        requestedEventTime, preSeconds: this.preSeconds,
-        postSeconds: this.postSeconds, windowStart: eventStart, windowEnd: eventEnd,
-        pending: true, acknowledged: false, failure: null};
-      this.clips.push(clip);
-    }
-    this.addWindow(eventRecord, clip, 'initial');
-    return {accepted: true, coalesced: overlapping.length > 0, clip: compact(clip)};
+  acceptUnmatchedMotionEvent(event, requestedEventTime = this.now()) {
+    if (!this.enabled) return {accepted: false, reason: 'disabled'};
+    if (!event || event.state !== 'pending' || !validId(event.id) ||
+        !event.id.startsWith('unmatched-motion:') || !validId(event.pass_id) ||
+        !validId(event.track_id) || !finite(event.observed_at) || event.observed_at < 0 ||
+        !finite(requestedEventTime) || requestedEventTime < 0 ||
+        !['empirical-aircraft-similarity', 'kinematic-motion-fallback']
+          .includes(event.scoring_basis) ||
+        (event.scoring_basis === 'empirical-aircraft-similarity' &&
+          (!finite(event.similarity_score) || event.similarity_score < 0 ||
+            event.similarity_score > 1)) ||
+        (event.scoring_basis === 'kinematic-motion-fallback' &&
+          (!finite(event.measured_fraction) || event.measured_fraction < 0 ||
+            event.measured_fraction > 1 || !finite(event.delay_motion_km) ||
+            event.delay_motion_km < 0)) ||
+        !Number.isInteger(event.measured_cpis) || event.measured_cpis < 3)
+      return {accepted: false, reason: 'invalid-unmatched-motion-event'};
+    if (this.events.has(event.id)) return {accepted: false, reason: 'duplicate-event'};
+    return this.enqueueInitial(event, this.remember(event), requestedEventTime,
+      'unmatched-motion');
   }
 
   acceptSnapshot(event, requestedEventTime, kind) {
@@ -344,7 +407,9 @@ class CaptureTriggerQueue {
   retryPreRollFailure(revision, requestedEventTime = this.now()) {
     const priorIndex = this.clips.findIndex(item => !item.pending && item.revision === revision);
     const prior = priorIndex < 0 ? null : this.clips[priorIndex];
-    if (!prior || prior.failure !== 'Kraken clip pre-roll is unavailable' ||
+    if (!prior || !['IQ clip pre-roll is unavailable',
+          'Kraken clip pre-roll is unavailable'].includes(prior.failure) ||
+        prior.staleAtClaim === true ||
         !finite(requestedEventTime) || requestedEventTime < 0) return null;
     const records = prior.eventIds.map(id => this.events.get(id)).filter(Boolean);
     const windows = records.map(event => event.captureWindows.find(item =>
@@ -355,6 +420,7 @@ class CaptureTriggerQueue {
     if (!records.length || windows.some(window => !window || window.preRollRetries >= 1)) return null;
     const clip = {revision: ++this.revision, eventIds: [...prior.eventIds], captureIds: {...prior.captureIds},
       passIds: [...prior.passIds], requestedEventTime,
+      exposureClass: 'pre-roll-retry',
       preSeconds: this.preSeconds, postSeconds: this.postSeconds,
       windowStart: requestedEventTime - this.preSeconds * 1000,
       windowEnd: requestedEventTime + this.postSeconds * 1000,
@@ -370,6 +436,7 @@ class CaptureTriggerQueue {
       const window = windows[index];
       if (window) Object.assign(window, {revision: clip.revision, requestedEventTime,
         windowStart: clip.windowStart, windowEnd: clip.windowEnd, state: 'pending', failure: null,
+        admissionState: 'pending', admissionReasons: [],
         preRollRetries: window.preRollRetries + 1});
       event.clipRevisions = [...new Set([...event.clipRevisions, clip.revision])];
       event.windowStart = clip.windowStart;
@@ -403,25 +470,74 @@ class CaptureTriggerQueue {
     return this.clips.find(clip => clip.pending) || this.clips.at(-1) || null;
   }
 
+  claimDeadline(clip) {
+    // A completed window can still be present in the native ring. Wall time is
+    // only an early rejection budget; native epoch/sample coverage is the final
+    // authority. Never move or shorten the original event/window to make it fit.
+    return Math.max(clip.windowEnd, Math.min(
+      clip.windowEnd + this.lateClaimAllowanceMs,
+      clip.windowStart + NATIVE_RING_SECONDS * 1000 - CLAIM_RING_GUARD_MS));
+  }
+
+  flushTerminalEvents(acceptEvents) {
+    if (typeof acceptEvents !== 'function')
+      throw new TypeError('Terminal capture evidence sink is required.');
+    const records = [...this.events.values()].filter(record =>
+      this.terminalNotifications.has(record));
+    if (!records.length) return;
+    acceptEvents(records);
+    for (const record of records) this.terminalNotifications.delete(record);
+  }
+
+  requestWithEvidence(acceptEvents) {
+    try { return this.request(true); }
+    finally { this.flushTerminalEvents(acceptEvents); }
+  }
+
   request(expose = false) {
-    const clip = this.current();
-    if (expose && clip?.pending && !clip.exposed && this.now() < this.nextExposureAt)
+    let clip = this.current();
+    // A processor outage can leave many immutable evidence windows queued.
+    // Never feed those expired windows through the native recorder one by one:
+    // doing so blocks current captures behind guaranteed pre-roll failures.
+    if (expose) while (clip?.pending && !clip.exposed &&
+        Number.isFinite(clip.windowEnd) && this.now() > this.claimDeadline(clip)) {
+      clip.claimedAt = this.now();
+      clip.staleAtClaim = true;
+      clip.exposed = true;
+      clip.pending = false;
+      clip.failure = 'capture-window-expired-before-recorder';
+      clip.acknowledged = false;
+      this.droppedEvents += clip.eventIds.length;
+      for (const eventId of clip.eventIds) {
+        const event = this.events.get(eventId);
+        if (event) {
+          event.state = 'failed';
+          event.failure = clip.failure;
+          this.terminalWindow(clip, eventId);
+          this.terminalNotifications.add(event);
+        }
+      }
+      clip = this.current();
+    }
+    // Unmatched-motion producers have their own bounded interval and all
+    // channels share this queue, so applying the ADS-B exposure cooldown here
+    // caused valid motion windows to wait until their RF pre-roll expired.
+    // The native recorder remains serialized by the pending/exposed clip.
+    if (expose && !['unmatched-motion', 'pre-roll-retry'].includes(clip?.exposureClass) &&
+        this.now() < this.nextExposureAt)
       return {clipRevision: 0, eventIds: [], passIds: [],
         requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
         windowStart: null, windowEnd: null, pending: false, acknowledged: false,
         failure: null, file: '', samples: 0};
     if (expose && clip?.pending && !clip.exposed) {
-      // Pending clips can wait behind an in-flight four-second recording.  A
-      // window fixed when eligibility settled may therefore be older than the
-      // native raw ring by the time the recorder claims it.  Re-center once,
-      // atomically at exposure, and propagate the physical bounds to every
-      // linked admission record.  The original truth CPI remains on the event.
-      clip.requestedEventTime = this.now();
-      clip.windowStart = clip.requestedEventTime - clip.preSeconds * 1000;
-      clip.windowEnd = clip.requestedEventTime + clip.postSeconds * 1000;
+      // The requested RF window is evidence identity and must remain tied to
+      // the truth event. Re-centering a delayed request records unrelated RF
+      // and guarantees a truth-bracket mismatch.
+      clip.claimedAt = this.now();
+      clip.staleAtClaim = clip.claimedAt > clip.windowEnd;
       clip.exposed = true;
-      this.linkRevision(clip);
-      this.nextExposureAt = clip.requestedEventTime + this.minimumExposureIntervalMs;
+      if (!['unmatched-motion', 'pre-roll-retry'].includes(clip.exposureClass))
+        this.nextExposureAt = clip.claimedAt + this.minimumExposureIntervalMs;
     }
     return compact(clip) || {clipRevision: 0, eventIds: [], passIds: [],
       requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
@@ -433,6 +549,8 @@ class CaptureTriggerQueue {
     return {...this.request(false), enabled: this.enabled,
       queuedClips: this.clips.filter(clip => clip.pending).length,
       maximumClipSeconds: this.maxClipSeconds, droppedEvents: this.droppedEvents,
+      lateClaimAllowanceMs: this.lateClaimAllowanceMs,
+      nativeRingSeconds: NATIVE_RING_SECONDS, claimRingGuardMs: CLAIM_RING_GUARD_MS,
       recentEvents: [...this.events.values()].slice(-250).map(event =>
         ({...event, clipRevisions: [...event.clipRevisions]}))};
   }
@@ -442,5 +560,6 @@ function createCaptureTriggerQueue(options) { return new CaptureTriggerQueue(opt
 
 module.exports = {DEFAULT_PRE_SECONDS, DEFAULT_POST_SECONDS, MAX_CLIP_SECONDS,
   MAX_CLIPS, MAX_EVENT_IDS, MIN_PERIODIC_INTERVAL_SECONDS, MAX_PERIODIC_SNAPSHOTS,
+  NATIVE_RING_SECONDS, CLAIM_CONTROL_MARGIN_MS, CLAIM_RING_GUARD_MS,
   optionsFromEnvironment, CaptureTriggerQueue,
   createCaptureTriggerQueue};

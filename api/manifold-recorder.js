@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {compatibilityFingerprint} = require('./manifold-identity');
+const {processingCapabilities} = require('./processing-capabilities');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const normalize = value => ((value % 360) + 360) % 360;
@@ -31,6 +32,7 @@ function azimuthElevation(site, aircraft) {
 function validateEvidence(frame) {
   if (!frame || !['vectorwarp-manifold-evidence-v1', 'vectorwarp-manifold-evidence-v2',
       'vectorwarp-manifold-evidence-v3'].includes(frame.schema) ||
+      frame.precision_contract !== 'binary64-json-roundtrip-v1' ||
       !finite(frame.timestamp) || !finite(frame.frequency_hz) || frame.frequency_hz <= 0 ||
       !Number.isInteger(frame.channels) || frame.channels < 2 || frame.channels > 8 ||
       !Array.isArray(frame.actual_gain_db)||frame.actual_gain_db.length!==frame.channels||
@@ -96,21 +98,36 @@ function validateEvidence(frame) {
 }
 
 function automaticallyEligible(config) {
-  const device = config.capture?.device || {}, geometry = device.array_geometry || {};
+  const capabilities = processingCapabilities(config);
   const fusion = config.process?.surveillance_fusion?.mode;
-  return Array.isArray(device.surveillance_channels) && device.surveillance_channels.length >= 2 &&
+  // Automatic collection uses the live truth source. Historical replay needs
+  // explicit export with acquisition-bound identity and offline truth labels.
+  if (config.capture?.replay?.state === true ||
+      ![undefined, 'fixed'].includes(config.capture?.device?.heimdall?.gain_control)) return false;
+  try { manifoldIdentity(config, Array(capabilities.surveillanceChannels.length).fill(0)); }
+  catch { return false; }
+  return config.process?.multi_illuminator?.enabled !== true &&
+    capabilities.coherentSurveillance && capabilities.surveillanceGeometry &&
+    capabilities.confirmedGeometry && capabilities.appliedGainMetadata &&
+    Number.isInteger(config.network?.ports?.manifold) &&
+    config.network.ports.manifold > 0 && config.network.ports.manifold <= 65535 &&
     ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion) &&
-    config.process?.detection?.enable === true && config.truth?.adsb?.enabled === true &&
-    geometry.mapping_confirmed === true && geometry.geometry_confirmed === true &&
-    geometry.orientation_confirmed === true && finite(geometry.x_axis_bearing_deg_true);
+    (fusion !== 'noise_whitened_beam_bank' ||
+      config.process?.performance?.acceleration === 'gpu-resident') &&
+    config.process?.detection?.enable === true && config.truth?.adsb?.enabled === true;
 }
 
 // Physical placement is deliberately distinct from acquisition identity. Gain,
 // detector, replay, and selection changes must start a new qualification cohort,
 // but must not make evidence from an unchanged installed array disappear.
+const canonicalSurveillance = config => {
+  const channels = config.capture?.device?.surveillance_channels;
+  return Array.isArray(channels) ? [...channels].sort((a, b) => a - b) : channels;
+};
+
 function physicalSiteDescriptor(config) {
   const device = config.capture?.device || {}, geometry = device.array_geometry || {};
-  const channels = device.surveillance_channels || [];
+  const channels = canonicalSurveillance(config) || [];
   const byChannel = new Map((geometry.elements || []).map(element =>
     [element?.daq_channel, element?.position]));
   const location = value => [value?.latitude, value?.longitude, value?.altitude];
@@ -141,20 +158,20 @@ function physicalFingerprintFromSample(sample) {
 function fingerprintDescriptor(config) {
   const options = config.process?.bearing?.manifold_recorder || {};
   const device = config.capture?.device || {}, heimdall = device.heimdall || {};
-  const channels = device.surveillance_channels;
+  const channels = canonicalSurveillance(config);
   let requestedChannelGains = null, requestedCaptureChannelGains;
-  if (Array.isArray(heimdall.channel_gains)) {
-    if (Array.isArray(channels) && heimdall.channel_gains.length === device.channel_count &&
+  const declaredGain = device.gain ?? heimdall.channel_gains ?? heimdall.gain;
+  const commonGain = device.gain ?? heimdall.gain;
+  if (Array.isArray(declaredGain)) {
+    if (Array.isArray(channels) && declaredGain.length === device.channel_count &&
         channels.every(channel => Number.isInteger(channel) && channel >= 0 &&
-          channel < heimdall.channel_gains.length)) {
-      requestedCaptureChannelGains = [...heimdall.channel_gains];
-      requestedChannelGains = channels.map(channel => heimdall.channel_gains[channel]);
-    } else if (Array.isArray(channels) && heimdall.channel_gains.length === channels.length) {
-      requestedChannelGains = [...heimdall.channel_gains];
+          channel < declaredGain.length)) {
+      requestedCaptureChannelGains = [...declaredGain];
+      requestedChannelGains = channels.map(channel => declaredGain[channel]);
     }
   }
   return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
-    receiver_gain_v2: {requested_common_gain: heimdall.gain ?? 'keep',
+    receiver_gain_v2: {requested_common_gain: finite(commonGain) ? commonGain : 'keep',
       requested_channel_gains: requestedChannelGains,
       ...(requestedCaptureChannelGains ?
         {requested_capture_channel_gains: requestedCaptureChannelGains} : {})},
@@ -182,7 +199,7 @@ function siteFingerprint(config) {
 
 function manifoldIdentity(config, actualGainDb, frequencyHz = config.capture?.fc,
   sampleRateHz = config.capture?.fs) {
-  const device = config.capture?.device || {}, channels = device.surveillance_channels;
+  const device = config.capture?.device || {}, channels = canonicalSurveillance(config);
   const heimdall = device.heimdall || {}, geometry = device.array_geometry || {};
   if (!finite(frequencyHz) || frequencyHz <= 0 || !finite(sampleRateHz) || sampleRateHz <= 0 ||
       !Array.isArray(channels) || !channels.length ||
@@ -190,12 +207,15 @@ function manifoldIdentity(config, actualGainDb, frequencyHz = config.capture?.fc
       actualGainDb.some(value => !finite(value)) || !finite(geometry.x_axis_bearing_deg_true) ||
       !Array.isArray(geometry.elements)) throw new Error('Invalid measured manifold identity');
   let requested;
-  if (Array.isArray(heimdall.channel_gains) && heimdall.channel_gains.length === device.channel_count)
-    requested = channels.map(channel => heimdall.channel_gains[channel]);
-  else if (finite(heimdall.gain) && heimdall.gain >= 0)
-    requested = channels.map(() => heimdall.gain);
+  const declaredGain = device.gain ?? heimdall.channel_gains ?? heimdall.gain;
+  if (Array.isArray(declaredGain) && declaredGain.length === device.channel_count)
+    requested = channels.map(channel => declaredGain[channel]);
+  else if (finite(declaredGain))
+    requested = channels.map(() => declaredGain);
   else throw new Error('Measured manifold identity requires explicit fixed requested gains');
-  if (requested.some(value => !finite(value) || value < 0 || value > 50))
+  // Device-specific range validation belongs at capture ingress, not in the
+  // receiver-independent measured identity contract.
+  if (requested.some(value => !finite(value)))
     throw new Error('Invalid requested gain in measured manifold identity');
   const byChannel = new Map(geometry.elements.map(element => [element?.daq_channel, element]));
   const positions = channels.map(channel => byChannel.get(channel)?.position);
@@ -214,19 +234,33 @@ function manifoldIdentity(config, actualGainDb, frequencyHz = config.capture?.fc
   return identity;
 }
 
+// This is the acquisition identity carried by recorded samples and fitted
+// detection-manifold candidates. It is deliberately distinct from the
+// settings-only site fingerprint because it includes observed applied gains.
+function manifoldSampleFingerprint(config, actualGainDb, frequencyHz = config.capture?.fc,
+  sampleRateHz = config.capture?.fs) {
+  const identity = manifoldIdentity(config, actualGainDb, frequencyHz, sampleRateHz);
+  return crypto.createHash('sha256').update(JSON.stringify({
+    configuration: fingerprintDescriptor(config), identity})).digest('hex');
+}
+
 class ManifoldRecorder {
   constructor(config, adsbSource, {fileSystem = fs} = {}) {
     this.config = config;
     this.options = {...(config.process?.bearing?.manifold_recorder || {})};
+    if (!Number.isInteger(this.options.max_file_mb) || this.options.max_file_mb < 1 ||
+        this.options.max_file_mb > 1024) this.options.max_file_mb = 64;
+    if (!Number.isInteger(this.options.max_files) || this.options.max_files < 1 ||
+        this.options.max_files > 20) this.options.max_files = 4;
     if (!finite(this.options.max_truth_age_s)) this.options.max_truth_age_s = 3;
     if (!finite(this.options.max_elevation_deg)) this.options.max_elevation_deg = 15;
     this.adsbSource = adsbSource;
     this.fs = fileSystem;
     this.latest = null;
     this.running = false;
-    const automatic = this.options.enabled === undefined || this.options.enabled === 'auto';
+    const automatic = this.options.enabled === 'auto';
     this.state = {enabled: this.options.enabled === true || this.options.enabled === 'on' ||
-      (automatic && automaticallyEligible(config)),
+        (automatic && automaticallyEligible(config)),
       automatic, frames: 0, samples: 0,
       unmatched: 0, staleTruth: 0, elevationRejected: 0, ambiguous: 0,
       lastWriteAt: null, error: null, path: this.options.path || null,
@@ -238,6 +272,12 @@ class ManifoldRecorder {
     this.state.acquisitionFingerprint = this.fingerprint;
     this.state.physicalSiteFingerprint = this.physicalFingerprint;
     this.state.cohortRoot = this.options.path ? `${this.options.path}.cohorts` : null;
+    this.state.storageLimits = {active_file_bytes: this.options.max_file_mb * 1024 * 1024,
+      files_per_active_stream: this.options.max_files,
+      cohort_bytes: Math.min(512 * 1024 * 1024,
+        2 * this.options.max_file_mb * this.options.max_files * 1024 * 1024),
+      cohort_files: Math.min(128, 2 * this.options.max_files),
+      cohort_index_bytes: 1024 * 1024};
     this.state.cohorts = {files: 0, sampleRows: 0, referenceRows: 0,
       physicalSites: 0, acquisitionIdentities: 0};
     this.sitePrepared = false;
@@ -264,6 +304,8 @@ class ManifoldRecorder {
       }
     } catch (error) {
       this.state.error = error.message;
+      if (/capacity reached|exceeds.*limit|collection stopped/.test(error.message))
+        this.state.enabled = false;
     } finally { this.running = false; }
   }
 
@@ -305,6 +347,11 @@ class ManifoldRecorder {
   }
 
   async preserveCohortFile(filename, prior, kind) {
+    let stat;
+    try { stat = await this.fs.promises.stat(filename); }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    if (!stat.isFile() || stat.size > this.state.storageLimits.active_file_bytes)
+      throw new Error('Manifold cohort source exceeds its configured file limit; collection stopped');
     let payload;
     try { payload = await this.fs.promises.readFile(filename); }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
@@ -314,6 +361,39 @@ class ManifoldRecorder {
     const digest = crypto.createHash('sha256').update(payload).digest('hex');
     const directory = path.join(this.state.cohortRoot, physical, acquisition);
     const destination = path.join(directory, `${kind}-${digest}.jsonl`);
+    // Historical cohorts are immutable, not an unbounded second recorder.
+    // Existing files are preserved at capacity; the operator must choose what
+    // to archive elsewhere before explicitly restarting collection.
+    try {
+      await this.fs.promises.stat(destination);
+      return destination;
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const limits = this.state.storageLimits;
+    let files = 0, bytes = 0, entries = 0;
+    const inspect = async folder => {
+      let children;
+      try { children = await this.fs.promises.readdir(folder, {withFileTypes: true}); }
+      catch (error) { if (error.code === 'ENOENT') return; throw error; }
+      for (const child of children) {
+        if (++entries > 4 * limits.cohort_files + 1)
+          throw new Error('Manifold cohort entry capacity reached; collection stopped');
+        const target = path.join(folder, child.name);
+        if (child.isSymbolicLink()) throw new Error('Manifold cohort symlinks are not supported');
+        if (child.isDirectory()) await inspect(target);
+        else if (child.isFile()) {
+          const size = (await this.fs.promises.stat(target)).size;
+          if (folder === this.state.cohortRoot && child.name === 'index.jsonl') {
+            if (size + 2048 > limits.cohort_index_bytes)
+              throw new Error('Manifold cohort index capacity reached; collection stopped');
+          } else { ++files; bytes += size; }
+          if (files >= limits.cohort_files || bytes + payload.length > limits.cohort_bytes)
+            throw new Error('Manifold cohort storage capacity reached; collection stopped');
+        } else throw new Error('Manifold cohort storage must contain only regular files and directories');
+      }
+    };
+    await inspect(this.state.cohortRoot);
+    if (payload.length > limits.cohort_bytes)
+      throw new Error('Manifold cohort storage capacity reached; collection stopped');
     await this.fs.promises.mkdir(directory, {recursive: true});
     let created = false;
     try {
@@ -337,7 +417,10 @@ class ManifoldRecorder {
   async refreshCohortStatus() {
     const index = path.join(this.state.cohortRoot, 'index.jsonl');
     let rows = [];
-    try { rows = (await this.fs.promises.readFile(index, 'utf8')).split(/\r?\n/)
+    try {
+      if ((await this.fs.promises.stat(index)).size > this.state.storageLimits.cohort_index_bytes)
+        throw new Error('Manifold cohort index exceeds 1 MiB; collection stopped');
+      rows = (await this.fs.promises.readFile(index, 'utf8')).split(/\r?\n/)
       .filter(Boolean).map(line => JSON.parse(line)); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     const unique = new Map(rows.map(row => [`${row.kind}:${row.sha256}`, row]));
@@ -474,6 +557,7 @@ class ManifoldRecorder {
   }
 
   async record(frame) {
+    validateEvidence(frame);
     await this.prepareSite();
     ++this.state.frames;
     await this.recordReference(frame);
@@ -485,8 +569,8 @@ class ManifoldRecorder {
       (finite(configuredUncertainty) ? Math.max(0, Math.min(5, configuredUncertainty)) : 1);
     const identity = manifoldIdentity(this.config, frame.actual_gain_db, frame.frequency_hz,
       frame.sample_rate_hz);
-    const identityFingerprint = crypto.createHash('sha256').update(JSON.stringify({
-      configuration: fingerprintDescriptor(this.config), identity})).digest('hex');
+    const identityFingerprint = manifoldSampleFingerprint(this.config, frame.actual_gain_db,
+      frame.frequency_hz, frame.sample_rate_hz);
     const [raw, delayDoppler] = await Promise.all([
       this.adsbSource.get('aircraft'), this.adsbSource.get('delayDoppler')]);
     const aircraftByHex = new Map((raw.aircraft || []).map(item => [item.hex, item]));
@@ -546,7 +630,9 @@ class ManifoldRecorder {
       const evidence = frame.data[candidate.index];
       const receiverGain = {...fingerprintDescriptor(this.config).receiver_gain_v2,
         actual_channel_gains_db: [...identity.actual_gain_db]};
-      records.push({schema: 'vectorwarp-manifold-sample-v2', recorded_at: new Date().toISOString(),
+      records.push({schema: 'vectorwarp-manifold-sample-v2',
+        precision_contract: frame.precision_contract,
+        recorded_at: new Date().toISOString(),
         radar_timestamp_ms: frame.timestamp, frequency_hz: frame.frequency_hz,
         sample_rate_hz: frame.sample_rate_hz, channels: frame.channels,
         config_fingerprint: identityFingerprint,
@@ -607,4 +693,4 @@ function createManifoldRecorder(config, adsbSource, dependencies) {
 
 module.exports = {azimuthElevation, validateEvidence, automaticallyEligible, fingerprintDescriptor,
   physicalSiteDescriptor, physicalSiteFingerprint, siteFingerprint, manifoldIdentity,
-  ManifoldRecorder, createManifoldRecorder};
+  manifoldSampleFingerprint, ManifoldRecorder, createManifoldRecorder};

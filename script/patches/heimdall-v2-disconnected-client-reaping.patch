@@ -1,0 +1,48 @@
+diff --git a/heimdall_v2/src/net/tcp_data_server.cpp b/heimdall_v2/src/net/tcp_data_server.cpp
+--- a/heimdall_v2/src/net/tcp_data_server.cpp
++++ b/heimdall_v2/src/net/tcp_data_server.cpp
+@@ -346,10 +346,43 @@ void TcpDataServer::accept_loop() {
+         fd_set read_fds;
+         FD_ZERO(&read_fds);
+         FD_SET(listener, &read_fds);
++        int max_fd = listener;
++        {
++            std::lock_guard<std::mutex> lock(clients_mutex);
++            clients.erase(std::remove_if(clients.begin(), clients.end(),
++                [](const auto& client) { return !client->active; }), clients.end());
++            for (auto& client : clients) {
++                if (!client->active) continue;
++                if (!sock_fits_fd_set(client->socket,
++                        static_cast<int>(clients.size()) + 1)) {
++                    client->active = false;
++                    continue;
++                }
++                FD_SET(client->socket, &read_fds);
++                max_fd = std::max(max_fd, client->socket);
++            }
++        }
+         
+         timeval timeout{0, 100000}; // 100ms timeout
+-        int result = sock_select(listener + 1, &read_fds, nullptr, nullptr, &timeout);
++        int result = sock_select(max_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+         if (!running) break;
+         if (result < 0 && errno != EINTR) break;
++
++        // The data protocol is server-to-client only. Readability therefore
++        // means EOF, a socket error, or invalid client input. Reap it here even
++        // when calibration has disabled FFT publication and broadcast_data()
++        // is not running; otherwise dead probes accumulate in CLOSE_WAIT.
++        if (result > 0) {
++            std::lock_guard<std::mutex> lock(clients_mutex);
++            for (auto& client : clients) {
++                if (!client->active || !FD_ISSET(client->socket, &read_fds)) continue;
++                char byte;
++                const ssize_t received = sock_recv(client->socket, &byte, 1, MSG_PEEK);
++                if (received >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
++                    client->active = false;
++            }
++            clients.erase(std::remove_if(clients.begin(), clients.end(),
++                [](const auto& client) { return !client->active; }), clients.end());
++        }
+         
+         if (result > 0 && FD_ISSET(listener, &read_fds)) {

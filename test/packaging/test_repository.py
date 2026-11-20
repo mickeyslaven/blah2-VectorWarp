@@ -7,6 +7,7 @@ import argparse
 from copy import deepcopy
 import importlib.util
 from html import unescape
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -376,7 +377,8 @@ class HomepageTests(unittest.TestCase):
         self.assertIsNotNone(match, 'workflow must retain the bounded release-selection step')
         return textwrap.dedent(match.group(1))
 
-    def _select_release_tag(self, event, releases, event_tag='', input_tag='', ref='refs/heads/main'):
+    def _select_release_tag(self, event, releases, event_tag='', input_tag='', ref='refs/heads/main',
+                            release_sha='a' * 40, repository='mickeyslaven/blah2-VectorWarp'):
         with tempfile.TemporaryDirectory(prefix='vectorwarp-release-selection-') as temporary:
             temporary = Path(temporary)
             fixture = temporary / 'releases.json'
@@ -389,6 +391,7 @@ class HomepageTests(unittest.TestCase):
             environment = {**os.environ, 'PATH': f'{temporary}:{os.environ["PATH"]}',
                            'GITHUB_EVENT_NAME': event, 'EVENT_TAG': event_tag,
                            'INPUT_TAG': input_tag, 'GITHUB_OUTPUT': str(output),
+                           'INPUT_RELEASE_SHA': release_sha, 'GITHUB_REPOSITORY': repository,
                            'FAKE_RELEASES': str(fixture), 'GITHUB_REF': ref}
             result = subprocess.run(['bash', '-c', self._release_selection_script()], env=environment,
                                     text=True, capture_output=True, timeout=5)
@@ -397,12 +400,14 @@ class HomepageTests(unittest.TestCase):
     def test_repository_refresh_workflow_selects_only_latest_stable_release(self):
         workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
         self.assertNotRegex(workflow, r'(?m)^  push:\n')
-        self.assertRegex(workflow, r'(?m)^  release:\n    types: \[published\]$')
-        self.assertRegex(workflow, r'(?m)^  schedule:\n')
+        self.assertNotRegex(workflow, r'(?m)^  release:\n')
+        self.assertNotRegex(workflow, r'(?m)^  schedule:\n')
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.publish", workflow)
         self.assertNotIn('pull_request:', workflow)
         self.assertNotIn('pull_request_target:', workflow)
         self.assertIn('environment: release-signing', workflow)
-        self.assertRegex(workflow, r'uses: actions/checkout@[^\n]+\n        with:\n          ref: main')
+        self.assertRegex(workflow, r'uses: actions/checkout@[^\n]+\n        with:\n          ref: \$\{\{ github.sha \}\}')
+        self.assertIn('[[ $tag_commit == "$EXPECTED_RELEASE_SHA" ]]', workflow)
         self.assertIn('case "$GITHUB_EVENT_NAME" in', workflow)
         self.assertNotIn('push)', workflow)
 
@@ -413,13 +418,14 @@ class HomepageTests(unittest.TestCase):
             {'tagName': 'v9.9.9', 'isDraft': False, 'isPrerelease': True},
             {'tagName': 'v2.4.7', 'isDraft': True, 'isPrerelease': False},
         ]
-        for event, event_tag, input_tag in (('release', 'v2.4.6', ''), ('schedule', '', ''),
-                                            ('workflow_dispatch', '', 'v2.4.6')):
+        for event, event_tag, input_tag in (('workflow_dispatch', '', 'v2.4.6'),):
             with self.subTest(event=event):
                 result, output = self._select_release_tag(event, releases, event_tag, input_tag)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(output, 'tag=v2.4.6\n')
         for event, event_tag, input_tag, fixture in (
+                ('release', 'v2.4.6', '', releases),
+                ('schedule', '', '', releases),
                 ('release', 'v2.4.5', '', releases),
                 ('release', 'v2.4.7', '', releases),
                 ('workflow_dispatch', '', 'v2.4.5', releases),
@@ -429,6 +435,133 @@ class HomepageTests(unittest.TestCase):
             with self.subTest(event=event, tag=event_tag or input_tag):
                 result, _ = self._select_release_tag(event, fixture, event_tag, input_tag)
                 self.assertNotEqual(result.returncode, 0)
+        for overrides in ({'release_sha': ''}, {'release_sha': 'main'},
+                          {'release_sha': 'a' * 39}, {'ref': 'refs/heads/review'},
+                          {'repository': 'untrusted/fork'}):
+            with self.subTest(overrides=overrides):
+                result, _ = self._select_release_tag('workflow_dispatch', releases,
+                                                     input_tag='v2.4.6', **overrides)
+                self.assertNotEqual(result.returncode, 0)
+
+
+class PublicationAuthorizationTests(unittest.TestCase):
+    """Run the actual pre-signing and deployment guards without remote writes."""
+
+    def test_every_privileged_pages_job_requires_explicit_dispatch(self):
+        workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
+        triggers = workflow.split('permissions:', 1)[0]
+        self.assertNotRegex(triggers, r'(?m)^  (push|release|schedule|workflow_run|pull_request_target):')
+        self.assertRegex(triggers, r'(?s)      publish:\n.*?type: boolean\n        default: false')
+        for name in ('rebuild-repository', 'publish-pages'):
+            job = re.search(r'(?ms)^  ' + name + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', workflow)
+            self.assertIsNotNone(job)
+            self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.publish", job.group(1))
+            self.assertIn('environment:', job.group(1))
+        candidate = (ROOT / '.github/workflows/pi-image.yml').read_text()
+        for token in ('secrets.', 'contents: write', 'gh release create', 'gh release upload', 'deploy-pages@'):
+            self.assertNotIn(token, candidate)
+
+    def shell_step(self, name):
+        workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
+        match = re.search(r'(?ms)^      - name: ' + re.escape(name) + r'\n'
+                          r'.*?^        run: \|\n((?:^          [^\n]*\n)+)', workflow)
+        self.assertIsNotNone(match)
+        return textwrap.dedent(match.group(1))
+
+    def test_pages_requires_signed_soak_receipt_for_exact_source_version_and_packages(self):
+        workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
+        self.assertIn('--pattern release-soak-provenance.json', workflow)
+        receipt = dict(schema=1, source_commit='a' * 40, version='1.2.3', packages={
+            'vectorwarp_1.2.3.deb': {'signedPackageSha256': 'b' * 64},
+            'vectorwarp-1.2.3.rpm': {'signedPackageSha256': 'c' * 64}})
+        cases = [({}, 'signed', True), ({'source_commit': 'd' * 40}, 'signed', False),
+                 ({'version': '1.2.4'}, 'signed', False), ({'schema': 0}, 'signed', False),
+                 ({'packages': {}}, 'signed', False),
+                 ({'packages': {'vectorwarp_1.2.3.deb': {'signedPackageSha256': 'f' * 64}}}, 'signed', False),
+                 ({}, 'missing', False), ({}, 'uncovered', False), ({}, 'duplicate', False),
+                 ({}, 'tampered', False)]
+        with tempfile.TemporaryDirectory(prefix='vectorwarp-pages-soak-') as temporary:
+            temporary = Path(temporary)
+            packages = temporary / 'packages'
+            packages.mkdir()
+            manifest = dict(source_commit='a' * 40, version='1.2.3', packages=[
+                {'filename': name, 'sha256': entry['signedPackageSha256']}
+                for name, entry in receipt['packages'].items()])
+            (packages / 'package-manifest.json').write_text(json.dumps(manifest))
+            environment = {**os.environ, 'RELEASE_COMMIT': 'a' * 40, 'RELEASE_VERSION': '1.2.3'}
+            for changes, mode, accepted in cases:
+                with self.subTest(changes=changes, mode=mode):
+                    path = packages / 'release-soak-provenance.json'
+                    path.write_text(json.dumps({**receipt, **changes}))
+                    line = f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n'
+                    if mode == 'missing':
+                        path.unlink()
+                    if mode == 'tampered':
+                        path.write_text(path.read_text() + '\n')
+                    (packages / 'SHA256SUMS').write_text('' if mode == 'uncovered' else
+                                                       line * (2 if mode == 'duplicate' else 1))
+                    result = subprocess.run(['bash', '-c', self.shell_step(
+                        'Verify signed soak provenance matches every released package')],
+                        cwd=temporary, env=environment, text=True, capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode == 0, accepted, result.stderr)
+
+    def test_signing_guard_requires_exact_trusted_main_and_opt_in(self):
+        with tempfile.TemporaryDirectory(prefix='vectorwarp-publication-guard-') as temporary:
+            temporary = Path(temporary)
+            fake_git = temporary / 'git'
+            fake_git.write_text('#!/bin/bash\nset -eu\n'
+                                'case "$1" in\n'
+                                'rev-parse) printf "%s\\n" "$CHECKOUT_SHA" ;;\n'
+                                'ls-remote) printf "%s\\trefs/heads/main\\n" "$MAIN_SHA" ;;\n'
+                                '*) exit 64 ;;\nesac\n')
+            fake_git.chmod(0o755)
+            environment = {**os.environ, 'PATH': f'{temporary}:{os.environ["PATH"]}',
+                           'GITHUB_EVENT_NAME': 'workflow_dispatch', 'PUBLISH': 'true',
+                           'GITHUB_REPOSITORY': 'mickeyslaven/blah2-VectorWarp',
+                           'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': 'a' * 40,
+                           'CHECKOUT_SHA': 'a' * 40, 'MAIN_SHA': 'a' * 40}
+            script = self.shell_step('Verify publication opt-in and trusted workflow revision')
+            cases = [{}, {'PUBLISH': 'false'}, {'PUBLISH': ''}, {'PUBLISH': '1'},
+                     {'GITHUB_REPOSITORY': 'untrusted/fork'}, {'GITHUB_REF': 'refs/tags/v1.2.3'},
+                     {'CHECKOUT_SHA': 'b' * 40}, {'MAIN_SHA': 'b' * 40}]
+            cases += [{'GITHUB_EVENT_NAME': event}
+                      for event in ('push', 'release', 'schedule', 'workflow_run', 'pull_request')]
+            for changes in cases:
+                with self.subTest(changes=changes):
+                    result = subprocess.run(['bash', '-c', script], env={**environment, **changes},
+                                            text=True, capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode == 0, not changes, result.stderr)
+
+    def test_deployment_rejects_receipt_from_another_source_or_run(self):
+        with tempfile.TemporaryDirectory(prefix='vectorwarp-publication-receipt-') as temporary:
+            temporary = Path(temporary)
+            repository = temporary / 'repository'
+            repository.mkdir()
+            (repository / 'install.sh').write_text('fixture')
+            (repository / 'repository-manifest.json').write_text('{}')
+            receipt = dict(authorization='workflow_dispatch:publish=true', workflow_sha='a' * 40,
+                           release_sha='b' * 40, release_tag='v1.2.3', run_id='123', run_attempt='1')
+            fake_git = temporary / 'git'
+            fake_git.write_text('#!/bin/sh\n[ "$1" = ls-remote ] || exit 64\n'
+                                'printf "%s\\n" "$TAG_REFS"\n')
+            fake_git.chmod(0o755)
+            environment = {**os.environ, 'PATH': f'{temporary}:{os.environ["PATH"]}',
+                           'GITHUB_SHA': 'a' * 40, 'EXPECTED_RELEASE_SHA': 'b' * 40,
+                           'TAG': 'v1.2.3', 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}
+            direct = 'b' * 40 + '\trefs/tags/v1.2.3'
+            annotated = 'c' * 40 + '\trefs/tags/v1.2.3\n' + 'b' * 40 + '\trefs/tags/v1.2.3^{}'
+            cases = [({}, direct, True), ({}, annotated, True), ({}, '', False),
+                     ({}, 'c' * 40 + '\trefs/tags/v1.2.3', False)]
+            cases += [({key: 'different'}, direct, False) for key in receipt]
+            for changes, tag_refs, accepted in cases:
+                with self.subTest(changes=changes, tag_refs=tag_refs):
+                    (repository / 'publication-authorization.json').write_text(json.dumps({**receipt, **changes}))
+                    result = subprocess.run(['bash', '-c', self.shell_step('Validate deployment input')],
+                                            cwd=temporary, env={**environment, 'TAG_REFS': tag_refs}, text=True,
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode == 0, accepted, result.stderr)
+
+
 class PublicDeploymentTests(unittest.TestCase):
     """Execute the actual post-deploy shell with offline HTTP fixtures."""
 
@@ -609,7 +742,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_release_matrix_requires_every_target_once(self):
         entries = []
-        for format, distro, version, arch in repository.RELEASE_TARGETS:
+        for format, distro, version, arch in repository.release_targets_for_version("1.2.3"):
             entries.append({"format": format, "distro": distro, "distro_version": version,
                             "arch": arch})
         repository.verify_release_matrix(entries, "0.1.10")

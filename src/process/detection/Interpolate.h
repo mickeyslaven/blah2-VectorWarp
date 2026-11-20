@@ -6,7 +6,6 @@
 /// - https://ccrma.stanford.edu/~jos/sasp/Quadratic_Interpolation_Spectral_Peaks.html
 /// - Fundamentals of Signal Processing (2nd), Richards, Section 5.3.6
 /// @author 30hours
-/// @todo Should I remove the detection pointer? Also on Centroid.
 
 #ifndef INTERPOLATE_H
 #define INTERPOLATE_H
@@ -24,9 +23,6 @@ private:
 
   /// @brief True if interpolating over Doppler.
   bool doDoppler;
-
-  /// @brief Pointer to detection data to store result.
-  Detection *detection;
 
 public:
   /// @brief Constructor.

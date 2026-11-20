@@ -39,12 +39,23 @@ function locate(rx, tx, excessPathM, bearingDeg) {
   return finite(rangeM) && rangeM > 0 ? {...destination(rx, bearingDeg, rangeM), rangeM, excessPathM} : null;
 }
 
-function separationM(a, b) { return inverse(a, b).distanceM; }
+function velocityMps(from, to, seconds) {
+  if (!(seconds > 0)) return null;
+  const displacement = inverse(from, to);
+  if (!finite(displacement.distanceM) || !finite(displacement.bearingDeg)) return null;
+  const speed = displacement.distanceM / seconds;
+  const bearing = radians(displacement.bearingDeg);
+  return {east: speed * Math.sin(bearing), north: speed * Math.cos(bearing), speed};
+}
 
 class BistaticHypothesisTracker {
   constructor({history = 8, maxSpeedMps = 450, maxAccelerationMps2 = 80} = {}) {
     this.history = history; this.maxSpeedMps = maxSpeedMps; this.maxAccelerationMps2 = maxAccelerationMps2;
-    this.tracks = new Map();
+    this.tracks = new Map(); this.domain = null;
+  }
+  reset() { this.tracks.clear(); this.domain = null; }
+  setDomain(domain) {
+    if (this.domain !== domain) { this.reset(); this.domain = domain; }
   }
   select(id, timestamp, candidates) {
     if (!id || !finite(timestamp) || !candidates.length) return null;
@@ -61,13 +72,17 @@ class BistaticHypothesisTracker {
       const next = [];
       for (const state of states) for (let current = 0; current < frames[frame].candidates.length; current += 1) {
         const from = frames[frame - 1].candidates[state.current], to = frames[frame].candidates[current];
-        const speed = separationM(from, to) / dt; if (!finite(speed) || speed > this.maxSpeedMps) continue;
+        const velocity = velocityMps(from, to, dt);
+        const speed = velocity?.speed;
+        if (!finite(speed) || speed > this.maxSpeedMps) continue;
         let penalty = .5 * (speed / this.maxSpeedMps) ** 2;
         if (frame > 1 && state.previous >= 0) {
           const before = frames[frame - 2].candidates[state.previous];
           const priorDt = (frames[frame - 1].timestamp - frames[frame - 2].timestamp) / 1000;
-          if (priorDt > 0) { const priorSpeed = separationM(before, from) / priorDt;
-            const acceleration = Math.abs(speed - priorSpeed) / Math.max(dt, priorDt);
+          if (priorDt > 0) { const priorVelocity = velocityMps(before, from, priorDt);
+            const acceleration = priorVelocity ? Math.hypot(
+              velocity.east - priorVelocity.east,
+              velocity.north - priorVelocity.north) / ((dt + priorDt) / 2) : Infinity;
             if (acceleration > this.maxAccelerationMps2) continue;
             penalty += .5 * (acceleration / this.maxAccelerationMps2) ** 2; }
         }
@@ -91,33 +106,60 @@ class BistaticHypothesisTracker {
 }
 
 function locationsFromBearing(frame, config, hypothesisTracker = null) {
+  const {geographicContext, geographicConfig} = require('./replay-geographic-sites');
+  const geographic = geographicContext(config);
+  config = geographicConfig(config);
   const enabled = config?.process?.bearing?.enable === true;
-  const fs = config?.capture?.fs, rx = config?.location?.rx, tx = config?.location?.tx;
+  const fs = frame?.sample_rate_hz !== undefined ? frame.sample_rate_hz : (config?.capture?.replay?.state === true ?
+    config.capture.replay.sample_rate_hz : config?.capture?.fs);
+  const rx = config?.location?.rx, tx = config?.location?.tx;
+  // Exact capture identity wins over rounded compatibility fields. A change
+  // of acquisition, producer session, or geometry cannot inherit old support.
+  const native = frame?.input_lineage;
+  const epoch = native ? native.available === true ? native.captureEpochExact : null :
+    frame?.capture_sample_position_available === false ? null : frame?.capture_epoch ?? null;
+  hypothesisTracker?.setDomain(JSON.stringify({epoch,
+    producer_session_id: frame?.producer_session_id ?? null,
+    server_session_id: frame?.server_session_id ?? null,
+    geographic, sample_rate_hz: fs}));
   if (!enabled) return {enabled: false, reason: 'Bearing processing is disabled.', timestamp: frame?.timestamp ?? null, data: []};
-  if (!finite(fs) || fs <= 0 || !rx || !tx)
-    return {enabled: true, available: false, reason: 'Receiver, transmitter, or sample-rate geometry is incomplete.', timestamp: frame?.timestamp ?? null, data: []};
-  const data = (Array.isArray(frame?.data) ? frame.data : []).map(track => {
+  if (!geographic.available) return {enabled, available: false, operational_localization: false,
+    reason: geographic.reason, timestamp: frame?.timestamp ?? null, data: []};
+  if (!finite(fs) || fs <= 0 || !rx || !tx || !finite(frame?.timestamp) || frame.timestamp <= 0)
+    return {enabled: true, available: false, operational_localization: false,
+      reason: 'Receiver, transmitter, sample-rate geometry or observation time is incomplete.',
+      timestamp: frame?.timestamp ?? null, data: []};
+  const data = (Array.isArray(frame?.data) ? frame.data : []).filter(track =>
+    finite(track?.delay) && track.delay > 0 && finite(track?.bearing_deg_true) &&
+    finite(track?.uncertainty_deg) && track.uncertainty_deg >= 0 && track.uncertainty_deg <= 180).map(track => {
     const excessPathM = Number(track.delay) * C / fs;
     const candidates = (Array.isArray(track.candidates) ? track.candidates : []).map(candidate => {
       const point = locate(rx, tx, excessPathM, candidate.bearing_deg_true);
       return point ? {...point, bearing_deg_true: candidate.bearing_deg_true, support: candidate.support} : null;
     }).filter(Boolean);
-    // Keep `location` as the strict, downstream-safe fix contract, while also
-    // exposing the best estimate for diagnostic displays even when confidence
-    // is insufficient to resolve the bearing.
+    // A resolved azimuth is NOT a resolved aircraft position. One bistatic
+    // delay and azimuth leave altitude ambiguous; this surface ellipse also
+    // lacks a calibrated 3D covariance. Preserve its diagnostic estimate but
+    // never let it satisfy the strict downstream geographic-fix contract.
     const selected = hypothesisTracker?.select(track.id, Number(frame?.timestamp), candidates);
     const currentEstimate = locate(rx, tx, excessPathM, track.bearing_deg_true);
     const estimate = selected || currentEstimate;
-    const point = track.resolved ? currentEstimate : null;
     const uncertainty = finite(track.uncertainty_deg) ? Math.min(180, Math.max(0, track.uncertainty_deg)) : 180;
-    const corridor = point ? [locate(rx, tx, excessPathM, normalize(track.bearing_deg_true - uncertainty)),
-      point, locate(rx, tx, excessPathM, normalize(track.bearing_deg_true + uncertainty))].filter(Boolean) : [];
-    return {...track, excess_path_km: excessPathM / 1000, estimate, location: point,
+    const corridor = currentEstimate ? [locate(rx, tx, excessPathM, normalize(track.bearing_deg_true - uncertainty)),
+      currentEstimate, locate(rx, tx, excessPathM, normalize(track.bearing_deg_true + uncertainty))].filter(Boolean) : [];
+    return {...track, excess_path_km: excessPathM / 1000, estimate, location: null,
+      operational_position: false, geometry_model: 'diagnostic-spherical-surface-ellipse',
+      altitude_resolved: false, covariance_3d: null,
+      uncertainty_source: 'bearing-only; altitude and range covariance unqualified',
       geometry_consistent_samples: selected?.geometry_consistent_samples || 0,
-      uncertainty_corridor: corridor, candidates};
+      uncertainty_corridor: [], diagnostic_surface_corridor: corridor, candidates};
   });
-  return {enabled: true, available: true, timestamp: frame?.timestamp ?? null,
-    method: frame?.method || 'coherent_beam_bank', data};
+  return {enabled: true, available: true, operational_localization: false,
+    reason: 'Single-site bearing and delay provide a diagnostic surface estimate, not an altitude-resolved geographic fix.',
+    timestamp: frame.timestamp, sample_rate_hz: fs,
+    sample_rate_source: frame.sample_rate_hz !== undefined ? 'native-product' : 'configured-acquisition',
+    method: 'single-site-diagnostic-surface-intersection',
+    bearing_method: frame?.method || 'coherent_beam_bank', data};
 }
 
 module.exports = {inverse, destination, locate, BistaticHypothesisTracker, locationsFromBearing};

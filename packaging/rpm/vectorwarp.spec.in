@@ -64,7 +64,9 @@ fi
 if getent group vectorwarp-config >/dev/null 2>&1 &&
     getent passwd vectorwarp-api >/dev/null 2>&1; then
   chown root:vectorwarp-config /etc/vectorwarp
+  chmod 0770 /etc/vectorwarp
   chown vectorwarp-api:vectorwarp-config /etc/vectorwarp/config.yml
+  chmod 0660 /etc/vectorwarp/config.yml
 fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf

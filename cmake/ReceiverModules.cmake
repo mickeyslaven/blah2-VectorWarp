@@ -2,16 +2,23 @@
 # private modules ship together, and are loaded only for the selected receiver.
 set(BLAH2_RECEIVER_ABI_INPUT "${CMAKE_CXX_COMPILER_ID}|${CMAKE_CXX_COMPILER_VERSION}|${CMAKE_SIZEOF_VOID_P}|${CMAKE_CXX_FLAGS}")
 foreach(interface src/capture/ReceiverModule.h src/capture/Source.h
-    src/capture/Recording.h src/capture/PairedCpiQueue.h src/capture/PairedCpiSource.h
-    src/capture/kraken/HeimdallFrame.h src/data/IqData.h)
+    src/capture/Recording.h src/capture/RecordingAcquisition.h
+    src/capture/PairedCpiQueue.h src/capture/PairedCpiSource.h
+    src/capture/kraken/HeimdallFrame.h src/data/IqData.h
+    src/data/FloatCaptureBlocks.h src/data/IqSampleView.h)
   file(SHA256 "${PROJECT_ROOT}/${interface}" interface_hash)
   string(APPEND BLAH2_RECEIVER_ABI_INPUT "|${interface_hash}")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_ROOT}/${interface}")
 endforeach()
 string(SHA256 BLAH2_RECEIVER_COHORT "${BLAH2_RECEIVER_ABI_INPUT}")
 set(BLAH2_RECEIVER_CODE_INPUT "")
-foreach(source src/capture/Source.cpp src/capture/Recording.cpp
+foreach(source src/capture/Source.cpp src/capture/Source.h src/capture/Recording.cpp
+    src/capture/Capture.cpp src/capture/Capture.h
     src/capture/PortableClipRecorder.cpp src/capture/PortableClipRecorder.h
+    src/capture/RecordingAcquisition.h src/capture/RecordingAcquisitionJson.h
+    src/capture/RecordingContextConfig.h
+    src/capture/kraken/KrakenClipRecorder.cpp src/capture/kraken/KrakenClipRecorder.h
+    src/capture/kraken/HeimdallFrame.cpp src/capture/kraken/HeimdallFrame.h
     src/capture/IqClip.h src/capture/Sha256.h
     src/capture/kraken/Kraken.cpp src/capture/rspduo/RspDuo.cpp
     src/capture/usrp/Usrp.cpp src/capture/hackrf/HackRf.cpp)

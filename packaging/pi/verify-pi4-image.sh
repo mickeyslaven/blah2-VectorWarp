@@ -86,7 +86,9 @@ test_root() {
       "$r/etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf"
   done
   chroot "$r" /bin/sh -ec 'id -nG vectorwarp | tr " " "\n" | grep -qx render; id -nG vectorwarp | tr " " "\n" | grep -qx video; id -nG vectorwarp | tr " " "\n" | grep -qx plugdev; ! id -nG vectorwarp-api | tr " " "\n" | grep -qx plugdev; find /usr/share/vulkan/icd.d -type f -name "*.json" -print -quit | grep -q .'
-  required_elfs=("$r/opt/vectorwarp/runtime/node/bin/node" "$r/opt/vectorwarp/current/bin/blah2" "$r/opt/vectorwarp/current/bin/blah2-gpu-worker" "$r/opt/vectorwarp/current/bin/blah2-mixed-worker")
+  [[ ! -e $r/opt/vectorwarp/current/bin/blah2-mixed-worker && ! -L $r/opt/vectorwarp/current/bin/blah2-mixed-worker ]] ||
+    die 'historical mixed DSP workers are not part of the unified image'
+  required_elfs=("$r/opt/vectorwarp/runtime/node/bin/node" "$r/opt/vectorwarp/current/bin/blah2" "$r/opt/vectorwarp/current/bin/blah2-gpu-worker")
   for elf in "${required_elfs[@]}"; do
     [[ -x $elf ]] || die "missing required native worker: ${elf#$r}"
     readelf -h "$elf" | grep -q 'Machine:.*AArch64'

@@ -60,6 +60,11 @@ TEST_CASE("coherent beam bank rejects mismatched map geometry")
   CoherentBeamBank fusion(config);
   Map<std::complex<double>> only(1, 1);
   REQUIRE_THROWS_AS(fusion.process({&only}), std::invalid_argument);
+  Map<std::complex<double>> wrong(2, 1);
+  REQUIRE_THROWS_AS(fusion.process_into({&only, &only}, wrong), std::invalid_argument);
+  REQUIRE_THROWS_AS(fusion.process_into({&only, &wrong}, only), std::invalid_argument);
+  REQUIRE_THROWS_AS(fusion.process_into({&only, nullptr}, only), std::invalid_argument);
+  REQUIRE_THROWS_AS(fusion.process_into({}, only), std::invalid_argument);
 }
 
 TEST_CASE("coherent beam bank rejects geometry beyond the resident channel bound")

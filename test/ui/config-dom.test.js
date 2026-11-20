@@ -60,6 +60,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: status === 200, status, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/processing_capabilities.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/kraken_geometry.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
@@ -81,6 +82,13 @@ function change(input, value, event = 'input') {
       /Automatic aircraft clips require a backend version/);
     saved.capture.aircraft_clips = aircraftClipSettings;
     await window.renderConfiguration();
+    let setupScrollBehavior;
+    window.matchMedia = () => ({matches: true});
+    window.document.getElementById('config-fields').scrollIntoView = options => {
+      setupScrollBehavior = options.behavior;
+    };
+    window.__settingsModeApi.openTab('receiver');
+    assert.equal(setupScrollBehavior, 'auto', 'Setup navigation respects reduced-motion preferences');
     await window.validateActiveConfiguration();
     assert.equal(window.document.querySelectorAll('[role=tab]').length, 6,
       'The SDRplay settings surface exposes each applicable task category');
@@ -132,30 +140,89 @@ function change(input, value, event = 'input') {
     assert.deepEqual([...query('process.performance.acceleration').querySelector('select').options]
       .map(option => option.value), ['automatic', 'cpu'],
     'Processing exposes the safe Automatic mode and an explicit CPU-only mode');
-    const receiverStartup = window.document.getElementById('receiver-startup');
-    const device = saved.capture.device;
-    const receiverStatus = {radar: 'receiving', processorFresh: true, processor: {
-      receiver: 'RspDuo', input: 'live', state: 'running', receiverStartup: {status: 'accepted',
+    // Startup status may describe only a fresh live instance of this receiver.
+    // These fixtures assert UI claims; they do not qualify hardware or SDKs.
+    const originalSaved = saved;
+    for (const [type, label, heading, sdk, unavailable, accepted, stopped, qualification] of [
+      ['RspDuo', 'RSPduo', 'SDRplay startup', 'SDRplay',
+        'Startup settings unavailable. Rebuild SDRplay support to see them.',
+        'SDRplay accepted settings', 'SDRplay accepted the last startup settings.'],
+      ['HackRF', 'HackRF', 'Dual HackRF startup', 'libhackrf',
+        'HackRF startup receipt unavailable. Rebuild HackRF support to see it.',
+        'Both HackRF startup paths accepted settings', 'The last HackRF startup calls were accepted.',
+        ['setterAcceptance', 'HackRF started without qualified setter acceptance.']],
+      ['Usrp', 'USRP', 'USRP startup', 'UHD',
+        'USRP startup readback unavailable. Rebuild UHD support to see it.',
+        'UHD read back both channels', 'UHD read back the last startup settings.',
+        ['readbackAvailable', 'USRP started without qualified UHD setting readback.']]
+    ]) {
+      saved = configurationForReceiver(type);
+      await window.renderConfiguration();
+      const target = window.document.getElementById('receiver-startup');
+      const device = saved.capture.device;
+      const receipt = {status: 'accepted', setterAcceptance: true, readbackAvailable: true,
         selected: {}, sdk: {version: null, stages: {}}, requested: {
-          frequency: saved.capture.fc, sampleRate: saved.capture.fs, serial: device.serial || '',
-          agcSetPoint: device.agcSetPoint, bandwidthNumber: device.bandwidthNumber,
-          gainReduction: device.gainReduction, lnaState: device.lnaState,
-          dabNotch: device.dabNotch, rfNotch: device.rfNotch,
-          ifFrequencyKhz: 0, ifBandwidthKhz: 0, decimation: 1, sampleCounterScale: 1
-        }}}};
-    window.renderReceiverStartup(receiverStatus, receiverStartup);
-    const startupDetails = receiverStartup.querySelector('details');
-    const startupSummary = startupDetails.querySelector('summary');
-    startupDetails.open = true;
-    startupSummary.focus();
-    window.renderReceiverStartup(receiverStatus, receiverStartup);
-    assert.strictEqual(receiverStartup.querySelector('details'), startupDetails,
-      'Diagnostic refresh keeps the expanded receiver details node');
-    assert.strictEqual(receiverStartup.querySelector('summary'), startupSummary,
-      'Diagnostic refresh keeps the focusable receiver summary node');
-    assert.equal(startupDetails.open, true);
-    assert.strictEqual(window.document.activeElement, startupSummary,
-      'Diagnostic refresh does not reset summary focus');
+          ...clone(device), frequency: saved.capture.fc, sampleRate: saved.capture.fs,
+          serial: device.serial || '', serials: device.serial, lnaGainDb: device.gain_lna,
+          vgaGainDb: device.gain_vga, ampEnabled: device.amp_enable,
+          subdevices: device.subdev, antennas: device.antenna, gains: device.gain,
+          ifFrequencyKhz: 0, ifBandwidthKhz: 0, decimation: 1, sampleCounterScale: 1}};
+      const status = {radar: 'receiving', processorFresh: true, processor: {
+        receiver: type, input: 'live', state: 'running', receiverStartup: receipt}};
+      const message = () => target.querySelector('[data-receiver-startup-message]').textContent;
+      const render = (next, expected) => {
+        window.renderReceiverStartup(next, target);
+        assert.equal(message(), expected, `${type}: startup message precedence`);
+        assert.equal(target.querySelector('h3').textContent, heading);
+        assert.equal(target.querySelector('[role=status]').textContent, expected);
+      };
+      const frames = type === 'HackRF' ? 'provisional paired frames' : 'radar frames';
+      const receiving = `${accepted}; receiving ${frames}.`;
+      render(status, receiving);
+      assert.equal(target.querySelector('[data-receiver-startup-mismatch]'), null);
+      const details = target.querySelector('details'), summary = details.querySelector('summary');
+      details.open = true; summary.focus();
+      render({...status, radar: 'no-data'}, `${accepted}; waiting for ${frames}.`);
+      assert.strictEqual(target.querySelector('details'), details, `${type}: details identity survives refresh`);
+      assert.strictEqual(target.querySelector('summary'), summary, `${type}: summary identity survives refresh`);
+      assert.equal(details.open, true);
+      assert.strictEqual(window.document.activeElement, summary, `${type}: refresh preserves focus`);
+      render({...status, processor: {...status.processor, state: 'stopped'}}, `Receiver stopped. ${stopped}`);
+      if (qualification) {
+        render({...status, processor: {...status.processor, state: 'stopped',
+          receiverStartup: {...receipt, [qualification[0]]: false}}}, qualification[1]);
+      }
+      const pending = {...status, processor: {...status.processor, state: 'stopped',
+        receiverStartup: {...receipt, status: 'applying', setterAcceptance: false, readbackAvailable: false}}};
+      render(pending, `Applying settings through ${sdk}…`);
+      const error = `Receiver error: fixture failure${type === 'Usrp' ?
+        ' Reconnect the USRP if it was unplugged, then run vectorwarp restart.' : ''}`;
+      render({...pending, processor: {...pending.processor, state: 'error', error: 'fixture failure'}}, error);
+      assert.ok(target.querySelector('details'), `${type}: a receipt remains inspectable during an error`);
+      for (const missing of [undefined, null]) {
+        render({...status, processor: {...status.processor, receiverStartup: missing}}, unavailable);
+        assert.equal(target.querySelector('details'), null, `${type}: missing receipt removes old details`);
+        render({...status, processor: {...status.processor, state: 'error',
+          error: 'fixture failure', receiverStartup: missing}}, error);
+      }
+      for (const absent of [null, {...status, processor: null}, {...status, processorFresh: false},
+        {...status, processor: {...status.processor, receiver: 'Other'}},
+        {...status, processor: {...status.processor, input: 'replay'}}]) {
+        render({...status, processor: {...status.processor,
+          receiverStartup: {...receipt, requested: {...receipt.requested, frequency: saved.capture.fc + 1}}}}, receiving);
+        assert.ok(target.querySelector('[data-receiver-startup-mismatch]'), `${type}: mismatched settings are visible`);
+        render(absent, `No current ${label} status. Saved settings apply at startup.`);
+        assert.equal(target.querySelector('details'), null, `${type}: inadmissible status removes old details`);
+        assert.equal(target.querySelector('[data-receiver-startup-mismatch]'), null,
+          `${type}: inadmissible status removes old mismatch`);
+      }
+      render(status, receiving);
+      assert.ok(target.querySelector('details'), `${type}: accepted receipt recovers after stale status`);
+      assert.equal(target.querySelector('details').open, false, `${type}: recreated details start collapsed`);
+    }
+    saved = originalSaved;
+    await window.renderConfiguration();
+    await window.validateActiveConfiguration();
     assert.equal(window.document.querySelector('[role=tab][data-tab=truth] strong').textContent, 'Aircraft');
     assert.equal(query('truth.adsb.enabled').querySelector('label').textContent, 'Show ADS-B');
     window.showMessage('Settings saved. Radar restarted; new frames received.', 'success', '<img src=x> RF not measured.');
@@ -324,14 +391,23 @@ function change(input, value, event = 'input') {
     assert.equal(manualGains.hidden, true);
     change(gainMode, 'fixed', 'change');
     assert.equal(manualGains.hidden, false);
-    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(await window.validateActiveConfiguration(), false,
+      'Changing receiver preserves stale radar roles for explicit repair');
     change(gainMode, 'measured_per_channel', 'change');
     assert.equal(manualGains.hidden, true);
-    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(await window.validateActiveConfiguration(), false,
+      'Changing gain mode cannot repair incompatible radar intent');
     [...window.document.querySelectorAll('#settings-panel-array button')]
       .find(button => button.textContent === 'Add antenna layout').click();
     const reference = window.document.querySelector('#settings-panel-array .geometry-reference-mode select');
     assert.ok(reference, 'Reference estimation is part of the visual array editor');
+    assert.equal(reference.value, '', 'Missing reference intent is not silently invented');
+    change(reference, 'array_eigenbeam', 'change');
+    // Explicitly choose the complete reference policy for this new array;
+    // changing the physical receiver did not supply it implicitly.
+    window.setValue(['process', 'reference_synthesis'],
+      clone(configurationForReceiver('Kraken').process.reference_synthesis));
+    window.renderEditor();
     assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 0);
     assert.equal(window.document.getElementById('upstream-status').closest('[role=tabpanel]').id,
       'settings-panel-capture');
@@ -340,13 +416,19 @@ function change(input, value, event = 'input') {
     assert.equal(window.document.querySelector('[role=tab][data-tab=array]').classList.contains('has-errors'), true);
     assert.equal(window.document.querySelector('[role=tab][data-tab=process]').classList.contains('has-errors'), false);
     change(query('process.reference_synthesis.analysis_samples').querySelector('input'), '32768');
+    assert.equal(await window.validateActiveConfiguration(), true,
+      'Explicit reference policy repairs the new receiver intent: ' +
+      window.document.getElementById('config-message').textContent);
+    assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.analysis_samples"]').length,
+      1, 'Geometry refresh cannot leave a stale duplicate technical control');
     const compatibilityValues = Object.entries(FIELD_RULES).filter(([, rule]) => rule.readOnly)
       .map(([key]) => [key, key.split('.').reduce((value, part) => value?.[part], saved)]);
     change(query('process.data.cpi').querySelector('input'), '0.25');
     change(window.document.querySelector('.geometry-preset-counts select'), '8', 'change');
     window.document.querySelector('.geometry-preset-grid button').click();
     assert.equal(window.document.querySelectorAll('.geometry-channel-map button').length, 8);
-    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(await window.validateActiveConfiguration(), true,
+      window.document.getElementById('config-message').textContent);
     await window.saveConfiguration();
     assert.equal(saved.capture.device.channel_count, 8);
     assert.equal(saved.process.data.cpi, .25, 'The one frame setting writes the processor CPI');
@@ -376,7 +458,8 @@ function change(input, value, event = 'input') {
       /install its receiver software in Receiver setup/i);
     assert.doesNotMatch(window.document.getElementById('config-message').textContent,
       /replay only/i);
-    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(await window.validateActiveConfiguration(), false,
+      'The selected array intent remains visible and incompatible on paired input');
     assert.equal(query('capture.device.antenna').querySelectorAll('input').length, 2);
     let restartChecks = 0;
     const ordinaryFetch = window.fetch;
@@ -429,11 +512,13 @@ function change(input, value, event = 'input') {
           continue;
         }
         assert.deepEqual([...field.querySelectorAll('.array-inputs label > span')].map(label => label.textContent),
-          ['Reference', 'Surveillance'], `${profile.type}: ${key} must identify the two receiver roles`);
+          [0, 1].map(channel => saved.process.reference_synthesis.channels.includes(channel) ?
+            'Reference' : 'Surveillance'), `${profile.type}: ${key} labels preserve the explicit role intent`);
       }
       assert.equal(window.document.querySelectorAll('#settings-panel-capture .site-settings select').length, 2);
       assert.equal(window.document.querySelectorAll('#settings-panel-capture [data-site-action=add]').length, 2);
-      if (profile.type !== 'Kraken') assert.equal(query('process.reference_synthesis.mode'), null);
+      if (profile.type !== 'Kraken') assert.ok(query('process.reference_synthesis.mode'),
+        'Incompatible saved intent remains editable for explicit repair');
     }
       // A background revision check must not recreate a clean editor while an
       // operator is focused in it. The explicit reload button remains the
@@ -498,6 +583,30 @@ function change(input, value, event = 'input') {
     assert.equal(window.document.querySelectorAll('[data-path="process.reference_synthesis.mode"]').length, 0,
       'The unified editor must not duplicate reference controls');
     assert.ok(query('process.data.buffer'));
-    console.log('Browser DOM tests passed: all-device layout audit, site add/edit/cancel/select, grouped frequency, errors, stale validation, discard and save payloads.');
+    window.applyComposite(config => window.KrakenGeometry.applyPreset(config, 'pentagon5'));
+    window.renderEditor();
+    for (const depth of [1, 2, 4, 8]) {
+      window.setValue(['process', 'detection', 'integration_cpis'], Math.min(depth, 2));
+      window.setValue(['process', 'detection', 'track_before_detect', 'enable'], depth > 2);
+      window.setValue(['process', 'detection', 'track_before_detect', 'max_cpis'], Math.max(depth, 4));
+      window.setValue(['process', 'tracker', 'initiate', 'M'], 4);
+      window.setValue(['process', 'tracker', 'initiate', 'N'], depth === 1 ? 6 : 1 + depth * 3);
+      window.setValue(['process', 'tracker', 'delete'], Math.max(1, depth - 1));
+      window.renderEditor();
+      assert.equal(await window.validateActiveConfiguration(), true, `feasible ${depth}-CPI browser admission: ` +
+        window.document.getElementById('config-message').textContent);
+      if (depth > 1) {
+        window.setValue(['process', 'tracker', 'initiate', 'N'], depth * 3);
+        window.renderEditor();
+        assert.equal(await window.validateActiveConfiguration(), false, 'browser rejects overlapping-window policy');
+        assert.equal(window.document.getElementById('config-save').disabled, true);
+        assert.match(window.document.body.textContent, /Explicit replay qualification/);
+        window.setValue(['process', 'tracker', 'initiate', 'N'], 1 + depth * 3);
+        window.setValue(['process', 'tracker', 'delete'], depth - 2);
+        window.renderEditor();
+        assert.equal(await window.validateActiveConfiguration(), false, 'browser rejects insufficient coast horizon');
+      }
+    }
+    console.log('Browser DOM tests passed: all-device layout, save validation and disjoint temporal admission.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

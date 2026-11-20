@@ -88,101 +88,11 @@ if $SETUP_PI_GPU; then
   [[ -z $DESTDIR ]] || die '--setup-pi-gpu is forbidden with --destdir; staging never probes or changes the host GPU'
   $WITH_SYSTEMD || die '--setup-pi-gpu requires the installed integration helpers'
 fi
-for file in .vectorwarp-build bin/blah2 api/server.js html/index.html config-examples/config.yml; do
-  [[ -e $ARTIFACT/$file ]] || die "artifact is incomplete: $file"
-done
-[[ -x $ARTIFACT/bin/blah2 ]] || die 'artifact processor is not executable'
-read_manifest_field() {
-  local field=$1 output=$2 count value
-  count=$(grep -c "^${field}=" "$ARTIFACT/.vectorwarp-build" || true)
-  [[ $count == 1 ]] || die "artifact manifest must contain exactly one $field"
-  value=$(sed -n "s/^${field}=//p" "$ARTIFACT/.vectorwarp-build")
-  printf -v "$output" '%s' "$value"
-}
-
-read_manifest_field build_id build_id
-[[ $build_id =~ ^[A-Za-z0-9._:-]+$ ]] || die 'artifact has an invalid build_id'
-read_manifest_field backend backend
-test_only=false
-test_only_count=$(grep -c '^test_only=' "$ARTIFACT/.vectorwarp-build" || true)
-((test_only_count <= 1)) || die 'artifact manifest has duplicate test_only fields'
-if ((test_only_count == 1)); then
-  read_manifest_field test_only test_only
-  [[ $test_only == true || $test_only == false ]] || die 'artifact has an invalid test_only marker'
-fi
-case "$backend" in
-  open-test)
-    expected_receivers=Usrp,HackRF,Kraken
-    [[ $test_only == true ]] || die 'open-test artifacts must be explicitly marked test-only' ;;
-  kraken) expected_receivers=Kraken ;;
-  rspduo) expected_receivers=RspDuo,Kraken ;;
-  usrp) expected_receivers=Usrp,Kraken ;;
-  hackrf) expected_receivers=HackRF,Kraken ;;
-  all) expected_receivers=Usrp,HackRF,Kraken ;;
-  *) die 'artifact has an invalid backend' ;;
-esac
-[[ $backend == open-test || $test_only == false ]] || die 'only open-test artifacts may be marked test-only'
-
-# New artifacts state their exact live receiver set. Accept the two historical
-# backend manifests without this field, but never infer or pass through unknown
-# receiver names from a manifest that does provide it.
-compiled_count=$(grep -c '^compiled_receivers=' "$ARTIFACT/.vectorwarp-build" || true)
-((compiled_count <= 1)) || die 'artifact manifest has duplicate compiled_receivers fields'
-if ((compiled_count == 0)); then
-  [[ $backend == kraken || $backend == all ]] ||
-    die 'selected-backend artifact lacks compiled_receivers'
-  RECEIVER_TYPES=$expected_receivers
-else
-  read_manifest_field compiled_receivers compiled_receivers
-  [[ $compiled_receivers =~ ^(RspDuo|Usrp|HackRF|Kraken)(,(RspDuo|Usrp|HackRF|Kraken))*$ ]] ||
-    die 'artifact has an invalid compiled_receivers list'
-  seen_rspduo=false; seen_usrp=false; seen_hackrf=false; seen_kraken=false
-  IFS=, read -r -a receiver_items <<<"$compiled_receivers"
-  for receiver in "${receiver_items[@]}"; do
-    case "$receiver" in
-      RspDuo) $seen_rspduo && die 'artifact has duplicate compiled receiver RspDuo'; seen_rspduo=true ;;
-      Usrp) $seen_usrp && die 'artifact has duplicate compiled receiver Usrp'; seen_usrp=true ;;
-      HackRF) $seen_hackrf && die 'artifact has duplicate compiled receiver HackRF'; seen_hackrf=true ;;
-      Kraken) $seen_kraken && die 'artifact has duplicate compiled receiver Kraken'; seen_kraken=true ;;
-      *) die 'artifact has an unknown compiled receiver' ;;
-    esac
-  done
-  RECEIVER_TYPES=
-  for receiver in RspDuo Usrp HackRF Kraken; do
-    case "$receiver" in
-      RspDuo) present=$seen_rspduo ;; Usrp) present=$seen_usrp ;;
-      HackRF) present=$seen_hackrf ;; Kraken) present=$seen_kraken ;;
-    esac
-    if $present; then
-      [[ -z $RECEIVER_TYPES ]] || RECEIVER_TYPES+=,
-      RECEIVER_TYPES+=$receiver
-    fi
-  done
-  [[ $RECEIVER_TYPES == "$expected_receivers" ]] ||
-    die 'artifact backend and compiled_receivers disagree'
-fi
-
-# A local source kit is deliberately separate from compiled live adapters.
-# Historical artifacts omit this field; new stable all builds require exactly
-# the one reviewed RSPduo kit and do not advertise it as compiled.
-local_build_count=$(grep -c '^local_build_receivers=' "$ARTIFACT/.vectorwarp-build" || true)
-((local_build_count <= 1)) || die 'artifact manifest has duplicate local_build_receivers fields'
-LOCAL_BUILD_RECEIVER_TYPES=
+artifact_values=$(python3 "$SOURCE_DIR/script/artifact-plan.py" validate "$ARTIFACT" --level install) || exit 1
+read -r build_id backend RECEIVER_TYPES LOCAL_BUILD_RECEIVER_TYPES test_only <<<"$artifact_values"
+[[ $LOCAL_BUILD_RECEIVER_TYPES != - ]] || LOCAL_BUILD_RECEIVER_TYPES=
 LOCAL_BUILD_ENABLED=false
-if ((local_build_count == 1)); then
-  read_manifest_field local_build_receivers LOCAL_BUILD_RECEIVER_TYPES
-  [[ -z $LOCAL_BUILD_RECEIVER_TYPES || $LOCAL_BUILD_RECEIVER_TYPES == RspDuo ]] ||
-    die 'artifact has an invalid local_build_receivers list'
-fi
 [[ -z $LOCAL_BUILD_RECEIVER_TYPES ]] || LOCAL_BUILD_ENABLED=true
-if [[ $backend == all && $compiled_count -gt 0 ]]; then
-  [[ $RECEIVER_TYPES == Usrp,HackRF,Kraken && $LOCAL_BUILD_RECEIVER_TYPES == RspDuo ]] ||
-    die 'stable artifact must have three compiled receivers and the RSPduo local build kit'
-  [[ -f $ARTIFACT/receiver-source/rspduo/kit.json && -x $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]] ||
-    die 'stable artifact lacks the local RSPduo build kit or helper'
-  [[ -f $ARTIFACT/systemd/vectorwarp-sdrplay-build.service.in ]] ||
-    die 'stable artifact lacks the local RSPduo build service template'
-fi
 
 if $WITH_SYSTEMD; then
   [[ -f $ARTIFACT/config-examples/config.yml ]] || die 'artifact lacks the canonical first-run config'
@@ -199,6 +109,7 @@ if $WITH_SYSTEMD; then
   [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'launcher is missing'
   [[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing'
   [[ -f $ARTIFACT/libexec/vectorwarp-check-node-version ]] || die 'Node version check helper is missing'
+  [[ -f $ARTIFACT/libexec/vectorwarp-cohort-check ]] || die 'cohort startup check helper is missing'
   [[ ! -L $DESTDIR/usr/bin && ! -L $DESTDIR/usr/bin/vectorwarp ]] ||
     die 'launcher install path must not be a symlink'
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
@@ -229,7 +140,7 @@ if [[ -z $DESTDIR ]]; then
   fi
   for runtime in "$ARTIFACT/bin/blah2-gpu-worker" "$ARTIFACT/bin/blah2-gpu-vulkan.so" \
       "$ARTIFACT/bin/blah2-gpu-resident-vulkan.so" \
-      "$ARTIFACT/bin/blah2-mixed-worker"; do
+      "$ARTIFACT/bin/blah2-gpu-wideband-vulkan.so"; do
     if [[ -e $runtime ]] && ldd "$runtime" 2>&1 | grep -q 'not found'; then
       ldd "$runtime" >&2
       die "runtime libraries are missing for $(basename "$runtime")"
@@ -363,6 +274,7 @@ if $WITH_SYSTEMD; then
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-config-guard.js" "$target_prefix/libexec/vectorwarp-config-guard.js"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
+  run install -m 0755 "$ARTIFACT/libexec/vectorwarp-cohort-check" "$target_prefix/libexec/vectorwarp-cohort-check"
   # The unit invokes this script through the private Node binary. Keeping it
   # non-executable also prevents RPM BRP from rewriting its env-node shebang
   # and inferring a false /usr/bin/node dependency.
@@ -442,7 +354,13 @@ fi
 
 if [[ ! -d $target_sysconf ]]; then
   run install -d -m 0770 "$target_sysconf"
-  if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then run chown root:vectorwarp-config "$target_sysconf"; fi
+fi
+if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then
+  # Atomic config saves create and rename a sibling file. Repair permissions on
+  # pre-existing installations too; ownership alone leaves a historical 0755
+  # directory unwritable by the API's vectorwarp-config group.
+  run chown root:vectorwarp-config "$target_sysconf"
+  run chmod 0770 "$target_sysconf"
 fi
 if [[ ! -e $target_sysconf/config.yml ]]; then
   run install -m 0660 "$ARTIFACT/config-examples/config.yml" "$target_sysconf/config.yml"
@@ -451,6 +369,10 @@ if [[ ! -e $target_sysconf/config.yml ]]; then
   fi
   say 'installed the neutral first-run configuration; choose a receiver and review frequency and sites in Settings'
 else
+  if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then
+    run chown vectorwarp-api:vectorwarp-config "$target_sysconf/config.yml"
+    run chmod 0660 "$target_sysconf/config.yml"
+  fi
   say 'kept the existing configuration byte-for-byte'
 fi
 

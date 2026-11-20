@@ -1,4 +1,5 @@
 #include "Detection.h"
+#include "JsonArrayFile.h"
 #include "data/meta/Constants.h"
 #include <iostream>
 #include <cstdlib>
@@ -10,7 +11,6 @@
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
-#include "rapidjson/filewritestream.h"
 
 // constructor
 Detection::Detection(std::vector<double> _delay, std::vector<double> _doppler, std::vector<double> _snr)
@@ -78,6 +78,24 @@ std::string Detection::to_json(uint64_t timestamp)
   document.AddMember("delay", arrayDelay, allocator);
   document.AddMember("doppler", arrayDoppler, allocator);
   document.AddMember("snr", arraySnr, allocator);
+  if (!evidence.empty()) {
+    rapidjson::Value support(rapidjson::kArrayType);
+    for (const auto& item : evidence) {
+      rapidjson::Value value(rapidjson::kObjectType), sequences(rapidjson::kArrayType);
+      value.AddMember("kind", "temporal_power", allocator);
+      value.AddMember("epoch_exact", rapidjson::Value(std::to_string(item.epoch).c_str(), allocator), allocator);
+      value.AddMember("newest_sequence_exact", rapidjson::Value(std::to_string(item.newestSequence).c_str(), allocator), allocator);
+      value.AddMember("cpis", item.depth, allocator);
+      value.AddMember("bank", item.bank, allocator);
+      value.AddMember("delay_motion_bins", item.delayMotion, allocator);
+      value.AddMember("doppler_motion_bins", item.dopplerMotion, allocator);
+      for (uint8_t age = 0; age < item.depth; ++age)
+        sequences.PushBack(rapidjson::Value(std::to_string(item.sequences[age]).c_str(), allocator), allocator);
+      value.AddMember("support_sequences_exact", sequences, allocator);
+      support.PushBack(value, allocator);
+    }
+    document.AddMember("evidence", support, allocator);
+  }
   
   rapidjson::StringBuffer strbuf;
   rapidjson::Writer<rapidjson::StringBuffer> writer(strbuf);
@@ -89,6 +107,7 @@ std::string Detection::to_json(uint64_t timestamp)
 
 std::string Detection::to_json_km(uint64_t timestamp, uint32_t fs)
 {
+  if (!evidence.empty()) return delay_bin_to_km(to_json(timestamp), fs);
   const size_t count = get_nDetections();
   if (doppler.size() < count || snr.size() < count)
     throw std::invalid_argument("Cannot convert invalid detections or zero sample rate");
@@ -151,55 +170,5 @@ std::string Detection::delay_bin_to_km(std::string json, uint32_t fs)
 
 bool Detection::save(std::string _json, std::string filename)
 {
-  using namespace rapidjson;
-
-  rapidjson::Document document;
-
-  // create file if it doesn't exist
-  if (FILE *fp = fopen(filename.c_str(), "r"); !fp)
-  {
-    if (fp = fopen(filename.c_str(), "w"); !fp)
-      return false;
-    fputs("[]", fp);
-    fclose(fp);
-  }
-
-  // add the document to the file
-  if (FILE *fp = fopen(filename.c_str(), "rb+"); fp)
-  {
-    // check if first is [
-    std::fseek(fp, 0, SEEK_SET);
-    if (getc(fp) != '[')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // is array empty?
-    bool isEmpty = false;
-    if (getc(fp) == ']')
-      isEmpty = true;
-
-    // check if last is ]
-    std::fseek(fp, -1, SEEK_END);
-    if (getc(fp) != ']')
-    {
-      std::fclose(fp);
-      return false;
-    }
-
-    // replace ] by ,
-    fseek(fp, -1, SEEK_END);
-    if (!isEmpty)
-      fputc(',', fp);
-
-    // add json element
-    fwrite(_json.c_str(), sizeof(char), _json.length(), fp);
-
-    // close the array
-    std::fputc(']', fp);
-    fclose(fp);
-    return true;
-  }
-  return false;
+  return blah2::data::appendJsonArray(_json, filename);
 }

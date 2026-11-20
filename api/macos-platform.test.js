@@ -2,7 +2,6 @@
 const assert = require('assert/strict');
 const {createReceiverProbes} = require('./receiver-probes');
 const {usbFromSystemProfiler} = require('./macos-receiver-probes');
-const {receiverSetupGuide} = require('./receiver-setup-guide');
 const {createGpuSetupStatus} = require('./gpu-setup');
 
 (async () => {
@@ -47,24 +46,6 @@ const {createGpuSetupStatus} = require('./gpu-setup');
     readHeader: async () => '#define SDRPLAY_API_VERSION 3.07'});
   assert.equal((await outdated.dependencyInventory({})).RspDuo.state, 'unknown',
     'An older header and library filename cannot establish the required SDK version.');
-  for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF']) {
-    const steps = receiverSetupGuide({type, capabilities: {liveCompiled: false}}, '/unused', {platform: 'darwin'});
-    assert.ok(steps.every(step => !step.command));
-    assert.ok(steps.some(step => /replay/.test(step.text)));
-    if (type === 'RspDuo') assert.ok(steps.some(step => step.link === 'https://sdrplay.com/hardware-api/'));
-  }
-  const standaloneKraken = receiverSetupGuide({type: 'Kraken', capabilities: {liveCompiled: true,
-    standaloneDistribution: true}}, '/unused', {platform: 'darwin'});
-  assert.ok(standaloneKraken.some(step => /separately installed local Heimdall companion/.test(step.text)));
-  assert.ok(!standaloneKraken.some(step => /remote Suite/.test(step.text)));
-  const brokenBundle = receiverSetupGuide({type: 'HackRF', capabilities: {liveCompiled: true,
-    runtimeLoadable: false, standaloneDistribution: true}}, '/unused', {platform: 'darwin'});
-  assert.ok(brokenBundle.some(step => /Reinstall the standalone VectorWarp package/.test(step.text)));
-  assert.ok(!brokenBundle.some(step => /Install libhackrf/.test(step.text)));
-  const bundledUsrp = receiverSetupGuide({type: 'Usrp', capabilities: {liveCompiled: true,
-    runtimeLoadable: true, standaloneDistribution: true}}, '/unused', {platform: 'darwin'});
-  assert.ok(bundledUsrp.some(step => /UHD_IMAGES_DIR/.test(step.text)));
-  assert.ok(!bundledUsrp.some(step => /Rebuild with the locally installed SDK/.test(step.text)));
   const routes = {};
   require('./receiver-routes').installReceiverRoutes({get: (key, handler) => routes[key] = handler,
     post: (key, handler) => routes[key] = handler}, {platform: 'darwin',

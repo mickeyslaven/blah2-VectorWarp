@@ -25,8 +25,8 @@ ratio.
 With `VECTORWARP_RSPDUO_CPI_QUEUE=1`, live dual-channel capture writes validated
 tuner pairs into a bounded signed16 CPI queue. The processor borrows one ready
 CPI at a time; paired queue capacity stays within the configured capture buffer.
-This keeps packed input available to the isolated mixed worker while retaining
-independent CPU recovery inputs. Without that opt-in, capture uses the existing
+This preserves paired acquisition ownership for the canonical processing pipeline
+and CPU recovery. Without that opt-in, capture uses the existing
 two `IqData` buffers. See the [Pi 4 setup profile](../../../docs/PI4_GUIDE.md)
 for the tested service environment, workload and qualification limits.
 

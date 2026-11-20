@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a tested tap from trusted main CI only; never force or rewrite history."""
+"""Publish a tested tap from an explicit main dispatch; never rewrite history."""
 import argparse
 import hashlib
 import json
@@ -26,9 +26,10 @@ def context(env, expected):
     if (env.get('GITHUB_ACTIONS') != 'true' or
             env.get('GITHUB_REPOSITORY') != SOURCE_REPO or
             env.get('GITHUB_REF') != 'refs/heads/main' or
-            env.get('GITHUB_EVENT_NAME') not in ('push', 'workflow_dispatch') or
+            env.get('GITHUB_EVENT_NAME') != 'workflow_dispatch' or
+            env.get('VECTORWARP_PUBLISH_HOMEBREW') != 'true' or
             env.get('GITHUB_SHA') != expected or not SHA.fullmatch(expected)):
-        raise ValueError('Publication requires the exact trusted main workflow SHA.')
+        raise ValueError('Publication requires an explicit opt-in and the exact trusted main workflow SHA.')
 
 
 def version_key(value):

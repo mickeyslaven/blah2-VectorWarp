@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -19,6 +20,33 @@ inline uint64_t heapBudget(uint64_t heapBytes) {
   return std::min(maximumDeviceBytes, heapBytes / 4);
 }
 
+struct AllocationPolicy {
+  uint64_t bytes = 0;
+  bool separateHostHeaps = true;
+};
+
+// A supervisor's lane reservation covers both host and device allocations.
+// Parse without stoull's whitespace/sign acceptance or an unbounded copy, and
+// never let an override enlarge the device's conservative default allowance.
+inline AllocationPolicy allocationPolicy(uint64_t heapBytes, const char* bounded) {
+  AllocationPolicy policy{heapBudget(heapBytes), bounded == nullptr};
+  if (!bounded) return policy;
+  uint64_t requested = 0;
+  unsigned count = 0;
+  for (const char* digit = bounded; *digit; ++digit) {
+    if (++count > 20 || *digit < '0' || *digit > '9')
+      throw std::invalid_argument("GPU lane allocation ceiling is invalid");
+    const uint64_t value = uint64_t(*digit - '0');
+    if (requested > (maximumDeviceBytes - value) / 10)
+      throw std::invalid_argument("GPU lane allocation ceiling exceeds policy");
+    requested = requested * 10 + value;
+  }
+  if (!count || !requested)
+    throw std::invalid_argument("GPU lane allocation ceiling must be positive");
+  policy.bytes = std::min(policy.bytes, requested);
+  return policy;
+}
+
 struct Type { uint32_t flags = 0, heap = 0; };
 struct Heap { uint64_t bytes = 0; bool device = false; };
 struct Properties { std::vector<Type> types; std::vector<Heap> heaps; };
@@ -27,11 +55,27 @@ struct Properties { std::vector<Type> types; std::vector<Heap> heaps; };
 // Types that alias one heap must share its allowance. Subtraction before the
 // comparison also rejects oversized requests without overflowing a counter.
 class AllocationBudget {
+public:
+  struct Rejection {
+    const char* reason = "none";
+    uint32_t type = noType, heap = noType;
+    uint64_t requested = 0, used = 0, heapUsed = 0, heapLimit = 0,
+      deviceUsed = 0, requiredAtLeast = 0;
+  };
+private:
   Properties properties_;
   uint64_t limit_, deviceLimit_, used_ = 0, peak_ = 0;
   uint64_t deviceUsed_ = 0, devicePeak_ = 0;
   bool separateHostHeaps_ = false;
   std::vector<uint64_t> heapUsed_;
+  Rejection rejection_;
+  bool reject(uint32_t type,uint64_t bytes,const char* reason) {
+    const uint32_t heap=type<properties_.types.size()?properties_.types[type].heap:noType;
+    rejection_={reason,type,heap,bytes,used_,heap<heapUsed_.size()?heapUsed_[heap]:0,
+      heap<properties_.heaps.size()?heapBudget(properties_.heaps[heap].bytes):0,
+      deviceUsed_,bytes>UINT64_MAX-used_?UINT64_MAX:used_+bytes};
+    return false;
+  }
 public:
   AllocationBudget(uint64_t limit, Properties properties,
       bool separateHostHeaps = false)
@@ -50,14 +94,15 @@ public:
     }
   }
   bool reserve(uint32_t type, uint64_t bytes) {
-    if (type >= properties_.types.size() || !bytes || bytes > limit_ - used_)
-      return false;
+    if (type >= properties_.types.size() || !bytes)
+      return reject(type,bytes,"invalid-request");
+    if(bytes > limit_ - used_)return reject(type,bytes,"aggregate-budget");
     const auto heap = properties_.types[type].heap;
-    if (heap >= heapUsed_.size()) return false;
+    if (heap >= heapUsed_.size()) return reject(type,bytes,"invalid-heap");
     if (separateHostHeaps_ && properties_.heaps[heap].device &&
-        bytes > deviceLimit_ - deviceUsed_) return false;
+        bytes > deviceLimit_ - deviceUsed_) return reject(type,bytes,"device-budget");
     const auto heapLimit = heapBudget(properties_.heaps[heap].bytes);
-    if (bytes > heapLimit - heapUsed_[heap]) return false;
+    if (bytes > heapLimit - heapUsed_[heap]) return reject(type,bytes,"heap-budget");
     heapUsed_[heap] += bytes; used_ += bytes; peak_ = std::max(peak_, used_);
     if (properties_.heaps[heap].device) {
       deviceUsed_ += bytes;
@@ -76,6 +121,11 @@ public:
   uint64_t deviceUsed() const { return deviceUsed_; }
   uint64_t devicePeak() const { return devicePeak_; }
   uint64_t deviceLimit() const { return deviceLimit_; }
+  const Rejection& lastRejection() const { return rejection_; }
+  void clearRejection() { rejection_={}; }
+  // Call after releasing a failed driver allocation's reservation. Distinguish
+  // actual driver exhaustion from our unchanged conservative policy ceilings.
+  void driverRejected(uint32_t type,uint64_t bytes) { reject(type,bytes,"vulkan-allocation"); }
 };
 
 inline uint32_t chooseType(uint32_t compatible, uint32_t required,

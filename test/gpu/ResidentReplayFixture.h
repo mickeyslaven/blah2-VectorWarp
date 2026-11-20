@@ -1,7 +1,7 @@
 #pragma once
 // Synthetic contract fixture, never a CPU substitute for native GPU parity.
 #include "GpuResidentWire.h"
-#include "GpuResidentHash.h"
+#include "capture/Sha256.h"
 #include "../../core/TrackBeforeDetect.private.h"
 #include <cmath>
 #include <limits>
@@ -17,8 +17,16 @@ inline ResidentReplaySnapshot fixture(const resident::Config& c,uint32_t availab
  const uint32_t passes=tbd?track_before_detect::detectorPassCount(depth):1;
  const uint32_t refinement=tbd?(c.bearing.scanBeams?c.bearing.scanBeams:c.fusion.beams*4):0;
  const uint32_t windows=(96+2*rows+cols+1)&~1u,windowWords=tbd?14:8;
+ const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
+ const double delayScale=motion.fractionalDelay?track_before_detect::delayDriftPerHz(
+  c.geometry.clutterSamples,c.fusion.frequencyHz):0;
+ const uint32_t offsetBase=windows+windowWords*cols+2*rows+2*cols;
+ const uint32_t offsetWords=tbd?track_before_detect::fractionalDelayTableWords(
+  rows,depth,motion.doppler,delayScale):0;
+ const uint32_t alphaBase=offsetBase+offsetWords,alphaStride=2*c.detector.train+1,
+  alphaWords=tbd?passes*(alphaStride+1)*2:0;
  const uint64_t lengths[]={256,1024,uint64_t(c.fusion.beams)*ch*8,uint64_t(refinement)*ch*8,
-  uint64_t(windows+windowWords*cols+2*rows+2*cols)*4,uint64_t(cells)*depth*8,
+  uint64_t(alphaBase+alphaWords)*4,uint64_t(cells)*depth*8,
   tbd&&c.detector.integrationBeamTolerance!=UINT32_MAX?uint64_t(cells)*depth*4:0,
   uint64_t(cells)*8,tbd?uint64_t(cells)*passes*8:0,uint64_t(cells)*std::max(1u,c.fusion.beams)*8,
   uint64_t(cells)*passes*40,uint64_t(cells)*16,uint64_t(cells)*ch*8,
@@ -32,10 +40,23 @@ inline ResidentReplaySnapshot fixture(const resident::Config& c,uint32_t availab
  for(size_t i=0;i<c.reference.channels.size();++i)cp.f64(64+i*16,1/std::sqrt(double(c.reference.channels.size())));
  auto metadata=writer(BlockKind::postprocessMetadata);
  metadata.u32(32*4,rows);metadata.u32(33*4,cols);metadata.u32(34*4,cells);metadata.u32(46*4,windows);
+ metadata.u32(35*4,offsetWords?offsetBase:0);
+ if(tbd){metadata.u32(54*4,alphaBase);metadata.u32(55*4,alphaStride);
+  metadata.u32(56*4,alphaBase+2*passes*alphaStride);
+  for(uint32_t pass=0;pass<passes;++pass){const uint32_t cpis=pass?track_before_detect::bankLength(pass-1):2;
+   const double pfa=track_before_detect::passPfa(c.detector.pfa,depth,motion.delay,motion.doppler,pass);
+   for(uint32_t count=1;count<alphaStride;++count)
+    metadata.f64((alphaBase+2*(pass*alphaStride+count))*4,track_before_detect::cfarAlpha(pfa,count,cpis));}}
  metadata.u32(72*4,uint32_t(c.epoch));metadata.u32(73*4,uint32_t(c.epoch>>32));metadata.u32(74*4,c.detector.integrationCpis);
- metadata.u32(75*4,c.fusion.beams);const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
+ metadata.u32(75*4,c.fusion.beams);
  metadata.u32(76*4,motion.delay);metadata.u32(77*4,c.detector.integrationBeamTolerance);
  metadata.u32(79*4,tbd?available:0);metadata.u32(84*4,windowWords);metadata.u32(93*4,motion.doppler);
+ metadata.f64(94*4,delayScale);
+ if(offsetWords)for(uint32_t row=0;row<rows;++row)for(uint32_t path=0;path<2*motion.doppler+1;++path)
+  for(uint32_t age=0;age<depth;++age){const int older=int(row)-(int(path)-int(motion.doppler))*int(age);
+   const int offset=older<0||older>=int(rows)?0:-track_before_detect::delayPathColumn(
+    0,0,age,delayScale,c.dopplerAxis[row],c.dopplerAxis[older]);
+   metadata.u32((offsetBase+(row*(2*motion.doppler+1)+path)*depth+age)*4,uint32_t(offset));}
  for(uint32_t row=0;row<rows;++row)metadata.f64((96+2*row)*4,c.dopplerAxis[row]);
  for(uint32_t j=0;j<cols;++j){metadata.u32((96+2*rows+j)*4,uint32_t(c.delayAxis[j]));
   const int n=cols,g=c.detector.guard,t=c.detector.train,k=j;const uint32_t bounds[]={uint32_t(std::max(0,k-g-t)),uint32_t(std::max(0,k-g)),uint32_t(std::min(n,k+g+1)),uint32_t(std::min(n,k+g+t+1))};
@@ -49,10 +70,11 @@ inline ResidentReplaySnapshot fixture(const resident::Config& c,uint32_t availab
  for(uint32_t slot=0;slot<depth;++slot)for(uint32_t i=0;i<cells;++i)history.f64((slot*cells+i)*8,tbd&&slot>=available?nan:double(i+1));
  if(tbd){auto banks=writer(BlockKind::temporalBanks);for(uint32_t pass=0;pass<passes;++pass){const auto length=pass?track_before_detect::bankLength(pass-1):2;
   for(uint32_t i=0;i<cells;++i)banks.f64((pass*cells+i)*8,available<length?nan:1);}}
- if(c.tracker.enabled){auto tracker=writer(BlockKind::trackerCheckpoint);tracker.u32(0,1);tracker.u32(4,trackerRecordWords(c.tracker)*4);
+ if(c.tracker.enabled){auto tracker=writer(BlockKind::trackerCheckpoint);tracker.u32(0,5);
+  tracker.u32(108,uint32_t(c.detector.integrationCpis>1));tracker.u32(4,trackerRecordWords(c.tracker)*4);
   tracker.u32(8,c.tracker.capacity);tracker.u32(12,trackerHistoryCapacity(c.tracker));tracker.u64(40,c.epoch);tracker.u64(48,frame.logicalId);tracker.u64(56,frame.consumedSequence);}
  const auto config=encodeConfig(c);std::copy(config.begin(),config.end(),s.blocks[19].bytes.begin());
  s.identity={c.epoch,frame.logicalId,frame.logicalId,frame.consumedSequence,frame.signalTimestampMs,transaction,wire::configHash(c),{}, {}};
- s.identity.moduleHash.fill(0x11);s.identity.deviceHash.fill(0x55);const auto& raw=s.blocks[13].bytes;Sha256 h;h.add(raw.data(),raw.size());s.identity.rawIqHash=h.finish();return s;
+ s.identity.moduleHash.fill(0x11);s.identity.deviceHash.fill(0x55);const auto& raw=s.blocks[13].bytes;blah2::Sha256 h;h.update(raw.data(),raw.size());s.identity.rawIqHash=h.finishBytes();return s;
 }
 }

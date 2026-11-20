@@ -1,31 +1,8 @@
 'use strict';
 
-// The recorder intentionally produces one immutable installed-array evidence
-// corpus. Bearing and detection fit different models from that corpus and must
-// retain independent qualification and activation state.
-function compactAutomation(status = {}, {autoPromoteEnabled = false,
-  forcePromotionDisabled = false} = {}) {
-  return {
-    enabled: Boolean(status.enabled),
-    state: status.state || 'disabled',
-    running: Boolean(status.running),
-    qualified: Boolean(status.qualified),
-    auto_promote_enabled: Boolean(autoPromoteEnabled),
-    promotion_allowed: forcePromotionDisabled ? false :
-      Boolean(status.qualified && autoPromoteEnabled),
-    failures: Array.isArray(status.failures) ? status.failures : [],
-    error: status.error || null,
-    last_evaluation_at: status.lastEvaluationAt || null,
-    candidate_path: status.candidatePath || null,
-    qualified_path: status.qualifiedPath || null,
-    validation_path: status.validationPath || null,
-    runtime_candidate_path: status.runtimeCandidatePath || null,
-    promotion: status.promotion || null
-  };
-}
-
-function buildArrayCalibrationStatus({config, recorderStatus, bearingStatus,
-  detectionStatus, frequencyResolvedStatus, generatedAt = Date.now()}) {
+// Read-only presentation of bounded evidence collection and configured static
+// models. Fitting and evaluation belong to explicitly invoked offline tools.
+function buildArrayCalibrationStatus({config, recorderStatus, generatedAt = Date.now()}) {
   const recorder = recorderStatus || {};
   const reference = {
     role: 'fixed-transmitter-direct-path-anchor',
@@ -38,14 +15,9 @@ function buildArrayCalibrationStatus({config, recorderStatus, bearingStatus,
     maximum_amplitude_step_db: recorder.maxReferenceAmplitudeStepDb ?? null
   };
   return {
-    schema: 'vectorwarp-array-calibration-status-v2',
+    schema: 'vectorwarp-array-calibration-status-v3',
     generated_at: generatedAt,
     frequency_hz: config.capture?.fc || null,
-    relationship: {
-      shared_evidence_corpus: true,
-      shared_fitted_model: false,
-      explanation: 'Bearing and detection use the same accepted complex array-response rows, but fit, validate, activate, and version separate models.'
-    },
     corpus: {
       role: 'installed-array-aircraft-response-corpus',
       schema: 'vectorwarp-manifold-sample-v2',
@@ -66,25 +38,21 @@ function buildArrayCalibrationStatus({config, recorderStatus, bearingStatus,
       elevation_rejections: recorder.elevationRejected || 0,
       ambiguous_matches: recorder.ambiguous || 0,
       last_write_at: recorder.lastWriteAt || null,
-      error: recorder.error || null
+      error: recorder.error || null,
+      storage_limits: recorder.storageLimits || null
     },
     reference,
     bearing: {
       purpose: 'direction-of-arrival estimation after a delay-Doppler return exists',
-      active_model: config.process?.bearing?.manifold_file || null,
-      automation: compactAutomation(bearingStatus, {
-        autoPromoteEnabled: config.process?.bearing?.manifold_automation?.auto_promote !== false
-      }),
-      progress: bearingStatus?.progress || null
+      enabled: config.process?.bearing?.enable === true,
+      active_model: config.process?.bearing?.manifold_file || null
     },
     detection: {
       purpose: 'surveillance beam-bank weighting before detection and CFAR',
-      active_model: config.process?.surveillance_fusion?.manifold_file || null,
-      automation: compactAutomation(detectionStatus, {forcePromotionDisabled: true}),
-      progress: detectionStatus?.progress || null
-    },
-    frequency_resolved: frequencyResolvedStatus || null
+      enabled: config.process?.detection?.enable === true,
+      active_model: config.process?.surveillance_fusion?.manifold_file || null
+    }
   };
 }
 
-module.exports = {compactAutomation, buildArrayCalibrationStatus};
+module.exports = {buildArrayCalibrationStatus};

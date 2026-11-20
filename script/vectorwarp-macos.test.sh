@@ -185,7 +185,7 @@ test ! -e "$TEMP/state/processor.json"
 
 # A local live Kraken profile launches the fixed foreground adapter before the
 # processor, records only that adapter, and terminates its owned child on stop.
-cp "$ROOT/config/config-kraken.yml" "$TEMP/state/config.yml"
+node "$ROOT/api/config-generate.js" Kraken >"$TEMP/state/config.yml"
 run start >/dev/null
 json_ok "$TEMP/state/kraken.json"; json_ok "$TEMP/state/processor.json"
 KRAKEN_CHILD=$(cat "$TEMP/state/kraken-child")
@@ -202,7 +202,7 @@ if kill -0 "$KRAKEN_CHILD" 2>/dev/null; then echo 'Kraken fixture child leaked a
 run open >/dev/null
 test ! -e "$TEMP/state/kraken.json" && test ! -e "$TEMP/state/processor.json"
 run stop >/dev/null
-cp "$ROOT/config/config-kraken.yml" "$TEMP/state/config.yml"
+node "$ROOT/api/config-generate.js" Kraken >"$TEMP/state/config.yml"
 if KRAKEN_FIXTURE_ERROR=1 PATH="$TEMP/tools:$PATH" VECTORWARP_MACOS_ROOT="$TEMP/root" VECTORWARP_MACOS_STATE="$TEMP/state" \
   VECTORWARP_MACOS_API_PORT="$PORT" VECTORWARP_MACOS_NODE=node "$ROOT/script/vectorwarp-macos" start >/dev/null 2>&1; then
   echo 'failed Kraken readiness accepted' >&2; exit 1

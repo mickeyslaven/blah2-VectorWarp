@@ -3,7 +3,10 @@
 #endif
 #include "GpuResidentWire.h"
 #include "GpuResidentProof.h"
-#include "GpuResidentHash.h"
+#include "capture/Sha256.h"
+#include "GpuArtifactBinding.h"
+#include "ReplayGpuQualification.h"
+#include "GpuWorkerLifetime.h"
 #include <complex>
 #include "data/meta/Constants.h"
 #include <algorithm>
@@ -35,9 +38,10 @@
 #include <unistd.h>
 
 extern char** environ;
+#include "GpuWorkerTransport.private.h"
 namespace blah2::resident {
 namespace transport {
-#include "GpuResidentTransport.private.h"
+using Clock=std::chrono::steady_clock;
 void sendPacket(int fd,const Packet& p){const auto bytes=encode(p);
 size_t sent=0;
  while(sent<bytes.size()){ssize_t n=send(fd,bytes.data()+sent,bytes.size()-sent,MSG_NOSIGNAL|MSG_DONTWAIT);
@@ -50,19 +54,14 @@ size_t sent=0;
  }}
 Packet receive(int fd,Clock::time_point deadline){std::array<uint8_t,packetBytes> bytes{};
 size_t got=0;
- while(got<bytes.size()){auto left=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-Clock::now()).count();
- if(left<=0)throw std::runtime_error("Resident worker deadline exceeded");
- pollfd poller{fd,POLLIN,0};
- int ready=poll(&poller,1,int(std::min<int64_t>(left,INT_MAX)));
- if(ready<0&&errno==EINTR)continue;
- if(ready<0)throw std::runtime_error("Resident worker poll failed");
- if(!ready)continue;
+ while(got<bytes.size()){
+ gpu_receive_deadline::waitReadable(fd,deadline,"Resident worker deadline exceeded or poll failed");
 #ifdef __APPLE__
   ssize_t n=recv(fd,bytes.data()+got,bytes.size()-got,MSG_DONTWAIT);
 #else
   ssize_t n=recv(fd,bytes.data(),bytes.size(),MSG_TRUNC|MSG_DONTWAIT);
 #endif
-  if(n<0&&(errno==EINTR||errno==EAGAIN))continue;
+ if(n<0&&(errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK))continue;
   if(n<=0)throw std::runtime_error("Resident worker stopped");
 #ifndef __APPLE__
   if(size_t(n)!=bytes.size())throw std::runtime_error("Resident worker packet length mismatch");
@@ -84,7 +83,7 @@ class Process final:public Session {
  Layout layout_;
  GpuProcessOptions options_;
  Nonce nonce_{};
- std::unique_ptr<transport::Child> child_;
+ std::unique_ptr<gpu_worker_transport::Child> child_;
  Mapping map_;
  Phase phase_=Phase::idle;
  uint64_t sequence_=0,lastLogical_=0,lastConsumed_=0,controlEvent_=0;
@@ -120,12 +119,21 @@ class Process final:public Session {
  if(expected!=Op::referenceReady&&expected!=Op::framePrepared)controlEvent_=validateControl(config_,p,result,map_.read(Section::controlEvidence),map_.read(Section::device),controlEvent_);
  return result;}
  OutputViews outputs(const Packet& p){validateEvidence(config_,p,map_.read(Section::readyEvidence),map_.read(Section::preparedEvidence),map_.read(Section::device));
+ const auto acknowledged=qualificationIdentity();const auto ready=map_.read(Section::readyEvidence);
+ require(std::memcmp(acknowledged.data()+32,ready.data+160,32)==0,
+  "Resident frame module image differs from initialized identity");
  auto v=views(map_,config_,p);
  const auto cp=referenceState(v.referenceCheckpoint);
- require(cp.epoch==config_.epoch&&cp.logicalFrame==p.frame.logicalId&&cp.samples==config_.geometry.clutterSamples&&cp.channels==config_.geometry.channels&&cp.weightCount==config_.reference.channels.size(),"Resident acknowledged reference state differs");
+ const bool array=config_.reference.mode==ReferenceMode::capturedArray;
+ require(cp.epoch==config_.epoch&&cp.logicalFrame==p.frame.logicalId&&cp.samples==config_.geometry.clutterSamples&&cp.channels==config_.inputChannels&&cp.weightCount==(array?config_.reference.channels.size():0),"Resident acknowledged reference state differs");
+ require(array||(!cp.frames&&!cp.updates&&cp.coherentFraction==0&&cp.coherentGainDb==0&&cp.scale==0),"Resident dedicated reference state is not inert");
  for(size_t i=cp.weightCount;i<cp.weights.size();++i)require(cp.weights[i]==std::complex<double>{},"Resident unused reference weight nonzero");
  if(p.phase==Phase::prepared){const auto proof=preparedProof(v.preparedEvidence);
  require(v.cfarCount==proof.postprocessStatus[6]&&v.centroidCount==proof.postprocessStatus[8]&&v.detectionCount==proof.postprocessStatus[11],"Resident metrics/device counts differ");
+ require(proof.postprocessStatus[28]==uint32_t(config_.detector.integrationCpis>1&&v.availableCpis==config_.detector.integrationCpis),
+  "Resident acknowledged temporal readiness/device history differ");
+ if(v.cfar.data)require(v.cfar.size==proof.postprocessStatus[16],"Resident CFAR diagnostic union/status differ");
+ if(v.centroid.data)require(v.centroid.size==proof.postprocessStatus[17],"Resident centroid diagnostic union/status differ");
  if(config_.tracker.enabled)require(v.trackerCheckpoint.size==proof.trackerStatus[24]&&v.trackerNoOp==(proof.trackerStatus[2]==1),"Resident tracker result/status differs");}v.delayKm={delayKm_.data(),delayKm_.size()};
  return v;}
  template<class F>decltype(auto) guarded(F&& f){try{return f();}catch(...){stop();
@@ -139,7 +147,7 @@ public:
   if(getentropy(nonce_.data(),sizeof(nonce_))||!(nonce_[0]||nonce_[1]))throw std::runtime_error("Resident session nonce unavailable");
   delayKm_.reserve(config_.delayAxis.size());
   for(auto delay:config_.delayAxis)delayKm_.push_back(1.0*delay*(Constants::c/double(config_.sampleRate))/1000);
-  child_=std::make_unique<transport::Child>(layout_.bytes,options_,[&](uint8_t* data,uint64_t size){map_={data,size_t(size),layout_};initializeMapping(map_,config_,nonce_);});
+  child_=std::make_unique<gpu_worker_transport::Child>(gpu_worker_transport::resident,layout_.bytes,options_,[&](uint8_t* data,uint64_t size){map_={data,size_t(size),layout_};initializeMapping(map_,config_,nonce_);});
   guarded([&]{deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);auto init=request(Op::initialize);transport::sendPacket(child_->fd(),init);response(init,Op::initialized,Phase::idle);});
  }
  ~Process()override{
@@ -151,17 +159,29 @@ public:
    transport::sendPacket(child_->fd(),p);
    response(p,Op::settled,Phase::settled);
   }catch(...){}
+  if(child_&&options_.offlineTransportTrace)child_->stop(true);
   stop();
  }
  const Config& config()const override{return config_;}const Layout& layout()const override{return layout_;}Phase phase()const override{return phase_;}
+ std::array<uint8_t,96> qualificationIdentity()const override{
+  std::array<uint8_t,96> identity{};const auto config=wire::configHash(config_);
+  std::copy(config.begin(),config.end(),identity.begin());
+  const auto control=map_.read(Section::controlEvidence);
+  require(control.size==controlEvidenceBytes,"Resident qualification identity lacks acknowledged module hash");
+  std::copy_n(control.data+112,16,identity.begin()+32);
+  std::copy_n(control.data+488,16,identity.begin()+48);
+  const auto device=map_.read(Section::device);blah2::Sha256 hash;
+  hash.update(device.data,device.size);const auto digest=hash.finishBytes();
+  std::copy(digest.begin(),digest.end(),identity.begin()+64);return identity;
+ }
  Span<std::complex<double>> input()override{inactive();
  auto b=map_.bytes(Section::canonical);
  return {reinterpret_cast<std::complex<double>*>(b.data),b.size/16};}
  void begin(Frame frame,uint64_t diagnosticPresence)override{inactive();
  require(!(diagnosticPresence&~diagnosticMask)&&!(diagnosticPresence&~config_.presence),"Resident requested diagnostic mask invalid");
  require(frame.logicalId&&(!haveFrame_||(frame.logicalId>lastLogical_&&frame.consumedSequence>lastConsumed_)),"Resident frame identity not advancing");
- if(config_.replay.maxBytes){const auto input=map_.read(Section::canonical);Sha256 hash;
-  hash.add(input.data,input.size);rawIqHash_=hash.finish();}
+ if(config_.replay.maxBytes){const auto input=map_.read(Section::canonical);blah2::Sha256 hash;
+  hash.update(input.data,input.size);rawIqHash_=hash.finishBytes();}
  guarded([&]{active_=request(Op::begin);active_.frame=frame;active_.tracker={};active_.diagnosticPresence=diagnosticPresence;deadline_=Clock::now()+std::chrono::milliseconds(options_.frameMs);transport::sendPacket(child_->fd(),active_);phase_=Phase::begun;});}
  OutputViews receiveReferenceReady()override{require(phase_==Phase::begun,"Resident reference acknowledgment out of order");
  return guarded([&]{auto reply=response(active_,Op::referenceReady,Phase::referenceReady);require(wire::same(reply.tracker,{}),"ReferenceReady unexpectedly carries tracker token");phase_=Phase::referenceReady;return outputs(reply);});}
@@ -169,11 +189,13 @@ public:
  return guarded([&]{auto reply=response(active_,Op::framePrepared,Phase::prepared);auto v=outputs(reply);token_=reply.tracker;phase_=Phase::prepared;return v;});}
  void commit(Token token)override{require(phase_==Phase::prepared||phase_==Phase::committed,"Resident commit outside pending frame");
  require(wire::same(token,token_),"Resident commit token differs");
- guarded([&]{auto p=request(Op::commit);p.tracker=token;transport::sendPacket(child_->fd(),p);auto r=response(p,Op::committed,Phase::committed);require(wire::same(r.tracker,token),"Resident commit acknowledgment token differs");phase_=Phase::committed;});}
+ // Prepared has completed the GPU work. Host oracles/publication may take
+ // arbitrarily longer; each new control request owns a bounded ACK window.
+ guarded([&]{auto p=request(Op::commit);p.tracker=token;deadline_=Clock::now()+std::chrono::milliseconds(options_.frameMs);transport::sendPacket(child_->fd(),p);auto r=response(p,Op::committed,Phase::committed);require(wire::same(r.tracker,token),"Resident commit acknowledgment token differs");phase_=Phase::committed;});}
  void abort(Token token)override{require(phase_==Phase::prepared&&wire::same(token,token_),"Resident abort token/state differs");
- guarded([&]{auto p=request(Op::abort);p.tracker=token;transport::sendPacket(child_->fd(),p);response(p,Op::aborted,Phase::rejected);phase_=Phase::rejected;});}
+ guarded([&]{auto p=request(Op::abort);p.tracker=token;deadline_=Clock::now()+std::chrono::milliseconds(options_.frameMs);transport::sendPacket(child_->fd(),p);response(p,Op::aborted,Phase::rejected);phase_=Phase::rejected;});}
  void published()override{require(phase_==Phase::committed,"Resident publication before commit");
- guarded([&]{auto p=request(Op::published);p.tracker=token_;transport::sendPacket(child_->fd(),p);response(p,Op::settled,Phase::settled);phase_=Phase::settled;haveFrame_=true;lastLogical_=active_.frame.logicalId;lastConsumed_=active_.frame.consumedSequence;});}
+ guarded([&]{auto p=request(Op::published);p.tracker=token_;deadline_=Clock::now()+std::chrono::milliseconds(options_.frameMs);transport::sendPacket(child_->fd(),p);response(p,Op::settled,Phase::settled);phase_=Phase::settled;haveFrame_=true;lastLogical_=active_.frame.logicalId;lastConsumed_=active_.frame.consumedSequence;});}
  std::vector<uint8_t> snapshot()override{inactive();
   require(config_.replay.maxBytes&&phase_==Phase::settled&&haveFrame_&&
    snapshotCount_<config_.replay.maxFrames&&snapshotLogical_!=active_.frame.logicalId,
@@ -185,8 +207,8 @@ public:
    resident_replay::Identity expected{config_.epoch,p.frame.logicalId,proof.residentGeneration,
     p.frame.consumedSequence,p.frame.signalTimestampMs,token_.transaction,wire::configHash(config_),{},rawIqHash_};
    std::memcpy(expected.moduleHash.data(),evidence.data+160,32);
-   const auto device=map_.read(Section::device);Sha256 deviceHash;
-   deviceHash.add(device.data,device.size);expected.deviceHash=deviceHash.finish();
+   const auto device=map_.read(Section::device);blah2::Sha256 deviceHash;
+   deviceHash.update(device.data,device.size);expected.deviceHash=deviceHash.finishBytes();
    const auto source=map_.read(Section::replaySnapshot);
    std::vector<uint8_t> copy(source.data,source.data+source.size);
    resident_replay::decode(copy.data(),copy.size(),config_,expected);
@@ -205,6 +227,15 @@ public:
   independent(reference.data,reference.size,1);
   independent(tracker.data,tracker.size,4);
   guarded([&]{auto r=map_.bytes(Section::referenceCheckpoint);std::memcpy(r.data,reference.data,256);auto p=request(Op::restore);p.frame={};p.tracker={};p.restoreTrackerSlot=0;p.diagnosticPresence=0;if(config_.tracker.enabled){const size_t recordWords=trackerRecordWords(config_.tracker);auto b=map_.bytes(Section::tracker0);require(tracker.data&&tracker.size>=trackerHeaderWords&&tracker.size<=b.size/4&&(tracker.size-trackerHeaderWords)%recordWords==0,"Resident restore checkpoint shape");wire::Reader bank{{reinterpret_cast<const uint8_t*>(tracker.data),tracker.size*4}};require(bank.u64(16)<=config_.tracker.capacity&&tracker.size==trackerHeaderWords+recordWords*bank.u64(16),"Resident restore checkpoint count differs");std::memset(b.data,0,b.size);std::memcpy(b.data,tracker.data,tracker.size*4);p.tracker.generation=bank.u64(48);}else require(!tracker.data&&!tracker.size,"Disabled tracker restore input");deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);transport::sendPacket(child_->fd(),p);response(p,Op::restored,Phase::idle);phase_=Phase::idle;haveFrame_=false;lastLogical_=lastConsumed_=0;token_={};});}
+ void resetInput()override{inactive();
+  guarded([&]{auto p=request(Op::resetInput);p.frame={};p.tracker={};p.diagnosticPresence=0;
+   deadline_=Clock::now()+std::chrono::milliseconds(options_.frameMs);
+   transport::sendPacket(child_->fd(),p);const auto reply=response(p,Op::inputReset,Phase::idle);
+   require(wire::same(reply.tracker,{}),"Resident input reset returned a stale token");
+   phase_=Phase::idle;active_={};token_={};rawIqHash_={};
+   // Keep haveFrame_/last IDs and snapshot bounds: a gap cannot replay a token.
+  });
+ }
  void stop()noexcept override{phase_=Phase::poisoned;
  if(child_)child_->stop();
  child_.reset();
@@ -215,7 +246,7 @@ public:
 std::unique_ptr<Session> createProcess(const Config& c,const GpuProcessOptions& o){return std::make_unique<Process>(c,o);}
 
 int runWorker(Factory create){
- if(!create||!transport::protectWorker())return 2;
+ if(!create||!gpu_worker_lifetime::protectWorker())return 2;
  void* address=MAP_FAILED;
  size_t bytes=0;
  Mapping map;
@@ -224,11 +255,13 @@ int runWorker(Factory create){
  bool havePacket=false;
  Phase phase=Phase::idle;
  try{
+  gpu_artifact_binding::workerStart();
+  replay_gpu_qualification::Worker qualification("resident");
   // No caller-controlled descriptor or count is dereferenced before the sealed
   // size and fixed setup prefix have been checked. The complete table is then
   // compared with the locally derived layout, including all unused bytes.
   struct stat info{};
-  require(fstat(4,&info)==0&&info.st_size>=1280+configBytes&&uint64_t(info.st_size)<=sharedLimit,"Resident shared descriptor size invalid");
+  require(fstat(4,&info)==0&&info.st_size>=1280+configBytes&&uint64_t(info.st_size)<=replaySharedLimit,"Resident shared descriptor size invalid");
 #ifndef __APPLE__
   const int seals=fcntl(4,F_GET_SEALS);
   require(seals>=0&&(seals&(F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL))==(F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL),"Resident memory descriptor is not size sealed");
@@ -274,6 +307,9 @@ int runWorker(Factory create){
   phase=next;};
   auto init=read();
   require(init.op==Op::initialize&&!init.frame.logicalId&&!init.frame.consumedSequence&&!init.frame.signalTimestampMs&&!init.diagnosticPresence&&wire::same(init.tracker,{}),"Resident first request must initialize");
+  qualification.device(config.device);
+  if(qualification.hit("startup"))throw std::runtime_error("Replay qualification resident startup rejection");
+  qualification.hit("allocation"); // Exercise the real allocator with its one-byte ceiling.
   backend=create(config,map);
   require(bool(backend),"Resident module factory returned null");
   backend->initializeEvidence(init);
@@ -293,24 +329,40 @@ int runWorker(Factory create){
    lastLogical=lastConsumed=0;
    reply(p,Op::restored,Phase::idle);
    continue;}
+   if(p.op==Op::resetInput){require(phase==Phase::idle||phase==Phase::settled,"Resident input reset while frame owned");
+   require(!p.frame.logicalId&&!p.frame.consumedSequence&&!p.frame.signalTimestampMs&&wire::same(p.tracker,{})&&!p.diagnosticPresence,"Resident input reset contains frame token");
+   backend->resetInput(p);
+   frame={};token={};frameDiagnostics=0;
+   // Preserve completed/last IDs across a capture gap, unlike checkpoint restore.
+   reply(p,Op::inputReset,Phase::idle);
+   continue;}
    if(p.op==Op::begin){require((phase==Phase::idle||phase==Phase::settled)&&p.frame.logicalId&&(!completed||(p.frame.logicalId>lastLogical&&p.frame.consumedSequence>lastConsumed))&&wire::same(p.tracker,{}),"Resident Begin frame/state invalid");
    frame=p.frame;
    frameDiagnostics=p.diagnosticPresence;
    phase=Phase::begun;
+    qualification.beforeFrame(frame.logicalId,frame.consumedSequence);
     if(!backend->prepareReference(p))throw StageRejected("Resident GPU reference rejected the frame",backend->rejectionStatus());
+    if(qualification.hit("prepare",frame.logicalId,frame.consumedSequence))
+     throw std::runtime_error("Replay qualification resident prepare rejection");
     reply(p,Op::referenceReady,Phase::referenceReady);
     // Ready bytes are immutable after its acknowledgment. Radar may now write
     // only Prepared/output storage; the canonical parent input stays owned.
     if(!backend->finishRadar(p))throw StageRejected("Resident GPU radar rejected the frame",backend->rejectionStatus());
+    if(qualification.hit("numeric-rejection",frame.logicalId,frame.consumedSequence))
+     wire::Writer{map.bytes(Section::metrics)}.f64(24,std::numeric_limits<double>::quiet_NaN());
     token=backend->preparedToken();
     require(config.tracker.enabled?(token.epoch==config.epoch&&token.transaction&&token.generation&&token.consumedSequence==frame.consumedSequence):wire::same(token,{}),"Resident prepared token invalid");
     p.tracker=token;
+    qualification.complete("frame-prepared",frame.logicalId,frame.consumedSequence);
     reply(p,Op::framePrepared,Phase::prepared);
     continue;
    }
    require(p.frame.logicalId==frame.logicalId&&p.frame.consumedSequence==frame.consumedSequence&&p.frame.signalTimestampMs==frame.signalTimestampMs&&p.diagnosticPresence==frameDiagnostics&&wire::same(p.tracker,token),"Resident transaction identity differs");
    if(p.op==Op::commit){require(phase==Phase::prepared||phase==Phase::committed,"Resident Commit without prepared transaction");
    backend->commit(p);
+   if(qualification.hit("commit",frame.logicalId,frame.consumedSequence))
+    throw std::runtime_error("Replay qualification resident commit acknowledgement rejection");
+   qualification.complete("frame-committed",frame.logicalId,frame.consumedSequence);
    reply(p,Op::committed,Phase::committed);}
    else if(p.op==Op::abort){require(phase==Phase::prepared,"Resident Abort without prepared transaction");
    backend->abort(p);

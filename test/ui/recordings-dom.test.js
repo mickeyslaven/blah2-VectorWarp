@@ -11,7 +11,9 @@ const {window} = dom;
 Object.defineProperty(window, 'innerWidth', {value: 390, configurable: true});
 window.liveApiUrl = value => value;
 window.recordingDuration = milliseconds => `00:00:${String(Math.floor(milliseconds / 1000)).padStart(2, '0')}`;
-window.scrollTo = () => {};
+let scrollOptions;
+window.scrollTo = options => { scrollOptions = options; };
+window.matchMedia = () => ({matches: true});
 window.confirm = () => true;
 window.alert = message => { throw new Error(message); };
 class FakeUpload {
@@ -76,6 +78,14 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   assert.match(window.document.getElementById('recording-operation-status').textContent,
     /replay settings, ADS-B timeline, and metadata/);
   const importInput = window.document.getElementById('recording-import');
+  const importButton = window.document.getElementById('recording-import-button');
+  let filePickerClicks = 0;
+  importInput.addEventListener('click', () => { filePickerClicks++; });
+  assert.equal(importButton.tagName, 'BUTTON', 'Import uses native keyboard activation');
+  importButton.focus();
+  assert.equal(window.document.activeElement, importButton);
+  importButton.click();
+  assert.equal(filePickerClicks, 1, 'Import activates the file picker');
   Object.defineProperty(importInput, 'files', {configurable: true,
     value: [new window.File(['test'], 'portable.blah2iq')]});
   importInput.dispatchEvent(new window.Event('change', {bubbles: true}));
@@ -91,6 +101,7 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   assert.match(replay.href, /\/display\/configuration\?replayFile=%2Frecordings%2Frecording-0\.blah2iq&replayId=id-0$/,
     'Replay carries its package identity through the canonical Settings save/restart flow');
   window.document.getElementById('recording-next').click();
+  assert.equal(scrollOptions.behavior, 'auto', 'Pagination respects reduced motion');
   await new Promise(resolve => setImmediate(resolve));
   assert.match(calls.at(-1).url, /offset=10/);
   assert.equal(window.document.querySelectorAll('.recording-card').length, 5);

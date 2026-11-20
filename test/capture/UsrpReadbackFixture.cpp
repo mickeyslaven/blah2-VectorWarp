@@ -3,9 +3,11 @@
 #include "capture/usrp/UsrpDeviceTime.h"
 #include "capture/usrp/UsrpSettings.h"
 #include "capture/usrp/UsrpStream.h"
+#include "capture/usrp/UsrpInputQuality.h"
 #include "data/meta/EventTime.h"
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <limits>
 #if defined(OVERFLOW)
@@ -70,6 +72,24 @@ void rejects(Receiver value) {
 }
 int main() {
   {
+    UsrpInputQuality quality;
+    quality.reset({41.0, 38.0});
+    std::array<std::complex<float>, 4096> first, second;
+    for (std::size_t index = 0; index < first.size(); ++index) {
+      first[index] = {.25f, -.5f};
+      second[index] = {index % 1024 == 0 ? -1.0f : .125f, .25f};
+    }
+    for (unsigned block = 0; block < 512; ++block)
+      quality.observe(first.data(), second.data(), first.size());
+    const auto input = quality.snapshot();
+    assert(input.available);
+    assert(input.channels[0].gainDb == 41.0 && input.channels[1].gainDb == 38.0);
+    assert(input.channels[0].sampledComponents >= 131072);
+    assert(input.channels[0].railFraction == 0.0 && input.channels[1].railFraction > 0.0);
+    assert(std::abs(input.channels[0].p999Fraction - .5) < .002);
+    assert(std::abs(input.channels[0].rmsFraction - std::sqrt(.15625)) < .001);
+  }
+  {
     const auto event = blah2::usrp_cpi_midpoint_time(3, 40000000, 7, 14,
       2000000, "internal", "internal", "B210", "A:A A:B");
     assert(event.deviceTimeAvailable && !event.estimateAvailable);
@@ -89,6 +109,11 @@ int main() {
   struct Time {
     int64_t tick = 0;
     int64_t to_ticks(double) const { return tick; }
+    double get_real_secs() const { return double(tick) / 2000000.0; }
+    int64_t get_full_secs() const { return tick / 2000000; }
+    double get_frac_secs() const {
+      return double(tick % 2000000) / 2000000.0;
+    }
   };
   struct TimedMetadata {
     bool has_time_spec = true;
@@ -119,6 +144,102 @@ int main() {
     deviceTime.commit(candidate); deviceTime.commit(continuation);
     assert(deviceTime.snapshot().available && deviceTime.snapshot().epoch == 1 &&
       deviceTime.snapshot().samples == 14);
+  }
+  {
+    struct FractionalTime {
+      double seconds = 0;
+      int64_t to_ticks(double rate) const {
+        return std::llround(seconds * rate);
+      }
+      double get_real_secs() const { return seconds; }
+      int64_t get_full_secs() const {
+        return static_cast<int64_t>(std::floor(seconds));
+      }
+      double get_frac_secs() const { return seconds - std::floor(seconds); }
+    };
+    struct FractionalMetadata {
+      bool has_time_spec = true;
+      FractionalTime time_spec;
+    };
+    constexpr double requestedRate = 24576000.0;
+    constexpr double appliedRate = 24576000.13882506;
+    constexpr uint64_t blockSamples = 4092;
+    UsrpDeviceTime requestedClock(requestedRate);
+    for (uint64_t block = 0; block < 30000; ++block) {
+      const FractionalMetadata metadata{true,
+        {static_cast<double>(block * blockSamples) / requestedRate}};
+      const auto requested = requestedClock.validate(metadata, blockSamples);
+      requestedClock.commit(requested);
+    }
+    assert(requestedClock.snapshot().samples == 30000 * blockSamples);
+    // Relative continuity must retain sub-sample precision at epoch-sized UHD
+    // times; converting the absolute timestamp to double first does not.
+    struct SplitTime {
+      int64_t whole = 0;
+      double fractional = 0;
+      int64_t to_ticks(double rate) const {
+        return std::llround(static_cast<long double>(whole) * rate +
+          static_cast<long double>(fractional) * rate);
+      }
+      double get_real_secs() const { return whole + fractional; }
+      int64_t get_full_secs() const { return whole; }
+      double get_frac_secs() const { return fractional; }
+    };
+    struct SplitMetadata { bool has_time_spec = true; SplitTime time_spec; };
+    UsrpDeviceTime epochClock(requestedRate);
+    constexpr int64_t epoch = 1700000000;
+    for (const int64_t offset : {1, 3, 5}) {
+      UsrpDeviceTime offsetClock(requestedRate);
+      const auto first = offsetClock.validate(SplitMetadata{true,
+        {epoch, static_cast<double>(offset) / requestedRate}}, blockSamples);
+      assert(first.firstTick == epoch * int64_t(requestedRate) + offset);
+    }
+    for (uint64_t block = 0; block < 30000; ++block) {
+      const long double offset = static_cast<long double>(block * blockSamples) /
+        requestedRate;
+      const auto whole = static_cast<int64_t>(std::floor(offset));
+      const SplitMetadata metadata{true,
+        {epoch + whole, static_cast<double>(offset - whole)}};
+      const auto observed = epochClock.validate(metadata, blockSamples);
+      epochClock.commit(observed);
+    }
+    assert(epochClock.snapshot().samples == 30000 * blockSamples);
+    // Once an epoch is established, continuity uses only split relative time;
+    // an opaque absolute conversion must never be invoked again.
+    struct NoAbsoluteTime {
+      int64_t whole = 0;
+      double fractional = 0;
+      int64_t to_ticks(double) const { throw std::runtime_error("unexpected absolute conversion"); }
+      int64_t get_full_secs() const { return whole; }
+      double get_frac_secs() const { return fractional; }
+    };
+    struct NoAbsoluteMetadata { bool has_time_spec = true; NoAbsoluteTime time_spec; };
+    const auto continued = epochClock.validate(NoAbsoluteMetadata{true,
+      {epoch + 4, static_cast<double>(30000 * blockSamples) / requestedRate - 4}},
+      blockSamples);
+    assert(continued.firstTick == epochClock.snapshot().nextTick);
+    for (const auto fractional : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.0}) {
+      bool rejected = false;
+      try { epochClock.validate(NoAbsoluteMetadata{true, {epoch, fractional}}, blockSamples); }
+      catch (const std::exception&) { rejected = true; }
+      assert(rejected);
+    }
+    UsrpDeviceTime overflowClock(1.0);
+    bool overflowRejected = false;
+    try { overflowClock.validate(NoAbsoluteMetadata{true,
+      {std::numeric_limits<int64_t>::max(), .75}}, 1); }
+    catch (const std::exception&) { overflowRejected = true; }
+    assert(overflowRejected);
+    // A sub-hertz readback residue must not accumulate into false gaps.
+    UsrpDeviceTime residueClock(requestedRate);
+    residueClock.configure_sample_rate(appliedRate);
+    for (uint64_t block = 0; block < 30000; ++block) {
+      const FractionalMetadata metadata{true,
+        {static_cast<double>(block * blockSamples) / requestedRate}};
+      const auto observation = residueClock.validate(metadata, blockSamples);
+      residueClock.commit(observation);
+    }
+    assert(residueClock.snapshot().samples == 30000 * blockSamples);
   }
   struct Metadata {
     enum Error { ERROR_CODE_NONE, TIMEOUT, OVERFLOW, BROKEN_CHAIN, BAD_PACKET };
@@ -209,5 +330,5 @@ int main() {
   }
   Receiver count; count.count = 1; rejects(count);
   Receiver mapping; mapping.spec.value = "A:B A:A"; rejects(mapping);
-  std::cout << "UHD mocked setter/readback, topology attestation and device-time continuity passed. No hardware opened.\n";
+  std::cout << "UHD mocked input-quality, setter/readback, topology attestation and device-time continuity passed. No hardware opened.\n";
 }

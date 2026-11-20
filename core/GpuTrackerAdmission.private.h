@@ -3,8 +3,17 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include "process/tracker/ConfirmationContract.h"
+#include "process/tracker/AssociationContract.h"
 
 namespace gpu_tracker {
+inline constexpr uint32_t persistenceHeaderWords=12,persistenceCellWords=3;
+inline uint64_t persistenceStateWords(uint32_t cells){return 1u+uint64_t(cells)*persistenceCellWords;}
+inline uint64_t persistenceBytes(bool enabled,uint32_t cells){
+ // Immutable policy plus two transactional occupied-count/cell banks. The
+ // candidate is copied from committed state, then promoted with the track bank.
+ return (persistenceHeaderWords+(enabled?2u*persistenceStateWords(cells):0u))*sizeof(uint32_t);
+}
 // Fine-bearing evidence requires a primary lobe. Secondary and tertiary lobes
 // are optional (zero) but, when present, must be inside the configured bank.
 inline constexpr const char* fineSpatialInvalidGlsl=
@@ -16,93 +25,6 @@ inline bool validFineSpatialEvidence(uint32_t spatial,uint32_t fineBeams){
 struct InitiationAdmission {
  uint32_t unmatched=0,admittedDetections=0,droppedDetections=0,initiatedTracks=0,totalTracks=0;
 };
-
-struct DopplerCombBirth {
- double delay=0;
- uint32_t dopplerRow=0;
- double snr=0;
- bool unmatched=true;
-};
-
-inline bool dopplerCombBirthEligible(const DopplerCombBirth* detections,
- uint32_t count,uint32_t candidate,uint32_t rowRadius=3,
- double minimumDelaySeparation=4.0,uint32_t minimumCluster=3){
- if(!detections||candidate>=count||minimumCluster<2||
-    !std::isfinite(minimumDelaySeparation)||minimumDelaySeparation<0)
-  throw std::invalid_argument("GPU tracker Doppler-comb admission invalid");
- if(!detections[candidate].unmatched)return false;
- uint32_t cluster=1,winner=candidate;
- for(uint32_t i=0;i<count;++i){
-  if(i==candidate||!detections[i].unmatched)continue;
-  const uint32_t rowDelta=detections[i].dopplerRow>detections[candidate].dopplerRow?
-   detections[i].dopplerRow-detections[candidate].dopplerRow:
-   detections[candidate].dopplerRow-detections[i].dopplerRow;
-  if(rowDelta>rowRadius||
-     std::abs(detections[i].delay-detections[candidate].delay)<minimumDelaySeparation)continue;
-  cluster++;
-  if(detections[i].snr>detections[winner].snr||
-     (detections[i].snr==detections[winner].snr&&i<winner))winner=i;
- }
- return cluster<minimumCluster||winner==candidate;
-}
-
-inline bool rangeCombBirthEligible(const DopplerCombBirth* detections,
- uint32_t count,uint32_t candidate,double delayRadius=.5,
- uint32_t minimumRowSeparation=4,uint32_t minimumCluster=3){
- if(!detections||candidate>=count||minimumCluster<2||
-    !std::isfinite(delayRadius)||delayRadius<0||!minimumRowSeparation)
-  throw std::invalid_argument("GPU tracker range-comb admission invalid");
- if(!detections[candidate].unmatched)return false;
- uint32_t cluster=1,winner=candidate;
- for(uint32_t i=0;i<count;++i){
-  if(i==candidate||!detections[i].unmatched||
-     std::abs(detections[i].delay-detections[candidate].delay)>delayRadius)continue;
-  const uint32_t rowDelta=detections[i].dopplerRow>detections[candidate].dopplerRow?
-   detections[i].dopplerRow-detections[candidate].dopplerRow:
-   detections[candidate].dopplerRow-detections[i].dopplerRow;
-  if(rowDelta<minimumRowSeparation)continue;
-  cluster++;
-  if(detections[i].snr>detections[winner].snr||
-     (detections[i].snr==detections[winner].snr&&i<winner))winner=i;
- }
- return cluster<minimumCluster||winner==candidate;
-}
-
-inline bool rangeCombAmbiguous(const DopplerCombBirth* detections,
- uint32_t count,uint32_t candidate,double delayRadius=.5,
- uint32_t minimumRowSeparation=4){
- if(!detections||candidate>=count||!std::isfinite(delayRadius)||delayRadius<0||
-    !minimumRowSeparation)
-  throw std::invalid_argument("GPU tracker range-comb ambiguity invalid");
- for(uint32_t i=0;i<count;++i){
-  if(i==candidate||std::abs(detections[i].delay-detections[candidate].delay)>delayRadius)
-   continue;
-  const uint32_t rowDelta=detections[i].dopplerRow>detections[candidate].dopplerRow?
-   detections[i].dopplerRow-detections[candidate].dopplerRow:
-   detections[candidate].dopplerRow-detections[i].dopplerRow;
-  if(rowDelta>=minimumRowSeparation)return true;
- }
- return false;
-}
-
-inline bool dopplerRidgeHasBirthCapacity(const DopplerCombBirth* tracks,
- uint32_t count,const DopplerCombBirth& candidate,uint32_t rowRadius=3,
- double minimumDelaySeparation=4.0,uint32_t maximumExisting=2){
- if((count&&!tracks)||!maximumExisting||
-    !std::isfinite(minimumDelaySeparation)||minimumDelaySeparation<0)
-  throw std::invalid_argument("GPU tracker Doppler-ridge capacity invalid");
- uint32_t siblings=0;
- for(uint32_t i=0;i<count;++i){
-  if(!tracks[i].unmatched)continue;
-  const uint32_t rowDelta=tracks[i].dopplerRow>candidate.dopplerRow?
-   tracks[i].dopplerRow-candidate.dopplerRow:
-   candidate.dopplerRow-tracks[i].dopplerRow;
-  if(rowDelta<=rowRadius&&
-     std::abs(tracks[i].delay-candidate.delay)>=minimumDelaySeparation&&
-     ++siblings>=maximumExisting)return false;
- }
- return true;
-}
 
 struct StationaryRetirementPolicy {
  uint32_t samples=0;
@@ -127,7 +49,7 @@ inline StationaryRetirementPolicy stationaryRetirementPolicy(bool enabled,
  // bounded evidence interval used by the birth map, while retaining the track
  // so it can recover after leaving the cell. Require at least 75% associated
  // samples, one delay unit of spread and at most one-and-a-half Doppler cells.
- return {persistenceCpis,std::max(2u,(3u*persistenceCpis+3u)/4u),
+ return {persistenceCpis,tracker_quarantine::quarantineMinimumAssociated(persistenceCpis),
   1.0,1.5/cpiSeconds};
 }
 
@@ -154,24 +76,6 @@ inline bool persistentRidgeContains(uint32_t learnedCell,uint32_t candidateCell,
  return delayDelta<=delayRadius&&rowDelta<=dopplerRadius;
 }
 
-// One credit leaks per four missed CPIs. Recurrence with short CFAR/quantizer
-// gaps therefore accumulates, while one-off occupancy is gone before it can
-// affect a later independent arrival.
-constexpr uint32_t persistentLeakCpis=4;
-
-inline uint32_t persistentEvidence(uint32_t packed,uint16_t frame){
- const uint32_t streak=packed&65535u,last=packed>>16u;
- const uint32_t age=(uint32_t(frame)-last)&65535u;
- const uint32_t missed=age?age-1u:0u;
- const uint32_t leaked=missed/persistentLeakCpis;
- return !packed||leaked>=streak?0u:streak-leaked;
-}
-
-inline uint32_t advancePersistentStreak(uint32_t packed,uint16_t frame){
- if(packed&&(packed>>16u)==frame)return packed;
- const uint32_t decayed=persistentEvidence(packed,frame);
- return (uint32_t(frame)<<16u)|std::min(65535u,decayed+1u);
-}
 
 inline InitiationAdmission boundInitiations(uint32_t capacity,uint32_t retained,
  uint32_t unmatched,uint32_t hypotheses){

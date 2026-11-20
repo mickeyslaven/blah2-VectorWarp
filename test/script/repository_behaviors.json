@@ -1,0 +1,261 @@
+{
+  "schema_version": 2,
+  "purpose": "Seed assertion obligations for repository refactor routing; consumed by repository_intelligence.py. Each cell explicitly lists assertion IDs or a pending binding reason. Unique source anchors are lexical evidence only; commands and bound cells are never execution receipts. Variants are named seed obligations, not an exhaustive platform/receiver/backend cross-product.",
+  "behaviors": [
+    {
+      "id": "canonical-radar",
+      "required_inputs": {"exact-candidate-build":"Existing build directory whose source identity and configured CTest inventory match this candidate; configure/build requires the normal resource gate."},
+      "contract": "Shared direct/channelized maps, detections, tracks, disabled stages and reset; receiver/backend differences require numerical and lifecycle parity.",
+      "owners": ["native-runtime","native-pipeline","canonical-data","native-ambiguity","native-integration","native-detection","native-tracker","native-fusion"],
+      "checks": {
+        "positive": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(multiIlluminatorRadar|productionRawIqParity)$","--output-on-failure"],"files":["test/unit/process/analysis/TestMultiIlluminatorRadar.cpp","test/unit/process/analysis/TestProductionRawIq.cpp"],"assertions":["canonical-radar.frontend-reference"]}],
+        "negative": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^multiIlluminatorRadar$","--output-on-failure"],"files":["test/unit/process/analysis/TestMultiIlluminatorRadar.cpp"],"assertions":["canonical-radar.invalid-statistic"]}],
+        "reset_failure": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^multiIlluminatorRadar$","--output-on-failure"],"files":["test/unit/process/analysis/TestMultiIlluminatorRadar.cpp"],"assertions":["canonical-radar.explicit-history-reset"]}],
+        "cross_adapter": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^productionRawIqParity$","--output-on-failure"],"files":["test/unit/process/analysis/TestProductionRawIq.cpp"],"assertions":["canonical-radar.raw-map-parity"]}]
+      },
+      "pending": "Source assertions are seeded; verify exact configured CTest selection and add missing bindings before migration. Native build, backend/device parity and live detection/track acceptance are pending.",
+      "variants": ["direct","channelized"],
+      "assertions": [
+        {"id":"canonical-radar.frontend-reference","facet":"positive","outcome":"Prepared frontend reference samples match the explicit oracle.","file":"test/unit/process/analysis/TestProductionRawIq.cpp","anchor":"REQUIRE(projectedActual.view_data() == projectedExpected.view_data());"},
+        {"id":"canonical-radar.invalid-statistic","facet":"negative","outcome":"The canonical ridge-birth filter refuses unavailable resident products.","file":"test/unit/process/analysis/TestMultiIlluminatorRadar.cpp","anchor":"REQUIRE_THROWS_AS(validateDopplerRidgeAdmission(resident, true), std::invalid_argument);"},
+        {"id":"canonical-radar.explicit-history-reset","facet":"reset_failure","outcome":"After a capture discontinuity, canonical direct and channelized temporal histories restart from the same bounded warm-up depth.","file":"test/unit/process/analysis/TestMultiIlluminatorRadar.cpp","anchor":"REQUIRE(lane.detectorIntegration->availableCpis == std::min<uint64_t>(phase + 1,depth));"},
+        {"id":"canonical-radar.raw-map-parity","facet":"cross_adapter","outcome":"Raw-IQ orchestration preserves the reference map values.","file":"test/unit/process/analysis/TestProductionRawIq.cpp","anchor":"REQUIRE(right->data == left->data);"}
+      ],
+      "variant_cells": {
+        "direct": {"positive":["canonical-radar.frontend-reference"],"negative":{"pending":"The selected assertion exercises the canonical admission helper; direct runtime refusal still needs a named assertion."},"reset_failure":["canonical-radar.explicit-history-reset"],"cross_adapter":["canonical-radar.raw-map-parity"]},
+        "channelized": {"positive":["canonical-radar.frontend-reference"],"negative":["canonical-radar.invalid-statistic"],"reset_failure":["canonical-radar.explicit-history-reset"],"cross_adapter":["canonical-radar.raw-map-parity"]}
+      }
+    },
+    {
+      "id": "settings-transaction",
+      "contract": "One settings identity, admission/default/persistence lifecycle and supported capability mapping.",
+      "owners": ["configuration-policy","configuration-data","ui-settings","receiver-control-api","runtime-api"],
+      "checks": {
+        "positive": [{"command":["node","api/config-settings-matrix.test.js"],"files":["api/config-settings-matrix.test.js"],"assertions":["settings-transaction.field-inventory"]}],
+        "negative": [{"command":["node","api/config-manager.test.js"],"files":["api/config-manager.test.js"],"assertions":["settings-transaction.unsupported-receiver"]}],
+        "reset_failure": [{"command":["node","api/config-recovery.test.js"],"files":["api/config-recovery.test.js"],"assertions":["settings-transaction.recovery-preserves-bytes"]}],
+        "cross_adapter": [{"command":["node","test/ui/settings-platform-matrix-dom.test.js"],"files":["test/ui/settings-platform-matrix-dom.test.js"],"assertions":["settings-transaction.os-control-parity"]}]
+      },
+      "pending": "Run and review exact candidate; visible page/setting/action and screenshot matrix remains a separate acceptance gate.",
+      "variants": ["linux","darwin"],
+      "assertions": [
+        {"id":"settings-transaction.field-inventory","facet":"positive","outcome":"Every required field occurs in the generated receiver/profile matrix.","file":"api/config-settings-matrix.test.js","anchor":"assert.deepEqual(missing, [], `schema fields missing from shipped/profile matrix: ${missing.join(', ')}`);"},
+        {"id":"settings-transaction.unsupported-receiver","facet":"negative","outcome":"Unconfigured receiver selection produces an explicit admission error.","file":"api/config-manager.test.js","anchor":"assert.ok(firstRun.errors.includes('capture.device.type is not supported'));"},
+        {"id":"settings-transaction.recovery-preserves-bytes","facet":"reset_failure","outcome":"Reading malformed configuration preserves its bytes.","file":"api/config-recovery.test.js","anchor":"assert.equal(fs.readFileSync(file, 'utf8'), raw, 'Recovery must not silently rewrite YAML');"},
+        {"id":"settings-transaction.os-control-parity","facet":"cross_adapter","outcome":"Linux and macOS settings fixtures retain identical control inventories.","file":"test/ui/settings-platform-matrix-dom.test.js","anchor":"if (inventories.has(key)) assert.deepEqual(inventory, inventories.get(key), `${identity}: canonical OS parity`);"}
+      ],
+      "variant_cells": {
+        "linux": {"positive":["settings-transaction.field-inventory"],"negative":["settings-transaction.unsupported-receiver"],"reset_failure":["settings-transaction.recovery-preserves-bytes"],"cross_adapter":["settings-transaction.os-control-parity"]},
+        "darwin": {"positive":["settings-transaction.field-inventory"],"negative":["settings-transaction.unsupported-receiver"],"reset_failure":["settings-transaction.recovery-preserves-bytes"],"cross_adapter":["settings-transaction.os-control-parity"]}
+      }
+    },
+    {
+      "id": "product-session-and-display",
+      "contract": "Maps, tracks and truth retain exact session/frame alignment, freshness, partial failure and lifecycle semantics.",
+      "owners": ["runtime-api","geolocation-api","ui-shared","ui-insights","ui-presentation"],
+      "checks": {
+        "positive": [{"command":["node","api/presentation-history.test.js"],"files":["api/presentation-history.test.js"],"assertions":["product-session-and-display.terminal-history"]}],
+        "negative": [{"command":["node","test/ui/frame-updates.test.js"],"files":["test/ui/frame-updates.test.js"],"assertions":["product-session-and-display.runtime-cadence"]}],
+        "reset_failure": [{"command":["node","api/producer-session-reset.test.js"],"files":["api/producer-session-reset.test.js"],"assertions":["product-session-and-display.fusion-reset"]}],
+        "cross_adapter": [{"command":["node","test/ui/map-drawers-dom.test.js"],"files":["test/ui/map-drawers-dom.test.js"],"assertions":["product-session-and-display.map-slice-retention"]}]
+      },
+      "pending": "Owner outcome review must distinguish local maps, geographic math, network tracks and display-only truth. No inference-feature truth is authorized.",
+      "variants": ["local","federated","display-truth"],
+      "assertions": [
+        {"id":"product-session-and-display.terminal-history","facet":"positive","outcome":"A terminal timing product does not enter presentation history.","file":"api/presentation-history.test.js","anchor":"assert.equal(session.histories.timing.exact(2), null);"},
+        {"id":"product-session-and-display.runtime-cadence","facet":"negative","outcome":"Display cadence reads runtime configuration and status.","file":"test/ui/frame-updates.test.js","anchor":"assert.ok(page.requests.every(path => ['/api/runtime/config', '/api/system/status'].includes(path)), 'Never schedule from the saved/editor config');"},
+        {"id":"product-session-and-display.fusion-reset","facet":"reset_failure","outcome":"Producer reset clears geographic fusion tracks and key.","file":"api/producer-session-reset.test.js","anchor":"assert.equal(fusion.tracks.size, 0); assert.equal(fusion.lastKey, null);"},
+        {"id":"product-session-and-display.map-slice-retention","facet":"cross_adapter","outcome":"The source guard refuses obsolete geographic track-slice rendering.","file":"test/ui/map-drawers-dom.test.js","anchor":"assert.doesNotMatch(source, /location-radar-track-slice|location-radar-track-ribs|sliceAltitudes/,"}
+      ],
+      "variant_cells": {
+        "local": {"positive":["product-session-and-display.terminal-history"],"negative":["product-session-and-display.runtime-cadence"],"reset_failure":["product-session-and-display.fusion-reset"],"cross_adapter":["product-session-and-display.map-slice-retention"]},
+        "federated": {"positive":{"pending":"Remote session alignment needs a named federation assertion."},"negative":["product-session-and-display.runtime-cadence"],"reset_failure":["product-session-and-display.fusion-reset"],"cross_adapter":{"pending":"A source guard for local map rendering does not establish federation parity."}},
+        "display-truth": {"positive":{"pending":"Display-only truth alignment and isolation need a dedicated assertion binding."},"negative":{"pending":"Display-only truth alignment and isolation need a dedicated assertion binding."},"reset_failure":{"pending":"Display-only truth alignment and isolation need a dedicated assertion binding."},"cross_adapter":{"pending":"Display-only truth alignment and isolation need a dedicated assertion binding."}}
+      }
+    },
+    {
+      "id": "recording-replay-lifecycle",
+      "contract": "Recorded identity/topology and bounded child/peer lifetime survive replay refusal, timeout, loss, reset and cleanup.",
+      "owners": ["capture-recording","recording-api","ui-recordings","replay-evidence-tools"],
+      "checks": {
+        "positive": [{"command":["python3","-m","unittest","test.script.test_replay_session"],"files":["test/script/test_replay_session.py"],"assertions":["recording-replay-lifecycle.graceful-reap"]}],
+        "negative": [{"command":["python3","-m","unittest","test.script.test_run_isolated_iq_replay"],"files":["test/script/test_run_isolated_iq_replay.py"],"assertions":["recording-replay-lifecycle.replacement-refusal"]}],
+        "reset_failure": [{"command":["python3","-m","unittest","test.script.test_replay_session"],"files":["test/script/test_replay_session.py"],"assertions":["recording-replay-lifecycle.private-worker-cleanup"]}],
+        "cross_adapter": [{"command":["node","api/recording-replay-topology.test.js"],"files":["api/recording-replay-topology.test.js"],"assertions":["recording-replay-lifecycle.array-topology"]}]
+      },
+      "pending": "Mock-child tests do not qualify installed Linux/macOS replay, recording ABI or exact-IQ backend parity.",
+      "variants": ["linux","darwin"],
+      "assertions": [
+        {"id":"recording-replay-lifecycle.graceful-reap","facet":"positive","outcome":"A replay child reaches the recorded graceful EOF shutdown.","file":"test/script/test_replay_session.py","anchor":"self.assertEqual(self.session.receipt[\"shutdown\"], \"graceful-eof-stop\")"},
+        {"id":"recording-replay-lifecycle.replacement-refusal","facet":"negative","outcome":"Replacing a pinned binary during replay fails the run.","file":"test/script/test_run_isolated_iq_replay.py","anchor":"self.assertIn(\"pinned artifact changed\", result[\"error\"])"},
+        {"id":"recording-replay-lifecycle.private-worker-cleanup","facet":"reset_failure","outcome":"Forced cleanup signals only the private replay process group.","file":"test/script/test_replay_session.py","anchor":"self.assertTrue(all(call.args[0] == self.session.process.pid for call in kill.call_args_list))"},
+        {"id":"recording-replay-lifecycle.array-topology","facet":"cross_adapter","outcome":"USRP and RSPduo array replay topology preserves both surveillance inputs.","file":"api/recording-replay-topology.test.js","anchor":"}, `${type} array recordings preserve both surveillance inputs`);"}
+      ],
+      "variant_cells": {
+        "linux": {"positive":["recording-replay-lifecycle.graceful-reap"],"negative":["recording-replay-lifecycle.replacement-refusal"],"reset_failure":["recording-replay-lifecycle.private-worker-cleanup"],"cross_adapter":["recording-replay-lifecycle.array-topology"]},
+        "darwin": {"positive":["recording-replay-lifecycle.graceful-reap"],"negative":["recording-replay-lifecycle.replacement-refusal"],"reset_failure":["recording-replay-lifecycle.private-worker-cleanup"],"cross_adapter":["recording-replay-lifecycle.array-topology"]}
+      }
+    },
+    {
+      "id": "artifact-release-identity",
+      "contract": "One artifact plan preserves exact package members and provenance, OS adapters, rollback/refusal and qualification-bound soak.",
+      "owners": ["build-release","build-integration","installation","release-ci","operational-tools"],
+      "checks": {
+        "positive": [{"command":["python3","-m","unittest","test.packaging.test_artifact_plan"],"files":["test/packaging/test_artifact_plan.py"],"assertions":["artifact-release-identity.package-members"]}],
+        "negative": [{"command":["python3","-m","unittest","test.packaging.test_release_ci"],"files":["test/packaging/test_release_ci.py"],"assertions":["artifact-release-identity.foreign-ci-refusal"]}],
+        "reset_failure": [{"command":["python3","-m","unittest","test.script.test_soak_identity"],"files":["test/script/test_soak_identity.py"],"assertions":["artifact-release-identity.artifact-identity"]}],
+        "cross_adapter": [{"command":["python3","-m","unittest","test.script.test_two_node_soak"],"files":["test/script/test_two_node_soak.py"],"assertions":["artifact-release-identity.soak-advancement"]}]
+      },
+      "pending": "Source fixtures are not actual platform build/install/upgrade/signing, physical GPU qualification or uninterrupted live soak.",
+      "variants": ["linux","darwin"],
+      "assertions": [
+        {"id":"artifact-release-identity.package-members","facet":"positive","outcome":"Build, install and package validation retain the selected backend profile.","file":"test/packaging/test_artifact_plan.py","anchor":"self.assertEqual(value[\"backend\"], backend)"},
+        {"id":"artifact-release-identity.foreign-ci-refusal","facet":"negative","outcome":"CI source, branch, repository and workflow identity mismatches are refused.","file":"test/packaging/test_release_ci.py","anchor":"with self.subTest(change=change), self.assertRaises(ValueError):"},
+        {"id":"artifact-release-identity.artifact-identity","facet":"reset_failure","outcome":"Loaded module identity refuses a disk inode replacement.","file":"test/script/test_soak_identity.py","anchor":"with self.assertRaisesRegex(ValueError, \"inode\"):"},
+        {"id":"artifact-release-identity.soak-advancement","facet":"cross_adapter","outcome":"The soak evaluator counts advancing CPIs across observations.","file":"test/script/test_two_node_soak.py","anchor":"self.assertEqual(observation[\"advancement\"], 10)"}
+      ],
+      "variant_cells": {
+        "linux": {"positive":["artifact-release-identity.package-members"],"negative":["artifact-release-identity.foreign-ci-refusal"],"reset_failure":["artifact-release-identity.artifact-identity"],"cross_adapter":["artifact-release-identity.soak-advancement"]},
+        "darwin": {"positive":{"pending":"The package-members fixture builds Linux .so/systemd artifacts; bind a macOS package-members assertion."},"negative":["artifact-release-identity.foreign-ci-refusal"],"reset_failure":{"pending":"The loaded-module identity fixture parses Linux proc/maps and .so paths; bind a macOS loaded-module identity assertion."},"cross_adapter":["artifact-release-identity.soak-advancement"]}
+      }
+    },
+    {
+      "id": "repository-retention",
+      "contract": "One current owner per behavior, no obsolete or generated copies, sealed exact downward ratchets and provenance-bound routing.",
+      "owners": ["repository-governance"],
+      "checks": {
+        "positive": [{"command":["python3","-m","unittest","discover","-s","test/script","-p","test_canonical_processing_architecture.py"],"files":["test/script/test_canonical_processing_architecture.py"],"assertions":["repository-retention.shared-stage-owners"]}],
+        "negative": [{"command":["python3","-m","unittest","discover","-s","test/script","-p","test_repository_intelligence.py"],"files":["test/script/test_repository_intelligence.py"],"assertions":["repository-retention.owner-refusal"]}],
+        "reset_failure": [{"command":["python3","-m","unittest","discover","-s","test/script","-p","test_repository_intelligence.py"],"files":["test/script/test_repository_intelligence.py"],"assertions":["repository-retention.snapshot-refusal"]}],
+        "cross_adapter": [{"command":["python3","-m","unittest","discover","-s","test/script","-p","test_canonical_processing_architecture.py"],"files":["test/script/test_canonical_processing_architecture.py"],"assertions":["repository-retention.shared-factories"]}]
+      },
+      "pending": "Independent review and exact budget adjustments; test guards do not replace behavioral or physical acceptance.",
+      "variants": ["source","configured-inventory"],
+      "assertions": [
+        {"id":"repository-retention.shared-stage-owners","facet":"positive","outcome":"Publication cannot duplicate the canonical processing owners.","file":"test/script/test_canonical_processing_architecture.py","anchor":"self.assertFalse(forbidden in main, f\"publication owns {forbidden}\")"},
+        {"id":"repository-retention.owner-refusal","facet":"negative","outcome":"A production source without an owner cannot be inventoried.","file":"test/script/test_repository_intelligence.py","anchor":"with self.assertRaisesRegex(ValueError, 'no canonical production owner'):"},
+        {"id":"repository-retention.snapshot-refusal","facet":"reset_failure","outcome":"Concurrent source mutation cannot seal a mixed graph.","file":"test/script/test_repository_intelligence.py","anchor":"with self.assertRaisesRegex(ValueError, 'source changed during extraction'):"},
+        {"id":"repository-retention.shared-factories","facet":"cross_adapter","outcome":"Direct ingress and canonical signal banks call the shared factories.","file":"test/script/test_canonical_processing_architecture.py","anchor":"self.assertTrue(call in source, f\"{label}: missing {call}\")"}
+      ],
+      "variant_cells": {
+        "source": {"positive":["repository-retention.shared-stage-owners"],"negative":["repository-retention.owner-refusal"],"reset_failure":["repository-retention.snapshot-refusal"],"cross_adapter":["repository-retention.shared-factories"]},
+        "configured-inventory": {"positive":{"pending":"Configured inventory has separate fixture controls; bind their specific assertions before this variant is accepted."},"negative":{"pending":"Configured inventory has separate fixture controls; bind their specific assertions before this variant is accepted."},"reset_failure":{"pending":"Configured inventory has separate fixture controls; bind their specific assertions before this variant is accepted."},"cross_adapter":{"pending":"Configured inventory has separate fixture controls; bind their specific assertions before this variant is accepted."}}
+      }
+    },
+    {
+      "id": "receiver-ingress-canonicalization",
+      "variants": ["Kraken","Usrp","HackRF","RspDuo"],
+      "required_inputs": {"exact-candidate-build":"Configured candidate with the selected receiver fixtures; fake-driver and loopback evidence is not physical qualification."},
+      "contract": "Every receiver adapter produces the same canonical IQ, topology, sample lineage and epoch semantics while retaining device-specific admission, readback, fault and shutdown behavior.",
+      "owners": ["ingress-kraken","ingress-usrp","ingress-hackrf","ingress-rspduo","receiver-control-api","canonical-data","capture-recording"],
+      "checks": {
+        "positive": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(krakenSocketCapture|usrpReceiveIngress|usrpAppliedReadback|hackrfAppliedSettings|rspduoCallbackHelpers)$","--output-on-failure"],"files":["test/capture/KrakenStreamFixture.cpp","test/capture/UsrpIngressFixture.cpp","test/capture/UsrpReadbackFixture.cpp","test/capture/HackRfSettingsFixture.cpp","test/capture/RspDuoHelpersFixture.cpp"],"assertions":["receiver-ingress-canonicalization.kraken-coherent-count","receiver-ingress-canonicalization.usrp-sample-lineage","receiver-ingress-canonicalization.hackrf-sample-values","receiver-ingress-canonicalization.rspduo-clock-wrap"]}],
+        "negative": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^rspduoStructuredFailures$","--output-on-failure"],"files":["test/capture/RspDuoFailureFixture.cpp"],"assertions":["receiver-ingress-canonicalization.rspduo-incomplete-startup"]}],
+        "reset_failure": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(krakenSocketCapture|usrpReceiveIngress|rspduoStructuredFailures)$","--output-on-failure"],"files":["test/capture/KrakenStreamFixture.cpp","test/capture/UsrpIngressFixture.cpp","test/capture/RspDuoFailureFixture.cpp"],"assertions":["receiver-ingress-canonicalization.kraken-loss-epoch","receiver-ingress-canonicalization.usrp-empty-stop","receiver-ingress-canonicalization.rspduo-cleanup"]}],
+        "cross_adapter": [{"command":["node","api/all-receiver-profiles-loopback.test.js"],"files":["api/all-receiver-profiles-loopback.test.js"],"assertions":["receiver-ingress-canonicalization.profile-persistence"]}]
+      },
+      "pending": "Review named assertions and configured test selection, then retain physical receiver/OS qualification as separate pending cells. Loopback or fake SDK results do not qualify hardware.",
+      "assertions": [
+        {"id":"receiver-ingress-canonicalization.kraken-coherent-count","facet":"positive","outcome":"Kraken coherent frames yield the expected number of samples.","file":"test/capture/KrakenStreamFixture.cpp","anchor":"{ Capture c; c.send_bytes(timed_frame(0), true); c.send_bytes(timed_frame(1, 1, 1, 200));\n    c.finish(); c.length(16); }"},
+        {"id":"receiver-ingress-canonicalization.rspduo-incomplete-startup","facet":"negative","outcome":"A failed RSPduo startup retains a pending receipt.","file":"test/capture/RspDuoFailureFixture.cpp","anchor":"assert(std::strcmp(incomplete[\"status\"].GetString(), \"pending\") == 0);"},
+        {"id":"receiver-ingress-canonicalization.kraken-loss-epoch","facet":"reset_failure","outcome":"Kraken FIFO retirement increments the processing epoch.","file":"test/capture/KrakenStreamFixture.cpp","anchor":"assert(c.source->processing_epoch() == 1);"},
+        {"id":"receiver-ingress-canonicalization.profile-persistence","facet":"cross_adapter","outcome":"Each receiver profile retains its type after an API transaction.","file":"api/all-receiver-profiles-loopback.test.js","anchor":"assert.equal(saved.body.config.capture.device.type, type);"},
+        {"id":"receiver-ingress-canonicalization.usrp-sample-lineage","facet":"positive","outcome":"USRP receive lineage retains the exact sample position and rate.","file":"test/capture/UsrpIngressFixture.cpp","anchor":"assert(time.nextSample == 21 && time.sampleRate == 2000000);"},
+        {"id":"receiver-ingress-canonicalization.hackrf-sample-values","facet":"positive","outcome":"HackRF callback ingestion preserves surveillance IQ values.","file":"test/capture/HackRfSettingsFixture.cpp","anchor":"assert(second.get_data()[3] == std::complex<double>(7, 8));"},
+        {"id":"receiver-ingress-canonicalization.rspduo-clock-wrap","facet":"positive","outcome":"RSPduo scaled sample clocks distinguish wrap from a sequence break.","file":"test/capture/RspDuoHelpersFixture.cpp","anchor":"assert(!scaledWrap.sequenceBreak && scaledWrap.wrapped);"},
+        {"id":"receiver-ingress-canonicalization.usrp-empty-stop","facet":"reset_failure","outcome":"USRP receive failure discards partial buffers and stops streaming.","file":"test/capture/UsrpIngressFixture.cpp","anchor":"assert(!a.get_length() && !b.get_length() && uhd::fake.stopped);"},
+        {"id":"receiver-ingress-canonicalization.rspduo-cleanup","facet":"reset_failure","outcome":"Failed RSPduo startup releases acquired SDK resources.","file":"test/capture/RspDuoFailureFixture.cpp","anchor":"assert(opened == closed && locked == unlocked && selected == released);"}
+      ],
+      "variant_cells": {
+        "Kraken": {"positive":["receiver-ingress-canonicalization.kraken-coherent-count"],"negative":{"pending":"The bound failure command selects only RSPduo; add a receiver-specific negative assertion and command."},"reset_failure":["receiver-ingress-canonicalization.kraken-loss-epoch"],"cross_adapter":["receiver-ingress-canonicalization.profile-persistence"]},
+        "Usrp": {"positive":["receiver-ingress-canonicalization.usrp-sample-lineage"],"negative":{"pending":"The bound failure command selects only RSPduo; add a receiver-specific negative assertion and command."},"reset_failure":["receiver-ingress-canonicalization.usrp-empty-stop"],"cross_adapter":["receiver-ingress-canonicalization.profile-persistence"]},
+        "HackRF": {"positive":["receiver-ingress-canonicalization.hackrf-sample-values"],"negative":{"pending":"The bound failure command selects only RSPduo; add a receiver-specific negative assertion and command."},"reset_failure":{"pending":"The existing reset command excludes HackRF; bind its callback and shutdown controls."},"cross_adapter":["receiver-ingress-canonicalization.profile-persistence"]},
+        "RspDuo": {"positive":["receiver-ingress-canonicalization.rspduo-clock-wrap"],"negative":["receiver-ingress-canonicalization.rspduo-incomplete-startup"],"reset_failure":["receiver-ingress-canonicalization.rspduo-cleanup"],"cross_adapter":["receiver-ingress-canonicalization.profile-persistence"]}
+      }
+    },
+    {
+      "id": "numerical-stage-lifecycle",
+      "variants": ["direct","channelized","enabled","disabled","reset","gap"],
+      "required_inputs": {"exact-candidate-build":"Candidate build with identical numerical dependencies and deterministic test controls."},
+      "contract": "Conditioning, clutter, metadata, executors, analysis observers and spectrum retain units, numerical distributions, disabled-stage identity, reset behavior and bounded workspaces.",
+      "owners": ["native-conditioning","native-clutter","native-meta","native-utility","native-analysis","native-spectrum","native-pipeline","native-detection","native-tracker","native-fusion"],
+      "checks": {
+        "positive": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(subbandChannelizer|wienerHopfRelativeDiagonalLoading|cfarExactOutput|testTracker|testSpectrum|fixedExecutor)$","--output-on-failure"],"files":["test/unit/process/conditioning/TestIlluminatorChannelizerBank.cpp","test/unit/process/clutter/TestWienerHopfLoading.cpp","test/unit/process/detection/TestCfarEfficiency.cpp","test/unit/process/tracker/TestTracker.cpp","test/unit/process/spectrum/TestSpectrum.cpp","test/unit/process/utility/TestFixedExecutor.cpp"],"assertions":["numerical-stage-lifecycle.bounded-executor"]}],
+        "negative": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(wienerHopfRelativeDiagonalLoading|cfarExactOutput|testTracker)$","--output-on-failure"],"files":["test/unit/process/clutter/TestWienerHopfLoading.cpp","test/unit/process/detection/TestCfarEfficiency.cpp","test/unit/process/tracker/TestTracker.cpp"],"assertions":["numerical-stage-lifecycle.singular-refusal"]}],
+        "reset_failure": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(multiIlluminatorRadar|subbandChannelizer|testSpectrum)$","--output-on-failure"],"files":["test/unit/process/analysis/TestMultiIlluminatorRadar.cpp","test/unit/process/conditioning/TestIlluminatorChannelizerBank.cpp","test/unit/process/spectrum/TestSpectrum.cpp"],"assertions":["numerical-stage-lifecycle.gap-reset"]}],
+        "cross_adapter": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(productionRawIqParity|multiIlluminatorRadar)$","--output-on-failure"],"files":["test/unit/process/analysis/TestProductionRawIq.cpp","test/unit/process/analysis/TestMultiIlluminatorRadar.cpp"],"assertions":["numerical-stage-lifecycle.reference-parity"]}]
+      },
+      "pending": "Source assertions are seeded; omitted numerical assertions and variant bindings still need review. These source tests do not establish exact-IQ parity for every receiver, backend or physical device.",
+      "assertions": [
+        {"id":"numerical-stage-lifecycle.bounded-executor","facet":"positive","outcome":"The fixed executor retains its bounded worker count.","file":"test/unit/process/utility/TestFixedExecutor.cpp","anchor":"REQUIRE(executor.size() == 3);"},
+        {"id":"numerical-stage-lifecycle.singular-refusal","facet":"negative","outcome":"A singular unloaded clutter solve fails without mutating retained samples.","file":"test/unit/process/clutter/TestWienerHopfLoading.cpp","anchor":"require(!singular.process(&rankOne, &retained) && retained.view_data() == unchanged,"},
+        {"id":"numerical-stage-lifecycle.gap-reset","facet":"reset_failure","outcome":"A sample gap restarts canonical temporal support sequencing without bridging the discontinuity.","file":"test/unit/process/analysis/TestMultiIlluminatorRadar.cpp","anchor":"REQUIRE(lane.detectorIntegration->window.newestSequence == phase + 1);"},
+        {"id":"numerical-stage-lifecycle.reference-parity","facet":"cross_adapter","outcome":"Shared raw-IQ processing preserves exact reference samples.","file":"test/unit/process/analysis/TestProductionRawIq.cpp","anchor":"REQUIRE(actual.reference.view_data() == expected.reference.view_data());"}
+      ],
+      "variant_cells": {
+        "direct": {"positive":["numerical-stage-lifecycle.bounded-executor"],"negative":["numerical-stage-lifecycle.singular-refusal"],"reset_failure":["numerical-stage-lifecycle.gap-reset"],"cross_adapter":["numerical-stage-lifecycle.reference-parity"]},
+        "channelized": {"positive":["numerical-stage-lifecycle.bounded-executor"],"negative":["numerical-stage-lifecycle.singular-refusal"],"reset_failure":["numerical-stage-lifecycle.gap-reset"],"cross_adapter":["numerical-stage-lifecycle.reference-parity"]},
+        "enabled": {"positive":["numerical-stage-lifecycle.bounded-executor"],"negative":["numerical-stage-lifecycle.singular-refusal"],"reset_failure":["numerical-stage-lifecycle.gap-reset"],"cross_adapter":["numerical-stage-lifecycle.reference-parity"]},
+        "disabled": {"positive":{"pending":"Disabled-stage identity needs a named assertion selected by this facet command."},"negative":{"pending":"Disabled-stage identity needs a named assertion selected by this facet command."},"reset_failure":{"pending":"The selected temporal gap-reset assertion requires detection enabled; disabled-stage lifecycle identity needs a named assertion."},"cross_adapter":["numerical-stage-lifecycle.reference-parity"]},
+        "reset": {"positive":{"pending":"Bind assertions that isolate post-reset numerical behavior."},"negative":{"pending":"Bind assertions that isolate post-reset numerical behavior."},"reset_failure":["numerical-stage-lifecycle.gap-reset"],"cross_adapter":["numerical-stage-lifecycle.reference-parity"]},
+        "gap": {"positive":{"pending":"Bind assertions that isolate post-gap numerical behavior."},"negative":{"pending":"Bind assertions that isolate post-gap numerical behavior."},"reset_failure":["numerical-stage-lifecycle.gap-reset"],"cross_adapter":{"pending":"The selected raw-IQ reference comparison has no gap input; bind parity assertions that exercise an input discontinuity."}}
+      }
+    },
+    {
+      "id": "qualified-gpu-backend",
+      "variants": ["cpu","gpu-auto","gpu-portable-fp32","gpu-resident-fp32","cpu-fp64"],
+      "required_inputs": {"exact-candidate-build":"Candidate configured for the admitted platform/backend; physical GPU receipts remain separate."},
+      "contract": "GPU admission, dispatch, precision, lifetime, telemetry, deadline, reset and fallback preserve CPU-oracle radar products; unsupported FP64 GPU ingress fails closed to the qualified CPU route.",
+      "owners": ["qualified-private-gpu","native-ambiguity","native-pipeline","native-conditioning","native-clutter","configuration-policy","runtime-api","build-integration"],
+      "checks": {
+        "positive": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(gpuProcessIsolation|residentProcessCpuBoundary)$","--output-on-failure"],"files":["test/gpu/TestGpuProcess.cpp","test/gpu/TestGpuResidentProcess.cpp"],"assertions":["qualified-gpu-backend.portable-oracle","qualified-gpu-backend.resident-reference-retention"]}],
+        "negative": [{"command":["python3","test/gpu/product_parity_test.py","--binary","<exact-candidate-binary>","--device-class","<fp32-or-fp64>","--source-sha","<exact-source-sha>","--receipt","<outside-repository-receipt>"],"files":["test/gpu/product_parity_test.py"],"assertions":["qualified-gpu-backend.missing-device-refusal"]},{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^multiIlluminatorRadar$","--output-on-failure"],"files":["test/unit/process/analysis/TestMultiIlluminatorRadar.cpp"],"assertions":["qualified-gpu-backend.auto-resident-module-refusal"]}],
+        "reset_failure": [{"command":["ctest","--test-dir","<exact-candidate-build>","--no-tests=error","-R","^(gpuProcessIsolation|residentProcessCpuBoundary)$","--output-on-failure"],"files":["test/gpu/TestGpuProcess.cpp","test/gpu/TestGpuResidentProcess.cpp"],"assertions":["qualified-gpu-backend.portable-worker-drain","qualified-gpu-backend.resident-no-leaked-worker"]}],
+        "cross_adapter": [{"command":["python3","test/gpu/product_parity_test.py","--binary","<exact-candidate-binary>","--device-class","<fp32-or-fp64>","--source-sha","<exact-source-sha>","--receipt","<outside-repository-receipt>"],"files":["test/gpu/product_parity_test.py"],"assertions":["qualified-gpu-backend.product-parity"]}]
+      },
+      "pending": "Review oracle/fallback assertions and execute platform-specific builds and physical qualification. GPU enumeration, mocks or CPU-boundary tests do not close physical cells.",
+      "assertions": [
+        {"id":"qualified-gpu-backend.portable-oracle","facet":"positive","outcome":"The portable worker fixture preserves its reference output.","file":"test/gpu/TestGpuProcess.cpp","anchor":"check(buffers.output[0]==buffers.reference[0],\"Profiler changed worker numerical output\");"},
+        {"id":"qualified-gpu-backend.missing-device-refusal","facet":"negative","outcome":"A required physical GPU feature class cannot be replaced by enumeration of another class.","file":"test/gpu/product_parity_test.py","anchor":"assert candidates, f\"required {feature_class} physical device unavailable (selector={selector!r})\""},
+        {"id":"qualified-gpu-backend.auto-resident-module-refusal","facet":"negative","outcome":"AUTO refuses the resident frontend when its optional module was not built, even when the resident capability and reference are otherwise admissible.","file":"test/unit/process/analysis/TestMultiIlluminatorRadar.cpp","anchor":"REQUIRE_FALSE(shouldAttemptResidentFrontend(\"auto\", true, true, false));"},
+        {"id":"qualified-gpu-backend.portable-worker-drain","facet":"reset_failure","outcome":"Portable EOF teardown drains its bounded worker records.","file":"test/gpu/TestGpuProcess.cpp","anchor":"check(count==2,\"EOF cleanup lost worker records or exceeded fixed profile cap\");"},
+        {"id":"qualified-gpu-backend.product-parity","facet":"cross_adapter","outcome":"Every numeric radar-product field meets the declared CPU-oracle tolerance.","file":"test/gpu/product_parity_test.py","anchor":"assert abs(expected - actual) <= tolerance, f\"{label}: {expected} != {actual}\""},
+        {"id":"qualified-gpu-backend.resident-reference-retention","facet":"positive","outcome":"Resident transport preparation preserves the acknowledged reference checkpoint.","file":"test/gpu/TestGpuResidentProcess.cpp","anchor":"check(std::memcmp(saved.data(),v.referenceCheckpoint.data,256)==0,\"Prepared mutated acknowledged reference bytes\");"},
+        {"id":"qualified-gpu-backend.resident-no-leaked-worker","facet":"reset_failure","outcome":"Resident teardown leaves no worker for the fixture to reap.","file":"test/gpu/TestGpuResidentProcess.cpp","anchor":"check(p<=0,\"Fixture had to reap a leaked worker\");"}
+      ],
+      "variant_cells": {
+        "cpu": {"positive":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."},"negative":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."},"reset_failure":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."},"cross_adapter":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."}},
+        "gpu-auto": {"positive":["qualified-gpu-backend.portable-oracle"],"negative":["qualified-gpu-backend.auto-resident-module-refusal"],"reset_failure":["qualified-gpu-backend.portable-worker-drain"],"cross_adapter":{"pending":"The physical parity runner selects gpu and gpu-resident, not auto; bind auto dispatch parity."}},
+        "gpu-portable-fp32": {"positive":["qualified-gpu-backend.portable-oracle"],"negative":["qualified-gpu-backend.missing-device-refusal"],"reset_failure":["qualified-gpu-backend.portable-worker-drain"],"cross_adapter":["qualified-gpu-backend.product-parity"]},
+        "gpu-resident-fp32": {"positive":["qualified-gpu-backend.resident-reference-retention"],"negative":{"pending":"The physical runner checks explicit resident refusal on FP32-class devices; bind that refusal assertion before accepting this cell."},"reset_failure":["qualified-gpu-backend.resident-no-leaked-worker"],"cross_adapter":{"pending":"The FP32-class resident run verifies refusal and no products, not numerical parity; successful resident parity remains unbound."}},
+        "cpu-fp64": {"positive":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."},"negative":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."},"reset_failure":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."},"cross_adapter":{"pending":"Bind the CPU control/fallback assertions with explicit ingress precision; GPU worker mocks are insufficient."}}
+      }
+    },
+    {
+      "id": "evidence-and-truth-isolation",
+      "variants": ["truth-present","truth-absent","truth-stale","replay","live"],
+      "contract": "Evidence, statistics and calibration products remain bounded and truth-labelled while native radar inference is unchanged when cooperative truth changes or disappears.",
+      "owners": ["evidence-api","geolocation-api","runtime-api","recording-api","replay-evidence-tools","ui-insights"],
+      "checks": {
+        "positive": [{"command":["node","api/evidence-statistics.test.js"],"files":["api/evidence-statistics.test.js"],"assertions":["evidence-and-truth-isolation.labelled-truth-history"]}],
+        "negative": [{"command":["node","api/manifold-evaluator.test.js"],"files":["api/manifold-evaluator.test.js"],"assertions":["evidence-and-truth-isolation.positive-only-refusal"]}],
+        "reset_failure": [{"command":["node","api/causal-funnel-recorder.test.js"],"files":["api/causal-funnel-recorder.test.js"],"assertions":["evidence-and-truth-isolation.failed-write-accounting"]}],
+        "cross_adapter": [{"command":["node","api/unified-radar-contract.test.js"],"files":["api/unified-radar-contract.test.js"],"assertions":["evidence-and-truth-isolation.receiver-defaults"]}]
+      },
+      "pending": "Review fixtures for an explicit hold-IQ-constant truth-removal comparison; source and API tests are not live/replay false-track qualification.",
+      "assertions": [
+        {"id":"evidence-and-truth-isolation.labelled-truth-history","facet":"positive","outcome":"Evidence eligibility retains its explicit cooperative-truth samples.","file":"api/evidence-statistics.test.js","anchor":"assert.equal(result.eligibility_events[0].truth_samples.length, 3);"},
+        {"id":"evidence-and-truth-isolation.positive-only-refusal","facet":"negative","outcome":"Positive-only calibration evidence cannot qualify production activation.","file":"api/manifold-evaluator.test.js","anchor":"assert.equal(result.evaluation.qualified, false, 'positive-only bearing evidence cannot qualify production activation');"},
+        {"id":"evidence-and-truth-isolation.failed-write-accounting","facet":"reset_failure","outcome":"An append failure counts the undurable in-flight evidence record as dropped.","file":"api/causal-funnel-recorder.test.js","anchor":"assert.equal(failing.status().dropped, 1, 'the in-flight record is accounted as dropped');"},
+        {"id":"evidence-and-truth-isolation.receiver-defaults","facet":"cross_adapter","outcome":"Generated receiver profiles preserve shared radar defaults; this is not a truth-removal comparison.","file":"api/unified-radar-contract.test.js","anchor":"assert.deepStrictEqual(mismatches, [], 'Generated receiver configurations changed the shared radar defaults:\\n' + mismatches.join('\\n'));"}
+      ],
+      "variant_cells": {
+        "truth-present": {"positive":["evidence-and-truth-isolation.labelled-truth-history"],"negative":["evidence-and-truth-isolation.positive-only-refusal"],"reset_failure":{"pending":"The recorder append-failure assertion does not isolate this truth state."},"cross_adapter":{"pending":"Receiver-default parity does not establish hold-IQ-constant truth-removal parity."}},
+        "truth-absent": {"positive":{"pending":"Bind evidence behavior for this truth or ingestion state explicitly."},"negative":{"pending":"Positive-only calibration refusal does not isolate this truth or ingestion state."},"reset_failure":{"pending":"The recorder append-failure assertion does not isolate this truth state."},"cross_adapter":{"pending":"Receiver-default parity does not establish hold-IQ-constant truth-removal parity."}},
+        "truth-stale": {"positive":{"pending":"Bind evidence behavior for this truth or ingestion state explicitly."},"negative":{"pending":"Positive-only calibration refusal does not isolate this truth or ingestion state."},"reset_failure":{"pending":"The recorder append-failure assertion does not isolate this truth state."},"cross_adapter":{"pending":"Receiver-default parity does not establish hold-IQ-constant truth-removal parity."}},
+        "replay": {"positive":{"pending":"Bind evidence behavior for this truth or ingestion state explicitly."},"negative":{"pending":"Positive-only calibration refusal does not isolate this truth or ingestion state."},"reset_failure":["evidence-and-truth-isolation.failed-write-accounting"],"cross_adapter":{"pending":"Receiver-default parity does not establish hold-IQ-constant truth-removal parity."}},
+        "live": {"positive":{"pending":"Bind evidence behavior for this truth or ingestion state explicitly."},"negative":{"pending":"Positive-only calibration refusal does not isolate this truth or ingestion state."},"reset_failure":["evidence-and-truth-isolation.failed-write-accounting"],"cross_adapter":{"pending":"Receiver-default parity does not establish hold-IQ-constant truth-removal parity."}}
+      }
+    }
+  ]
+}

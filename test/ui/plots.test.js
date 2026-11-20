@@ -16,6 +16,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
     const running = {capture: {fs: 2400000}, process: {data: {cpi: .2},
       detection: {enable: true}}, truth: {adsb: {enabled: true}}};
     let detected = {timestamp: 1000, delay: [1], doppler: [2]};
+    const truthAircraft = {abc123: {hex: 'abc123', flight: 'TEST1', alt_geom: 5000,
+      delay: 1.3, doppler: 40}, def456: {hex: 'def456', flight: 'TEST2', alt_geom: 30000,
+      delay: 2.5, doppler: -20}};
     let tracked = {timestamp: 1000, data: [
       {id: 9, state: 'ACTIVE', delay: 8, doppler: 2},
       {id: 10, state: 'COASTING', delay: 10, doppler: -3}
@@ -36,10 +39,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
       aircraftLabel: common.aircraftLabel,
+      aircraftIdentity: common.aircraftIdentity,
+      radarVisualSemantics: common.radarVisualSemantics,
       aircraftPlotSymbol: common.aircraftPlotSymbol,
       aircraftPlotData: common.aircraftPlotData,
       aircraftHoverText: common.aircraftHoverText,
       aircraftHoverTemplate: common.aircraftHoverTemplate,
+      VectorWarpPlotTheme: common.vectorwarpPlotTheme,
       stabilizeAircraftSnapshots: (rows, options) => {
         snapshotScopes.push(options?.scope);
         return common.stabilizeAircraftSnapshots(rows, options);
@@ -48,7 +54,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
         fetchUrls.push(url);
         return url.startsWith('/api/detection') ? detected :
           url.startsWith('/api/tracker') ? tracked :
-          url.startsWith('/api/adsb/delay-doppler') ? {} : new Promise(() => {});
+          url.startsWith('/api/adsb/delay-doppler') ? truthAircraft : new Promise(() => {});
       },
       window: {innerWidth: 1200, location: new URL('http://vectorwarp.test/display/map/'), addEventListener() {}, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},
@@ -56,9 +62,19 @@ const clone = value => JSON.parse(JSON.stringify(value));
         [method, async (...args) => { calls.push({method, args: clone(args)}); }])),
       startRadarPlot: (_url, render) => { update = render; return {stop() {}}; }
     });
+    require('./display-fixture')(context);
     const source = fs.readFileSync(path.join(__dirname, '../../html/js', `plot_${kind}.js`), 'utf8');
     assert.ok(!source.includes('setInterval'), `${kind} must use shared frame timing`);
     vm.runInContext(source, context);
+    if (kind !== 'map') {
+      const initialLayout = calls[0].args[2], initialConfig = calls[0].args[3];
+      assert.deepEqual(clone(initialLayout.margin), {l: 92, r: 50, b: 50, t: 10, pad: 0},
+        `${kind} retains the shared plot viewport margins`);
+      assert.equal(initialLayout.paper_bgcolor, 'rgba(0,0,0,0)',
+        `${kind} retains the transparent plot canvas`);
+      assert.equal(initialConfig.scrollZoom, kind === 'spectrum' ? undefined : true,
+        `${kind} retains its original scroll-zoom behavior`);
+    }
     if (context.vectorwarpMapReady) await context.vectorwarpMapReady;
     if (context.vectorwarpDetectionReady) await context.vectorwarpDetectionReady;
     if (context.vectorwarpSpectrumReady) await context.vectorwarpSpectrumReady;
@@ -81,8 +97,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(context.mapPresentationUrl('/api/map', 768),
         '/api/map?max_rows=128&max_cols=128',
         'Tablets request the bounded peak-preserving map representation');
-      assert.equal(context.mapPresentationUrl('/api/map', 1280), '/api/map',
-        'Desktop keeps the full-resolution map');
+      assert.equal(context.mapPresentationUrl('/api/map', 1280),
+        '/api/map?max_rows=192&max_cols=256',
+        'Desktop uses the bounded higher-detail display representation');
     }
     if (kind === 'spectrum') {
       const fallback = context.spectrumColorRange([[NaN, Infinity]]);
@@ -93,17 +110,31 @@ const clone = value => JSON.parse(JSON.stringify(value));
       map: {timestamp: 1000, nRows: 3, delay: [1], doppler: [1, 2, 3], data: [[1], [2], [3]], maxPower: 15},
       spectrum: {timestamp: [1000], frequency: [[100000, 100001]], spectrum: [[-92, -37]]},
       timing: {timestamp: [1000], captureEpoch: [0], captureFirstEpochSample: [8448789504],
-        captureEndEpochSample: [8449989504], gpu_resident_ready: [15], cpi: [20], frameTimestamp: 1000},
+        captureEndEpochSample: [8449989504], gpu_resident_ready: [15], detector: [5],
+        cpi: [20], frameTimestamp: 1000},
       detection: {timestamp: [1000], delay: [1], doppler: [2], snr: [3]}
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
+    if (kind === 'detection') {
+      const trace = calls.filter(call => call.method === 'react').at(-1).args[1][0];
+      assert.equal(trace.name, common.radarVisualSemantics.labels.detection);
+      assert.equal(trace.marker.color, common.radarVisualSemantics.colors.detection,
+        'Standalone detection/history plots share the live DD detection color');
+      assert.equal(trace.marker.symbol, 'circle');
+    }
     if (kind === 'map') assert.ok(snapshotScopes.includes('delay-doppler:fm-90.5'),
       'ADS-B snapshot retention is isolated to the selected illuminator lane');
     assert.equal(calls.filter(call => call.method === 'react').length, 2, `${kind}: initial real frame must create correct traces without tearing down its plot root`);
     if (kind === 'map') {
       const initialTraces = calls.filter(call => call.method === 'react').at(-1).args[1];
       assert.equal(initialTraces[2].marker.symbol, 'circle',
-        'ADS-B truth stays a uniform green-dot overlay on delay–Doppler');
+        'ADS-B truth stays a circular overlay in delay–Doppler coordinates');
+      assert.deepEqual(initialTraces[2].marker.color,
+        Object.values(truthAircraft).map(common.aircraftAltitudeColor),
+        'Aircraft altitude colors match the regular geographic Map');
+      assert.equal(initialTraces[2].name, 'ADS-B position');
+      assert.deepEqual([1, 3, 4, 2, 5].map(index => initialTraces[index].legendrank),
+        [10, 20, 30, 40, 50], 'Detection, track, coast, aircraft, Remote ID keep one legend order');
       assert.equal(initialTraces[1].marker.symbol, 'circle',
         'Radar detections keep their established circular marker styling');
       assert.equal(initialTraces[1].marker.size, 8, 'Raw detections are small, light markers');
@@ -117,8 +148,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(initialTraces[4].marker.symbol, 'circle-open',
         'Coasting persistent tracks remain visible as hollow orange rings');
       assert.equal(initialTraces[4].x[0], 10 * 299792458 / 300000 / 1000);
-      assert.ok(context.urlMap.includes('/api/map') && context.urlMap.includes('illuminator=fm-90.5'),
-        'The heatmap URL is resolved only after the selected lane is known');
+      assert.ok(context.urlMap.includes('/api/radar/frame') && context.urlMap.includes('illuminator=fm-90.5'),
+        'The atomic heatmap URL is resolved only after the selected lane is known');
       assert.ok(fetchUrls.some(url => url.includes('/api/detection') && url.includes('frame_timestamp=1000')));
       assert.ok(fetchUrls.some(url => url.includes('/api/tracker') && url.includes('frame_timestamp=1000')),
         'Both overlays are requested for the exact heatmap frame');
@@ -136,7 +167,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     }
     if (kind === 'timing') {
       const traces = calls.at(-1).args[1];
-      assert.deepEqual(traces.map(trace => trace.name), ['gpu_resident_ready', 'cpi']);
+      assert.deepEqual(traces.map(trace => trace.name), ['Detector (ms)', 'Cpi (ms)']);
       assert.ok(traces.every(trace => Math.max(...trace.y) < 1000000),
         'Epoch and absolute sample counters must never be graphed as stage milliseconds');
     }
@@ -194,6 +225,26 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.ok(calls.slice(changedGridCallsBefore).some(call => call.method === 'react'),
         'Map grid changes reconcile the existing Plotly root');
       assert.ok(!calls.some(call => call.method === 'newPlot'), 'Map never tears down the plot root');
+      const events = {};
+      const plot = {on: (name, callback) => { events[name] = callback; },
+        addEventListener: (name, callback) => { events[name] = callback; }, setAttribute() {}};
+      context.document = {getElementById: () => plot, querySelectorAll: () => []};
+      context.bindDelayDopplerSelection();
+      events.plotly_click({points: [{curveNumber: 2, pointNumber: 1}]});
+      await context.refreshDelayDopplerSelection();
+      assert.equal(context.selectedDelayDopplerTarget, 'aircraft:DEF456');
+      const selectedStyle = clone(context.delayDopplerSelectionStyle(context.delayDopplerSelectionTraces[0]));
+      assert.deepEqual(selectedStyle['marker.line.color'], ['#10251f', '#ffffff'],
+        'White denotes selection without replacing altitude color or claiming radar support');
+      assert.deepEqual(selectedStyle['marker.size'], [10, 14]);
+      await update(changedGrid);
+      assert.equal(context.selectedDelayDopplerTarget, 'aircraft:DEF456', 'Selection survives frame refresh');
+      events.keydown({key: 'Escape'});
+      assert.equal(context.selectedDelayDopplerTarget, null);
+      events.plotly_click({points: [{curveNumber: 3, pointNumber: 0}]});
+      assert.equal(context.selectedDelayDopplerTarget, 'track:9');
+      context.configureMapChannel({id: 'another-channel'});
+      assert.equal(context.selectedDelayDopplerTarget, null, 'Changing channel clears lane-local selection');
     }
   }
   const unavailableCalls = [];
@@ -201,6 +252,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     URL, Date,
     liveApiUrl: value => value,
     radarPresentationUrl: value => value,
+    VectorWarpPlotTheme: common.vectorwarpPlotTheme,
     getRadarRuntimeConfig: async () => ({process: {data: {cpi: .5},
       multi_illuminator: {enabled: true}}}),
     fetchRadarJson: async () => null,
@@ -209,6 +261,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     Plotly: {react: async (...args) => unavailableCalls.push(args), update: async () => {}},
     window: {}
   });
+  require('./display-fixture')(unavailableContext);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../html/js/plot_spectrum.js'), 'utf8'),
     unavailableContext);
   await unavailableContext.vectorwarpSpectrumReady;

@@ -81,6 +81,33 @@ recording, replay, receiver setup, and a 3D airspace map.
 - Sanitized issue reports with free-form comments, configuration, service
   status, and logs.
 
+## Next release (unreleased)
+
+Since v0.1.38, the next release adds:
+
+- One unified all-receiver build for KrakenSDR, USRP/UHD, dual HackRF, and the
+  local SDRplay adapter kit; choose the connected receiver in Settings.
+- Every receiver normalizes its samples at ingress, then uses the same clutter,
+  ambiguity, fusion, temporal, detection, and tracking pipeline. Channelization
+  creates signal lanes; it does not select a second radar implementation.
+- Wideband captures can be channelized into independent, phase-preserving FM
+  and HDTV (ATSC) station lanes for parallel radar processing.
+- GPU acceleration now covers both narrow FM and wide HDTV channelization,
+  with shared FFT/filter work and an automatic qualified CPU fallback.
+- Each station lane retains its own tuning, filter, transmitter geometry,
+  recording metadata, detections, and tracks.
+- Per-node capability reporting identifies receiver type, channel count,
+  broadcast standards, and available radar resources so the portal selects
+  each node's supported views.
+- More resilient receiver timing, calibration telemetry, browser reconnects,
+  and preservation of bearing evidence across acquisition changes.
+- Package upgrades that preserve the existing VectorWarp configuration, plus
+  more tolerant Debian repository setup on slow or temporarily skewed mirrors.
+
+This is a development summary, not a release announcement. Physical hardware
+qualification, final artifact acceptance and soak evidence, and explicit
+publication authorization are still required before release.
+
 ## Install
 
 ### Linux

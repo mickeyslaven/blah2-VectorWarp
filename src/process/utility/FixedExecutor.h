@@ -21,6 +21,11 @@ public:
 
   void parallel_for(std::size_t count,
     const std::function<void(std::size_t)>& work);
+  // Borrow only currently idle workers, behind ordinary queued work. check()
+  // bounds admission and cancels unstarted items; all admitted work is joined
+  // before returning or throwing. Never call from this executor's own worker.
+  void borrow(std::size_t count, const std::function<void(std::size_t)>& work,
+    const std::function<void()>& check);
   std::future<void> submit(std::function<void()> work);
   std::size_t size() const;
 

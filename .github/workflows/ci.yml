@@ -5,6 +5,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      require_gpu_receipts:
+        description: 'Verify existing physical GPU qualification for this exact revision'
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: read
@@ -15,6 +24,7 @@ concurrency:
 
 jobs:
   test:
+    # Keep the established required-check identity while expanding its coverage.
     name: CPU unit, API, and replay tests (${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -22,20 +32,30 @@ jobs:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: 1
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - id: node-pin
+        run: version=$(python3 script/artifact-plan.py pin node) && echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Set up Node 24 for API tests
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 24.22.1
+          node-version: ${{ steps.node-pin.outputs.version }}
           package-manager-cache: false
-      - name: Install CPU build dependencies
+      - name: Install API test dependencies for the prebuild contract gate
+        run: npm ci --prefix api --ignore-scripts --no-audit --no-fund
+      - name: Install unified SDR and GPU-module build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential cmake curl git pkg-config python3-yaml tar unzip xz-utils zip \
-            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm
+            build-essential cmake curl git ninja-build pkg-config python3-yaml tar unzip xz-utils zip \
+            apt-utils createrepo-c gnupg glslang-dev glslang-tools libarmadillo-dev libfftw3-dev \
+            libhackrf-dev libuhd-dev libboost-dev libusb-1.0-0-dev libvulkan-dev mesa-vulkan-drivers \
+            libasio-dev rapidjson-dev rpm
       - name: Exercise SDRplay compiler privilege drop under systemd (no vendor SDK)
         run: |
           sudo python3 test/packaging/sdrplay_child_setup_test.py \
@@ -44,26 +64,83 @@ jobs:
             --build-user nobody
       - name: Bootstrap pinned vcpkg manifest dependencies
         run: |
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build/ci-deps/vcpkg
-          git -C build/ci-deps/vcpkg fetch --depth=1 origin b45fe136ff576ad06105fed78245e765ab35ad16
-          git -C build/ci-deps/vcpkg checkout --detach b45fe136ff576ad06105fed78245e765ab35ad16
+          python3 script/artifact-plan.py checkout vcpkg build/ci-deps/vcpkg
           build/ci-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
           mkdir -p build/ci-manifest
-          cp lib/vcpkg-kraken.json build/ci-manifest/vcpkg.json
-      - name: Configure CPU-only Kraken test build
+          cp lib/vcpkg.json build/ci-manifest/vcpkg.json
+          python3 script/artifact-plan.py checkout VkFFT build/ci-deps/VkFFT
+      - name: Configure unified receiver and GPU-module test build
         run: |
           cmake -S . -B build/ci \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
-            -DBLAH2_KRAKEN_ONLY=ON -DBLAH2_GPU=OFF \
+            -DBLAH2_KRAKEN_ONLY=OFF -DBLAH2_ENABLE_USRP=ON \
+            -DBLAH2_ENABLE_HACKRF=ON -DBLAH2_ENABLE_RSPDUO=OFF \
+            -DBLAH2_LOCAL_BUILD_RSPDUO=ON \
+            -DBLAH2_GPU=ON -DBLAH2_GPU_ADVANCED=ON -DBLAH2_TEST_SOFTWARE_VULKAN=ON \
+            -DVKFFT_ROOT="$PWD/build/ci-deps/VkFFT" \
             -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-deps/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" \
-            -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
+            -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed" \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+      - name: Gate source and affected native target before full build
+        run: |
+          python3 script/prebuild_acceptance.py \
+            --build-dir build/ci \
+            --native-target blah2 \
+            --native-target testGpuTrackerAdmission \
+            --native-target testTracker \
+            --native-target testDetectionMath \
+            --native-target testGpuTrackerCorrectness \
+            --native-target testMultiIlluminatorRadar \
+            --native-test gpuTrackerCapacityAdmission \
+            --native-test testTracker \
+            --native-test testDetectionMath \
+            --native-test residentTrackerSoftwareVulkanParity \
+            --native-test multiIlluminatorRadar \
+            --receipt build/ci/prebuild-acceptance.json
+      - name: Build configured native targets
+        run: |
           cmake --build build/ci --parallel 2
-      - name: Run C++ unit and portable replay tests
+      - name: Run C++ unit, resident CPU-only Vulkan parity, and portable replay tests
+        # Opt-in parity uses --software and refuses physical GPU devices. The
+        # protected physical-GPU receipt lane remains separately required.
         run: ctest --test-dir build/ci --output-on-failure --no-tests=error
+      - name: Verify GPU platform and receiver build contracts
+        run: |
+          python3 test/script/test_canonical_processing_architecture.py -v
+          python3 test/packaging/test_gpu_platform_contract.py -v
+          python3 test/packaging/test_release_matrix.py -v
+          python3 test/gpu/test_product_parity_contract.py -v
+          VECTORWARP_TEST_RECORDING_INSPECTOR="$PWD/build/ci/bin/inspectRecordingProvenance" python3 test/gpu/test_unified_corpus_contract.py -v
+          python3 test/gpu/test_pre_soak_receipt_gate.py -v
+          python3 test/packaging/test_ci_workflows.py -v
+          python3 test/packaging/test_release_ci.py -v
+      - name: Run offline replay and qualification contract regressions
+        # Data-only fixtures and fake children: no RF or physical GPU qualification.
+        run: |
+          python3 -m unittest discover -s test/gpu -p test_recorded_iq_qualification.py
+          python3 -m unittest discover -s test/script -p test_replay_session.py
+          python3 -m unittest discover -s test/script -p test_run_isolated_iq_replay.py
+          python3 -m unittest discover -s test/script -p test_observer_allocation_contract.py
       - name: Run offline full-processor replay harness
-        run: python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2
+        run: |
+          python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2 | tee build/ci/processor-replay.json
+          build/ci/bin/blah2 --processing-capabilities > build/ci/processing-capabilities.json
+          build/ci/bin/blah2 --receiver-status > build/ci/receiver-capabilities.json
+      - name: Preserve unified CPU replay and GPU build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unified-ci-${{ matrix.runner }}-${{ github.sha }}
+          path: |
+            build/ci/Testing/Temporary/
+            build/ci/prebuild-acceptance.json
+            build/ci/processor-replay.json
+            build/ci/processing-capabilities.json
+            build/ci/receiver-capabilities.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run offline Pi packaging and diagnostics checks
         run: |
           python3 test/packaging/test_pi_image_manifest.py -v
@@ -77,14 +154,12 @@ jobs:
           python3 test/packaging/test_install_release.py -v
           python3 test/packaging/test_receiver_updates.py -v
           sudo python3 test/packaging/test_receiver_workflow.py -v
-          python3 test/packaging/test_sdrplay_build_sdk.py -v
           python3 test/packaging/test_rpm_local_kit.py -v
           sudo python3 test/packaging/test_sdrplay_local_build.py -v
       - name: Run API and UI unit tests
         env:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
         run: |
-          npm ci --prefix api --ignore-scripts --no-audit --no-fund
           node --test api/heimdall-timing.test.js
           python3 test/packaging/test_bundled_kraken.py -v
           VECTORWARP_LAUNCHER_TEST_API="$PWD/api" VECTORWARP_LAUNCHER_TEST_NODE="$(command -v node)" python3 test/packaging/test_launcher.py -v
@@ -151,6 +226,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  qualified-linux-gpu:
+    # Physical qualification is an explicit protected-runner operation. A new
+    # main push must be able to finish its hosted checks before that dispatch.
+    if: github.event_name == 'workflow_dispatch' && inputs.require_gpu_receipts
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/gpu-receipt-gate.yml
+    with:
+      source-sha: ${{ github.sha }}
+
   kraken-linux-simulation:
     name: Native Kraken software simulation (${{ matrix.runner }})
     strategy:
@@ -162,6 +248,8 @@ jobs:
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
       - name: Install native build dependencies before fetching sources
         run: |
           sudo apt-get update

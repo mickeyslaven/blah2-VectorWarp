@@ -1,6 +1,47 @@
 var gridSignature = '';
 var range_x = [];
 var range_y = [];
+var radarSemantics = radarVisualSemantics;
+var selectedDelayDopplerTarget = null;
+var delayDopplerSelectionTraces = [];
+
+function delayDopplerSelectionStyle(trace) {
+  const selected = (trace.ids || []).map(id => id === selectedDelayDopplerTarget);
+  return {
+    'marker.size': selected.map(value => value ? trace.size + 4 : trace.size),
+    'marker.line.color': selected.map(value => value ? radarSemantics.colors.selected : trace.outline),
+    'marker.line.width': selected.map(value => value ? 3 : trace.width)
+  };
+}
+
+function refreshDelayDopplerSelection() {
+  return Promise.all(delayDopplerSelectionTraces.map(trace => {
+    const style = delayDopplerSelectionStyle(trace);
+    return Plotly.restyle('data', Object.fromEntries(Object.entries(style)
+      .map(([key, value]) => [key, [value]])), [trace.index]);
+  }));
+}
+
+function bindDelayDopplerSelection() {
+  const plot = typeof document === 'undefined' ? null : document.getElementById('data');
+  if (!plot?.on || plot._vectorwarpSelectionBound) return;
+  plot._vectorwarpSelectionBound = true;
+  plot.tabIndex = 0;
+  plot.setAttribute?.('aria-description', 'Bistatic range and Doppler coordinates. Click a marker to select; Escape clears selection.');
+  plot.on('plotly_click', event => {
+    const point = event?.points?.[0];
+    const trace = delayDopplerSelectionTraces.find(item => item.index === point?.curveNumber);
+    const id = trace?.ids?.[point?.pointNumber];
+    if (!id) return;
+    selectedDelayDopplerTarget = selectedDelayDopplerTarget === id ? null : id;
+    void refreshDelayDopplerSelection();
+  });
+  plot.addEventListener?.('keydown', event => {
+    if (event.key !== 'Escape' || !selectedDelayDopplerTarget) return;
+    selectedDelayDopplerTarget = null;
+    void refreshDelayDopplerSelection();
+  });
+}
 
 function delayDopplerPresentation(width, height) {
   // A landscape phone has a wide CSS viewport, but very little vertical room.
@@ -32,7 +73,11 @@ function delayDopplerPresentation(width, height) {
     tickCount: 0,
     showScale: true,
     colorbar: {
-      title: {text: 'Power (dB)', side: 'right', font: {color: '#f3eee9', size: 15}},
+      // Native maps deliberately preserve the historical 10*log10(|CAF|)
+      // display scale.  Calling that quantity power is dimensionally wrong
+      // and invites threshold comparisons against the detector's separate
+      // power statistic.
+      title: {text: 'Map level (dB)', side: 'right', font: {color: '#f3eee9', size: 15}},
       tickfont: {color: '#f3eee9', size: 13},
       outlinecolor: '#47362e', thickness: 14
     }
@@ -47,16 +92,18 @@ function currentDelayDopplerPresentation() {
 var plotPresentation = currentDelayDopplerPresentation();
 
 function mapPresentationUrl(path, width) {
-  if (!Number.isFinite(width) || width > 1024) return path;
   const separator = path.includes('?') ? '&' : '?';
   // The native 601x511 JSON map is about 1.8 MB per frame.  A peak-preserving
-  // server presentation keeps tablet/phone transfer and Plotly work bounded
-  // without changing detector processing or the underlying radar grid.
-  return `${path}${separator}max_rows=128&max_cols=128`;
+  // server presentation keeps every web client bounded without changing
+  // detector processing or the underlying scientific grid. Desktop gets more
+  // visual detail; tablets and phones avoid unnecessary transfer and paint.
+  const compact = Number.isFinite(width) && width <= 1024;
+  return `${path}${separator}max_rows=${compact ? 128 : 192}&max_cols=${compact ? 128 : 256}`;
 }
 
 // setup API
 var selectedIlluminator = '';
+var selectedIlluminatorSynthetic = false;
 var selectedIlluminatorSampleRate = null;
 var mapProductPath = urlMap;
 var urlDetection = null;
@@ -64,6 +111,18 @@ var urlTracker = null;
 var urlAdsbData = null;
 var urlRemoteIdData = liveApiUrl(radarPresentationUrl('/api/remote-id/delay-doppler?overlay=1'));
 var maxHoldGrid = null;
+
+function finiteGridMaximum(grid, fallback = 0) {
+  let maximum = Number.NEGATIVE_INFINITY;
+  for (const row of Array.isArray(grid) ? grid : []) {
+    if (!Array.isArray(row)) continue;
+    for (const value of row) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > maximum) maximum = numeric;
+    }
+  }
+  return Number.isFinite(maximum) ? maximum : fallback;
+}
 
 function applyClientMaxHold(frame) {
   if (typeof window === 'undefined' || window.vectorwarpMapMode !== 'maxhold' ||
@@ -73,7 +132,11 @@ function applyClientMaxHold(frame) {
   if (!sameShape) maxHoldGrid = frame.data.map(row => row.slice());
   else maxHoldGrid = frame.data.map((row, rowIndex) => row.map((value, columnIndex) =>
     Math.max(Number(value), Number(maxHoldGrid[rowIndex][columnIndex]) * .98)));
-  return {...frame, data: maxHoldGrid, maxPower: Math.max(...maxHoldGrid.flat())};
+  // A full desktop map contains more than 300k cells. Spreading that array
+  // into Math.max exceeds JavaScript's argument limit even though the exact
+  // same selected-lane frame works after mobile downsampling.
+  return {...frame, data: maxHoldGrid,
+    maxPower: finiteGridMaximum(maxHoldGrid, Number(frame.maxPower) || 0)};
 }
 
 // setup plotly
@@ -128,14 +191,10 @@ var config = {
 }
 
 // setup plotly data
-var data = [
-  {
-    z: [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-    colorscale: 'Jet',
-    showscale: plotPresentation.showScale,
-    type: 'heatmap'
-  }
-];
+// Do not draw a synthetic zero-valued heatmap before the first complete radar
+// frame. Plotly maps zero to the middle of its automatic colour range, which
+// produced a large green rectangle that looked like real radar data.
+var data = [];
 var detection = [];
 var radarOverlayMode = 'all';
 try {
@@ -163,12 +222,23 @@ if (typeof document !== 'undefined') {
 }
 var adsb = {};
 var remoteId = {};
-function exactFrameUrl(path, timestamp) {
-  const url = new URL(path, typeof window === 'undefined' ?
-    'http://vectorwarp.invalid' : window.location.href);
-  url.searchParams.set('frame_timestamp', String(timestamp));
-  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
-    `${url.pathname}${url.search}`;
+function adsbOverlay(data, channel, graceMs) {
+  const overlay = {delay: [], doppler: [], flight: [], customdata: [], hover: [], colors: [], ids: []};
+  const stable = stabilizeAircraftSnapshots(Object.entries(data || {})
+    .map(([hex, record]) => record?.hex ? record : {...record, hex}),
+  {scope: `delay-doppler:${channel || 'single'}`, graceMs});
+  for (const aircraft of stable) {
+    if (!aircraft || !('doppler' in aircraft)) continue;
+    overlay.delay.push(aircraft.delay);
+    overlay.doppler.push(aircraft.doppler);
+    overlay.flight.push(aircraftLabel(aircraft));
+    overlay.customdata.push(aircraftPlotData(aircraft));
+    overlay.colors.push(radarSemantics.aircraftColor(aircraft));
+    overlay.ids.push(`aircraft:${aircraftIdentity(aircraft)}`);
+    overlay.hover.push(aircraftHoverText(aircraft,
+      {delay: aircraft.delay, doppler: aircraft.doppler}));
+  }
+  return overlay;
 }
 
 function trackerOverlay(frame, runningConfig) {
@@ -180,8 +250,8 @@ function trackerOverlay(frame, runningConfig) {
   // separately because it was previously established.
   const updatedStates = new Set(['ACTIVE', 'CONFIRMED']);
   const result = {
-    updated: {delay: [], doppler: [], hover: []},
-    coasting: {delay: [], doppler: [], hover: []}
+    updated: {delay: [], doppler: [], hover: [], ids: []},
+    coasting: {delay: [], doppler: [], hover: [], ids: []}
   };
   if (kilometresPerBin === null) return result;
   for (const track of Array.isArray(frame?.data) ? frame.data : []) {
@@ -193,12 +263,17 @@ function trackerOverlay(frame, runningConfig) {
     const group = state === 'COASTING' ? result.coasting : result.updated;
     group.delay.push(range);
     group.doppler.push(doppler);
-    group.hover.push(`Radar track ${track.id ?? '—'}<br>${state}<br>${range.toFixed(2)} km · ${doppler.toFixed(1)} Hz`);
+    group.ids.push(`track:${track.id ?? `${delay}:${doppler}`}`);
+    group.hover.push(`Radar track ${track.id ?? '—'}<br>${state === 'COASTING' ? 'Coasting' : 'Radar tracked'}<br>Bistatic range ${range.toFixed(2)} km · Doppler ${doppler.toFixed(1)} Hz`);
   }
   return result;
 }
 
-Plotly.react('data', data, layout, config);
+Plotly.react('data', data, {...layout, annotations: [{
+  text: 'Waiting for the first<br>complete radar frame…', showarrow: false,
+  xref: 'paper', yref: 'paper', x: .5, y: .5, xanchor: 'center',
+  font: {color: '#ac9e94', size: 14}
+}]}, config);
 
 if (typeof window !== 'undefined' && window.addEventListener) {
   let resizeTimer;
@@ -225,8 +300,10 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 }
 
 // callback function
-var radarUpdates = null;
 async function renderRadarMap(data) {
+  const frameChannel = selectedIlluminator;
+  const atomicFrame = data?.schema === 'vectorwarp-radar-display-frame-v1' ? data : null;
+  if (atomicFrame) data = atomicFrame.map;
   data = applyClientMaxHold(data);
   const runningConfig = selectedIlluminatorConfig(await getRadarRuntimeConfig());
   const detectionEnabled = runningConfig.process?.detection?.enable !== false;
@@ -237,38 +314,43 @@ async function renderRadarMap(data) {
   const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
   // Remote ID currently has no per-illuminator delay/Doppler geometry. Never
   // combine the selected FM lane with the legacy global transmitter model.
-  const remoteIdEnabled = !selectedIlluminator && runningConfig.truth?.remote_id?.enabled === true;
+  const remoteIdEnabled = (!selectedIlluminator || selectedIlluminatorSynthetic) &&
+    runningConfig.truth?.remote_id?.enabled === true;
   if (typeof document !== 'undefined') document.querySelectorAll('[data-overlay-kind="remote-id"]').forEach(marker => {
     marker.hidden = !remoteIdEnabled;
   });
-  const [detected, trackerFrame, data_adsb, data_remote_id] = await Promise.all([
-    detectionEnabled && visible.detections ? fetchRadarJson(exactFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
-    fetchRadarJson(exactFrameUrl(urlTracker, data.timestamp)).catch(() => null),
-    adsbEnabled ? fetchRadarJson(exactFrameUrl(urlAdsbData, data.timestamp)).catch(() => null) : null,
-    remoteIdEnabled ? fetchRadarJson(exactFrameUrl(urlRemoteIdData, data.timestamp)).catch(() => null) : null
+  const adsbRequest = adsbEnabled ?
+    fetchRadarJson(radarFrameUrl(urlAdsbData, data.timestamp)).catch(() => null) :
+    Promise.resolve(null);
+  const [detected, trackerFrame, data_remote_id] = await Promise.all([
+    atomicFrame ? Promise.resolve(atomicFrame.detections) :
+      detectionEnabled && visible.detections ? fetchRadarJson(radarFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
+    atomicFrame ? Promise.resolve(atomicFrame.tracks) :
+      fetchRadarJson(radarFrameUrl(urlTracker, data.timestamp)).catch(() => null),
+    remoteIdEnabled ? fetchRadarJson(radarFrameUrl(urlRemoteIdData, data.timestamp)).catch(() => null) : null
   ]);
+  if (frameChannel !== selectedIlluminator) return false;
+  // Never advance the heatmap while replacing a failed exact-frame radar
+  // overlay request with an empty set. An empty, successfully returned frame
+  // is authoritative; null here means transport/history failure. Keeping the
+  // last complete visualization avoids making established tracks blink out
+  // during a transient request and lets startRadarPlot retry this timestamp.
+  if (trackerFrame === null ||
+      (detectionEnabled && visible.detections && detected === null)) return false;
   detection = detected || {delay: [], doppler: []};
   const tracked = trackerOverlay(trackerFrame, runningConfig);
   if (!visible.tracks) {
-    tracked.updated = {delay: [], doppler: [], hover: []};
-    tracked.coasting = {delay: [], doppler: [], hover: []};
+    tracked.updated = {delay: [], doppler: [], hover: [], ids: []};
+    tracked.coasting = {delay: [], doppler: [], hover: [], ids: []};
   }
-  adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
-  const stableAircraft = stabilizeAircraftSnapshots(Object.entries(data_adsb || {})
-      .map(([hex, record]) => record?.hex ? record : {...record, hex}),
-    {scope: `delay-doppler:${selectedIlluminator || 'single'}`,
-      graceMs: adsbEnabled ? 10000 : 0});
-  for (const aircraft of stableAircraft) {
-      if (aircraft && 'doppler' in aircraft) {
-        adsb.delay.push(aircraft.delay);
-        adsb.doppler.push(aircraft.doppler);
-        adsb.flight.push(aircraftLabel(aircraft));
-        adsb.customdata.push(aircraftPlotData(aircraft));
-        adsb.hover.push(aircraftHoverText(aircraft,
-          {delay: aircraft.delay, doppler: aircraft.doppler}));
-      }
-  }
-  remoteId = {delay: [], doppler: [], customdata: [], hover: []};
+  // A complete atomic radar frame must paint without waiting on a network-fed
+  // truth overlay. Preserve the last confirmed visualization and refresh trace
+  // 2 independently when ADS-B arrives; scoring/association remains server-side
+  // and still uses exact event-time data.
+  if (!atomicFrame) adsb = adsbOverlay(await adsbRequest, selectedIlluminator, adsbEnabled ? 10000 : 0);
+  else if (!Array.isArray(adsb.delay))
+    adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: [], colors: [], ids: []};
+  remoteId = {delay: [], doppler: [], customdata: [], hover: [], ids: []};
   const stableDrones = stabilizeAircraftSnapshots(Object.entries(data_remote_id || {})
       .map(([id, record]) => record?.hex ? record : {...record, hex: id}),
     {scope: 'delay-doppler-remote-id', graceMs: remoteIdEnabled ? 10000 : 0});
@@ -277,6 +359,7 @@ async function renderRadarMap(data) {
     remoteId.delay.push(drone.delay);
     remoteId.doppler.push(drone.doppler);
     remoteId.customdata.push(aircraftPlotData(drone));
+    remoteId.ids.push(`remote-id:${aircraftIdentity(drone)}`);
     remoteId.hover.push(aircraftHoverText(drone, {delay: drone.delay, doppler: drone.doppler}));
   }
 
@@ -304,7 +387,8 @@ async function renderRadarMap(data) {
         type: 'heatmap'
     };
     var trace2 = {
-        name: 'Raw detection',
+        name: radarSemantics.labels.detection,
+        legendrank: radarSemantics.legendRank.detection,
         x: detection.delay,
         y: detection.doppler,
         mode: 'markers',
@@ -312,22 +396,23 @@ async function renderRadarMap(data) {
         marker: {
           size: 8,
           opacity: 0.68,
-          color: '#f4b183',
+          color: radarSemantics.colors.detection,
           symbol: 'circle'
         }
     };
     var trace3 = {
-      name: 'ADS-B aircraft',
+      name: radarSemantics.labels.adsb,
+      legendrank: radarSemantics.legendRank.adsb,
       x: adsb.delay,
       y: adsb.doppler,
       mode: 'markers',
       type: 'scatter',
       marker: {
-        size: 16,
+        size: 10,
         opacity: 0.78,
-        color: '#4dd4b0',
-        // All externally sourced aircraft truth remains a green dot. MLAT is
-        // identified in hover/details rather than changing the radar grammar.
+        color: adsb.colors,
+        // Altitude colors match Map; circles indicate projected coordinates,
+        // never a geographic aircraft pose or an independent radar position.
         symbol: 'circle',
         line: {color: '#10251f', width: 1.2}
       },
@@ -336,7 +421,8 @@ async function renderRadarMap(data) {
       hovertemplate: '%{text}<extra></extra>'
     };
     var trace4 = {
-      name: 'Updated radar track',
+      name: radarSemantics.labels.track,
+      legendrank: radarSemantics.legendRank.track,
       x: tracked.updated.delay,
       y: tracked.updated.doppler,
       mode: 'markers',
@@ -344,7 +430,7 @@ async function renderRadarMap(data) {
       marker: {
         size: 11,
         opacity: 1,
-        color: '#ff7a45',
+        color: radarSemantics.colors.track,
         symbol: 'circle',
         line: {color: '#542012', width: 1.4}
       },
@@ -352,7 +438,8 @@ async function renderRadarMap(data) {
       hovertemplate: '%{text}<extra></extra>'
     };
     var trace5 = {
-      name: 'Coasting radar track',
+      name: radarSemantics.labels.coasting,
+      legendrank: radarSemantics.legendRank.coasting,
       x: tracked.coasting.delay,
       y: tracked.coasting.doppler,
       mode: 'markers',
@@ -360,20 +447,21 @@ async function renderRadarMap(data) {
       marker: {
         size: 13,
         opacity: .72,
-        color: '#ff7a45',
+        color: radarSemantics.colors.coasting,
         symbol: 'circle-open',
-        line: {color: '#ff7a45', width: 2}
+        line: {color: radarSemantics.colors.coasting, width: 2}
       },
       text: tracked.coasting.hover,
       hovertemplate: '%{text}<extra></extra>'
     };
     var trace6 = {
-      name: 'Remote ID drone',
+      name: radarSemantics.labels.remoteId,
+      legendrank: radarSemantics.legendRank.remoteId,
       x: remoteId.delay,
       y: remoteId.doppler,
       mode: 'markers',
       type: 'scatter',
-      marker: {size: 14, opacity: .9, color: '#20dddc', symbol: 'diamond',
+      marker: {size: 14, opacity: .9, color: radarSemantics.colors.remoteId, symbol: 'diamond',
         line: {color: '#0d3535', width: 1.3}},
       customdata: remoteId.customdata,
       text: remoteId.hover,
@@ -381,7 +469,7 @@ async function renderRadarMap(data) {
     };
 
     var data_trace = [trace1, trace2, trace3, trace4, trace5, trace6];
-    await Plotly.react('data', data_trace, layout, config);
+    await Plotly.react('data', data_trace, {...layout, annotations: []}, config);
     gridSignature = gridKey;
   }
   // case update plot
@@ -395,19 +483,49 @@ async function renderRadarMap(data) {
       customdata: [[], [], adsb.customdata, [], [], remoteId.customdata]
     };
     await Plotly.update('data', trace_update);
+    await Plotly.restyle('data', {'marker.color': [adsb.colors]}, [2]);
   }
+  delayDopplerSelectionTraces = [
+    {index: 2, ids: adsb.ids, size: 10, outline: '#10251f', width: 1.2},
+    {index: 3, ids: tracked.updated.ids, size: 11, outline: '#542012', width: 1.4},
+    {index: 4, ids: tracked.coasting.ids, size: 13, outline: radarSemantics.colors.coasting, width: 2},
+    {index: 5, ids: remoteId.ids, size: 14, outline: '#0d3535', width: 1.3}
+  ];
+  bindDelayDopplerSelection();
+  if (selectedDelayDopplerTarget) await refreshDelayDopplerSelection();
+  if (atomicFrame && adsbEnabled) void adsbRequest.then(dataAdsb => {
+    if (frameChannel !== selectedIlluminator || dataAdsb === null) return;
+    const next = adsbOverlay(dataAdsb, frameChannel, 10000);
+    adsb = next;
+    delayDopplerSelectionTraces[0].ids = next.ids;
+    const selection = delayDopplerSelectionStyle(delayDopplerSelectionTraces[0]);
+    return Plotly.restyle('data', {x: [next.delay], y: [next.doppler],
+      text: [next.hover], customdata: [next.customdata], 'marker.color': [next.colors],
+      ...Object.fromEntries(Object.entries(selection).map(([key, value]) => [key, [value]]))}, [2]);
+  }).catch(() => {});
   return true;
 }
 
-var vectorwarpMapReady = getIlluminatorContext().then(context => {
+function configureMapChannel(context) {
   selectedIlluminator = context?.id || '';
+  selectedIlluminatorSynthetic = context?.item?.api_illuminator === false;
   selectedIlluminatorSampleRate = Number(context?.item?.output_sample_rate_hz);
-  const product = path => selectedIlluminatorUrl(path, context);
-  urlDetection = liveApiUrl(radarPresentationUrl(product('/api/detection')));
-  urlTracker = liveApiUrl(radarPresentationUrl(product('/api/tracker')));
-  urlAdsbData = liveApiUrl(radarPresentationUrl(product('/api/adsb/delay-doppler?overlay=1')));
-  urlMap = liveApiUrl(radarPresentationUrl(mapPresentationUrl(product(mapProductPath),
-    typeof window === 'undefined' ? 1280 : window.innerWidth)));
-  radarUpdates = startRadarPlot(urlMap, renderRadarMap);
-  return radarUpdates;
+  urlDetection = radarDisplayUrl('detection', undefined, context);
+  urlTracker = radarDisplayUrl('map', '/api/tracker', context);
+  urlAdsbData = radarDisplayUrl('map', '/api/adsb/delay-doppler?overlay=1', context);
+  const liveMapPath = context?.enabled && context.id && context.item?.api_illuminator !== false ?
+    '/api/radar/frame' : mapProductPath;
+  urlMap = radarDisplayUrl('map', mapPresentationUrl(liveMapPath,
+    typeof window === 'undefined' ? 1280 : window.innerWidth), context);
+  maxHoldGrid = null;
+  gridSignature = '';
+  selectedDelayDopplerTarget = null;
+  delayDopplerSelectionTraces = [];
+  adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: [], colors: [], ids: []};
+}
+var vectorwarpMapReady = startRadarDisplay('map', renderRadarMap,
+  {url: () => urlMap, configure: configureMapChannel}).then(controller => {
+  window.startVectorWarpChannelRadar = controller.start;
+  window.stopVectorWarpChannelRadar = controller.stop;
+  return controller;
 });

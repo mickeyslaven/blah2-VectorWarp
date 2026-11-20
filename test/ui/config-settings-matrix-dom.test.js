@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
-const {configurationForReceiver} = require('../../api/config-store');
+const {configurationForReceiver, stripLegacyNoOps} = require('../../api/config-store');
 const clone = value => JSON.parse(JSON.stringify(value));
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
@@ -28,7 +28,7 @@ window.fetch = async (url, options = {}) => {
   if (url === '/api/config/validate') body = validateConfig(JSON.parse(options.body), saved);
   else if (url.startsWith('/api/config?')) {
     assert.equal(options.headers['If-Match'], `"${revision}"`);
-    saved = JSON.parse(options.body); revision = `matrix-${++writes}`;
+    saved = stripLegacyNoOps(JSON.parse(options.body)); revision = `matrix-${++writes}`;
     body = {ok: true, restarting: false, revision, message: 'Saved locally.'};
   } else if (url === '/api/config') body = saved;
   else if (url === '/api/config/capabilities') body = {editable: true, restartAvailable: false,
@@ -44,9 +44,11 @@ window.fetch = async (url, options = {}) => {
   return {ok: true, status: 200, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
 };
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/processing_capabilities.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/kraken_geometry.js'), 'utf8'));
-window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8') +
+  '\nwindow.fixtureDraft = () => activeConfig;');
 const field = key => window.document.querySelector(`[data-path="${key}"]`);
 const control = key => {
   const result = field(key);
@@ -78,8 +80,11 @@ function renderedValue(key, expected) {
   return normalize(input, expected);
 }
 async function saveAndAssert(label, expected) {
-  assert.equal(await window.validateActiveConfiguration(), true, `${label}: valid browser draft`);
+  assert.equal(await window.validateActiveConfiguration(), true,
+    `${label}: ${validateConfig(window.fixtureDraft(), saved).errors.join('; ')}`);
   await window.saveConfiguration();
+  assert.equal(saved.save.iq, undefined, 'Retired IQ flag has no control or saved value');
+  assert.equal(saved.save.timing, undefined, 'Retired timing flag has no control or saved value');
   for (const [key, value] of Object.entries(expected)) {
     const actual = key.split('.').reduce((target, part) => target?.[part], saved);
     assert.deepEqual(actual, value, `${label}: ${key} round trips`);
@@ -102,44 +107,41 @@ async function saveAndAssert(label, expected) {
       if (rule.readOnly) assert.equal(field(key), null, `${key} is intentionally not editable`);
 
     const autoBooleanPaths = [
-      'process.bearing.frequency_resolved_shadow.enabled',
       'process.bearing.manifold_recorder.enabled'
     ];
     for (const [index, key] of autoBooleanPaths.entries()) {
-      assert.equal(control(key).tagName, 'SELECT', `${key}: booleans retain all three modes`);
-      assert.deepEqual([...control(key).options].map(option => option.value), ['auto', 'on', 'off']);
-      assert.equal(control(key).value, index ? 'on' : 'off');
+      assert.equal(control(key).tagName, 'SELECT', `${key}: booleans retain explicit mode controls`);
+      assert.deepEqual([...control(key).options].map(option => option.value),
+        ['auto', 'on', 'off']);
+      assert.equal(control(key).value, 'on');
     }
-    // This unqualified RSPduo fixture cannot enable either worker. Turning the
-    // recorder off must leave the unedited shadow's legacy false value intact.
-    setScalar(autoBooleanPaths[1], 'off');
-    await saveAndAssert('Unedited legacy boolean mode', {
-      [autoBooleanPaths[0]]: false, [autoBooleanPaths[1]]: 'off'
-    });
-    for (const key of autoBooleanPaths) {
-      setScalar(key, 'on');
-      assert.equal(await window.validateActiveConfiguration(), false,
-        `${key}: the dropdown must retain receiver qualification checks`);
-      setScalar(key, 'off');
-    }
-    await saveAndAssert('Explicit off modes', Object.fromEntries(
-      autoBooleanPaths.map(key => [key, 'off'])));
-    setScalar(autoBooleanPaths[1], 'auto');
-    await saveAndAssert('Automatic recorder mode', {[autoBooleanPaths[1]]: 'auto'});
+    // Unqualified saved settings are retained and unavailable, not silently
+    // edited or made actionable by a synthetic event on a disabled control.
+    for (const key of autoBooleanPaths) assert.equal(control(key).disabled,true,key);
+    assert.equal(saved.process.bearing.manifold_recorder.enabled,true);
+    assert.equal(await window.validateActiveConfiguration(),false,
+      'The validator still reports unavailable saved enablement');
+    // Load a valid independent fixture for the editable round-trip matrix.
+    saved.process.bearing.manifold_recorder.enabled = false;
+    await window.renderConfiguration();
 
-    // Receiver-only array controls disappear when a non-array backend is
-    // selected; portable radar, replay, tracker, and ADS-B controls remain.
+    // Saved incompatible array intent stays visible for explicit repair.
     window.switchDevice('RspDuo');
-    assert.equal(field('process.bearing.frequency_resolved_shadow.enabled'), null);
-    assert.equal(field('process.surveillance_fusion.mode'), null);
+    assert.ok(field('process.surveillance_fusion.mode'));
     assert.ok(field('process.detection.pfa'));
     assert.ok(field('process.tracker.enable'));
+    assert.equal(await window.validateActiveConfiguration(), false);
+    // Fresh receiver setup supplies its physical defaults, independently of
+    // the preceding existing-configuration transition/refusal regression.
+    saved = configurationForReceiver('RspDuo');
+    await window.renderConfiguration();
 
     // Browser validation combines native constraints with API cross-field checks.
     setScalar('process.detection.pfa', 1);
     assert.equal(await window.validateActiveConfiguration(), false, 'PFA must remain below one');
     setScalar('process.detection.pfa', .00001);
-    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(await window.validateActiveConfiguration(), true,
+      JSON.stringify(validateConfig(window.fixtureDraft(), saved).errors));
 
     // Common settings cover recording, CPU/performance, map/detection/
     // tracker controls, ADS-B, paths, ports, and location dialog validation.
@@ -166,6 +168,9 @@ async function saveAndAssert(label, expected) {
     setScalar('process.detection.nCentroid', 7);
     setScalar('process.tracker.enable', false);
     setScalar('process.tracker.enable', true);
+    assert.equal(validateConfig(window.fixtureDraft(), saved).valid, false,
+      'Tracking needs enabled detection in every receiver profile');
+    setScalar('process.tracker.enable', false);
     setScalar('process.tracker.initiate.M', 2);
     setScalar('process.tracker.initiate.N', 4);
     setScalar('process.tracker.initiate.maxAcc', 12);
@@ -204,7 +209,7 @@ async function saveAndAssert(label, expected) {
       'process.detection.pfa': .00002, 'process.detection.nGuard': 3, 'process.detection.nTrain': 8,
       'process.detection.minDelay': 6, 'process.detection.minDoppler': 20,
       'process.detection.nCentroid': 7,
-      'process.tracker.enable': true,
+      'process.tracker.enable': false,
       'process.tracker.initiate.M': 2, 'process.tracker.initiate.N': 4,
       'process.tracker.initiate.maxAcc': 12,
       'process.tracker.initiate.acceleration_model': 'hypothesis_bank',
@@ -258,11 +263,14 @@ async function saveAndAssert(label, expected) {
       'capture.device.subdev': 'A:0 A:1', 'capture.device.antenna': ['RX2', 'TX/RX'],
       'capture.device.gain': [20, 21], 'capture.device.type': 'Usrp'});
 
-    window.switchDevice('Kraken');
+    saved = configurationForReceiver('Kraken');
+    await window.renderConfiguration();
     assert.ok(field('capture.aircraft_clips.enabled'), 'Kraken exposes automatic aircraft clips');
     assert.ok(field('capture.aircraft_clips.maximum_slant_range_km'),
       'Automatic clips expose range selection');
     assert.ok(field('process.surveillance_fusion.mode'), 'Kraken exposes coherent fusion controls');
+    setScalar('process.detection.enable', true);
+    setScalar('process.tracker.enable', true);
     setScalar('process.detection.integration_cpis', 1);
     setScalar('capture.device.heimdall.host', '127.0.0.1');
     setScalar('capture.device.heimdall.port', 8091);
@@ -277,6 +285,8 @@ async function saveAndAssert(label, expected) {
     setScalar('process.reference_synthesis.covariance_smoothing', .25);
     setScalar('process.reference_synthesis.diagonal_loading', .001);
     await saveAndAssert('Kraken', {
+      'process.detection.enable': true,
+      'process.tracker.enable': true,
       'process.detection.integration_cpis': 1,
       'process.reference_synthesis.analysis_samples': 65536,
       'process.reference_synthesis.analysis_interval': 3, 'process.reference_synthesis.power_iterations': 8,
@@ -320,7 +330,42 @@ async function saveAndAssert(label, expected) {
       'process.reference_synthesis.diagonal_loading'
     ];
     for (const key of requiredCoverage) assert.ok(covered.has(key), `Coverage gate: ${key} was saved and re-rendered`);
-    assert.ok(writes >= 6, 'Common and each receiver/synthesis profile round-tripped.');
+    assert.ok(writes >= 5, 'Common and four receiver/synthesis profiles round-tripped; unavailable legacy fields were read-only.');
+    for (const receiver of ['Kraken', 'Usrp', 'RspDuo', 'HackRF']) {
+      window.switchDevice(receiver);
+      for (const [key, rule] of Object.entries(FIELD_RULES)) {
+        if (!rule.control?.scale) continue;
+        const names = key.split('.');
+        const parent = names.slice(0, -1).reduce((value, name) => value?.[name], window.fixtureDraft());
+        if (!parent) continue;
+        const original = parent[names.at(-1)];
+        const widget = window.typedInput(original, names);
+        // Grouped RF tuning and receiver-supported rate choices retain their
+        // own interactions. Every ordinary numeric control uses one descriptor.
+        if (!widget.classList.contains('input-with-unit')) continue;
+        const input = widget.querySelector('input');
+        assert.equal(widget.querySelector('span').textContent, rule.control.unit, key);
+        assert.equal(input.step, String(rule.integer ? 1 / rule.control.scale : 'any'), key);
+        if (rule.min !== undefined) assert.equal(input.min, String(rule.min / rule.control.scale), key);
+        if (rule.max !== undefined) assert.equal(input.max, String(rule.max / rule.control.scale), key);
+        change(input, '1.25');
+        assert.equal(parent[names.at(-1)], 1.25 * rule.control.scale, `${receiver}/${key}: persistence units`);
+        change(input, '');
+        assert.equal(parent[names.at(-1)], null, `${receiver}/${key}: blank is not zero`);
+        window.setValue(names, original);
+      }
+      window.fixtureDraft().process.multi_illuminator.enabled = true;
+      window.fixtureDraft().process.clutter.enable = false;
+      const settings = window.renderClutterSettings();
+      const select = settings.querySelector('select');
+      const off = [...select.options].find(option => option.value === 'off');
+      assert.equal(off.disabled, true, receiver);
+      assert.match(off.title, /requires clutter/);
+      assert.equal(select.value, 'off', 'Saved unsupported value is preserved for correction');
+      change(select, 'off');
+      assert.equal(window.fixtureDraft().process.clutter.enable, false);
+      assert(settings.textContent.includes('requires clutter removal'));
+    }
     console.log('Settings matrix DOM: common, location, network, ADS-B, performance, detector/tracker, and all receiver profiles round-trip locally.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

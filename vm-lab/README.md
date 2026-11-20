@@ -15,15 +15,13 @@ ecosystem:
 | Noble R9 | Noble 24.04 | `ubuntu24.04/amd64` |
 | Resolute R1 | Resolute 26.04 | `ubuntu26.04/amd64` |
 
-Create separate disposable overlays/guests before running a target. The runner
-does not download images, reset disks, alter boot configuration, or install on
-a controller host (Fedora x86_64 also uses disposable guests). On Strix it refuses to run outside the Qwen unload/restore
-guard; restoration succeeds only after `qwen-window.sh reload` completes its
-health check. On M2 it checks Lima reports exactly 2 GiB and runs only one
-target command at a time.
+Create separate disposable guests before running a target. The runner does not
+download images, reset disks, alter boot configuration, install on a controller
+host, or assume a particular hypervisor. Controller resource isolation and
+unrelated-workload coordination remain the operator's responsibility.
 
 ```sh
-sudo vm-lab/with-qwen-unloaded.sh vm-lab/run-release-target.sh \
+vm-lab/run-release-target.sh \
   dragonos-focalx-r37.1 clean@guest-a upgrade@guest-b \
   vectorwarp-source.tar.gz vectorwarp_9999.0.0-1_ubuntu22.04_amd64.deb \
   vectorwarp_0.1.29-1_ubuntu22.04_amd64.deb

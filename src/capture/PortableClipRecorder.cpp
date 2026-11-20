@@ -1,5 +1,6 @@
 #include "PortableClipRecorder.h"
 #include "Sha256.h"
+#include "RecordingAcquisitionJson.h"
 
 #include <algorithm>
 #include <chrono>
@@ -52,6 +53,9 @@ void write_synced(const std::string& path,const std::string& value) {
 }
 struct PortableClipRecorder::Block {
   uint64_t epoch = 0, first = 0, count = 0;
+  uint64_t sequence = 0;
+  bool positionAvailable = false;
+  std::shared_ptr<const RecordingBlockMetadata> metadata;
   IqBlock samples;
 };
 struct PortableClipRecorder::Active {
@@ -65,6 +69,15 @@ struct PortableClipRecorder::Job {
   std::vector<std::shared_ptr<Block>> blocks;
 };
 
+bool PortableClipRecorder::supports_retention(uint32_t channels,
+    uint32_t sampleRate, double seconds) noexcept {
+  if (!channels || !sampleRate || !std::isfinite(seconds) || seconds < 0)
+    return false;
+  const long double bytes = static_cast<long double>(channels) * sampleRate *
+    seconds * sizeof(std::complex<float>);
+  return bytes <= static_cast<long double>(MAXIMUM_RING_BYTES);
+}
+
 PortableClipRecorder::PortableClipRecorder(std::string directory,
     std::string receiver, uint32_t channels, uint32_t sampleRate,
     uint32_t frequency, Options options)
@@ -77,6 +90,7 @@ PortableClipRecorder::PortableClipRecorder(std::string directory,
       this->options.ringSeconds < 0 || this->options.maximumClipSeconds <= 0 ||
       this->options.ringSeconds > this->options.maximumClipSeconds ||
       this->options.maximumClipSeconds > 10.0 ||
+      !supports_retention(channels, sampleRate, this->options.ringSeconds) ||
       !this->options.maximumWriterJobs)
     throw std::invalid_argument("Invalid portable clip recorder bounds");
   const long double retained = std::ceil(
@@ -121,13 +135,17 @@ void PortableClipRecorder::fail_active_locked(const std::string& error) {
 }
 
 bool PortableClipRecorder::ingest(IqBlock samples, uint64_t epoch,
-    uint64_t firstSample, bool positionAvailable, int64_t receiptNanoseconds) {
+    uint64_t firstSample, bool positionAvailable, int64_t receiptNanoseconds,
+    std::shared_ptr<const RecordingBlockMetadata> metadata) {
   if (samples.size() != channels || samples.empty()) return false;
   const std::size_t count = samples.front().size();
   if (!count || std::any_of(samples.begin(), samples.end(),
       [&](const auto& channel) { return channel.size() != count; })) return false;
-  std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
-  if (!lock.owns_lock()) return false;
+  std::unique_lock<std::mutex> lock(mutex);
+  if (!ring.empty() && ring.back()->metadata != metadata) {
+    fail_active_locked("Acquisition settings changed during portable clip");
+    ring.clear(); retainedSamples = 0; haveEpoch = false;
+  }
   const int64_t receipt = receiptNanoseconds ? receiptNanoseconds : now_nanoseconds();
   uint64_t first = positionAvailable ? firstSample : nextSample;
   if (!haveEpoch || (positionAvailable && (epoch != streamEpoch || first != nextSample))) {
@@ -147,12 +165,17 @@ bool PortableClipRecorder::ingest(IqBlock samples, uint64_t epoch,
   }
   auto block = std::make_shared<Block>();
   block->epoch = streamEpoch; block->first = first; block->count = count;
+  block->sequence = ++ingressSequence; block->positionAvailable = positionAvailable;
+  block->metadata = std::move(metadata);
   block->samples = std::move(samples);
   nextSample = first + count;
   ring.push_back(block); retainedSamples += count;
-  if (active && active->epoch == streamEpoch && nextSample > active->first)
-    active->blocks.push_back(block);
-  while (ring.size() > 1 && retainedSamples > ringSamples) {
+  if (active && active->epoch == streamEpoch && nextSample > active->first) {
+    if (active->blocks.size() >= acquisition::maximumFrames)
+      fail_active_locked("Portable clip frame lineage exceeds bounded capacity");
+    else active->blocks.push_back(block);
+  }
+  while (ring.size() > 1 && (retainedSamples > ringSamples || ring.size() > acquisition::maximumFrames)) {
     retainedSamples -= ring.front()->count;
     ring.pop_front();
   }
@@ -258,7 +281,7 @@ void PortableClipRecorder::writer_loop() {
   }
 }
 
-IqClipStatus PortableClipRecorder::write_job(const Job& job) {
+IqClipStatus PortableClipRecorder::write_job(Job& job) {
   if (options.beforeWrite) options.beforeWrite();
   std::filesystem::create_directories(directory);
   const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -267,19 +290,46 @@ IqClipStatus PortableClipRecorder::write_job(const Job& job) {
     ("aircraft-" + std::to_string(stamp) + "-" +
       std::to_string(job.sequence) + ".blah2iq")).string();
   const std::string partial=file+".partial", metadataPartial=file+".json.partial";
-  RecordingWriter output(partial, {channels, sampleRate, frequency, 0, "blah2"});
-  uint64_t written = 0;
+  std::vector<RecordingFrameLineage> lineage;
+  bool positions = true;
+  std::shared_ptr<const RecordingBlockMetadata> metadata;
+  bool metadataSet = false;
   for (const auto& block : job.blocks) {
-    const uint64_t begin = std::max(job.first, block->first);
-    const uint64_t finish = std::min(job.end, block->first + block->count);
+    const auto begin = std::max(job.first, block->first);
+    const auto finish = std::min(job.end, block->first + block->count);
     if (finish <= begin) continue;
-    const std::size_t offset = static_cast<std::size_t>(begin - block->first);
-    const std::size_t count = static_cast<std::size_t>(finish - begin);
-    IqBlock slice(channels);
-    for (uint32_t channel = 0; channel < channels; ++channel)
-      slice[channel].assign(block->samples[channel].begin() + offset,
-        block->samples[channel].begin() + offset + count);
-    output.append(slice); written += count;
+    if (lineage.size() >= acquisition::maximumFrames)
+      throw std::runtime_error("Portable clip frame lineage exceeds bounded capacity");
+    if (!metadataSet) { metadata = block->metadata; metadataSet = true; }
+    if (metadata != block->metadata)
+      throw std::runtime_error("Portable clip crosses an acquisition settings boundary");
+    positions = positions && block->positionAvailable && block->epoch == job.epoch;
+    lineage.push_back({block->sequence, block->first, block->count, begin - block->first, finish - begin});
+  }
+  const auto acquisitionJson = acquisition::serialize(metadata.get(), receiver, channels,
+    sampleRate, frequency, job.epoch, job.first, job.end, positions, lineage);
+  RecordingWriter output(partial, {channels, sampleRate, frequency, 0, "blah2", acquisitionJson});
+  uint64_t written = 0;
+  try {
+    for (auto& block : job.blocks) {
+      const uint64_t begin = std::max(job.first, block->first);
+      const uint64_t finish = std::min(job.end, block->first + block->count);
+      if (finish > begin) {
+        const std::size_t offset = static_cast<std::size_t>(begin - block->first);
+        const std::size_t count = static_cast<std::size_t>(finish - begin);
+        output.append_slice(block->samples, offset, count); written += count;
+      }
+      // Once the final slice from this block is durable in the writer's file
+      // stream, the recorder no longer needs to pin it while close/fsync and
+      // final-file integrity verification run. The live ring may still own it.
+      block.reset();
+    }
+    job.blocks.clear();
+  } catch (...) {
+    // A failed write must not retain the remaining clip window through error
+    // publication or recorder shutdown.
+    job.blocks.clear();
+    throw;
   }
   if (!written) throw std::runtime_error("IQ clip contains no writable samples");
   output.close();

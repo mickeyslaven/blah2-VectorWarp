@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -22,19 +23,8 @@ import tempfile
 MAX_BYTES = 900 * 1024 * 1024
 FINGERPRINT = re.compile(r"(?:[0-9A-F]{40}|[0-9A-F]{64})\Z")
 FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~-]*\Z")
-TARGETS = {
-    ("deb", "ubuntu", "22.04"): ("jammy", {"amd64", "arm64"}),
-    ("deb", "ubuntu", "24.04"): ("noble", {"amd64", "arm64"}),
-    ("deb", "ubuntu", "26.04"): ("resolute", {"amd64", "arm64"}),
-    ("deb", "debian", "12"): ("bookworm", {"arm64"}),
-    ("deb", "debian", "13"): ("trixie", {"amd64", "arm64"}),
-    ("rpm", "fedora", "44"): (None, {"x86_64", "aarch64"}),
-}
-RELEASE_TARGETS = {
-    (format, distro, version, arch)
-    for (format, distro, version), (_, architectures) in TARGETS.items()
-    for arch in architectures
-}
+ARTIFACT_PLAN = runpy.run_path(str(Path(__file__).resolve().with_name("artifact-plan.py")))
+TARGETS = ARTIFACT_PLAN["release_targets"]()
 
 
 def release_installation(manifest):
@@ -493,10 +483,9 @@ def load_manifest(file, packages):
 
 
 def release_targets_for_version(version):
-    """Bookworm ARM64 joins the immutable release matrix at 0.1.10."""
-    parts = tuple(map(int, version.split(".")))
-    return (RELEASE_TARGETS if parts >= (0, 1, 10) else
-            {target for target in RELEASE_TARGETS if target[:3] != ("deb", "debian", "12")})
+    return {(kind, distro, release, arch)
+            for (kind, distro, release), (_, arches) in ARTIFACT_PLAN["release_targets"](version).items()
+            for arch in arches}
 
 
 def verify_release_matrix(entries, version):

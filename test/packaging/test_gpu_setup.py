@@ -225,7 +225,10 @@ class SetupTests(unittest.TestCase):
         build = (ROOT / 'script/build-native.sh').read_text()
         install = (ROOT / 'script/install-native.sh').read_text()
         release = (ROOT / 'script/install-release.sh').read_text()
-        self.assertIn('$SOURCE_DIR/script/vectorwarp-gpu-setup', build)
+        plan = json.loads((ROOT / 'packaging/artifact-plan.json').read_text())
+        self.assertIn(['script/vectorwarp-gpu-setup', 'libexec/vectorwarp-gpu-setup', '0755'],
+                      plan['stage']['linux'])
+        self.assertIn('"$ARTIFACT_PLAN" stage', build)
         self.assertIn('$target_prefix/libexec/vectorwarp-gpu-setup', install)
         self.assertIn('--setup-pi-gpu is forbidden with --destdir', install)
         self.assertLess(release.index('run apt-get install vectorwarp'), release.index('run /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver'))

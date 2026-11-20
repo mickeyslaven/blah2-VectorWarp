@@ -1,242 +1,120 @@
 'use strict';
 
-const assert = require('assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const {TrackerPublication, JsonlTailer, publicationSettings} =
-  require('./tracker-publication');
-
-function config(mode = 'hybrid', sampleRate = 2_400_000) {
-  return {capture: {fs: sampleRate}, process: {tracker: {publication: {mode,
-    event_file: '/run/vectorwarp/unassisted.jsonl', stale_after_s: 2,
-    native_min_associations: 5, delay_tolerance: 2,
-    doppler_tolerance: 5}}}};
-}
-
-function event(id, timestamp, delay, doppler, length = 8) {
-  return {track_id: id, timestamp, length,
-    detections: [{timestamp: timestamp - 500, delay: delay - .1, doppler: doppler - 1},
-      {timestamp, delay, doppler}], is_anomalous: false, max_velocity_ms: 20,
-    anomaly_types: []};
-}
-
-function native(timestamp = 1000) {
-  return JSON.stringify({timestamp, n: 4, nTentative: 1, nAssociated: 1,
-    nActive: 1, nCoasting: 1, data: [
-      {id: 'same', state: 'ACTIVE', delay: 315.92, doppler: 22, n: 20},
-      {id: 'weak', state: 'ASSOCIATED', delay: 30, doppler: -50, n: 4},
-      {id: 'extra', state: 'COASTING', delay: 40, doppler: 22, n: 7},
-      {id: 'invalid', state: 'ACTIVE', delay: null, doppler: 0, n: 99}
-    ]});
-}
-
-function publishesHybridWithoutDuplicate() {
-  let now = 10_000;
-  const publication = new TrackerPublication(config(), {now: () => now});
-  publication.acceptNative(native());
-  publication.acceptInput('{"timestamp":1000}', true);
-  assert.equal(publication.acceptExternal(event('u1', 1000, 39.46268, 20)), true);
-  const frame = JSON.parse(publication.frame());
-  assert.equal(frame.publication.mode, 'hybrid');
-  assert.equal(frame.publication.unassisted, 1);
-  assert.equal(frame.publication.nativeSupplement, 1);
-  assert.deepEqual(frame.data.map(item => item.id), ['u1', 'native-extra']);
-  assert.equal(frame.data[0].source, 'unassisted');
-  assert.equal(frame.data[0].sourceTimestamp, 1000);
-  assert.equal(frame.data[1].confidence, 'supplement');
-  assert.deepEqual(frame.data[1], {...JSON.parse(native()).data[2],
-    id: 'native-extra', source: 'native', confidence: 'supplement', sourceTimestamp: 1000});
-  assert.equal(publication.status().fusion.nativeDeduplicated, 1);
-  now += 2001;
-  assert.equal(publication.frame(), native());
-  assert.equal(publication.status().fusion.fallbackActive, true);
-}
-
-function preservesNativeCompatibility() {
-  const raw = `  ${native()}\n`;
-  for (const mode of ['native', 'hybrid', 'external']) {
-    let now = 10_000;
-    const publication = new TrackerPublication(config(mode), {now: () => now});
-    publication.acceptNative(raw);
-    publication.acceptInput({timestamp: 1000});
-    assert.equal(publication.acceptExternal(event('ignored', 1000, 1, 1)), true);
-    assert.strictEqual(publication.nativeOnly(), raw);
-    if (mode === 'native') assert.strictEqual(publication.frame(), raw);
-    now += 2001;
-    assert.strictEqual(publication.frame(), raw, `${mode}: stale input preserves native bytes`);
-    assert.strictEqual(publication.nativeOnly(), raw);
-  }
-  assert.equal(publicationSettings({process: {tracker: {}}}).mode, 'native');
-}
-
-function preservesEventTimeProvenanceThroughFusion() {
-  const eventTime = {source: 'kraken_heimdall_host_arrival_estimate', exact: false,
-    uncertaintyBounded: false, uncertaintyNs: null};
-  const publication = new TrackerPublication(config('external'), {now: () => 10});
-  const nativeFrame = JSON.parse(native());
-  nativeFrame.eventTime = eventTime;
-  publication.acceptNative(nativeFrame);
-  publication.acceptInput({timestamp: 1000, eventTime}, true);
-  assert.equal(publication.acceptExternal(event('timed', 1000, 1, 1)), true);
-  assert.deepEqual(JSON.parse(publication.frame()).eventTime, eventTime,
-    'fusion must not strip an inexact Kraken event-time warning');
-}
-
-function convertsExternalDelayAndHistory() {
-  for (const [sampleRate, expected] of [
-    [2_400_000, [6.324375244956963, 7.1249290734325275]],
-    [2_000_000, [5.270312704130802, 5.937440894527106]]
-  ]) {
-    const publication = new TrackerPublication(config('external', sampleRate), {now: () => 10});
-    const input = Object.freeze({timestamp: 1000, delay: Object.freeze([.89]),
-      doppler: Object.freeze([20])});
-    const external = event('kilometres', 1000, .89, 20);
-    external.detections.forEach(Object.freeze);
-    Object.freeze(external.detections);
-    Object.freeze(external);
-    const original = JSON.stringify(external);
-    publication.acceptInput(input);
-    assert.equal(publication.acceptExternal(external), true);
-    const stored = publication.external.get('kilometres');
-    const published = JSON.parse(publication.frame()).data[0];
-    for (const track of [stored, published]) {
-      assert.ok(Math.abs(track.delay - expected[1]) < 1e-12);
-      assert.equal(track.associated_delay.length, expected.length);
-      track.associated_delay.forEach((delay, index) => {
-        assert.ok(Math.abs(delay - expected[index]) < 1e-12);
-        const kilometres = delay * 299792458 / sampleRate / 1000;
-        assert.ok(Math.abs(kilometres - external.detections[index].delay) < 1e-12);
-      });
-      assert.deepEqual(track.associated_doppler, [19, 20]);
-    }
-    assert.equal(JSON.stringify(external), original);
-    assert.deepEqual(input.delay, [.89]);
-  }
-}
-
-function rejectsInvalidSampleRatesWithFullNativeFallback() {
-  const raw = `  ${native()}\n`;
-  const captureSettings = [{}, null, ...[undefined, null, 0, -1, NaN, Infinity,
-    -Infinity, '2400000', Number.MAX_VALUE].map(fs => ({fs}))];
-  for (const mode of ['native', 'hybrid', 'external']) {
-    for (const capture of captureSettings) {
-      const settings = config(mode);
-      settings.capture = capture;
-      const publication = new TrackerPublication(settings, {now: () => 10});
-      publication.acceptNative(raw);
-      publication.acceptInput({timestamp: 1000});
-      assert.equal(publication.acceptExternal(event('invalid-rate', 1000, .89, 20)), false);
-      assert.strictEqual(publication.frame(), raw);
-      assert.strictEqual(publication.nativeOnly(), raw);
-      const status = publication.status();
-      assert.equal(status.externalTracks, 0);
-      assert.equal(status.counters.invalid, 1);
-      assert.equal(status.externalFresh, false);
-      if (mode !== 'native') assert.equal(status.fusion.fallbackActive, true);
-    }
-  }
-}
-
-function supportsExternalOnlyAndRejectsBadEvents() {
-  const publication = new TrackerPublication(config('external'), {now: () => 10});
-  publication.acceptNative(native());
-  publication.acceptInput({timestamp: 2}, true);
-  assert.equal(publication.acceptExternal({timestamp: 1, track_id: 'bad', detections: []}), false);
-  assert.equal(publication.acceptExternal(event('good', 2, 3, 4)), true);
-  const frame = JSON.parse(publication.frame());
-  assert.deepEqual(frame.data.map(item => item.id), ['good']);
-  assert.equal(frame.publication.nativeSupplement, 0);
-  assert.equal(publication.status().counters.invalid, 1);
-}
-
-function neverPublishesMixedOrUntimedTrackerEpochs() {
-  for (const mode of ['external', 'hybrid']) {
-    let now = 10;
-    const publication = new TrackerPublication(config(mode), {now: () => now});
-    const raw = native(1000);
-    publication.acceptNative(raw);
-    publication.acceptInput({timestamp: 1000}, true);
-    assert.strictEqual(publication.frame(), raw,
-      `${mode}: no external frame must fall back to native bytes`);
-    assert.equal(publication.acceptExternal(event('old', 10_000, 1, 1)), true);
-    assert.strictEqual(publication.frame(), raw,
-      `${mode}: external and detector timestamps from different epochs must not mix`);
-    publication.acceptInput({timestamp: 10_000}, true);
-    const frame = JSON.parse(publication.frame());
-    assert.equal(frame.timestamp, 10_000);
-    assert.equal(frame.data[0].sourceTimestamp, 10_000);
-    if (mode === 'hybrid') assert.equal(frame.publication.nativeSupplement, 0,
-      'an incompatible native frame must not supplement a current external frame');
-    now += 2001;
-    assert.strictEqual(publication.frame(), raw,
-      `${mode}: a stale external frame must fall back to native bytes`);
-  }
-}
-
-function neverFusesDifferentCaptureEpochsInsideFreshnessWindow() {
-  for (const mode of ['external', 'hybrid']) {
-    const publication = new TrackerPublication(config(mode), {now: () => 10});
-    const epoch1 = {source: 'kraken_heimdall_host_arrival_estimate', epoch: '1'};
-    const epoch2 = {source: 'kraken_heimdall_host_arrival_estimate', epoch: '2'};
-    publication.acceptInput({timestamp: 1000, eventTime: epoch1}, true);
-    assert.equal(publication.acceptExternal(event('old', 1000, 1, 1)), true);
-    const newerNative = JSON.parse(native(1500));
-    newerNative.eventTime = epoch2;
-    publication.acceptNative(newerNative);
-    publication.acceptInput({timestamp: 1500, eventTime: epoch2}, true);
-    const frame = JSON.parse(publication.frame());
-    assert.equal(frame.timestamp, 1000);
-    assert.deepEqual(frame.eventTime, epoch1);
-    assert.deepEqual(frame.data.map(track => track.id), ['old'],
-      `${mode}: epoch-2 native tracks must not supplement epoch-1 external tracks`);
-  }
-}
-
-function parsesBoundedJsonLines() {
-  let callback;
-  const events = [];
-  const tailer = new JsonlTailer('/unused', value => { events.push(value); return true; },
-    {schedule: fn => { callback = fn; return {unref() {}}; }, cancel() {}});
-  assert.equal(typeof callback, 'function');
-  tailer.consume('{"track_id":"a"}\n{"track_id"');
-  tailer.consume(':"b"}\nnot-json\n');
-  assert.deepEqual(events.map(item => item.track_id), ['a', 'b']);
-  assert.equal(tailer.status().lines, 2);
-  assert.equal(tailer.status().invalid, 1);
-  tailer.close();
-}
-
-async function tailsOnlyNewEventsAndFollowsRotation() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-tracker-'));
-  const filename = path.join(directory, 'events.jsonl');
-  fs.writeFileSync(filename, '{"track_id":"history"}\n');
-  const events = [];
-  const tailer = new JsonlTailer(filename, value => { events.push(value); return true; },
-    {schedule: () => ({unref() {}}), cancel() {}});
-  await tailer.poll();
-  assert.deepEqual(events, [], 'history present before startup must be ignored');
-  fs.appendFileSync(filename, '{"track_id":"live"}\n');
-  await tailer.poll();
-  fs.renameSync(filename, `${filename}.1`);
-  fs.writeFileSync(filename, '{"track_id":"rotated"}\n');
-  await tailer.poll();
-  assert.deepEqual(events.map(item => item.track_id), ['live', 'rotated']);
-  assert.equal(tailer.status().resets, 1);
-  tailer.close();
-  fs.rmSync(directory, {recursive: true});
-}
+// Regression purpose: retired publishers cannot create a second radar stream;
+// upgrades preserve unsupported intent and canonical native bytes.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const net = require('node:net');
+const http = require('node:http');
+const {spawn} = require('node:child_process');
+const yaml = require('js-yaml');
+const {FIELD_RULES, RETIRED_FIXED_SETTINGS, validateConfig} = require('./config-manager');
+const {configurationForReceiver, readConfig, saveConfig, migrateKnownDefaults} = require('./config-store');
+const {RadarSessionStore} = require('./presentation-history');
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-publication-retirement-'));
+const file = path.join(directory, 'config.yml');
+const clone = value => JSON.parse(JSON.stringify(value));
+const set = (value, dotted, child) => {
+  const keys = dotted.split('.'), leaf = keys.pop();
+  for (const key of keys) value = value[key] ||= {};
+  value[leaf] = child;
+};
+const get = (value, dotted) => dotted.split('.').reduce((item, key) => item?.[key], value);
+const base = () => {
+  const config = configurationForReceiver('Usrp');
+  config.network.ip = '127.0.0.1';
+  config.save.path = directory + '/';
+  return config;
+};
+const port = () => new Promise((resolve, reject) => {
+  const probe = net.createServer();
+  probe.once('error', reject);
+  probe.listen(0, '127.0.0.1', () => { const value = probe.address().port; probe.close(() => resolve(value)); });
+});
+const request = (port, route) => new Promise((resolve, reject) => {
+  const req = http.get({hostname:'127.0.0.1',port,path:route,timeout:500}, response => {
+    let text=''; response.setEncoding('utf8'); response.on('data', chunk => { text+=chunk; });
+    response.on('end', () => resolve({status:response.statusCode,body:JSON.parse(text)}));
+  });
+  req.on('error', reject); req.on('timeout', () => req.destroy(new Error('timeout')));
+});
 
 (async () => {
-  publishesHybridWithoutDuplicate();
-  preservesNativeCompatibility();
-  preservesEventTimeProvenanceThroughFusion();
-  convertsExternalDelayAndHistory();
-  rejectsInvalidSampleRatesWithFullNativeFallback();
-  supportsExternalOnlyAndRejectsBadEvents();
-  neverPublishesMixedOrUntimedTrackerEpochs();
-  neverFusesDifferentCaptureEpochsInsideFreshnessWindow();
-  parsesBoundedJsonLines();
-  await tailsOnlyNewEventsAndFollowsRotation();
-  console.log('tracker-publication tests passed');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+  const native = JSON.stringify({timestamp:1000,n:1,data:[{id:7,state:'TENTATIVE',n:1,delay:9,doppler:20}]});
+  const session = new RadarSessionStore({});
+  session.acceptProduct('tracker', native);
+  assert.equal(session.products.tracker, native, 'canonical publication retains native states and bytes');
+
+  for (const mode of ['external','hybrid']) {
+    const config = base();
+    config.process.tracker.publication = {mode,event_file:path.join(directory,'events.jsonl')};
+    fs.writeFileSync(config.process.tracker.publication.event_file,
+      JSON.stringify({track_id:'unqualified',timestamp:Date.now(),detections:[{delay:1,doppler:2}]})+'\n');
+    const validation = validateConfig(config);
+    assert.equal(validation.valid,false);
+    assert(validation.errors.some(message => /publication is retired/.test(message)));
+    fs.writeFileSync(file,yaml.dump(config));
+    const original=fs.readFileSync(file,'utf8'),document=readConfig(file);
+    assert.equal(document.config.process.tracker.publication.mode,mode);
+    assert.equal(document.setupRequired,true);
+    assert.throws(()=>saveConfig(file,config,document.revision),/publication is retired/);
+    assert.equal(fs.readFileSync(file,'utf8'),original,'refusal does not rewrite active policy');
+    const repaired=clone(document.config);delete repaired.process.tracker.publication;
+    assert.equal(validateConfig(repaired).valid,true,validateConfig(repaired).errors.join('; '));
+    saveConfig(file,repaired,document.revision);
+    assert.equal(fs.readFileSync(file+'.bak','utf8'),original);
+
+    for (const key of Object.keys(config.network.ports)) config.network.ports[key]=await port();
+    fs.writeFileSync(file,yaml.dump(config));
+    const child=spawn(process.execPath,['--max-old-space-size=192',path.join(__dirname,'server.js'),file],{
+      env:{...process.env,BLAH2_PREVIEW:'true'},stdio:['ignore','ignore','pipe']});
+    let errors='';child.stderr.on('data',chunk=>{errors+=chunk;});
+    try {
+      let ready;
+      for(let attempt=0;attempt<100;attempt++){
+        if(child.exitCode!==null)throw new Error(errors);
+        try{ready=await request(config.network.ports.api,'/api/config');break;}catch(_){}
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      assert(ready,'API remains available to repair retired intent: '+errors);
+      assert.equal(ready.body.process.tracker.publication.mode,mode);
+      for(const route of ['/api/tracker','/api/tracker/native','/api/radar/observations']){
+        const blocked=await request(config.network.ports.api,route);
+        assert.equal(blocked.status,503,route);
+        assert.match(blocked.body.reason,/publication is retired/);
+      }
+    }finally{
+      child.kill('SIGTERM');
+      await new Promise(resolve=>child.once('exit',resolve));
+    }
+  }
+  const config=base();
+  const allowed={'save.iq':true,'save.timing':false,'network.ports.config':4003,
+    'process.multi_illuminator.input_phase_correction':'off',
+    'process.multi_illuminator.doppler_window':'rectangular','process.bearing.candidate_peaks':3};
+  for(const [name,value]of Object.entries(allowed))set(config,name,value);
+  config.process.tracker.publication={mode:'native',event_file:'/unused'};
+  const original=yaml.dump(config);fs.writeFileSync(file,original);fs.chmodSync(file,0o640);
+  assert.equal(migrateKnownDefaults(file),true);
+  assert.equal(fs.readFileSync(file+'.bak','utf8'),original);
+  assert.equal(fs.statSync(file).mode&0o777,0o640);
+  assert.equal(migrateKnownDefaults(file),false,'retirement is idempotent');
+  const migrated=readConfig(file);
+  assert.equal(migrated.validation.valid,true,migrated.validation.errors.join('; '));
+  assert.equal(migrated.config.process.tracker.publication,undefined);
+  for(const name of Object.keys(RETIRED_FIXED_SETTINGS)){
+    assert.equal(FIELD_RULES[name],undefined,'not advertised: '+name);
+    assert.equal(get(migrated.config,name),undefined,'removed: '+name);
+    const invalid=clone(migrated.config);set(invalid,name,'unsupported');
+    const validation=validateConfig(invalid);
+    assert.equal(validation.valid,false,name);
+    assert(validation.errors.some(message=>message.includes(name)),name);
+    fs.writeFileSync(file,yaml.dump(invalid));
+    assert.equal(get(readConfig(file).config,name),'unsupported','unsupported intent must remain visible');
+    assert.equal(migrateKnownDefaults(file),false,'cannot erase unsupported alternative');
+  }
+  console.log('Canonical native publication, active-policy refusal, API interlock and atomic fixed-setting retirement passed.');
+})().catch(error=>{console.error(error);process.exitCode=1;})
+  .finally(()=>fs.rmSync(directory,{recursive:true,force:true}));

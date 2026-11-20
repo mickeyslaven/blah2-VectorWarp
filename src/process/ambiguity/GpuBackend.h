@@ -2,11 +2,13 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace blah2 {
-enum class GpuWorkKind : uint32_t { radar = 0, fir = 1 };
+// Kind 1 belonged to the retired mixed-worker FIR route. Never reuse it.
+enum class GpuWorkKind : uint32_t { radar = 0, retiredFir = 1 };
 // All lengths are configuration-derived. No capture backend or site assumptions.
 struct GpuGeometry {
   uint32_t range, doppler, delays, channels;
@@ -15,7 +17,8 @@ struct GpuGeometry {
   // source callers compatible; GPU_ABI 4 rejects binary geometry/contract mismatches.
   uint32_t clutterSamples = 0, clutterBins = 0;
   int32_t clutterDelayMin = 0;
-  // Appended for ABI 4. FIR-only workers have no radar/clutter dimensions.
+  // ABI 4 reserves the retired FIR tag and trailing fields. Keep their layout
+  // for old workers/modules, but require radar kind and zero reserved fields.
   GpuWorkKind kind = GpuWorkKind::radar;
   uint32_t firSamples = 0, firTaps = 0, firFft = 0, firPercent = 0;
 };
@@ -71,6 +74,14 @@ public:
   // caller must run this frame on CPU. Exceptions remain transport/device faults.
   virtual bool processClutterFrame() = 0;
 };
+// Optional host-side scheduling interface; existing worker/module vtables and
+// wire layouts are unchanged. The callback runs once before exposing results,
+// and may overlap isolated worker execution. It must not mutate shared buffers.
+class GpuClutterHostWorkBackend {
+public:
+  virtual ~GpuClutterHostWorkBackend() = default;
+  virtual bool processClutterFrameWithHostWork(const std::function<void()>& hostWork) = 0;
+};
 class GpuClutterBufferBackend {
 public:
   virtual ~GpuClutterBufferBackend() = default;
@@ -78,34 +89,22 @@ public:
     const std::complex<float>* surveillance, size_t surveillanceCount,
     std::complex<float>* output, size_t outputCount) = 0;
 };
-struct GpuFirBuffers {
-  std::complex<float>* reference = nullptr;
-  size_t referenceCount = 0;
-  std::complex<float>* weights = nullptr;
-  size_t weightCount = 0;
-  std::complex<float>* output = nullptr;
-  size_t outputCount = 0;
-};
-class GpuFirFrameBackend {
-public:
-  virtual ~GpuFirFrameBackend() = default;
-  virtual bool firAvailable() const = 0;
-  virtual GpuFirBuffers firBuffers() = 0;
-  virtual void submitFirReference() = 0;
-  virtual void submitFirWeights() = 0;
-  virtual void finishFir() = 0;
-};
-class GpuFirBufferBackend {
-public:
-  virtual ~GpuFirBufferBackend() = default;
-  virtual void submitFirReferenceBuffers(const std::complex<float>* reference,
-    size_t referenceCount) = 0;
-  virtual void processFirWeightsBuffers(const std::complex<float>* weights,
-    size_t weightCount, std::complex<float>* output, size_t outputCount) = 0;
-};
 // Module ABI is versioned, built with the executable, and loaded only by explicit
 // path beside the executable (never an untrusted current-working-directory path).
 constexpr unsigned GPU_ABI = 4;
 using GpuCreate = GpuBackend* (*)(unsigned, const GpuGeometry*, const char*);
 using GpuList = std::vector<GpuDevice> (*)();
+// Diagnostic JSON only; not the geometry/worker ABI. Driver strings are bounded
+// and escaped independently of the optional Vulkan module's other interfaces.
+inline std::string gpuDiagnosticString(const std::string& value) {
+  std::string result = "\"";
+  for (size_t i = 0; i < value.size() && i < 240; ++i) {
+    const unsigned char c = value[i];
+    if (c == '"' || c == '\\') result += '\\';
+    if (c < 32 || c >= 127) result += '?';
+    else result += static_cast<char>(c);
+  }
+  return result + '"';
+}
+using GpuDriverStatus = std::string (*)(unsigned);
 }

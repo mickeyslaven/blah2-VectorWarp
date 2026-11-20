@@ -16,8 +16,7 @@ const {emptyRecord} = require('../html/js/kraken_geometry');
 const clone = value => JSON.parse(JSON.stringify(value));
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-receiver-sync-'));
 const filename = path.join(directory, 'config.yml');
-const original = yaml.load(fs.readFileSync(path.join(
-  __dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
+const original = require('./config-store').configurationForReceiver('Kraken');
 // Receiver synchronization is independent of the Linux-only automatic-gain
 // restart receipt, so use the fixed/manual path in this isolated API fixture.
 original.capture.device.heimdall.gain_control = 'fixed';
@@ -440,7 +439,8 @@ function withSixChannels(config) {
     const direct = clone(reconcile);
     direct.capture.fs = 2000000;
     direct.capture.device = {type: 'Usrp', address: 'type=b200',
-      subdev: 'A:A A:B', antenna: ['RX2', 'RX2'], gain: [20, 20]};
+      subdev: 'A:A A:B', timing_source: 'internal',
+      antenna: ['RX2', 'RX2'], gain: [20, 20]};
     delete direct.process.reference_synthesis;
     const directResult = await request(apiPort, 'PUT', '/api/config?restart=false',
       direct, revision, intent);

@@ -23,6 +23,7 @@ struct time_spec_t {
   time_spec_t(double s = 0) : seconds(s) {}
   time_spec_t operator+(time_spec_t other) const { return seconds + other.seconds; }
   long long to_ticks(double rate) const { return std::llround(seconds * rate); }
+  double get_real_secs() const { return seconds; }
   int64_t get_full_secs() const { return static_cast<int64_t>(std::floor(seconds)); }
   double get_frac_secs() const { return seconds - std::floor(seconds); }
 };

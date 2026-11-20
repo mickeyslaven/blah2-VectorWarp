@@ -1,4 +1,5 @@
 #include "process/conditioning/SubbandChannelizer.h"
+#include "process/conditioning/SamplePhase.h"
 
 #include <algorithm>
 #include <cmath>
@@ -91,7 +92,7 @@ SubbandChannelizer::SubbandChannelizer(Config config,
     config_.inputRateHz;
   oscillatorStep_ = std::polar(1.0, step);
   const int64_t integralOffset = std::llround(config_.centerOffsetHz);
-  if (std::abs(config_.centerOffsetHz - double(integralOffset)) < 1e-9)
+  if (config_.centerOffsetHz == double(integralOffset))
   {
     const uint64_t magnitude = integralOffset < 0 ?
       uint64_t(-(integralOffset + 1)) + 1 : uint64_t(integralOffset);
@@ -200,8 +201,8 @@ SubbandChannelizer::Output SubbandChannelizer::process_impl(
 
   if (!started_)
   {
-    const double phase = std::remainder(-2 * pi * config_.centerOffsetHz *
-      double(firstInputSample) / config_.inputRateHz, 2 * pi);
+    const double phase = 2 * pi * mixerPhaseCycles(firstInputSample,
+      config_.centerOffsetHz, config_.inputRateHz);
     oscillator_ = std::polar(1.0, phase);
     started_ = true;
   }

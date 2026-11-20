@@ -66,6 +66,7 @@ function summarizeCoverage(samples, sectors = 8) {
 
 function validateSample(sample) {
   if (!sample || !['vectorwarp-manifold-sample-v1', 'vectorwarp-manifold-sample-v2'].includes(sample.schema) ||
+      sample.precision_contract !== 'binary64-json-roundtrip-v1' ||
       !finite(sample.frequency_hz) || !Number.isInteger(sample.channels) ||
       !finite(sample.truth?.local_azimuth_deg) || !finite(sample.truth?.elevation_deg) ||
       !finite(sample.direct_path_local_azimuth_deg) ||

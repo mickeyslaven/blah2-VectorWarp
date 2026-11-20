@@ -1,3 +1,54 @@
+const DISTANCE_VIEW_KEY = 'vectorwarp-distance-view';
+
+// Shared defaults for the legacy Plotly displays. Individual views retain
+// their axes and responsive presentation, while colors and viewport behavior
+// remain identical everywhere.
+const vectorwarpPlotTheme = {
+  layout(uirevision) {
+    return {font: {color: '#f3eee9'}, autosize: true,
+      margin: {l: 92, r: 50, b: 50, t: 10, pad: 0},
+      hoverlabel: {namelength: 0}, plot_bgcolor: 'rgba(0,0,0,0)',
+      paper_bgcolor: 'rgba(0,0,0,0)', annotations: [], uirevision,
+      displayModeBar: false};
+  },
+  cartesianLayout(uirevision, xTitle, yTitle, {legend = false} = {}) {
+    return {...this.layout(uirevision),
+      xaxis: {gridcolor: '#47362e', zerolinecolor: '#47362e',
+        title: {text: xTitle, font: {size: 18}}, showgrid: false, ticks: '', side: 'bottom'},
+      yaxis: {gridcolor: '#47362e', zerolinecolor: '#47362e',
+        title: {text: yTitle, font: {size: 18}}, showgrid: false, ticks: '', ticksuffix: ' ',
+        categoryorder: 'total descending'},
+      ...(legend ? {legend: {orientation: 'h', bgcolor: '#29201c', bordercolor: '#47362e',
+        borderwidth: 1}} : {})};
+  },
+  config(scrollZoom = false) {
+    return {responsive: true, displayModeBar: false, ...(scrollZoom ? {scrollZoom: true} : {})};
+  }
+};
+if (typeof window !== 'undefined') window.VectorWarpPlotTheme = vectorwarpPlotTheme;
+
+function initializeDistanceView() {
+  if (typeof window === 'undefined' || typeof document === 'undefined' ||
+      !document.body?.classList?.toggle) return;
+  const requested = new URLSearchParams(window.location.search).get('distance_view');
+  let enabled = requested === '1' || requested === 'true';
+  if (requested === null) try { enabled = window.localStorage?.getItem(DISTANCE_VIEW_KEY) === 'true'; }
+  catch (_) { enabled = false; }
+  else try { window.localStorage?.setItem(DISTANCE_VIEW_KEY, String(enabled)); } catch (_) {}
+  document.body.classList.toggle('distance-view', enabled);
+  const control = document.getElementById('distance-view-toggle');
+  if (control) {
+    control.checked = enabled;
+    control.addEventListener('change', () => {
+      document.body.classList.toggle('distance-view', control.checked);
+      try { window.localStorage?.setItem(DISTANCE_VIEW_KEY, String(control.checked)); } catch (_) {}
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+}
+
+initializeDistanceView();
+
 function ensureBrandFavicon() {
   if (!document.head || !document.createElement) return;
   const existing = document.querySelector('link[rel~="icon"]');
@@ -13,6 +64,8 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
+  const federationEmbed = new URLSearchParams(window.location.search).get('federationEmbed') === '1';
+  if (federationEmbed) document.body.classList.add('federation-embed');
   const current = name => active === name ? ' aria-current="page"' : '';
   target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}"${current('radar')}>Live radar</a><a href="/display/locations" class="${active === 'map' ? 'active' : ''}"${current('map')}>Map</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}"${current('controller')}>System</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}"${current('recordings')}>Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}"${current('settings')}>Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status" role="status" aria-live="polite"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" role="status" aria-live="polite" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
   restoreLiveStatusLabel(document.getElementById('live-status'), 'RADAR');
@@ -39,38 +92,51 @@ function renderAppHeader(active) {
 const ILLUMINATOR_SELECTION_KEY = 'vectorwarp-selected-illuminator-v1';
 let illuminatorContextPromise = null;
 let illuminatorContext = {enabled: false, id: null, item: null, illuminators: []};
+let illuminatorContextRetryTimer = null;
 
 function illuminatorDisplayScope() {
   if (typeof document === 'undefined' || typeof window === 'undefined') return 'selected';
   const body = document.body;
   const insight = body?.dataset?.insightView;
-  if (['health', 'calibration'].includes(insight)) return 'aggregate';
-  if (['overview', 'detections', 'activity', 'locations', 'evaluation', 'tracks',
+  // System-level status, calibration and diagnostics describe one acquisition
+  // pipeline. They default to its aggregate view and never require an RF
+  // channel choice. Pages displaying channel-specific radar products retain
+  // the shared channel selector.
+  if (['overview', 'health', 'calibration', 'activity'].includes(insight)) return 'aggregate';
+  if (['detections', 'locations', 'evaluation', 'tracks', 'recordings',
     'statistics'].includes(insight) || body?.dataset?.radarView) return 'selected';
   const consolidated = body?.dataset?.consolidatedView;
   const requested = new URLSearchParams(window.location.search).get('view');
-  if (consolidated === 'diagnostics')
-    return requested === 'timing' || requested === 'health' ? 'aggregate' : 'selected';
+  if (consolidated === 'diagnostics') return 'aggregate';
   if (consolidated === 'signal') return requested === 'maxhold' ? 'selected' : 'wideband';
   if (consolidated === 'detection') return 'selected';
   return 'none';
 }
 
 function selectedIlluminatorFromStorage() {
-  try { return window.localStorage?.getItem(ILLUMINATOR_SELECTION_KEY) || ''; }
+  try { return window.localStorage?.getItem(ILLUMINATOR_SELECTION_KEY + ':' + selectedNode()) || ''; }
   catch (_) { return ''; }
 }
 
 function storeSelectedIlluminator(id) {
-  try { window.localStorage?.setItem(ILLUMINATOR_SELECTION_KEY, id); }
+  try { window.localStorage?.setItem(ILLUMINATOR_SELECTION_KEY + ':' + selectedNode(), id); }
   catch (_) { /* Persistence is optional. */ }
 }
 
 function getIlluminatorContext() {
   if (illuminatorContextPromise) return illuminatorContextPromise;
-  illuminatorContextPromise = fetchRadarJson(liveApiUrl('/api/illuminators/live')).then(status => {
-    const illuminators = status?.enabled === true && Array.isArray(status.illuminators) ?
-      status.illuminators : [];
+  illuminatorContextPromise = fetchRadarJson(liveApiUrl('/api/illuminators/live')).then(async status => {
+    let illuminators = status?.enabled === true && Array.isArray(status?.illuminators) ? status.illuminators.map(item =>
+      ({...item, api_illuminator: true})) : [];
+    if (!illuminators.length) {
+      const config = await fetchRadarJson(liveApiUrl('/api/runtime/config'));
+      const frequency = Number(config?.capture?.fc);
+      const sampleRate = Number(config?.capture?.fs);
+      illuminators = [{id: 'primary', standard: 'Single channel', api_illuminator: false,
+        frequency_hz: Number.isFinite(frequency) ? frequency : null,
+        output_sample_rate_hz: Number.isFinite(sampleRate) ? sampleRate : null,
+        available: true}];
+    }
     const requested = typeof window === 'undefined' ? '' :
       new URLSearchParams(window.location.search).get('illuminator') || '';
     const stored = typeof window === 'undefined' ? '' : selectedIlluminatorFromStorage();
@@ -78,16 +144,23 @@ function getIlluminatorContext() {
       illuminators.find(candidate => candidate.id === stored) ||
       illuminators.find(candidate => candidate.id === status?.primary) || illuminators[0] || null;
     illuminatorContext = {enabled: illuminators.length > 0, id: item?.id || null,
-      item, illuminators, primary: status?.primary || null};
+      item, illuminators, primary: status?.primary || null, catalogUnavailable: false};
     if (item) storeSelectedIlluminator(item.id);
     if (typeof window !== 'undefined') window.vectorwarpIlluminatorContext = illuminatorContext;
     return illuminatorContext;
-  }).catch(() => illuminatorContext);
+  }).catch(() => {
+    // A transient request delay must not permanently turn a multi-lane page
+    // into an apparently single-stream page. Permit the next bounded refresh
+    // to retry the catalog without disturbing the last confirmed selection.
+    illuminatorContext = {...illuminatorContext, catalogUnavailable: true};
+    illuminatorContextPromise = null;
+    return illuminatorContext;
+  });
   return illuminatorContextPromise;
 }
 
 function selectedIlluminatorUrl(path, context = illuminatorContext) {
-  if (!context?.enabled || !context.id) return path;
+  if (!context?.enabled || !context.id || context.item?.api_illuminator === false) return path;
   const url = new URL(path, typeof window === 'undefined' ?
     'http://vectorwarp.invalid' : window.location.href);
   url.searchParams.set('illuminator', context.id);
@@ -95,22 +168,115 @@ function selectedIlluminatorUrl(path, context = illuminatorContext) {
     `${url.pathname}${url.search}`;
 }
 
+let federatedChannelsPromise = null;
+async function getFederatedChannels({fresh = false} = {}) {
+  if (federatedChannelsPromise && !fresh) return federatedChannelsPromise;
+  federatedChannelsPromise = (async () => {
+    await discoverApiEndpoint();
+    const response = await readResponse(`${apiEndpoint || ''}/api/federation/nodes`,
+      {cache: 'no-store'}, 6000);
+    const registry = await response.json();
+    if (!response.ok || !Array.isArray(registry.nodes)) throw new Error('Local node catalog unavailable');
+    const read = async (node, endpoint) => {
+      const prefix = node.local ? '' : `/api/federation/nodes/${encodeURIComponent(node.id)}`;
+      const result = await readResponse(`${apiEndpoint || ''}${prefix}${endpoint}`,
+        {cache: 'no-store'}, 6000);
+      if (!result.ok) throw new Error(`${node.label} unavailable`);
+      return result.json();
+    };
+    const rows = await Promise.all(registry.nodes.map(async node => {
+      try {
+        const status = await read(node, '/api/illuminators/live');
+        let items = status?.enabled === true && Array.isArray(status?.illuminators) ? status.illuminators.map(item =>
+          ({...item, api_illuminator: true})) : [];
+        if (!items.length) {
+          const config = await read(node, '/api/runtime/config');
+          items = [{id: 'primary', standard: 'Single channel', api_illuminator: false,
+            frequency_hz: Number(config?.capture?.fc),
+            output_sample_rate_hz: Number(config?.capture?.fs), available: true}];
+        }
+        return items.map(item => ({nodeId: node.id, nodeLabel: node.label,
+          local: node.local === true, item}));
+      } catch (_) { return []; }
+    }));
+    return {nodes: registry.nodes, channels: rows.flat()};
+  })().catch(error => { federatedChannelsPromise = null; throw error; });
+  return federatedChannelsPromise;
+}
+
+function federatedChannelUrl(path, channel) {
+  const prefix = channel?.local ? '' :
+    `/api/federation/nodes/${encodeURIComponent(channel?.nodeId || '')}`;
+  const url = new URL(prefix + path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  if (channel?.item?.api_illuminator !== false && channel?.item?.id)
+    url.searchParams.set('illuminator', channel.item.id);
+  const relative = `${url.pathname}${url.search}`;
+  return apiEndpoint ? `${apiEndpoint}${relative}` : relative;
+}
+
+// Fusion requires independent transmitter geometry, not merely multiple RF
+// channels. Multiple carriers from one authoritative transmitter_site remain
+// useful channel views but cannot localize a target as independent sites.
+function independentTransmitterSiteCount(items = []) {
+  return new Set((Array.isArray(items) ? items : [])
+    .map(item => typeof item?.transmitter_site === 'string' ? item.transmitter_site.trim() : '')
+    .filter(Boolean)).size;
+}
+
+function liveRadarCardPresentation(context, channelDescriptor) {
+  const sites = context?.enabled ? independentTransmitterSiteCount(context.illuminators) : 0;
+  if (sites > 1) return {
+    meta: `VectorWarp Fusion View · ${sites} independent sites`,
+    href: '/?radar_view=fusion'
+  };
+  if (context?.enabled && context.id) return {
+    meta: `Selected channel · ${channelDescriptor}`,
+    href: `/?illuminator=${encodeURIComponent(context.id)}`
+  };
+  return {meta: channelDescriptor, href: '/'};
+}
+
+function receiverChannelCount(device = {}) {
+  const explicit = Number(device.channel_count ?? device.adapter?.channel_count);
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+  for (const value of [device.gain, device.gainReduction, device.gain_lna,
+    device.gain_vga, device.antenna, device.serial])
+    if (Array.isArray(value) && value.length) return value.length;
+  if (Array.isArray(device.surveillance_channels) && device.surveillance_channels.length)
+    return new Set([Number.isInteger(device.reference_channel) ? device.reference_channel : 0,
+      ...device.surveillance_channels.map(Number)]).size;
+  return null;
+}
+
 function selectedIlluminatorConfig(config, context = illuminatorContext) {
   const item = context?.item;
-  if (!item) return config;
+  const profiles = typeof module !== 'undefined' && module.exports ?
+    require('./config_profiles') : globalThis.VectorWarpConfigProfiles;
+  const effective = (value, scaleNeighborhoods = false) => profiles ?
+    profiles.effectiveDelayConfig(value, value.capture?.fs, {scaleNeighborhoods}) : value;
+  if (!item) return effective(config);
   const configured = config?.process?.multi_illuminator?.illuminators?.find(candidate =>
     candidate?.id === item.id);
   const sampleRate = Number(configured?.output_sample_rate_hz ?? item.output_sample_rate_hz);
-  const transmitter = configured?.transmitter;
-  return {...config,
-    capture: Number.isFinite(sampleRate) && sampleRate > 0 ?
-      {...config?.capture, fs: sampleRate} : config?.capture,
-    location: transmitter ? {...config?.location, tx: transmitter} : config?.location};
+  const frequency = Number(configured?.frequency_hz ?? item.frequency_hz);
+  const coherentLane = config?.process?.multi_illuminator?.enabled === true &&
+    ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(config.process.surveillance_fusion?.mode);
+  const explicitSite = configured?.transmitter_location ?? item.transmitter_location;
+  const transmitter = coherentLane ? (explicitSite ? {...configured?.transmitter, ...explicitSite} : null) :
+    configured?.transmitter;
+  return effective({...config,
+    capture: {...config?.capture,
+      ...(Number.isFinite(sampleRate) && sampleRate > 0 ? {fs: sampleRate} : {}),
+      ...(Number.isFinite(frequency) && frequency > 0 ? {fc: frequency} : {})},
+    location: transmitter || coherentLane ? {...config?.location, tx: transmitter || {}} : config?.location}, true);
 }
 
 function illuminatorControlTarget() {
   return document.querySelector?.('.radar-toolbar') ||
-    document.querySelector?.('.insight-topbar > div') ||
+    // History pages are inconsistent about wrapping their heading. Target the
+    // bar itself so direct-<h1> and wrapped-title pages both get the selector.
+    document.querySelector?.('.insight-topbar') ||
     document.querySelector?.('.controller-intro > div');
 }
 
@@ -118,6 +284,23 @@ async function initializeIlluminatorDisplay() {
   const scope = illuminatorDisplayScope();
   if (scope === 'none' || typeof document === 'undefined') return illuminatorContext;
   const context = await getIlluminatorContext();
+  if (scope === 'selected' && (!context.enabled || context.catalogUnavailable) &&
+      selectedNode() !== 'local') {
+    try {
+      const fleet = await getFederatedChannels({fresh: true});
+      const fallback = fleet.channels.find(channel => channel.local) || fleet.channels[0];
+      if (fallback && fallback.nodeId !== selectedNode()) {
+        window.sessionStorage?.setItem('vectorwarp-node', fallback.nodeId);
+        const location = new URL(window.location.href);
+        if (fallback.local) location.searchParams.delete('federationNode');
+        else location.searchParams.set('federationNode', fallback.nodeId);
+        if (fallback.item.api_illuminator === false) location.searchParams.delete('illuminator');
+        else location.searchParams.set('illuminator', fallback.item.id);
+        window.location.replace(location.href);
+        return context;
+      }
+    } catch (_) { /* Keep the unavailable node visible while discovery retries. */ }
+  }
   // Recording controls render before the asynchronous lane catalog arrives.
   // Refresh their copy once scope is known so a global raw-IQ recording is
   // never presented as if it contained only the selected display lane.
@@ -129,30 +312,144 @@ async function initializeIlluminatorDisplay() {
   control.className = 'radar-overlay-control illuminator-scope-control';
   if (scope !== 'selected' || !context.enabled) {
     control.innerHTML = `<span>Scope</span><strong>${scope === 'wideband' ?
-      'Global wideband' : scope === 'aggregate' ? 'All-lane pipeline' : 'Single radar stream'}</strong>`;
-    target.appendChild(control);
+      'Global wideband' : scope === 'aggregate' ? 'All-lane pipeline' :
+      context.catalogUnavailable ? 'Lane catalog delayed' : 'Single radar stream'}</strong>`;
+    const state = target.matches?.('.insight-topbar') ?
+      target.querySelector?.('.view-state') : null;
+    if (state) target.insertBefore(control, state);
+    else target.appendChild(control);
+    if (scope === 'selected' && context.catalogUnavailable && !illuminatorContextRetryTimer) {
+      illuminatorContextRetryTimer = window.setTimeout(() => {
+        illuminatorContextRetryTimer = null;
+        control.remove?.();
+        initializeIlluminatorDisplay();
+      }, 2500);
+    }
     return context;
   }
   const label = document.createElement('span');
-  label.textContent = 'Selected lane';
+  let statisticsAggregate = document.body?.dataset?.insightView === 'statistics' &&
+    context.illuminators.length > 1;
+  label.textContent = statisticsAggregate ? 'Statistics scope' : 'Selected channel';
   const select = document.createElement('select');
   select.id = 'shared-illuminator-select';
-  select.setAttribute('aria-label', 'Selected illuminator lane');
-  select.replaceChildren(...context.illuminators.map(item => {
+  select.setAttribute('aria-label', statisticsAggregate ? 'Statistics scope' : 'Selected channel');
+  let federated = {nodes: [{id: selectedNode(), label: 'Local', local: true}],
+    channels: context.illuminators.map(item => ({nodeId: selectedNode(),
+      nodeLabel: 'Local', local: selectedNode() === 'local', item}))};
+  try { federated = await getFederatedChannels({fresh: true}); } catch (_) { /* Current node remains usable. */ }
+  statisticsAggregate ||= document.body?.dataset?.insightView === 'statistics' &&
+    (federated.channels.length > 1 || federated.nodes.length > 1);
+  label.textContent = statisticsAggregate ? 'Statistics scope' : 'Selected channel';
+  select.setAttribute('aria-label', statisticsAggregate ? 'Statistics scope' : 'Selected channel');
+  const channelOptions = federated.channels.map(channel => {
     const option = document.createElement('option');
-    option.value = item.id;
-    option.textContent = `${item.id} · ${(Number(item.frequency_hz) / 1e6).toFixed(1)} MHz`;
+    option.value = `${channel.nodeId}::${channel.item.id}`;
+    const frequency = Number(channel.item.frequency_hz);
+    option.textContent = `${channel.item.id === 'primary' ? 'Primary' : channel.item.id}${Number.isFinite(frequency) ?
+      ` · ${(frequency / 1e6).toFixed(1)} MHz` : ''} (${channel.nodeLabel})`;
     return option;
-  }));
-  select.value = context.id;
-  select.addEventListener('change', () => {
-    storeSelectedIlluminator(select.value);
-    const location = new URL(window.location.href);
-    location.searchParams.set('illuminator', select.value);
-    window.location.assign(location.href);
   });
-  control.append(label, select);
-  target.appendChild(control);
+  if (statisticsAggregate) {
+    const all = document.createElement('option');
+    all.value = '__all__';
+    all.textContent = 'All channels combined';
+    channelOptions.unshift(all);
+  }
+  select.replaceChildren(...channelOptions);
+  const initialParameters = new URL(window.location.href).searchParams;
+  const aggregateSelected = statisticsAggregate &&
+    (initialParameters.get('scope') === 'all' ||
+      (!initialParameters.has('scope') && !initialParameters.has('illuminator')));
+  select.value = aggregateSelected ? '__all__' : `${selectedNode()}::${context.id}`;
+  const referenceStatus = document.createElement('small');
+  referenceStatus.className = 'atsc-reference-status';
+  const renderReferenceStatus = item => {
+    if (!['ATSC', 'ATSC-1.0', 'ATSC-3.0'].includes(item?.standard) ||
+        (item.atsc_reference_mode || 'automatic') === 'raw') {
+      referenceStatus.textContent = '';
+      referenceStatus.hidden = true;
+      return;
+    }
+    const metric = item.atsc_reference;
+    const metricsAvailable = metric?.metrics_available ?? metric?.available;
+    const pilotCandidate = metric?.pilot_candidate ?? metric?.candidate;
+    referenceStatus.hidden = false;
+    referenceStatus.textContent = !metric ? 'ATSC reference qualification pending · raw reference' :
+      metric.effective_mode === 'pilot_projected' ?
+        'ATSC pilot projected · raw clutter cancellation' :
+      metric.reason === 'raw_control_not_beaten' ?
+        'Automatic reference: raw control is better' :
+      metricsAvailable === true ?
+        `ATSC pilot ${pilotCandidate === true ? 'candidate rejected' : 'not qualified'} · raw reference` :
+        `ATSC pilot unavailable${metric.fallback_reason || metric.reason ?
+          ` (${metric.fallback_reason || metric.reason})` : ''} · raw reference`;
+  };
+  if (aggregateSelected) referenceStatus.hidden = true;
+  else renderReferenceStatus(context.item);
+  const applySelection = id => {
+    const item = illuminatorContext.illuminators.find(candidate => candidate.id === id);
+    if (!item || item.id === illuminatorContext.id) return;
+    illuminatorContext = {...illuminatorContext, id: item.id, item};
+    illuminatorContextPromise = Promise.resolve(illuminatorContext);
+    window.vectorwarpIlluminatorContext = illuminatorContext;
+    select.value = `${selectedNode()}::${item.id}`;
+    renderReferenceStatus(item);
+    storeSelectedIlluminator(item.id);
+    window.dispatchEvent(new CustomEvent('vectorwarp:illuminator-change', {detail: illuminatorContext}));
+  };
+  select.addEventListener('change', () => {
+    const location = new URL(window.location.href);
+    if (statisticsAggregate && select.value === '__all__') {
+      location.searchParams.delete('illuminator');
+      location.searchParams.set('scope', 'all');
+      window.history.pushState(null, '', location.href);
+      referenceStatus.hidden = true;
+      window.dispatchEvent(new CustomEvent('vectorwarp:statistics-scope-change'));
+      return;
+    }
+    const [nodeId, channelId] = select.value.split('::');
+    const selected = federated.channels.find(channel => channel.nodeId === nodeId &&
+      channel.item.id === channelId);
+    if (selected && nodeId !== selectedNode()) {
+      try { window.sessionStorage.setItem('vectorwarp-node', nodeId); } catch (_) { /* optional */ }
+      location.searchParams.delete('scope');
+      if (nodeId === 'local') location.searchParams.delete('federationNode');
+      else location.searchParams.set('federationNode', nodeId);
+      if (selected.item.api_illuminator === false) location.searchParams.delete('illuminator');
+      else location.searchParams.set('illuminator', channelId);
+      window.location.assign(location.href);
+      return;
+    }
+    location.searchParams.delete('scope');
+    if (context.item?.api_illuminator === false) location.searchParams.delete('illuminator');
+    else location.searchParams.set('illuminator', channelId);
+    window.history.pushState(null, '', location.href);
+    applySelection(channelId);
+  });
+  window.addEventListener('popstate', () => {
+    const parameters = new URL(window.location.href).searchParams;
+    if (statisticsAggregate && (parameters.get('scope') === 'all' ||
+        (!parameters.has('scope') && !parameters.has('illuminator')))) {
+      select.value = '__all__';
+      referenceStatus.hidden = true;
+      window.dispatchEvent(new CustomEvent('vectorwarp:statistics-scope-change'));
+      return;
+    }
+    const id = parameters.get('illuminator') || context.id;
+    applySelection(id);
+  });
+  control.append(label, select, referenceStatus);
+  const state = target.matches?.('.insight-topbar') ?
+    target.querySelector?.('.view-state') : null;
+  if (state) target.insertBefore(control, state);
+  else target.appendChild(control);
+  // The catalog can resolve after fullscreen was entered.
+  const fullscreenPanel = document.fullscreenElement || document.webkitFullscreenElement ||
+    document.querySelector?.('.fullscreen-target.fullscreen-fallback');
+  if (fullscreenPanel?.classList?.contains('fullscreen-target') &&
+      !fullscreenPanel.contains?.(control)) fullscreenPanel.appendChild(control);
+  window.dispatchEvent(new CustomEvent('vectorwarp:illuminator-catalog-ready', {detail: context}));
   return context;
 }
 
@@ -172,14 +469,13 @@ function addRadarViewControl(panel, target) {
   summary.setAttribute('aria-label', 'Choose radar view');
   summary.setAttribute('title', 'Choose radar view');
   summary.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/><rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/><rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/><rect x="17" y="17" width="4" height="4"/></svg>';
-  const menu = document.createElement('div');
+  const menu = document.createElement('nav');
   menu.className = 'radar-view-menu';
-  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Radar views');
   menu.replaceChildren(...views.map(([key, href, label]) => {
     const link = document.createElement('a');
     link.href = href;
     link.textContent = label;
-    link.setAttribute('role', 'menuitem');
     if (key === active) link.setAttribute('aria-current', 'page');
     return link;
   }));
@@ -358,7 +654,7 @@ async function pauseRecording() {
 function addRecordingControl() {
   // Starting/stopping raw-IQ capture is an operational action, not a chart
   // feature. Only explicitly opted-in live radar pages may expose it.
-  if (document.body?.dataset.captureControls !== 'true') return;
+  if (selectedNode() !== 'local' || document.body?.dataset.captureControls !== 'true') return;
   const visual = document.getElementById('data');
   if (!visual || document.getElementById('recording-control')) return;
   const panel = visual.closest('.panel') || visual.parentElement;
@@ -412,7 +708,19 @@ function addFullscreenControl() {
   labelFullscreen(false);
   const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
   const fallbackActive = () => panel.classList.contains('fullscreen-fallback');
+  const moveChannelControl = active => {
+    const control = document.getElementById('shared-illuminator-control');
+    if (!control) return;
+    if (active) panel.appendChild(control);
+    else {
+      const target = illuminatorControlTarget();
+      const state = target?.querySelector?.('.view-state');
+      if (state) target.insertBefore(control, state);
+      else target?.appendChild(control);
+    }
+  };
   const setFallback = active => {
+    moveChannelControl(active);
     panel.classList.toggle('fullscreen-fallback', active);
     document.documentElement.classList.toggle('fullscreen-page', active);
     document.body.classList.toggle('fullscreen-page', active);
@@ -496,6 +804,7 @@ function addFullscreenControl() {
   window.addEventListener('resize', resizePlot);
   const fullscreenChanged = () => {
     labelFullscreen(Boolean(fullscreenElement()));
+    moveChannelControl(fullscreenElement() === panel);
     resizePlot();
     window.setTimeout(resizePlot, 120);
     window.setTimeout(resizePlot, 360);
@@ -535,8 +844,25 @@ let apiEndpoint = null;
 let apiDiscovery = null;
 
 function liveApiUrl(path) {
-  return apiEndpoint ? `${apiEndpoint}${path}` : path;
+  const node = selectedNode();
+  const mapped = node !== 'local' && /^\/(api|stash|capture)(\/|$)/.test(path) &&
+    !path.startsWith('/api/federation/') ? `/api/federation/nodes/${encodeURIComponent(node)}${path}` : path;
+  return apiEndpoint ? `${apiEndpoint}${mapped}` : mapped;
 }
+
+function selectedNode() {
+  try {
+    const normalized = (window.location.pathname || '/').replace(/\/index\.html$/, '')
+      .replace(/\/+$/, '') || '/';
+    if (['/controller', '/display/configuration'].includes(normalized)) {
+      window.sessionStorage?.setItem('vectorwarp-node', 'local');
+      return 'local';
+    }
+    const id = new URLSearchParams(window.location.search).get('federationNode') || window.sessionStorage.getItem('vectorwarp-node');
+    return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id || '') ? id : 'local'; }
+  catch (_) { return 'local'; }
+}
+
 
 function pageOrigin() {
   return window.location.origin || `${window.location.protocol}//${window.location.hostname}${window.location.port ? `:${window.location.port}` : ''}`;
@@ -595,6 +921,8 @@ async function discoverApiEndpoint() {
 }
 
 async function fetchStatusResource(url, options = {}, timeoutMs = 5000) {
+  if (selectedNode() !== 'local' && !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase()))
+    throw new Error('Remote nodes are read-only');
   const parsed = new URL(url, pageOrigin());
   const internal = /^\/(api|stash|capture)(\/|$)/.test(parsed.pathname) &&
     parsed.hostname === new URL(pageOrigin()).hostname;
@@ -624,7 +952,15 @@ const CLIENT_JSON_CACHE_PREFIX = 'vectorwarp-json-v2:';
 
 function clientJsonCachePolicy(url) {
   const parsed = new URL(url, pageOrigin());
-  const path = parsed.pathname;
+  // Preserve the underlying resource's freshness rules through the fixed
+  // federation prefix. Remote live frames must not inherit the generic
+  // five-minute stale fallback merely because the portal proxied them.
+  const path = parsed.pathname.replace(
+    /^\/api\/federation\/nodes\/[a-z0-9][a-z0-9_-]{0,63}(?=\/(?:api|stash|capture)(?:\/|$))/, '');
+  // Fusion positions are live navigation state.  A failed request must clear
+  // the scope immediately instead of replaying a stale position as motion.
+  if (path === '/api/tracker/fused')
+    return {freshMs: 0, staleMs: 0, storage: null};
   if (/^\/(?:stash|capture)(?:\/|$)/.test(path) ||
       /^\/api\/(?:iqdata|spectrum)(?:\/|$)/.test(path))
     return {freshMs: 0, staleMs: 0, storage: null};
@@ -650,7 +986,7 @@ function clientJsonStorage(kind) {
 
 function clientJsonKey(url) {
   const parsed = new URL(url, pageOrigin());
-  return `${parsed.pathname}${parsed.search}`;
+  return `${selectedNode()}:${parsed.pathname}${parsed.search}`;
 }
 
 function readClientJsonCache(key, policy) {
@@ -769,7 +1105,39 @@ function rspDuoOverloadStatus(status, expected = false, now = Date.now()) {
 
 function renderReceiverHealth(status, target = document.getElementById('receiver-health-status'), detailed = false) {
   if (!target) return;
-  const expected = detailed || (!status?.processor && target.dataset.receiver === 'RspDuo');
+  const input = status?.processor?.receiverHealth?.inputQuality;
+  if (input && Array.isArray(input.channels)) {
+    const channels = input.channels.filter(channel => Number(channel.sampledComponents) >= 65536);
+    if (channels.length) {
+      const unsafe = channels.filter(channel => channel.railFraction > .00001 ||
+        channel.p999Fraction > .70);
+      const view = {visible: unsafe.length > 0, severity: 'bad', channels: unsafe,
+        message: unsafe.map(channel => `input ${channel.channel}: gain ${channel.gainDb} dB, ` +
+          `p99.9 ${(100 * channel.p999Fraction).toFixed(1)}%, ` +
+          `clipped ${(100 * channel.railFraction).toFixed(4)}%`).join(' · ')};
+      const receiver = status?.processor?.receiver || input.receiver || 'Receiver';
+      target.dataset.receiver = receiver; target.hidden = !view.visible;
+      const signature = JSON.stringify(view);
+      if (target.dataset.healthView === signature) return;
+      target.dataset.healthView = signature; target.dataset.severity = view.severity;
+      target.replaceChildren();
+      if (view.visible) {
+        const message = document.createElement(detailed ? 'p' : 'span');
+        message.textContent = `${receiver} RF input degraded · ${view.message}`;
+        target.appendChild(message);
+        const link = document.createElement('a'); link.href = '/display/configuration';
+        link.textContent = 'Receiver gain settings'; target.appendChild(link);
+      }
+      return;
+    }
+  }
+  const expectsOverload = detailed || status?.processor?.receiver === 'RspDuo' ||
+    (!status?.processor && target.dataset.receiver === 'RspDuo');
+  if (!expectsOverload) {
+    target.dataset.receiver = ''; target.hidden = true; target.replaceChildren();
+    return;
+  }
+  const expected = detailed || expectsOverload;
   const view = rspDuoOverloadStatus(status, expected);
   target.dataset.receiver = view.visible ? 'RspDuo' : '';
   target.hidden = !view.visible;
@@ -807,7 +1175,10 @@ function renderReceiverHealth(status, target = document.getElementById('receiver
     const help = document.createElement('p');
     help.textContent = 'Counts reset when receiver capture starts. SDRplay overload events do not prove continuous ADC clipping. “No overload reported” does not guarantee RF quality. ' +
       'If overload repeats, increase the affected channel’s gain reduction with AGC off, or choose a higher LNA state to reduce RF gain. With AGC on, try a more negative AGC target. Use Save & Restart, then check both channels again.';
-    target.appendChild(help);
+    const guidance = document.createElement('details');
+    const summary = document.createElement('summary'); summary.textContent = 'Overload guidance';
+    guidance.append(summary, help);
+    target.appendChild(guidance);
   } else {
     target.appendChild(message);
     const link = document.createElement('a');
@@ -830,6 +1201,12 @@ async function replayCommand(action, seconds) {
 }
 function renderReplayTransport(processor) {
   let bar = document.getElementById('replay-transport');
+  const remoteOrEmbedded = selectedNode() !== 'local' ||
+    new URLSearchParams(window.location.search).get('federationEmbed') === '1';
+  // Replay mutation is intentionally local-only. Hiding the transport also
+  // prevents remote/aggregate views from polling an endpoint the read-only
+  // federation allowlist deliberately does not expose.
+  if (remoteOrEmbedded) processor = null;
   if (processor?.input !== 'replay') {
     if (bar) bar.hidden = true;
     if (window.blah2ReplayStatusTimer) {
@@ -902,7 +1279,8 @@ async function refreshLiveStatus() {
       label = replay.state === 'error' ? 'REPLAY ERROR' : replay.state === 'complete' ? 'REPLAY COMPLETE' :
         replay.state === 'stopped' ? 'REPLAY STOPPED' : `REPLAY ${replay.state.toUpperCase()}${progress}`;
     } else label = restarting ? 'RESTARTING' : status.errors?.length ? 'ERROR' :
-      status.radar === 'receiving' ? 'ONLINE' : status.radar === 'stale' ? 'STALE' : 'OFFLINE';
+      status.radar === 'receiving' ? 'ONLINE' : status.radar === 'degraded' ?
+        'RF DEGRADED' : status.radar === 'stale' ? 'STALE' : 'OFFLINE';
     updateLiveStatusLabel(radarLabel, 'RADAR', label, label === 'ONLINE');
     radarLabel.title = processor?.error || status.errors?.[0] || status.message || '';
     rememberLiveStatus('RADAR', label, label === 'ONLINE', radarLabel.title);
@@ -954,20 +1332,24 @@ function updateLiveStatusLabel(target, prefix, label, healthy) {
   const signature = `${prefix}:${label}:${healthy ? 'healthy' : 'degraded'}`;
   if (target._vectorwarpStatusSignature === signature) return;
   target._vectorwarpStatusSignature = signature;
-  target.innerHTML = `<span class="live-dot${healthy ? '' : ' offline'}"></span>${prefix} ${label}`;
+  const dot = document.createElement('span');
+  dot.className = `live-dot${healthy ? '' : ' offline'}`;
+  target.replaceChildren(dot, document.createTextNode(`${prefix} ${label}`));
 }
 
 const LIVE_STATUS_CACHE_KEY = 'vectorwarp:service-status:v1';
 const LIVE_STATUS_CACHE_AGE_MS = 30000;
 function readLiveStatusCache() {
-  try { return JSON.parse(window.sessionStorage?.getItem(LIVE_STATUS_CACHE_KEY) || '{}'); }
+  try { return JSON.parse(window.sessionStorage?.getItem(
+    `${LIVE_STATUS_CACHE_KEY}:${selectedNode()}`) || '{}'); }
   catch (_) { return {}; }
 }
 function rememberLiveStatus(prefix, label, healthy, title = '') {
   try {
     const cache = readLiveStatusCache();
     cache[prefix] = {label, healthy: healthy === true, title, at: Date.now()};
-    window.sessionStorage?.setItem(LIVE_STATUS_CACHE_KEY, JSON.stringify(cache));
+    window.sessionStorage?.setItem(`${LIVE_STATUS_CACHE_KEY}:${selectedNode()}`,
+      JSON.stringify(cache));
   } catch (_) { /* Status continuity must not depend on browser storage. */ }
 }
 function restoreLiveStatusLabel(target, prefix, now = Date.now()) {
@@ -1000,6 +1382,297 @@ function radarPresentationUrl(path) {
     `${url.pathname}${url.search}`;
 }
 
+function radarFrameUrl(path, timestamp) {
+  if (!Number.isSafeInteger(Number(timestamp)) || Number(timestamp) < 0) return path;
+  const url = new URL(path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  url.searchParams.set('frame_timestamp', String(Number(timestamp)));
+  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
+    `${url.pathname}${url.search}`;
+}
+
+// One display transport contract. Renderers retain their coordinate/trace math;
+// a page or channel must not introduce another alignment or cache policy.
+const radarDisplayLanes = Object.freeze({
+  map: {scope: 'selected', aligned: true, fresh: true},
+  detection: {path: '/api/detection', scope: 'selected', aligned: true, fresh: true},
+  timing: {path: '/stash/timing', scope: 'global', aligned: true, fresh: true},
+  spectrum: {path: '/stash/iqdata', scope: 'global', aligned: true, fresh: true, startup: 'wideband'},
+  geographic: {scope: 'view', aligned: 'products', resources: {
+    config: () => readRadarDisplayConfig('geographic'), tracker: '/api/tracker',
+    coverage: ({coverage, altitude}) => coverage ? readRadarDisplay('geographic',
+      `/api/radar/coverage?hours=24&bins=72&altitude=${encodeURIComponent(altitude)}`).catch(() => null) : null,
+    laneContext: () => getIlluminatorContext(), fused: ['/api/tracker/fused', null]
+  }},
+  network: {scope: 'global', intervalMs: 1000,
+    history: {fused: new Map(), adsb: new Map(), trails: new Map()}, resources: {
+    result: ['/api/tracker/fused', {available: false}], config: () => getRadarRuntimeConfig(),
+    cooperative: ['/api/federation/cooperative', null], adsbData: ['/api/adsb', null],
+    associationData: ['/api/federation/live-aircraft-associations', null]
+  }}
+});
+
+function selectedDisplayProduct(lane, path) {
+  return lane.scope === 'selected' || lane.scope === 'view' &&
+    illuminatorDisplayScope() === 'selected' &&
+    /^\/api\/(?:detection|tracker|bearing|locations|adsb\/delay-doppler|live-scorecard(?:\/provisional)?|statistics|radar\/coverage)(?:[/?]|$)/.test(path);
+}
+
+function radarDisplayUrl(name, path = radarDisplayLanes[name].path,
+    context = illuminatorContext, timestamp = undefined) {
+  const lane = radarDisplayLanes[name];
+  let url = selectedDisplayProduct(lane, path) ? selectedIlluminatorUrl(path, context) : path;
+  if (lane.aligned === true || lane.aligned === 'products' &&
+      /^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing|iqdata)(?:[/?]|$)/.test(url))
+    url = radarPresentationUrl(url);
+  return liveApiUrl(radarFrameUrl(url, timestamp));
+}
+
+async function readRadarDisplay(name, path = radarDisplayLanes[name].path,
+    {awaitFresh = radarDisplayLanes[name].fresh, timestamp} = {}) {
+  const lane = radarDisplayLanes[name];
+  const context = lane.scope === 'global' ? null : await getIlluminatorContext();
+  const result = await fetchCachedJsonResource(radarDisplayUrl(name, path, context, timestamp), {},
+    awaitFresh ? {freshMs: 0, awaitFresh: true} : {});
+  if (selectedDisplayProduct(lane, path) && (await getIlluminatorContext()).id !== context.id)
+    throw new Error('Channel changed during refresh');
+  return result;
+}
+
+async function readRadarDisplayConfig(name) {
+  const config = await getRadarRuntimeConfig();
+  return radarDisplayLanes[name].scope === 'view' && illuminatorDisplayScope() === 'selected' ?
+    selectedIlluminatorConfig(config) : config;
+}
+
+async function readRadarDisplayBundle(name, options = {}) {
+  const entries = await Promise.all(Object.entries(radarDisplayLanes[name].resources).map(async ([key, resource]) => {
+    const value = typeof resource === 'function' ? await resource(options) :
+      await readRadarDisplay(name, Array.isArray(resource) ? resource[0] : resource, {awaitFresh: true})
+        .catch(error => { if (Array.isArray(resource)) return resource[1]; throw error; });
+    return [key, value];
+  }));
+  const bundle = Object.fromEntries(entries);
+  if (name === 'geographic') {
+    bundle.frameTimestamp = Number.isSafeInteger(Number(bundle.tracker?.timestamp)) ? Number(bundle.tracker.timestamp) : null;
+    bundle.detection = await readRadarDisplay(name, '/api/detection', {awaitFresh: true, timestamp: bundle.frameTimestamp});
+  }
+  return bundle;
+}
+
+function appendRadarTrail(histories, id, sample, {gap, slack, speed, count, age = Infinity, replace = false}) {
+  let history = histories.get(id) || [];
+  const last = history.at(-1), dt = last ? (sample.stamp - last.stamp) / 1000 : null;
+  if (last && replace && last.stamp === sample.stamp) history[history.length - 1] = sample;
+  else {
+    if (last && (!(dt > 0) || dt > gap ||
+        Math.hypot(sample.point[0] - last.point[0], sample.point[1] - last.point[1]) > slack + speed * dt)) history = [];
+    history.push(sample);
+  }
+  history = (Number.isFinite(age) ? history.filter(point => sample.stamp - point.stamp <= age) : history).slice(-count);
+  histories.set(id, history);
+  return history;
+}
+
+// The network lane owns temporal state. Projection and operational-track
+// qualification remain the existing renderer/model adapters.
+function updateNetworkDisplayHistory(bundle, {project, model, fusedTracks = model.operationalTracks(bundle.result, bundle.config?.location?.rx)}) {
+  const {result, config, adsbData, associationData} = bundle;
+  const {fused, adsb, trails} = radarDisplayLanes.network.history;
+  const receiver = config?.location?.rx, now = Date.now(), current = new Set();
+  const associations = new Map((associationData?.associations || []).filter(item => item?.hex)
+    .map(item => [String(item.hex).trim().toLowerCase(), item]));
+  (Array.isArray(adsbData?.aircraft) ? adsbData.aircraft : []).forEach((item, index) => {
+    const key = String(item.hex || item.flight || `anonymous-${index}`).trim().toLowerCase();
+    const point = project(item, receiver);
+    if (!point || Math.hypot(...point) > 65) return;
+    current.add(key);
+    adsb.set(key, {item, point, lastSeen: now});
+  });
+  bundle.adsbAircraft = [];
+  for (const [key, entry] of adsb) {
+    if (now - entry.lastSeen > 20000) { adsb.delete(key); trails.delete(key); continue; }
+    const ageSeconds = Math.max(0, (now - entry.lastSeen) / 1000), point = [...entry.point];
+    const finite = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+    if (ageSeconds > 0 && finite(entry.item.gs) && finite(entry.item.track)) {
+      const distance = Number(entry.item.gs) * 1.852 / 3600 * ageSeconds;
+      const heading = Number(entry.item.track) * Math.PI / 180;
+      point[0] += distance * Math.sin(heading);
+      point[1] += distance * Math.cos(heading);
+    }
+    if (Math.hypot(...point) > 60) continue;
+    const association = associations.get(key) || null, coasting = !current.has(key);
+    const trail = appendRadarTrail(trails, key, {point: [...point], stamp: now, coasting, association},
+      {gap: 25, slack: .5, speed: .65, count: 60, age: 60000});
+    bundle.adsbAircraft.push({key, item: entry.item, point, trail, association, coasting, ageSeconds});
+  }
+  bundle.fusedTracks = fusedTracks;
+  bundle.trackPoints = bundle.fusedTracks.map(item => model.radarPoint(item, receiver));
+  const active = new Set(bundle.fusedTracks.map(item => item.id));
+  if (result?.available !== true) fused.clear();
+  for (const id of fused.keys()) if (!active.has(id)) fused.delete(id);
+  bundle.fusedTracks.forEach((item, index) => {
+    if (bundle.trackPoints[index]) appendRadarTrail(fused, item.id,
+      {point: bundle.trackPoints[index], stamp: Number(item.measurement_timestamp ?? item.timestamp ?? result.timestamp)},
+      {gap: 3, slack: .25, speed: .55, count: 20, replace: true});
+  });
+  bundle.fusedHistory = fused;
+}
+
+// Position feeds and lane geometry join only at the tracker frame. A failed
+// truth source never discards a successful source or borrows its geometry.
+async function readRadarDisplayTruth(config, timestamp) {
+  const finite = value => value !== null && value !== undefined && value !== '' &&
+    typeof value !== 'boolean' && Number.isFinite(Number(value));
+  const results = await Promise.allSettled(['adsb', 'remote-id'].map(async source => {
+    if (config?.truth?.[source.replace('-', '_')]?.enabled !== true) return [];
+    const base = `/api/${source}`, options = {awaitFresh: true, timestamp};
+    const [feed, geometry] = await Promise.all([
+      readRadarDisplay('geographic', base, options),
+      source === 'adsb' || !window.vectorwarpIlluminatorContext?.enabled ?
+        readRadarDisplay('geographic', `${base}/delay-doppler?overlay=1`, options) : {}
+    ]);
+    const byId = new Map(Object.entries(geometry || {}).map(([id, item]) =>
+      [String(item?.hex || id || '').toUpperCase(), item]));
+    return (feed?.disabledForReplay || !Array.isArray(feed?.aircraft) ? [] : feed.aircraft)
+      .filter(item => finite(item.lat) && finite(item.lon) && (finite(item.seen_pos) ? Number(item.seen_pos) : 0) < 120)
+      .map(item => {
+        const row = byId.get(String(item.hex || '').toUpperCase());
+        return {...item, ...row, _lane_geometry_current: finite(row?.delay) && finite(row?.doppler)};
+      });
+  }));
+  const aircraft = results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+  const failed = results.filter(result => result.status === 'rejected');
+  if (!aircraft.length && failed.length) throw failed[0].reason;
+  return {aircraft, aircraftError: failed.length ? 'Some aircraft sources are temporarily unavailable' : null};
+}
+
+function ensureRadarDisplayMap(name, graph, viewport, style, ready) {
+  if (graph._vectorwarpMapReady) return graph._vectorwarpMapReady;
+  graph._vectorwarpMapReady = create().catch(error => {
+    graph._vectorwarpMap?.remove?.();
+    delete graph._vectorwarpMap;
+    delete graph._vectorwarpMapReady;
+    throw error;
+  });
+  return graph._vectorwarpMapReady;
+  async function create() {
+    const maplibre = await (window.vectorwarpMapLibreReady || Promise.resolve(window.maplibregl));
+    if (!maplibre?.Map) throw new Error('Map renderer could not load');
+    let imageryManifest = {};
+    try { imageryManifest = await readRadarDisplay(name, '/api/map/imagery'); } catch (_) {}
+    let savedCamera = null;
+    try {
+      const candidate = JSON.parse(localStorage.getItem('vectorwarp-map-camera-v1') || 'null');
+      if (candidate?.key === viewport.key && Array.isArray(candidate.center) &&
+          candidate.center.length === 2 && candidate.center.every(Number.isFinite)) savedCamera = candidate;
+    } catch (_) { /* Camera persistence is optional. */ }
+    const map = new maplibre.Map({
+      container: graph,
+      style: style(imageryManifest),
+      center: savedCamera?.center || [viewport.center.lon, viewport.center.lat],
+      zoom: Number.isFinite(savedCamera?.zoom) ? savedCamera.zoom : viewport.zoom,
+      pitch: Number.isFinite(savedCamera?.pitch) ? savedCamera.pitch : 0,
+      bearing: Number.isFinite(savedCamera?.bearing) ? savedCamera.bearing : 0,
+      minPitch: 0,
+      maxPitch: 85,
+      attributionControl: true,
+      cooperativeGestures: false,
+      renderWorldCopies: false,
+      dragRotate: true,
+      touchPitch: true,
+      // Keep several neighboring zoom rings resident so turning the camera
+      // reuses tiles instead of unloading and fetching the same view again.
+      // The explicit cap remains suitable for mobile memory budgets.
+      maxTileCacheZoomLevels: 8,
+      maxTileCacheSize: 192,
+      fadeDuration: 220
+    });
+    graph._vectorwarpMap = map;
+    map.on('moveend', () => {
+      try {
+        const center = map.getCenter();
+        localStorage.setItem('vectorwarp-map-camera-v1', JSON.stringify({key: viewport.key,
+          center: [center.lng, center.lat], zoom: map.getZoom(), pitch: map.getPitch(),
+          bearing: map.getBearing(), at: Date.now()}));
+      } catch (_) { /* Camera persistence is optional. */ }
+    });
+    graph.dataset.mapRenderer = 'maplibre-terrain';
+    if (maplibre.NavigationControl && map.addControl) {
+      const compass = new maplibre.NavigationControl({
+        showCompass: true, showZoom: false, visualizePitch: true
+      });
+      map.addControl(compass, 'top-left');
+      graph.dataset.mapCompass = 'bearing-and-pitch';
+    }
+    await new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('Map renderer timed out')), 15000);
+      map.once('load', () => { window.clearTimeout(timeout); resolve(); });
+      map.once('error', event => {
+        // A missing terrain tile must not prevent the base map and live radar
+        // overlays from loading. Only fail before the style itself exists.
+        if (!map.isStyleLoaded?.() && !map.getStyle?.()) {
+          window.clearTimeout(timeout);
+          reject(event?.error || new Error('Map renderer failed'));
+        }
+      });
+    });
+    ready(map);
+    return map;
+  }
+}
+
+async function readFederatedRadar(path, fleet) {
+  const nodes = fleet?.nodes?.length ? fleet.nodes : [{id: 'local', label: 'Local', local: true}];
+  const settled = await Promise.allSettled(nodes.map(async node => {
+    const prefix = node.local ? '' : `/api/federation/nodes/${encodeURIComponent(node.id)}`;
+    const [status, value] = await Promise.all([
+      readRadarDisplay('network', `${prefix}/api/system/status?summary=1`),
+      readRadarDisplay('network', `${prefix}${path}`)
+    ]);
+    // A reachable API can retain old scorecards after observation stops.
+    if (status?.radar !== 'receiving' || status?.processorFresh !== true)
+      throw new Error(`${node.label || node.id} is not receiving fresh radar frames`);
+    return {node, value};
+  }));
+  return settled.filter(result => result.status === 'fulfilled').map(result => result.value);
+}
+
+async function startRadarDisplay(name, render, {url, configure, unavailable, paused = false} = {}) {
+  const lane = radarDisplayLanes[name];
+  if (lane.scope === 'selected') {
+    window.addEventListener('vectorwarp:illuminator-change', event => { void configure(event.detail); });
+    await configure(await getIlluminatorContext());
+  }
+  if (!lane.intervalMs) url ??= radarDisplayUrl(name);
+  if (lane.startup === 'wideband') {
+    const runtime = await getRadarRuntimeConfig();
+    if (runtime?.process?.multi_illuminator?.enabled === true) {
+      try {
+        const first = await fetchRadarJson(url);
+        const latest = Array.isArray(first?.timestamp) ? Number(first.timestamp.at(-1)) : Number(first?.timestamp);
+        const timestampMs = latest < 1e11 ? latest * 1000 : latest;
+        const freshnessMs = Math.max(10000, Number(runtime?.process?.data?.cpi || 1) * 3000);
+        if (!first?.frequency?.[0]?.length || !Array.isArray(first?.spectrum) ||
+            !Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > freshnessMs)
+          throw new Error('Wideband spectrum unavailable');
+        await render(first);
+      } catch (_) { unavailable(); return null; }
+    }
+  }
+  let updates;
+  const controller = {
+    start() {
+      if (updates && lane.intervalMs) updates.start();
+      return updates ||= lane.intervalMs ? startRadarUpdates(render, lane.intervalMs, {fixed: true}) : startRadarPlot(url, render);
+    },
+    stop() { updates?.stop(); if (!lane.intervalMs) updates = null; },
+    refresh() { return updates?.refresh(); }
+  };
+  if (!paused) controller.start();
+  return controller;
+}
+
 async function getRadarRuntimeConfig() {
   if (radarRuntimeCache && Date.now() - radarRuntimeReadAt < 2000) return radarRuntimeCache;
   if (!radarRuntimePending) {
@@ -1020,7 +1693,7 @@ function radarFrameIntervalMs(config) {
     Math.min(2147483647, Math.max(16, seconds * 1000)) : 1000;
 }
 
-function startRadarUpdates(update, minimumIntervalMs = 16) {
+function startRadarUpdates(update, minimumIntervalMs = 16, {fixed = false} = {}) {
   let stopped = false;
   let running = false;
   let timer;
@@ -1032,15 +1705,15 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
     // Background tabs cannot paint a useful radar frame.  Pausing here avoids
     // redundant heatmap compression, transfer and Plotly work while another
     // visible tab continues normally. Resume immediately when shown again.
-    if (typeof document !== 'undefined' && document.hidden) {
+    if (!fixed && typeof document !== 'undefined' && document.hidden) {
       timer = window.setTimeout(tick, 1000);
       return;
     }
     running = true;
     try {
-      try { loadedConfig = await getRadarRuntimeConfig(); } catch (_) { /* Retry after an API restart. */ }
+      if (!fixed) try { loadedConfig = await getRadarRuntimeConfig(); } catch (_) { /* Retry after an API restart. */ }
       if (stopped) return;
-      const nextInterval = Math.max(minimumIntervalMs, radarFrameIntervalMs(loadedConfig));
+      const nextInterval = fixed ? minimumIntervalMs : Math.max(minimumIntervalMs, radarFrameIntervalMs(loadedConfig));
       if (interval !== nextInterval) { interval = nextInterval; due = 0; }
       if (Date.now() >= due) {
         due = Date.now() + interval;
@@ -1052,27 +1725,28 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
     } finally {
       running = false;
       // Account for request/render time; never run overlapping updates or queue
-      // missed frames. If a slow network/render ran past the deadline, start a
-      // fresh interval now instead of issuing catch-up requests back-to-back.
-      // Check for restarted config even during very long CPIs.
-      if (interval !== null && due <= Date.now()) due = Date.now() + interval;
+      // missed frames. Slow CPI renders start a fresh interval; a fixed clock
+      // resumes at its next beat. Long CPIs still check for restarted config.
+      if (interval !== null && due <= Date.now()) due = fixed ?
+        due + (Math.floor((Date.now() - due) / interval) + 1) * interval : Date.now() + interval;
       if (!stopped) timer = window.setTimeout(tick,
         Math.max(16, Math.min(2000, due - Date.now())));
     }
   }
-  const visibilityChanged = () => {
-    if (stopped || document.hidden) return;
+  const refresh = () => {
+    if (stopped || fixed && running) return;
     due = 0;
     window.clearTimeout(timer);
-    void tick();
+    return tick();
   };
-  if (typeof document !== 'undefined')
+  const visibilityChanged = () => { if (!document.hidden) void refresh(); };
+  if (!fixed && typeof document !== 'undefined')
     document.addEventListener?.('visibilitychange', visibilityChanged);
   tick();
-  return {stop() {
+  return {refresh, start() { if (stopped) { stopped = false; void refresh(); } }, stop() {
     stopped = true;
     window.clearTimeout(timer);
-    if (typeof document !== 'undefined')
+    if (!fixed && typeof document !== 'undefined')
       document.removeEventListener?.('visibilitychange', visibilityChanged);
   }};
 }
@@ -1100,7 +1774,9 @@ function startRadarPlot(url, render) {
   const minimumIntervalMs = 100;
   return startRadarUpdates(async () => {
     try {
-      const data = await fetchRadarJson(url);
+      const requestUrl = typeof url === 'function' ? url() : url;
+      const data = await fetchRadarJson(requestUrl);
+      if (typeof url === 'function' && requestUrl !== url()) return;
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         if (status && renderedTimestamp === undefined) {
           status.className = 'plot-state waiting';
@@ -1112,14 +1788,24 @@ function startRadarPlot(url, render) {
       const stamp = data.frameTimestamp ?? data.timestamp;
       if (stamp === undefined || stamp === null) return;
       const key = JSON.stringify(stamp);
-      if (key === renderedTimestamp) return;
+      const frameKey = `${requestUrl}:${key}`;
+      if (frameKey === renderedTimestamp) return;
       const complete = await render(data);
       // Failed fetches/renders can be retried on the next tick.
       if (complete !== false) {
-        renderedTimestamp = key;
+        renderedTimestamp = frameKey;
         consecutiveFailures = 0;
         target?.setAttribute?.('aria-busy', 'false');
         if (status) status.hidden = true;
+      } else {
+        target?.setAttribute?.('aria-busy', 'false');
+        if (status) {
+          status.hidden = false;
+          status.className = 'plot-state waiting';
+          status.textContent = renderedTimestamp === undefined ?
+            'Waiting for a complete aligned map, detection, and tracker frame…' :
+            'New map arrived before its exact overlays. Showing the last complete frame and retrying…';
+        }
       }
     } catch (error) {
       consecutiveFailures++;
@@ -1144,9 +1830,7 @@ async function renderRuntimeSummary() {
     const capture = config.capture || {};
     const device = capture.device || {};
     const process = config.process || {};
-    const channels = device.channel_count || device.gain?.length ||
-      device.surveillance_channels?.length ||
-      (['RspDuo', 'Usrp', 'HackRF'].includes(device.type) ? 2 : '?');
+    const channels = receiverChannelCount(device) || '?';
     const cpi = process.data?.cpi;
     const ambiguity = process.ambiguity || {};
     const detection = process.detection || {};
@@ -1172,6 +1856,7 @@ async function renderRuntimeSummary() {
     const laneDescriptor = laneContext.enabled ?
       `${laneName} · ${laneFrequency}${laneRate ? ` · ${laneRate}` : ''}` :
       `${hardware} · ${frequency} · ${channels} channels`;
+    const liveRadarCard = liveRadarCardPresentation(laneContext, laneDescriptor);
     const lanePrefix = laneContext.enabled ? `${laneName} · ` : '';
     const globalCapture = laneContext.enabled ?
       `${hardware} · ${frequency} wideband capture · ${channels} channels · ${lanes} lanes` :
@@ -1191,7 +1876,7 @@ async function renderRuntimeSummary() {
       'display-locations-meta': `${lanePrefix}Live delay ellipses · ${receiver} and ${transmitter}`,
       'display-evaluation-meta': adsb.enabled === true ?
         `Enabled${Number.isFinite(Number(adsb.display_range_km)) ? ` · ${adsb.display_range_km} km range` : ''} · comparison only` : 'Disabled in settings',
-      'display-live-meta': laneDescriptor,
+      'display-live-meta': liveRadarCard.meta,
       'display-maxhold-meta': `${lanePrefix}${ambiguity.delayMin ?? '—'}–${ambiguity.delayMax ?? '—'} delay bins · ${ambiguity.dopplerMin ?? '—'}–${ambiguity.dopplerMax ?? '—'} Hz`,
       'display-spectrum-meta': laneContext.enabled ? `Global wideband · ${frequency} capture` : spectrum,
       'display-range-meta': `${lanePrefix}${receiver} receiver · ${transmitter} illuminator`,
@@ -1204,6 +1889,8 @@ async function renderRuntimeSummary() {
       const element = document.getElementById(id);
       if (element) element.textContent = value;
     });
+    const liveRadarLink = document.getElementById('display-live-meta')?.closest?.('a');
+    if (liveRadarLink) liveRadarLink.href = liveRadarCard.href;
   } catch (_) {
     if (target) target.textContent = 'Live receiver configuration unavailable';
   }
@@ -1373,6 +2060,24 @@ function aircraftAltitudeColor(aircraft = {}) {
   return `#${channel(0)}${channel(1)}${channel(2)}`;
 }
 
+// Display semantics only. Geographic views retain the canonical Map artwork;
+// delay–Doppler views use coordinate-appropriate circles with the same colors.
+// A support ring describes evidence, while a white outline describes selection.
+const radarVisualSemantics = Object.freeze({
+  colors: Object.freeze({detection: '#f4b183', track: '#ff7a45', coasting: '#ff7a45',
+    support: '#5be7ff', selected: '#ffffff', remoteId: '#20dddc',
+    independent: '#ff8754', adsbFallback: '#4dd4b0'}),
+  labels: Object.freeze({detection: 'Detection', track: 'Radar track', coasting: 'Coasting',
+    adsb: 'ADS-B position', independent: 'Independent radar position', remoteId: 'Remote ID',
+    adsbOnly: 'ADS-B only', detected: 'Radar detected', tracked: 'Radar tracked',
+    multiChannel: 'Multi-channel support'}),
+  legendOrder: Object.freeze(['detection', 'track', 'coasting', 'adsb', 'remoteId']),
+  legendRank: Object.freeze({detection: 10, track: 20, coasting: 30, adsb: 40, remoteId: 50}),
+  aircraftColor: aircraftAltitudeColor,
+  aircraftSvgMarkup
+});
+if (typeof window !== 'undefined') window.VectorWarpVisualSemantics = radarVisualSemantics;
+
 const aircraftSnapshotCaches = new Map();
 function stabilizeAircraftSnapshots(rows = [], options = {}) {
   const scope = String(options.scope || 'default');
@@ -1487,11 +2192,18 @@ function siteSvgMarkup(kind = 'receiver') {
 if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
-    startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
+    startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, radarFrameUrl,
+    radarDisplayLanes, radarDisplayUrl, readRadarDisplay, readFederatedRadar, startRadarDisplay,
+    readRadarDisplayBundle, readRadarDisplayConfig, readRadarDisplayTruth, ensureRadarDisplayMap, selectedNode,
+    discoverApiEndpoint, fetchStatusResource,
     fetchCachedJsonResource, clientJsonCachePolicy,
     refreshLiveStatus, refreshReceiverDevices, updateLiveStatusLabel, aircraftKind, aircraftPlotSymbol,
     aircraftLabel, aircraftInfo, aircraftIdentity, aircraftScreenRotation, aircraftFlightPathAngle,
     aircraftPlotData, aircraftHoverText, aircraftHoverTemplate, aircraftSvgMarkup, aircraftAltitudeColor,
+    radarVisualSemantics,
     siteSvgMarkup, illuminatorDisplayScope, getIlluminatorContext,
     selectedIlluminatorUrl, selectedIlluminatorConfig, initializeIlluminatorDisplay,
-    stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft};
+    independentTransmitterSiteCount, liveRadarCardPresentation,
+    receiverChannelCount,
+    stabilizeAircraftSnapshots, updateAircraftTrackHistories, selectRadarAssociatedAircraft,
+    vectorwarpPlotTheme};

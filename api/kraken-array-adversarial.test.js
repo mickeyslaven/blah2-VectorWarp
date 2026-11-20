@@ -225,12 +225,19 @@ check('ADS-B changes cannot change geometry or bearing acceptance', () => {
   assert.deepEqual(evaluateKrakenArray(cfg, status), evaluateKrakenArray(truthChanged, status));
 });
 check('current detector and tracker schemas have no bearing or ADS-B input', () => {
-  for (const relative of ['src/data/Detection.h', 'src/process/tracker/Tracker.h']) {
+  for (const relative of ['src/data/Detection.h', 'src/process/tracker/Tracker.h',
+    'src/process/detection/DetectorIntegration.h']) {
     const text = fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
     assert.doesNotMatch(text, /\b(?:bearing|azimuth|adsb|array_geometry)\b/i, relative);
   }
-  const main = fs.readFileSync(path.join(__dirname, '../src/blah2.cpp'), 'utf8');
-  assert.match(main, /tracker->process\(detection\.get\(\), trackerTime\)/);
+  const pipeline = fs.readFileSync(path.join(__dirname,
+    '../src/process/pipeline/RadarPipeline.h'), 'utf8');
+  assert.match(pipeline,
+    /trackProducts\(\*output\.detections, tracker,\s*position\.timestampMs, output\.integration, &detector\);/);
+  const integration = fs.readFileSync(path.join(__dirname,
+    '../src/process/detection/DetectorIntegration.h'), 'utf8');
+  assert.match(integration,
+    /return tracker\.process\(&detections, signalTimeMs, guided\);/);
 });
 
 let failures = 0;

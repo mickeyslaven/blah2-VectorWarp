@@ -4,127 +4,63 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
-const {getDeviceProfiles, validateConfig, writeConfigAtomically} = require('./config-manager');
-const FIELD_RULES = require('./config-rules');
+const {getDeviceProfiles, validateConfig, writeConfigAtomically, FIELD_RULES,
+  RETIRED_FIXED_SETTINGS, publicationPolicyError} = require('./config-manager');
 const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
 const {siteFingerprint} = require('./manifold-recorder');
+const {legacyDelayReferenceRate, applyReceiverProfile} = require('../html/js/config_profiles');
+
+// Source trees and macOS bundles use config/; native packages use
+// config-examples/. Both contain the same immutable canonical first-run YAML.
+// Never derive defaults from the operator-owned active configuration.
+const canonicalPath = ['config', 'config-examples'].map(directory =>
+  path.join(__dirname, '..', directory, 'config.yml')).find(filename => fs.existsSync(filename));
+if (!canonicalPath) throw new Error('Canonical first-run configuration is missing from this installation.');
+const canonicalDefaults = yaml.load(fs.readFileSync(canonicalPath, 'utf8'));
 
 // Neutral first-run form, not a running radar configuration or site claim.
 function setupDefaults() {
-  const calibrationPath = process.env.VECTORWARP_MACOS_STATE ?
-    path.join(process.env.VECTORWARP_MACOS_STATE, 'calibration', 'manifold-samples.jsonl') :
-    '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl';
-  return {
-    capture: {fs: 2000000, fc: 204640000,
-      aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
-        minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
-        minimum_elevation_deg: 0, maximum_elevation_deg: 90,
-        minimum_interval_seconds: 5},
-      // Never infer hardware on a fresh install. An invalid marker keeps the
-      // processor fail-closed while still allowing the API and Settings UI to
-      // load the canonical configuration and receiver profiles.
-      device: {type: 'Unconfigured'},
-      replay: {state: false, loop: false,
-        file: '/var/lib/vectorwarp/recordings/recording.blah2iq', format: 'auto',
-        provenance: 'legacy-unqualified'}},
-    process: {
-      performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
-      data: {cpi: 0.5, buffer: 2},
-      multi_illuminator: {enabled: false, illuminators: []},
-      ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},
-      // The numeric interval remains available for legacy/manual tuning, but
-      // fresh configurations track the full ambiguity interval by default.
-      clutter: {enable: true, followAmbiguity: true, delayMin: -10, delayMax: 400},
-      detection: {enable: true, pfa: 0.00001, nGuard: 2, nTrain: 6,
-        minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
-        integration_motion_bins: 0,
-        track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
-      tracker: {enable: true, profile: 'balanced', initiate: {M: 3, N: 6,
-        maxAcc: 10, min_snr_db: 5, acceleration_model: 'adaptive_gate'},
-        delete: 10,
-        track_guided_shadow: {enable: false, max_tracks: 64}},
-      bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
-        frequency_resolved_shadow: {enabled: false, fft_size: 2048, subbands: 24,
-          bandwidth_fraction: .9, diagonal_loading: .01, capture_seconds: .25,
-          interval_s: 300, timeout_ms: 15000},
-        manifold_automation: {auto_promote: true},
-        manifold_recorder: {enabled: 'auto',
-          path: calibrationPath,
-          min_snr_db: 6, min_elevation_deg: 0, max_elevation_deg: 15,
-          max_delay_error_km: .25, max_doppler_error_hz: 5,
-          max_truth_age_s: 3, max_file_mb: 64, max_files: 4}}
-    },
-    network: {ip: '0.0.0.0', ports: {api: 3000, map: 3001, detection: 3002,
-      track: 3003, bearing: 3004, manifold: 3005, illuminator: 3007,
-      timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
-    truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1,
-      smoothing_window: 10, max_position_age: 30,
-      provisional_event_time_uncertainty_s: 1},
-      remote_id: {enabled: false, source: '127.0.0.1:8754', poll_interval: .5,
-        source_timeout: 1.2, smoothing_window: 4, max_position_age: 10,
-        wifi_enabled: false}},
-    location: {rx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set receiver site'},
-      tx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set transmitter site'}},
-    save: {iq: false, map: false, detection: false, timing: false,
-      path: '/var/lib/vectorwarp/recordings/',
-      retention: {automatic_cleanup: false, low_space_policy: 'stop_recording', maximum_age_days: 30,
-        maximum_total_gb: 100, minimum_free_gb: 5}}
-  };
+  const config = JSON.parse(JSON.stringify(canonicalDefaults));
+  if (process.env.VECTORWARP_MACOS_STATE)
+    config.process.bearing.manifold_recorder.path = path.join(
+      process.env.VECTORWARP_MACOS_STATE, 'calibration', 'manifold-samples.jsonl');
+  return config;
 }
 
-function configurationForReceiver(type, base = setupDefaults()) {
+function configurationForReceiver(type, base) {
   const profile = getDeviceProfiles().find(item => item.type === type);
   if (!profile) throw new Error(`Unknown receiver profile: ${type}`);
-  const config = JSON.parse(JSON.stringify(base));
-  config.capture.device = JSON.parse(JSON.stringify(profile.device));
-  config.capture.fs = profile.sampleRate;
-  const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
-    result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
-      merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
-      JSON.parse(JSON.stringify(value));
-    return result;
-  }, target);
-  config.process.performance = {...config.process.performance,
-    ...(profile.process?.performance || {})};
-  for (const [key, value] of Object.entries(profile.process || {})) {
-    if (key === 'performance') continue;
-    config.process[key] = merge(config.process[key] || {}, value);
-  }
-  if (!profile.process?.reference_synthesis) delete config.process.reference_synthesis;
-  if (!profile.features?.coherentArray) {
-    delete config.process.surveillance_fusion;
-    if (config.process.bearing) {
-      config.process.bearing.enable = false;
-      if (config.process.bearing.frequency_resolved_shadow)
-        config.process.bearing.frequency_resolved_shadow.enabled = false;
-      if (config.process.bearing.manifold_recorder)
-        config.process.bearing.manifold_recorder.enabled = false;
-    }
-    if (config.process.detection) {
-      config.process.detection.integration_cpis = 1;
-      config.process.detection.integration_motion_bins = 0;
-      if (config.process.detection.track_before_detect)
-        config.process.detection.track_before_detect.enable = false;
-    }
-    if (config.process.tracker) {
-      delete config.process.tracker.gpu_capacity;
-      delete config.process.tracker.beam_tolerance;
-      if (config.process.tracker.track_guided_shadow) {
-        config.process.tracker.track_guided_shadow.enable = false;
-        config.process.tracker.track_guided_shadow.promote = false;
-      }
-      if (config.process.tracker.initiate?.stationary_clutter)
-        config.process.tracker.initiate.stationary_clutter.enable = false;
-    }
-  }
-  return config;
+  const config = JSON.parse(JSON.stringify(base === undefined ? setupDefaults() : base));
+  return applyReceiverProfile(config, profile, base === undefined);
 }
 
 function stripLegacyNoOps(config) {
   if (!config || typeof config !== 'object') return config;
+  for (const [name, accepted] of Object.entries(RETIRED_FIXED_SETTINGS)) {
+    const parts = name.split('.'), leaf = parts.pop();
+    const parent = parts.reduce((value, key) => value?.[key], config);
+    if (parent && accepted(parent[leaf])) delete parent[leaf];
+  }
+  if (config.process?.tracker?.publication?.mode === 'native')
+    delete config.process.tracker.publication;
   if (config.process?.data) delete config.process.data.overlap;
   if (config.process?.tracker) delete config.process.tracker.smooth;
   if (config.truth) delete config.truth.ais;
+  // Retire observation-only lanes without promoting their unqualified output.
+  // This runs in the existing atomic upgrade migration and save sanitizer.
+  const detection = config.process?.detection;
+  if (detection) {
+    delete detection.temporal_shadow;
+    delete detection.live_temporal_shadow;
+    delete detection.doppler_ridge_scrubber;
+  }
+  if (config.process?.tracker) delete config.process.tracker.track_guided_shadow;
+  if (config.process?.bearing) {
+    delete config.process.bearing.frequency_resolved_shadow;
+    delete config.process.bearing.manifold_automation;
+  }
+  if (config.process?.surveillance_fusion)
+    delete config.process.surveillance_fusion.detection_manifold_automation;
   return config;
 }
 
@@ -143,6 +79,10 @@ function readConfig(filename) {
     if (parsed.truth?.adsb && Object.prototype.hasOwnProperty.call(parsed.truth.adsb, 'adsb2dd'))
       delete parsed.truth.adsb.adsb2dd;
     stripLegacyNoOps(parsed);
+    // Preserve bounded recorder collection defaults from released configs.
+    const bearing = parsed.process?.bearing;
+    if (bearing?.manifold_recorder && bearing.manifold_recorder.enabled === undefined)
+      bearing.manifold_recorder.enabled = 'auto';
     // Detect cycles/aliases before recursive form rendering and validation.
     let nodes = 0;
     const visit = (value, parents = new Set(), depth = 0) => {
@@ -159,6 +99,10 @@ function readConfig(filename) {
     parsed = null;
   }
   const defaults = setupDefaults();
+  // A missing reference means legacy lane-local bins, never an inferred
+  // 2-MS/s scale. Persist an unambiguous original rate in the migration.
+  if (parsed?.process && parsed.process.delay_reference_sample_rate_hz === undefined)
+    delete defaults.process.delay_reference_sample_rate_hz;
   // A released configuration without a profile is the legacy permissive
   // tracker. Do not silently migrate it merely by reading and saving another
   // setting; fresh configurations still start conservative.
@@ -176,7 +120,7 @@ function readConfig(filename) {
       // Missing optional fields must use processor defaults, not the more
       // aggressive new-device preset (which opts into array synthesis).
       defaults.process.performance.surveillance_workers = 1;
-      defaults.process.performance.fft_threads = profile.type === 'Kraken' ? 1 : 4;
+      defaults.process.performance.fft_threads = 1;
     }
     if (profile.type === 'Kraken') {
       const count = Number.isInteger(parsed.capture.device.channel_count) ?
@@ -202,11 +146,19 @@ function readConfig(filename) {
       ['auto', 'on', 'off'].includes(current);
     return false;
   };
+  const optionalDefault = (value, prefix) => FIELD_RULES[prefix]?.optional ||
+    (value && typeof value === 'object' && !Array.isArray(value) &&
+      Object.entries(value).every(([key, child]) => optionalDefault(child, `${prefix}.${key}`)));
   const merge = (base, current, prefix = '') => {
     if (current === undefined) {
-      if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.') &&
+      if (!optionalDefault(base, prefix) &&
+          prefix !== 'process.performance' && !prefix.startsWith('process.performance.') &&
+          prefix !== 'process.multi_illuminator' && !prefix.startsWith('process.multi_illuminator.') &&
           prefix !== 'capture.aircraft_clips' && !prefix.startsWith('capture.aircraft_clips.') &&
           prefix !== 'truth.remote_id' && !prefix.startsWith('truth.remote_id.') &&
+          !prefix.startsWith('process.reference_synthesis.target_protection_') &&
+          prefix !== 'save.complex_cutout' && !prefix.startsWith('save.complex_cutout.') &&
+          prefix !== 'network.ports.illuminator' &&
           prefix !== 'save.retention' && !prefix.startsWith('save.retention.'))
         suppliedDefaults.push(prefix);
       return base;
@@ -229,11 +181,25 @@ function readConfig(filename) {
       result[key] = merge(value, current[key], prefix ? `${prefix}.${key}` : key);
     return result;
   };
-  const config = parsed ? merge(defaults, parsed) : defaults;
+  const config = stripLegacyNoOps(parsed ? merge(defaults, parsed) : defaults);
+  // A multi-illuminator installation deliberately carries transmitter
+  // geometry on each enabled lane.  The legacy global location.tx is only a
+  // fallback for single-illuminator operation and must not force the first-run
+  // assistant back open when every active lane has its own geometry.
+  const laneTransmittersComplete = parsed?.process?.multi_illuminator?.enabled === true &&
+    Array.isArray(parsed.process.multi_illuminator.illuminators) &&
+    parsed.process.multi_illuminator.illuminators.some(lane => lane?.enabled === true) &&
+    parsed.process.multi_illuminator.illuminators
+      .filter(lane => lane?.enabled === true)
+      .every(lane => lane.transmitter && typeof lane.transmitter.name === 'string' &&
+        lane.transmitter.name.trim() && Number.isFinite(lane.transmitter.latitude) &&
+        Number.isFinite(lane.transmitter.longitude) && Number.isFinite(lane.transmitter.altitude));
+  const requiredDefaults = laneTransmittersComplete ?
+    suppliedDefaults.filter(field => field !== 'location.tx') : suppliedDefaults;
   const validation = validateConfig(config);
   return {config, revision: crypto.createHash('sha256').update(exists ? raw : 'missing').digest('hex'),
-    exists, readError, suppliedDefaults, validation,
-    setupRequired: Boolean(readError || suppliedDefaults.length || !validation.valid)};
+    exists, readError, suppliedDefaults: requiredDefaults, validation,
+    setupRequired: Boolean(readError || requiredDefaults.length || !validation.valid)};
 }
 
 function writable(filename) {
@@ -269,7 +235,16 @@ function migrateKnownDefaults(filename) {
   try { parsed = yaml.load(fs.readFileSync(filename, 'utf8'), {schema: yaml.JSON_SCHEMA}); }
   catch (_) { return false; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
-  let changed = false;
+  const beforeRetirement = JSON.stringify(parsed);
+  stripLegacyNoOps(parsed);
+  let changed = JSON.stringify(parsed) !== beforeRetirement;
+  if (parsed.process && parsed.process.delay_reference_sample_rate_hz === undefined) {
+    const reference = legacyDelayReferenceRate(parsed);
+    if (reference !== null) {
+      parsed.process.delay_reference_sample_rate_hz = reference;
+      changed = true;
+    }
+  }
   if (parsed.capture?.device?.type === 'Usrp' && parsed.capture.device.address === 'localhost') {
     parsed.capture.device.address = 'type=b200';
     changed = true;
@@ -277,6 +252,18 @@ function migrateKnownDefaults(filename) {
   if (!changed) return false;
   writeConfigAtomically(filename, parsed);
   return true;
+}
+
+// Package activation can restore the API more than once when systemd retries
+// an early failure.  A root-created, short expiry preserves the conffile for
+// those starts without turning a killed package transaction into a permanent
+// migration bypass.
+function preserveConfigBytesDuringUpgrade(environment = process.env,
+  uptimeSeconds) {
+  const now = Math.floor(Number(uptimeSeconds));
+  const until = Number(environment.VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME);
+  return Number.isSafeInteger(now) && Number.isSafeInteger(until) &&
+    until >= now && until <= now + 300;
 }
 
 function saveConfig(filename, candidate, expectedRevision) {
@@ -287,6 +274,13 @@ function saveConfig(filename, candidate, expectedRevision) {
     throw error;
   }
   const metadataErrors = recordErrors(candidate?.capture?.device?.array_geometry);
+  const publicationError = publicationPolicyError(candidate);
+  if (publicationError) metadataErrors.push(publicationError);
+  for (const [name, accepted] of Object.entries(RETIRED_FIXED_SETTINGS)) {
+    const value = name.split('.').reduce((item, key) => item?.[key], candidate);
+    if (value !== undefined && !accepted(value))
+      metadataErrors.push(`${name} is retired and its requested alternative is unsupported`);
+  }
   if (metadataErrors.length) {
     const error = new Error(metadataErrors.join(' '));
     error.status = 422;
@@ -298,18 +292,22 @@ function saveConfig(filename, candidate, expectedRevision) {
   const bearing = prepared.process?.bearing;
   if (selectedGain !== previousGain && bearing &&
       (bearing.manifold_file || before.config.process?.bearing?.manifold_file)) {
-    // Gain changes invalidate learned RF qualification, not physical surveys.
-    // Do not silently substitute ideal steering for an active learned model.
-    delete bearing.manifold_file;
-    bearing.enable = false;
+    if (bearing.manifold_file === before.config.process?.bearing?.manifold_file) {
+      const error = new Error('The selected bearing manifold must be requalified for the new gain. Explicitly select a matching calibration before saving.');
+      error.status = 422;
+      throw error;
+    }
   }
   const automaticPath = before.config.process?.bearing?.manifold_recorder?.path;
   if (automaticPath && prepared.process?.bearing?.manifold_file === `${automaticPath}.qualified.json` &&
-      siteFingerprint(before.config) !== siteFingerprint(prepared))
-    delete prepared.process.bearing.manifold_file;
+      siteFingerprint(before.config) !== siteFingerprint(prepared)) {
+    const error = new Error('The selected bearing manifold does not match the changed installation. Explicitly select a qualified calibration before saving.');
+    error.status = 422;
+    throw error;
+  }
   writeConfigAtomically(filename, prepared);
   return readConfig(filename);
 }
 
 module.exports = {readConfig, writable, saveConfig, setupDefaults, configurationForReceiver,
-  migrateKnownDefaults, stripLegacyNoOps};
+  migrateKnownDefaults, preserveConfigBytesDuringUpgrade, stripLegacyNoOps};

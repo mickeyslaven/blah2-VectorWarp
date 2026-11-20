@@ -51,4 +51,21 @@ assert(rows.find(row => row.kind === 'track_measurement').delay_km > 0);
 assert.equal(rows.at(-1).kind, 'run_end');
 assert.deepEqual(rows.map(row => row.sequence), rows.map((_row, index) => index));
 
+const streamFile = path.join(directory, 'stream.ndjson');
+const stream = new OprsEventRecorder({capture: {fs: 6144000}}, {filename: streamFile});
+stream.acceptDetection(JSON.stringify({timestamp: 1000, delay: [10], doppler: [20]}));
+stream.acceptTracker(JSON.stringify({timestamp: 1000,
+  data: [{id: 'lane', state: 'ACTIVE', n: 3, delay: 10, doppler: 20}]}));
+stream.acceptTiming(JSON.stringify({timestamp: 1000, cpi: 200}));
+for (const method of ['acceptDetection', 'acceptTracker', 'acceptTiming']) {
+  assert.doesNotThrow(() => stream[method]('{invalid'));
+  assert.doesNotThrow(() => stream[method]('null'));
+}
+stream.close();
+const streamRows = fs.readFileSync(streamFile, 'utf8').trim().split('\n').map(JSON.parse);
+assert.equal(streamRows.filter(row => row.kind === 'detection').length, 1);
+assert.equal(streamRows.filter(row => row.kind === 'timing_frame').length, 1);
+assert.equal(streamRows.find(row => row.kind === 'track_measurement').delay_km,
+  10 * (299792.458 / 6144000), 'serialized native track delay uses the lane rate');
+
 console.log('oprs-event-recorder tests passed');

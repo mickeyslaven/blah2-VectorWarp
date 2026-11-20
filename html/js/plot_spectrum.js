@@ -25,29 +25,9 @@ function spectrumColorRange(spectrum) {
   return {zmin: lowest, zmax: highest};
 }
 
-// setup API
-var urlMap = liveApiUrl(radarPresentationUrl('/stash/iqdata'));
-
 // setup plotly
 var layout = {
-  font: {color: '#f3eee9'},
-  autosize: true,
-  margin: {
-    l: 92,
-    r: 50,
-    b: 50,
-    t: 10,
-    pad: 0
-  },
-  hoverlabel: {
-    namelength: 0
-  },
-  plot_bgcolor: "rgba(0,0,0,0)",
-  paper_bgcolor: "rgba(0,0,0,0)",
-  annotations: [],
-  // Preserve the operator's viewport across spectrum-history refreshes.
-  uirevision: 'vectorwarp-spectrum',
-  displayModeBar: false,
+  ...VectorWarpPlotTheme.layout('vectorwarp-spectrum'),
   xaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
@@ -72,10 +52,7 @@ var layout = {
     categoryorder: "total descending"
   }
 };
-var config = {
-  responsive: true,
-  displayModeBar: false
-}
+var config = VectorWarpPlotTheme.config();
 
 // setup plotly data
 var data = [
@@ -94,19 +71,15 @@ var detection = [];
 Plotly.react('data', data, layout, config);
 
 // callback function
-var radarUpdates = null;
 async function renderSpectrum(data) {
+  data.timestamp = data.timestamp.map(value => new Date(value));
+  const frequency = data.frequency[0].map(khz => khz / 1000);
+  const colorRange = spectrumColorRange(data.spectrum);
 
   // case draw new plot
   if (data.frequency?.[0]?.length !== nRows) {
-    // timestamp posix to js
-    for (let i = 0; i < data.timestamp.length; i++)
-    {
-      data.timestamp[i] = new Date(data.timestamp[i]);
-    }
-    var colorRange = spectrumColorRange(data.spectrum);
     var trace1 = {
-        x: data.frequency[0].map(khz => khz / 1000),
+        x: frequency,
         y: data.timestamp,
         z: data.spectrum,
         colorscale: 'Jet',
@@ -123,14 +96,8 @@ async function renderSpectrum(data) {
   }
   // case update plot
   else {
-    // timestamp posix to js
-    for (let i = 0; i < data.timestamp.length; i++)
-    {
-      data.timestamp[i] = new Date(data.timestamp[i]);
-    }
-    var colorRange = spectrumColorRange(data.spectrum);
     var trace_update = {
-      x: [data.frequency[0].map(khz => khz / 1000)],
+      x: [frequency],
       y: [data.timestamp],
       z: [data.spectrum],
       zauto: [false],
@@ -150,25 +117,5 @@ function showSpectrumUnavailable() {
   target?.setAttribute?.('aria-busy', 'false');
 }
 
-var vectorwarpSpectrumReady = getRadarRuntimeConfig().then(async runtime => {
-  if (runtime?.process?.multi_illuminator?.enabled === true) {
-    try {
-      const first = await fetchRadarJson(urlMap);
-      const latestTimestamp = Array.isArray(first?.timestamp) ?
-        Number(first.timestamp.at(-1)) : Number(first?.timestamp);
-      const timestampMs = latestTimestamp < 1e11 ? latestTimestamp * 1000 : latestTimestamp;
-      const freshnessMs = Math.max(10000, Number(runtime?.process?.data?.cpi || 1) * 3000);
-      if (!first?.frequency?.[0]?.length || !Array.isArray(first?.spectrum) ||
-          !Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > freshnessMs) {
-        showSpectrumUnavailable();
-        return null;
-      }
-      await renderSpectrum(first);
-    } catch (_) {
-      showSpectrumUnavailable();
-      return null;
-    }
-  }
-  radarUpdates = startRadarPlot(urlMap, renderSpectrum);
-  return radarUpdates;
-});
+var vectorwarpSpectrumReady = startRadarDisplay('spectrum', renderSpectrum,
+  {unavailable: showSpectrumUnavailable});

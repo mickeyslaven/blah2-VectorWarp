@@ -3,7 +3,8 @@
 const crypto = require('crypto');
 
 const SCHEMA = 'vectorwarp-illuminator-transmitter-catalog-v1';
-const STANDARDS = new Set(['FM', 'DAB', 'ATSC', 'DVB-T/T2']);
+const STANDARDS = new Set(['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0',
+  'DVB-T/T2', 'ISDB-T', 'DTMB', 'CUSTOM']);
 const VERIFICATION = new Set(['regulator', 'operator-verified', 'unverified']);
 const MAX_TRANSMITTERS = 500000;
 
@@ -12,7 +13,7 @@ const MAX_TRANSMITTERS = 500000;
 // a survey preview can use it.
 const SOURCES = Object.freeze([
   Object.freeze({id: 'fcc-lms-us', authority: 'US Federal Communications Commission',
-    jurisdiction: 'US', standards: Object.freeze(['FM', 'ATSC']),
+    jurisdiction: 'US', standards: Object.freeze(['FM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0']),
     landing_url: 'https://opendata.fcc.gov/Media/LMS-Public-Database-Files/nsck-y87u',
     update_mode: 'download-normalize-pin', coordinate_system: 'WGS84'}),
   Object.freeze({id: 'ofcom-txparams-vhf-uk', authority: 'Ofcom', jurisdiction: 'UK',

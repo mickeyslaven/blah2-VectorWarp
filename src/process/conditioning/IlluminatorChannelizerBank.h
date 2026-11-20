@@ -2,6 +2,7 @@
 #define ILLUMINATOR_CHANNELIZER_BANK_H
 
 #include "process/conditioning/SubbandChannelizer.h"
+#include "data/CanonicalSignal.h"
 #include "process/utility/FixedExecutor.h"
 
 #include <cstddef>
@@ -10,28 +11,14 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
+#include <optional>
 
 namespace blah2::channelizer
 {
 
-struct IlluminatorDefinition
-{
-  std::string id;
-  uint64_t frequencyHz = 0;
-  uint32_t occupiedBandwidthHz = 0;
-  uint32_t outputRateHz = 0;
-  uint32_t tapsPerPhase = 24;
-  // Optional broadcast-system label used by reference conditioning. Keep it
-  // last so existing aggregate initializers remain source compatible.
-  std::string standard;
-};
-
-struct IlluminatorOutput
-{
-  std::string id;
-  uint64_t frequencyHz = 0;
-  SubbandChannelizer::Output samples;
-};
+using IlluminatorDefinition = iq::SignalDefinition;
+using IlluminatorOutput = iq::SignalBlock;
 
 // Fans one coherent physical capture into independent, phase-preserving
 // illuminator streams. It performs no receiver I/O and can therefore be used

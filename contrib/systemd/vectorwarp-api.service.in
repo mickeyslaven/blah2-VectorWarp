@@ -12,6 +12,10 @@ SupplementaryGroups=vectorwarp-config vectorwarp
 WorkingDirectory=@PREFIX@/current
 Environment=NODE_ENV=production
 Environment=VECTORWARP_LINUX_SERVICE=1
+# Present only while a package upgrade restores the API. Its value is a
+# short, API-validated expiry so an interrupted transaction cannot suppress
+# ordinary startup migration indefinitely.
+EnvironmentFile=-/run/vectorwarp-api-preserve-config.env
 Environment="BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@"
 Environment="BLAH2_SDRPLAY_LOCAL_BUILD=@LOCAL_BUILD_ENABLED@"
 Environment="BLAH2_LOCAL_BUILD_RECEIVER_TYPES=@LOCAL_BUILD_RECEIVER_TYPES@"
@@ -19,6 +23,7 @@ Environment="BLAH2_SDRPLAY_BUILD_HELPER=@PREFIX@/libexec/vectorwarp-build-sdrpla
 Environment="BLAH2_RECEIVER_HELPER=@PREFIX@/libexec/vectorwarp-receiver-helper"
 Environment="BLAH2_CONFIG_RESTART_COMMAND=[\"@PREFIX@/libexec/vectorwarp-receiver-helper\",\"request-restart\"]"
 ExecCondition=/usr/bin/node @PREFIX@/libexec/vectorwarp-check-node-version
+ExecCondition=+/usr/bin/python3 @PREFIX@/libexec/vectorwarp-cohort-check --preflight --release @PREFIX@/current --config @SYSCONFDIR@/config.yml
 ExecStart=/usr/bin/node @PREFIX@/current/api/server.js @SYSCONFDIR@/config.yml
 Restart=on-failure
 RestartSec=3s

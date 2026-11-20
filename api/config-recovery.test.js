@@ -9,7 +9,7 @@ const net = require('net');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
 const {readConfig, saveConfig, writable, migrateKnownDefaults,
-  configurationForReceiver} = require('./config-store');
+  preserveConfigBytesDuringUpgrade, configurationForReceiver} = require('./config-store');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-recovery-'));
 const file = path.join(dir, 'config.yml');
 
@@ -45,20 +45,21 @@ function availablePort(usedPorts) {
   let child;
   const conflict = net.createServer();
   try {
-    for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml',
-      'config-kraken.yml']) {
-      const shipped = readConfig(path.join(__dirname, '..', 'config', name));
+    for (const name of ['config.yml', 'HackRF', 'Usrp', 'Kraken', 'RspDuo']) {
+      const source = name === 'config.yml' ? path.join(__dirname, '..', 'config', name) : file;
+      if (name !== 'config.yml') fs.writeFileSync(file, yaml.dump(configurationForReceiver(name)));
+      const shipped = readConfig(source);
       assert.deepEqual(shipped.suppliedDefaults, [],
         `${name} omits required defaults: ${shipped.suppliedDefaults.join(', ')}`);
       if (name === 'config.yml') assert.equal(shipped.setupRequired, true,
         'the canonical first-run config must require an explicit receiver choice');
-      else if (name !== 'config-hackrf.yml') assert.equal(shipped.setupRequired, false,
+      else if (name !== 'HackRF') assert.equal(shipped.setupRequired, false,
         `${name} should remain a complete compatibility fixture`);
     }
-    const legacyUsrp = yaml.load(fs.readFileSync(
-      path.join(__dirname, '..', 'config', 'config-usrp.yml'), 'utf8'));
+    const legacyUsrp = configurationForReceiver('Usrp');
     legacyUsrp.capture.device.address = 'localhost';
     fs.writeFileSync(file, yaml.dump(legacyUsrp), {mode: 0o640});
+    fs.chmodSync(file, 0o640);
     assert.equal(readConfig(file).validation.valid, false,
       'the public validator must continue rejecting a bare UHD hostname');
     assert.equal(migrateKnownDefaults(file), true);
@@ -70,6 +71,52 @@ function availablePort(usedPorts) {
     assert.equal(readConfig(file).validation.valid, true);
     assert.equal(migrateKnownDefaults(file), false,
       'the migration must be one-shot and leave current selectors untouched');
+    for (const gainControl of ['measured', 'measured_per_channel']) {
+      for (const selection of ['recorder', 'bearing', 'detection']) {
+        const configured = configurationForReceiver('Kraken');
+        Object.assign(configured.capture.device.heimdall, {gain_control: gainControl,
+          gain: 14.4, channel_gains: [3.7, 3.7, 14.4, 3.7, 3.7]});
+        if (selection === 'recorder') configured.process.bearing.manifold_recorder.enabled = 'on';
+        if (selection === 'bearing') configured.process.bearing.manifold_file = '/tmp/measured-bearing.json';
+        if (selection === 'detection') configured.process.surveillance_fusion.manifold_file = '/tmp/measured-detection.json';
+        const raw = yaml.dump(configured);
+        fs.writeFileSync(file, raw, {mode: 0o640});
+        assert.equal(migrateKnownDefaults(file), false,
+          `${gainControl}/${selection}: startup must preserve explicit hardware intent`);
+        const loaded = readConfig(file);
+        assert.equal(fs.readFileSync(file, 'utf8'), raw,
+          'migration and read must preserve the complete configuration bytes');
+        assert.deepEqual(loaded.config.capture.device.heimdall, configured.capture.device.heimdall);
+        assert.equal(loaded.config.process.bearing.manifold_file, configured.process.bearing.manifold_file);
+        assert.equal(loaded.config.process.surveillance_fusion.manifold_file,
+          configured.process.surveillance_fusion.manifold_file);
+        if (selection !== 'recorder') {
+          assert.equal(loaded.validation.valid, false,
+            'invalid measured-manifold gain identity requires explicit operator repair');
+          assert.ok(loaded.validation.errors.some(error => /manifold.*fixed/.test(error)),
+            'refusal must identify the gain identity, not an unrelated setting');
+        }
+      }
+    }
+    const automaticKraken = configurationForReceiver('Kraken');
+    automaticKraken.capture.device.heimdall.gain_control = 'measured_per_channel';
+    automaticKraken.capture.device.heimdall.channel_gains =
+      [3.7, 3.7, 14.4, 3.7, 3.7];
+    automaticKraken.process.bearing.manifold_recorder.enabled = 'off';
+    fs.writeFileSync(file, yaml.dump(automaticKraken));
+    assert.equal(migrateKnownDefaults(file), false,
+      'automatic gain remains automatic when no measured manifold is active');
+    automaticKraken.process.bearing.manifold_recorder.enabled = 'on';
+    automaticKraken.capture.device.heimdall.channel_gains = [3.7, 3.7];
+    fs.writeFileSync(file, yaml.dump(automaticKraken));
+    assert.equal(migrateKnownDefaults(file), false,
+      'an incomplete requested gain vector fails closed instead of being frozen');
+    assert.equal(preserveConfigBytesDuringUpgrade(
+      {VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME: '1120'}, 1000), true);
+    for (const value of ['999', '1301', 'not-a-time', '1120.5'])
+      assert.equal(preserveConfigBytesDuringUpgrade(
+        {VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME: value}, 1000), false,
+      `invalid or stale package-upgrade expiry must not suppress migration: ${value}`);
     legacyUsrp.capture.device.address = 'addr=192.168.10.2';
     legacyUsrp.truth.remote_id = {enabled: true, source: '127.0.0.1:8754',
       poll_interval: .5, source_timeout: 1.2, smoothing_window: 4,
@@ -130,12 +177,12 @@ function availablePort(usedPorts) {
     delete legacyRsp.process.performance;
     fs.writeFileSync(file, yaml.dump(legacyRsp));
     const legacyDocument = readConfig(file);
-    assert.deepEqual(legacyDocument.config.process.performance, {surveillance_workers: 1, fft_threads: 4, acceleration: 'auto'});
+    assert.deepEqual(legacyDocument.config.process.performance, {surveillance_workers: 1, fft_threads: 1, acceleration: 'auto'});
     assert.equal(legacyDocument.setupRequired, false, 'Valid old configs must not require setup just for optional defaults');
 
     // Kraken gain is a declared string/number union: a "keep" profile default
     // must not replace a persisted Suite gain while recovering a document.
-    const kraken = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
+    const kraken = configurationForReceiver('Kraken');
     // Suite AGC (-1) is intentionally invalid with measured-per-channel gain:
     // the latter needs stable fixed starting gains for reproducible probes.
     for (const gain of [0, 28.7, 49.6, 50]) {
@@ -163,14 +210,19 @@ function availablePort(usedPorts) {
     config.network.ports.map = conflict.address().port;
     for (const key of ['detection','track','timestamp','timing','iqdata','config'])
       config.network.ports[key] = await availablePort(usedPorts);
-    fs.writeFileSync(file, yaml.dump(config));
+    delete config.process.delay_reference_sample_rate_hz;
+    fs.writeFileSync(file, `${yaml.dump(config)}# operator-owned package-upgrade bytes\n`);
+    fs.rmSync(`${file}.bak`, {force: true});
+    const packageUpgradeBytes = fs.readFileSync(file);
     let childExit = null;
     let childOutput = '';
     const appendChildOutput = (label, chunk) => {
       childOutput = `${childOutput}${label}${chunk}`.slice(-4096);
     };
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), file],
-      {stdio: ['ignore', 'pipe', 'pipe']});
+      {stdio: ['ignore', 'pipe', 'pipe'],
+        env: {...process.env, VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME:
+          String(Math.floor(os.uptime()) + 120)}});
     child.stdout.on('data', chunk => appendChildOutput('stdout: ', chunk));
     child.stderr.on('data', chunk => appendChildOutput('stderr: ', chunk));
     child.once('error', error => { childExit = `spawn error: ${error.message}`; });
@@ -182,6 +234,10 @@ function availablePort(usedPorts) {
       catch (_) { await new Promise(resolve => setTimeout(resolve, 30)); }
     }
     assert.equal(response?.status, 200, `API stays available when a radar data port cannot bind (${childExit || 'startup timed out'}; ${childOutput || 'no child output'})`);
+    assert.deepEqual(fs.readFileSync(file), packageUpgradeBytes,
+      'the package-upgrade API start must preserve operator configuration byte-for-byte');
+    assert.equal(fs.existsSync(`${file}.bak`), false,
+      'a byte-preserving package-upgrade start must not create a migration backup');
     assert.ok(response.body.errors.some(error => error.includes('map data port')));
     assert.equal((await request(apiPort, '/api/config/capabilities')).body.editable, true);
     fs.writeFileSync(file, 'not: [valid yaml');

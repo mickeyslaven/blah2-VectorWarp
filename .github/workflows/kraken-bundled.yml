@@ -1,15 +1,22 @@
 name: Bundled Kraken source contract
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   installed-source-kit:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y podman apparmor-utils
       - name: Build and reject tampered kit inside disposable no-USB Fedora systemd
         run: sudo python3 test/packaging/fedora_apparmor_ci.py -- python3 test/packaging/kraken_sourcekit_ci.py
@@ -46,6 +53,8 @@ jobs:
             apt-get install -y --no-install-recommends git g++ cmake ninja-build make patch python3 pkg-config libeigen3-dev libusb-1.0-0-dev libssl-dev zlib1g-dev binutils ca-certificates
           fi
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
       - name: Build pinned companion and run deterministic upstream tests
         run: python3 script/build-kraken.py --jobs 2 --test --output-dir build/companion
       - name: Verify package lifecycle and binary provenance contracts

@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDescriptor,
   physicalSiteFingerprint, siteFingerprint} = require('./manifold-recorder');
+const {validateSample} = require('./manifold-fitter');
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-manifold-'));
@@ -27,11 +28,16 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
     {abc123: {timestamp: 100, delay: 10, doppler: 20}}};
   const recorder = new ManifoldRecorder(config, source);
   const frame = validateEvidence({schema: 'vectorwarp-manifold-evidence-v1', timestamp: 100000,
+    precision_contract: 'binary64-json-roundtrip-v1',
     frequency_hz: 539000000, sample_rate_hz: 2400000, channels: 2,
     actual_gain_db: [14.2, 14.1],
     reference_weights: [[1, 0], [0, 1]], data: [{cell: 5, delay_km: 10.5,
       doppler_hz: 18, snr_db: 9, response: [[1, 2], [3, 4]]}]});
   await recorder.record(frame);
+  const roundedLegacyFrame = {...frame}; delete roundedLegacyFrame.precision_contract;
+  assert.throws(() => validateEvidence(roundedLegacyFrame), /Invalid manifold evidence frame/);
+  await assert.rejects(recorder.record(roundedLegacyFrame), /Invalid manifold evidence frame/,
+    'an old producer must not be relabeled as full precision by a new recorder');
   const rows = fs.readFileSync(filename, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].icao, 'abc123');
@@ -41,6 +47,7 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   assert.ok(Number.isFinite(rows[0].direct_path_local_azimuth_deg));
   assert.deepEqual(rows[0].response, [[1, 2], [3, 4]]);
   assert.equal(rows[0].schema, 'vectorwarp-manifold-sample-v2');
+  assert.equal(rows[0].precision_contract, 'binary64-json-roundtrip-v1');
   assert.deepEqual(rows[0].manifold_identity.actual_gain_db, [14.2, 14.1]);
   assert.equal(rows[0].manifold_identity.sample_rate_hz, 2400000);
   assert.match(rows[0].manifold_identity.compatibility_fingerprint, /^fnv1a64:[a-f0-9]{16}$/);
@@ -84,13 +91,63 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   Object.assign(automaticConfig.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
   automaticConfig.process.surveillance_fusion = {mode: 'coherent_beam_bank'};
+  automaticConfig.process.reference_synthesis = {mode: 'array_eigenbeam', channels: [0, 1]};
   automaticConfig.process.detection = {enable: true};
   automaticConfig.truth = {adsb: {enabled: true}};
+  automaticConfig.network = {ports: {manifold: 3005}};
   assert.equal(automaticallyEligible(automaticConfig), true);
+  const automaticRecorder = new ManifoldRecorder(automaticConfig, source);
+  assert.equal(automaticRecorder.status().enabled, true,
+    'auto must collect bounded evidence on a fully qualified coherent route');
+  assert.equal(automaticRecorder.status().automatic, true);
+  const multiAutomatic=structuredClone(automaticConfig);
+  multiAutomatic.process.multi_illuminator={enabled:true};
+  assert.equal(automaticallyEligible(multiAutomatic),false,
+    'multi-lane automatic mode must not enable a listener without native manifold evidence');
+  assert.equal(new ManifoldRecorder(multiAutomatic,{}).state.enabled,false);
   const genericArrayConfig = JSON.parse(JSON.stringify(automaticConfig));
   genericArrayConfig.capture.device.type = 'Usrp';
-  assert.equal(automaticallyEligible(genericArrayConfig), true,
-    'Automatic manifold collection must depend on coherent geometry, not an SDR brand');
+  assert.equal(automaticallyEligible(genericArrayConfig), false,
+    'A coherent live adapter without applied gain metadata cannot record a measured manifold');
+  genericArrayConfig.capture.replay = {state: true, channel_count: 2,
+    reference_mode: 'array_eigenbeam', reference_channels: [0, 1], surveillance_channels: [0, 1]};
+  assert.equal(automaticallyEligible(genericArrayConfig), false,
+    'historical replay requires explicit acquisition-bound export, never live truth auto collection');
+  for (const mutate of [
+    value => { value.capture.device.heimdall.gain_control = 'auto'; },
+    value => { value.capture.device.heimdall.gain = 'keep'; },
+    value => { delete value.capture.device.heimdall; }
+  ]) {
+    const unavailable = structuredClone(automaticConfig); mutate(unavailable);
+    assert.equal(automaticallyEligible(unavailable), false,
+      'auto collection must require explicit fixed requested gains');
+  }
+  const genericGain = structuredClone(config);
+  delete genericGain.capture.device.heimdall;
+  genericGain.capture.device.gain = [-3, 61];
+  genericGain.capture.device.surveillance_channels = [1, 0];
+  genericGain.process.bearing.manifold_recorder.path = path.join(directory, 'generic-gain.jsonl');
+  const genericRecorder = new ManifoldRecorder(genericGain, source);
+  await genericRecorder.record(frame);
+  const genericRow = JSON.parse(fs.readFileSync(genericRecorder.options.path, 'utf8').trim());
+  assert.deepEqual(genericRow.manifold_identity.requested_gain_db, [-3, 61],
+    'identity must preserve declared total dB gains without a Kraken-only range');
+  assert.deepEqual(genericRow.manifold_identity.channel_mapping, [0, 1],
+    'identity order must match the native canonical channel order, not YAML ordering');
+  assert.deepEqual(genericGain.capture.device.surveillance_channels, [1, 0]);
+  assert.deepEqual(genericRow.configuration.receiver_gain_v2.requested_channel_gains, [-3, 61]);
+  assert.doesNotThrow(() => validateSample(genericRow));
+  for (const mutate of [
+    value => { value.capture.device.array_geometry.mapping_confirmed = false; },
+    value => { value.capture.device.array_geometry.elements.pop(); },
+    value => { value.capture.device.array_geometry.x_axis_bearing_deg_true = NaN; },
+    value => { value.capture.device.surveillance_channels = [0]; },
+    value => { value.capture.device.surveillance_channels = [0, 0]; },
+    value => { value.process.surveillance_fusion.mode = 'noise_whitened_beam_bank'; }
+  ]) {
+    const invalid = structuredClone(automaticConfig); mutate(invalid);
+    assert.equal(automaticallyEligible(invalid), false);
+  }
   const promotedConfig = JSON.parse(JSON.stringify(automaticConfig));
   promotedConfig.process.bearing.manifold_file = `${filename}.qualified.json`;
   assert.equal(siteFingerprint(promotedConfig), siteFingerprint(automaticConfig),
@@ -145,7 +202,14 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   assert.ok(nextGainRecorder.status().importedLegacyCohorts >= 0);
   assert.equal(nextGainRecorder.status().cohorts.sampleRows, 1);
   assert.equal(nextGainRecorder.status().cohorts.physicalSites, 1);
+  const preserved = fs.readFileSync(path.join(cohortRoot, cohortFiles[0]), 'utf8');
+  nextGainRecorder.state.storageLimits.cohort_files = 1;
+  await assert.rejects(() => nextGainRecorder.preserveCohortFile(gainPath,
+    {fingerprint: 'another-acquisition'}, 'samples'), /capacity reached/);
+  assert.equal(fs.readFileSync(path.join(cohortRoot, cohortFiles[0]), 'utf8'), preserved,
+    'capacity exhaustion must preserve historical evidence');
   const changedSite = JSON.parse(JSON.stringify(automaticConfig));
+  changedSite.process.bearing.manifold_recorder.enabled = true;
   changedSite.location.rx.longitude = -80.01;
   const second = new ManifoldRecorder(changedSite, source);
   assert.equal(second.status().enabled, true);
@@ -168,6 +232,7 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   assert.ok(!fs.existsSync(`${filename}.site-previous.2`),
     'Site archives plus the active collection must obey max_files');
   const adaptive = validateEvidence({schema: 'vectorwarp-manifold-evidence-v2', timestamp: 100000,
+    precision_contract: 'binary64-json-roundtrip-v1',
     frequency_hz: 539000000, sample_rate_hz: 2400000, channels: 2,
     actual_gain_db: [14.2, 14.1],
     reference_weights: [[1, 0], [0, 1]], bearing_replay: {method: 'covariance_mvdr',

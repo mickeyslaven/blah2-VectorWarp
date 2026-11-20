@@ -1,8 +1,10 @@
 #include "core/GpuTrackerAdmission.private.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 static void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 static bool adaptiveCompatible(double delayDelta,double dopplerDelta,double span,double elapsed,
@@ -17,17 +19,60 @@ static double adaptiveElapsed(double frameElapsed,unsigned inactiveFrames){
  return frameElapsed*double(inactiveFrames+1);
 }
 
+static void associationRoundingContract(){
+ // ARM Release enables FMA without an extra ISA flag. These exact distances
+ // must retain the same separately rounded operations on every architecture.
+ // Volatile inputs ensure this checks runtime arithmetic, not constant folding.
+ volatile double delay=-1.125,cpi=.5,elapsed=.5,span=8,q=.125;
+ for(const auto& sample:{std::pair<double,uint64_t>{0,0x3ff0333333333334ULL},
+                        std::pair<double,uint64_t>{3.5,0x3fa9999999999999ULL}}){
+  const auto result=tracker_association::associationDecision(delay,sample.first,0,0,cpi,
+   true,elapsed,span,q,false,9.210340371976184);
+  uint64_t bits=0;std::memcpy(&bits,&result.distance,sizeof(bits));
+  require(result.valid&&result.accepted&&result.rejection==0&&bits==sample.second,
+   "association binary64 rounding contracted or cross-architecture distance changed");
+ }
+ volatile double position=.24,velocity=48,acceleration=4,time=.8,wavelength=2,resolution=100;
+ const double predictedDelay=tracker_association::predictionDelay(position,velocity,acceleration,time,wavelength,resolution),
+  predictedDoppler=tracker_association::predictionDoppler(velocity,acceleration,time);
+ uint64_t delayBits=0,dopplerBits=0;
+ std::memcpy(&delayBits,&predictedDelay,sizeof(delayBits));
+ std::memcpy(&dopplerBits,&predictedDoppler,sizeof(dopplerBits));
+ require(delayBits==0xbfe1b71758e21966ULL&&dopplerBits==0x404999999999999aULL,
+  "kinematic prediction binary64 rounding changed");
+}
+
 int main()try{
+ associationRoundingContract();
+ require(gpu_tracker::persistenceBytes(false,0)==48&&
+  gpu_tracker::persistenceBytes(false,1000)==48&&
+  gpu_tracker::persistenceBytes(true,1000)==24056,
+  "disabled clutter buffer must hold its complete retirement and capacity header");
+ require(!tracker_policy::frameClockNoOp(false,0,0,0,0)&&
+  tracker_policy::frameClockNoOp(true,0,0,2,1)&&
+  tracker_policy::frameClockNoOp(true,9,10,3,2)&&
+  tracker_policy::frameClockNoOp(true,11,10,2,2)&&
+  !tracker_policy::frameClockNoOp(true,11,10,3,2),
+  "accepted-frame clock must handle first zero timestamp, empty duplicates and stale sequences");
+ for(uint32_t depth:{1u,2u,4u,8u}){
+  const auto minimum=tracker_confirmation::confirmationMinimumWindow(4,depth);
+  require(!tracker_confirmation::confirmationFeasible(4,minimum-1,depth),"impossible confirmation accepted");
+  require(tracker_confirmation::confirmationFeasible(4,minimum,depth),"feasible confirmation rejected");
+  require(tracker_confirmation::confirmationCoastFeasible(depth-1,depth),"coast boundary rejected");
+  if(depth>1)require(!tracker_confirmation::confirmationCoastFeasible(depth-2,depth),"short coast admitted");
+ }
  using gpu_tracker::boundInitiations;
- using gpu_tracker::DopplerCombBirth;
- using gpu_tracker::dopplerCombBirthEligible;
- using gpu_tracker::rangeCombBirthEligible;
- using gpu_tracker::rangeCombAmbiguous;
+ using DopplerCombBirth=tracker_policy::Candidate;
+ const auto view=[](const DopplerCombBirth* p,uint32_t n){return std::vector<DopplerCombBirth>(p,p+n);};
+ const auto dopplerCombBirthEligible=[&](const auto* p,uint32_t n,uint32_t i){auto v=view(p,n);return tracker_policy::View{v,{}}.combBirthEligible(i,false);};
+ const auto rangeCombBirthEligible=[&](const auto* p,uint32_t n,uint32_t i){auto v=view(p,n);return tracker_policy::View{v,{}}.combBirthEligible(i,true);};
+ const auto rangeCombAmbiguous=[&](const auto* p,uint32_t n,uint32_t i){auto v=view(p,n);return tracker_policy::View{v,{}}.rangeCombAmbiguous(i);};
  using gpu_tracker::validQuarantineCoverage;
- using gpu_tracker::dopplerRidgeHasBirthCapacity;
- using gpu_tracker::advancePersistentStreak;
+ const auto dopplerRidgeHasBirthCapacity=[&](const DopplerCombBirth* p,uint32_t n,const DopplerCombBirth& c){
+  const auto tracks=view(p,n);return tracker_policy::View{{c},tracks}.dopplerRidgeHasBirthCapacity(0);};
+ using tracker_policy::advancePersistentStreak;
  using gpu_tracker::persistentCell;
- using gpu_tracker::persistentEvidence;
+ using tracker_policy::persistentEvidence;
  using gpu_tracker::persistentRidgeContains;
  using gpu_tracker::stationaryRetirementPolicy;
  using gpu_tracker::validFineSpatialEvidence;
@@ -111,22 +156,39 @@ int main()try{
  require(!persistentRidgeContains(37,32,10,8)&&
   !persistentRidgeContains(37,57,10,8)&&!persistentRidgeContains(37,67,10,8),
   "persistent neighborhood exceeded its delay or Doppler radius");
- uint32_t streak=0;uint16_t frame=1;
- for(uint32_t observation=0;observation<60;++observation,frame+=2)
-  streak=advancePersistentStreak(streak,frame);
- require((streak&65535u)==60,
-  "persistent cell did not learn intermittent recurring evidence");
- const uint16_t last=uint16_t(frame-2);
- const auto duplicate=advancePersistentStreak(streak,last);
- require(duplicate==streak,"duplicate detections strengthened one frame twice");
- uint32_t crossing=advancePersistentStreak(0,1);
- crossing=advancePersistentStreak(crossing,6);
- require((crossing&65535u)==1,
-  "isolated transient crossing accumulated recurring evidence");
- require(persistentEvidence(streak,uint16_t(last+13))==57,
-  "bounded absence did not leak evidence deterministically");
- require(persistentEvidence(streak,uint16_t(last+241))==0,
-  "stale persistent evidence did not expire");
+ constexpr uint32_t hpRows=601,hpColumns=511,hpCenter=300*hpColumns+255;
+ require(persistentRidgeContains(hpCenter,hpCenter+hpColumns+4,hpColumns,hpRows)&&
+  !persistentRidgeContains(hpCenter,hpCenter+hpRows+4,hpColumns,hpRows),
+  "non-square persistence exchanged delay and Doppler dimensions");
+ for(uint32_t row:{0u,hpRows-1})for(uint32_t column:{0u,hpColumns-1}){
+  const uint32_t cell=row*hpColumns+column;
+  require(persistentRidgeContains(cell,cell,hpColumns,hpRows),
+   "non-square persistence lost a corner cell");
+ }
+ require(!persistentRidgeContains(hpColumns-1,hpColumns,hpColumns,hpRows),
+  "persistent neighborhood wrapped across a delay-axis edge");
+ // T04: full-width recurrence, duplicates, stale reappearance and both word boundaries.
+ uint32_t streak=0;uint64_t last=0;
+ for(uint64_t frame=1;frame<120;frame+=2){streak=advancePersistentStreak(streak,last,frame);last=frame;}
+ require(streak==60,"intermittent recurrence did not accumulate");
+ require(advancePersistentStreak(streak,last,last)==streak,"duplicate detection strengthened evidence");
+ require(persistentEvidence(streak,last,last+13)==57,"bounded absence decay differs");
+ for(uint64_t generation:{301ull,65595ull,65596ull,65597ull,131132ull,4294967356ull}){
+  require(persistentEvidence(60,60,generation)==0,"stale occupancy resurrected");
+  require(advancePersistentStreak(60,60,generation)==1,"reappearance inherited stale evidence");}
+ for(uint64_t generation:{65536ull,131072ull,4294967296ull}){
+  require(advancePersistentStreak(60,generation-1,generation)==61,"live occupancy lost at rollover");
+  require(advancePersistentStreak(65535,generation-1,generation)==65535,"maximum persistence overflowed");}
+ require(persistentEvidence(60,61,60)==0,"reversed generation revived evidence");
+ require(advancePersistentStreak(0,0,65596)==1,"reset did not cold start");
+ // T01/T05: ordered ties and the inclusive configured cutoff.
+ const DopplerCombBirth ties[]={{8,100,10,true},{20,102,10,true},{34,99,10,true}};
+ for(uint32_t i=0;i<3;++i)require(dopplerCombBirthEligible(ties,3,i)==(i==0),"equal-SNR tie differs");
+ for(double sign:{-1.,1.}){
+  require(tracker_policy::stationaryDopplerEligible(sign*2,2),"inclusive Doppler boundary rejected");
+  for(double value:{std::nextafter(2.,3.),2.01}){
+   require(!tracker_policy::stationaryDopplerEligible(sign*value,2),"outside Doppler cutoff accepted");
+   require(tracker_policy::stationaryDopplerEligible(sign*value,0),"all-Doppler control rejected");}}
  const auto disabled=stationaryRetirementPolicy(false,0,0);
  require(disabled.samples==0&&disabled.minimumAssociated==0&&disabled.maxDopplerSpanHz==0,
   "disabled stationary retirement retained a policy");

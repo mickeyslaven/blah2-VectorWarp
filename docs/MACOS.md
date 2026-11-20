@@ -43,11 +43,11 @@ script/build-macos.sh --backend all --test
 build/macos/artifact/script/vectorwarp-macos
 ```
 
-The default `all` profile builds USRP and HackRF adapters using the installed
-open-source libraries. `--backend cpu` builds CPU/replay without those SDKs.
-`--backend usrp` and `--backend hackrf` select one optional adapter. Kraken's
-existing built-in network client remains compiled; these commands do not
-configure or connect to a Kraken host. The Homebrew formula installs the local
+The public build supports only `--backend all`: it builds USRP and HackRF
+adapters using the installed open-source libraries, includes the RSPduo local
+adapter source kit, and retains Kraken's built-in network client. Receiver
+selection is a runtime setting, not a different radar-core build. These commands
+do not configure or connect to a Kraken host. The Homebrew formula installs the local
 Kraken companion automatically. For a source build, stage it into the same
 artifact:
 
@@ -68,12 +68,12 @@ paths (adjust the paths to your installation):
 ```sh
 BLAH2_SDRPLAY_INCLUDE_DIR=/usr/local/include \
 BLAH2_SDRPLAY_LIBRARY=/usr/local/lib/libsdrplay_api.so.3.15 \
-  script/build-macos.sh --backend rspduo --build-dir build/macos-rspduo --test
+  script/build-macos.sh --backend all --with-rspduo --build-dir build/macos-all-sdr --test
 ```
 
-To include USRP, HackRF and RSPduo together, use the same explicit SDK variables
-with `--backend all --with-rspduo --build-dir build/macos-all-sdr --test`.
-The default `all` still includes only the open-source receiver libraries.
+This adds the locally compiled RSPduo adapter alongside USRP, HackRF and Kraken;
+it does not select a separate processing pipeline. Without `--with-rspduo`,
+`all` includes the source kit so the adapter can be built after SDK installation.
 
 This compiles VectorWarp's adapter locally; it does not copy or package the
 vendor SDK. The macOS source-kit workflow uses the current user’s writable
@@ -151,17 +151,18 @@ python3 test/macos/config_runtime_test.py --binary build/macos/artifact/bin/blah
 python3 test/macos/receiver_sdk_test.py --binary build/macos/artifact/bin/blah2
 ```
 
-`--test` runs native CTest before staging, including macOS GPU worker
-isolation fixtures that do not open a GPU. Linux privileged receiver-helper
+`--test` runs native CTest before staging, including macOS GPU worker isolation
+fixtures. GPU-enabled builds also run physical GPU checks; they require a working
+device and cannot be replaced by SDK discovery. Linux privileged receiver-helper
 tests require Linux; the Linux CI/package matrix retains that coverage. The
-macOS workflow has passed its Apple Silicon and Intel runner jobs, providing
-source-level CPU, open adapter, synthetic Kraken, replay, API, browser and
-lifecycle evidence on both architectures. It does not qualify Intel hardware,
-GPU processing, or an installed Homebrew package.
+current macOS workflows require the common CPU/GPU product-parity harness on
+Apple Silicon and Intel, including the standalone package with Homebrew hidden.
+Workflow definitions alone are not execution evidence for the current source.
 
 The matching [Linux release-package run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739837)
-passed all ten OS/architecture jobs, including their installed-service and
-Chromium smoke checks. Those results do not replace hardware qualification.
+historically passed all ten OS/architecture jobs, including their installed-service
+and Chromium smoke checks. Those earlier results do not establish acceptance of
+the current source or replace hardware qualification.
 
 The launcher uses Python’s kernel file locking and macOS process identity APIs.
 It records exact arguments and process birth time to avoid stopping an unrelated

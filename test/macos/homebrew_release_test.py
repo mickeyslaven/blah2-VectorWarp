@@ -93,6 +93,23 @@ class HomebrewReleaseTest(unittest.TestCase):
         self.command("--output-tap-dir", str(output))
         self.assertTrue((output / "homebrew-release.json").is_file())
 
+    def test_accepts_current_architecture_contract(self):
+        self.write_archive("AGENTS.md", (ROOT / "AGENTS.md").read_bytes())
+        output = self.root / "architecture-contract"
+        self.command("--output-tap-dir", str(output))
+        self.assertTrue((output / "homebrew-release.json").is_file())
+
+    def test_accepts_public_runtime_and_tool_sources(self):
+        for path in (
+            "runtime/vectorwarp-example.service",
+            "tools/ReplayInspect.cpp",
+        ):
+            with self.subTest(path=path):
+                self.write_archive(path, b"// public source\n")
+                output = self.root / path.split("/", 1)[0]
+                self.command("--output-tap-dir", str(output))
+                self.assertTrue((output / "homebrew-release.json").is_file())
+
     def test_public_core_header_is_allowed_without_admitting_private_or_binary_paths(self):
         header = ROOT / "core/GpuReferenceSpectrum.private.h"
         self.write_archive("core/GpuReferenceSpectrum.private.h", header.read_bytes())

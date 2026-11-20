@@ -4,6 +4,7 @@
 #include "UsrpIngress.h"
 #include "UsrpCoherence.h"
 
+#include <algorithm>
 #include <string.h>
 #include <iostream>
 #include <vector>
@@ -171,6 +172,26 @@ std::string Usrp::health_json() const
   recovery.AddMember("discardedSamplesPerChannel", unsignedNumber(discardedSamples), allocator);
   recovery.AddMember("lastDiscontinuity", rapidjson::Value(lastDiscontinuity.c_str(), allocator), allocator);
   document.AddMember("recovery", recovery, allocator);
+  const auto quality = inputQuality.snapshot();
+  if (quality.available) {
+    rapidjson::Value input(rapidjson::kObjectType);
+    input.AddMember("source", "uhd-normalized-fc32", allocator);
+    rapidjson::Value channels(rapidjson::kArrayType);
+    for (std::size_t index = 0; index < quality.channels.size(); ++index) {
+      const auto& source = quality.channels[index];
+      rapidjson::Value channel(rapidjson::kObjectType);
+      channel.AddMember("channel", static_cast<unsigned>(index), allocator);
+      channel.AddMember("gainDb", source.gainDb, allocator);
+      channel.AddMember("sampledComponents", unsignedNumber(source.sampledComponents), allocator);
+      channel.AddMember("railFraction", source.railFraction, allocator);
+      channel.AddMember("nearRailFraction", source.nearRailFraction, allocator);
+      channel.AddMember("p999Fraction", source.p999Fraction, allocator);
+      channel.AddMember("rmsFraction", source.rmsFraction, allocator);
+      channels.PushBack(channel, allocator);
+    }
+    input.AddMember("channels", channels, allocator);
+    document.AddMember("inputQuality", input, allocator);
+  }
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
   document.Accept(writer);
@@ -198,6 +219,13 @@ std::string Usrp::recording_provenance_json() const
   return {buffer.GetString(), buffer.GetSize()};
 }
 
+std::vector<double> Usrp::recording_applied_gain_db() const
+{
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  if (!appliedSettingsAvailable || !coherenceAvailable || timingState != "qualified") return {};
+  return {appliedSettings.gainDb[0], appliedSettings.gainDb[1]};
+}
+
 void Usrp::process(IqData *buffer1, IqData *buffer2)
 {
     if (!buffer1 || !buffer2 || buffer1 == buffer2)
@@ -219,6 +247,17 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
 
     // Set and independently read back both channels before opening the stream.
     const auto applied = apply_usrp_settings(*usrp, uhd::usrp::subdev_spec_t(subdev), fc, fs, gain, antenna);
+    if (applied.sampleRateHz.size() != 2 ||
+        std::abs(applied.sampleRateHz[0] - applied.sampleRateHz[1]) >
+          std::max(1e-6, std::max(applied.sampleRateHz[0], applied.sampleRateHz[1]) * 1e-12))
+      throw std::runtime_error("[USRP] Applied channel sample rates are not coherent.");
+    inputQuality.reset({applied.gainDb.at(0), applied.gainDb.at(1)});
+    // Keep UHD timestamp ticks on the configured stream clock.  B210 rate
+    // readback can contain a sub-hertz floating-point residue even though the
+    // delivered sample clock remains the configured rational rate.  Scaling
+    // the absolute UHD time by that residue invents a one-sample gap every few
+    // seconds at wideband rates.  The independently published appliedReadback
+    // remains available for diagnostics and configuration attestation.
     const auto attestation = attest_usrp_coherence(*usrp, subdev);
     {
       std::lock_guard<std::mutex> lock(provenanceMutex);
@@ -243,6 +282,8 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
     std::vector<std::complex<float>*> buff_ptrs;
     buff_ptrs.push_back(&usrpBuffer1.front());
     buff_ptrs.push_back(&usrpBuffer2.front());
+    // Allocate optional bounded diagnostic storage before streaming starts.
+    UsrpIngressTiming ingressTiming;
 
     // setup stream
     uhd::rx_metadata_t metadata;
@@ -262,7 +303,6 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       ~MonitorStream() { active = false; }
     } monitorStream{monitoring};
     monitoring = true;
-    UsrpIngressTiming ingressTiming;
     struct StagedBlock {
       UsrpDeviceTime::Observation timing;
       blah2::IqBlock samples;
@@ -384,6 +424,7 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
           recording_discontinuity(message);
           throw std::runtime_error(message);
         }
+        inputQuality.observe(qualified[0].data(), qualified[1].data(), qualified[0].size());
         record_block(qualified, startPosition);
         staged.clear();
         continue;
@@ -397,6 +438,7 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
         recording_discontinuity(message);
         throw std::runtime_error(message);
       }
+      inputQuality.observe(buff_ptrs[0], buff_ptrs[1], nReceived);
       if (recording_wants_samples() && nReceived) {
         blah2::IqBlock block(2);
         for (unsigned ch=0; ch<2; ++ch)

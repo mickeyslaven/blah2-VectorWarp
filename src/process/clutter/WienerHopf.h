@@ -19,6 +19,7 @@ public:
     friend class WienerHopf;
     int32_t delayMin_;
     uint32_t taps_, samples_, filterLength_;
+    double relativeDiagonalLoading_ = 0;
     std::vector<std::complex<double>> rotated_, spectrum_, paddedSpectrum_;
     arma::cx_mat cholesky_;
     arma::cx_vec correlation_;
@@ -27,11 +28,16 @@ public:
     fftw_plan paddedPlan_ = nullptr;
     bool valid_ = false;
   public:
-    PreparedReference(int32_t delayMin, int32_t delayMax, uint32_t nSamples);
+    // Replay/CPU-only numerical conditioning. Zero preserves the historical
+    // covariance exactly; positive values add lambda * real(R00) to its diagonal.
+    PreparedReference(int32_t delayMin, int32_t delayMax, uint32_t nSamples,
+      double relativeDiagonalLoading = 0);
     ~PreparedReference();
     PreparedReference(const PreparedReference&) = delete;
     PreparedReference& operator=(const PreparedReference&) = delete;
     bool prepare(const IqData& reference);
+    // Replay diagnostic only: factor pivot spread, NOT a reciprocal condition number.
+    double cholesky_diagonal_ratio() const;
   };
 
   struct FilteredView {
@@ -44,7 +50,8 @@ public:
 
   enum class Workspace { Pi, SharedReference };
   WienerHopf(int32_t delayMin, int32_t delayMax, uint32_t nSamples,
-             Workspace workspace = Workspace::Pi);
+             Workspace workspace = Workspace::Pi,
+             double relativeDiagonalLoading = 0);
   ~WienerHopf();
   WienerHopf(const WienerHopf&) = delete;
   WienerHopf& operator=(const WienerHopf&) = delete;

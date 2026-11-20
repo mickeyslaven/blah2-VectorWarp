@@ -1,4 +1,5 @@
 #include "capture/PortableClipRecorder.h"
+#include "capture/RecordingAcquisitionJson.h"
 
 #include <cassert>
 #include <chrono>
@@ -30,14 +31,13 @@ blah2::IqClipStatus wait(blah2::PortableClipRecorder& recorder) {
 }
 
 bool ingest_when_available(blah2::PortableClipRecorder& recorder,
-    unsigned first, unsigned count, uint64_t epoch, int64_t receiptNanoseconds) {
-  // Ingest is intentionally non-blocking so optional recording can never stall
-  // a receiver callback.  The writer thread can briefly own the mutex while it
-  // starts, so retry the unchanged synthetic block instead of making this
-  // fixture depend on thread scheduling.
+    unsigned first, unsigned count, uint64_t epoch, int64_t receiptNanoseconds,
+    std::shared_ptr<const blah2::RecordingBlockMetadata> metadata = {}) {
+  // Ingest waits only for the recorder's short state transition. File writes
+  // stay outside this mutex, so a good receiver block is never discarded.
   for (unsigned attempt = 0; attempt < 200; ++attempt) {
     if (recorder.ingest(block(first, count), epoch, first, true,
-        receiptNanoseconds)) return true;
+        receiptNanoseconds, metadata)) return true;
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   return false;
@@ -50,20 +50,44 @@ int main() {
   std::filesystem::remove_all(directory);
   std::filesystem::create_directories(directory);
   try {
+    // Ten-second late claims are available only when the bounded float-IQ ring
+    // fits the fixed admission budget; never let a high-rate portable radio
+    // silently pin multiple GiB of RAM.
+    assert(blah2::PortableClipRecorder::supports_retention(2, 2000000, 10.0));
+    assert(!blah2::PortableClipRecorder::supports_retention(2, 20000000, 10.0));
+    assert(!blah2::PortableClipRecorder::supports_retention(2, 30000000, 10.0));
+    blah2::PortableClipRecorder::Options rejectedOptions;
+    rejectedOptions.ringSeconds = 10.0; rejectedOptions.maximumClipSeconds = 10.0;
+    bool rejected = false;
+    try { blah2::PortableClipRecorder rejectedRecorder(directory.string(), "HackRF", 2,
+      20000000, 204640000, rejectedOptions); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected);
+
     blah2::PortableClipRecorder::Options options;
     options.ringSeconds = 0.3;
     options.maximumClipSeconds = 0.5;
     blah2::PortableClipRecorder recorder(directory.string(), "Usrp", 2, 1000,
       204640000, options);
+    auto acquisition = std::make_shared<blah2::RecordingBlockMetadata>();
+    acquisition->perChannelGainDb = {14.199999809265137, 0.10000000000000002};
+    acquisition->gainProvenance = "sample-aligned-readback";
+    acquisition->receiverDetailsJson = "{\"device\":\"B210-fixture\",\"readbackAvailable\":true}";
+    acquisition->context.referenceMode = "dedicated";
+    acquisition->context.referenceChannels = {0}; acquisition->context.surveillanceChannels = {1};
+    acquisition->context.coherent = true;
+    acquisition->context.configurationSha256 = std::string(64, 'a');
+    acquisition->context.codeSha256 = std::string(64, 'b');
+    acquisition->context.manifoldSha256 = {{"reference", std::string(64, 'c')}};
 
     // Receipt time describes the end of each block, establishing a zero-time
     // sample epoch while retaining only the configured 300-sample pre-roll.
     for (unsigned first = 0; first < 300; first += 100)
       assert(ingest_when_available(recorder, first, 100, 7,
-        int64_t(first + 100) * 1000000));
+        int64_t(first + 100) * 1000000, acquisition));
     recorder.request({1, 300, 150, 450, {"event"}, {"pass"}});
-    assert(ingest_when_available(recorder, 300, 100, 7, 400000000));
-    assert(ingest_when_available(recorder, 400, 100, 7, 500000000));
+    assert(ingest_when_available(recorder, 300, 100, 7, 400000000, acquisition));
+    assert(ingest_when_available(recorder, 400, 100, 7, 500000000, acquisition));
     const auto status = wait(recorder);
     assert(status.revision == 1 && status.error.empty());
     assert(status.samples == 300 && !status.file.empty());
@@ -89,6 +113,27 @@ int main() {
     replay.sampleRate = 1000; replay.frequency = 204640000;
     blah2::RecordingReader reader(status.file, replay);
     assert(reader.metadata().samples == 300);
+    assert(reader.provenance().perChannelGainDb == acquisition->perChannelGainDb);
+    assert(reader.provenance().exactAcquisition && reader.provenance().acquisitionIntegrityValid);
+    assert(!reader.provenance().acquisitionHashTrusted && !reader.provenance().exactTime);
+    assert(reader.provenance().frames.size() == 4);
+    assert(reader.provenance().frames.front().sourceFirst == 100);
+    assert(reader.provenance().frames.front().sliceOffset == 50);
+    assert(reader.provenance().frames.back().count == 50);
+    assert(reader.provenance().acquisitionContext.manifoldSha256 == acquisition->context.manifoldSha256);
+    auto strict = replay; strict.requireExactAcquisition = true;
+    bool missingTrustRejected = false;
+    try { blah2::RecordingReader invalid(status.file, strict); }
+    catch (const std::exception&) { missingTrustRejected = true; }
+    assert(missingTrustRejected);
+    strict.expectedRecordingSha256 = metadata["dataSha256"].GetString();
+    blah2::RecordingReader verified(status.file, strict);
+    assert(verified.provenance().acquisitionHashTrusted);
+    strict.expectedRecordingSha256[0] = strict.expectedRecordingSha256[0] == 'a' ? 'b' : 'a';
+    bool tamperedTrustRejected = false;
+    try { blah2::RecordingReader invalid(status.file, strict); }
+    catch (const std::exception&) { tamperedTrustRejected = true; }
+    assert(tamperedTrustRejected);
     blah2::IqBlock samples, part;
     while (reader.read(part)) {
       if (samples.empty()) samples.resize(part.size());

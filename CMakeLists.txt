@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.16)
 if(COMMAND cmake_policy)
   cmake_policy(SET CMP0003 NEW)
   cmake_policy(SET CMP0068 NEW)
@@ -14,9 +14,6 @@ include(CTest)
 if(APPLE)
   # Mach-O resolves adjacent private libraries relative to the loading binary.
   set(BLAH2_RUNTIME_RPATH "@loader_path")
-  # AppleClang diagnoses a legacy cached detector pointer that GCC accepts.
-  # Keep the project's warning policy while allowing this existing source ABI.
-  add_compile_options(-Wno-error=unused-private-field)
 else()
   set(BLAH2_RUNTIME_RPATH "$ORIGIN")
 endif()
@@ -42,6 +39,14 @@ option(BLAH2_ENABLE_HACKRF "Build the HackRF live capture backend"
   ${BLAH2_OPTIONAL_RECEIVER_DEFAULT})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror")
+# GCC 15 diagnoses RapidJSON 1.1's intentionally unusable StringRef assignment
+# body while parsing the vendor header, even though that template is never
+# instantiated. Keep all project warnings fatal and isolate only this new
+# vendor-header diagnostic until RapidJSON ships the upstream correction.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+    CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=template-body")
+endif()
 
 find_package(Threads REQUIRED)
 find_package(asio QUIET)
@@ -123,52 +128,13 @@ endif()
 
 include(cmake/ReceiverModules.cmake)
 
-# Receiver-independent coherent subband extraction. The live multi-illuminator
-# orchestration is gated separately; this library has no receiver side effects.
-add_library(blah2FixedExecutor STATIC
-  src/process/utility/FixedExecutor.cpp)
-target_link_libraries(blah2FixedExecutor PUBLIC Threads::Threads)
-
-# Production orchestration shared by the live executable and raw-IQ replay.
-# Numerical primitives keep their existing target-specific accelerator flags.
-add_library(blah2ProductionRawIq STATIC src/process/analysis/ProductionRawIq.cpp)
-target_include_directories(blah2ProductionRawIq SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
-target_link_libraries(blah2ProductionRawIq PUBLIC
-  Threads::Threads blah2RapidJson blah2FixedExecutor)
-
-add_library(blah2Channelizer STATIC
-  src/process/conditioning/IlluminatorChannelizerBank.cpp
-  src/process/conditioning/SubbandChannelizer.cpp)
-target_include_directories(blah2Channelizer SYSTEM PRIVATE
-  ${BLAH2_FFTW3_INCLUDE_DIR})
-target_link_libraries(blah2Channelizer PUBLIC
-  blah2FixedExecutor ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
-target_sources(blah2Channelizer PRIVATE src/process/utility/ProcessingThreads.cpp)
-add_library(blah2MultiIlluminatorRadar STATIC
-  src/process/analysis/MultiIlluminatorRadar.cpp)
-target_include_directories(blah2MultiIlluminatorRadar SYSTEM PRIVATE
-  ${ARMADILLO_INCLUDE_DIRS})
-target_link_libraries(blah2MultiIlluminatorRadar PUBLIC
-  blah2Channelizer blah2ProductionRawIq blah2FixedExecutor)
+include(cmake/ProcessingLibraries.cmake)
 
 if(BLAH2_BUILD_BENCHMARKS)
   add_executable(benchmarkMultiIlluminatorCpu
-    test/benchmark/MultiIlluminatorCpuBenchmark.cpp
-    src/process/ambiguity/Ambiguity.cpp
-    src/process/clutter/WienerHopf.cpp
-    src/process/conditioning/ArrayReferenceSynthesizer.cpp
-    src/process/fusion/Noncoherent.cpp
-    src/process/detection/CfarDetector1D.cpp
-    src/process/detection/Centroid.cpp
-    src/process/detection/Interpolate.cpp
-    src/process/tracker/Tracker.cpp
-    src/process/meta/HammingNumber.cpp
-    src/data/IqData.cpp src/data/Map.cpp src/data/Detection.cpp src/data/Track.cpp)
-  target_include_directories(benchmarkMultiIlluminatorCpu SYSTEM PRIVATE
-    ${ARMADILLO_INCLUDE_DIRS})
+    test/benchmark/MultiIlluminatorCpuBenchmark.cpp)
   target_link_libraries(benchmarkMultiIlluminatorCpu PRIVATE
-    blah2MultiIlluminatorRadar blah2RapidJson ${ARMADILLO_LIBRARIES}
-    ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+    blah2MultiIlluminatorRadar blah2Channelizer)
   add_executable(benchmarkWidebandCpuChannelizer
     test/benchmark/WidebandCpuChannelizerBenchmark.cpp)
   target_include_directories(benchmarkWidebandCpuChannelizer SYSTEM PRIVATE
@@ -185,36 +151,21 @@ add_executable(blah2
   src/capture/Replay.cpp
   src/capture/kraken/Kraken.cpp
   src/capture/kraken/KrakenClipRecorder.cpp
-  src/process/ambiguity/Ambiguity.cpp
-  src/process/ambiguity/Acceleration.cpp
-  src/process/clutter/WienerHopf.cpp
-  src/process/conditioning/ArrayReferenceSynthesizer.cpp
-  src/process/fusion/Noncoherent.cpp
-  src/process/fusion/CoherentBeamBank.cpp
   src/process/analysis/ComplexCutoutRecorder.cpp
   src/process/analysis/ReplayEchoInjector.cpp
-  src/process/detection/CfarDetector1D.cpp
-  src/process/detection/Centroid.cpp
-  src/process/detection/Interpolate.cpp
-  src/process/tracker/Tracker.cpp
-  src/process/spectrum/SpectrumAnalyser.cpp
-  src/process/meta/HammingNumber.cpp
+  src/process/integration/DirectPathCoherentReplay.cpp
   src/process/utility/Socket.cpp
-  src/process/utility/ProcessingThreads.cpp
-  src/data/Map.cpp
-  src/data/Detection.cpp
-  src/data/Track.cpp
   src/data/meta/Timing.cpp
 )
 
 if(BUILD_TESTING OR BLAH2_BUILD_OFFLINE_TOOLS)
+  include(cmake/ResidentReplayInspector.cmake)
+  include(cmake/DirectPathCoherentReplay.cmake)
   # Replay-only production beam/CFAR evidence emitter. It is never linked into
   # the live processor and has no configuration default or deployment hook.
   add_executable(detectionManifoldGridReplay
-    src/process/analysis/DetectionManifoldGridReplay.cpp
-    src/process/fusion/CoherentBeamBank.cpp
-    src/data/Map.cpp)
-  target_link_libraries(detectionManifoldGridReplay PRIVATE blah2RapidJson)
+    src/process/analysis/DetectionManifoldGridReplay.cpp)
+  target_link_libraries(detectionManifoldGridReplay PRIVATE blah2Fusion)
   if(NOT BLAH2_BUILD_OFFLINE_TOOLS)
     set_target_properties(detectionManifoldGridReplay PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
@@ -222,17 +173,11 @@ if(BUILD_TESTING OR BLAH2_BUILD_OFFLINE_TOOLS)
 endif()
 
 target_link_libraries(blah2 PRIVATE 
-  blah2ProductionRawIq
   blah2Channelizer
   blah2MultiIlluminatorRadar
-  Threads::Threads
-  blah2RapidJson
   asio::asio
   ryml::ryml
   httplib::httplib
-  ${ARMADILLO_LIBRARIES}
-  ${BLAH2_FFTW3_LIBRARY}
-  ${BLAH2_FFTW3_THREADS_LIBRARY}
   ${CMAKE_DL_LIBS}
   blah2ReceiverLoader
 )
@@ -251,17 +196,17 @@ endif()
 
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # Pure C++ provenance checks: no receiver, DSP library or GPU runtime needed.
+  add_executable(testCanonicalIqLineage test/unit/data/TestCanonicalIqLineage.cpp)
+  target_include_directories(testCanonicalIqLineage PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  set_target_properties(testCanonicalIqLineage PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  add_test(NAME canonicalIqLineageContract COMMAND testCanonicalIqLineage)
+  set_tests_properties(canonicalIqLineageContract PROPERTIES TIMEOUT 10)
   add_executable(testProductionRawIq
-    test/unit/process/analysis/TestProductionRawIq.cpp
-    src/process/ambiguity/Ambiguity.cpp
-    src/process/clutter/WienerHopf.cpp
-    src/process/conditioning/ArrayReferenceSynthesizer.cpp
-    src/process/meta/HammingNumber.cpp
-    src/data/IqData.cpp src/data/Map.cpp)
-  target_include_directories(testProductionRawIq SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
-  target_link_libraries(testProductionRawIq PRIVATE blah2ProductionRawIq
-    Catch2::Catch2WithMain ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
-    ${BLAH2_FFTW3_THREADS_LIBRARY})
+    test/unit/process/analysis/TestProductionRawIq.cpp)
+  target_link_libraries(testProductionRawIq PRIVATE
+    blah2MultiIlluminatorRadar Catch2::Catch2WithMain)
   set_target_properties(testProductionRawIq PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
   add_test(NAME productionRawIqParity COMMAND testProductionRawIq)
@@ -306,28 +251,22 @@ if(BUILD_TESTING)
   set_tests_properties(gpuWidebandWorkerProtocol PROPERTIES TIMEOUT 10)
   add_executable(testMultiIlluminatorRadar
     test/unit/process/analysis/TestMultiIlluminatorRadar.cpp
-    src/data/meta/Timing.cpp
-    src/process/ambiguity/Ambiguity.cpp
-    src/process/clutter/WienerHopf.cpp
-    src/process/conditioning/ArrayReferenceSynthesizer.cpp
-    src/process/fusion/Noncoherent.cpp
-    src/process/detection/CfarDetector1D.cpp
-    src/process/detection/Centroid.cpp
-    src/process/detection/Interpolate.cpp
-    src/process/tracker/Tracker.cpp
-    src/process/meta/HammingNumber.cpp
-    src/data/IqData.cpp src/data/Map.cpp src/data/Detection.cpp src/data/Track.cpp)
-  target_include_directories(testMultiIlluminatorRadar SYSTEM PRIVATE
-    ${ARMADILLO_INCLUDE_DIRS})
+    test/unit/process/analysis/TestTemporalEvidence.cpp
+    test/unit/process/analysis/TestDirectPathCoherentExperiment.cpp
+    src/data/meta/Timing.cpp)
   target_link_libraries(testMultiIlluminatorRadar PRIVATE
-    blah2MultiIlluminatorRadar Catch2::Catch2WithMain blah2RapidJson
-    ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
-    ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+    blah2MultiIlluminatorRadar blah2Channelizer Catch2::Catch2WithMain)
   set_target_properties(testMultiIlluminatorRadar PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
   add_test(NAME multiIlluminatorRadar COMMAND testMultiIlluminatorRadar)
   set_tests_properties(multiIlluminatorRadar PROPERTIES TIMEOUT 60
     ENVIRONMENT "VECTORWARP_FFTW_PLAN=estimate;VECTORWARP_CLUTTER_WORKERS=1;OPENBLAS_NUM_THREADS=1")
+  # This regression deliberately uses JavaScript's canonical numeric JSON
+  # serialization; substituting Python formatting would weaken its contract.
+  find_program(BLAH2_TEST_NODE_EXECUTABLE NAMES node)
+  if(NOT BLAH2_TEST_NODE_EXECUTABLE)
+    message(FATAL_ERROR "BUILD_TESTING requires Node.js for detectionManifoldNativeGrid canonical JSON validation")
+  endif()
   add_test(NAME detectionManifoldNativeGrid
     COMMAND ${Python3_EXECUTABLE}
       ${PROJECT_ROOT}/test/script/test_detection_manifold_native_grid.py
@@ -341,59 +280,43 @@ endif()
 
 include(cmake/GpuAcceleration.cmake)
 
+# Native artifacts are one private ABI cohort. A runtime stage must include
+# the capture-core SONAME and symlinks as well as every built adapter/module.
+foreach(runtime_target blah2 blah2CaptureCore blah2GpuWorker blah2GpuVulkan
+    blah2GpuWidebandVulkan blah2GpuResidentVulkan blah2ReceiverUsrp
+    blah2ReceiverHackrf blah2ReceiverRspduo)
+  if(TARGET ${runtime_target})
+    install(TARGETS ${runtime_target}
+      RUNTIME DESTINATION bin COMPONENT NativeRuntime
+      LIBRARY DESTINATION bin COMPONENT NativeRuntime)
+  endif()
+endforeach()
+
 if(BUILD_TESTING)
 add_executable(testAcceleration
-  test/unit/process/ambiguity/TestAcceleration.cpp
-  src/process/ambiguity/Acceleration.cpp
-  src/process/ambiguity/Ambiguity.cpp
-  src/process/meta/HammingNumber.cpp
-  src/data/IqData.cpp src/data/Map.cpp)
-target_link_libraries(testAcceleration PRIVATE blah2RapidJson blah2GpuProcess ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS})
-add_executable(testMixedAutoPolicy
-  test/unit/process/mixed/TestMixedAutoPolicy.cpp)
-target_include_directories(testMixedAutoPolicy PRIVATE src)
-add_test(NAME mixedAutoPolicy COMMAND testMixedAutoPolicy)
-add_executable(testMixedMap
-  test/unit/process/mixed/TestMixedMap.cpp src/data/Map.cpp)
-target_include_directories(testMixedMap PRIVATE src)
-target_link_libraries(testMixedMap PRIVATE blah2RapidJson)
-add_test(NAME mixedFullMapGuard COMMAND testMixedMap)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  add_executable(testMixedWorkerDouble
-    test/unit/process/mixed/MixedWorkerDouble.cpp)
-  target_include_directories(testMixedWorkerDouble PRIVATE src)
-  add_executable(testMixedProcess
-    test/unit/process/mixed/TestMixedProcess.cpp
-    src/data/IqData.cpp
-    src/process/mixed/MixedProcess.cpp)
-  target_include_directories(testMixedProcess PRIVATE src)
-  target_link_libraries(testMixedProcess PRIVATE Threads::Threads blah2RapidJson)
-  add_test(NAME mixedWorkerFaults COMMAND testMixedProcess
-    $<TARGET_FILE:testMixedWorkerDouble>)
-  set_tests_properties(mixedWorkerFaults PROPERTIES TIMEOUT 10)
-endif()
-target_compile_options(testMixedAutoPolicy PRIVATE -UNDEBUG)
-target_compile_options(testMixedMap PRIVATE -UNDEBUG)
-if(TARGET testMixedProcess)
-  target_compile_options(testMixedProcess PRIVATE -UNDEBUG)
-endif()
+  test/unit/process/ambiguity/TestAcceleration.cpp)
+target_link_libraries(testAcceleration PRIVATE blah2Acceleration)
 if(TARGET blah2GpuVulkan)
   add_dependencies(testAcceleration blah2GpuWorker)
 endif()
 add_executable(testAccelerationFallback
-  test/unit/process/ambiguity/TestAccelerationFallback.cpp
-  src/process/ambiguity/Acceleration.cpp src/process/ambiguity/Ambiguity.cpp
-  src/process/meta/HammingNumber.cpp src/data/IqData.cpp src/data/Map.cpp)
-target_link_libraries(testAccelerationFallback PRIVATE blah2RapidJson blah2GpuProcess ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS})
+  test/unit/process/ambiguity/TestAccelerationFallback.cpp)
+target_link_libraries(testAccelerationFallback PRIVATE blah2Acceleration)
 add_test(NAME testAccelerationFallback COMMAND testAccelerationFallback)
+add_test(NAME captureStartupPreparation COMMAND ${Python3_EXECUTABLE}
+  ${PROJECT_ROOT}/test/script/test_capture_startup_preparation.py)
+set_tests_properties(captureStartupPreparation PROPERTIES TIMEOUT 40)
 
 add_executable(testClutterFft
-  test/unit/process/clutter/TestClutterFft.cpp
-  src/process/clutter/WienerHopf.cpp src/data/IqData.cpp)
-target_compile_features(testClutterFft PRIVATE cxx_std_17)
-target_link_libraries(testClutterFft PRIVATE blah2RapidJson ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+  test/unit/process/clutter/TestClutterFft.cpp)
+target_link_libraries(testClutterFft PRIVATE blah2RadarDsp)
 add_test(NAME clutterFftPadding COMMAND testClutterFft)
-set_tests_properties(clutterFftPadding PROPERTIES TIMEOUT 30)
+set_tests_properties(clutterFftPadding PROPERTIES TIMEOUT 120)
+add_executable(testWienerHopfLoading
+  test/unit/process/clutter/TestWienerHopfLoading.cpp)
+target_link_libraries(testWienerHopfLoading PRIVATE blah2RadarDsp)
+add_test(NAME wienerHopfRelativeDiagonalLoading COMMAND testWienerHopfLoading)
+set_tests_properties(wienerHopfRelativeDiagonalLoading PROPERTIES TIMEOUT 10)
 
 # Compile the wrapper against a minimal FFTW 3.3.8-shaped header: the public
 # API has a setter but no planner-thread getter.
@@ -404,14 +327,21 @@ target_include_directories(testFftwThreadsLegacy BEFORE PRIVATE
 add_test(NAME fftwThreadStateLegacyApi COMMAND testFftwThreadsLegacy)
 
 add_executable(testCfarEfficiency
-  test/unit/process/detection/TestCfarEfficiency.cpp
-  src/process/detection/CfarDetector1D.cpp src/data/Detection.cpp src/data/Map.cpp)
-target_link_libraries(testCfarEfficiency PRIVATE blah2RapidJson)
+  test/unit/process/detection/TestCfarEfficiency.cpp)
+target_link_libraries(testCfarEfficiency PRIVATE blah2Detection)
 add_test(NAME cfarExactOutput COMMAND testCfarEfficiency)
 add_executable(testIqDataFifo
-  test/unit/data/TestIqDataFifo.cpp src/data/IqData.cpp)
-target_link_libraries(testIqDataFifo PRIVATE blah2RapidJson Threads::Threads)
+  test/unit/data/TestIqDataFifo.cpp)
+target_link_libraries(testIqDataFifo PRIVATE blah2IqData blah2RapidJson Threads::Threads)
 add_test(NAME iqDataFifo COMMAND testIqDataFifo)
+# Exercise the real shared capture core, not a second IqData.cpp linked into
+# the test. Relocating this binary with the native install tree also checks
+# cross-DSO pool allocation/recycling and the runtime loader's library choice.
+add_executable(testCapturePoolAbi test/unit/data/TestIqDataFifo.cpp)
+target_link_libraries(testCapturePoolAbi PRIVATE blah2CaptureCore blah2RapidJson Threads::Threads)
+set_target_properties(testCapturePoolAbi PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE
+  INSTALL_RPATH "${BLAH2_RUNTIME_RPATH}")
+add_test(NAME capturePoolSharedCoreAbi COMMAND testCapturePoolAbi)
 include(cmake/JsonOutputTests.cmake)
 
 # unit tests
@@ -426,70 +356,46 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
 endif()
 add_executable(testProcessingThreads
   test/unit/process/utility/TestProcessingThreads.cpp
-  src/process/utility/ProcessingThreads.cpp
 )
-target_link_libraries(testProcessingThreads PRIVATE Threads::Threads)
+target_link_libraries(testProcessingThreads PRIVATE blah2FixedExecutor)
 set_target_properties(testProcessingThreads PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testProcessingThreads COMMAND testProcessingThreads)
 
 add_executable(testAmbiguity
   test/unit/process/ambiguity/TestAmbiguity.cpp
-  src/data/IqData.cpp
-  src/data/Map.cpp
-  src/process/ambiguity/Ambiguity.cpp
-  src/process/meta/HammingNumber.cpp
 )
-target_link_libraries(testAmbiguity PRIVATE 
-  Catch2::Catch2WithMain 
-  blah2RapidJson
-  ${BLAH2_FFTW3_LIBRARY}
-  ${BLAH2_FFTW3_THREADS_LIBRARY}
-)
+target_link_libraries(testAmbiguity PRIVATE Catch2::Catch2WithMain blah2RadarDsp)
 set_target_properties(testAmbiguity PROPERTIES 
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 
 add_executable(testTracker
   test/unit/process/tracker/TestTracker.cpp
-  src/data/Detection.cpp
-  src/data/Track.cpp
-  src/process/tracker/Tracker.cpp
 )
-target_link_libraries(testTracker PRIVATE 
-  Catch2::Catch2WithMain
-  blah2RapidJson
-)
+target_link_libraries(testTracker PRIVATE Catch2::Catch2WithMain blah2Tracking)
 set_target_properties(testTracker PROPERTIES 
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 
 add_executable(testHammingNumber
   test/unit/process/meta/TestHammingNumber.cpp
-  src/process/meta/HammingNumber.cpp
 )
-target_link_libraries(testHammingNumber PRIVATE 
-  Catch2::Catch2WithMain
-)
+target_link_libraries(testHammingNumber PRIVATE Catch2::Catch2WithMain blah2RadarDsp)
 set_target_properties(testHammingNumber PROPERTIES 
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 
 add_executable(testKrakenMultiChannel
   test/unit/capture/kraken/TestHeimdallFrame.cpp
   test/unit/process/conditioning/TestArrayReferenceSynthesizer.cpp
+  test/unit/process/detection/TestPostClutterBootstrap.cpp
   test/unit/process/fusion/TestNoncoherent.cpp
   test/unit/process/fusion/TestCoherentBeamBank.cpp
+  test/unit/process/fusion/TestBearingRefinement.cpp
   test/unit/process/fusion/TestBearingSteering.cpp
   test/unit/process/ambiguity/TestBearingManifold.cpp
   test/unit/process/ambiguity/TestResidentFusionWeights.cpp
-  src/capture/kraken/HeimdallFrame.cpp
-  src/process/conditioning/ArrayReferenceSynthesizer.cpp
-  src/process/fusion/Noncoherent.cpp
-  src/process/fusion/CoherentBeamBank.cpp
-  src/data/IqData.cpp
-  src/data/Map.cpp
 )
 target_link_libraries(testKrakenMultiChannel PRIVATE
-  Catch2::Catch2WithMain
-  blah2RapidJson
+  Catch2::Catch2WithMain blah2RadarDsp blah2Fusion blah2CaptureCore blah2FixedExecutor
 )
 set_target_properties(testKrakenMultiChannel PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
@@ -498,26 +404,16 @@ set_target_properties(testKrakenMultiChannel PROPERTIES
 add_test(NAME testAmbiguity COMMAND testAmbiguity)
 add_test(NAME testTracker COMMAND testTracker)
 add_executable(testBearingPhaseProjection
-  test/bearing/TestBearingPhaseProjection.cpp
-  src/process/ambiguity/Ambiguity.cpp
-  src/process/conditioning/ArrayReferenceSynthesizer.cpp
-  src/process/clutter/WienerHopf.cpp
-  src/process/meta/HammingNumber.cpp
-  src/data/IqData.cpp
-  src/data/Map.cpp)
-target_include_directories(testBearingPhaseProjection SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
-target_link_libraries(testBearingPhaseProjection PRIVATE Catch2::Catch2WithMain
-  blah2RapidJson ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
-  ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+  test/bearing/TestBearingPhaseProjection.cpp)
+target_link_libraries(testBearingPhaseProjection PRIVATE Catch2::Catch2WithMain blah2RadarDsp)
 set_target_properties(testBearingPhaseProjection PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME bearingPhaseProjection COMMAND testBearingPhaseProjection)
 set_tests_properties(bearingPhaseProjection PROPERTIES TIMEOUT 30
   ENVIRONMENT "VECTORWARP_FFTW_PLAN=estimate;VECTORWARP_CLUTTER_WORKERS=1;OPENBLAS_NUM_THREADS=1")
 add_executable(testSpectrum
-  test/unit/process/spectrum/TestSpectrum.cpp
-  src/process/spectrum/SpectrumAnalyser.cpp src/data/IqData.cpp)
-target_link_libraries(testSpectrum PRIVATE Catch2::Catch2WithMain blah2RapidJson ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
+  test/unit/process/spectrum/TestSpectrum.cpp)
+target_link_libraries(testSpectrum PRIVATE Catch2::Catch2WithMain blah2RadarDsp)
 set_target_properties(testSpectrum PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testSpectrum COMMAND testSpectrum)
@@ -526,38 +422,32 @@ target_link_libraries(testSocket PRIVATE Catch2::Catch2WithMain asio::asio Threa
 set_target_properties(testSocket PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testSocket COMMAND testSocket)
-add_executable(testMapData test/unit/process/spectrum/TestMapData.cpp src/data/Map.cpp)
-target_link_libraries(testMapData PRIVATE Catch2::Catch2WithMain blah2RapidJson)
+add_executable(testMapData test/unit/process/spectrum/TestMapData.cpp)
+target_link_libraries(testMapData PRIVATE Catch2::Catch2WithMain blah2RadarData)
 set_target_properties(testMapData PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testMapData COMMAND testMapData)
 add_executable(testComplexCutoutRecorder
   test/unit/process/analysis/TestComplexCutoutRecorder.cpp
-  src/process/analysis/ComplexCutoutRecorder.cpp
-  src/data/Map.cpp)
-target_link_libraries(testComplexCutoutRecorder PRIVATE Catch2::Catch2WithMain blah2RapidJson)
+  src/process/analysis/ComplexCutoutRecorder.cpp)
+target_link_libraries(testComplexCutoutRecorder PRIVATE Catch2::Catch2WithMain blah2RadarData)
 set_target_properties(testComplexCutoutRecorder PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testComplexCutoutRecorder COMMAND testComplexCutoutRecorder)
 add_executable(testReplayEchoInjector
   test/unit/process/analysis/TestReplayEchoInjector.cpp
-  src/process/analysis/ReplayEchoInjector.cpp
-  src/data/IqData.cpp)
-target_link_libraries(testReplayEchoInjector PRIVATE Catch2::Catch2WithMain blah2RapidJson)
+  src/process/analysis/ReplayEchoInjector.cpp)
+target_link_libraries(testReplayEchoInjector PRIVATE Catch2::Catch2WithMain blah2IqData blah2RapidJson)
 set_target_properties(testReplayEchoInjector PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testReplayEchoInjector COMMAND testReplayEchoInjector)
-add_executable(testDetectionMath test/unit/process/detection/TestDetectionMath.cpp
-  src/process/detection/CfarDetector1D.cpp
-  src/process/detection/Centroid.cpp src/process/detection/Interpolate.cpp
-  src/data/Detection.cpp src/data/Map.cpp)
-target_link_libraries(testDetectionMath PRIVATE Catch2::Catch2WithMain blah2RapidJson)
+add_executable(testDetectionMath test/unit/process/detection/TestDetectionMath.cpp)
+target_link_libraries(testDetectionMath PRIVATE Catch2::Catch2WithMain blah2Detection)
 set_target_properties(testDetectionMath PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testDetectionMath COMMAND testDetectionMath)
-add_executable(testInterpolationSnr test/unit/process/detection/TestInterpolationSnr.cpp
-  src/process/detection/Interpolate.cpp src/data/Detection.cpp src/data/Map.cpp)
-target_link_libraries(testInterpolationSnr PRIVATE blah2RapidJson)
+add_executable(testInterpolationSnr test/unit/process/detection/TestInterpolationSnr.cpp)
+target_link_libraries(testInterpolationSnr PRIVATE blah2Detection)
 set_target_properties(testInterpolationSnr PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testInterpolationSnr COMMAND testInterpolationSnr)

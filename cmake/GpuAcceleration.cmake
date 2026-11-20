@@ -1,13 +1,29 @@
-if(APPLE)
-  set(BLAH2_GPU_DEFAULT "OFF")
-else()
-  set(BLAH2_GPU_DEFAULT "AUTO")
-endif()
+set(BLAH2_GPU_DEFAULT "AUTO")
 set(BLAH2_GPU "${BLAH2_GPU_DEFAULT}" CACHE STRING "Build GPU module: AUTO, ON or OFF")
 set_property(CACHE BLAH2_GPU PROPERTY STRINGS AUTO ON OFF)
+set(BLAH2_GPU_ADVANCED "AUTO" CACHE STRING
+  "Build native resident/wideband GPU modules: AUTO, ON (required) or OFF")
+set_property(CACHE BLAH2_GPU_ADVANCED PROPERTY STRINGS AUTO ON OFF)
+include(${CMAKE_CURRENT_LIST_DIR}/GpuPlatformPolicy.cmake)
+blah2_gpu_platform_policy("${CMAKE_SYSTEM_NAME}" "${BLAH2_GPU}" "${BLAH2_GPU_ADVANCED}"
+  BLAH2_GPU_RESIDENT_ELIGIBLE BLAH2_GPU_RESIDENT_REASON
+  BLAH2_GPU_WIDEBAND_ELIGIBLE BLAH2_GPU_WIDEBAND_REASON)
+set(BLAH2_GPU_PORTABLE_BUILT FALSE)
+set(BLAH2_GPU_RESIDENT_BUILT FALSE)
+set(BLAH2_GPU_WIDEBAND_BUILT FALSE)
 set(VKFFT_ROOT "" CACHE PATH "VkFFT 1.3.4 source directory")
+function(blah2_isolate_vkfft_vendor_warnings target)
+  # GCC 15 diagnoses VkFFT 1.3.4's code-generator pointer selection as
+  # maybe-uninitialized even though the active backend fixes the selector.
+  # Keep -Werror for VectorWarp and every other warning; isolate only this
+  # vendor-header diagnostic on translation units that include VkFFT.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(${target} PRIVATE -Wno-error=maybe-uninitialized)
+  endif()
+endfunction()
 add_library(blah2GpuProcess STATIC ${PROJECT_ROOT}/src/process/ambiguity/GpuProcess.cpp)
 target_compile_features(blah2GpuProcess PUBLIC cxx_std_17)
+target_include_directories(blah2GpuProcess PUBLIC ${PROJECT_ROOT}/src)
 add_library(blah2GpuWidebandProcess STATIC
   ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandChannelizer.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandProcess.cpp)
@@ -31,12 +47,9 @@ if(TARGET blah2)
   target_link_libraries(blah2 PRIVATE blah2GpuResidentProcess)
 endif()
 
-target_link_libraries(blah2GpuProcess PUBLIC Threads::Threads)
+target_link_libraries(blah2GpuProcess PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 if(TARGET blah2)
   target_link_libraries(blah2 PRIVATE blah2GpuProcess)
-endif()
-if(NOT BLAH2_GPU MATCHES "^(AUTO|ON|OFF)$")
-  message(FATAL_ERROR "BLAH2_GPU must be AUTO, ON or OFF")
 endif()
 if(NOT BLAH2_GPU STREQUAL "OFF")
   find_package(Vulkan QUIET)
@@ -55,21 +68,26 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     endif()
   endif()
   if(Vulkan_FOUND AND TARGET glslang::glslang AND EXISTS "${VKFFT_ROOT}/vkFFT/vkFFT.h")
+    set(BLAH2_GPU_PORTABLE_BUILT TRUE)
+    if(TARGET blah2)
+      target_compile_definitions(blah2 PRIVATE VECTORWARP_GPU=1)
+    endif()
     add_library(blah2GpuVulkan MODULE ${PROJECT_ROOT}/src/process/ambiguity/VulkanBackend.cpp)
     target_compile_features(blah2GpuVulkan PRIVATE cxx_std_17)
     target_compile_definitions(blah2GpuVulkan PRIVATE VKFFT_BACKEND=0)
     target_include_directories(blah2GpuVulkan SYSTEM PRIVATE
-      ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS})
+      ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${ARMADILLO_INCLUDE_DIRS})
     # VkFFT includes glslang_c_interface.h without its parent path.
     find_path(GLSLANG_C_INCLUDE glslang_c_interface.h PATH_SUFFIXES glslang/Include REQUIRED)
     target_include_directories(blah2GpuVulkan SYSTEM PRIVATE ${GLSLANG_C_INCLUDE})
     target_link_libraries(blah2GpuVulkan PRIVATE Vulkan::Vulkan glslang::glslang
       glslang::SPIRV glslang::glslang-default-resource-limits
-      ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+      ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} ${ARMADILLO_LIBRARIES} Threads::Threads)
     # The isolated module owns the short FP64 clutter baseline and macOS
     # prime-plan constants. Its loader-only worker does not use FFTW directly.
     # Vulkan's zero-initialized structs intentionally initialize sType first.
     target_compile_options(blah2GpuVulkan PRIVATE -Wno-missing-field-initializers)
+    blah2_isolate_vkfft_vendor_warnings(blah2GpuVulkan)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       # This versioned C++ plugin ABI uses unmangled names for dlsym; these
       # exports are never called from C. Keep the stable names under -Werror.
@@ -82,8 +100,8 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     endif()
     set(BLAH2_GPU_WORKER_SOURCES ${PROJECT_ROOT}/src/process/ambiguity/GpuWorker.cpp)
     if(APPLE)
-      # CMake 3.8 does not reliably enable an OBJCXX project language. Compile
-      # this one worker-only source with AppleClang's explicit language flag.
+      # Keep the project CXX-only and compile this one worker-only source with
+      # AppleClang's explicit Objective-C++ language flag.
       set(BLAH2_MAC_GPU_COMPATIBILITY ${PROJECT_ROOT}/src/process/ambiguity/MacGpuCompatibility.mm)
       set_source_files_properties(${BLAH2_MAC_GPU_COMPATIBILITY} PROPERTIES
         LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
@@ -106,7 +124,8 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     if(TARGET blah2)
       add_dependencies(blah2 blah2GpuWorker)
     endif()
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(BLAH2_GPU_WIDEBAND_ELIGIBLE)
+      set(BLAH2_GPU_WIDEBAND_BUILT TRUE)
       add_library(blah2GpuWidebandVulkan MODULE
         ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandModule.cpp
         ${PROJECT_ROOT}/src/process/ambiguity/GpuWidebandChannelizer.cpp)
@@ -121,12 +140,24 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
         ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
       target_compile_options(blah2GpuWidebandVulkan PRIVATE
         -Wno-missing-field-initializers)
-      set_property(TARGET blah2GpuWidebandVulkan APPEND_STRING PROPERTY
-        LINK_FLAGS " -Wl,-z,defs")
+      if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(blah2GpuWidebandVulkan PRIVATE
+          -Wno-return-type-c-linkage)
+      endif()
+      blah2_isolate_vkfft_vendor_warnings(blah2GpuWidebandVulkan)
+      if(APPLE)
+        target_link_options(blah2GpuWidebandVulkan PRIVATE "LINKER:-undefined,error")
+      else()
+        target_link_options(blah2GpuWidebandVulkan PRIVATE "LINKER:-z,defs")
+      endif()
       set_target_properties(blah2GpuWidebandVulkan PROPERTIES PREFIX ""
         OUTPUT_NAME "blah2-gpu-wideband-vulkan"
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
       add_dependencies(blah2GpuWorker blah2GpuWidebandVulkan)
+      target_compile_definitions(blah2GpuWorker PRIVATE VECTORWARP_WIDEBAND_GPU=1)
+      if(TARGET blah2)
+        target_compile_definitions(blah2 PRIVATE VECTORWARP_WIDEBAND_GPU=1)
+      endif()
       if(BUILD_TESTING OR BLAH2_BUILD_OFFLINE_TOOLS)
         add_executable(testGpuWidebandPhysical
           ${PROJECT_ROOT}/test/gpu/TestGpuWidebandPhysical.cpp)
@@ -140,30 +171,21 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
         set_target_properties(testGpuWidebandPhysical PROPERTIES
           RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_DIR}")
         add_executable(testGpuWidebandEndToEnd
-          ${PROJECT_ROOT}/test/gpu/TestGpuWidebandEndToEnd.cpp
-          ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
-          ${PROJECT_ROOT}/src/process/clutter/WienerHopf.cpp
-          ${PROJECT_ROOT}/src/process/conditioning/ArrayReferenceSynthesizer.cpp
-          ${PROJECT_ROOT}/src/process/fusion/Noncoherent.cpp
-          ${PROJECT_ROOT}/src/process/detection/CfarDetector1D.cpp
-          ${PROJECT_ROOT}/src/process/detection/Centroid.cpp
-          ${PROJECT_ROOT}/src/process/detection/Interpolate.cpp
-          ${PROJECT_ROOT}/src/process/tracker/Tracker.cpp
-          ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
-          ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
-          ${PROJECT_ROOT}/src/data/Detection.cpp ${PROJECT_ROOT}/src/data/Track.cpp)
-        target_include_directories(testGpuWidebandEndToEnd SYSTEM PRIVATE
-          ${ARMADILLO_INCLUDE_DIRS})
+          ${PROJECT_ROOT}/test/gpu/TestGpuWidebandEndToEnd.cpp)
         target_link_libraries(testGpuWidebandEndToEnd PRIVATE
-          blah2GpuWidebandProcess blah2MultiIlluminatorRadar blah2RapidJson
-          ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
-          ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+          blah2GpuWidebandProcess blah2MultiIlluminatorRadar blah2Channelizer)
         target_compile_definitions(testGpuWidebandEndToEnd PRIVATE
           GPU_WIDEBAND_WORKER="$<TARGET_FILE:blah2GpuWorker>")
         add_dependencies(testGpuWidebandEndToEnd blah2GpuWorker
           blah2GpuWidebandVulkan)
         set_target_properties(testGpuWidebandEndToEnd PROPERTIES
           RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_DIR}")
+      endif()
+    endif()
+    if(BLAH2_GPU_RESIDENT_ELIGIBLE)
+      set(BLAH2_GPU_RESIDENT_BUILT TRUE)
+      if(TARGET blah2MultiIlluminatorRadar)
+        target_compile_definitions(blah2MultiIlluminatorRadar PRIVATE VECTORWARP_RESIDENT_GPU=1)
       endif()
       add_library(blah2GpuResidentVulkan MODULE
         ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentModule.cpp
@@ -179,6 +201,7 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
         glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
         Threads::Threads ${CMAKE_DL_LIBS})
       target_compile_options(blah2GpuResidentVulkan PRIVATE -Wno-missing-field-initializers)
+      blah2_isolate_vkfft_vendor_warnings(blah2GpuResidentVulkan)
       set_property(TARGET blah2GpuResidentVulkan APPEND_STRING PROPERTY LINK_FLAGS " -Wl,-z,defs")
       if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         target_compile_options(blah2GpuResidentVulkan PRIVATE -Wno-return-type-c-linkage)
@@ -186,51 +209,25 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
       set_target_properties(blah2GpuResidentVulkan PROPERTIES PREFIX ""
         OUTPUT_NAME "blah2-gpu-resident-vulkan" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
       add_dependencies(blah2GpuWorker blah2GpuResidentVulkan)
+      target_compile_definitions(blah2GpuWorker PRIVATE VECTORWARP_RESIDENT_GPU=1)
       if(TARGET blah2)
         target_compile_definitions(blah2 PRIVATE VECTORWARP_RESIDENT_GPU=1)
         add_dependencies(blah2 blah2GpuResidentVulkan)
       endif()
-      # The qualified mixed CPI runs in its own bounded worker. A stuck V3D
-      # fence can then be killed without blocking capture or CPU recovery.
-      add_executable(blah2MixedWorker
-        ${PROJECT_ROOT}/src/process/mixed/MixedWorker.cpp
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/ambiguity/Ambiguity.cpp
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/ambiguity/GpuPartialAmbiguity.cpp
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/WienerHopf.cpp
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/gpu/GpuBlockedCorrelation.cpp
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/gpu/OwlGpuFilter.cpp
-        ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
-        ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp)
-      target_compile_features(blah2MixedWorker PRIVATE cxx_std_17)
-      target_compile_definitions(blah2MixedWorker PRIVATE
-        VKFFT_BACKEND=0 VECTORWARP_MIXED_FIR_BENCH=1
-        VECTORWARP_GPU_BLOCKED_FULL_BENCH=1
-        VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH=1)
-      target_compile_options(blah2MixedWorker PRIVATE -Wno-missing-field-initializers)
-      # The child links frozen DSP implementations: every translation unit must
-      # see their matching class layouts before the directory-wide src include.
-      target_include_directories(blah2MixedWorker BEFORE PRIVATE
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/gpu
-        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/ambiguity
-        ${PROJECT_ROOT}/src/process/mixed
-        ${PROJECT_ROOT}/src)
-      target_include_directories(blah2MixedWorker SYSTEM PRIVATE
-        ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
-      target_link_libraries(blah2MixedWorker PRIVATE Vulkan::Vulkan
-        glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
-        fftw3 fftw3_threads armadillo Threads::Threads blah2RapidJson)
-      set_target_properties(blah2MixedWorker PROPERTIES OUTPUT_NAME "blah2-mixed-worker")
-      if(TARGET blah2)
-        target_sources(blah2 PRIVATE ${PROJECT_ROOT}/src/process/mixed/MixedProcess.cpp)
-        target_compile_definitions(blah2 PRIVATE VECTORWARP_MIXED_AUTO=1)
-        add_dependencies(blah2 blah2MixedWorker)
-      endif()
     endif()
     message(STATUS "GPU acceleration: portable Vulkan module enabled")
-  elseif(BLAH2_GPU STREQUAL "ON")
-    message(FATAL_ERROR "GPU build needs Vulkan/glslang development packages and VKFFT_ROOT (VkFFT 1.3.4)")
+  elseif(BLAH2_GPU STREQUAL "ON" OR BLAH2_GPU_ADVANCED STREQUAL "ON")
+    message(FATAL_ERROR "Required GPU build needs Vulkan/glslang development packages and VKFFT_ROOT (VkFFT 1.3.4)")
   else()
+    if(BLAH2_GPU_RESIDENT_ELIGIBLE)
+      set(BLAH2_GPU_RESIDENT_REASON "GPU dependencies absent; CPU processing remains available")
+    endif()
+    if(BLAH2_GPU_WIDEBAND_ELIGIBLE)
+      set(BLAH2_GPU_WIDEBAND_REASON "GPU dependencies absent; CPU processing remains available")
+    endif()
     message(STATUS "GPU dependencies absent: building CPU fallback (BLAH2_GPU=ON requires GPU support)")
   endif()
 endif()
+message(STATUS "GPU build capabilities: portable=${BLAH2_GPU_PORTABLE_BUILT}; resident=${BLAH2_GPU_RESIDENT_BUILT}; wideband=${BLAH2_GPU_WIDEBAND_BUILT}")
+message(STATUS "Resident GPU capability: ${BLAH2_GPU_RESIDENT_REASON}")
+message(STATUS "Wideband GPU capability: ${BLAH2_GPU_WIDEBAND_REASON}")

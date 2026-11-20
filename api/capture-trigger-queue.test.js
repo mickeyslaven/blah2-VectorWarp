@@ -22,21 +22,21 @@ assert.deepEqual(optionsFromEnvironment({}),
     periodicIntervalSeconds: 0, periodicMaxSnapshots: 0,
     minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
     minimumElevationDeg: 0, maximumElevationDeg: 90,
-    minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
   BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8', BLAH2_CAPTURE_TRIGGER_ENABLED: '1'}),
 {enabled: true, preSeconds: 2, postSeconds: 8, maxClipSeconds: 10,
   periodicIntervalSeconds: 0, periodicMaxSnapshots: 0,
   minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
   minimumElevationDeg: 0, maximumElevationDeg: 90,
-  minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '3'}),
 {enabled: false, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 3,
   minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
   minimumElevationDeg: 0, maximumElevationDeg: 90,
-  minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
   {interval_seconds: 15, max_snapshots: 2}, aircraft_clips:
   {enabled: true, pre_seconds: 1, post_seconds: 4}}}),
@@ -44,7 +44,7 @@ assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
   periodicIntervalSeconds: 15, periodicMaxSnapshots: 2,
   minimumSlantRangeKm: 0, maximumSlantRangeKm: 1000,
   minimumElevationDeg: 0, maximumElevationDeg: 90,
-  minimumExposureIntervalMs: 5000});
+    minimumExposureIntervalMs: 5000, lateClaimAllowanceMs: 0});
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '9',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '1'}), /at least 10/);
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
@@ -88,10 +88,15 @@ claimClock = 111000;
 const claimedFresh = claimFresh.request(true);
 assert.deepEqual({requestedEventTime: claimedFresh.requestedEventTime,
   windowStart: claimedFresh.windowStart, windowEnd: claimedFresh.windowEnd},
-{requestedEventTime: 111000, windowStart: 109000, windowEnd: 114000},
-  'A queued clip is re-centered exactly when the native recorder claims it');
-assert.equal(claimFresh.status().recentEvents[0].captureWindows[0].windowStart, 109000,
-  'Fresh physical bounds propagate to admission provenance');
+{requestedEventTime: 104000, windowStart: 102000, windowEnd: 107000},
+  'A queued clip retains the RF window associated with its truth event');
+assert.equal(claimFresh.status().recentEvents[0].captureWindows[0].windowStart, 102000,
+  'Recorder claim timing cannot rewrite admission provenance');
+assert.equal(claimedFresh.pending, false);
+assert.equal(claimedFresh.failure, 'capture-window-expired-before-recorder');
+assert.equal(claimFresh.status().recentEvents[0].state, 'failed');
+assert.equal(claimFresh.retryPreRollFailure(1), null,
+  'A stale queued evidence window must not be retried as unrelated current RF');
 let spacedClock = 100000;
 const spaced = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 2,
   minimumExposureIntervalMs: 5000, now: () => spacedClock});
@@ -104,7 +109,7 @@ assert.equal(spaced.request(true).clipRevision, 0,
   'The native recorder is not exposed to a second copy before the ring drains');
 spacedClock = 105000;
 assert.equal(spaced.request(true).clipRevision, 2,
-  'The queued clip is exposed and freshly centered after the bounded interval');
+  'The queued clip is exposed without rewriting its evidence window');
 let accepted = queue.acceptEligibilityEvent(event(1, 100000));
 assert.equal(accepted.accepted, true);
 assert.equal(accepted.clip.clipRevision, 1);
@@ -153,7 +158,7 @@ assert.equal(queue.acknowledge(3), false, 'A terminal clip cannot be acknowledge
 let retryClock = 5000;
 const startup = new CaptureTriggerQueue({now: () => retryClock});
 startup.acceptEligibilityEvent(event(4, 4000));
-assert.equal(startup.acknowledge(1, 'Kraken clip pre-roll is unavailable'), true);
+assert.equal(startup.acknowledge(1, 'IQ clip pre-roll is unavailable'), true);
 retryClock = 7100;
 const retry = startup.retryPreRollFailure(1);
 assert.equal(retry.clipRevision, 2);
@@ -165,6 +170,19 @@ assert.equal(startup.acknowledge(2, null,
   {file: '/clips/startup-retry.mchq', samples: 12000000}), true);
 assert.equal(startup.status().recentEvents[0].state, 'acknowledged');
 
+let longCooldownClock = 5000;
+const longCooldownRetry = new CaptureTriggerQueue({minimumExposureIntervalMs: 120000,
+  now: () => longCooldownClock});
+longCooldownRetry.acceptEligibilityEvent(event(41, 4000));
+assert.equal(longCooldownRetry.request(true).clipRevision, 1);
+assert.equal(longCooldownRetry.acknowledge(1, 'IQ clip pre-roll is unavailable'), true);
+longCooldownClock = 10000;
+assert.equal(longCooldownRetry.retryPreRollFailure(1).clipRevision, 2);
+assert.equal(longCooldownRetry.request(true).clipRevision, 2,
+  'A single pre-roll retry must not expire behind the ordinary exposure cooldown');
+assert.equal(longCooldownRetry.request().pending, true);
+assert.equal(longCooldownRetry.request().failure, null);
+
 let periodicRetryClock = 121000;
 const periodicRetry = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 2, now: () => periodicRetryClock});
@@ -173,14 +191,14 @@ periodicRetry.acceptEligibilityEvent(periodicRetryEvent);
 assert.equal(periodicRetry.acknowledge(1, null,
   {file: '/clips/initial.mchq', samples: 1}), true);
 periodicRetry.acceptPeriodicSnapshot(periodicRetryEvent, 120000);
-assert.equal(periodicRetry.acknowledge(2, 'Kraken clip pre-roll is unavailable'), true);
+assert.equal(periodicRetry.acknowledge(2, 'IQ clip pre-roll is unavailable'), true);
 const retriedPeriodic = periodicRetry.retryPreRollFailure(2);
 assert.equal(retriedPeriodic.clipRevision, 3,
   'A periodic window retries even when its event already has an initial capture');
 assert.equal(retriedPeriodic.requestedEventTime, 121000);
 assert.equal(periodicRetry.retryPreRollFailure(2), null,
   'The failed periodic revision cannot be retried twice');
-assert.equal(periodicRetry.acknowledge(3, 'Kraken clip pre-roll is unavailable'), true);
+assert.equal(periodicRetry.acknowledge(3, 'IQ clip pre-roll is unavailable'), true);
 assert.equal(periodicRetry.retryPreRollFailure(3), null,
   'The replacement periodic window receives only one fresh-time retry');
 
@@ -238,7 +256,8 @@ assert.deepEqual(monotonic.clips.map(clip => clip.revision), [3, 4],
 assert.equal(monotonic.acknowledge(3), true);
 assert.equal(monotonic.request().clipRevision, 4);
 
-const inFlight = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 3});
+const inFlight = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 3,
+  now: () => 100000});
 inFlight.acceptEligibilityEvent(event(23, 100000));
 assert.equal(inFlight.status().clipRevision, 1, 'Status inspection does not claim a recorder request');
 assert.equal(inFlight.request(true).clipRevision, 1, 'Recorder polling claims the current revision');
@@ -453,5 +472,6 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   assert.equal(legacy.capture_samples, 1,
     'Legacy capture scalars remain attached to the initial window after periodic acknowledgements');
   periodicStats.close(); fs.rmSync(periodicDirectory, {recursive: true, force: true});
+  require('./capture-trigger-late-claim.test');
   console.log('Capture trigger queue coalescing, bounds and ADS-B-only admission tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -9,6 +9,10 @@ const path = require('path');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
+const parseFrame = value => {
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch (_) { return null; }
+};
 
 class OprsEventRecorder {
   constructor(config, options = {}) {
@@ -54,7 +58,9 @@ class OprsEventRecorder {
   }
 
   acceptDetection(frame) {
-    if (!this.enabled || !finite(frame?.timestamp) || !Array.isArray(frame.delay) ||
+    if (!this.enabled) return;
+    frame = parseFrame(frame);
+    if (!finite(frame?.timestamp) || !Array.isArray(frame.delay) ||
         !Array.isArray(frame.doppler)) return;
     if (!this.exactEventTime(frame, 'detection')) return;
     const timestamp = Math.trunc(frame.timestamp);
@@ -70,7 +76,9 @@ class OprsEventRecorder {
   }
 
   acceptTracker(frame) {
-    if (!this.enabled || !finite(frame?.timestamp) || !Array.isArray(frame.data)) return;
+    if (!this.enabled) return;
+    frame = parseFrame(frame);
+    if (!finite(frame?.timestamp) || !Array.isArray(frame.data)) return;
     if (!this.exactEventTime(frame, 'tracker')) return;
     const timestamp = Math.trunc(frame.timestamp);
     this.append({kind: 'tracker_frame', run_id: this.runId, event_time_ms: timestamp,
@@ -105,7 +113,9 @@ class OprsEventRecorder {
   }
 
   acceptTiming(frame) {
-    if (!this.enabled || !finite(frame?.timestamp)) return;
+    if (!this.enabled) return;
+    frame = parseFrame(frame);
+    if (!finite(frame?.timestamp)) return;
     if (!this.exactEventTime(frame, 'timing')) return;
     const fields = {};
     for (const [name, value] of Object.entries(frame))

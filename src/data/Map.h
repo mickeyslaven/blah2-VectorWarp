@@ -13,6 +13,10 @@
 #include <vector>
 #include <deque>
 #include <complex>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
 template <typename T>
 
@@ -26,6 +30,32 @@ private:
   uint32_t nCols;
 
 public:
+  // Shared row-major metric accumulator. Producers may reuse an identical
+  // cell level across their output maps without changing reduction order.
+  struct MetricAccumulator {
+    double sum = 0, peak = -std::numeric_limits<double>::infinity();
+    uint64_t count = 0;
+    static double magnitude(double value) { return std::abs(value); }
+    static double magnitude(std::complex<double> value) {
+      // hypot(x, +/-0) is exactly abs(x); other complex values retain hypot.
+      return value.imag() == 0 ? std::abs(value.real()) : std::abs(value);
+    }
+    static double level(T value) {
+      const double absolute = magnitude(value);
+      if (!std::isfinite(absolute))
+        throw std::runtime_error("Radar map contains a non-finite sample");
+      return 10 * std::log10(std::max(1e-30, absolute));
+    }
+    void addLevel(double value) {
+      sum = sum + value; peak = (peak < value) ? value : peak; ++count;
+    }
+    double add(T value) { const double result = level(value); addLevel(result); return result; }
+    void apply(Map<T>& map) const {
+      map.noisePower = count ? sum / static_cast<double>(count) : 0;
+      map.maxPower = count ? peak - map.noisePower : 0;
+    }
+  };
+
   /// @brief Map data to store.
   std::vector<std::vector<T>> data;
 
@@ -51,17 +81,21 @@ public:
   /// @param i Index of row to update.
   /// @param row Data to update.
   /// @return Void.
-  void set_row(uint32_t i, std::vector<T> row);
+  void set_row(uint32_t i, const std::vector<T>& row);
 
   /// @brief Update a column in the 2D map.
   /// @param i Index of column to update.
   /// @param col Data to update.
   /// @return Void.
-  void set_col(uint32_t i, std::vector<T> col);
+  void set_col(uint32_t i, const std::vector<T>& col);
 
   /// @brief Create map metrics (noise power, dynamic range).
   /// @return Void.
   void set_metrics();
+
+  /// @brief Exclude invalid temporal cells; an empty mask preserves all cells.
+  /// @param validCells Row-major mask, either empty or one byte per map cell.
+  void set_metrics(const std::vector<uint8_t>& validCells);
 
   /// @brief Get the number of rows in the map.
   /// @return Number of rows.
@@ -101,6 +135,17 @@ public:
   /// @brief Generate the same display JSON directly with delay in kilometres.
   /// @param fs Sampling frequency (Hz), nonzero.
   std::string to_json_km(uint64_t timestamp, uint32_t fs);
+
+  /// @brief Generate map metadata without the large cell matrix. Downstream
+  /// display code retains the most recent full matrix while consuming current
+  /// detections and tracks.
+  std::string to_json_metadata_km(uint64_t timestamp, uint32_t fs);
+
+  /// @brief Generate a bounded display-only map. Radar processing and saved
+  /// experiment products retain the complete native matrix; this method only
+  /// reduces the monitor transport raster and quantizes it to quarter dB.
+  std::string to_json_presentation_km(uint64_t timestamp, uint32_t fs,
+    bool includeData, uint32_t maximumCells = 200000);
 
   /// @brief Update JSON to convert delay bins to km.
   /// @param json Input JSON string with delay field.

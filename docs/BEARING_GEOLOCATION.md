@@ -202,64 +202,37 @@ network:
     manifold: 3005
 ```
 
-Canonical combined status is available at `/api/array-calibration/status`.
-The older `/api/bearing/manifold-recorder` and
-`/api/bearing/manifold-progress` routes remain compatibility views. A slow truth source cannot back-pressure the
-radar: the API keeps at most the newest evidence frame while matching or writing.
-Full ambiguity maps are never copied or stored.
+Recorder, reference stability, and configured static model status are available
+at `/api/array-calibration/status` and `/display/calibration`. The narrower
+`/api/bearing/manifold-recorder` route reports recorder counters. Status
+requests do not launch fitting or evaluation. A slow truth source cannot
+back-pressure radar: the API retains at most the newest evidence frame while
+matching or writing. Full ambiguity maps are never copied or stored.
 
-### Automatic measured-manifold lifecycle
+### Offline measured-manifold workflow
 
-The normal Kraken configuration also runs the fitter and validation lifecycle
-in a background worker. No calibration script or frame-count judgement is
-required. `/api/bearing/manifold-automation` reports `collecting`, `evaluating`,
-`qualified-pending-restart`, or `active`, together with every unmet gate. The
-worker writes `<path>.candidate.json`; it promotes only a qualified model to
-`<path>.qualified.json`.
+The bounded recorder collects installed-array evidence. Explicit offline
+commands fit separate bearing and detection models; operators select reviewed
+static files through `process.bearing.manifold_file` and
+`process.surveillance_fusion.manifold_file`. Frequency, sample rate, channel
+mapping, geometry, and applied-gain identity remain mandatory. Legacy live
+fitting and automatic-promotion settings are removed during configuration
+migration.
 
-`/display/calibration` is the operator-facing campaign view. It reports the
-current frequency/site-fingerprint corpus, accepted samples, independent
-passes, aircraft, per-sector coverage, fit-ready angular bins, held-out
-evidence, unsupported azimuth gap and every remaining collection or validation
-gate. Its JSON contract is `/api/array-calibration/status`. Opening the view
-requests a signature-cached background refresh; fitting unchanged data is not
-repeated and no work runs in the radar processor.
+The bearing fitter's optional `--config config.yml` evaluates complete held-out
+passes against ideal steering and records coverage, median error, sector
+regressions, and candidate gates. Those gates do not establish production
+qualification. Production selection requires whole-pass positive and negative
+replay outcomes, independent prospective evidence, and no false-track or
+cadence regression. No fitting command changes configuration or restarts radar.
 
-Historical v1 rows may be retained for bearing-only diagnostics when their
-frequency, sample rate, channel order, geometry and truth provenance remain
-auditable. They are never silently merged with a current v2 identity epoch,
-and rows lacking applied-gain/identity or same-IQ nuisance provenance cannot
-qualify a production bearing model or enter detection-manifold fitting.
-
-Promotion is deliberately pass-balanced. Frames from the same aircraft pass
-share one vote, and complete passes are withheld from fitting. The candidate
-and VectorWarp's default free-space model are replayed on exactly those unseen
-passes. The built-in gates require, by default:
-
-- at least 40 independent passes and 12 aircraft;
-- independent coverage in at least six of eight azimuth sectors, with five
-  passes and three aircraft in every counted sector;
-- at least 12 withheld passes across four sectors;
-- a measured-model median error no worse than 45 degrees;
-- at least a five-degree or 15-percent median improvement over the default;
-- no reduction in the withheld within-45-degree rate; and
-- no independently tested sector regressing by more than eight degrees.
-
-When all gates pass, `manifold_automation.auto_promote: true` atomically selects
-the qualified file and requests the configured controlled service restart. If
-restart control is unavailable, the selection is saved and activates at the
-next ordinary restart. A site-defining setting change automatically removes an
-auto-selected model before saving the new configuration, so the recorder starts
-a new corpus. `auto_promote: false` retains automatic collection, fitting, and
-shadow comparison but leaves activation to the operator.
-
-ADS-B is used only to label the calibration corpus and score the shadow A/B
-test. It is not available to live bearing, detection, tracking, or Retina after
-promotion. Fit work runs outside the radar processor and does not consume its
-CPI budget.
+ADS-B labels recorded evidence and scores evaluation; live bearing, detection,
+and tracking do not consume aircraft truth. Historical rows without the
+current precision, applied-gain identity, or same-IQ nuisance provenance remain
+diagnostic evidence and cannot qualify a measured model.
 
 The recorder also writes `<path>.reference.jsonl` whenever the array-eigenbeam
-reference analysis advances. This bounded shadow log stores the coherent
+reference analysis advances. This bounded reference log stores the coherent
 fraction/gain and each channel's complex principal-eigenvector response relative
 to channel 0 (or the strongest channel if channel 0 is unusable), together with
 the maximum phase and amplitude step since the preceding update. It does not
@@ -283,7 +256,7 @@ previous active JSONL as `.site-previous` (within the configured file bound),
 writes a new site ledger, and begins a clean collection. Samples from different
 installations are therefore never silently fitted as one manifold.
 
-For offline experiments or manual review, the same fitter remains available:
+Fit a bearing manifold from a single compatible evidence cohort:
 
 ```sh
 node script/fit-bearing-manifold.js \
@@ -304,11 +277,30 @@ range, and holdout correlation metadata. Review
 those diagnostics before setting `manifold_file`; an azimuth-only model does not
 erase elevation dependence or roof multipath outside the observations.
 
-## Built-in channel-order and heading diagnostic
+Fit a detection manifold using the configured production beam count:
 
-`/api/bearing/diagnostic` and the Radar locations page expose a read-only,
-shadow-only diagnostic once replay-capable samples exist. The same check can be
-run without the web service:
+```sh
+node script/fit-detection-manifold.js --enable-offline-experiment \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl \
+  --config /etc/vectorwarp/config.yml \
+  --output /tmp/detection-candidate.json \
+  --runtime-output /tmp/detection-dense-bank.json
+```
+
+An optional `--validation replay.jsonl` adds independent replay receipts.
+The command limits combined inputs to 64 MiB / 20,000 rows, each output to
+2 MiB, and the fit worker to 256 MiB old-generation memory and 30 seconds.
+Configuration input is capped at 256 KiB. Existing outputs are refused.
+Dense export requires complete beam/elevation support; a dense artifact is
+replay-ready, not production-qualified. The bank hash and acquisition identity
+are retained for `script/generate-detection-manifold-production-receipt.py`
+and `script/evaluate-detection-manifold-replay.py`; the latter requires
+`--enable-offline-experiment`. Native full-bank export and receipt validation
+remain the production replay boundary.
+
+## Offline channel-order and heading diagnostic
+
+Run the channel-order and heading check against retained evidence:
 
 ```sh
 node script/evaluate-bearing-calibration.js \
@@ -323,7 +315,7 @@ the currently configured mapping, the best replay mapping, and a separate
 heading-only correction. It never edits configuration or feeds ADS-B into live
 bearing, detection, tracking, or Retina output.
 
-The same endpoint also scores the recorded direct-path eigenbeam against the
+The same offline command also scores the recorded direct-path eigenbeam against the
 configured transmitter as a known-angle RF source. It reports phase residuals
 for the configured mapping and heading, every regular-polygon mapping at the
 configured heading, and every whole-degree heading with the configured mapping.
@@ -331,7 +323,7 @@ This closes an important observability gap in `fixed_site`: that setting builds
 the bearing anchor from configured geometry, while the known-angle diagnostic
 uses the independently observed eigenbeam phases. Reference amplitude imbalance,
 coherence, multipath, and mapping/heading aliases remain visible, and the result
-is always shadow-only; it never edits configuration.
+is offline evidence; it never edits configuration.
 
 For a stronger check, the transmitter-agnostic survey CLI combines two or more
 known RF sources. Each manifest source supplies its name, latitude, longitude,
@@ -365,8 +357,8 @@ the channel labels by one element is mathematically equivalent to changing the
 array heading by one element angle. Therefore even strong replay evidence is a
 review result, not proof of mislabeled cables. A known-angle RF source or a
 physical one-channel-at-a-time verification is required to distinguish those
-two explanations. Older v1 samples remain valid for manifold fitting but lack
-the covariance needed for exact MVDR mapping replay.
+two explanations. Historical rows without the current precision and identity contract remain
+diagnostic evidence; exact MVDR replay also requires recorded covariance.
 
 When track-before-detect and `tracker.beam_tolerance` are both enabled, the
 multi-CPI integrator also requires coarse-angle consistency along each
@@ -377,7 +369,7 @@ delay/Doppler motion trajectory. This is joint delay-Doppler-angle TBD; omitting
 
 - `/api/tracker` remains the legacy tracker schema.
 - `/api/bearing` exposes radar-only temporal bearing evidence.
-- `/api/bearing/diagnostic` reports the shadow-only wiring/heading replay.
+- `/api/array-calibration/status` reports bounded recorder/reference status and static model paths.
 - `/api/locations` adds bistatic candidate points and uncertainty corridors.
 - `/display/locations` overlays gold bearing evidence on orange delay ellipses.
 - Disabled or unsupported configurations continue running ordinary passive
@@ -387,60 +379,3 @@ The conventional and covariance methods use the already calibrated coherent
 array manifold. Experimental neural, MUSIC, and SBL selectors are not included;
 they require independent timing and real-aircraft validation before becoming
 selectable production methods.
-
-## Frequency-resolved coherent-multipath shadow
-
-A nearby coherent reflector can occupy the same delay sample as the direct
-transmitter. Whole-band covariance then sees one rank-one spatial mode even
-though the path delay remains visible as phase slope across RF frequency. The
-optional frequency-resolved shadow preserves that information without changing
-reference synthesis, detection, tracking, bearing, or Retina output:
-
-```yaml
-process:
-  bearing:
-    frequency_resolved_shadow:
-      enabled: true
-      fft_size: 2048
-      subbands: 24
-      bandwidth_fraction: 0.9
-      diagonal_loading: 0.01
-      capture_seconds: 0.25
-      interval_s: 300
-      timeout_ms: 15000
-      path: /var/lib/vectorwarp-api/calibration/frequency-resolved-reference.json
-```
-
-The API launches a bounded worker that attaches as another read-only Heimdall
-MCHQ client. It derives frequency, sample rate, channel count, channel order,
-element coordinates, array orientation, and transmitter direction from the
-active configuration. There are no channel, frequency, television-standard,
-site, or transmitter-name constants.
-
-Each run accumulates complex cross-spectral matrices across the configured
-subbands, extracts their principal coherent responses, measures rank-one
-fraction and phase curvature, and constructs diagonally loaded direct-
-constrained MVDR candidate weights. Candidate weights use the mathematical
-convention `y = w^H x`. They are diagnostic output only; the processor does not
-load or apply them. The output is atomically replaced, carries a fingerprint of
-the complete RF/geometry model, and is exposed at
-`/api/bearing/frequency-resolved-shadow`.
-
-The same bounded analysis can run as a one-shot during staged deployments
-without changing the active API configuration:
-
-```sh
-node script/run-frequency-resolved-shadow.js \
-  --config-url http://receiver-host:3000/api/config \
-  --output /var/lib/vectorwarp-api/calibration/frequency-resolved-reference.json
-```
-
-When enabled, the API owns this observer's initial run and `interval_s`
-cadence. There is deliberately no packaged systemd timer: a second scheduler
-would create an overlapping Heimdall/MCHQ client. Sites that need a one-shot
-can use the command above while the API-owned observer is disabled.
-
-Promotion requires a separate processor implementation and held-out ADS-B
-comparison across multiple aircraft and sectors. In particular, a well-
-conditioned direct constraint is not by itself proof that suppressing the
-reference composite improves aircraft bearings.

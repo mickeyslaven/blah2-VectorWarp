@@ -11,7 +11,7 @@ const {validateDetectionSample, validateDetectionReplay, validateProductionRepla
 const {BANK_HASH_CONTRACT, detectionBankHash, fitDetectionManifold,
   denseRuntimeCandidate, cfarThreshold} = require('./detection-manifold-fitter');
 const {evaluateDetectionManifoldCandidate, summarizeDetectionManifoldProgress,
-  DetectionManifoldAutomation} = require('./detection-manifold-automation');
+  compareProductionReplay} = require('../script/detection-manifold-evaluator');
 const {compatibilityFingerprint} = require('./manifold-identity');
 
 const polar = phase => [Math.cos(phase), Math.sin(phase)];
@@ -33,7 +33,8 @@ for (let sector = 0; sector < 8; ++sector) for (let pass = 0; pass < 20; ++pass)
   const response = [polar(common), polar(common + .8 * Math.cos(phase)),
     polar(common + .8 * Math.sin(phase))];
   const nuisance = Array.from({length: 5}, () => [0, 1, 2].map(() => [0, 0]));
-  samples.push({schema: 'vectorwarp-manifold-sample-v2', frequency_hz: 539000000,
+  samples.push({schema: 'vectorwarp-manifold-sample-v2',
+    precision_contract: 'binary64-json-roundtrip-v1', frequency_hz: 539000000,
     sample_rate_hz: 2400000, channels: 3, config_fingerprint: 'detection-site',
     manifold_identity: manifoldIdentity,
     receiver_gain_v2: {requested_common_gain: 12, requested_channel_gains: null,
@@ -201,7 +202,7 @@ assert.ok(cfarThreshold({pfa: .1, training_cells: 16, effective_trials: 4}) >
   'effective trial accounting must tighten the candidate threshold');
 
 const config = {capture: {fc: 539000000}, process: {bearing: {manifold_recorder: {}},
-  surveillance_fusion: {detection_manifold_automation: {enabled: true}}}};
+  surveillance_fusion: {beams: 8, effective_beam_trials: 2}}};
 const relaxed = {azimuthBins: 8, elevationBins: 1, gates: {minIndependentPasses: 20,
   minValidationPasses: 8, minMissPasses: 6, minCoveredSectors: 6,
   minValidationSectors: 4, minFitBins: 6,
@@ -213,6 +214,13 @@ const positivesOnly = summarizeDetectionManifoldProgress(samples, config, relaxe
 assert.equal(positivesOnly.positive_control.fit_ready, true);
 assert.equal(positivesOnly.validation.ready, false);
 assert.equal(positivesOnly.collection_ready, false);
+assert.equal(positivesOnly.validation_passes, 0);
+assert.equal(positivesOnly.miss_passes, 0);
+assert.equal(positivesOnly.holdout_nuisance_cells, 0,
+  'detected training rows cannot manufacture independent validation or false-alarm controls');
+assert.equal(positivesOnly.fit_bins, 8);
+assert.equal(positivesOnly.runtime_support.complete, true);
+assert.deepEqual(positivesOnly.runtime_support.elevation_range_deg, [5, 5]);
 const positivesOnlyEvaluation = evaluateDetectionManifoldCandidate(samples, config, relaxed);
 assert.equal(positivesOnlyEvaluation.evaluation.qualified, false,
   'detected positive controls alone must never qualify a candidate');
@@ -291,47 +299,92 @@ assert.ok(sparseProgress.largest_unsupported_gap_deg > relaxed.gates.maxUnsuppor
 const unsupportedReplay = replay.map((row, index) => index < replay.length / 2 ? row :
   {...row, truth: {...row.truth, local_azimuth_deg: row.truth.local_azimuth_deg + 22.5}});
 const unsupportedEvaluation = evaluateDetectionManifoldCandidate([...samples, ...unsupportedReplay],
-  config, {...relaxed, azimuthBins: 16});
+  {...config, process: {...config.process, surveillance_fusion: {
+    ...config.process.surveillance_fusion, beams: 16}}}, {...relaxed, azimuthBins: 16});
 assert.equal(unsupportedEvaluation.evaluation.qualified, false);
 assert.ok(unsupportedEvaluation.evaluation.diagnostic_failures.some(value => /support covers/.test(value)));
 
-const disabled = new DetectionManifoldAutomation({process: {surveillance_fusion: {},
-  bearing: {manifold_recorder: {path: '/tmp/not-read.jsonl'}}}});
-assert.equal(disabled.status().enabled, false);
-assert.equal(disabled.status().promotion_allowed, false);
+const twelveBeamConfig = JSON.parse(JSON.stringify(config));
+twelveBeamConfig.process.surveillance_fusion.beams = 12;
+const twelveBeamOptions = {...relaxed}; delete twelveBeamOptions.azimuthBins;
+const twelveBeam = evaluateDetectionManifoldCandidate(samples, twelveBeamConfig, twelveBeamOptions);
+assert.equal(twelveBeam.manifold.azimuth_bins, 12,
+  'automation must fit the configured production bank without an independent eight-beam default');
+assert.equal(twelveBeam.runtimeCandidate, null, 'eight supported directions cannot fill a twelve-beam bank');
+assert.equal(twelveBeam.progress.runtime_support.complete, false);
+assert.equal(twelveBeam.progress.fit_bins, twelveBeam.manifold.responses.length);
+const twelveBeamSamples = samples.map((row, index) => ({...row,
+  truth: {...row.truth, local_azimuth_deg: index % 12 * 30 + 1}}));
+const twelveDense = evaluateDetectionManifoldCandidate(twelveBeamSamples,
+  twelveBeamConfig, twelveBeamOptions);
+assert.equal(twelveDense.runtimeCandidate.beams, 12);
+assert.equal(twelveDense.runtimeCandidate.responses.length, 12);
+const defaultBeamConfig = JSON.parse(JSON.stringify(twelveBeamConfig));
+delete defaultBeamConfig.process.surveillance_fusion.beams;
+assert.equal(evaluateDetectionManifoldCandidate(twelveBeamSamples, defaultBeamConfig,
+  twelveBeamOptions).runtimeCandidate.beams, 12, 'the optional setting uses the production default');
+assert.throws(() => evaluateDetectionManifoldCandidate(samples, twelveBeamConfig, relaxed),
+  /configured production beam count/, 'legacy conflicting fit options require regeneration');
+const wrongTopology = compareProductionReplay([validateProductionReplay(productionReceipt)],
+  candidateModelSha256, twelveBeamConfig);
+assert.equal(wrongTopology.matching_candidate_passes, 0);
+assert.equal(wrongTopology.beam_topology_mismatches, 1);
+assert.equal(wrongTopology.candidate_hash_mismatches, 0);
+const reducedTrials = compareProductionReplay([validateProductionReplay(productionReceipt)],
+  candidateModelSha256, {...config, process: {...config.process, surveillance_fusion: {
+    ...config.process.surveillance_fusion, effective_beam_trials: 8}}});
+assert.equal(reducedTrials.matching_candidate_passes, 0);
+assert.equal(reducedTrials.beam_trial_mismatches, 1,
+  'matching steering weights cannot qualify receipts scored with a smaller trial penalty');
+const variedElevation = samples.map((row, index) => ({...row,
+  truth: {...row.truth, elevation_deg: 1 + index % 3 * 6}}));
+const variedProgress = summarizeDetectionManifoldProgress(variedElevation, config, relaxed);
+assert.equal(variedProgress.fit_bins, 8,
+  'progress counts the actual fitter bins, not unrelated five-degree elevation bins');
+assert.deepEqual(variedProgress.runtime_support.elevation_range_deg, [1, 13]);
 
-(async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'detection-manifold-'));
+const {spawnSync} = require('child_process');
+const cli = path.join(__dirname, '../script/fit-detection-manifold.js');
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'detection-manifold-offline-'));
+try {
   const samplePath = path.join(directory, 'samples.jsonl');
   const replayPath = path.join(directory, 'independent-replay.jsonl');
+  const configPath = path.join(directory, 'config.json');
+  const candidatePath = path.join(directory, 'candidate.json');
+  const runtimePath = path.join(directory, 'dense-bank.json');
   fs.writeFileSync(samplePath, samples.map(JSON.stringify).join('\n') + '\n');
   fs.writeFileSync(replayPath, replay.map(JSON.stringify).join('\n') + '\n');
-  const positiveOnlyConfig = JSON.parse(JSON.stringify(config));
-  positiveOnlyConfig.process.bearing.manifold_recorder.path = samplePath;
-  positiveOnlyConfig.process.surveillance_fusion.detection_manifold_automation = {
-    enabled: true, corpus_path: samplePath,
-    candidate_path: path.join(directory, 'positive-control-candidate.json')};
-  const positiveOnlyStatus = await new DetectionManifoldAutomation(positiveOnlyConfig)
-    .evaluate({force: true});
-  assert.equal(positiveOnlyStatus.qualified, false);
-  assert.equal(positiveOnlyStatus.state, 'diagnostic-only-native-export-blocked');
-  assert.ok(fs.existsSync(positiveOnlyConfig.process.surveillance_fusion
-    .detection_manifold_automation.candidate_path));
-  const enabledConfig = JSON.parse(JSON.stringify(config));
-  enabledConfig.process.bearing.manifold_recorder.path = samplePath;
-  enabledConfig.process.surveillance_fusion.detection_manifold_automation = {
-    enabled: true, corpus_path: samplePath, validation_path: replayPath,
-    candidate_path: path.join(directory, 'candidate.json')};
-  const unchangedConfig = JSON.stringify(enabledConfig);
-  const automation = new DetectionManifoldAutomation(enabledConfig);
-  const status = await automation.evaluate({force: true});
-  assert.equal(status.promotion_allowed, false);
-  assert.ok(fs.existsSync(enabledConfig.process.surveillance_fusion.detection_manifold_automation.candidate_path),
-    JSON.stringify(status));
-  assert.equal(JSON.stringify(enabledConfig), unchangedConfig,
-    'shadow qualification must not mutate or promote live configuration');
-  assert.equal(fs.existsSync(`${samplePath}.qualified.json`), false,
-    'detection qualification must not write the bearing promotion artifact');
-  fs.rmSync(directory, {recursive: true});
-  console.log('Detection manifold: diagnostic fitting, strict full-bank import boundary, fail-closed qualification, and default-off automation passed.');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+  const configBytes = JSON.stringify(config);
+  fs.writeFileSync(configPath, configBytes);
+  const args = ['--input', samplePath, '--validation', replayPath, '--config', configPath,
+    '--output', candidatePath, '--runtime-output', runtimePath];
+  const refused = spawnSync(process.execPath, [cli, ...args], {encoding: 'utf8'});
+  assert.notEqual(refused.status, 0, 'offline execution requires explicit opt-in');
+  assert.equal(fs.existsSync(candidatePath), false);
+  const fitted = spawnSync(process.execPath, [cli, '--enable-offline-experiment', ...args],
+    {encoding: 'utf8', timeout: 35000});
+  assert.equal(fitted.status, 0, fitted.stderr);
+  const status = JSON.parse(fitted.stdout);
+  assert.equal(status.qualified, false);
+  assert.equal(JSON.parse(fs.readFileSync(runtimePath)).beams, 8);
+  assert.equal(JSON.parse(fs.readFileSync(candidatePath)).schema, 'vectorwarp-detection-manifold-candidate-v1');
+  assert.equal(fs.readFileSync(configPath, 'utf8'), configBytes, 'offline fitting cannot edit configuration');
+  const original = fs.readFileSync(runtimePath, 'utf8');
+  const repeated = spawnSync(process.execPath, [cli, '--enable-offline-experiment', ...args],
+    {encoding: 'utf8', timeout: 35000});
+  assert.notEqual(repeated.status, 0);
+  assert.match(repeated.stderr, /already exists/);
+  assert.equal(fs.readFileSync(runtimePath, 'utf8'), original, 'existing bank bytes must be preserved');
+  const sparseConfig = {...config, process: {...config.process,
+    surveillance_fusion: {...config.process.surveillance_fusion, beams: 12}}};
+  fs.writeFileSync(configPath, JSON.stringify(sparseConfig));
+  const sparseArgs = ['--enable-offline-experiment', '--input', samplePath, '--config', configPath,
+    '--output', path.join(directory, 'sparse.json'), '--runtime-output', path.join(directory, 'sparse-bank.json')];
+  const sparse = spawnSync(process.execPath, [cli, ...sparseArgs], {encoding: 'utf8', timeout: 35000});
+  assert.notEqual(sparse.status, 0);
+  assert.match(sparse.stderr, /Incomplete beam\/elevation support/);
+  assert.equal(fs.existsSync(path.join(directory, 'sparse.json')), false,
+    'a rejected dense fit publishes no candidate');
+  assert.equal(fs.existsSync(path.join(directory, 'sparse-bank.json')), false);
+  console.log('Detection manifold: offline bounded fitting, full-bank import, identity and refusal checks passed.');
+} finally { fs.rmSync(directory, {recursive: true}); }

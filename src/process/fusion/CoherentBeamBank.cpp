@@ -70,7 +70,8 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
 }
 
 void CoherentBeamBank::calibrate(
-  const std::vector<std::complex<double>>& directPathWeights)
+  const std::vector<std::complex<double>>& directPathWeights,
+  const double* channelScale)
 {
   if (directPathWeights.size() != positionsM_.size())
     throw std::invalid_argument("Coherent calibration channel count does not match antenna geometry");
@@ -130,7 +131,7 @@ void CoherentBeamBank::calibrate(
     }
     const auto calibrated = blah2::resident_fusion::calibratedWeights(
       residentSteering, uint32_t(positionsM_.size()), directPathWeights.data(),
-      unity.data(), nullFraction, false);
+      channelScale ? channelScale : unity.data(), nullFraction, channelScale != nullptr);
     for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
       weights_[beam][channel] = std::conj(calibrated[channel]);
   }
@@ -144,29 +145,46 @@ std::unique_ptr<Map<std::complex<double>>> CoherentBeamBank::process(
   const uint32_t rows = maps.front()->get_nRows();
   const uint32_t columns = maps.front()->get_nCols();
   auto fused = std::make_unique<Map<std::complex<double>>>(rows, columns);
-  fused->delay = maps.front()->delay;
-  fused->doppler = maps.front()->doppler;
+  process_into(maps, *fused);
+  return fused;
+}
+
+void CoherentBeamBank::process_into(
+  const std::vector<Map<std::complex<double>> *>& maps,
+  Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams) const
+{
+  if (maps.empty() || maps.front() == nullptr || maps.size() != weights_.front().size())
+    throw std::invalid_argument("Coherent fusion map count does not match antenna geometry");
+  const uint32_t rows = maps.front()->get_nRows();
+  const uint32_t columns = maps.front()->get_nCols();
+  if (fused.get_nRows() != rows || fused.get_nCols() != columns)
+    throw std::invalid_argument("Fused ambiguity-map dimensions do not match");
   for (auto *map : maps)
     if (!map || map->get_nRows() != rows || map->get_nCols() != columns)
       throw std::invalid_argument("Ambiguity-map dimensions do not match");
+  fused.delay = maps.front()->delay;
+  fused.doppler = maps.front()->doppler;
+  if (selectedBeams) selectedBeams->assign(uint64_t(rows) * columns, 0);
 
   for (uint32_t row = 0; row < rows; ++row)
     for (uint32_t column = 0; column < columns; ++column)
     {
       double bestPower = -1;
-      for (const auto& weights : weights_)
+      uint32_t bestBeam = 0;
+      for (uint32_t beam = 0; beam < weights_.size(); ++beam)
       {
+        const auto& weights = weights_[beam];
         std::complex<double> beamValue{0, 0};
         for (std::size_t channel = 0; channel < maps.size(); ++channel)
           beamValue += weights[channel] * maps[channel]->data[row][column];
         const double power = std::norm(beamValue);
-        if (power > bestPower) bestPower = power;
+        if (power > bestPower) { bestPower = power; bestBeam = beam + 1; }
       }
       // Match the existing noncoherent fusion contract: downstream stages
       // consume a real, nonnegative amplitude rather than a complex sample.
-      fused->data[row][column] = {std::sqrt(bestPower), 0};
+      fused.data[row][column] = {std::sqrt(bestPower), 0};
+      if (selectedBeams) (*selectedBeams)[uint64_t(row) * columns + column] = bestBeam;
     }
-  return fused;
 }
 
 std::vector<double> CoherentBeamBank::powerBankAt(

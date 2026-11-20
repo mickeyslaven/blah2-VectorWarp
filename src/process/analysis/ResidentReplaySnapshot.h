@@ -8,7 +8,7 @@ namespace blah2::resident { struct Config; }
 namespace blah2::resident_replay {
 using Hash = std::array<uint8_t,32>;
 constexpr uint32_t version=1,headerBytes=2048;
-constexpr uint64_t byteLimit=256ULL<<20;
+constexpr uint64_t byteLimit=512ULL<<20;
 constexpr uint32_t frameLimit=128;
 
 // No implicit enablement: all provenance and both bounds are mandatory.

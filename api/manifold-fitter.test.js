@@ -15,7 +15,8 @@ const samples = [];
 for (let bin = 0; bin < 12; ++bin) for (let sample = 0; sample < 10; ++sample) {
   const angle = bin * 30 * Math.PI / 180, common = sample * .7;
   const phases = [common, common + 1.1 * Math.cos(angle), common + .8 * Math.sin(angle)];
-  samples.push({schema: 'vectorwarp-manifold-sample-v2', frequency_hz: 539000000,
+  samples.push({schema: 'vectorwarp-manifold-sample-v2',
+    precision_contract: 'binary64-json-roundtrip-v1', frequency_hz: 539000000,
     sample_rate_hz: 2400000,
     channels: 3, config_fingerprint: 'one-site',
     manifold_identity: manifoldIdentity,
@@ -26,6 +27,12 @@ for (let bin = 0; bin < 12; ++bin) for (let sample = 0; sample < 10; ++sample) {
     reference_weights: [common, common + 1.1, common].map(phase => [Math.cos(phase), Math.sin(phase)])});
 }
 const result = fitManifold(samples, {beams: 12, minSamples: 3, minCoverage: 1, maxGapDeg: 45});
+for (const schema of ['vectorwarp-manifold-sample-v1', 'vectorwarp-manifold-sample-v2']) {
+  const legacy = samples.map(row => ({...row, schema}));
+  for (const row of legacy) delete row.precision_contract;
+  assert.throws(() => fitManifold(legacy), /Invalid VectorWarp manifold sample/,
+    'legacy schema labels must not bypass the precision quarantine');
+}
 assert.equal(result.schema, 'vectorwarp-bearing-manifold-v2');
 assert.equal(result.identity.direct_path_beam, 0);
 assert.equal(result.responses.length, 12);

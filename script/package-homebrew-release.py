@@ -19,10 +19,10 @@ TAP = "mickeyslaven/vectorwarp"
 SOURCE_REPOSITORY = "mickeyslaven/blah2-VectorWarp"
 ALLOWED_ROOT_DIRS = {
     ".github", "Formula", "api", "bench", "cmake", "config", "contrib", "core", "docs",
-    "examples", "html", "lib", "oprs", "packaging", "schemas", "script", "src", "test", "vm-lab",
+    "examples", "html", "lib", "oprs", "packaging", "runtime", "schemas", "script", "src", "test", "tools", "vm-lab",
 }
 ALLOWED_SERVICE_DIRS = {"report-relay"}
-ALLOWED_ROOT_FILES = {".gitattributes", ".gitignore", "CMakeLists.txt", "CMakePresets.json", "Doxyfile", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"}
+ALLOWED_ROOT_FILES = {".gitattributes", ".gitignore", "AGENTS.md", "CMakeLists.txt", "CMakePresets.json", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"}
 DENIED_ROOTS = {".git", "bin", "build", "data", "node_modules", "private", "sdk", "secrets"}
 DENIED_FILE_SUFFIXES = {".dmg", ".dylib", ".mchq", ".pkg", ".so"}
 VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.-]+)?$")

@@ -1,4 +1,5 @@
 'use strict';
+const {validRecordedSites} = require('./replay-geographic-sites');
 
 const RECEIVERS = new Set(['Kraken', 'RspDuo', 'Usrp', 'HackRF']);
 const STATES = new Set(['loading', 'playing', 'paused', 'draining', 'complete', 'stopped', 'error', 'live']);
@@ -487,6 +488,35 @@ function usrpHealth(payload, outer, errors) {
       continuous: timing.continuous, sampleRateHz, epochTick, nextTick, samples, blocks}};
   if (epoch !== null) result.deviceTime.epoch = epoch;
   if (recovery !== undefined) result.recovery = recovery;
+  if (payload.inputQuality !== undefined) {
+    const source = payload.inputQuality;
+    if (!object(source) || source.source !== 'uhd-normalized-fc32' ||
+        !Array.isArray(source.channels) || source.channels.length !== 2) {
+      errors.push(`${name}.inputQuality has an invalid schema`);
+    } else {
+      const channels = source.channels.map((channel, index) => {
+        if (!object(channel) || channel.channel !== index ||
+            typeof channel.gainDb !== 'number' || !Number.isFinite(channel.gainDb) ||
+            channel.gainDb < 0 || channel.gainDb > 100)
+          errors.push(`${name}.inputQuality.channels[${index}] has invalid identity or gain`);
+        const sampledComponents = decimal(channel.sampledComponents,
+          `inputQuality.channels[${index}].sampledComponents`);
+        const metric = field => {
+          const value = channel[field];
+          if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)
+            errors.push(`${name}.inputQuality.channels[${index}].${field} must be a fraction`);
+          return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+        };
+        return {channel: index, gainDb: channel.gainDb,
+          sampledComponents, railFraction: metric('railFraction'),
+          nearRailFraction: metric('nearRailFraction'),
+          p999Fraction: metric('p999Fraction'), rmsFraction: metric('rmsFraction')};
+      });
+      result.inputQuality = {source: 'uhd-normalized-fc32', channels,
+        safe: channels.every(channel => BigInt(channel.sampledComponents) > 0n &&
+          channel.railFraction <= .00001 && channel.p999Fraction <= .70)};
+    }
+  }
   return result;
 }
 function hackrfStartup(payload, outer, errors) {
@@ -687,6 +717,7 @@ function status(payload) {
     totalSamples: count(payload.totalSamples, 'totalSamples', errors),
     loops: count(payload.loops, 'loops', errors),
     trailingSamples: count(payload.trailingSamples, 'trailingSamples', errors),
+    replayControlsAvailable: payload.replayControlsAvailable === true,
     recording: payload.recording === true,
     recordingFile: text(payload.recordingFile, 'recordingFile', errors),
     recordingError: errorText(payload.recordingError, 'recordingError', errors),
@@ -711,6 +742,33 @@ function status(payload) {
       value.clipRevision === null)
     errors.push('clipFile and clipSamples require clipRevision');
   if (value.state === 'error' && !value.error) errors.push('error state requires error text');
+  if (payload.replayProvenance !== undefined) {
+    const source = payload.replayProvenance;
+    if (!object(source)) errors.push('replayProvenance must be an object');
+    else {
+      const proof = {};
+      for (const key of ['acquisitionIntegrityValid', 'acquisitionHashTrusted', 'exactAcquisition',
+        'geographicSitesAvailable']) {
+        if (source[key] !== undefined && typeof source[key] !== 'boolean') errors.push(`replayProvenance.${key} must be boolean`);
+        proof[key] = source[key] === true;
+      }
+      for (const key of ['recordingSha256', 'acquisitionSha256']) {
+        proof[key] = text(source[key], `replayProvenance.${key}`, errors, false);
+        if (proof[key] && !/^[a-f0-9]{64}$/.test(proof[key])) errors.push(`replayProvenance.${key} is invalid`);
+      }
+      for (const key of ['geographicSitesReason', 'acquisitionReason', 'gainProvenance'])
+        proof[key] = text(source[key], `replayProvenance.${key}`, errors, false);
+      proof.geographicSites = null;
+      if (proof.geographicSitesAvailable) {
+        if (input !== 'replay' || !proof.acquisitionIntegrityValid || !proof.acquisitionHashTrusted ||
+            !proof.recordingSha256 || !proof.acquisitionSha256 || !validRecordedSites(source.geographicSites))
+          errors.push('replayProvenance geographic sites require authenticated acquisition evidence');
+        else proof.geographicSites = JSON.parse(JSON.stringify(source.geographicSites));
+      } else if (source.geographicSites !== undefined && source.geographicSites !== null)
+        errors.push('Unavailable replay geography must not publish usable sites');
+      value.replayProvenance = proof;
+    }
+  }
   if (value.positionSamples > value.totalSamples && value.totalSamples > 0)
     errors.push('positionSamples exceeds totalSamples');
   if (payload.receiverStartup !== undefined)
@@ -728,7 +786,4 @@ function status(payload) {
   return errors.length ? {valid: false, errors} : {valid: true, value};
 }
 
-function fresh(entry, now = Date.now(), maxAgeMs = 5000) {
-  return !!entry && Number.isFinite(entry.receivedAt) && now - entry.receivedAt <= maxAgeMs;
-}
-module.exports = {status, fresh, MAX_TEXT};
+module.exports = {status, MAX_TEXT};

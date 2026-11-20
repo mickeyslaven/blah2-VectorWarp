@@ -51,6 +51,35 @@ bool smooth(std::size_t value)
     while (value % factor == 0) value /= factor;
   return value == 1;
 }
+
+template <typename Input, typename SharedState, typename ChannelAt>
+std::vector<IlluminatorOutput> process_bank(const Input& input,
+  uint64_t firstInputSample, SharedState* shared,
+  const std::vector<IlluminatorDefinition>& definitions,
+  const std::vector<std::unique_ptr<SubbandChannelizer>>& channelizers,
+  utility::FixedExecutor* executor, ChannelAt channelAt)
+{
+  if (shared)
+  {
+    if (input.size() != shared->channels || std::any_of(input.begin(), input.end(),
+          [&](const auto& channel) { return channelAt(channel) == nullptr; }))
+      throw std::invalid_argument("Illuminator channelizer input count changed");
+    const std::size_t samples = input.empty() ? 0 : channelAt(input.front())->size();
+    for (const auto& channel : input)
+      if (channelAt(channel)->size() != samples)
+        throw std::invalid_argument("Illuminator channelizer inputs are unpaired");
+    return shared->process(samples, firstInputSample, definitions,
+      [&](std::size_t channel, std::size_t sample) {
+        return std::complex<double>((*channelAt(input[channel]))[sample]);
+      });
+  }
+  std::vector<IlluminatorOutput> output(channelizers.size());
+  executor->parallel_for(channelizers.size(), [&](std::size_t index) {
+    output[index] = {definitions[index].id, definitions[index].frequencyHz,
+      channelizers[index]->process(input, firstInputSample)};
+  });
+  return output;
+}
 }
 
 struct IlluminatorChannelizerBank::SharedRasterState
@@ -426,51 +455,18 @@ std::vector<IlluminatorOutput> IlluminatorChannelizerBank::process(
   const std::vector<std::vector<std::complex<float>>>& input,
   uint64_t firstInputSample)
 {
-  if (shared_)
-  {
-    if (input.size() != channelCount_)
-      throw std::invalid_argument("Illuminator channelizer input count changed");
-    const std::size_t samples = input.empty() ? 0 : input.front().size();
-    for (const auto& channel : input)
-      if (channel.size() != samples)
-        throw std::invalid_argument("Illuminator channelizer inputs are unpaired");
-    return shared_->process(samples, firstInputSample, definitions_,
-      [&input](std::size_t channel, std::size_t sample) {
-        return std::complex<double>(input[channel][sample]);
-      });
-  }
-  std::vector<IlluminatorOutput> output(channelizers_.size());
-  executor_->parallel_for(channelizers_.size(), [&](std::size_t index) {
-    output[index] = {definitions_[index].id, definitions_[index].frequencyHz,
-      channelizers_[index]->process(input, firstInputSample)};
-  });
-  return output;
+  return process_bank(input, firstInputSample, shared_.get(),
+    definitions_, channelizers_, executor_.get(),
+    [](const auto& channel) { return &channel; });
 }
 
 std::vector<IlluminatorOutput> IlluminatorChannelizerBank::process(
   const std::vector<const std::deque<std::complex<double>>*>& input,
   uint64_t firstInputSample)
 {
-  if (shared_)
-  {
-    if (input.size() != channelCount_ || std::any_of(input.begin(), input.end(),
-          [](const auto* channel) { return channel == nullptr; }))
-      throw std::invalid_argument("Illuminator channelizer input count changed");
-    const std::size_t samples = input.empty() ? 0 : input.front()->size();
-    for (const auto* channel : input)
-      if (channel->size() != samples)
-        throw std::invalid_argument("Illuminator channelizer inputs are unpaired");
-    return shared_->process(samples, firstInputSample, definitions_,
-      [&input](std::size_t channel, std::size_t sample) {
-        return (*input[channel])[sample];
-      });
-  }
-  std::vector<IlluminatorOutput> output(channelizers_.size());
-  executor_->parallel_for(channelizers_.size(), [&](std::size_t index) {
-    output[index] = {definitions_[index].id, definitions_[index].frequencyHz,
-      channelizers_[index]->process(input, firstInputSample)};
-  });
-  return output;
+  return process_bank(input, firstInputSample, shared_.get(),
+    definitions_, channelizers_, executor_.get(),
+    [](const auto* channel) { return channel; });
 }
 
 void IlluminatorChannelizerBank::reset()

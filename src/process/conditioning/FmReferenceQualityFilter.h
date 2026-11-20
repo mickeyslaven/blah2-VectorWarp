@@ -43,10 +43,13 @@ public:
 
   const Metrics& process(const IqData& input, IqData& output)
   {
-    const auto& samples = input.view_data();
-    if (samples.size() > output.get_n())
+    const auto count = input.sample_view().size();
+    if (count > output.get_n())
       throw std::invalid_argument("FM reference-quality output is too small");
-    auto& result = output.resize_for_write(static_cast<uint32_t>(samples.size()));
+    auto& result = output.resize_contiguous_for_write(static_cast<uint32_t>(count));
+    // Preserve the legacy in-place contract: conversion may retire its deque,
+    // so obtain the reader only after the output's representation is settled.
+    const auto samples = input.sample_view();
     const std::size_t blocks = (samples.size() + blockSamples_ - 1) /
       blockSamples_;
     metrics_ = {blocks, blocks, 1, false};

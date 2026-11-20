@@ -72,6 +72,9 @@ public:
   Source::SampleTimePosition sample_time_position() const override;
   std::vector<double> actual_gain_db() const;
   std::string recording_provenance_json() const override;
+  void set_recording_context(blah2::RecordingContext context) override;
+  std::vector<double> recording_applied_gain_db() const override { return actual_gain_db(); }
+  std::string recording_gain_provenance() const override { return "sample-aligned-receiver-header"; }
 };
 
 #endif

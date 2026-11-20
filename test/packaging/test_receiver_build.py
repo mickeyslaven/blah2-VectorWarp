@@ -67,20 +67,20 @@ exit 0
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_manifests_pin_the_gcc_compatible_rapidjson_snapshot(self):
-        for relative in ("lib/vcpkg.json", "lib/vcpkg-kraken.json"):
-            with self.subTest(manifest=relative):
-                manifest = json.loads((ROOT / relative).read_text(encoding="utf-8"))
-                dependency = next(item for item in manifest["dependencies"]
-                                  if item["name"] == "rapidjson")
-                override = next(item for item in manifest["overrides"]
-                                if item["name"] == "rapidjson")
-                self.assertEqual(dependency, {
-                    "name": "rapidjson", "version>=": "2023-07-17"
-                })
-                self.assertEqual(override, {
-                    "name": "rapidjson", "version-date": "2023-07-17"
-                })
+    def test_manifest_pins_the_gcc_compatible_rapidjson_snapshot(self):
+        manifest = json.loads((ROOT / "lib/vcpkg.json").read_text(encoding="utf-8"))
+        dependency = next(item for item in manifest["dependencies"]
+                          if item["name"] == "rapidjson")
+        override = next(item for item in manifest["overrides"]
+                        if item["name"] == "rapidjson")
+        self.assertEqual(dependency, {
+            "name": "rapidjson", "version>=": "2023-07-17"
+        })
+        self.assertEqual(override, {
+            "name": "rapidjson", "version-date": "2023-07-17"
+        })
+        self.assertEqual(list((ROOT / "lib").glob("vcpkg*.json")),
+                         [ROOT / "lib/vcpkg.json"])
 
     def build_environment(self, with_uhd: bool) -> dict:
         uhd_tools = self.temp / "uhd-tools"
@@ -97,8 +97,53 @@ exit 0
             "PKG_CONFIG_LOG": str(self.temp / "pkg-config.log"),
             "BLAH2_SDRPLAY_INCLUDE_DIR": str(self.sdrplay / "include"),
             "BLAH2_SDRPLAY_LIBRARY": str(self.sdrplay / "lib/libsdrplay_api.so.3.15"),
+            # Receiver subsets are CMake/adapter fault fixtures, never public
+            # installable product builds.
+            "VECTORWARP_INTERNAL_ADAPTER_FIXTURE": "true",
         })
         return environment
+
+    def test_public_build_rejects_receiver_subset_artifacts(self):
+        environment = self.build_environment(True)
+        environment.pop("VECTORWARP_INTERNAL_ADAPTER_FIXTURE")
+        for backend in ("open-test", "kraken", "rspduo", "usrp", "hackrf"):
+            with self.subTest(backend=backend):
+                result = subprocess.run([
+                    "bash", str(BUILD_SCRIPT), "--backend", backend, "--preflight"
+                ], cwd=ROOT, env=environment, text=True, capture_output=True,
+                   check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("use --backend all", result.stderr)
+
+    def test_public_macos_build_rejects_receiver_subset_artifacts(self):
+        environment = self.build_environment(True)
+        environment.pop("VECTORWARP_INTERNAL_ADAPTER_FIXTURE")
+        environment["FAKE_UNAME"] = "Darwin"
+        for backend in ("cpu", "kraken", "rspduo", "usrp", "hackrf"):
+            with self.subTest(backend=backend):
+                result = subprocess.run([
+                    "bash", str(ROOT / "script/build-macos.sh"), "--backend", backend
+                ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("use --backend all", result.stderr)
+
+    def test_macos_default_shell_preserves_optional_receiver_arguments(self):
+        environment = self.build_environment(True)
+        environment["FAKE_UNAME"] = "Darwin"
+        environment["CMAKE_ARGUMENTS"] = str(self.temp / "cmake-arguments")
+        executable(self.tools / "brew", '#!/bin/sh\nprintf "%s\\n" /fixture/homebrew\n')
+        executable(self.tools / "cmake", '#!/bin/sh\nprintf "%s\\n" "$@" >"$CMAKE_ARGUMENTS"\nexit 73\n')
+        for options, rspduo, local in (([], "OFF", "ON"), (["--with-rspduo"], "ON", "OFF")):
+            with self.subTest(options=options):
+                result = subprocess.run([
+                    "/bin/bash", str(ROOT / "script/build-macos.sh"), "--backend", "all",
+                    "--gpu", "off", "--build-dir", str(self.temp / "build"), *options,
+                ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 73, result.stderr)
+                arguments = Path(environment["CMAKE_ARGUMENTS"]).read_text().splitlines()
+                for flag, value in (("USRP", "ON"), ("HACKRF", "ON"), ("RSPDUO", rspduo)):
+                    self.assertIn(f"-DBLAH2_ENABLE_{flag}={value}", arguments)
+                self.assertIn(f"-DBLAH2_LOCAL_BUILD_RSPDUO={local}", arguments)
 
     def cmake_fixture_arguments(self) -> list[str]:
         packages = self.temp / "cmake-packages"
@@ -209,7 +254,7 @@ endif()
             "bash", str(BUILD_SCRIPT), "--backend", "airspy", "--preflight"
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertNotEqual(invalid.returncode, 0)
-        self.assertIn("open-test, kraken, rspduo, usrp, hackrf or all", invalid.stderr)
+        self.assertIn("use --backend all", invalid.stderr)
 
     def test_open_test_preflight_needs_uhd_and_hackrf_but_not_sdrplay(self):
         environment = self.build_environment(True)
@@ -299,6 +344,7 @@ endif()
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
         (artifact / "libexec/check-node-version.js").rename(
             artifact / "libexec/vectorwarp-check-node-version")
+        shutil.copy2(ROOT / "tools/vectorwarp_soak_identity.py", artifact / "libexec/vectorwarp-cohort-check")
         (artifact / "libexec/vectorwarp-check-node-version").chmod(0o755)
         (artifact / 'libexec/vectorwarp').chmod(0o755)
         shutil.copy2(ROOT / 'packaging/deb/preinst', artifact / 'libexec/vectorwarp-quiesce')
@@ -356,6 +402,22 @@ endif()
             sorted(path.name for path in
                    (stage / 'opt/vectorwarp/current/config-examples').glob('*.yml')),
             ['config.yml'])
+
+    def test_installer_rejects_historical_mixed_worker_before_staging(self):
+        for symlink in (False, True):
+            with self.subTest(dangling_symlink=symlink):
+                artifact = self.make_artifact('all', 'Usrp,HackRF,Kraken', 'false')
+                worker = artifact / 'bin/blah2-mixed-worker'
+                if symlink:
+                    worker.symlink_to('absent-historical-worker')
+                else:
+                    executable(worker)
+                stage = self.temp / f'mixed-refusal-{symlink}'
+                result = self.install(artifact, stage)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('historical mixed DSP workers are not part of the unified',
+                              result.stderr)
+                self.assertFalse(stage.exists())
 
     def test_installer_renders_the_validated_compiled_receiver_manifest(self):
         for backend, (receivers, _) in RECEIVERS.items():

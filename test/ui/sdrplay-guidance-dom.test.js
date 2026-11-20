@@ -39,7 +39,7 @@ window.fetch = async (url, options = {}) => {
   return {ok: true, status: 200, headers: {get: () => '"' + 'a'.repeat(64) + '"'},
     json: async () => JSON.parse(JSON.stringify(body))};
 };
-for (const file of ['config_profiles.js', 'kraken_geometry.js', 'config_ui.js'])
+for (const file of ['processing_capabilities.js', 'config_profiles.js', 'kraken_geometry.js', 'config_ui.js'])
   window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const check = async () => {

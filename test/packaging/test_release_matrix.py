@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 import pathlib
+import json
 import re
+import os
+import subprocess
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -19,9 +23,11 @@ class ReleaseMatrixTest(unittest.TestCase):
             ('debian13', 'amd64'), ('debian13', 'arm64'),
             ('fedora44', 'x86_64'), ('fedora44', 'aarch64'),
         }
-        actual = set(re.findall(r'distro: ([\w.]+), format: \w+, arch: (\w+)', workflow))
+        matrix = json.loads(subprocess.check_output(["python3", str(ROOT / "script/artifact-plan.py"), "matrix"], text=True))
+        actual = {(item["distro"], item["arch"]) for item in matrix["include"]}
         self.assertEqual(expected, actual)
-        self.assertEqual(workflow.count('script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test'), 6)
+        self.assertEqual(workflow.count('script/artifact-plan.py native-package'), 3)
+        self.assertNotIn('script/build-native.sh --backend all', workflow)
         self.assertIn('script/test-package-upgrade.sh --previous', workflow)
         self.assertIn('script/test-installed-package.sh --package', workflow)
         self.assertIn('--dragonos-uhd-fixture', workflow)
@@ -38,12 +44,64 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertIn('Dpkg::Options::=--force-confold', upgrade)
         self.assertIn("-f='\\${binary:Package}\\\\t\\${Version}\\\\n'", upgrade)
 
+    def test_debian_package_jobs_refresh_inconsistent_mirrors(self):
+        workflow = (ROOT / '.github/workflows/release-packages.yml').read_text()
+        containerfile = (ROOT / 'test/packaging/Containerfile.service-deb').read_text()
+        retry = (ROOT / 'test/packaging/apt-install-with-retry.sh').read_text()
+        self.assertEqual(workflow.count('test/packaging/apt-install-with-retry.sh'), 1)
+        self.assertIn('/usr/local/bin/apt-install-with-retry', containerfile)
+        self.assertIn('while [ "$attempt" -le 3 ]', retry)
+        self.assertIn('APT::Update::Error-Mode=any', retry)
+        self.assertEqual(retry.count('Acquire::Retries=3'), 2)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            fake_bin = root / 'bin'
+            fake_bin.mkdir()
+            log = root / 'calls'
+            state = root / 'state'
+            lists = root / 'lists'
+            lists.mkdir()
+            (lists / 'stale').write_text('stale')
+            helper = root / 'apt-install-with-retry.sh'
+            helper.write_text(retry.replace('/var/lib/apt/lists', str(lists)))
+            helper.chmod(0o755)
+            apt = fake_bin / 'apt-get'
+            apt.write_text('''#!/bin/sh
+echo "$*" >> "$APT_RETRY_LOG"
+case " $* " in
+  *" update "*)
+    case " $* " in *" APT::Update::Error-Mode=any "*) ;; *) exit 90;; esac
+    if [ ! -e "$APT_RETRY_STATE" ]; then : > "$APT_RETRY_STATE"; exit 100; fi
+    ;;
+esac
+exit 0
+''')
+            apt.chmod(0o755)
+            sleep = fake_bin / 'sleep'
+            sleep.write_text('#!/bin/sh\nexit 0\n')
+            sleep.chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                'PATH': f'{fake_bin}:/usr/bin:/bin',
+                'APT_RETRY_LOG': str(log),
+                'APT_RETRY_STATE': str(state),
+            })
+            subprocess.run([str(helper), 'example-package'],
+                           check=True, env=env, capture_output=True, text=True)
+            calls = log.read_text().splitlines()
+            self.assertEqual(sum(' update' in f' {call}' for call in calls), 2)
+            self.assertEqual(sum(' install ' in f' {call} ' for call in calls), 1)
+            self.assertFalse((lists / 'stale').exists())
+
     def test_local_matrix_matches_ci_and_dragonos_generations(self):
         rows = []
         for line in (ROOT / 'vm-lab/release-matrix.tsv').read_text().splitlines():
             if line and not line.startswith('#'):
                 rows.append(line.split('\t'))
-        targets = {row[6] for row in rows}
+        self.assertTrue(rows)
+        self.assertTrue(all(len(row) == 5 for row in rows))
+        targets = {row[4] for row in rows}
         self.assertTrue({
             'ubuntu22.04/amd64', 'ubuntu22.04/arm64',
             'ubuntu24.04/amd64', 'ubuntu24.04/arm64',
@@ -54,9 +112,10 @@ class ReleaseMatrixTest(unittest.TestCase):
         names = {row[0] for row in rows}
         self.assertTrue({'dragonos-focalx-r37.1', 'dragonos-noble-r9',
                          'dragonos-resolute-r1'}.issubset(names))
-        m2 = [row for row in rows if row[1] == 'm2' and row[2] != 'host']
-        self.assertTrue(m2)
-        self.assertTrue(all(row[7:9] == ['2048', 'lima-serial'] for row in m2))
+        self.assertTrue(all(row[1] in {'ubuntu', 'debian', 'fedora', 'dragonos'}
+                            for row in rows))
+        self.assertEqual((ROOT / 'vm-lab/release-matrix.tsv').read_text().splitlines()[0],
+                         '# target\tos\tversion\tarch\tpackage_target')
 
     def test_macos_has_clean_installs_on_both_runners_and_upgrade(self):
         macos = (ROOT / '.github/workflows/macos.yml').read_text()
@@ -76,8 +135,24 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertIn('TEST_CMAKE_DIR="$BUILD_DIR/cmake-tests"', build)
         self.assertIn('-DBUILD_TESTING=ON -DBLAH2_OUTPUT_DIR="$TEST_OUTPUT_DIR"', build)
         self.assertIn('-DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"', build)
-        self.assertIn("-name 'test*'", build)
-        self.assertIn('release artifact must not contain test executables', package)
+        self.assertIn('--level build --backend "$BACKEND"', build)
+        self.assertIn('--level package', package)
+
+    def test_kraken_companion_uses_selected_build_tree(self):
+        build = (ROOT / 'script/build-native.sh').read_text()
+        self.assertIn('--build-dir "$BUILD_DIR/kraken-native"', build)
+        self.assertNotIn('build-kraken.py" --jobs', build)
+
+    def test_public_build_entrypoints_require_unified_receiver_artifact(self):
+        native = (ROOT / 'script/build-native.sh').read_text()
+        macos = (ROOT / 'script/build-macos.sh').read_text()
+        for script in (native, macos):
+            self.assertIn('VECTORWARP_INTERNAL_ADAPTER_FIXTURE', script)
+            self.assertIn('receiver-subset builds are internal adapter fixtures; use --backend all',
+                          script)
+        package = (ROOT / 'script/package-native.sh').read_text()
+        self.assertIn('script/artifact-plan.py" validate', package)
+        self.assertIn('--level package', package)
 
 
 if __name__ == '__main__':

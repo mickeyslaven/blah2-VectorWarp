@@ -9,8 +9,8 @@ namespace blah2 {
 
 // FFTW 3.3.8 exposes the planner-thread setter but not its getter. Keep the
 // process-configured value alongside the setter so planning scopes can restore
-// it on every supported FFTW release. Frozen mixed-worker DSP sources include
-// this utility intentionally; it contains no DSP implementation or layout.
+// it on every supported FFTW release without duplicating planner state across
+// processing stages.
 inline std::atomic<int>& fftw_planner_thread_setting() {
   static std::atomic<int> setting{1};
   return setting;

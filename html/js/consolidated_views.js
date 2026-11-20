@@ -10,6 +10,16 @@
   const defaults = {diagnostics: 'activity', signal: 'spectrum', detection: 'range-doppler'};
   const requested = new URLSearchParams(window.location.search).get('view');
   const view = choices[kind]?.includes(requested) ? requested : defaults[kind];
+  const titles = {
+    diagnostics: {activity: 'Activity', timing: 'Timing', health: 'Health'},
+    signal: {spectrum: 'Reference spectrum', maxhold: 'Maximum hold'},
+    detection: {range: 'Range history', doppler: 'Doppler history', 'range-doppler': 'Range–Doppler'}
+  };
+  const title = titles[kind]?.[view];
+  if (title) {
+    document.getElementById('view-title').textContent = title;
+    document.title = `VectorWarp · ${title}`;
+  }
 
   document.querySelectorAll('.view-tabs [data-view]').forEach(link => {
     const active = link.dataset.view === view;
@@ -27,17 +37,15 @@
 
   if (kind === 'diagnostics') {
     const content = document.getElementById('consolidated-content');
-    const titles = {activity: 'Activity', timing: 'Timing', health: 'Health'};
-    document.getElementById('view-title').textContent = titles[view];
     if (view === 'timing') {
       window.xTitle = 'Timestamp';
-      window.yTitle = 'Time (ms)';
+      window.yTitle = 'Stage time (ms)';
       content.innerHTML = '<section class="timing-summary" id="presentation-timing" aria-live="polite"><div><strong>Connecting</strong><span>Presentation timing</span></div></section><section class="panel"><div class="visualization" id="data"></div></section>';
-      load('../../js/plot_timing.js?v=consolidated-pages-1');
+      load('../../js/plot_timing.js?v=ui-consistency-30');
     } else {
       document.body.dataset.insightView = view;
       content.innerHTML = '<div id="view-root"></div>';
-      load('../../js/insights.js?v=frame-health-2');
+      load('../../js/insights.js?v=ui-consistency-30');
     }
   } else if (kind === 'signal') {
     if (view === 'maxhold') {
@@ -46,8 +54,8 @@
       // lane's live map instead.
       window.urlMap = '/api/map';
       window.vectorwarpMapMode = 'maxhold';
-      load('../../js/plot_map.js?v=multi-illuminator-2');
-    } else load('../../js/plot_spectrum.js?v=consolidated-pages-1');
+      load('../../js/plot_map.js?v=ui-consistency-30');
+    } else load('../../js/plot_spectrum.js?v=ui-consistency-30');
   } else if (kind === 'detection') {
     const variables = {
       range: ['Timestamp', 'Bistatic Range (km)', 'timestamp', 'delay'],
@@ -56,6 +64,6 @@
     }[view];
     [window.xTitle, window.yTitle, window.xVariable, window.yVariable] = variables;
     window.vectorwarpDetectionHistory = view !== 'range-doppler';
-    load('../../js/plot_detection.js?v=multi-illuminator-2');
+    load('../../js/plot_detection.js?v=ui-consistency-30');
   }
 }());

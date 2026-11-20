@@ -1,0 +1,67 @@
+{
+  "schema": "vectorwarp-unified-gpu-feature-contract-v1",
+  "description": "Supplemental physical acceptance requirements. Scenario definitions are requirements, never execution evidence. The two-channel product harness alone cannot satisfy this contract.",
+  "commonChecks": ["artifact-unchanged", "immutable-resolved-plan", "physical-device-execution", "frame-bound-lineage", "numerical-oracle", "target-present", "absent-target-control", "no-false-track-increase"],
+  "scenarios": [
+    {
+      "id": "resident-multilane-2",
+      "deviceClasses": ["fp64"],
+      "settings": {"lanes": 2, "channels": 2, "reference": "dedicated", "modes": ["cpu", "gpu-resident"]},
+      "checks": ["distinct-lane-signals", "channelizer-complex-phase-parity", "resident-execution-every-lane", "lane-isolation", "map-detection-track-parity", "gap-reset", "epoch-reset"]
+    },
+    {
+      "id": "resident-multilane-8",
+      "deviceClasses": ["fp64"],
+      "settings": {"lanes": 8, "channels": 2, "reference": "dedicated", "modes": ["cpu", "gpu-resident"]},
+      "checks": ["distinct-lane-signals", "channelizer-complex-phase-parity", "resident-execution-every-lane", "lane-isolation", "map-detection-track-parity", "aggregate-memory-bound", "gap-reset", "epoch-reset"]
+    },
+    {
+      "id": "coherent-array-manifold-bearing",
+      "deviceClasses": ["fp64"],
+      "settings": {"lanes": [1, 2], "channels": [3, 5, 8], "reference": "array-subspace", "fusion": ["coherent", "noise-whitened"], "modes": ["gpu-resident"], "oracle": "independent-known-array-scene"},
+      "checks": ["resident-execution-every-lane", "reference-complex-parity", "known-bearing-recovery", "manifold-channel-order", "calibration-identity", "whitened-statistic-calibration", "bad-manifold-refusal", "missing-calibration-refusal", "lane-isolation"]
+    },
+    {
+      "id": "power-tbd-4-single",
+      "deviceClasses": ["fp32", "fp64"],
+      "settings": {"lanes": 1, "maxCpis": 4, "motion": ["integer", "fractional-delay"], "modes": ["cpu", "gpu", "gpu-resident-if-fp64"]},
+      "checks": ["history-warmup", "four-cpi-support", "map-detection-track-parity", "motion-trajectory-oracle", "gap-reset", "epoch-reset", "no-cross-epoch-support"]
+    },
+    {
+      "id": "power-tbd-8-single",
+      "deviceClasses": ["fp32", "fp64"],
+      "settings": {"lanes": 1, "maxCpis": 8, "motion": ["integer", "fractional-delay"], "modes": ["cpu", "gpu", "gpu-resident-if-fp64"]},
+      "checks": ["history-warmup", "four-cpi-support", "eight-cpi-support", "map-detection-track-parity", "motion-trajectory-oracle", "gap-reset", "epoch-reset", "no-cross-epoch-support"]
+    },
+    {
+      "id": "power-tbd-4-multilane",
+      "deviceClasses": ["fp32", "fp64"],
+      "settings": {"lanes": 2, "maxCpis": 4, "motion": ["integer", "fractional-delay"], "modes": ["cpu", "gpu", "gpu-resident-if-fp64"]},
+      "checks": ["history-warmup", "four-cpi-support", "map-detection-track-parity", "motion-trajectory-oracle", "lane-isolation", "gap-reset", "epoch-reset", "no-cross-epoch-support"]
+    },
+    {
+      "id": "power-tbd-8-multilane",
+      "deviceClasses": ["fp32", "fp64"],
+      "settings": {"lanes": 2, "maxCpis": 8, "motion": ["integer", "fractional-delay"], "modes": ["cpu", "gpu", "gpu-resident-if-fp64"]},
+      "checks": ["history-warmup", "four-cpi-support", "eight-cpi-support", "map-detection-track-parity", "motion-trajectory-oracle", "lane-isolation", "gap-reset", "epoch-reset", "no-cross-epoch-support"]
+    },
+    {
+      "id": "coherent-tbd-4-8",
+      "deviceClasses": ["fp64"],
+      "settings": {"lanes": [1, 2], "channels": 5, "maxCpis": [4, 8], "motion": ["integer", "fractional-delay"], "fusion": ["coherent", "noise-whitened"], "modes": ["gpu-resident"], "oracle": "independent-known-array-scene"},
+      "checks": ["history-warmup", "four-cpi-support", "eight-cpi-support", "beam-conditioned-support", "motion-trajectory-oracle", "bearing-support", "gap-reset", "epoch-reset", "no-cross-epoch-support"]
+    },
+    {
+      "id": "failure-injection-portable",
+      "deviceClasses": ["fp32", "fp64"],
+      "settings": {"lanes": [1, 2], "modes": ["auto", "gpu"], "faults": ["startup", "allocation", "worker-exit", "timeout", "numeric-rejection", "input-gap"]},
+      "checks": ["fault-observed-at-requested-boundary", "exact-frame-cpu-recovery", "no-double-consumption", "no-partial-publication", "truthful-fallback-execution", "history-reset", "next-frame-parity", "worker-reaped"]
+    },
+    {
+      "id": "failure-injection-resident",
+      "deviceClasses": ["fp64"],
+      "settings": {"lanes": [1, 2], "modes": ["auto", "gpu-resident"], "faults": ["startup", "allocation", "prepare", "commit", "worker-exit", "timeout", "numeric-rejection", "input-gap"], "statistics": ["power", "resident-only-coherent"]},
+      "checks": ["fault-observed-at-requested-boundary", "equivalent-power-cpu-recovery", "resident-only-fail-closed", "no-partial-publication", "no-stale-products", "no-double-consumption", "history-reset", "truthful-fallback-execution", "worker-reaped"]
+    }
+  ]
+}

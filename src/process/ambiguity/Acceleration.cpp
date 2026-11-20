@@ -1,8 +1,10 @@
 #include "Acceleration.h"
 #include "GpuProcess.h"
+#include "GpuClutterBatch.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -23,6 +25,7 @@ Acceleration::Acceleration(std::string mode, GpuGeometry geometry,
   uint32_t correlation, uint32_t sampleRate, double middle, std::string device, BackendFactory factory,
   TimeSource timeSource)
   : geometry_(geometry), correlation_(correlation), sampleRate_(sampleRate), middle_(middle),
+    backendFactory_(std::move(factory)), deviceSelector_(std::move(device)),
     timeSource_(std::move(timeSource)) {
   if (mode != "auto" && mode != "cpu" && mode != "gpu")
     throw std::invalid_argument("Acceleration must be auto, cpu or gpu");
@@ -44,17 +47,17 @@ Acceleration::Acceleration(std::string mode, GpuGeometry geometry,
     return;
   }
   try {
-    if (factory) gpu_ = factory(geometry_, device);
-    else gpu_ = createGpuProcess(geometry_, device);
+    if (backendFactory_) gpu_ = backendFactory_(geometry_, deviceSelector_);
+    else gpu_ = createGpuProcess(geometry_, deviceSelector_);
     if (!gpu_) throw std::runtime_error("GPU module did not create a processor");
-    status_.device = gpu_->device().name;
+    status_.device = gpu_->device().id;
     status_.state = "checking";
-    status_.reason = "Checking GPU accuracy and speed";
+    status_.reason = "Checking GPU accuracy";
     auto* clutter = dynamic_cast<GpuClutterFrameBackend*>(gpu_.get());
     if (geometry_.clutterSamples && clutter && clutter->clutterAvailable()) {
       clutterStatus_.device = status_.device;
       clutterStatus_.state = "checking";
-      clutterStatus_.reason = "Checking GPU clutter accuracy and speed";
+      clutterStatus_.reason = "Checking GPU clutter accuracy";
     } else if (geometry_.clutterSamples) {
       clutterDisabled_ = true;
       clutterStatus_.state = "fallback";
@@ -63,8 +66,30 @@ Acceleration::Acceleration(std::string mode, GpuGeometry geometry,
   } catch (const std::exception& error) { fallback(error.what()); }
 }
 Acceleration::~Acceleration() = default;
+bool Acceleration::startupPending() const {
+  return gpu_ && (combinedPending_ ||
+    (!ambiguityDisabled_ && checks_ < AmbiguityQualificationFrames) ||
+    (geometry_.clutterSamples && !clutterDisabled_ &&
+      (clutterChecks_ < ClutterQualificationFrames ||
+       combinedChecks_ < CombinedQualificationFrames)));
+}
+void Acceleration::prepareStartup(
+    const std::function<void(unsigned)>& processFrame) {
+  for (unsigned frame = 0; startupPending(); ++frame) {
+    if (frame >= TotalQualificationFrames)
+      throw std::runtime_error("Acceleration startup qualification did not complete");
+    processFrame(frame);
+  }
+}
+void Acceleration::beginFrame() { recoverWorkerIfPending(); }
 double Acceleration::now_ms() const { return timeSource_ ? timeSource_() : monotonic_ms(); }
+namespace {
+template<class T> void release_vector(std::vector<T>& value) {
+  std::vector<T>().swap(value);
+}
+}
 void Acceleration::fallback(const std::string& message) {
+  const bool lostWorker = bool(gpu_) && recoverableWorkerFailure(message);
   gpu_.reset();
   status_.active = "cpu";
   status_.state = "fallback";
@@ -75,23 +100,108 @@ void Acceleration::fallback(const std::string& message) {
     clutterStatus_.state = "fallback";
     clutterStatus_.reason = message;
   }
-  reference_.clear(); surveillance_.clear(); output_.clear();
+  release_vector(reference_);
+  release_vector(surveillance_);
+  release_vector(output_);
+  release_vector(cpuClutter_);
+  combinedPending_ = false;
+  recoveryPending_ = lostWorker;
+  recoveryCooldownFrames_ = 0;
   std::cerr << "Acceleration: " << message << '\n';
+}
+bool Acceleration::recoverableWorkerFailure(const std::string& message) {
+  return message.find("GPU worker ") != std::string::npos &&
+    (message.find("timed out") != std::string::npos ||
+     message.find("stopped unexpectedly") != std::string::npos ||
+     message.find("connection failed") != std::string::npos ||
+     message.find("communication failed") != std::string::npos ||
+     message.find("invalid response") != std::string::npos ||
+     message.find("wrong frame") != std::string::npos ||
+     message.find("no longer available") != std::string::npos);
+}
+void Acceleration::recoverWorkerIfPending() {
+  if (!recoveryPending_ || gpu_) return;
+  if (recoveryCooldownFrames_) { --recoveryCooldownFrames_; return; }
+  try {
+    auto replacement = backendFactory_ ? backendFactory_(geometry_, deviceSelector_) :
+      createGpuProcess(geometry_, deviceSelector_);
+    if (!replacement) throw std::runtime_error("GPU module did not create a processor");
+    auto* clutter = dynamic_cast<GpuClutterFrameBackend*>(replacement.get());
+    const bool clutterReady = !geometry_.clutterSamples ||
+      (clutter && clutter->clutterAvailable());
+    status_.device = replacement->device().id;
+    status_.active = "cpu";
+    status_.state = "checking";
+    status_.reason = "Numerically checking recovered GPU worker";
+    if (!ambiguityDisabled_ && checks_ >= AmbiguityQualificationFrames)
+      checks_ = AmbiguityQualificationFrames - 1;
+    if (geometry_.clutterSamples) {
+      clutterDisabled_ = !clutterReady;
+      clutterStatus_.device = status_.device;
+      clutterStatus_.active = "cpu";
+      clutterStatus_.state = clutterReady ? "checking" : "fallback";
+      clutterStatus_.reason = clutterReady ?
+        "Numerically checking recovered GPU clutter worker" :
+        "Recovered worker has no GPU clutter capability; using CPU clutter";
+      if (clutterReady && clutterChecks_ >= ClutterQualificationFrames)
+        clutterChecks_ = ClutterQualificationFrames - 1;
+    }
+    gpu_ = std::move(replacement);
+    recoveryPending_ = false;
+    recoveryFailures_ = 0;
+    recoveryCooldownFrames_ = 0;
+    std::cerr << "Acceleration: recreated GPU worker " << status_.device
+      << "; numerical requalification required\n";
+  } catch (const std::exception& error) {
+    ++recoveryFailures_;
+    recoveryCooldownFrames_ = 1u << std::min(recoveryFailures_, 4u);
+    status_.reason = std::string("GPU worker recovery failed: ") + error.what();
+    if (geometry_.clutterSamples) clutterStatus_.reason = status_.reason;
+    std::cerr << "Acceleration: " << status_.reason << "; retry in "
+      << recoveryCooldownFrames_ << " frames\n";
+  }
 }
 void Acceleration::disableAmbiguity(const std::string& message) {
   ambiguityDisabled_ = true;
   status_.active = "cpu";
   status_.state = "fallback";
   status_.reason = message;
-  reference_.clear(); surveillance_.clear(); output_.clear();
+  release_vector(reference_);
+  release_vector(surveillance_);
+  release_vector(output_);
+  if (!combinedPending_) release_vector(cpuClutter_);
+  // A worker with no remaining eligible stage can release its
+  // process and device allocations immediately instead of retaining idle GPU
+  // memory for the rest of the capture session.
+  if (!geometry_.clutterSamples || clutterDisabled_) gpu_.reset();
   std::cerr << "Acceleration: " << message << '\n';
 }
 bool Acceleration::processClutter(const IqData& reference,
     const std::vector<IqData*>& surveillance, const ClutterCpuRun& cpuRun) {
+  return processClutter(reference, surveillance, cpuRun, {});
+}
+bool Acceleration::processClutter(const IqData& reference,
+    const std::vector<IqData*>& surveillance, const ClutterCpuRun& cpuRun,
+    const CpuRun& hostWork) {
+  recoverWorkerIfPending();
   if (combinedPending_)
     throw std::logic_error("GPU clutter frame was not followed by ambiguity processing");
   clutterTiming_ = {};
+  clutterStatus_.gpuExecutionBackend.clear();
+  bool hostWorkAttempted = false;
+  std::exception_ptr hostWorkFailure;
+  const auto runHostWork = [&] {
+    if (hostWorkAttempted) return;
+    hostWorkAttempted = true;
+    try { if (hostWork) hostWork(); }
+    catch (...) { hostWorkFailure = std::current_exception(); }
+  };
+  const auto requireHostWork = [&] {
+    runHostWork();
+    if (hostWorkFailure) std::rethrow_exception(hostWorkFailure);
+  };
   const auto runCpu = [&] {
+    requireHostWork();
     clutterTiming_.cpuExecuted = true;
     return cpuRun();
   };
@@ -99,15 +209,16 @@ bool Acceleration::processClutter(const IqData& reference,
   auto* backend = dynamic_cast<GpuClutterFrameBackend*>(gpu_.get());
   if (!backend || !backend->clutterAvailable()) {
     clutterDisabled_ = true;
+    clutterStatus_.active = "cpu";
     clutterStatus_.state = "fallback";
     clutterStatus_.reason = "GPU clutter processing is unavailable; using CPU clutter";
     return runCpu();
   }
   const size_t samples = geometry_.clutterSamples;
-  if (reference.view_data().size() < samples || surveillance.size() != geometry_.channels)
+  if (reference.sample_view().size() < samples || surveillance.size() != geometry_.channels)
     throw std::invalid_argument("Incomplete input for GPU clutter processing");
   for (const auto* channel : surveillance)
-    if (!channel || channel->view_data().size() < samples)
+    if (!channel || channel->sample_view().size() < samples)
       throw std::invalid_argument("Surveillance CPI is shorter than GPU clutter input");
   const double gpuStart = now_ms();
   bool inputCommitted = false;
@@ -118,28 +229,38 @@ bool Acceleration::processClutter(const IqData& reference,
         frame.surveillanceCount != samples * geometry_.channels ||
         frame.outputCount != samples * geometry_.channels)
       throw std::runtime_error("GPU clutter shared-frame dimensions changed; using CPU");
-    const auto& source = reference.view_data();
-    for (size_t i = 0; i < samples; ++i) {
-      const int64_t shifted = (int64_t(i) - geometry_.clutterDelayMin) % int64_t(samples);
-      frame.reference[i] = source[shifted < 0 ? shifted + samples : shifted];
-    }
+    const auto& source = reference.sample_view();
+    copyClutterReference(source, frame.reference, samples, geometry_.clutterDelayMin);
     for (size_t channel = 0; channel < surveillance.size(); ++channel) {
-      const auto& input = surveillance[channel]->view_data();
-      for (size_t i = 0; i < samples; ++i)
-        frame.surveillance[channel * samples + i] = input[i];
+      const auto& input = surveillance[channel]->sample_view();
+      input.copy_to(frame.surveillance + channel * samples, samples);
     }
     const double dispatchStart = now_ms();
     clutterTiming_.prepareMs = dispatchStart - gpuStart;
-    if (!backend->processClutterFrame()) {
+    auto* overlap = dynamic_cast<GpuClutterHostWorkBackend*>(gpu_.get());
+    // The worker sees copied buffers. Host work reads the unchanged FP64 IQ;
+    // even a failed callback is drained before any result or fallback commits.
+    bool clutterAccepted;
+    if (hostWork && overlap)
+      clutterAccepted = overlap->processClutterFrameWithHostWork(runHostWork);
+    else {
+      requireHostWork();
+      clutterAccepted = backend->processClutterFrame();
+    }
+    // A normal clutterRejected reply is still completed GPU work; execution
+    // telemetry describes work performed, independently of output admission.
+    clutterTiming_.gpuExecuted = true;
+    clutterStatus_.gpuExecutionBackend = "vulkan";
+    requireHostWork();
+    if (!clutterAccepted) {
       clutterDisabled_ = true;
       clutterStatus_.active = "cpu";
       clutterStatus_.state = "fallback";
-      clutterStatus_.reason = "GPU clutter precision guard rejected the frame; using CPU clutter";
+      clutterStatus_.reason = "GPU clutter unavailable or precision guard rejected the frame; using CPU clutter";
       return runCpu();
     }
     const double acceptStart = now_ms();
     clutterTiming_.dispatchMs = acceptStart - dispatchStart;
-    clutterTiming_.gpuExecuted = true;
     if (!std::all_of(frame.output, frame.output + frame.outputCount, [](auto value) {
           return std::isfinite(value.real()) && std::isfinite(value.imag());
         })) throw std::runtime_error("GPU returned invalid clutter data; using CPU");
@@ -160,7 +281,7 @@ bool Acceleration::processClutter(const IqData& reference,
     }
     std::vector<std::deque<std::complex<double>>> candidate(surveillance.size());
     for (size_t channel = 0; channel < surveillance.size(); ++channel) {
-      const auto& original = surveillance[channel]->view_data();
+      const auto& original = surveillance[channel]->sample_view();
       for (size_t i = 0; i < samples; ++i)
         candidate[channel].push_back(original[i] -
           std::complex<double>(frame.output[channel * samples + i]));
@@ -181,7 +302,7 @@ bool Acceleration::processClutter(const IqData& reference,
         double error = 0, filtered = 0, input = 0;
         double maxError = 0, maxFiltered = 0, maxInput = 0;
         size_t maxErrorSample = 0;
-        const auto& expected = surveillance[channel]->view_data();
+        const auto& expected = surveillance[channel]->sample_view();
         for (size_t i = 0; i < samples; ++i) {
           const std::complex<double> actual = candidate[channel][i];
           const double delta = std::norm(actual - expected[i]);
@@ -230,12 +351,10 @@ bool Acceleration::processClutter(const IqData& reference,
       clutterStatus_.cpuMs = median(clutterCpuTimes_);
       clutterStatus_.gpuMs = median(clutterGpuTimes_);
       if (qualifying && ++clutterChecks_ == ClutterQualificationFrames) {
-        if (clutterStatus_.requested == "auto" &&
-            clutterStatus_.gpuMs >= clutterStatus_.cpuMs * .95) {
-          clutterDisabled_ = true;
-          clutterStatus_.active = "cpu";
-          clutterStatus_.state = "fallback";
-          clutterStatus_.reason = "CPU clutter is faster for these settings";
+        if (combinedChecks_ >= CombinedQualificationFrames) {
+          clutterStatus_.active = "vulkan";
+          clutterStatus_.state = "ready";
+          clutterStatus_.reason.clear();
         } else {
           clutterStatus_.state = "checking";
           clutterStatus_.reason = "Checking composed GPU clutter and ambiguity output";
@@ -243,8 +362,10 @@ bool Acceleration::processClutter(const IqData& reference,
       }
       if (!qualifying && !clutterDisabled_) {
         cpuClutter_.clear(); cpuClutter_.reserve(surveillance.size());
-        for (const auto* channel : surveillance)
-          cpuClutter_.emplace_back(channel->view_data());
+        for (const auto* channel : surveillance) {
+          const auto source = channel->sample_view();
+          cpuClutter_.emplace_back(source.begin(), source.end());
+        }
         for (size_t channel = 0; channel < surveillance.size(); ++channel)
           surveillance[channel]->replace(std::move(candidate[channel]));
         combinedPending_ = true;
@@ -256,6 +377,7 @@ bool Acceleration::processClutter(const IqData& reference,
     clutterStatus_.gpuMs = gpuMs;
     return true;
   } catch (const std::exception& error) {
+    if (hostWorkFailure) std::rethrow_exception(hostWorkFailure);
     // A startup CPU oracle may have already mutated part of the
     // frame before throwing. It is not safe to run that callback a second time.
     if (clutterTiming_.cpuExecuted || inputCommitted) throw;
@@ -266,15 +388,51 @@ bool Acceleration::processClutter(const IqData& reference,
 void Acceleration::process(const std::deque<std::complex<double>>& reference,
   const std::vector<IqData*>& surveillance, const std::vector<Ambiguity*>& cpu,
   const CpuRun& cpuRun) {
-  if (!gpu_) { cpuRun(); return; }
+  process(IqSampleView(reference), surveillance, cpu, cpuRun);
+}
+void Acceleration::process(IqSampleView reference,
+  const std::vector<IqData*>& surveillance, const std::vector<Ambiguity*>& cpu,
+  const CpuRun& cpuRun) {
+  processInput(reference, surveillance, nullptr, {}, 0, 0, cpu, cpuRun);
+}
+void Acceleration::processBorrowed(
+    const std::complex<double>* rotatedReference,
+    const std::vector<const std::complex<double>*>& filteredSurveillance,
+    uint32_t fullSamples, int32_t referenceRotation,
+    const std::vector<Ambiguity*>& cpu, const CpuRun& cpuRun) {
+  static const std::deque<std::complex<double>> emptyReference;
+  std::vector<IqData*> placeholders(filteredSurveillance.size(), nullptr);
+  processInput(emptyReference, placeholders, rotatedReference,
+    filteredSurveillance, fullSamples, referenceRotation, cpu, cpuRun);
+}
+void Acceleration::processInput(
+    IqSampleView reference,
+    const std::vector<IqData*>& surveillance,
+    const std::complex<double>* borrowedReference,
+    const std::vector<const std::complex<double>*>& borrowedSurveillance,
+    uint32_t borrowedSamples, int32_t borrowedRotation,
+    const std::vector<Ambiguity*>& cpu, const CpuRun& cpuRun) {
+  if (!geometry_.clutterSamples) recoverWorkerIfPending();
+  const bool borrowed = borrowedReference != nullptr;
+  if (borrowed && (clutterAvailable() || combinedPending_))
+    throw std::invalid_argument(
+      "Borrowed ambiguity input requires rejected or unavailable GPU clutter");
+  ambiguityGpuExecuted_ = false;
+  status_.gpuExecutionBackend.clear();
+  ambiguityCpuExecuted_ = false;
+  const auto runCpu = [&] {
+    ambiguityCpuExecuted_ = true;
+    cpuRun();
+  };
+  if (!gpu_) { runCpu(); return; }
   if (ambiguityDisabled_) {
-    if (!combinedPending_) { cpuRun(); return; }
+    if (!combinedPending_) { runCpu(); return; }
     if (cpuClutter_.size() != surveillance.size() || cpu.size() != surveillance.size())
       throw std::runtime_error("CPU composed clutter oracle dimensions changed");
     // With CPU ambiguity selected, qualify GPU clutter composition by running
     // the same CPU ambiguity first on GPU-filtered IQ, then on the saved FP64
     // CPU-filtered IQ. The second result owns the frame delivered downstream.
-    cpuRun();
+    runCpu();
     std::vector<std::vector<std::vector<std::complex<double>>>> candidateMaps;
     candidateMaps.reserve(cpu.size());
     for (const auto* processor : cpu) candidateMaps.push_back(processor->result()->data);
@@ -282,7 +440,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       surveillance[channel]->replace(std::move(cpuClutter_[channel]));
     cpuClutter_.clear();
     combinedPending_ = false;
-    cpuRun();
+    runCpu();
     bool invalid = false;
     double worstRms = 0, worstPeak = 0;
     std::ostringstream failures;
@@ -329,26 +487,21 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       return;
     }
     if (++combinedChecks_ == CombinedQualificationFrames) {
-      if (clutterStatus_.requested == "auto" &&
-          clutterStatus_.gpuMs >= clutterStatus_.cpuMs * .95) {
-        clutterDisabled_ = true;
-        clutterStatus_.active = "cpu";
-        clutterStatus_.state = "fallback";
-        clutterStatus_.reason = "CPU clutter is faster for these settings";
-      } else {
-        clutterStatus_.active = "vulkan";
-        clutterStatus_.state = "ready";
-        clutterStatus_.reason.clear();
-      }
+      clutterStatus_.active = "vulkan";
+      clutterStatus_.state = "ready";
+      clutterStatus_.reason.clear();
     }
     return;
   }
   const uint64_t samples = uint64_t(correlation_) * geometry_.doppler;
   if (surveillance.size() != geometry_.channels || cpu.size() != geometry_.channels ||
-      reference.size() < samples)
+      (borrowed ? borrowedSamples < samples : reference.size() < samples) ||
+      (borrowed && borrowedSurveillance.size() != geometry_.channels))
     throw std::invalid_argument("Incomplete input for GPU radar processing");
-  for (const auto* input : surveillance)
-    if (input->view_data().size() < samples)
+  for (size_t channel = 0; channel < surveillance.size(); ++channel)
+    if (borrowed ? borrowedSurveillance[channel] == nullptr :
+        (!surveillance[channel] ||
+          surveillance[channel]->sample_view().size() < samples))
       throw std::invalid_argument("Surveillance CPI is shorter than ambiguity input");
   const double gpuStart = now_ms();
   bool cpuStarted = false;
@@ -380,11 +533,19 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
     // producer zeroed live samples before immediately overwriting them and
     // interleaved writes across every surveillance channel.
     auto referenceSample = reference.begin();
+    uint32_t borrowedReferenceIndex = 0;
+    if (borrowed) {
+      const int64_t start = int64_t(borrowedRotation) % borrowedSamples;
+      borrowedReferenceIndex = uint32_t(start < 0 ? start + borrowedSamples : start);
+    }
     for (uint32_t d = 0; d < geometry_.doppler; ++d) {
       const size_t offset = size_t(d) * geometry_.range;
       for (uint32_t r = 0; r < correlation_; ++r) {
         const size_t sample = size_t(d) * correlation_ + r;
-        auto value = *referenceSample++;
+        auto value = borrowed ? borrowedReference[borrowedReferenceIndex] :
+          *referenceSample++;
+        if (borrowed && ++borrowedReferenceIndex == borrowedSamples)
+          borrowedReferenceIndex = 0;
         if (middle_ != 0)
           value *= std::polar(1.0, 2 * std::acos(-1.0) * middle_ * sample / sampleRate_);
         referenceData[offset + r] = value;
@@ -393,14 +554,24 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
         referenceData + offset + geometry_.range, std::complex<float>{});
     }
     for (size_t channel = 0; channel < surveillance.size(); ++channel) {
-      auto source = surveillance[channel]->view_data().begin();
       auto* destination = surveillanceData + channel * rangeElements;
-      for (uint32_t d = 0; d < geometry_.doppler; ++d) {
-        const size_t offset = size_t(d) * geometry_.range;
-        std::copy_n(source, correlation_, destination + offset);
-        source += correlation_;
-        std::fill(destination + offset + correlation_,
-          destination + offset + geometry_.range, std::complex<float>{});
+      if (borrowed) {
+        const auto* source = borrowedSurveillance[channel];
+        for (uint32_t d = 0; d < geometry_.doppler; ++d) {
+          const size_t offset = size_t(d) * geometry_.range;
+          std::copy_n(source, correlation_, destination + offset);
+          source += correlation_;
+          std::fill(destination + offset + correlation_,
+            destination + offset + geometry_.range, std::complex<float>{});
+        }
+      } else {
+        const auto source = surveillance[channel]->sample_view();
+        for (uint32_t d = 0; d < geometry_.doppler; ++d) {
+          const size_t offset = size_t(d) * geometry_.range;
+          source.copy_to(destination + offset, correlation_, size_t(d) * correlation_);
+          std::fill(destination + offset + correlation_,
+            destination + offset + geometry_.range, std::complex<float>{});
+        }
       }
     }
     const std::complex<float>* outputData;
@@ -414,6 +585,10 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       outputData = output_.data();
       outputCount = output_.size();
     }
+    // A returned frame completed on the GPU even if the numerical/output
+    // admission checks below reject it and recompute on CPU.
+    ambiguityGpuExecuted_ = true;
+    status_.gpuExecutionBackend = "vulkan";
     const size_t perChannel = size_t(geometry_.doppler) * geometry_.delays;
     if (outputCount != perChannel * geometry_.channels ||
         !std::all_of(outputData, outputData + outputCount, [](auto value) {
@@ -431,7 +606,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       cpuClutter_.clear();
       combinedPending_ = false;
       cpuStarted = true;
-      cpuRun();
+      runCpu();
       bool invalid = false;
       double worstRms = 0, worstPeak = 0;
       std::ostringstream failures;
@@ -479,17 +654,9 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
         return;
       }
       if (++combinedChecks_ == CombinedQualificationFrames) {
-        if (clutterStatus_.requested == "auto" &&
-            clutterStatus_.gpuMs >= clutterStatus_.cpuMs * .95) {
-          clutterDisabled_ = true;
-          clutterStatus_.active = "cpu";
-          clutterStatus_.state = "fallback";
-          clutterStatus_.reason = "CPU clutter is faster for these settings";
-        } else {
-          clutterStatus_.active = "vulkan";
-          clutterStatus_.state = "ready";
-          clutterStatus_.reason.clear();
-        }
+        clutterStatus_.active = "vulkan";
+        clutterStatus_.state = "ready";
+        clutterStatus_.reason.clear();
       }
       return;
     }
@@ -498,7 +665,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       // complex bin on every channel before any GPU result can reach detection.
       const double cpuStart = now_ms();
       cpuStarted = true;
-      cpuRun();
+      runCpu();
       const double cpuMs = now_ms() - cpuStart;
       for (size_t channel = 0; channel < cpu.size(); ++channel) {
         double signal = 0, error = 0, peak = 0, maxError = 0;
@@ -523,31 +690,24 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       cpuTimes_.push_back(cpuMs); gpuTimes_.push_back(gpuMs);
       status_.cpuMs = median(cpuTimes_); status_.gpuMs = median(gpuTimes_);
       if (++checks_ == AmbiguityQualificationFrames) {
-        if (status_.requested == "auto" && status_.gpuMs >= status_.cpuMs * .95) {
-          disableAmbiguity("CPU is faster for these settings"); return;
-        }
+        // AUTO retains correctness-qualified GPU work. Timings are diagnostic,
+        // not a noisy short-window admission policy or a steady-state demotion.
         status_.active = "vulkan"; status_.state = "ready"; status_.reason.clear();
         std::cout << "Acceleration: Vulkan / " << status_.device << '\n';
       }
       return;
     }
     inputRetired = true; // No CPU retry once any input retirement has begun.
-    for (auto* input : surveillance)
-      input->discard_front(static_cast<uint32_t>(samples));
-    // Qualification measures GPU transform/import before retirement because
-    // CPU owns those frames for accuracy comparison. AUTO additionally checks
-    // the complete accepted GPU path below; it is not a whole-pipeline tuner.
-    // The frozen recorded-IQ benchmark campaign predates this safeguard.
-    if (status_.requested == "auto") {
-      sustainedGpuTimes_.push_back(now_ms() - gpuStart);
-      status_.gpuMs = median(sustainedGpuTimes_);
-      if (sustainedGpuTimes_.size() == 5) {
-        if (status_.gpuMs >= status_.cpuMs * .95)
-          disableAmbiguity("CPU was faster than sustained GPU processing");
-        else
-          sustainedGpuTimes_.clear();
-      }
-    }
+    if (!borrowed)
+      for (auto* input : surveillance)
+        input->discard_front(static_cast<uint32_t>(samples));
+    // Startup qualification compares the same ambiguity work on CPU and GPU.
+    // Do not revisit that decision using loaded live-call latency after
+    // capture is admitted: worker scheduling and load phase can bias that
+    // wall time, while status_.cpuMs is a frozen pre-capture baseline.  The
+    // mismatched phases can demote a proven GPU path to a CPU path that cannot
+    // sustain the receiver. Runtime GPU faults and invalid results still take
+    // the exception fallback above.
   } catch (const std::exception& error) {
     if (combinedPending_) {
       for (size_t channel = 0; channel < surveillance.size() &&
@@ -558,7 +718,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
     if (cpuStarted || inputRetired) throw; // Never rerun an already-consumed frame.
     // GPU never consumes input: this exact frame can safely be rerun on CPU.
     fallback(error.what());
-    cpuRun();
+    runCpu();
   }
 }
 }

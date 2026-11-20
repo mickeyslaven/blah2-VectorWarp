@@ -42,6 +42,14 @@ assert.equal(root.children[0].querySelector('.config-group-heading'), null,
 assert.ok(root.children[0].classList.contains('config-group-single'));
 assert.equal(root.querySelectorAll('.config-field').length, 6,
   'Changing disclosure depth preserves every setting');
+const direct = disclosure(2);
+direct.dataset.configGroup = 'process.example';
+const directInline = window.finishSettingsGroup(direct,
+  direct.querySelector(':scope > summary'), direct.querySelector(':scope > .config-fields'), false);
+assert.equal(directInline.tagName, 'SECTION');
+assert.equal(directInline.dataset.configGroup, 'process.example');
+assert.equal(directInline.querySelectorAll('.config-field').length, 2,
+  'Recursive rendering and post-render normalization share one inline-group transform');
 const panels = window.document.createElement('div');
 panels.innerHTML = '<section id="settings-panel-capture"><details class="kraken-geometry"></details></section>' +
   '<section id="settings-panel-array"></section>';

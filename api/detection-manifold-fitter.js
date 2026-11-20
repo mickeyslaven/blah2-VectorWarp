@@ -77,26 +77,20 @@ function passBalancedResponse(rows, field) {
   return {response, training_passes: passes.size, training_samples: rows.length};
 }
 
-function fitDetectionManifold(rawSamples, {azimuthBins = 8, elevationBins = 1,
-  minTrainingPassesPerBin = 2, corpusSha256 = null} = {}) {
+function detectionSupport(training, {azimuthBins = 12, elevationBins = 1,
+  minTrainingPassesPerBin = 2} = {}) {
   if (!Number.isInteger(azimuthBins) || azimuthBins < 4 || azimuthBins > 360 ||
       !Number.isInteger(elevationBins) || elevationBins < 1 ||
       !Number.isInteger(minTrainingPassesPerBin) || minTrainingPassesPerBin < 1)
     throw new Error('Invalid detection manifold fit settings');
-  const corpus = buildDetectionCorpus(rawSamples, {corpusSha256});
-  if (!corpus.training.length) throw new Error('No pass-disjoint detection training evidence');
-  const first = corpus.training[0], identity = clone(first.manifold_identity);
-  const directAzimuth = angle(first.direct_path_local_azimuth_deg);
-  if (corpus.training.some(row => canonical(row.manifold_identity) !== canonical(identity) ||
-      Math.abs(angle(row.direct_path_local_azimuth_deg) - directAzimuth) > 1e-6))
-    throw new Error('Detection training requires one exact installed identity and fixed-transmitter anchor');
   // Fit support only from the pass-disjoint training partition. Using held-out
   // or replay rows here leaks evaluation geometry into the runtime candidate.
-  const elevations = corpus.training.map(row => row.truth.elevation_deg);
+  const elevations = training.map(row => row.truth.elevation_deg);
+  if (!elevations.length) return {elevationRange: null, bins: new Map()};
   const elevationRange = [Math.min(...elevations), Math.max(...elevations)];
   const elevationWidth = Math.max(1e-9, elevationRange[1] - elevationRange[0]);
   const bins = new Map();
-  for (const row of corpus.training) {
+  for (const row of training) {
     const azimuth = azimuthBin(row.truth.local_azimuth_deg, azimuthBins);
     const elevation = Math.min(elevationBins - 1,
       Math.floor((row.truth.elevation_deg - elevationRange[0]) / elevationWidth * elevationBins));
@@ -104,9 +98,24 @@ function fitDetectionManifold(rawSamples, {azimuthBins = 8, elevationBins = 1,
     if (!bins.has(key)) bins.set(key, []);
     bins.get(key).push(row);
   }
+  for (const [key, rows] of bins)
+    if (new Set(rows.map(row => row._pass_id)).size < minTrainingPassesPerBin) bins.delete(key);
+  return {elevationRange, bins};
+}
+
+function fitDetectionManifold(rawSamples, {azimuthBins = 12, elevationBins = 1,
+  minTrainingPassesPerBin = 2, corpusSha256 = null} = {}) {
+  const corpus = buildDetectionCorpus(rawSamples, {corpusSha256});
+  if (!corpus.training.length) throw new Error('No pass-disjoint detection training evidence');
+  const first = corpus.training[0], identity = clone(first.manifold_identity);
+  const directAzimuth = angle(first.direct_path_local_azimuth_deg);
+  if (corpus.training.some(row => canonical(row.manifold_identity) !== canonical(identity) ||
+      Math.abs(angle(row.direct_path_local_azimuth_deg) - directAzimuth) > 1e-6))
+    throw new Error('Detection training requires one exact installed identity and fixed-transmitter anchor');
+  const {elevationRange, bins} = detectionSupport(corpus.training,
+    {azimuthBins, elevationBins, minTrainingPassesPerBin});
   const responses = [];
   for (const [key, rows] of bins) {
-    if (new Set(rows.map(row => row._pass_id)).size < minTrainingPassesPerBin) continue;
     const supportElevations = rows.map(row => row.truth.elevation_deg);
     responses.push({key, azimuth_bin: Number(key.split(':')[0]),
       elevation_bin: Number(key.split(':')[1]),
@@ -220,5 +229,5 @@ function denseRuntimeCandidate(model) {
     positive_corpus_sha256: model.calibration?.positive_corpus_sha256 || null};
 }
 
-module.exports = {BANK_HASH_CONTRACT, detectionBankHash, fitDetectionManifold,
+module.exports = {BANK_HASH_CONTRACT, detectionBankHash, detectionSupport, fitDetectionManifold,
   denseRuntimeCandidate, responseFor, statistic, cfarThreshold};

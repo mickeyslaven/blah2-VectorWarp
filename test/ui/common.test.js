@@ -7,7 +7,11 @@ function page(origin, apiOrigin = origin) {
   const calls = [];
   const storage = new Map();
   const session = new Map();
-  const labels = {'live-status': {innerHTML: ''}, 'adsb-status': {innerHTML: '', hidden: true},
+  const label = extra => ({innerHTML: '', ...extra,
+    replaceChildren(...children) {
+      this.innerHTML = children.map(child => child.textContent || '').join('');
+    }});
+  const labels = {'live-status': label(), 'adsb-status': label({hidden: true}),
     'processor-alert': {textContent: '', hidden: true},
     'receiver-device-alert': {textContent: '', hidden: true}};
   const state = {radar: 'receiving', adsbEnabled: false, errors: [], restart: {state: 'idle'},
@@ -15,7 +19,9 @@ function page(origin, apiOrigin = origin) {
     failWrite: false, failStatus: false, stallBody: false};
   const context = vm.createContext({
     URL, URLSearchParams, AbortController,
-    document: {hidden: false, getElementById: id => labels[id] || null, querySelectorAll: () => []},
+    document: {hidden: false, getElementById: id => labels[id] || null, querySelectorAll: () => [],
+      createElement: () => ({className: '', textContent: ''}),
+      createTextNode: textContent => ({textContent})},
     window: {location: new URL(origin), innerWidth: 1280, setTimeout, clearTimeout,
       localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)},
       sessionStorage: {getItem: key => session.get(key), setItem: (key, value) => session.set(key, value)}},
@@ -63,9 +69,9 @@ function page(origin, apiOrigin = origin) {
   assert.equal(toggle.headers['X-VectorWarp-Intent'], 'recording-toggle-v1');
 
   const test = page('http://radar.local:9876');
-  const stableStatus = {writes: 0, _html: '', set innerHTML(value) {
-    this.writes++; this._html = value;
-  }, get innerHTML() { return this._html; }};
+  const stableStatus = {writes: 0, innerHTML: '', replaceChildren(...children) {
+    this.writes++; this.innerHTML = children.map(child => child.textContent || '').join('');
+  }};
   test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'ONLINE', true);
   test.context.updateLiveStatusLabel(stableStatus, 'RADAR', 'ONLINE', true);
   assert.equal(stableStatus.writes, 1,

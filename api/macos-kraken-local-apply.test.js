@@ -47,7 +47,7 @@ async function ready(port) { for(let i=0;i<120;i++){try { const result=await req
   const current=setupDefaults(); current.network.ip='127.0.0.1';
   const port=21000+(process.pid%1000); Object.keys(current.network.ports).forEach((key,index)=>{current.network.ports[key]=port+index;});
   fs.writeFileSync(filename,yaml.dump(current));
-  const candidate=yaml.load(fs.readFileSync(path.join(__dirname,'..','config','config-kraken.yml'),'utf8'));
+  const candidate=require('./config-store').configurationForReceiver('Kraken');
   // Automatic gain uses the installed Linux restart receipt. This Darwin
   // lifecycle test exercises the supported manual/fixed Kraken path.
   candidate.capture.device.heimdall.gain_control='fixed';

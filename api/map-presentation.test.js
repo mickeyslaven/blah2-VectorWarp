@@ -42,6 +42,9 @@ assert.equal(serializedReduced.data.length, 32,
   'live socket JSON strings must cross the presentation boundary before compaction');
 assert.strictEqual(presentMap(serialized), serialized,
   'the default full-resolution endpoint preserves its existing wire representation');
+const smallSerialized = JSON.stringify(frame);
+assert.deepEqual(presentMap(smallSerialized, {max_rows: '192', max_cols: '256'}), frame,
+  'an atomic display request returns an object even when no reduction is needed');
 const encoded = encodeMapResponse(serialized, {max_rows: '32', max_cols: '32'}, 'br, gzip');
 assert.equal(encoded.contentEncoding, 'gzip');
 assert.equal(JSON.parse(zlib.gunzipSync(encoded.body)).data.length, 32);

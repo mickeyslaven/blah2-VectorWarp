@@ -1,12 +1,19 @@
 #include "LegacyJson.h"
 #include "data/Detection.h"
+#include <array>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <random>
 #include <time.h>
+#include <rapidjson/document.h>
 
 namespace {
 using Complex = std::complex<double>;
@@ -51,7 +58,56 @@ Map<Complex> fixture(uint32_t rows, uint32_t columns = 256) {
   source.set_metrics();
   return source;
 }
+void saveCompatibility() {
+  char pattern[] = "/tmp/vectorwarp-json-save-XXXXXX";
+  const char* directory = mkdtemp(pattern);
+  require(directory, "Cannot create save-test directory");
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+  } cleanup{directory};
+  Detection detection(1, 2, 3);
+  Map<double> real(1, 1);
+  Map<Complex> complex(1, 1);
+  const std::vector<std::function<bool(std::string, std::string)>> saves{
+    [&](auto value, auto path) { return detection.save(value, path); },
+    [&](auto value, auto path) { return real.save(value, path); },
+    [&](auto value, auto path) { return complex.save(value, path); }};
+  const auto read = [](const auto& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), {});
+  };
+  unsigned sequence = 0;
+  const std::array<std::string, 10> initialValues{
+    "", "[", "]", "{}", " []", "[]\n", "[]", "[1]", "[ ]", "[invalid]"};
+  for (const auto& save : saves) {
+    for (const std::string& payload : {std::string{}, std::string("{\"n\":1.2300}"),
+        std::string("NaN"), std::string("null\0tail", 9)}) {
+      for (const std::string& initial : initialValues) {
+        const auto path = cleanup.path / std::to_string(++sequence);
+        { std::ofstream file(path, std::ios::binary); file << initial; }
+        const bool accepted = initial == "[]" || initial == "[1]" ||
+          initial == "[ ]" || initial == "[invalid]";
+        require(save(payload, path.string()) == accepted, "Save boundary acceptance changed");
+        const std::string expected = !accepted ? initial :
+          initial.substr(0, initial.size() - 1) + (initial == "[]" ? "" : ",") + payload + "]";
+        same(expected, read(path), "save exact payload bytes");
+      }
+      const auto path = cleanup.path / std::to_string(++sequence);
+      require(save(payload, path.string()), "Save did not initialize a missing file");
+      same("[" + payload + "]", read(path), "new save file");
+      require(save("null", path.string()), "Save could not append a second value");
+      same(payload.empty() ? "[null]" : "[" + payload + ",null]", read(path), "second append");
+    }
+    const std::string alias = (cleanup.path / std::to_string(++sequence)).string();
+    require(save(alias, alias), "Aliased payload/filename failed");
+    same("[" + alias + "]", read(alias), "aliased save strings");
+    require(!save("null", cleanup.path.string()), "Directory accepted as JSON file");
+    require(!save("null", (cleanup.path / "absent" / "file").string()), "Missing parent accepted");
+  }
+}
 void correctness() {
+  saveCompatibility();
   auto source = fixture(3, 7);
   source.delay = {-10, -5, -1, 0, 1, 245, std::numeric_limits<int>::max()};
   source.doppler = {-4800.1234567, -0.0, 1e-300};
@@ -114,6 +170,76 @@ void correctness() {
   for (const uint32_t rows : {321u, 961u, 1921u}) {
     auto large = fixture(rows);
     checkMap(large, 1700000000123ULL, 2400000, "standard-range production map");
+  }
+  {
+    auto display = fixture(601, 1261);
+    display.data[1][1] = {1e6, 0};
+    display.set_metrics();
+    const auto original = display.data;
+    const auto full = display.to_json_km(1700000000123ULL, 6144000);
+    const auto reduced = display.to_json_presentation_km(
+      1700000000123ULL, 6144000, true);
+    const auto metadata = display.to_json_presentation_km(
+      1700000000124ULL, 6144000, false);
+    rapidjson::Document map, meta;
+    map.Parse(reduced.c_str()); meta.Parse(metadata.c_str());
+    require(!map.HasParseError() && !meta.HasParseError(),
+      "Presentation map is not valid JSON");
+    require(map["presentationStride"].GetUint() == 2 &&
+      map["presentation_only"].GetBool() &&
+      std::string(map["presentation_pooling"].GetString()) == "max" &&
+      map["presentation_precision_db"].GetDouble() == .25 &&
+      map["sourceRows"].GetUint() == 601 &&
+      map["sourceCols"].GetUint() == 1261 &&
+      map["nRows"].GetUint() == 301 && map["nCols"].GetUint() == 631,
+      "Presentation map geometry differs");
+    require(map["data"].Size() == 301 && map["data"][0].Size() == 631 &&
+      map["delay"].Size() == 631 && map["doppler"].Size() == 301,
+      "Presentation map axes and raster differ");
+    require(map["data"][0][0].GetDouble() > 40.0,
+      "Presentation max pooling lost an off-grid peak");
+    require(display.data == original,
+      "Presentation serialization mutated source samples");
+    require(meta["data_omitted"].GetBool() &&
+      meta["nRows"].GetUint() == map["nRows"].GetUint() &&
+      meta["nCols"].GetUint() == map["nCols"].GetUint() &&
+      meta["delay"].Size() == map["delay"].Size() &&
+      meta["doppler"].Size() == map["doppler"].Size(),
+      "Presentation metadata geometry differs from its retained raster");
+    require(reduced.size() * 3 < full.size(),
+      "Presentation map did not materially reduce transport bytes");
+    for (const auto& row : map["data"].GetArray())
+      for (const auto& value : row.GetArray())
+        require(std::abs(value.GetDouble() * 4.0 -
+          std::round(value.GetDouble() * 4.0)) < 1e-9,
+          "Presentation map is not quarter-dB quantized");
+    require(outcome([&] { return display.to_json_presentation_km(
+      1, 6144000, true, 0); }) ==
+      "invalid_argument:Cannot convert an invalid presentation map",
+      "Zero presentation cell budget was accepted");
+    for (uint32_t peak = 0; peak < 4; ++peak) {
+      Map<double> block(2, 2); block.delay = {0, 1}; block.doppler = {0, 1};
+      block.data = {{1, 1}, {1, 1}}; block.data[peak / 2][peak % 2] = 1e6;
+      block.noisePower = 0; block.maxPower = 60;
+      rapidjson::Document pooled;
+      pooled.Parse(block.to_json_presentation_km(1, 6144000, true, 1).c_str());
+      require(!pooled.HasParseError() && pooled["data"][0][0].GetDouble() == 60,
+        "Presentation pooling lost a peak at within-block offset " +
+          std::to_string(peak));
+    }
+    Map<double> edge(3, 3); edge.delay = {0, 1, 2}; edge.doppler = {0, 1, 2};
+    edge.data[2][2] = 1e6; edge.noisePower = 0; edge.maxPower = 60;
+    rapidjson::Document pooledEdge;
+    pooledEdge.Parse(edge.to_json_presentation_km(1, 6144000, true, 4).c_str());
+    require(!pooledEdge.HasParseError() &&
+      pooledEdge["data"][1][1].GetDouble() == 60,
+      "Presentation pooling lost a peak in a partial edge block");
+    auto invalidPresentation = fixture(3, 3);
+    invalidPresentation.noisePower = std::numeric_limits<double>::quiet_NaN();
+    require(outcome([&] { return invalidPresentation.to_json_presentation_km(
+      1, 6144000, true); }) ==
+      "runtime_error:Presentation map contains non-finite metadata",
+      "Presentation map accepted non-finite metadata");
   }
   for (const auto value : extremes) {
     const std::vector<double> delay{-10, 0, value, 245.98765};

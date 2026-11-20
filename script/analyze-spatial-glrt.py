@@ -15,33 +15,9 @@ CAL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CAL)
 
 
-def inverse(matrix):
-    count = len(matrix)
-    augmented = [list(row) + [1 if row_index == column else 0
-                              for column in range(count)]
-                 for row_index, row in enumerate(matrix)]
-    for column in range(count):
-        pivot = max(range(column, count), key=lambda row: abs(augmented[row][column]))
-        if abs(augmented[pivot][column]) < 1e-24:
-            raise ValueError("singular covariance")
-        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
-        scale = augmented[column][column]
-        augmented[column] = [value / scale for value in augmented[column]]
-        for row in range(count):
-            if row == column:
-                continue
-            scale = augmented[row][column]
-            augmented[row] = [value - scale * pivot_value for value, pivot_value in
-                              zip(augmented[row], augmented[column])]
-    return [row[count:] for row in augmented]
-
-
-def multiply(matrix, vector):
-    return [sum(value * item for value, item in zip(row, vector)) for row in matrix]
-
-
-def dot(left, right):
-    return sum(value.conjugate() * item for value, item in zip(left, right))
+inverse = CAL.inverse
+multiply = CAL.multiply
+dot = CAL.dot
 
 
 def cell(frame, row, column):

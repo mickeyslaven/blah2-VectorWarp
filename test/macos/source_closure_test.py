@@ -169,21 +169,12 @@ class SourceClosureTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "history exceeds review bound"):
             namespace["core_path_history"]("Patches/demo/fix.patch", "a" * 40)
 
-    def test_closure_does_not_bypass_source_claim_transition(self):
-        candidate = {"source_id": self.source, "arch": self.arch,
-            "runtime_manifest_sha256": inputs.sha256(self.runtime), "components": [],
-            "gaps": [inputs.NODE_GAP]}
-        baseline = {"source_id": inputs.BASELINE_SOURCE_ID, "arch": self.arch, "components": []}
-        candidate_path = self.root / "candidate.json"; candidate_path.write_text(json.dumps(candidate))
-        baseline_path = self.root / "baseline.json"; baseline_path.write_text(json.dumps(baseline))
-        with mock.patch.object(inputs, "verify_source_claim_transition",
-                side_effect=ValueError("transition rejected")) as transition:
-            with self.assertRaisesRegex(ValueError, "transition rejected"):
-                inputs.verify_inventory(
-                    candidate_path, baseline_path, self.root, self.source, self.arch,
-                    closure={"schema": 1},
-                )
-        transition.assert_called_once()
+    def test_closure_does_not_bypass_current_source_claim_validation(self):
+        with mock.patch.object(inputs, "source_claims", side_effect=ValueError("claim rejected")) as claims:
+            with self.assertRaisesRegex(ValueError, "claim rejected"):
+                inputs.verify_source_closure(self.closure(), self.inventory, self.runtime,
+                                             self.source, self.arch, self.run)
+        claims.assert_called_once()
 
     def closure(self, *, arch=None, omit=False, tamper=False):
         path = self.root / ("closure-" + str(len(list(self.root.glob('closure-*')))) + ".tar.gz")

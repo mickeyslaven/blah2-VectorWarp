@@ -14,8 +14,9 @@ RUN_TESTS=false
 SDRPLAY_INCLUDE_DIR=${BLAH2_SDRPLAY_INCLUDE_DIR:-/usr/local/include}
 SDRPLAY_LIBRARY=${BLAH2_SDRPLAY_LIBRARY:-/usr/local/lib/libsdrplay_api.so.3.15}
 
-VCPKG_COMMIT=b45fe136ff576ad06105fed78245e765ab35ad16
-VKFFT_COMMIT=066a17c17068c0f11c9298d848c2976c71fad1c1
+ARTIFACT_PLAN="$SOURCE_DIR/script/artifact-plan.py"
+VCPKG_COMMIT=$(python3 "$ARTIFACT_PLAN" pin vcpkg)
+VKFFT_COMMIT=$(python3 "$ARTIFACT_PLAN" pin VkFFT)
 
 usage() {
   cat <<'EOF'
@@ -23,7 +24,7 @@ Usage: script/build-native.sh [options]
 
 Build a relocatable VectorWarp artifact without installing it.
 
-  --backend NAME          all (default); open-test, kraken, rspduo, usrp or hackrf for development
+  --backend all           Unified build (default); other values are internal fixtures only
   --gpu auto|on|off       Optional Vulkan worker selection (default: auto)
   --build-dir PATH        Build/output directory (default: build/native)
   --deps-dir PATH         Pinned source dependency cache
@@ -62,28 +63,12 @@ while (($#)); do
   esac
 done
 
-case "$BACKEND" in
-  open-test)
-    # Open CI-only package coverage: no licensed SDRplay SDK or adapter.
-    ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true ;;
-  kraken)
-    ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
-  rspduo)
-    ENABLE_RSPDUO=ON; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=RspDuo,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
-  usrp)
-    ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Usrp,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
-  hackrf)
-    ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
-  all)
-    ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=RspDuo; LOCAL_BUILD_RSPDUO=ON; TEST_ONLY=false ;;
-  *) die '--backend must be open-test, kraken, rspduo, usrp, hackrf or all' ;;
-esac
+if [[ $BACKEND != all && ${VECTORWARP_INTERNAL_ADAPTER_FIXTURE:-false} != true ]]; then
+  die 'receiver-subset builds are internal adapter fixtures; use --backend all'
+fi
+profile=$(python3 "$ARTIFACT_PLAN" profile "$BACKEND") || exit 1
+read -r ENABLE_RSPDUO ENABLE_USRP ENABLE_HACKRF LOCAL_BUILD_RSPDUO COMPILED_RECEIVERS LOCAL_BUILD_RECEIVERS TEST_ONLY <<<"$profile"
+[[ $LOCAL_BUILD_RECEIVERS != - ]] || LOCAL_BUILD_RECEIVERS=
 [[ $GPU =~ ^(AUTO|ON|OFF)$ ]] || die '--gpu must be auto, on or off'
 [[ $JOBS =~ ^[1-9][0-9]*$ ]] || die '--jobs must be a positive integer'
 BUILD_DIR=$(realpath -m "$BUILD_DIR")
@@ -95,7 +80,7 @@ BUILD_ARCH=$(uname -m)
 
 for command in cmake git node npm curl tar zip unzip pkg-config cc c++ ninja python3; do need_command "$command"; done
 node "$SOURCE_DIR/script/check-node-version.js" || die 'a patched supported Node.js release is required'
-for file in CMakeLists.txt lib/vcpkg.json lib/vcpkg-kraken.json api/package.json html/index.html; do
+for file in CMakeLists.txt lib/vcpkg.json api/package.json html/index.html; do
   [[ -f "$SOURCE_DIR/$file" ]] || die "source file is missing: $file"
 done
 pkg-config --exists fftw3 || die 'FFTW3 development files are required'
@@ -133,25 +118,24 @@ if $DRY_RUN; then
   say "dry run for backend=$BACKEND receivers=$COMPILED_RECEIVERS gpu=${GPU,,}"
 fi
 
-ensure_checkout() {
-  local url=$1 directory=$2 commit=$3
-  if [[ ! -d $directory/.git ]]; then
-    $OFFLINE && die "offline dependency is absent: $directory"
-    run git clone --filter=blob:none "$url" "$directory"
+# A development build may use local edits, but it must never claim that its
+# bytes came from an immutable release commit. Capture this before building as
+# well as afterwards; a commit made during compilation also invalidates it.
+source_clean=false
+if ! $DRY_RUN; then
+  source_commit=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+  [[ $source_commit =~ ^[0-9a-f]{40}$ ]] || die 'cannot identify source commit'
+  if [[ -z $(git -C "$SOURCE_DIR" status --porcelain --untracked-files=normal) ]]; then
+    source_clean=true
   fi
-  if ! $DRY_RUN && ! git -C "$directory" cat-file -e "$commit^{commit}" 2>/dev/null; then
-    $OFFLINE && die "offline dependency lacks pinned commit $commit: $directory"
-    run git -C "$directory" fetch --depth 1 origin "$commit"
-  fi
-  run git -C "$directory" checkout --detach "$commit"
-  if ! $DRY_RUN; then
-    [[ $(git -C "$directory" rev-parse HEAD) == "$commit" ]] ||
-      die "dependency did not resolve to pinned commit: $directory"
-  fi
-}
+fi
+
+dependency_options=()
+if $OFFLINE; then dependency_options+=(--offline); fi
+if $DRY_RUN; then dependency_options+=(--dry-run); fi
 
 run mkdir -p "$DEPS_DIR"
-ensure_checkout https://github.com/microsoft/vcpkg.git "$DEPS_DIR/vcpkg" "$VCPKG_COMMIT"
+python3 "$ARTIFACT_PLAN" checkout vcpkg "$DEPS_DIR/vcpkg" "${dependency_options[@]}"
 if [[ ! -x $DEPS_DIR/vcpkg/vcpkg ]]; then
   $OFFLINE && die 'vcpkg is not bootstrapped in the offline dependency cache'
   # The pinned historical wrapper uses `#!/bin/sh -e`, which some current
@@ -163,7 +147,7 @@ if [[ ! -x $DEPS_DIR/vcpkg/vcpkg ]]; then
     /bin/sh "$DEPS_DIR/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 fi
 if [[ $GPU != OFF ]]; then
-  ensure_checkout https://github.com/DTolm/VkFFT.git "$DEPS_DIR/VkFFT" "$VKFFT_COMMIT"
+  python3 "$ARTIFACT_PLAN" checkout VkFFT "$DEPS_DIR/VkFFT" "${dependency_options[@]}"
 fi
 
 CMAKE_DIR="$BUILD_DIR/cmake"
@@ -175,13 +159,9 @@ ARTIFACT="$BUILD_DIR/artifact"
 run mkdir -p "$BUILD_DIR"
 run rm -rf "$CMAKE_DIR" "$TEST_CMAKE_DIR" "$TEST_OUTPUT_DIR" "$MANIFEST_DIR" "$ARTIFACT_TMP"
 run mkdir -p "$MANIFEST_DIR" "$ARTIFACT_TMP/bin"
-if [[ $BACKEND == kraken ]]; then
-  run cp "$SOURCE_DIR/lib/vcpkg-kraken.json" "$MANIFEST_DIR/vcpkg.json"
-  KRAKEN_ONLY=ON
-else
-  run cp "$SOURCE_DIR/lib/vcpkg.json" "$MANIFEST_DIR/vcpkg.json"
-  KRAKEN_ONLY=OFF
-fi
+run cp "$SOURCE_DIR/lib/vcpkg.json" "$MANIFEST_DIR/vcpkg.json"
+KRAKEN_ONLY=OFF
+if [[ $BACKEND == kraken ]]; then KRAKEN_ONLY=ON; fi
 
 vcpkg_tool_path=$PATH
 vcpkg_compiler_prefix=
@@ -257,31 +237,16 @@ fi
 run "${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR" \
   "${cmake_args[@]}" -DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"
 run cmake --build "$CMAKE_DIR" --parallel "$JOBS"
-run python3 "$SOURCE_DIR/script/build-kraken.py" --jobs "$((JOBS > 32 ? 32 : JOBS))" --output-dir "$ARTIFACT_TMP"
+run python3 "$SOURCE_DIR/script/build-kraken.py" \
+  --build-dir "$BUILD_DIR/kraken-native" \
+  --jobs "$((JOBS > 32 ? 32 : JOBS))" --output-dir "$ARTIFACT_TMP"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$ARTIFACT_TMP/share/heimdall/controller.py"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-heimdall.py" "$ARTIFACT_TMP/share/heimdall/service.py"
 run python3 "$SOURCE_DIR/script/stage-kraken-kit.py" --source "$SOURCE_DIR" \
   --output "$ARTIFACT_TMP/receiver-source/kraken"
 
-run cp -a "$SOURCE_DIR/api" "$ARTIFACT_TMP/api"
-run rm -rf "$ARTIFACT_TMP/api/node_modules"
+run python3 "$ARTIFACT_PLAN" stage --source "$SOURCE_DIR" --output "$ARTIFACT_TMP" --platform linux
 run npm ci --prefix "$ARTIFACT_TMP/api" --omit=dev --ignore-scripts --no-audit --no-fund
-run find "$ARTIFACT_TMP/api" -type f -name '*.test.js' -delete
-run cp -a "$SOURCE_DIR/html" "$ARTIFACT_TMP/html"
-run mkdir -p "$ARTIFACT_TMP/config-examples"
-# Runtime packages contain one canonical first-run configuration. Receiver
-# profiles are supplied by the API and selected explicitly in Settings.
-run install -m 0644 "$SOURCE_DIR/config/config.yml" "$ARTIFACT_TMP/config-examples/config.yml"
-run cp -a "$SOURCE_DIR/docs" "$ARTIFACT_TMP/docs"
-# Reports ship with compact, reviewable benchmark summaries. Raw per-run logs,
-# frame dumps and machine-local receipts belong in CI/release artifacts, not an
-# installed VectorWarp runtime package.
-run find "$ARTIFACT_TMP/docs/benchmarks" -type f \( \
-  -name '*.log' -o -name '*.jsonl' -o -name '*.frames.csv' -o \
-  -name '*.command.json' -o -name '*.geometry.json' -o \
-  -name '*.profile.json' -o -name '*.summary.json' -o \
-  -name '*-per-cpi.csv' -o -name 'per-cpi.csv' \) -delete
-run cp -a "$SOURCE_DIR/contrib/systemd" "$ARTIFACT_TMP/systemd"
 run mkdir -p "$ARTIFACT_TMP/licenses"
 if $DRY_RUN; then
   say 'would collect vcpkg and VkFFT license notices'
@@ -301,66 +266,17 @@ else
     run install -m 0644 "$vkfft_license" "$ARTIFACT_TMP/licenses/VkFFT.txt"
   fi
 fi
-run mkdir -p "$ARTIFACT_TMP/libexec"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-restart" "$ARTIFACT_TMP/libexec/vectorwarp-restart"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-health-watchdog.js" "$ARTIFACT_TMP/libexec/vectorwarp-health-watchdog.js"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-config-guard.js" "$ARTIFACT_TMP/libexec/vectorwarp-config-guard.js"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-activate-web" "$ARTIFACT_TMP/libexec/vectorwarp-activate-web"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp" "$ARTIFACT_TMP/libexec/vectorwarp"
-run install -m 0755 "$SOURCE_DIR/packaging/deb/preinst" "$ARTIFACT_TMP/libexec/vectorwarp-quiesce"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/libexec/vectorwarp-wait-api.js"
-# The service always invokes this helper through an explicit Node binary.  It
-# must remain non-executable in both the immutable release and the integration
-# copy so RPM does not infer a host /usr/bin/node dependency from its shebang.
-run install -m 0644 "$SOURCE_DIR/script/check-node-version.js" "$ARTIFACT_TMP/libexec/vectorwarp-check-node-version"
-run install -m 0755 "$SOURCE_DIR/script/evaluate-bearing-calibration.js" "$ARTIFACT_TMP/libexec/vectorwarp-bearing-diagnostic"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sudoers-migrate.py" "$ARTIFACT_TMP/libexec/vectorwarp-sudoers-migrate"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-dnf.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-dnf.py"
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-gpu-setup" "$ARTIFACT_TMP/libexec/vectorwarp-gpu-setup"
-# Present only in current builds. Keeping these optional preserves the ability
-# to install historical artifacts without inventing an SDRplay action for them.
-if [[ -f $SOURCE_DIR/script/vectorwarp-sdrplay-service.py ]]; then
-  run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sdrplay-service.py" "$ARTIFACT_TMP/libexec/vectorwarp-sdrplay-service.py"
-fi
-if [[ -f $SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js ]]; then
-  run install -m 0644 "$SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js" "$ARTIFACT_TMP/libexec/vectorwarp-prepare-sdrplay.js"
-fi
 if [[ $LOCAL_BUILD_RSPDUO == ON && $DRY_RUN == false ]]; then
   [[ -f $CMAKE_DIR/receiver-generated/rspduo-plan.json ]] || die 'local RSPduo kit plan was not generated'
   run python3 "$SOURCE_DIR/script/stage-rspduo-kit.py" --source "$SOURCE_DIR" \
     --generated "$CMAKE_DIR/receiver-generated" --core "$ARTIFACT_TMP/bin/libblah2-capture-core.so.1" \
     --output "$ARTIFACT_TMP/receiver-source/rspduo"
 fi
-if [[ -f $SOURCE_DIR/script/vectorwarp-build-sdrplay.py ]]; then
-  run install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-sdrplay.py" \
-    "$ARTIFACT_TMP/libexec/vectorwarp-build-sdrplay.py"
-fi
-run install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-kraken.py" "$ARTIFACT_TMP/libexec/vectorwarp-build-kraken.py"
-run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
-run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
-
 if ! $DRY_RUN; then
-  if find "$ARTIFACT_TMP/bin" -maxdepth 1 \( -type f -o -type l \) -name 'test*' -print -quit | grep -q .; then
-    die 'release artifact contains a test executable'
-  fi
-  [[ -x $ARTIFACT_TMP/bin/blah2 ]] || die 'processor binary was not produced'
-  [[ -f $ARTIFACT_TMP/bin/libblah2-capture-core.so.1 ]] || die 'capture core library was not produced'
-  for adapter in rspduo usrp hackrf; do
-    case $adapter in
-      rspduo) enabled=$ENABLE_RSPDUO ;;
-      usrp) enabled=$ENABLE_USRP ;;
-      hackrf) enabled=$ENABLE_HACKRF ;;
-    esac
-    if [[ $enabled == ON ]]; then
-      [[ -f $ARTIFACT_TMP/bin/blah2-receiver-$adapter.so ]] || die "receiver adapter was not produced: $adapter"
-    fi
-  done
-  [[ -f $ARTIFACT_TMP/api/server.js && -f $ARTIFACT_TMP/html/index.html ]] ||
-    die 'API/UI artifact is incomplete'
-  source_commit=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || printf unknown)
-  [[ $source_commit =~ ^[0-9a-f]{40}$ ]] || die 'could not bind artifact to an exact source commit'
+  python3 "$ARTIFACT_PLAN" validate "$ARTIFACT_TMP" --level build --backend "$BACKEND"
+  [[ $(git -C "$SOURCE_DIR" rev-parse HEAD) == "$source_commit" ]] ||
+    die 'source commit changed during build; rebuild the frozen candidate'
+  [[ -z $(git -C "$SOURCE_DIR" status --porcelain --untracked-files=normal) ]] || source_clean=false
   revision=${source_commit:0:12}
   build_id="$(date -u +%Y%m%dT%H%M%SZ)-$revision"
   build_os_id=unknown
@@ -369,8 +285,8 @@ if ! $DRY_RUN; then
     build_os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"' | head -n 1)
     build_os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
   fi
-  printf 'build_id=%s\nsource_commit=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
-    "$build_id" "$source_commit" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
+  printf 'build_id=%s\nsource_commit=%s\nsource_clean=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
+    "$build_id" "$source_commit" "$source_clean" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"

@@ -36,7 +36,6 @@ function validIdentity(identity, frequency, sampleRate, channels) {
     identity.channel_mapping.every(value => Number.isInteger(value) && value >= 0) &&
     new Set(identity.channel_mapping).size === channels &&
     vector(identity.requested_gain_db, channels) &&
-    identity.requested_gain_db.every(value => value >= 0 && value <= 50) &&
     vector(identity.actual_gain_db, channels) &&
     Array.isArray(identity.positions_m) && identity.positions_m.length === channels &&
     identity.positions_m.every(value => vector(value, 3)) &&

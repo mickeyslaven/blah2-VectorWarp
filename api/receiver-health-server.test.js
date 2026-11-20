@@ -37,7 +37,7 @@ async function reservePorts(count) {
   let child;
   let errors = '';
   try {
-    const config = yaml.load(fs.readFileSync(path.join(__dirname, '../config/config-pi4-rspduo.yml'), 'utf8'));
+    const config = require('./config-store').configurationForReceiver('RspDuo');
     config.network.ip = '127.0.0.1';
     const ports = await reservePorts(Object.keys(config.network.ports).length);
     Object.keys(config.network.ports).forEach((name, index) => { config.network.ports[name] = ports[index]; });

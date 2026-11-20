@@ -5,7 +5,7 @@ const path = require('path');
 const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
 const {setupDefaults} = require('../../api/config-store');
-const {emptyRecord} = require('../../html/js/kraken_geometry');
+const {emptyRecord, context} = require('../../html/js/kraken_geometry');
 const {applyDeviceProfile, receiverFailureMessage, receiverMayHaveChanged} = require('../../html/js/config_ui');
 const clone = value => JSON.parse(JSON.stringify(value));
 let saved = applyDeviceProfile(setupDefaults(), getDeviceProfiles()[0]);
@@ -13,6 +13,17 @@ saved.capture.device.array_geometry = emptyRecord(5);
 saved.capture.device.array_geometry.mapping_confirmed = true;
 saved.capture.device.array_geometry.geometry_confirmed = true;
 const originalMeasurements = clone(saved.capture.device.array_geometry.elements);
+// Gain selection cannot revoke physical geometry assertions under either policy.
+for (const policy of ['fixed', 'measured', 'measured_per_channel']) {
+  const candidate = clone(saved);
+  candidate.capture.device.heimdall.gain_control = policy;
+  const before = context(candidate);
+  for (const [key, value] of [['gain', 7.7], ['channel_gains', [7.7, 8.7, 9.7, 10.7, 11.7]],
+    ['gain_control', policy === 'fixed' ? 'measured_per_channel' : 'fixed']]) {
+    candidate.capture.device.heimdall[key] = value;
+    assert.equal(context(candidate), before, `${policy}: ${key} preserves geometry context`);
+  }
+}
 let mode = 'partial', revision = 'fixture', lastPutTimeout = 0;
 const dom = new JSDOM('<div id="configuration"></div>', {url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'});
 const window = dom.window;
@@ -44,7 +55,15 @@ window.fetch = async (url, options = {}) => {
   } else throw new Error(`Unexpected fixture URL ${url}`);
   return {ok: status === 200, status, headers: {get: () => `"${revision}"`}, json: async () => clone(body)};
 };
-for (const file of ['config_profiles.js', 'kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8'));
+for (const file of ['processing_capabilities.js', 'config_profiles.js', 'kraken_geometry.js', 'config_ui.js']) window.eval(fs.readFileSync(path.join(__dirname, '../../html/js', file), 'utf8') +
+  (file === 'config_ui.js' ? `
+    window.fixtureDraft = () => activeConfig;
+    window.observeFixtureEdits = events => {
+      const filter = refreshSettingsFilter, validate = scheduleValidation;
+      refreshSettingsFilter = () => { events.push(['filter']); filter(); };
+      scheduleValidation = () => { events.push(['validate']); validate(); };
+      return () => { refreshSettingsFilter = filter; scheduleValidation = validate; };
+    };` : ''));
 const query = key => window.document.querySelector(`[data-path="${key}"] input, [data-path="${key}"] select`);
 const mapping = () => query('capture.device.array_geometry.mapping_confirmed');
 const message = () => window.document.getElementById('config-message').textContent;
@@ -52,6 +71,43 @@ function change(input, value) { input.value = String(value); input.dispatchEvent
 (async () => {
   try {
     await window.renderConfiguration();
+    // Freeze the existing edit boundary before sharing scalar/composite ownership.
+    const geometryNode = () => window.document.querySelector('.kraken-geometry');
+    const hostPath = ['capture', 'device', 'heimdall', 'host'];
+    const originalHost = saved.capture.device.heimdall.host;
+    const originalContext = window.KrakenGeometry.context;
+    const originalInvalidate = window.KrakenGeometry.invalidate;
+    const events = [];
+    window.KrakenGeometry.context = config => {
+      events.push(['context', config.capture.device.heimdall.host]);
+      return originalContext(config);
+    };
+    window.KrakenGeometry.invalidate = geometry => {
+      events.push(['invalidate', geometry.mapping_confirmed]);
+      return originalInvalidate(geometry);
+    };
+    for (const scalar of [true, false]) {
+      const beforeNode = geometryNode();
+      const nextHost = scalar ? 'scalar-fixture.local' : 'composite-fixture.local';
+      events.length = 0;
+      const stopObserving = window.observeFixtureEdits(events);
+      if (scalar) window.setValue(hostPath, nextHost);
+      else window.applyComposite(config => { config.capture.device.heimdall.host = nextHost; });
+      stopObserving();
+      assert.deepEqual(events, [['context', originalHost], ['context', nextHost], ['invalidate', true],
+        ['filter'], ['validate']], 'Both edits invalidate, update filtering, then schedule validation');
+      assert.equal(window.fixtureDraft().capture.device.array_geometry.mapping_confirmed, false);
+      assert.equal(mapping().checked, !scalar, 'Only scalar edits immediately rebuild geometry controls');
+      assert.equal(geometryNode() === beforeNode, !scalar, 'Composite edits retain the geometry DOM');
+      assert.equal(window.document.getElementById('config-save').disabled, true,
+        'An edit must await fresh validation before saving');
+      assert.match(window.document.getElementById('config-state').textContent, /unsaved change/);
+      window.document.getElementById('config-reset').click();
+      assert.equal(window.fixtureDraft().capture.device.heimdall.host, originalHost);
+      assert.equal(mapping().checked, true, 'Discard restores assertions before any receiver transaction');
+    }
+    window.KrakenGeometry.context = originalContext;
+    window.KrakenGeometry.invalidate = originalInvalidate;
     change(query('process.data.cpi'), .4);
     await window.saveConfiguration();
     assert.ok(lastPutTimeout >= 72000, 'Browser deadline must exceed all configured server stage deadlines');

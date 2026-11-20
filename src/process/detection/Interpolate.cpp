@@ -25,16 +25,17 @@ std::unique_ptr<Detection> Interpolate::process(Detection *x, Map<std::complex<d
   doppler = x->get_doppler();
   snr = x->get_snr();
 
-  if (!y)
-    return std::make_unique<Detection>(delay, doppler, snr);
+  if (!y) return std::make_unique<Detection>(*x);
   // interpolate data
   double intDelay, intDoppler, intSnrDelay, intSnrDoppler, intSnr[3];
   std::vector<double> delay2, doppler2, snr2;
+  std::vector<Detection::Evidence> evidence;
+  std::vector<uint32_t> spatial;
   std::deque<int> indexDelay = y->delay;
   std::deque<double> indexDoppler = y->doppler;
 
   if (indexDelay.empty() || indexDoppler.empty() || y->data.empty())
-    return std::make_unique<Detection>(delay, doppler, snr);
+    return std::make_unique<Detection>(*x);
   const auto snrAt = [&](size_t row, size_t column, double& value) {
     if (row >= y->data.size() || column >= y->data[row].size()) return false;
     const double magnitude = std::abs(y->data[row][column]);
@@ -106,8 +107,13 @@ std::unique_ptr<Detection> Interpolate::process(Detection *x, Map<std::complex<d
     delay2.push_back(intDelay);
     doppler2.push_back(intDoppler);
     snr2.push_back(std::max(std::max(intSnrDelay, intSnrDoppler), snr[i]));
+    if (!x->get_evidence().empty()) evidence.push_back(x->get_evidence()[i]);
+    if (!x->get_spatial().empty()) spatial.push_back(x->get_spatial()[i]);
   }
 
   // create detection
-  return std::make_unique<Detection>(delay2, doppler2, snr2);
+  auto result = std::make_unique<Detection>(delay2, doppler2, snr2);
+  result->set_evidence(std::move(evidence));
+  result->set_spatial(std::move(spatial));
+  return result;
 }

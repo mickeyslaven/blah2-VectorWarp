@@ -2,35 +2,38 @@
 set -euo pipefail
 
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+ARTIFACT_PLAN="$SOURCE_DIR/script/artifact-plan.py"
 BUILD_DIR="$SOURCE_DIR/build/macos"
 OUTPUT_DIR=""
 BACKEND=all
 WITH_RSPDUO=false
 JOBS=4
 RUN_TESTS=false
-GPU=off
+PHYSICAL_GPU_TESTS=OFF
+GPU=auto
 
 usage() {
   cat <<'EOF'
 Usage: script/build-macos.sh [options]
 
-Build a native macOS artifact. GPU acceleration defaults to off; select it
-explicitly only when the local Vulkan and VkFFT dependencies are installed.
+Build a native macOS artifact. GPU acceleration defaults to automatic and
+qualifies each available stage independently at runtime.
 
-  --backend cpu|kraken|usrp|hackrf|rspduo|all
-                                      Compile selected receiver adapters
+  --backend all                       Unified build (default); subsets are internal fixtures only
   --with-rspduo                     Also compile RSPduo against explicit local SDK paths
   --build-dir PATH                   CMake build root (default: build/macos)
   --output-dir PATH                  Artifact root (default: BUILD_DIR/artifact)
   --jobs N                           Parallel build jobs (default: 4)
   --test                             Run CTest after a successful build
-  --gpu off|auto|on                  Optional macOS GPU build (default: off)
+  --physical-gpu-test                Also require physical GPU CTests (implies --test)
+  --gpu off|auto|on                  Optional macOS GPU build (default: auto)
   -h, --help                         Show this help
 
-`cpu` (or `kraken`) only builds the processor and replay path. It does not
-contact a Kraken device or open a receiver. `all` builds the open USRP and
-HackRF adapters. `rspduo` requires caller-supplied `BLAH2_SDRPLAY_INCLUDE_DIR`
-and `BLAH2_SDRPLAY_LIBRARY` values; this script never downloads vendor files.
+`all` builds the open USRP and HackRF adapters and the local RSPduo SDK kit.
+`--with-rspduo` additionally compiles that adapter using caller-supplied
+`BLAH2_SDRPLAY_INCLUDE_DIR` and `BLAH2_SDRPLAY_LIBRARY` values; this script
+never downloads vendor files or contacts an SDR. Partial builds are internal
+test fixtures, not installable product variants.
 EOF
 }
 
@@ -43,6 +46,7 @@ while (($#)); do
     --output-dir) (($# >= 2)) || die '--output-dir needs a path'; OUTPUT_DIR=$2; shift 2 ;;
     --jobs) (($# >= 2)) || die '--jobs needs a value'; JOBS=$2; shift 2 ;;
     --test) RUN_TESTS=true; shift ;;
+    --physical-gpu-test) RUN_TESTS=true; PHYSICAL_GPU_TESTS=ON; shift ;;
     --gpu) (($# >= 2)) || die '--gpu needs off, auto, or on'; GPU=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -53,8 +57,12 @@ normalize_path() { python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]
 
 [[ $(uname -s) == Darwin ]] || die 'this script runs on macOS only'
 [[ $BACKEND =~ ^(cpu|kraken|usrp|hackrf|rspduo|all)$ ]] || die 'backend must be cpu, kraken, usrp, hackrf, rspduo, or all'
+if [[ $BACKEND != all && ${VECTORWARP_INTERNAL_ADAPTER_FIXTURE:-false} != true ]]; then
+  die 'receiver-subset builds are internal adapter fixtures; use --backend all'
+fi
 [[ $JOBS =~ ^[1-9][0-9]*$ ]] || die 'jobs must be a positive integer'
 [[ $GPU =~ ^(off|auto|on)$ ]] || die '--gpu must be off, auto, or on'
+[[ $PHYSICAL_GPU_TESTS != ON || $GPU != off ]] || die '--physical-gpu-test requires GPU support'
 if [[ $GPU == on ]]; then
   [[ ${VKFFT_ROOT:-} == /* && -d ${VKFFT_ROOT:-} ]] ||
     die '--gpu on needs VKFFT_ROOT set to an absolute local VkFFT directory'
@@ -69,7 +77,7 @@ elif [[ ${VECTORWARP_MACOS_BREW_PREFIX:-} == /* && -d ${VECTORWARP_MACOS_BREW_PR
 else
   die 'Homebrew is required; install it, then rerun'
 fi
-for command in cmake ninja node npm python3 rsync; do command -v "$command" >/dev/null || die "missing $command; install it, then rerun"; done
+for command in cmake ninja node npm python3; do command -v "$command" >/dev/null || die "missing $command; install it, then rerun"; done
 node "$SOURCE_DIR/script/check-node-version.js" || die 'a patched supported Node.js release is required'
 
 BUILD_DIR=$(normalize_path "$BUILD_DIR")
@@ -80,6 +88,8 @@ for protected in "$SOURCE_DIR" "$SOURCE_DIR/api" "$SOURCE_DIR/html" "$SOURCE_DIR
     die 'build and output paths must not replace source-tree components'
 done
 [[ $OUTPUT_DIR != "$BUILD_DIR" ]] || die 'output directory must be separate from build directory'
+[[ ! -e $OUTPUT_DIR/bin/blah2-mixed-worker && ! -L $OUTPUT_DIR/bin/blah2-mixed-worker ]] ||
+  die 'historical mixed DSP workers are not part of the unified build artifact; choose a clean output directory'
 
 have_formula() {
   if command -v brew >/dev/null; then
@@ -95,17 +105,12 @@ for formula in "${dependencies[@]}"; do
     die "missing $formula; run: brew install $formula"
 done
 
-ENABLE_USRP=OFF
-ENABLE_HACKRF=OFF
-ENABLE_RSPDUO=OFF
-LOCAL_RSPDUO=OFF
-case "$BACKEND" in
-  usrp) ENABLE_USRP=ON ;;
-  hackrf) ENABLE_HACKRF=ON ;;
-  rspduo) ENABLE_RSPDUO=ON ;;
-  all) ENABLE_USRP=ON; ENABLE_HACKRF=ON; LOCAL_RSPDUO=ON ;;
-esac
-if $WITH_RSPDUO; then ENABLE_RSPDUO=ON; LOCAL_RSPDUO=OFF; fi
+# cpu is an existing macOS internal no-device fixture, equivalent to Kraken-only.
+profile_backend=$BACKEND; [[ $profile_backend != cpu ]] || profile_backend=kraken
+profile_options=(); if $WITH_RSPDUO; then profile_options+=(--with-rspduo); fi
+# macOS Bash 3.2 treats an empty array as unset under nounset.
+profile=$(python3 "$ARTIFACT_PLAN" profile "$profile_backend" ${profile_options[@]+"${profile_options[@]}"}) || exit 1
+read -r ENABLE_RSPDUO ENABLE_USRP ENABLE_HACKRF LOCAL_RSPDUO unused <<<"$profile"
 UHD_FORMULA=${BLAH2_UHD_FORMULA:-uhd}
 for formula in $([[ $ENABLE_USRP == ON ]] && printf '%s' "$UHD_FORMULA") $([[ $ENABLE_HACKRF == ON ]] && printf 'hackrf'); do
   have_formula "$formula" ||
@@ -128,9 +133,12 @@ case "$GPU" in
   auto) GPU_CMAKE=AUTO ;;
   on) GPU_CMAKE=ON ;;
 esac
+# Hosted macOS VMs can compile GPU modules without exposing physical hardware.
+# Only the explicit --physical-gpu-test option enables hardware qualification.
 cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR" \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING="$RUN_TESTS" \
-  -DBLAH2_KRAKEN_ONLY=ON -DBLAH2_ENABLE_USRP="$ENABLE_USRP" \
+  -DBLAH2_TEST_PHYSICAL_GPU="$PHYSICAL_GPU_TESTS" \
+  -DBLAH2_KRAKEN_ONLY=OFF -DBLAH2_ENABLE_USRP="$ENABLE_USRP" \
   -DBLAH2_ENABLE_HACKRF="$ENABLE_HACKRF" -DBLAH2_ENABLE_RSPDUO="$ENABLE_RSPDUO" \
   -DBLAH2_LOCAL_BUILD_RSPDUO="$LOCAL_RSPDUO" \
   -DBLAH2_SDRPLAY_INCLUDE_DIR="${BLAH2_SDRPLAY_INCLUDE_DIR:-/usr/local/include}" \
@@ -141,17 +149,8 @@ cmake --build "$CMAKE_DIR" --parallel "$JOBS"
 if $RUN_TESTS; then ctest --test-dir "$CMAKE_DIR" --output-on-failure; fi
 find "$OUTPUT_DIR/bin" -maxdepth 1 -type f -name 'test*' -delete
 rm -rf "$OUTPUT_DIR/bin/test"
-for directory in api html config; do
-  mkdir -p "$OUTPUT_DIR/$directory"
-  rsync -a --delete --exclude node_modules --exclude '*.test.js' \
-    "$SOURCE_DIR/$directory/" "$OUTPUT_DIR/$directory/"
-done
-mkdir -p "$OUTPUT_DIR/script"
+python3 "$ARTIFACT_PLAN" stage --source "$SOURCE_DIR" --output "$OUTPUT_DIR" --platform macos
 rm -f "$OUTPUT_DIR/vectorwarp-macos"
-install -m 0755 "$SOURCE_DIR/script/vectorwarp-macos" "$OUTPUT_DIR/script/vectorwarp-macos"
-install -m 0755 "$SOURCE_DIR/script/vectorwarp-macos.py" "$OUTPUT_DIR/script/vectorwarp-macos.py"
-install -m 0755 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$OUTPUT_DIR/script/vectorwarp-kraken-macos.py"
-install -m 0755 "$SOURCE_DIR/script/check-node-version.js" "$OUTPUT_DIR/script/check-node-version.js"
 if [[ $LOCAL_RSPDUO == ON ]]; then
   kit_parent="$OUTPUT_DIR/receiver-source"
   mkdir -p "$kit_parent"
@@ -181,7 +180,6 @@ if [[ $LOCAL_RSPDUO == ON ]]; then
   install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-sdrplay-macos.sh" "$OUTPUT_DIR/script/vectorwarp-build-sdrplay-macos.sh"
   install -m 0644 "$SOURCE_DIR/script/vectorwarp-build-sdrplay-macos.js" "$OUTPUT_DIR/script/vectorwarp-build-sdrplay-macos.js"
 fi
-install -m 0644 "$SOURCE_DIR/LICENSE" "$OUTPUT_DIR/LICENSE"
 # npm 11 resolves a prefixed project through a different code path.  Running
 # from the staged directory keeps package and lockfile discovery local to the
 # artifact, including when its root is an absolute path.

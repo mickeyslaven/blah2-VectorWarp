@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
+    branches: [main]
     # The validation job below enforces exact vMAJOR.MINOR.PATCH semantics;
     # keep the event filter broad so valid tags are never lost to glob syntax.
     tags: ['v*']
@@ -11,8 +12,24 @@ on:
     inputs:
       version:
         description: 'Version to dry-run, without the v prefix (for example 1.2.3)'
-        required: true
+        required: false
         type: string
+      publish:
+        description: 'Promote the exact soaked candidate to a draft from the selected immutable tag'
+        type: boolean
+        default: false
+      candidate_run_id:
+        description: 'Successful explicit main package run to promote; required for publish'
+        type: string
+        required: false
+      soak_receipt:
+        description: 'JSON with bindingJson (exact raw binding text) and summary; required for publish'
+        type: string
+        required: false
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: read
@@ -29,18 +46,27 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       tagged_release: ${{ steps.version.outputs.tagged_release }}
+      matrix: ${{ steps.artifacts.outputs.matrix }}
     steps:
       - name: Check out tag or dry-run revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - id: artifacts
+        name: Read the reviewed artifact matrix
+        run: echo "matrix=$(python3 script/artifact-plan.py matrix)" >> "$GITHUB_OUTPUT"
       - id: version
         name: Reject mutable or malformed versions
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
+          if [[ $PUBLISH == true && $GITHUB_REF_TYPE != tag ]]; then
+            echo 'Publication must be dispatched from an immutable version tag.' >&2; exit 1
+          fi
           if [[ ${GITHUB_REF_TYPE} == tag ]]; then
             tag=${GITHUB_REF_NAME}
             tagged_release=true
@@ -49,10 +75,11 @@ jobs:
             git show-ref --verify --quiet refs/remotes/origin/main
             [[ $(git rev-parse refs/remotes/origin/main) == "${GITHUB_SHA}" ]] || {
               echo 'Stable tags must point to the exact current main commit.' >&2; exit 1; }
-          elif [[ ${GITHUB_EVENT_NAME} == pull_request ]]; then
-            # PRs build the same local-kit all-receiver contract without SDKs
-            # or signing. They cannot reach protected publication jobs.
-            tag=v0.0.0
+          elif [[ ${GITHUB_EVENT_NAME} == pull_request ||
+                  ( ${GITHUB_EVENT_NAME} == push && ${GITHUB_REF} == refs/heads/main ) ]]; then
+            # A high review-only version exercises real installed upgrades.
+            # PR/main candidates cannot reach protected publication jobs.
+            tag=v9999.0.0
             tagged_release=false
           else
             [[ ${GITHUB_EVENT_NAME} == workflow_dispatch ]]
@@ -69,6 +96,7 @@ jobs:
   fedora-pam:
     name: Fedora container authentication (${{ matrix.runner }})
     needs: validate
+    if: inputs.publish != true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -78,6 +106,8 @@ jobs:
     steps:
       - name: Check out the exact release revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
       - name: Install disposable test runtime
         run: |
           sudo apt-get update
@@ -96,30 +126,33 @@ jobs:
     # Retain the required-check identity; this job does not use a vendor SDK.
     name: Verify CPU unit, API, and replay tests
     needs: validate
+    if: inputs.publish != true
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Check out the exact release revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - id: node-pin
+        run: version=$(python3 script/artifact-plan.py pin node) && echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Set up Node 24 for API tests
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 24.22.1
+          node-version: ${{ steps.node-pin.outputs.version }}
           package-manager-cache: false
       - name: Install CPU build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential cmake curl git pkg-config python3-yaml tar unzip xz-utils zip \
-            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
+            build-essential cmake curl git ninja-build pkg-config python3-yaml tar unzip xz-utils zip \
+            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev libasio-dev rapidjson-dev rpm libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
       - name: Bootstrap pinned vcpkg manifest dependencies
         run: |
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build/ci-deps/vcpkg
-          git -C build/ci-deps/vcpkg fetch --depth=1 origin b45fe136ff576ad06105fed78245e765ab35ad16
-          git -C build/ci-deps/vcpkg checkout --detach b45fe136ff576ad06105fed78245e765ab35ad16
+          python3 script/artifact-plan.py checkout vcpkg build/ci-deps/vcpkg
           build/ci-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
           mkdir -p build/ci-manifest
-          cp lib/vcpkg-kraken.json build/ci-manifest/vcpkg.json
+          cp lib/vcpkg.json build/ci-manifest/vcpkg.json
       - name: Configure and test without GPU hardware
         run: |
           cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
@@ -131,6 +164,12 @@ jobs:
           ctest --test-dir build/ci --output-on-failure --no-tests=error
       - name: Run offline full-processor replay harness
         run: python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2
+      - name: Verify GPU platform and receiver build contracts
+        run: |
+          python3 test/packaging/test_gpu_platform_contract.py -v
+          python3 test/packaging/test_ci_workflows.py -v
+          python3 test/packaging/test_release_soak.py -v
+          python3 test/packaging/test_release_ci.py -v
       - name: Run repository generator unit and ephemeral integration tests
         run: |
           python3 test/packaging/test_repository.py -v
@@ -161,7 +200,6 @@ jobs:
           sudo python3 test/packaging/test_package_upgrade.py -v
           node test/packaging/upgrade_state.test.js
           python3 test/packaging/test_smoke_receiver_status.py -v
-          python3 test/packaging/test_sdrplay_build_sdk.py -v
           python3 test/packaging/test_sdrplay_distribution.py -v
           python3 test/packaging/test_rpm_local_kit.py -v
       - name: Syntax-check every workflow shell block and release script
@@ -195,32 +233,23 @@ jobs:
           PY
   package:
     name: ${{ matrix.distro }} ${{ matrix.arch }} package
-    # PRs and trusted builds both exercise the local-kit all-receiver artifact.
-    # Only trusted builds can upload inputs for release signing.
+    # Every event exercises the same local-kit all-receiver build and upgrade.
     needs: [validate, verify, fedora-pam]
     # Required package checks must fail, not become mergeable skipped checks,
     # when the disposable test OS cannot authenticate an ordinary user.
-    if: always()
-    environment: ${{ github.event_name == 'pull_request' && 'pr-packaging' || 'release-signing' }}
+    if: always() && inputs.publish != true
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-24.04, distro: ubuntu22.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu22.04, image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7 }
-          - { runner: ubuntu-24.04-arm, distro: ubuntu22.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu22.04, image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7 }
-          - { runner: ubuntu-24.04, distro: ubuntu24.04, format: deb, arch: amd64, node_arch: x64 }
-          - { runner: ubuntu-24.04-arm, distro: ubuntu24.04, format: deb, arch: arm64, node_arch: arm64 }
-          - { runner: ubuntu-24.04, distro: ubuntu26.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
-          - { runner: ubuntu-24.04-arm, distro: ubuntu26.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
-          - { runner: ubuntu-24.04-arm, distro: debian12, format: deb, arch: arm64, node_arch: arm64, distro_env: debian12, image: docker.io/library/debian@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26 }
-          - { runner: ubuntu-24.04, distro: debian13, format: deb, arch: amd64, node_arch: x64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
-          - { runner: ubuntu-24.04-arm, distro: debian13, format: deb, arch: arm64, node_arch: arm64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
-          - { runner: ubuntu-24.04, distro: fedora44, format: rpm, arch: x86_64, node_arch: x64 }
-          - { runner: ubuntu-24.04-arm, distro: fedora44, format: rpm, arch: aarch64, node_arch: arm64 }
+      matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
     # Stable builds stage only VectorWarp's local RSPduo source kit. No job
     # receives, downloads, or caches the separately licensed SDRplay SDK.
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # Hosted mirror throughput varies substantially for the disposable
+    # installed-service OS: a fresh all-receiver package can pull hundreds of
+    # distro dependencies before the unchanged browser/replay and upgrade
+    # assertions run. Keep the complete acceptance path instead of cancelling
+    # successful slow-mirror jobs at the former 60-minute ceiling.
+    timeout-minutes: 120
     steps:
       - name: Require successful build and test-environment prerequisites
         env:
@@ -230,163 +259,68 @@ jobs:
         run: test "$VALIDATE_RESULT" = success && test "$VERIFY_RESULT" = success && test "$PAM_RESULT" = success
       - name: Check out the exact release revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Install disposable package test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends podman uidmap slirp4netns
       - name: Build native Debian package
-        if: github.event_name != 'pull_request' && matrix.distro == 'ubuntu24.04'
+        if: matrix.distro == 'ubuntu24.04'
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
-          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
+            build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config python3 sudo tar unzip util-linux xz-utils zip \
             libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
-          sha_var="NODE_SHA_${NODE_ARCH^^}"
-          node_sha=${!sha_var}
-          archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            "https://nodejs.org/dist/v24.22.1/${archive}" --output "$RUNNER_TEMP/${archive}"
-          printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/${archive}" | sha256sum --check --strict
-          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"
-          node_root="$RUNNER_TEMP/${archive%.tar.xz}"
-          export PATH="$node_root/bin:$PATH"
-          script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
-          script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
-            --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
-          bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          python3 script/artifact-plan.py native-package --format deb \
+            --version "$VERSION" --distro "${{ matrix.distro }}" --node-arch "$NODE_ARCH"
       - name: Build native Ubuntu 22.04/26.04 or Debian 12/13 package in pinned isolated userspace
-        if: github.event_name != 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian12' || matrix.distro == 'debian13')
+        if: matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian12' || matrix.distro == 'debian13'
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
-          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
+            -e VERSION -e NODE_ARCH \
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             ${{ matrix.image }} \
             bash -euo pipefail -c '
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install --yes --no-install-recommends \
-                build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
+              test/packaging/apt-install-with-retry.sh \
+                build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config python3 sudo tar unzip util-linux xz-utils zip \
                 libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
               git config --global --add safe.directory /src
-              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
-              archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
-              curl --fail --location --proto "=https" --tlsv1.2 \
-                "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
-              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
-              tar -C /tmp -xf "/tmp/${archive}"
-              node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
-              script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
-                --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
-              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
+              python3 script/artifact-plan.py native-package --format deb \
+                --version "$VERSION" --distro "${{ matrix.distro_env }}" --node-arch "$NODE_ARCH"
             '
       - name: Build native Fedora RPM in isolated Fedora userspace
-        if: github.event_name != 'pull_request' && matrix.format == 'rpm'
+        if: matrix.format == 'rpm'
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
-          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
+            -e VERSION -e NODE_ARCH \
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
-            registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 \
+            ${{ matrix.image }} \
             bash -euo pipefail -c '
-              dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
+              dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config python3 sudo tar unzip util-linux xz zip \
                 fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
               git config --global --add safe.directory /src
-              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
-              archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
-              curl --fail --location --proto "=https" --tlsv1.2 \
-                "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
-              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
-              tar -C /tmp -xf "/tmp/${archive}"
-              node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
-              script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" \
-                --version "$VERSION" --distro fedora44 --output-dir dist
-              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
+              python3 script/artifact-plan.py native-package --format rpm \
+                --version "$VERSION" --distro "fedora44" --node-arch "$NODE_ARCH"
             '
-      - name: Build local-kit all-receiver Ubuntu 24.04 package for PR verification
-        if: github.event_name == 'pull_request' && matrix.distro == 'ubuntu24.04'
-        env:
-          VERSION: 9999.0.0
-          NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
-          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
-            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
-          sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
-          curl --fail --location --proto '=https' --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "$RUNNER_TEMP/${archive}"
-          printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/${archive}" | sha256sum --check --strict
-          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"; node_root="$RUNNER_TEMP/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-          script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
-          script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
-          bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
-      - name: Build local-kit all-receiver Debian-family package for PR verification
-        if: github.event_name == 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian12' || matrix.distro == 'debian13')
-        env:
-          VERSION: 9999.0.0
-          NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
-          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
-        run: |
-          set -euo pipefail
-          podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
-            ${{ matrix.image }} bash -euo pipefail -c '
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install --yes --no-install-recommends build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
-              git config --global --add safe.directory /src
-              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
-              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
-              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
-              tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
-              script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
-              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
-            '
-      - name: Build local-kit all-receiver Fedora package for PR verification
-        if: github.event_name == 'pull_request' && matrix.format == 'rpm'
-        env:
-          VERSION: 9999.0.0
-          NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
-          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
-        run: |
-          set -euo pipefail
-          podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
-            registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 bash -euo pipefail -c '
-              dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
-              git config --global --add safe.directory /src
-              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
-              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
-              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
-              tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
-              script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro fedora44 --output-dir dist
-              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
-            '
+      - id: node-pin
+        run: version=$(python3 script/artifact-plan.py pin node) && echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Set up browser-test Node (test runner only)
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 24.22.1
+          node-version: ${{ steps.node-pin.outputs.version }}
           package-manager-cache: false
       - name: Install isolated browser-test dependencies (not packaged)
         env:
@@ -472,19 +406,32 @@ jobs:
           set -euo pipefail
           package=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
           [[ -n $package && -f "${package}.manifest.json" ]]
-      - name: Upload signed-review inputs
-        if: github.event_name != 'pull_request'
+      - name: Upload unsigned package review inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: package-${{ matrix.distro }}-${{ matrix.arch }}
+          name: unsigned-package-${{ matrix.distro }}-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+  qualified-linux-gpu:
+    # Unsigned dry runs remain usable before physical release qualification.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_type == 'tag'
+    needs: validate
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/gpu-receipt-gate.yml
+    with:
+      source-sha: ${{ github.sha }}
+
   sign-and-draft-release:
     name: Sign RPMs and create reviewable draft release
-    needs: [validate, package]
+    # Publication deliberately has no build dependency: only the previously
+    # tested and soaked candidate's exact artifacts may reach signing.
+    needs: [validate, qualified-linux-gpu]
     if: >-
-      github.event_name == 'push' &&
+      github.repository == 'mickeyslaven/blah2-VectorWarp' &&
+      github.event_name == 'workflow_dispatch' && inputs.publish &&
       github.ref_type == 'tag' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.validate.outputs.tagged_release == 'true'
@@ -492,15 +439,34 @@ jobs:
     environment: release-signing
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Check out the immutable release tag
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Collect all package assets
+          persist-credentials: false
+      - name: Require successful hosted checks for the exact merged source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 script/verify-release-ci.py
+      - name: Authenticate successful immutable candidate run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ $CANDIDATE_RUN_ID =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > candidate-run.json
+          python3 script/verify-release-soak.py candidate
+      - name: Collect exact prior candidate package assets without rebuilding
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: package-*
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          pattern: unsigned-package-*
           path: packages
           merge-multiple: true
       - name: Generate immutable upstream review artifact
@@ -557,7 +523,13 @@ jobs:
       - name: Install repository signing tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends apt-utils createrepo-c gnupg rpm
+          sudo apt-get install --yes --no-install-recommends apt-utils createrepo-c gnupg rpm rpm2cpio cpio
+      - name: Verify 24-hour soak against exact candidate package payloads
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          VECTORWARP_SOAK_RECEIPT: ${{ inputs.soak_receipt }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: python3 script/verify-release-soak.py verify
       - name: Fail closed unless repository signing is configured
         env:
           SIGNING_KEY: ${{ secrets.VECTORWARP_ARCHIVE_SIGNING_KEY }}
@@ -585,6 +557,10 @@ jobs:
             --expected-source-commit "${{ github.sha }}" --require-release-matrix
           test -f repository/repository-manifest.json
           test $(du -sm repository | awk '{print $1}') -le 900
+      - name: Prove signing preserved the soaked payloads
+        run: |
+          python3 script/verify-release-soak.py signed \
+            --packages repository --manifest repository/repository-manifest.json
       - name: Collect final signed release assets and checksums
         env:
           FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
@@ -600,8 +576,10 @@ jobs:
           cp packaging/keys/vectorwarp.asc release-assets/vectorwarp-archive-key.asc
           cp repository/keys/fingerprint.txt release-assets/signing-fingerprint.txt
           cp release-review/upstream-diff.txt release-review/UPSTREAM_BASELINE.json release-assets/
+          cp release-soak-provenance.json release-assets/
+          cp release-ci-provenance.json release-assets/
           (cd release-assets && sha256sum *.deb *.rpm package-manifest.json repository-manifest.json \
-            upstream-diff.txt UPSTREAM_BASELINE.json vectorwarp-archive-key.asc signing-fingerprint.txt \
+            upstream-diff.txt UPSTREAM_BASELINE.json vectorwarp-archive-key.asc signing-fingerprint.txt release-soak-provenance.json release-ci-provenance.json \
             > SHA256SUMS)
           gpg --batch --yes --pinentry-mode error --local-user "$FINGERPRINT" --armor --detach-sign \
             --output release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
@@ -613,12 +591,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
         run: |
           set -euo pipefail
           gh release view "$TAG" >/dev/null 2>&1 && { echo "Release already exists: $TAG" >&2; exit 1; }
+          # Re-read the remote tag after the matrix completes. A local checkout
+          # from validation cannot detect a moved tag during a long build.
+          git fetch --no-tags origin "refs/tags/${TAG}"
+          [[ $(git rev-parse 'FETCH_HEAD^{commit}') == "$GITHUB_SHA" ]] || {
+            echo 'Release tag moved after validation; refusing publication.' >&2; exit 1; }
           gh release create "$TAG" --draft --verify-tag --title "VectorWarp $VERSION" \
-            --notes "Automated native package build. RPM assets and SHA256SUMS are signed; review checksums and provenance before publishing." \
+            --notes "Explicit promotion of soaked native packages; no rebuild. Source: ${GITHUB_SHA}. Candidate: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}. Signing: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (attempt ${GITHUB_RUN_ATTEMPT}). Signed release-soak-provenance.json binds the 24-hour host receipt and original package SHA256 to each final asset; RPM signatures may change container bytes, never payloads." \
             release-assets/*.deb release-assets/*.rpm release-assets/SHA256SUMS release-assets/SHA256SUMS.asc \
             release-assets/vectorwarp-archive-key.asc release-assets/signing-fingerprint.txt \
             release-assets/package-manifest.json release-assets/repository-manifest.json \
-            release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json
+            release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json \
+            release-assets/release-soak-provenance.json release-assets/release-ci-provenance.json

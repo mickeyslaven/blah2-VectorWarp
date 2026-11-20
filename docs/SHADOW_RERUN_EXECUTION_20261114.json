@@ -1,0 +1,78 @@
+{
+  "schema": "vectorwarp-shadow-development-rerun-execution-v1",
+  "working_directory": "/var/tmp/vectorwarp-config-preservation-b7c3b8b",
+  "promotion_authorized": false,
+  "live_mutation_authorized_by_this_manifest": false,
+  "resource_gate": {
+    "heavy_passed": false,
+    "available_memory_gib": 16.6,
+    "minimum_heavy_memory_gib": 48,
+    "amd_gtt_gib": 94.4,
+    "root_free_gib": 203.6,
+    "assistants_unloaded": false,
+    "lightweight_only": true,
+    "cpu": 8,
+    "nice": 19,
+    "virtual_memory_kib": 786432,
+    "cpu_seconds": 60,
+    "wall_seconds": 120
+  },
+  "inputs": {
+    "ledger": {
+      "path": "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/source.jsonl",
+      "sha256": "f7460445d3eaec29747592af1af6a37d8246e6827d27d58970cac6743e36f1dc"
+    },
+    "configuration": {
+      "path": "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/homeportal-config.yml",
+      "sha256": "da951d6e81d1916b91ced6aade75d15807cd8eb109a0687969faee9ce8d1183f"
+    },
+    "tracker_executable": {
+      "path": "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/temporal-endpoint-replay",
+      "sha256": "8c1440044dc826dc8c974ce06b04959a4cff92233a9db04666247eda795e484e"
+    },
+    "script_sha256": "6092b0104da6aa88b4c5e49084b5d8c2c53175472e519808917b528015b5c218"
+  },
+  "build_argv": [
+    "/usr/bin/g++", "-O0", "-g0", "-std=c++17", "-Isrc",
+    "tools/TemporalEndpointReplay.cpp", "src/process/tracker/Tracker.cpp",
+    "src/data/Track.cpp", "src/data/Detection.cpp", "-o",
+    "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/temporal-endpoint-replay"
+  ],
+  "run_argv": [
+    "python3", "script/rerun-temporal-endpoints.py",
+    "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/source.jsonl",
+    "--tracker", "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/temporal-endpoint-replay",
+    "--output-directory", "/var/tmp/shadow-rerun-v9-20261114.ltKwbp/reproduction"
+  ],
+  "retained_exact_input_inventory": [
+    {
+      "path": "/var/tmp/vectorwarp-hp-replay-strix-20261112/input/kraken-clip-r1-1794526125425739092-1.mchq",
+      "sha256": "cc422af8646c9dd9b0a92a5c770b25081b0a9762db671ac76c19fd22f48a9616",
+      "retained_resident_frames": 20,
+      "role": "short_development_only"
+    },
+    {
+      "path": "/var/tmp/hp-weak-evidence-live-20261113T2007.vww",
+      "sha256": "c059603ea2259b522fa93f6c74af547246831baf1c2e1463fd534d6fc9c24a86",
+      "retained_caf_frames": 8,
+      "role": "short_development_only"
+    }
+  ],
+  "not_executed": {
+    "normalized_gate_exact_iq": {
+      "reasons": ["heavy_resource_gate_failed", "independent_covariance_fit_absent", "qualified_whole_pass_and_nuisance_cohorts_absent"],
+      "frozen_geometry_arms": [
+        {"name": "prior_rectangle", "normalized_half_widths": [1, 1], "area": 4},
+        {"name": "circle_matching_prior_rectangle_area", "radius_squared": 1.2732395447351628, "area": 4},
+        {"name": "current_fixed_circle", "radius_squared": 9.210340371976184, "area": 28.935137649661865},
+        {"name": "square_matching_current_circle_area", "normalized_half_widths": [2.6895695589472055, 2.6895695589472055], "area": 28.935137649661865}
+      ],
+      "covariance_arm_requires_independent_fit": true
+    },
+    "guided_four_arm_exact_iq": {
+      "reasons": ["heavy_resource_gate_failed", "same_iq_whole_pass_and_independent_nuisance_cohort_absent", "retained_short_clips_do_not_cover_full_policy_horizon"],
+      "arms": ["ordinary_baseline", "mn_only", "disjoint_credit_only", "guided_sustain_and_promotion"]
+    },
+    "cancellation_arm_c": {"reason": "valid_negative_preserved"}
+  }
+}

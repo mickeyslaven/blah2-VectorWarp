@@ -1,7 +1,7 @@
 (function(root, factory) {
-  if (typeof module !== 'undefined' && module.exports) module.exports = factory();
-  else root.KrakenGeometry = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function() {
+  if (typeof module !== 'undefined' && module.exports) module.exports = factory(require('./processing_capabilities'));
+  else root.KrakenGeometry = factory(root.VectorWarpProcessingCapabilities);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(processingTopology) {
   'use strict';
   const prefix = 'capture.device.array_geometry';
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -163,32 +163,6 @@
       bearing: 4, shape: 'cross', dedicated: true});
     return presets.map(item => Object.freeze(item));
   }
-  function disableIncompatibleArrayFeatures(config, dedicated = false) {
-    const process = config.process || {};
-    if (process.surveillance_fusion &&
-        ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(process.surveillance_fusion.mode))
-      process.surveillance_fusion.mode = 'noncoherent';
-    if (process.bearing) process.bearing.enable = false;
-    if (process.detection) {
-      if (process.detection.track_before_detect) process.detection.track_before_detect.enable = false;
-      if (dedicated) {
-        process.detection.integration_cpis = 1;
-        process.detection.integration_motion_bins = 0;
-      }
-    }
-    if (dedicated && process.performance?.acceleration === 'gpu-resident')
-      process.performance.acceleration = 'auto';
-    if (dedicated && process.tracker) {
-      if (process.tracker.track_guided_shadow) {
-        process.tracker.track_guided_shadow.enable = false;
-        process.tracker.track_guided_shadow.promote = false;
-      }
-      if (process.tracker.initiate?.stationary_clutter)
-        process.tracker.initiate.stationary_clutter.enable = false;
-      if (process.tracker.initiate?.acceleration_model === 'adaptive_gate')
-        process.tracker.initiate.acceleration_model = 'hypothesis_bank';
-    }
-  }
   function presetRecord(config, presetId) {
     const preset = layoutPresets().find(item => item.id === presetId);
     if (!preset) return null;
@@ -244,14 +218,11 @@
       device.surveillance_channels = channels;
       config.process.reference_synthesis = {...existingSynthesis,
         mode: 'dedicated', channels: [reference]};
-      disableIncompatibleArrayFeatures(config, true);
     } else {
       device.reference_channel = channels[0];
       device.surveillance_channels = channels;
       config.process.reference_synthesis = {...existingSynthesis,
         mode: 'array_eigenbeam', channels};
-      if (generated.preset.shape !== 'regular_polygon')
-        disableIncompatibleArrayFeatures(config, false);
     }
     return true;
   }
@@ -282,7 +253,6 @@
       device.surveillance_channels = remove(device.surveillance_channels, channel);
       geometry.bearing_channels = remove(geometry.bearing_channels, channel);
       synthesis.mode = 'dedicated'; synthesis.channels = [channel];
-      disableIncompatibleArrayFeatures(config, true);
       if (valid(previous) && previous !== channel && channelRole(config, previous) === 'disabled')
         device.surveillance_channels = add(device.surveillance_channels, previous);
     } else {
@@ -310,7 +280,8 @@
   function applyReferenceMode(config, mode) {
     const device = config.capture.device;
     const geometry = device.array_geometry;
-    const synthesis = config.process.reference_synthesis;
+    if (!object(config.process)) config.process = {};
+    const synthesis = config.process.reference_synthesis ||= {};
     if (mode === 'array_eigenbeam') {
       const oldReference = device.reference_channel;
       synthesis.mode = 'array_eigenbeam';
@@ -327,7 +298,6 @@
       synthesis.mode = 'dedicated'; synthesis.channels = [reference];
       device.surveillance_channels = (device.surveillance_channels || []).filter(channel => channel !== reference);
       geometry.bearing_channels = (geometry.bearing_channels || []).filter(channel => channel !== reference);
-      disableIncompatibleArrayFeatures(config, true);
     }
     invalidate(geometry); return config;
   }
@@ -336,14 +306,14 @@
     const device = config.capture.device, geometry = device.array_geometry;
     const shell = document.createElement('section'); shell.className = 'geometry-channel-editor';
     const heading = document.createElement('div'); heading.className = 'geometry-channel-heading';
-    heading.innerHTML = '<h3>Antennas and channel roles</h3><p>Select an antenna to edit it.</p>';
+    heading.innerHTML = '<h3 title="Select an antenna to edit it.">Antennas and channel roles</h3>';
     const referenceLabel = document.createElement('label'); referenceLabel.className = 'geometry-reference-mode';
     const referenceTitle = document.createElement('span'); referenceTitle.textContent = 'Reference estimation';
     const referenceSelect = document.createElement('select');
     for (const [value, label] of [['array_eigenbeam', 'Automatic from array'], ['dedicated', 'Dedicated reference antenna']]) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; referenceSelect.appendChild(option);
     }
-    referenceSelect.value = config.process.reference_synthesis.mode;
+    referenceSelect.value = config.process?.reference_synthesis?.mode || '';
     referenceSelect.disabled = !canEdit();
     referenceSelect.addEventListener('change', () => {
       applyReferenceMode(config, referenceSelect.value); changed(true);
@@ -363,7 +333,8 @@
       const title = document.createElement('h4'); title.textContent = `Channel ${selected} · ${element.id}`;
       const makeLabel = (text, control, help = '') => {
         const label = document.createElement('label'); const span = document.createElement('span'); span.textContent = text;
-        label.append(span, control); if (help) { const small = document.createElement('small'); small.textContent = help; label.appendChild(small); }
+        label.append(span, control);
+        if (help) { control.title = help; control.setAttribute('aria-description', help); }
         return label;
       };
       const role = document.createElement('select');
@@ -419,6 +390,8 @@
     const title = document.createElement('h3'); title.textContent = 'Common array layouts';
     const explanation = document.createElement('p');
     explanation.textContent = 'Choose a layout.';
+    explanation.hidden = true;
+    title.title = explanation.textContent;
     const countPicker = document.createElement('label'); countPicker.className = 'geometry-preset-counts';
     const countTitle = document.createElement('span'); countTitle.textContent = 'Antennas connected';
     const countSelect = document.createElement('select');
@@ -477,15 +450,21 @@
     const device = config.capture?.device || {};
     const geometry = {...device.array_geometry};
     confirmations.forEach(key => { delete geometry[key]; });
+    if (config.capture?.replay?.state === true) {
+      const topology = processingTopology.processingCapabilities(config);
+      return JSON.stringify(['recorded', topology.channelCount, topology.referenceChannel,
+        topology.referenceMode, topology.referenceChannels, topology.surveillanceChannels, geometry]);
+    }
     const heimdall = object(device.heimdall) ? {...device.heimdall} : device.heimdall;
     if (object(heimdall)) {
       delete heimdall.gain;
       delete heimdall.gain_control;
       delete heimdall.channel_gains;
     }
-    return JSON.stringify([device.type,
+    const synthesis = config.process?.reference_synthesis || {};
+    return JSON.stringify([device.type, device.serial, device.address,
       device.channel_count, device.reference_channel, device.surveillance_channels,
-      heimdall, config.process?.reference_synthesis, geometry]);
+      heimdall, synthesis.mode, synthesis.channels, geometry]);
   }
   function reconcile(config, previous) {
     if (previous && context(config) !== context(previous))
@@ -555,14 +534,23 @@
       elements: Array.from({length: Math.max(2, Math.min(8, count || 2))}, (_, index) =>
         ({id: `element-${index + 1}`, daq_channel: null, position: [null, null, null]}))};
   }
-  function render(document, config, changed, editable = true, resizeChannels = null) {
+  function render(document, config, changed, editable = true, resizeChannels = null, topology = null) {
+    topology ||= processingTopology.processingCapabilities(config);
     const canEdit = typeof editable === 'function' ? editable : () => editable;
+    const savedDevice = config.capture.device;
+    const recorded = config.capture.replay?.state === true && topology?.coherentSurveillance === true;
+    if (recorded) config = {...config, capture:{...config.capture, device:{...savedDevice,
+      channel_count:topology.channelCount, reference_channel:topology.referenceChannel,
+      surveillance_channels:topology.surveillanceChannels}}, process:{...config.process,
+      reference_synthesis:{...config.process?.reference_synthesis, mode:topology.referenceMode,
+        channels:topology.referenceChannels}}};
     const device = config.capture.device;
+    const arrayEditable = topology.liveMchq || topology.coherentSurveillance;
     const section = document.createElement('details');
     section.className = 'config-group kraken-geometry';
     section.dataset.configGroup = prefix;
     const heading = document.createElement('summary');
-    heading.textContent = device.type === 'Kraken' ? 'Array setup' : 'Saved Kraken array setup (inactive)';
+    heading.textContent = recorded ? 'Recorded array setup' : arrayEditable ? 'Array setup' : 'Saved array setup (inactive)';
     section.appendChild(heading);
     const content = document.createElement('div');
     content.className = 'config-fields';
@@ -576,19 +564,20 @@
     };
     if (geometry === undefined) {
       note('Unknown geometry does not prevent passive radar.');
-      content.appendChild(button('Add antenna layout', () => { device.array_geometry = emptyRecord(device.channel_count); changed(true); }));
+      content.appendChild(button('Add antenna layout', () => { savedDevice.array_geometry = emptyRecord(device.channel_count); changed(true); }));
       return section;
     }
     content.appendChild(button('Remove layout', () => {
       if (document.defaultView?.confirm('Remove this layout and its measurements from the draft? Discard changes can restore them until you save.')) {
-        delete device.array_geometry;
+        delete savedDevice.array_geometry;
         changed(true);
       }
     }));
-    if (device.type !== 'Kraken') {
-      note('Kept for Kraken. Select Kraken to edit, or remove it from the draft.');
+    if (!arrayEditable) {
+      note('Saved layout retained. A coherent array input or recorded array topology is required to edit it.');
       return section;
     }
+    if (recorded) note(`Recorded array: ${topology.channelCount} inputs. Channel roles come from the recording; live receiver controls are not used.`);
     const visualHost = document.createElement('div');
     visualHost.className = 'geometry-visual-host';
     content.appendChild(visualHost);
@@ -619,8 +608,10 @@
         changed(true);
       }
     }, canEdit()));
-    content.insertBefore(presetHost, assessment);
-    content.insertBefore(channelRoleEditor(document, config, changed, canEdit), assessment);
+    if (!recorded) {
+      content.insertBefore(presetHost, assessment);
+      content.insertBefore(channelRoleEditor(document, config, changed, canEdit), assessment);
+    }
     const manualDetails = document.createElement('details');
     manualDetails.className = 'geometry-manual';
     const manualSummary = document.createElement('summary');
@@ -633,6 +624,8 @@
       const wrapper = document.createElement('div'); wrapper.className = 'config-field'; wrapper.dataset.path = `${prefix}.${key}`;
       const label = document.createElement('label'); control.id = `geometry-${key.replace(/\./g, '-')}`; label.htmlFor = control.id; label.textContent = title;
       const small = document.createElement('small'); small.textContent = help;
+      small.hidden = true; small.id = `${control.id}-help`;
+      control.title = help; control.setAttribute('aria-describedby', small.id);
       const error = document.createElement('span'); error.className = 'config-field-error';
       control.disabled = !canEdit(); control.dataset.originalDisabled = String(!canEdit());
       wrapper.append(label, control, small, error); parent.appendChild(wrapper); return control;

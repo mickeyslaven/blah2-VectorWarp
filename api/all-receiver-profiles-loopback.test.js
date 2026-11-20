@@ -11,14 +11,12 @@ const {spawn} = require('child_process');
 const yaml = require('js-yaml');
 const {configurationForReceiver} = require('./config-store');
 
-const root = path.join(__dirname, '..');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-all-receivers-'));
 const filename = path.join(directory, 'config.yml');
 const marker = path.join(directory, 'restart-marker');
 let apiPort, suitePort;
 const clone = value => JSON.parse(JSON.stringify(value));
-const load = name => yaml.load(fs.readFileSync(path.join(root, 'config', name), 'utf8'));
-const initial = load('config-kraken.yml');
+const initial = configurationForReceiver('Kraken');
 initial.network.ip = '127.0.0.1';
 
 const suiteState = {settings: {center_freq: initial.capture.fc, sample_rate: initial.capture.fs, gain: 0},
@@ -92,8 +90,8 @@ async function waitForApi() {
   }
   throw new Error(`loopback API did not start: ${stderr}`);
 }
-function profile(name, type) {
-  const config = type === 'RspDuo' ? configurationForReceiver(type, load('config.yml')) : load(name);
+function profile(type) {
+  const config = configurationForReceiver(type);
   config.network = clone(initial.network);
   if (type === 'Kraken') {
     config.capture.device.heimdall.host = '127.0.0.1';
@@ -132,9 +130,8 @@ function profile(name, type) {
       'the Settings API must return the numeric gain present at API startup');
     assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.device.heimdall.gain, 49.6);
 
-    for (const [name, type] of [['config-kraken.yml', 'Kraken'], ['config.yml', 'RspDuo'],
-      ['config-usrp.yml', 'Usrp'], ['config-hackrf.yml', 'HackRF']]) {
-      const candidate = profile(name, type);
+    for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF']) {
+      const candidate = profile(type);
       const validation = await request('POST', '/api/config/validate', candidate);
       assert.equal(validation.status, 200, `${type}: ${JSON.stringify(validation.body)}`);
       const headers = type === 'Kraken' ? {'X-VectorWarp-Receiver-Sync': 'synchronize-v1'} : {};
@@ -147,7 +144,7 @@ function profile(name, type) {
     }
     for (const gain of [28.7, -1, 'keep']) {
       const commandStart = suiteCommands.length;
-      const candidate = profile('config-kraken.yml', 'Kraken');
+      const candidate = profile('Kraken');
       candidate.capture.device.heimdall.gain = gain;
       const saved = await request('PUT', '/api/config?restart=false', candidate,
         {'X-VectorWarp-Receiver-Sync': 'synchronize-v1'});
@@ -167,7 +164,7 @@ function profile(name, type) {
         'Settings API must agree with raw YAML');
       assert.equal((await request('GET', '/api/config/capabilities')).body.setupRequired, false);
     }
-    const retune = profile('config-kraken.yml', 'Kraken');
+    const retune = profile('Kraken');
     retune.capture.fc += 1000000;
     retune.capture.device.heimdall.gain = 'keep';
     const commandStart = suiteCommands.length;
