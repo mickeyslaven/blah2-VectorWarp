@@ -8446,6 +8446,42 @@
             3678
           ]
         }
+    },
+      {
+        "owner": "2026-11-23 macOS frontend parity dependency order review",
+        "purpose": "Install the existing API dependency tree before the native macOS CTest phase so the cross-language frontend-plan parity test executes identically on Intel and Apple Silicon.",
+        "rejected_reuse": "Do not skip frontendPlanParity on macOS, duplicate dependency installs, vendor js-yaml, weaken CTest, or make the frontend contract platform-specific.",
+        "cleanup_plan": "Retain one API install before the unified macOS build and its workflow-order regression. This exact CI ceiling has no reserve and must ratchet downward with later workflow consolidation.",
+        "changes": {
+          "context_characters:production": [
+            7077575,
+            7077587
+          ],
+          "context_characters:release-ci": [
+            138234,
+            138246
+          ],
+          "context_lines:production": [
+            130853,
+            130854
+          ],
+          "context_lines:release-ci": [
+            2654,
+            2655
+          ],
+          "context_tokens:production": [
+            1774464,
+            1774465
+          ],
+          "context_tokens:release-ci": [
+            30846,
+            30847
+          ],
+          "lines:.github": [
+            2654,
+            2655
+          ]
+        }
       }
   ],
   "context_snapshot": {

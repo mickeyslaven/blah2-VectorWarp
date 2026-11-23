@@ -167,6 +167,20 @@ class WorkflowContracts(unittest.TestCase):
                         "build/ci/prebuild-acceptance.json")
         self.assertEqual(evidence["if"], "always()")
 
+    def test_macos_installs_api_dependencies_before_native_ctest(self):
+        job = workflow("macos.yml")["jobs"]["local-runtime"]
+        steps = job["steps"]
+        install = next(index for index, step in enumerate(steps)
+                       if "npm ci --prefix api" in step.get("run", ""))
+        build = next(index for index, step in enumerate(steps)
+                     if "script/build-macos.sh" in step.get("run", ""))
+        self.assertLessEqual(install, build)
+        build_run = steps[build].get("run", "")
+        self.assertLess(build_run.index("npm ci --prefix api"),
+                        build_run.index("script/build-macos.sh"),
+                        "frontendPlanParity requires the API dependency tree during CTest")
+        self.assertEqual(sum("npm ci --prefix api" in step.get("run", "") for step in steps), 1)
+
     def test_full_browser_route_matrix_is_required_on_linux_and_both_macs(self):
         for name, job_name in (("ci.yml", "test"), ("macos.yml", "local-runtime")):
             job = workflow(name)["jobs"][job_name]
