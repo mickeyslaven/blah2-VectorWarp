@@ -56,8 +56,14 @@ case "$1" in
     [ "$2" != "${FAIL_START:-none}" ] ;;
   stop|daemon-reload|is-active) exit 0 ;;
   --job-mode=ignore-dependencies)
-    [ "$*" = '--job-mode=ignore-dependencies --no-block stop vectorwarp-receiver.socket' ] || exit 9
-    echo inactive > "$SOCKET_STATE_FILE" ;;
+    case "$*" in
+      '--job-mode=ignore-dependencies --no-block stop vectorwarp-receiver.socket')
+        echo inactive > "$SOCKET_STATE_FILE" ;;
+      '--job-mode=ignore-dependencies start vectorwarp-api.service')
+        test -f "$PRESERVE_CONFIG_FILE" || exit 10
+        printf 'preserve-config=%s\n' "$(cat "$PRESERVE_CONFIG_FILE")" >>"$UPGRADE_TEST_LOG" ;;
+      *) exit 9 ;;
+    esac ;;
   *) exit 9 ;;
 esac
 ''')
@@ -143,7 +149,7 @@ esac
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.state.exists())
         calls = self.log.read_text().splitlines()
-        self.assertLess(calls.index('start vectorwarp-api.service'),
+        self.assertLess(calls.index('--job-mode=ignore-dependencies start vectorwarp-api.service'),
                         next(i for i, line in enumerate(calls) if line.startswith('node ')))
         self.assertLess(next(i for i, line in enumerate(calls) if line.startswith('node ')),
                         calls.index('start vectorwarp-processor.service'))
@@ -189,10 +195,10 @@ esac
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline and process.poll() is None and (
                     not self.log.exists() or
-                    'start vectorwarp-api.service' not in self.log.read_text()):
+                    '--job-mode=ignore-dependencies start vectorwarp-api.service' not in self.log.read_text()):
                 time.sleep(.01)
             self.assertIsNone(process.poll(), 'activation exited before the API readiness boundary')
-            self.assertIn('start vectorwarp-api.service', self.log.read_text())
+            self.assertIn('--job-mode=ignore-dependencies start vectorwarp-api.service', self.log.read_text())
             process.terminate()
             _, stderr = process.communicate(timeout=3)
             self.assertEqual(process.returncode, 143, stderr)
@@ -320,11 +326,15 @@ esac
                     result = self.call(post)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     calls = self.log.read_text().splitlines()
-                    self.assertEqual([call for call in calls if call.startswith(('start ', 'enable '))],
-                                     [f'start {unit}' for active, unit in (
-                                         (socket, 'vectorwarp-receiver.socket'),
-                                         (broker, 'vectorwarp-receiver.service'),
-                                         (api, 'vectorwarp-api.service')) if active])
+                    service_starts = [call for call in calls if
+                                      call.startswith(('start ', 'enable ')) or
+                                      call == '--job-mode=ignore-dependencies start vectorwarp-api.service']
+                    expected = [f'start {unit}' for active, unit in (
+                        (socket, 'vectorwarp-receiver.socket'),
+                        (broker, 'vectorwarp-receiver.service')) if active]
+                    if api:
+                        expected.append('--job-mode=ignore-dependencies start vectorwarp-api.service')
+                    self.assertEqual(service_starts, expected)
                     self.assertFalse(self.state.exists())
                     self.assertFalse((self.base / 'preserve-config.env').exists())
 

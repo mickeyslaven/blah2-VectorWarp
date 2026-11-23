@@ -7676,6 +7676,21 @@
         "context_tokens:capture-recording": [59771, 59847],
         "context_tokens:production": [1755308, 1755429]
       }
+    },
+    {
+      "owner": "2026-11-23 exact package cohort restoration",
+      "purpose": "Restore the exact pre-upgrade service cohort by starting the API without following its ordinary processor Wants edge, preserving a deliberately stopped radar while retaining normal API-restart recovery behavior outside package activation.",
+      "rejected_reuse": "Do not weaken the installed lifecycle assertion, remove the runtime API-to-processor recovery edge, start then stop an unintended processor, branch by distribution or receiver, or infer operator intent from configuration validity.",
+      "cleanup_plan": "Retain offline cohort-combination coverage and installed DEB/RPM reinstall checks. These ceilings are exact with no reserve and later reductions must ratchet downward.",
+      "changes": {
+        "lines:packaging": [1648, 1652],
+        "context_characters:installation": [186558, 186862],
+        "context_characters:production": [6997361, 6997665],
+        "context_lines:installation": [3611, 3615],
+        "context_lines:production": [129651, 129655],
+        "context_tokens:installation": [48790, 48846],
+        "context_tokens:production": [1755429, 1755485]
+      }
     }
   ],
   "context_snapshot": {

@@ -67,7 +67,11 @@ failed() {
   preserve_until=$((preserve_uptime + 120))
   (umask 077 && printf 'VECTORWARP_PRESERVE_CONFIG_BYTES_UNTIL_UPTIME=%s\n' "$preserve_until" >"$preserve_config") || failed
 }
-[ "$was_api" = 0 ] || systemctl start vectorwarp-api.service || failed
+# Package restoration must reproduce the captured cohort exactly.  The API's
+# ordinary Wants= edge intentionally revives a healthy processor after direct
+# runtime restarts, but following that edge here would start radar that was
+# stopped before the package transaction.
+[ "$was_api" = 0 ] || systemctl --job-mode=ignore-dependencies start vectorwarp-api.service || failed
 [ "$was_api" = 0 ] || /opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/libexec/vectorwarp-wait-api.js \
   /etc/vectorwarp/config.yml /opt/vectorwarp/current/api/node_modules || failed
 [ "$was_api" = 0 ] || cleanup
