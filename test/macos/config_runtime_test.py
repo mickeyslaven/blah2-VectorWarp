@@ -69,8 +69,9 @@ def run_case(binary, name, changes, receiver='Usrp', channels=2, gpu_capable=Fal
         output_dir = work / 'output with spaces'
         output_dir.mkdir()
         recording = work / 'synthetic.iq'
-        sinks, status = replay.SinkGroup(), replay.StatusServer()
-        sinks.payloads.update({key: bytearray() for key in ('detection', 'track', 'iqdata')})
+        retained = {name: replay.MAX_RETAINED_OUTPUT for name in
+                    ('map', 'detection', 'track', 'illuminator', 'timestamp', 'timing', 'iqdata')}
+        sinks, status = replay.SinkGroup(retained=retained), replay.StatusServer()
         process = None
         try:
             config = replay.config(receiver, channels, recording, status.port, sinks.ports())

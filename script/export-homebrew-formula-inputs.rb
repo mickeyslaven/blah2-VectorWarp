@@ -112,7 +112,7 @@ formulas = rows.sort_by { |row| row[0, 2] }.map do |formula, version, usages, re
   seen[identity] = true
   before = file_sha(recipe)
   metadata = api_metadata.fetch(formula, {})
-  loaded = Formulary.factory(recipe)
+  loaded = Formulary.respond_to?(:from_path) ? Formulary.from_path(recipe) : Formulary.factory(recipe)
   abort "frozen recipe identity differs: expected #{formula}|#{version}, got #{loaded.name}|#{loaded.pkg_version}" \
     unless loaded.name == formula && loaded.pkg_version.to_s == version
   api_version = metadata.dig("versions", "stable")

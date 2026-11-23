@@ -516,15 +516,15 @@ try
     }
     blah2::replay_gpu_qualification::configure(config,state,replayFormat);
   }
-  for (const auto& entry : {std::make_pair("recording_sha256", &replayRecordingHash),
-      std::make_pair("acquisition_sha256", &replayAcquisitionHash)})
+  const std::array replayHashes{std::make_pair("recording_sha256", &replayRecordingHash),
+      std::make_pair("acquisition_sha256", &replayAcquisitionHash)};
+  for (const auto& entry : replayHashes)
     if (tree["capture"]["replay"].has_child(ryml::to_csubstr(entry.first)))
       tree["capture"]["replay"][ryml::to_csubstr(entry.first)] >> *entry.second;
   if (tree["capture"]["replay"].has_child("qualification") &&
       tree["capture"]["replay"]["qualification"].has_child("acquisition")) {
     const auto acquisition = tree["capture"]["replay"]["qualification"]["acquisition"];
-    for (const auto& entry : {std::make_pair("recording_sha256", &replayRecordingHash),
-        std::make_pair("acquisition_sha256", &replayAcquisitionHash)})
+    for (const auto& entry : replayHashes)
       if (acquisition.has_child(ryml::to_csubstr(entry.first))) {
       std::string value; acquisition[ryml::to_csubstr(entry.first)] >> value;
       if (!entry.second->empty() && *entry.second != value)
@@ -848,7 +848,9 @@ try
       }
     }
   } else if (tree.rootref().has_child("location")) {
-    for (const auto& entry : {std::make_pair("rx", &geographicRx), std::make_pair("tx", &geographicTx)})
+    const std::array geographicSites{std::make_pair("rx", &geographicRx),
+        std::make_pair("tx", &geographicTx)};
+    for (const auto& entry : geographicSites)
       if (tree["location"].has_child(ryml::to_csubstr(entry.first))) {
         const auto site = tree["location"][ryml::to_csubstr(entry.first)]; std::array<double,3> value{};
         site["latitude"] >> value[0]; site["longitude"] >> value[1]; site["altitude"] >> value[2];

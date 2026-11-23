@@ -80,6 +80,10 @@ function nodeCapabilities(config = {}) {
     center_frequency_hz: config.capture?.fc ?? null};
 }
 
+function nodeStatisticsTimeout() {
+  return 6000;
+}
+
 function registry(filename) {
   if (!filename || !fs.existsSync(filename)) return [];
   const resolved = fs.realpathSync(filename);
@@ -710,14 +714,19 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
           if (entry.role === 'coordinator') return {id: entry.id, label: entry.label,
             role: 'coordinator', local: entry.local, available: false, channels: [], passes: []};
           try {
+            // A busy radar host can serialize large local and peer pass
+            // snapshots after an OOM/restart. Their callbacks share this event
+            // loop, so keep this refresh bounded without falsely removing a
+            // healthy node. Discovery and ordinary health probes stay strict.
+            const timeoutMs = nodeStatisticsTimeout(entry);
             const [status, timing, scorecard, associationPasses] = await Promise.all([
-              cooperativeRead(entry, '/api/system/status', 2500),
-              cooperativeRead(entry, '/api/timing', 2500),
+              cooperativeRead(entry, '/api/system/status', timeoutMs),
+              cooperativeRead(entry, '/api/timing', timeoutMs),
               cooperativeRead(entry,
                 '/api/live-scorecard/association-basis?timing=provisional&compact=true',
-                2500, 512 * 1024),
+                timeoutMs, 512 * 1024),
               cooperativeRead(entry,
-                '/api/association/passes?timing=provisional&compact=true', 2500,
+                '/api/association/passes?timing=provisional&compact=true', timeoutMs,
                 8 * 1024 * 1024)]);
             const value = compactNodeStatistics(entry, status, timing, scorecard,
               associationPasses);
@@ -925,4 +934,4 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
 module.exports = {installNodeFederation, registry, safeConfig, nodeCapabilities, nodeRole, READS,
   localNodeOrigin, probeJson, discoverLocalNode, cooperativeSources, compactNodeStatistics,
   combineNodeStatistics, deduplicatePasses, alignNodeStatistics, defaultRegistryPath,
-  configuredApiPort, mergeLiveAircraftAssociations};
+  configuredApiPort, mergeLiveAircraftAssociations, nodeStatisticsTimeout};

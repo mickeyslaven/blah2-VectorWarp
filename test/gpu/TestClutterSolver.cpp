@@ -238,8 +238,11 @@ void productionCovarianceOracle() {
   for(uint32_t i=0;i<b;++i){
     rhs[i]={std::numeric_limits<float>::quiet_NaN(),0}; // No FP32 covariance reads.
     rhs[b+i]=Float(double(n)*expected[i]);
-    rounded[i]=Double(rhs[b+i])/double(n);
   }
+  // Widen the stored FP32 RHS in a separate pass. GCC 11 can otherwise carry
+  // the unrounded FP64 intermediate into the oracle during this same loop.
+  for(uint32_t i=0;i<b;++i)
+    rounded[i]=Double(rhs[b+i])/double(n);
   const arma::cx_vec weights=arma::solve(arma::trimatu(upper),
     arma::solve(arma::trimatl(upper.t()),rounded));
   DenseSolver solver(n,b,1);solver.factorCovariance(actual.data(),actual.size());

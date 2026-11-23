@@ -69,6 +69,10 @@ void verifyPaths(unsigned count, int first, int last, double loading) {
     const Complex target = .7 * value + Complex(.01 * std::sin(.13 * i), .02 * std::cos(.07 * i));
     reference.push_back(value); direct.push_back(target); shared.push_back(target);
     floats[i] = value; surveillance[i] = target;
+  }
+  // Read the completed FP32 buffers separately: GCC 11 can retain unrounded
+  // intermediates when narrowing and immediately widening in the same loop.
+  for (unsigned i = 0; i < count; ++i) {
     widenedReference.push_back(Complex(floats[i])); widenedOutput.push_back(Complex(surveillance[i]));
   }
   const auto frozen = reference.view_data();

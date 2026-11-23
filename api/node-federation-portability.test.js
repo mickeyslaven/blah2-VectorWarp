@@ -8,7 +8,8 @@ const os = require('os');
 const http = require('http');
 const express = require('express');
 const {configuredApiPort, defaultRegistryPath, nodeCapabilities, nodeRole, registry,
-  installNodeFederation, localNodeOrigin, discoverLocalNode} = require('./node-federation');
+  installNodeFederation, localNodeOrigin, discoverLocalNode,
+  nodeStatisticsTimeout} = require('./node-federation');
 
 test('coordinator role requires an explicit portable declaration', () => {
   assert.equal(nodeRole({}), 'radar');
@@ -30,6 +31,11 @@ test('federation uses the same configured API port as the server', () => {
   assert.equal(configuredApiPort({network: {ports: {api: 43821}}},
     {BLAH2_SETUP_PORT: '45123'}), 45123);
   assert.equal(configuredApiPort({}, {}), 3000);
+});
+
+test('statistics refresh survives bounded coordinator pressure without changing health probes', () => {
+  assert.equal(nodeStatisticsTimeout({local: true}), 6000);
+  assert.equal(nodeStatisticsTimeout({local: false}), 6000);
 });
 
 test('registry defaults are writable per-user paths on desktop platforms', () => {

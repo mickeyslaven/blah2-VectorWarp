@@ -101,8 +101,12 @@ const server = http.createServer((request, response) => {
     });
     stage = 'initial map and labels';
     await page.goto(base + '/display/locations/', {waitUntil: 'domcontentloaded'});
-    assert.match(await page.locator('meta[name="viewport"]').getAttribute('content'), /user-scalable=no/,
-      'the dedicated map route must never convert a pinch into whole-page zoom');
+    assert.doesNotMatch(await page.locator('meta[name="viewport"]').getAttribute('content'),
+      /user-scalable=no|maximum-scale=1/,
+      'the dedicated map route must preserve browser zoom for accessible text scaling');
+    assert.equal(await page.locator('.location-map-panel .maplibregl-map').evaluate(element =>
+      getComputedStyle(element).touchAction), 'none',
+      'map gestures must stay on the map without disabling whole-page accessibility zoom');
     await page.waitForFunction(() => document.querySelectorAll('.location-site-label').length === 2);
     await page.waitForFunction(() => document.querySelectorAll('.location-aircraft-marker').length === 1);
     assert.deepEqual(await page.locator('.location-site-label').allTextContents(), ['Receiver <test>', 'Illuminator']);

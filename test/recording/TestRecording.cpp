@@ -820,7 +820,7 @@ int main() try {
       rejects([&] { RecordingReader invalid(clipPath,options); },
         "Portable sidecar accepted mismatched recording metadata");
       metadata(hash,1003,data.size());
-      auto changed=data;changed.back()^=1;write(clipPath,changed);
+      auto changed=data;changed.at(changed.size()-1)^=1;write(clipPath,changed);
       rejects([&] { RecordingReader invalid(clipPath,options); },
         "Portable sidecar accepted modified IQ bytes with the original SHA-256");
     }

@@ -37,6 +37,7 @@ class SourceClosureTest(unittest.TestCase):
         self.assertIn('local_patch_checksums": checksums', workflow)
         self.assertIn('identifier = "vectorwarp/release-build/vectorwarp-uhd"', workflow)
         exporter_source = (ROOT / "script/export-homebrew-formula-inputs.rb").read_text()
+        self.assertIn("Formulary.from_path(recipe)", exporter_source)
         self.assertIn('if has_local_patch &&', exporter_source)
         self.assertIn('Homebrew API local-patch identity differs', exporter_source)
 

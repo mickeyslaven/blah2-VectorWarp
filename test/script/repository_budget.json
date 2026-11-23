@@ -7562,6 +7562,34 @@
         "oversized_lines:api/server.js": [2399, 2408],
         "oversized_lines:html/js/config_ui.js": [3521, 3525]
       }
+    },
+    {
+      "owner": "2026-11-22 final cross-platform CI and bounded federation recovery review",
+      "purpose": "Resolve GCC 15 lifetime diagnostics, load frozen Homebrew recipes by reviewed path, preserve accessible browser zoom, and prevent a loaded coordinator from falsely removing healthy statistics nodes after pressure recovery. Reuse the existing federation, replay runtime and release owners; production growth is exact and contains no receiver-, OS- or site-specific behavior.",
+      "rejected_reuse": "Do not disable browser zoom, relax numerical tolerances, fork radar math, add alternate node publishers, hide host addresses or device presets, or treat a delayed statistics callback as evidence that capture stopped.",
+      "cleanup_plan": "Retain strict discovery and ordinary health deadlines, bounded six-second statistics refreshes, frozen-recipe identity/hash checks, GCC 11/15 regression coverage and all canonical pipeline guards. Ratchet every later deletion; live behavior, hosted builds and physical soak remain separate acceptance gates.",
+      "changes": {
+        "context_characters:build-integration/contracts": [1385155, 1385145],
+        "context_characters:build-release": [652334, 652400],
+        "context_characters:native-runtime": [192229, 192219],
+        "context_characters:production": [6994076, 6994597],
+        "context_characters:release-ci/contracts": [361192, 361258],
+        "context_characters:runtime-api": [466475, 466940],
+        "context_lines:build-integration/contracts": [28254, 28256],
+        "context_lines:native-runtime": [3477, 3479],
+        "context_lines:production": [129579, 129590],
+        "context_lines:runtime-api": [8322, 8331],
+        "context_tokens:build-integration/contracts": [341557, 341547],
+        "context_tokens:build-release": [162797, 162813],
+        "context_tokens:native-runtime": [38897, 38887],
+        "context_tokens:production": [1754774, 1754852],
+        "context_tokens:release-ci/contracts": [94254, 94270],
+        "context_tokens:runtime-api": [115641, 115713],
+        "lines:api": [26057, 26066],
+        "lines:src": [45423, 45425],
+        "oversized_bytes:src/blah2.cpp": [192229, 192219],
+        "oversized_lines:src/blah2.cpp": [3477, 3479]
+      }
     }
   ],
   "context_snapshot": {
