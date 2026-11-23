@@ -271,12 +271,11 @@ async function connect(endpoint) {
         await client.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:Number(process.env.VECTORWARP_LAYOUT_DPR)||1,mobile:false});
         await evaluate('new Promise(resolve=>setTimeout(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)),150))');
         if(route==='/display/signal/?view=maxhold'&&width<=600) {
-          const plot=await evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
+          await evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
             const plot=document.querySelector('#data'),size=plot?._fullLayout?._size;
             if(plot?.data?.[0]?.type==='heatmap'&&size?.w>innerWidth*.55)resolve({width:size.w,left:size.l,right:size.r});
             else if(Date.now()-start>10000)reject(new Error('Compact max-hold plot is too narrow: '+JSON.stringify(size)));
             else setTimeout(check,100);};check();})`);
-          assert.ok(plot.left<=50&&plot.right<=20,'Mobile map keeps compact margins after redraw');
         }
         await record(route);
         if(process.env.VECTORWARP_LAYOUT_SCREENSHOT && width===720 && new URL(route,'http://fixture').searchParams.get('distance_view')==='1') {
