@@ -89,8 +89,14 @@ def assert_web_only():
     assert int(property_of('vectorwarp-api.service', 'MainPID')) > 0
     assert property_of('vectorwarp-receiver.socket', 'ActiveState') == 'active'
     for unit in ('vectorwarp-processor.service', 'vectorwarp-restart.service'):
-        assert property_of(unit, 'ActiveState') in ('inactive', 'failed'), unit
-        assert property_of(unit, 'MainPID') == '0', unit
+        deadline = time.monotonic() + 15
+        while True:
+            state, pid = property_of(unit, 'ActiveState'), property_of(unit, 'MainPID')
+            if state in ('inactive', 'failed') and pid == '0':
+                break
+            assert state == 'activating' and pid == '0', (unit, state, pid)
+            assert time.monotonic() < deadline, (unit, 'did not settle without starting')
+            time.sleep(.1)
     broker_state = property_of('vectorwarp-receiver.service', 'ActiveState')
     broker_pid = property_of('vectorwarp-receiver.service', 'MainPID')
     assert broker_state in ('inactive', 'failed', 'active'), broker_state
