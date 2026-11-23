@@ -204,10 +204,17 @@ if(BUILD_TESTING)
   add_test(NAME canonicalIqLineageContract COMMAND testCanonicalIqLineage)
   add_executable(testFrontendPlan test/unit/process/conditioning/TestFrontendPlan.cpp)
   target_link_libraries(testFrontendPlan PRIVATE blah2FrontendPlan)
-  add_test(NAME frontendPlanParity COMMAND ${CMAKE_COMMAND} -E env
-    VECTORWARP_FRONTEND_PLAN_TEST=$<TARGET_FILE:testFrontendPlan>
-    node --test ${PROJECT_SOURCE_DIR}/api/frontend-plan.test.js)
-  set_tests_properties(frontendPlanParity PROPERTIES TIMEOUT 15)
+  # Native/package builds must remain testable without an npm dependency tree.
+  # The exact-source CI and macOS acceptance lanes install API dependencies and
+  # additionally compare these native frames against the canonical API plan.
+  add_test(NAME frontendPlanNativeContract COMMAND testFrontendPlan)
+  set_tests_properties(frontendPlanNativeContract PROPERTIES TIMEOUT 10)
+  if(EXISTS "${PROJECT_SOURCE_DIR}/api/node_modules/js-yaml/index.js")
+    add_test(NAME frontendPlanParity COMMAND ${CMAKE_COMMAND} -E env
+      VECTORWARP_FRONTEND_PLAN_TEST=$<TARGET_FILE:testFrontendPlan>
+      node --test ${PROJECT_SOURCE_DIR}/api/frontend-plan.test.js)
+    set_tests_properties(frontendPlanParity PROPERTIES TIMEOUT 15)
+  endif()
   set_tests_properties(canonicalIqLineageContract PROPERTIES TIMEOUT 10)
   add_executable(testProductionRawIq
     test/unit/process/analysis/TestProductionRawIq.cpp)

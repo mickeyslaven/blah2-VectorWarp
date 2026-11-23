@@ -8482,6 +8482,21 @@
             2655
           ]
         }
+      },
+      {
+        "owner": "2026-11-23 native package frontend-contract dependency review",
+        "purpose": "Keep native package CTest independent of an unshipped npm tree while retaining the native frontend-plan executable contract in every package build and exact API/native parity in the prerequisite release and macOS acceptance lanes.",
+        "rejected_reuse": "Do not vendor js-yaml, add network dependency installation to distro-native package builders, skip the native frontend contract, or weaken the exact-source release/macOS parity checks.",
+        "cleanup_plan": "Retain one dependency-free native contract and condition the cross-language comparison only on the canonical API dependency tree already installed by its owning acceptance lanes. These exact ceilings have no reserve.",
+        "changes": {
+          "context_characters:build-integration": [102076, 102543],
+          "context_characters:production": [7077587, 7078054],
+          "context_lines:build-integration": [1895, 1902],
+          "context_lines:production": [130854, 130861],
+          "context_tokens:build-integration": [16458, 16537],
+          "context_tokens:production": [1774465, 1774544],
+          "lines:root": [607, 614]
+        }
       }
   ],
   "context_snapshot": {

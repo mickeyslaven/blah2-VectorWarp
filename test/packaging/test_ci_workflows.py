@@ -167,6 +167,16 @@ class WorkflowContracts(unittest.TestCase):
                         "build/ci/prebuild-acceptance.json")
         self.assertEqual(evidence["if"], "always()")
 
+    def test_native_packages_do_not_require_unshipped_api_dependencies(self):
+        cmake = (ROOT / "CMakeLists.txt").read_text()
+        self.assertIn("NAME frontendPlanNativeContract", cmake)
+        self.assertIn('if(EXISTS "${PROJECT_SOURCE_DIR}/api/node_modules/js-yaml/index.js")', cmake)
+        self.assertLess(cmake.index("NAME frontendPlanNativeContract"),
+                        cmake.index("NAME frontendPlanParity"))
+        package = workflow("release-packages.yml")["jobs"]["package"]
+        self.assertIn("verify", package["needs"],
+                      "Every package build must depend on exact-source API/native parity")
+
     def test_macos_installs_api_dependencies_before_native_ctest(self):
         job = workflow("macos.yml")["jobs"]["local-runtime"]
         steps = job["steps"]
