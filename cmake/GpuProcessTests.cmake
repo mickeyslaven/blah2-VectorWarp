@@ -222,7 +222,7 @@ target_link_libraries(testGpuResidentWire PRIVATE blah2RapidJson)
 add_test(NAME residentWireCpuBoundary COMMAND testGpuResidentWire)
 set_tests_properties(residentWireCpuBoundary PROPERTIES TIMEOUT 10)
 
-# Compile these four exact sources directly: the CPU double deliberately owns
+# Compile exact sources directly: the CPU double owns
 # gpuSiblingPath, so linking blah2GpuProcess would duplicate that definition.
 add_executable(testGpuResidentProcess ${PROJECT_ROOT}/test/gpu/TestGpuResidentProcess.cpp
   ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp
@@ -234,7 +234,7 @@ target_include_directories(testGpuResidentProcess PRIVATE
   ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
 target_link_libraries(testGpuResidentProcess PRIVATE Threads::Threads blah2RapidJson)
 add_test(NAME residentProcessCpuBoundary COMMAND testGpuResidentProcess)
-set_tests_properties(residentProcessCpuBoundary PROPERTIES TIMEOUT 10)
+set_tests_properties(residentProcessCpuBoundary PROPERTIES TIMEOUT 10 RUN_SERIAL TRUE)
 
 add_executable(testResidentReplaySnapshot ${PROJECT_ROOT}/test/gpu/TestResidentReplaySnapshot.cpp)
 target_compile_features(testResidentReplaySnapshot PRIVATE cxx_std_17)
