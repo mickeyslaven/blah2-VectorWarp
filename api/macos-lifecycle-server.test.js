@@ -52,8 +52,17 @@ async function ports(count) {
       'Content-Type': 'application/json', Origin: origin, 'If-Match': `"${capabilities.configRevision}"`,
       'X-VectorWarp-Intent': 'config-write-v1', 'X-VectorWarp-Receiver-Sync': 'synchronize-v1'}, body: JSON.stringify(config)});
     assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
-    for (let attempt = 0; attempt < 120 && !fs.existsSync(marker); attempt += 1) await delay(25);
-    assert.equal(fs.readFileSync(marker, 'utf8'), 'restart');
+    // Creation and contents are separate observable events: the launcher opens
+    // the marker before printf writes its argument.  Wait for the lifecycle
+    // receipt itself instead of racing the first directory entry notification.
+    let markerValue = '';
+    for (let attempt = 0; attempt < 120 && markerValue !== 'restart'; attempt += 1) {
+      try { markerValue = fs.readFileSync(marker, 'utf8'); } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (markerValue !== 'restart') await delay(25);
+    }
+    assert.equal(markerValue, 'restart');
     console.log('macOS browser Save & Restart dispatches the whole-stack launcher.');
   } finally {
     if (child) { child.kill('SIGTERM'); if (child.exitCode === null) await new Promise(resolve => child.once('exit', resolve)); }
