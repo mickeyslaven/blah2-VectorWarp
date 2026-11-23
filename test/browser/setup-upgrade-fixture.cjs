@@ -642,7 +642,15 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       return document.activeElement===t&&d.scrollTop===0&&r.top>=0&&r.bottom<=innerHeight;})()`),true,
     'Upgrade notice opens with its title visible and focused, not scrolled to acknowledgement');
     assert.match(await evaluate(`${query('#config-migration-dialog')}.textContent`),/Do not repeat receiver setup/);
-    await check(`migration-review-${width}`);await popup('#config-migration-dialog a');await click('#config-migration-dialog button');
+    await check(`migration-review-${width}`);
+    if(width===390)await popup('#config-migration-dialog a');
+    else {
+      const receiptLink=await evaluate(`(()=>{const e=${query('#config-migration-dialog a')};return {href:e.href,target:e.target,rel:e.rel};})()`);
+      assert.equal(new URL(receiptLink.href).origin,await evaluate('location.origin'),'Desktop receipt link stays fixture-local');
+      assert.equal(receiptLink.target,'_blank','Desktop receipt link preserves a separate review surface');
+      assert.match(receiptLink.rel,/noreferrer/,'Desktop receipt link isolates the review surface');
+    }
+    await click('#config-migration-dialog button');
     await navigate(route);assert.equal(await evaluate('!!document.querySelector("#config-migration-dialog")'),false,'Acknowledgement survives reload');
     await click('#config-migration-history');await wait(query('#config-migration-dialog[open]'));
     await client.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
