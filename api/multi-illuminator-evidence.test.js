@@ -49,7 +49,7 @@ const fakeSuspiciousLedger = {accept(value) { suspiciousAccepted.push(value); },
   attachTruthAssessment() { return false; }, close() { this.closed = true; }};
 function fakeStatistics(lane, timing) {
   return {key: `${lane.capture.fc}-${timing}`, configEpoch: `config-${lane.capture.fc}`,
-    receiverEpoch: `receiver-${lane.capture.fs}`, accepted: [],
+    receiverEpoch: `receiver-${lane.capture.fs}`, accepted: [], state: {error: null},
     acceptDetection(value) { this.accepted.push(['detection', value]); },
     acceptTracker(value) { this.accepted.push(['tracker', value]); },
     acceptTiming(value) { this.accepted.push(['timing', value]); },
@@ -67,6 +67,12 @@ const evidence = new MultiIlluminatorEvidence(config, {get() {}}, {
       operational: fakeStatistics(lane, 'provisional')};
     created.push(value); return value;
   }});
+assert.equal(evidence.health().status, 'healthy');
+created[0].operational.state.error = 'EACCES: evidence ledger is not writable';
+assert.equal(evidence.health().status, 'degraded');
+assert.deepEqual(evidence.health().channels[0].errors,
+  ['EACCES: evidence ledger is not writable']);
+created[0].operational.state.error = null;
 evidence.accept({id: 'fm-a', timestamp: 1000, first_input_sample: 0,
   end_input_sample: 149999, detections: {timestamp: 1000}, tracks: {timestamp: 1000}});
 assert.equal(created[0].exact.accepted.length, 3);

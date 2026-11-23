@@ -1761,6 +1761,13 @@ async function readFederatedRadar(path, fleet) {
       error.radarUnavailable = true;
       throw error;
     }
+    if (statusResult.status === 'fulfilled' &&
+        statusResult.value?.evidenceHealth?.status === 'degraded') {
+      federatedStatisticsSnapshots.delete(key);
+      const error = new Error(`${node.label || node.id} cannot persist radar statistics`);
+      error.statisticsUnavailable = true;
+      throw error;
+    }
     if (statusResult.status === 'rejected' || valueResult.status === 'rejected') {
       const cached = federatedStatisticsSnapshots.get(key);
       if (cached) return {...cached.row, stale: true, stale_at: cached.at};
@@ -1776,6 +1783,8 @@ async function readFederatedRadar(path, fleet) {
   const rows = settled.filter(result => result.status === 'fulfilled').map(result => result.value);
   rows.unavailableNodes = nodes.filter((node, index) =>
     settled[index].reason?.radarUnavailable === true).map(node => node.id);
+  rows.statisticsUnavailableNodes = nodes.filter((node, index) =>
+    settled[index].reason?.statisticsUnavailable === true).map(node => node.id);
   return rows;
 }
 

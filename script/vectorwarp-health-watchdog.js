@@ -110,6 +110,13 @@ function receiverApplicationVerified(document, status) {
     receiver.configRevision === document?.revision;
 }
 
+function evidenceFailure(status) {
+  const health = status?.evidenceHealth || status?.featureDiagnostics?.evidenceStatistics;
+  if (health?.status !== 'degraded') return null;
+  return (health.channels || []).flatMap(channel => channel.errors || [])
+    .filter(Boolean).slice(0, 4);
+}
+
 function applicationInterlock(document, status, {processorActive = true} = {}) {
   if (!status || typeof document?.revision !== 'string') return null;
   const revisionMismatch = status.configRevision !== document.revision ||
@@ -254,6 +261,15 @@ async function main(argv = process.argv.slice(2)) {
     }
     return;
   }
+  const evidenceErrors = evidenceFailure(status);
+  if (evidenceErrors) {
+    writeState(stateFile, {...previous, status: 'evidence-degraded',
+      configRevision: document.revision, lastProbeAt: Date.now(),
+      lastProbeReason: 'evidence-statistics-unavailable', evidenceErrors});
+    console.error(`VECTORWARP_LIVENESS_ALERT evidence-statistics-unavailable: ${evidenceErrors.join('; ') || 'unknown persistence failure'}`);
+    process.exitCode = 1;
+    return;
+  }
   const decision = evaluateFrameLiveness({now: Date.now(), processorActive, processorPid,
     processorProgress: processorProgress(processorPid),
     lastFrameAt: status?.lastFrameAt ?? null}, previous);
@@ -294,5 +310,5 @@ if (require.main === module)
   main().catch(error => { console.error(`VECTORWARP_LIVENESS_ALERT ${error.stack}`); process.exitCode = 1; });
 
 module.exports = {main, recover, receiverSettlement, requested, sameSettings, startProcessor, processorProgress,
-  synchronizeAfterRestart, applicationInterlock, receiverApplicationVerified,
+  synchronizeAfterRestart, applicationInterlock, receiverApplicationVerified, evidenceFailure,
   FRAME_RECOVERY_TIMEOUT_MS, RECEIVER_READINESS_TIMEOUT_MS};

@@ -355,6 +355,7 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
     associationPasses.passes : scorecardPasses);
   const passes = passSources.map(compactPass).filter(Boolean);
   const tracking = status?.featureDiagnostics?.trackingPerformance || status?.trackingPerformance || {};
+  const evidence = status?.featureDiagnostics?.evidenceStatistics || status?.evidenceHealth || {};
   const cadenceMs = Number(status?.featureDiagnostics?.processing?.configuredCpiMs) || null;
   const rawBacklogMs = Number(timing?.capture_backlog_ms);
   const readyCpis = Number(timing?.capture_queue_ready_cpis);
@@ -374,7 +375,10 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
       status.configRevision === status.loadedRevision : true,
     statistics_window: associationPasses?.statistics_window || null,
     timing_policy: associationPasses?.timing_policy || scorecard?.timing_policy || null,
-    tracking_status: tracking.status || 'unknown', channels: channels.map(row => ({...row,
+    tracking_status: tracking.status || 'unknown',
+    evidence_status: evidence.status || 'unknown',
+    evidence_errors: (evidence.channels || []).flatMap(channel => channel.errors || []),
+    channels: channels.map(row => ({...row,
       node: entry.id, key: `${entry.id}:${row.id}`})), association, passes,
     timing: {cpi_ms: Number(timing?.cpi) || null,
       cadence_ms: cadenceMs,
@@ -491,6 +495,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
   const cooperativeTracks = cooperative?.available ? cooperative.tracks || [] : [];
   const unhealthy = radarNodes.filter(node => !node?.available || node.stale === true || node.radar !== 'receiving' ||
     node.processor_fresh !== true || node.config_match !== true || node.tracking_status === 'degraded' ||
+    node.evidence_status === 'degraded' ||
     (node.timing?.cadence_ms > 0 && node.timing?.cpi_ms > node.timing.cadence_ms * 1.1) ||
     (node.timing?.cadence_ms > 0 && node.timing?.backlog_ms > node.timing.cadence_ms * 1.25));
   return {schema: 'vectorwarp-network-statistics-v1', scope: 'all-nodes',

@@ -1219,8 +1219,15 @@ app.get('/api/system/status', async (req, res) => {
     (config.process.multi_illuminator.illuminators || [])
       .filter(item => item?.enabled === true).map(item => item.id) : ['primary']);
   const trackingPerformance = radarPerformanceHealth.snapshot();
+  const evidenceHealth = multiIlluminatorEvidence.enabled ? multiIlluminatorEvidence.health() : (() => {
+    const errors = [evidenceStatistics?.state?.error, provisionalEvidenceStatistics?.state?.error]
+      .filter(value => typeof value === 'string' && value);
+    return {status: errors.length ? 'degraded' : 'healthy', channels: [
+      {id: 'primary', status: errors.length ? 'degraded' : 'healthy', errors}]};
+  })();
   const radar = baseRadar === 'receiving' &&
-    (rfInputDegraded || trackingPerformance.status === 'degraded') ? 'degraded' : baseRadar;
+    (rfInputDegraded || trackingPerformance.status === 'degraded' ||
+      evidenceHealth.status === 'degraded') ? 'degraded' : baseRadar;
   // The header is present on every page and polls continuously. Keep its
   // response cheap: receiver discovery, GPU setup, build metadata and the full
   // ADS-B source report belong to their dedicated/settings views.
@@ -1233,6 +1240,7 @@ app.get('/api/system/status', async (req, res) => {
       sampleRate: processor.sampleRate, file: processor.file
     } : null;
     return res.json({radar, node_role: nodeRole(), rfInputQuality: inputQuality, trackingPerformance,
+      evidenceHealth,
       configMigrations: document.configMigrations,
       configMigrationError: document.configMigrationError,
       configMigrationOmitted: document.configMigrationOmitted,
@@ -1258,7 +1266,7 @@ app.get('/api/system/status', async (req, res) => {
   const sourceRows = Array.isArray(adsb?.sources) ? adsb.sources : [];
   const positionSources = adsb?.fusion?.position_sources || {};
   const featureDiagnostics = {
-    trackingPerformance,
+    trackingPerformance, evidenceStatistics: evidenceHealth,
     recording: {
       requested: capture, paused: capturePaused,
       active: processor?.input === 'live' && processor.recording === true,

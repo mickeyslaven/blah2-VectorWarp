@@ -5,7 +5,7 @@ const path = require('path');
 const vm = require('vm');
 const {EventEmitter} = require('events');
 const {receiverSettlement, requested, sameSettings, synchronizeAfterRestart, applicationInterlock,
-  processorProgress, FRAME_RECOVERY_TIMEOUT_MS, RECEIVER_READINESS_TIMEOUT_MS} =
+  processorProgress, evidenceFailure, FRAME_RECOVERY_TIMEOUT_MS, RECEIVER_READINESS_TIMEOUT_MS} =
   require('./vectorwarp-health-watchdog');
 const {evaluateFrameLiveness} = require('../api/frame-liveness');
 
@@ -20,6 +20,11 @@ for (const value of [stat.replace('123', '-1'), stat.replace('456', '1e3'),
   assert.equal(processorProgress(42, () => value), null);
 assert.equal(processorProgress(42, () => { throw new Error('process exited'); }), null);
 assert.equal(processorProgress(0, () => { throw new Error('must not read'); }), null);
+assert.equal(evidenceFailure({evidenceHealth: {status: 'healthy'}}), null);
+assert.deepEqual(evidenceFailure({evidenceHealth: {status: 'degraded', channels: [
+  {id: 'primary', errors: ['EACCES: evidence ledger is not writable']}]}}),
+['EACCES: evidence ledger is not writable'],
+'A persistence failure must prevent an otherwise live processor from reporting healthy');
 
 // The installed oneshot must not truncate its own receiver/frame wait budget.
 const unit = fs.readFileSync(path.join(__dirname,

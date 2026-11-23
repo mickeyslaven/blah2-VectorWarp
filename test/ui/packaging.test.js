@@ -259,6 +259,9 @@ assert.match(buildScript, /licenses\/VkFFT\.txt/);
 
 assert.match(debPostinst, /systemd-sysusers/);
 assert.match(debPostinst, /systemd-tmpfiles/);
+assert.match(read('contrib/systemd/vectorwarp.tmpfiles'),
+  /^d \/var\/lib\/vectorwarp-api\/calibration 0750 vectorwarp-api vectorwarp-api -$/m,
+  'Package activation must repair the writable statistics-ledger directory');
 assert.match(debPostinst, /\/opt\/vectorwarp\/libexec\/vectorwarp-activate-web/);
 const webActivation = read('script/vectorwarp-activate-web');
 assert.match(webActivation, /is-active --quiet vectorwarp-api\.service/);

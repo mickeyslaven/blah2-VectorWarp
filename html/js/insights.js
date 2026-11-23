@@ -113,6 +113,9 @@
   }
 
   function networkAssociationAggregate(rows, fleet, networkSummary = null) {
+    if (rows.statisticsUnavailableNodes?.length) return {unavailable_reason:
+      'One or more radar nodes cannot persist evaluation evidence. Repair node storage before interpreting statistics.',
+    availability_failure: true};
     if (!rows.length) {
       if (rows.unavailableNodes?.length) return {unavailable_reason:
         'No radar nodes are publishing fresh observations.', availability_failure: true};

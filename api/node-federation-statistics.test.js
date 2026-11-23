@@ -48,7 +48,8 @@ test('compacts single-node scorecard with provenance', () => {
   const value = compactNodeStatistics({id: 'beta', label: 'Remote Node', local: false},
     {radar: 'receiving', processorFresh: true, processor: {state: 'live'},
       configRevision: 'a', loadedRevision: 'a',
-      featureDiagnostics: {trackingPerformance: {status: 'healthy'}}},
+      featureDiagnostics: {trackingPerformance: {status: 'healthy'}, evidenceStatistics: {
+        status: 'degraded', channels: [{id: 'primary', errors: ['ledger unwritable']}]}}},
     {cpi: 430, capture_backlog_ms: 500, captureDroppedSamples: [2, 2]},
     {current_setup_lifetime: {eligible_passes: 10, detected_passes: 4, tracked_passes: 3},
       recent_scored_passes: []});
@@ -56,6 +57,9 @@ test('compacts single-node scorecard with provenance', () => {
   assert.equal(value.channels[0].key, 'beta:primary');
   assert.equal(value.timing.backlog_ms, 500);
   assert.equal(value.timing.raw_capture_backlog_ms, 500);
+  assert.equal(value.evidence_status, 'degraded');
+  assert.deepEqual(value.evidence_errors, ['ledger unwritable']);
+  assert.equal(combineNodeStatistics([{...value, passes: []}]).health.status, 'degraded');
 });
 
 test('reports queued work rather than the receiver in-flight CPI', () => {

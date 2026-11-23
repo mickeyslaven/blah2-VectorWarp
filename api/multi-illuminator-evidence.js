@@ -349,6 +349,16 @@ class MultiIlluminatorEvidence {
 
   lane(id) { return this.lanes.get(String(id)); }
 
+  health() {
+    const channels = [...this.lanes.values()].map(lane => {
+      const errors = [lane.exact?.state?.error, lane.operational?.state?.error]
+        .filter(value => typeof value === 'string' && value);
+      return {id: lane.illuminator.id, status: errors.length ? 'degraded' : 'healthy', errors};
+    });
+    return {status: channels.some(channel => channel.status !== 'healthy') ?
+      'degraded' : 'healthy', channels};
+  }
+
   get configEpoch() {
     return this.lanes.values().next().value?.operational?.configEpoch ?? null;
   }

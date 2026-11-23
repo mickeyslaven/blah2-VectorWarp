@@ -19,7 +19,8 @@ context.fetchCachedJsonResource = async (url, options, policy) => {
   const mode = modes.get(id);
   if (mode === 'offline') throw new Error('transport timeout');
   return url.includes('/system/status') ? {processorFresh: mode !== 'stopped',
-    processor: {state: mode === 'stopped' ? 'stopped' : 'live'}, radar: 'degraded'} :
+    processor: {state: mode === 'stopped' ? 'stopped' : 'live'}, radar: 'degraded',
+    evidenceHealth: {status: mode === 'evidence-error' ? 'degraded' : 'healthy'}} :
     {channels: [{id, updated_at: now}]};
 };
 const read = () => context.readFederatedRadar('/api/live-scorecard/association-basis?display=kiosk', fleet);
@@ -53,5 +54,10 @@ const read = () => context.readFederatedRadar('/api/live-scorecard/association-b
   assert.equal((await read()).length, 1, 'An explicit stop invalidates cached evidence before a subsequent outage');
   modes.clear();
   assert.ok((await read()).every(row => !row.stale), 'Recovery restores current rows');
+  modes.set('alpha','evidence-error');
+  rows = await read();
+  assert.deepEqual(Array.from(rows, row => row.node.id), ['beta']);
+  assert.deepEqual(Array.from(rows.statisticsUnavailableNodes), ['alpha'],
+    'A live processor cannot hide a failed statistics ledger behind zero counters');
   console.log('Federation statistics cache: bounded last-good, explicit stop, coordinator, expiry and recovery passed.');
 })().catch(error => {console.error(error);process.exitCode=1;});
