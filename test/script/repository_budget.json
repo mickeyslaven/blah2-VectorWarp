@@ -7592,6 +7592,24 @@
         "oversized_bytes:src/blah2.cpp": [192229, 192219],
         "oversized_lines:src/blah2.cpp": [3477, 3479]
       }
+    },
+    {
+      "owner": "2026-11-23 capability-bounded Linux service cohort portability",
+      "purpose": "Keep installed runtime cohort verification fail-closed while allowing Ubuntu containers without CAP_SYS_PTRACE to use the already validated systemd working directory when another service user's proc cwd cannot be dereferenced. Runtime entrypoints, configuration, executable identity, loaded modules and artifact hashes remain independently pinned.",
+      "rejected_reuse": "Do not weaken executable, configuration, process-root, module or artifact checks; do not add distro or device branches, grant ptrace capability, or treat errors other than PermissionError as an acceptable fallback.",
+      "cleanup_plan": "Retain the narrow permission-denied regression and exact ceilings with no reserve; ratchet any later reduction and keep one cross-platform cohort owner.",
+      "changes": {
+        "lines:tools": [2121, 2132],
+        "context_characters:build-release/contracts": [367761, 368184],
+        "context_characters:operational-tools": [608280, 608703],
+        "context_characters:production": [6994589, 6995012],
+        "context_lines:build-release/contracts": [7443, 7454],
+        "context_lines:operational-tools": [11368, 11379],
+        "context_lines:production": [129590, 129601],
+        "context_tokens:build-release/contracts": [87657, 87730],
+        "context_tokens:operational-tools": [148325, 148398],
+        "context_tokens:production": [1754851, 1754924]
+      }
     }
   ],
   "context_snapshot": {

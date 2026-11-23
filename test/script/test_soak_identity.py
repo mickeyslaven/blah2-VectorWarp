@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("soak_identity", ROOT / "tools/vectorwarp_soak_identity.py")
@@ -14,6 +14,14 @@ SPEC.loader.exec_module(IDENTITY)
 
 
 class ArtifactIdentityTests(unittest.TestCase):
+    def test_process_cwd_uses_declared_plan_only_when_proc_access_is_denied(self):
+        proc, declared = MagicMock(), Path('/declared/service/cwd')
+        proc.__truediv__.return_value.resolve.side_effect = PermissionError('ptrace denied')
+        self.assertEqual(IDENTITY.process_cwd(proc, declared), declared)
+        proc.__truediv__.return_value.resolve.side_effect = FileNotFoundError('process disappeared')
+        with self.assertRaises(FileNotFoundError):
+            IDENTITY.process_cwd(proc, declared)
+
     def fixture(self, root):
         root.chmod(0o755)
         release = root / "candidate"

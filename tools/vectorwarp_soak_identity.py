@@ -57,6 +57,17 @@ def check_arguments(unit: str, arguments: list[str], cwd: Path,
         raise ValueError("processor entrypoint or config outside cohort")
 
 
+def process_cwd(proc: Path, declared: Path) -> Path:
+    try:
+        return (proc / "cwd").resolve(strict=True)
+    except PermissionError:
+        # Root inside a capability-bounded container may not dereference a
+        # different service user's cwd. The service plan and absolute runtime
+        # arguments remain independently checked, so its declared cwd is the
+        # only safe portable fallback.
+        return declared
+
+
 def check_candidate_access(release: Path, units: dict) -> None:
     """Prove daemon access despite privileged ExecCondition."""
     if any(values.get("User", "") in {"", "root", "0"} for values in units.values()):
@@ -128,7 +139,7 @@ def preflight(release: Path, config: Path, units: dict | None = None,
             proc = Path("/proc") / str(int(values["MainPID"]))
             processes.append(proc)
             running = (proc / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
-            check_arguments(unit, running, (proc / "cwd").resolve(strict=True), release, config)
+            check_arguments(unit, running, process_cwd(proc, cwd), release, config)
             if unit == "vectorwarp-processor.service" and (proc / "exe").resolve(strict=True) != release / "bin/blah2":
                 raise ValueError("active processor differs from the candidate service plan")
             running_environment = dict(item.split("=", 1) for item in
