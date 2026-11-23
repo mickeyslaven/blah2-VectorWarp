@@ -688,9 +688,15 @@ class GpuArtifactBinding(unittest.TestCase):
         self.assertEqual(channel.records, [])
 
     def test_receipt_retention_is_bounded(self):
-        with patch.object(RUN.ARTIFACTS, "MAX_RECEIPTS", 2):
+        payload = artifact_log([self.events[0]]).encode()
+        receiver, sender = Mock(), Mock()
+        sender.fileno.return_value = 42
+        receiver.recv.side_effect = [payload, payload, payload,
+                                     ConnectionResetError("closed datagram peer")]
+        with patch.object(RUN.ARTIFACTS, "MAX_RECEIPTS", 2), \
+             patch.object(RUN.ARTIFACTS.socket, "socketpair", return_value=(receiver, sender)), \
+             patch.object(RUN.ARTIFACTS.select, "select", return_value=([], [], [])):
             channel, _ = self.channel()
-            for _ in range(3): channel.sender.send(artifact_log([self.events[0]]).encode(), socket.MSG_DONTWAIT)
             with self.assertRaisesRegex(ValueError, "exceeded its bound"): channel.finish()
             self.assertLessEqual(len(channel.records), 2)
 
