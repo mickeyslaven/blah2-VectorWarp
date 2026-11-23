@@ -194,8 +194,11 @@ def main():
                             # Only the PID recorded in this test's private state
                             # is signalled; these are actual native/API crashes.
                             os.kill(previous[component], signal.SIGKILL)
-                            eventually(lambda: all(a != b for a, b in zip(previous, pids())),
-                                       'supervisor did not replace both crashed-instance processes')
+                            eventually(lambda: (all(a != b for a, b in zip(previous, pids()))
+                                                if component == 0 else
+                                                pids()[0] == previous[0] and
+                                                pids()[1] != previous[1]),
+                                       'supervisor did not replace the failed dependency cohort')
                             eventually(receiving, 'crash recovery did not resume frames')
                         owned = pids()
                         os.kill(owned[1], signal.SIGSTOP)

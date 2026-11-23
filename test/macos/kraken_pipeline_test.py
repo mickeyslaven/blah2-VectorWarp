@@ -158,7 +158,7 @@ def main():
         assert not any((state / f'{name}.json').exists() for name in ('api', 'kraken', 'processor'))
 
         # Exercise the actual foreground target used by Homebrew/launchd. A
-        # crashed native controller must replace and resume the entire stack.
+        # crashed controller replaces its native cohort while preserving API state.
         config['capture']['replay']['state'] = False
         filename.write_text(json.dumps(config))
         with (work / 'supervisor.log').open('w') as log:
@@ -169,8 +169,9 @@ def main():
         native_pid = json.loads((state / 'kraken-ready.json').read_text())['nativePid']
         crash_time = time.time() * 1000
         os.kill(native_pid, signal.SIGKILL)
-        wait(lambda: all(a != b for a, b in zip(supervised, owned())),
-             'Supervisor did not replace the full stack after native failure', seconds=30)
+        wait(lambda: owned()[0] == supervised[0] and
+             all(a != b for a, b in zip(supervised[1:], owned()[1:])),
+             'Supervisor did not preserve API while replacing the native cohort', seconds=30)
         resumed = wait(receiving, 'Supervised capture did not recover after native failure')
         assert resumed['lastFrameAt'] > crash_time
         final_owned = owned()

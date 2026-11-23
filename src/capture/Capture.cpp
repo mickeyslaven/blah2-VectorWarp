@@ -340,6 +340,23 @@ void Capture::processing_error(const std::string& error) {
   std::cerr << "Radar input: " << error << '\n';
 }
 
+bool Capture::publish_status(const std::string& ip, uint16_t port) const {
+  const auto deadline = std::chrono::steady_clock::now() +
+    std::chrono::seconds(2);
+  do {
+    httplib::Client client("http://" + ip + ":" + std::to_string(port));
+    client.set_connection_timeout(0, 250000);
+    client.set_read_timeout(0, 500000);
+    client.set_write_timeout(0, 500000);
+    const auto response = client.Post("/api/processor/status", status_json(),
+      "application/json");
+    if (response && response->status >= 200 && response->status < 300)
+      return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  } while (std::chrono::steady_clock::now() < deadline);
+  return false;
+}
+
 void Capture::processing_failure_or_stop(const std::string& error) {
   if (STOP_SIGNAL) {
     request_stop();

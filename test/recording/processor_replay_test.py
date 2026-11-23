@@ -489,7 +489,8 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
         sinks = SinkGroup()
         process = None
         try:
-            status.start()
+            if kind != "missing":
+                status.start()
             sinks.start()
             payload = config(receiver, channels, recording, status.port, sinks.ports(), loop,
                              mismatch=kind == "mismatch", temporal_lane=temporal_lane)
@@ -501,17 +502,29 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
             process = subprocess.Popen([str(binary), "-c", str(config_path)], cwd=root,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             if kind in ("missing", "mismatch"):
-                # Recording identity is checked before HTTP status/networking.
-                # A fail-fast rejection must not be mistaken for a hung replay.
+                # Recording identity is checked before DSP or product sockets,
+                # but the canonical processor contract must still expose the
+                # admission error to an installed API.
+                if kind == "missing":
+                    # Bind before launch, then delay HTTP readiness beyond the
+                    # processor startup pause to exercise bounded retry.
+                    time.sleep(2.25)
+                    status.start()
                 output, _ = process.communicate(timeout=14)
                 expected = ("Cannot open replay file:" if kind == "missing" else
                             "Recording channel count differs from Settings")
                 if process.returncode != 1 or expected not in output:
                     raise AssertionError(f"replay identity was not refused: {output[-4000:]}")
-                if "Setting up device" in output or status.snapshot() or any(sinks.bytes.values()):
+                states = status.snapshot()
+                if (len(states) != 1 or states[0].get("input") != "replay" or
+                        states[0].get("state") != "error" or
+                        expected not in states[0].get("error", "") or
+                        states[0].get("file") != str(recording)):
+                    raise AssertionError(f"replay admission error was not published: {states}")
+                if "Setting up device" in output or any(sinks.bytes.values()):
                     raise AssertionError("invalid replay admitted hardware or published products")
                 return {"case": f"{receiver}-{channels}-{kind}", "ok": True,
-                        "startup_rejection": expected, "output_bytes": 0}
+                        "startup_rejection": expected, "status": "error", "output_bytes": 0}
             # Large-rate software fixtures get a bounded allowance on slow CI
             # hosts. This is a correctness test, never a real-time speed claim.
             deadline = time.monotonic() + (60 if sample_rate == 6000000 else 14)

@@ -822,6 +822,9 @@ try
   const bool coherentInput = inputTopology.coherent;
   const bool arrayReference = inputTopology.arrayReference;
   const auto captureChannelCount = std::size_t(inputTopology.channelCount);
+  auto capture = std::make_unique<Capture>(type, fs, fc, path);
+  if (state) capture->set_replay(loop, replayFile, replayFormat,
+    legacyReplayBlockSamples, replayProvenanceMode, replayStartSample);
   blah2::RecordingProvenance replayIdentityProvenance;
   std::optional<std::array<double,3>> geographicRx, geographicTx;
   const auto coordinates = [](const rapidjson::Value& site) {
@@ -832,8 +835,15 @@ try
       legacyReplayBlockSamples,replayProvenanceMode};
     options.expectedRecordingSha256 = replayRecordingHash;
     options.expectedAcquisitionSha256 = replayAcquisitionHash;
-    blah2::RecordingReader identity(replayFile, options);
-    replayIdentityProvenance = identity.provenance();
+    try {
+      blah2::RecordingReader identity(replayFile, options);
+      replayIdentityProvenance = identity.provenance();
+    } catch (const std::exception& error) {
+      capture->processing_error(error.what());
+      if (!capture->publish_status(ip_capture, port_capture))
+        std::cerr << "Replay admission status could not reach the API\n";
+      throw;
+    }
     for (auto& lane : illuminatorDefinitions) lane.transmitterLocation.reset();
     if (replayIdentityProvenance.geographicSitesAvailable) {
       rapidjson::Document sites;
@@ -1183,11 +1193,8 @@ try
     << " available_cpus=" << threadPlan.availableCpus
     << "\n";
 
-  Capture *capture = new Capture(type, fs, fc, path);
   capture->set_recording_context(blah2::acquisition::contextFromConfig(tree.rootref(),
     contents, referenceMode, referenceChannels, surveillanceChannels, coherentInput));
-  if (state) capture->set_replay(loop, replayFile, replayFormat,
-    legacyReplayBlockSamples, replayProvenanceMode, replayStartSample);
   if (state) capture->trust_replay_acquisition(replayRecordingHash, replayAcquisitionHash);
   if (tree["capture"]["replay"].has_child("qualification") &&
       tree["capture"]["replay"]["qualification"].has_child("acquisition")) {

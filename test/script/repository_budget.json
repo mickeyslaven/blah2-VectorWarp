@@ -7628,6 +7628,54 @@
         "context_tokens:operational-tools": [148398, 148538],
         "context_tokens:production": [1754924, 1755064]
       }
+    },
+    {
+      "owner": "2026-11-23 canonical fail-fast replay status review",
+      "purpose": "Publish replay identity and file-admission failures through the existing processor-status contract before DSP starts, so installed services expose the real fault and can recover after configuration correction. Reuse Capture status serialization and add exact offline and installed-service negative controls; no radar math, receiver or OS behavior changes.",
+      "rejected_reuse": "Do not weaken the installed lifecycle assertion, infer failure from systemd alone, create an alternate status publisher, admit invalid replay data, or add receiver-, distribution- or host-specific handling.",
+      "cleanup_plan": "Retain one Capture-owned status schema and bounded HTTP publication, exact no-product replay rejection, corrected-file recovery, architecture checks and package tests. These ceilings are exact with no reserve; ratchet later reductions.",
+      "changes": {
+        "lines:src": [45425, 45446],
+        "oversized_bytes:src/blah2.cpp": [192219, 192489],
+        "oversized_lines:src/blah2.cpp": [3479, 3486],
+        "context_characters:build-integration/contracts": [1385145, 1386135],
+        "context_characters:capture-recording": [241213, 241933],
+        "context_characters:native-runtime": [192219, 192489],
+        "context_characters:native-runtime/contracts": [280313, 280590],
+        "context_characters:production": [6995725, 6996715],
+        "context_lines:build-integration/contracts": [28256, 28277],
+        "context_lines:capture-recording": [4996, 5010],
+        "context_lines:native-runtime": [3479, 3486],
+        "context_lines:native-runtime/contracts": [5899, 5903],
+        "context_lines:production": [129616, 129637],
+        "context_tokens:build-integration/contracts": [341547, 341791],
+        "context_tokens:capture-recording": [59592, 59771],
+        "context_tokens:native-runtime": [38887, 38952],
+        "context_tokens:native-runtime/contracts": [71274, 71330],
+        "context_tokens:production": [1755064, 1755308]
+      }
+    },
+    {
+      "owner": "2026-11-23 cross-platform startup fault persistence review",
+      "purpose": "Retry the canonical startup-error post across bounded API readiness races and keep the macOS API alive while restarting only a failed native dependency cohort. This aligns Linux and macOS service recovery without changing radar math, receiver adapters or configuration semantics.",
+      "rejected_reuse": "Do not erase processor errors by restarting a healthy API, add an alternate telemetry store, retry without a deadline, fork by receiver or host, or weaken native-cohort recovery checks.",
+      "cleanup_plan": "Retain delayed-readiness replay rejection, macOS API PID preservation and native-cohort recovery tests plus package lifecycle checks. These exact ceilings carry no reserve and later deletions must ratchet downward.",
+      "changes": {
+        "lines:script": [27859, 27866],
+        "lines:src": [45446, 45453],
+        "context_characters:build-integration/contracts": [1386135, 1386398],
+        "context_characters:build-release": [652400, 652783],
+        "context_characters:capture-recording": [241933, 242196],
+        "context_characters:production": [6996715, 6997361],
+        "context_lines:build-integration/contracts": [28277, 28284],
+        "context_lines:build-release": [12582, 12589],
+        "context_lines:capture-recording": [5010, 5017],
+        "context_lines:production": [129637, 129651],
+        "context_tokens:build-integration/contracts": [341791, 341867],
+        "context_tokens:build-release": [162813, 162858],
+        "context_tokens:capture-recording": [59771, 59847],
+        "context_tokens:production": [1755308, 1755429]
+      }
     }
   ],
   "context_snapshot": {

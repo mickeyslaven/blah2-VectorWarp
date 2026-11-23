@@ -90,6 +90,10 @@ public:
     return fatalLiveInputFailure.load();
   }
   std::string status_json() const;
+  // Publish the same bounded processor contract during both normal capture
+  // and fail-fast replay admission. This keeps pre-capture input errors
+  // visible without inventing a second service-status path.
+  bool publish_status(const std::string& ip, uint16_t port) const;
   void processing_error(const std::string& error);
   // Classify a processing exception at the shared live/replay boundary. A
   // signal-requested stop is normal; an unsignalled live failure remains fatal.

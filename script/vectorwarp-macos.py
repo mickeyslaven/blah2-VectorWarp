@@ -611,12 +611,19 @@ process.stdout.write(yaml.dump(c));'''
                         kraken_ok = not self.kraken_settings() or self.live('kraken')
                         if self.live('api') and self.live('processor') and kraken_ok:
                             continue
-                        # A partial stack is never left running after a crash.
                         with self.lock():
                             self.refuse_foreign_instances()
-                            self.stop('processor')
-                            self.stop('kraken')
-                            self.stop('api')
+                            # Preserve API fault visibility while restarting
+                            # only the failed component and its dependants.
+                            if not self.live('api'):
+                                self.stop('processor')
+                                self.stop('kraken')
+                                self.stop('api')
+                            elif not kraken_ok:
+                                self.stop('processor')
+                                self.stop('kraken')
+                            else:
+                                self.stop('processor')
                         break
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                     print(f'vectorwarp-macos supervisor: {error}', file=sys.stderr)
