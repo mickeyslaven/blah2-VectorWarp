@@ -137,7 +137,7 @@ restore() {
     printf '%s %s\n' "$context" 'A restart/build became active. API/processor were not restored. Wait for that action, then inspect their systemctl status and retry.' >&2
     return
   fi
-  [ "$was_api" = 0 ] || systemctl start "$api" || true
+  [ "$was_api" = 0 ] || systemctl --job-mode=ignore-dependencies start "$api" || true
   [ "$was_processor" = 0 ] || systemctl start "$processor" || true
   rm -f -- "$state"
   printf '%s %s\n' "$context" 'Verify service state with systemctl status vectorwarp-api.service vectorwarp-processor.service vectorwarp-receiver.socket.' >&2

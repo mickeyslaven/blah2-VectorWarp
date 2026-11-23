@@ -54,14 +54,18 @@ case "$1" in
       printf 'preserve-config=%s\n' "$(cat "$PRESERVE_CONFIG_FILE")" >>"$UPGRADE_TEST_LOG"
     fi
     [ "$2" != "${FAIL_START:-none}" ] ;;
-  stop|daemon-reload|is-active) exit 0 ;;
+  stop) [ "$2" != "${FAIL_STOP:-none}" ] ;;
+  daemon-reload|is-active) exit 0 ;;
   --job-mode=ignore-dependencies)
     case "$*" in
       '--job-mode=ignore-dependencies --no-block stop vectorwarp-receiver.socket')
         echo inactive > "$SOCKET_STATE_FILE" ;;
       '--job-mode=ignore-dependencies start vectorwarp-api.service')
-        test -f "$PRESERVE_CONFIG_FILE" || exit 10
-        printf 'preserve-config=%s\n' "$(cat "$PRESERVE_CONFIG_FILE")" >>"$UPGRADE_TEST_LOG" ;;
+        [ "${FAIL_START:-none}" != vectorwarp-api.service ] || exit 1
+        if [ -f "$PRESERVE_CONFIG_FILE" ]; then
+          printf 'preserve-config=%s\n' "$(cat "$PRESERVE_CONFIG_FILE")" >>"$UPGRADE_TEST_LOG"
+        fi
+        printf 'api-start=success\n' >>"$UPGRADE_TEST_LOG" ;;
       *) exit 9 ;;
     esac ;;
   *) exit 9 ;;
@@ -141,6 +145,18 @@ esac
                 self.assertFalse(self.state.exists())
                 self.assertFalse(any(line.startswith('stop ') for line in self.log.read_text().splitlines()))
 
+    def test_pre_unpack_abort_restores_api_without_reviving_stopped_processor(self):
+        pre = self.script('packaging/deb/preinst')
+        result = self.call(pre, 'upgrade', '0.1.6', API_STATE='active',
+                           FAIL_STOP='vectorwarp-receiver.service')
+        self.assertNotEqual(result.returncode, 0)
+        calls = self.log.read_text().splitlines()
+        self.assertIn('--job-mode=ignore-dependencies start vectorwarp-api.service', calls)
+        self.assertIn('api-start=success', calls)
+        self.assertNotIn('start vectorwarp-api.service', calls)
+        self.assertNotIn('start vectorwarp-processor.service', calls)
+        self.assertFalse(self.state.exists())
+
     def test_activate_only_snapshot_and_wait_for_api_before_processor(self):
         post = self.script('packaging/activate-upgrade')
         self.state.write_text('api=1\nprocessor=1\nsocket=1\nbroker=0\n')
@@ -162,6 +178,17 @@ esac
         self.state.write_text('api=1\nprocessor=1\nsocket=1\nbroker=0\n')
         self.state.chmod(0o600)
         result = self.call(post, FAIL_NODE='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('activation failed', result.stderr)
+        self.assertNotIn('start vectorwarp-processor.service', self.log.read_text())
+        self.assertFalse(self.state.exists())
+        self.assertFalse((self.base / 'preserve-config.env').exists())
+
+    def test_failed_api_start_never_starts_processor_or_claims_activation(self):
+        post = self.script('packaging/activate-upgrade')
+        self.state.write_text('api=1\nprocessor=1\nsocket=1\nbroker=0\n')
+        self.state.chmod(0o600)
+        result = self.call(post, FAIL_START='vectorwarp-api.service')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('activation failed', result.stderr)
         self.assertNotIn('start vectorwarp-processor.service', self.log.read_text())
