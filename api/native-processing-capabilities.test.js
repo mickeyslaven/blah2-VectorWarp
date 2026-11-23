@@ -85,7 +85,7 @@ for (const report of ['', '{}', '{"schema":2,"portableGpu":true,"residentGpu":tr
     }});
   await queryStandalone('darwin'); // Missing bundled ICD must not inherit ambient paths.
   fs.writeFileSync(icd, '{}');
-  await queryStandalone('darwin', icd); // No Homebrew path or ambient environment is needed.
+  await queryStandalone('darwin', fs.realpathSync(icd)); // No ambient environment is needed.
   await queryStandalone('linux');
   fs.unlinkSync(icd);
   fs.mkdirSync(icd);
