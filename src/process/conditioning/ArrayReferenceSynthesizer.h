@@ -2,6 +2,7 @@
 #define ARRAY_REFERENCE_SYNTHESIZER_H
 
 #include "data/IqData.h"
+#include "data/CanonicalSignal.h"
 
 #include <complex>
 #include <cstdint>
@@ -75,6 +76,10 @@ public:
   // Replay coherent accumulation needs one immutable physical anchor.  The
   // historical diagnostic above sums channels and can legitimately exceed
   // unit magnitude, so it cannot serve as a normalized phase pilot.
+  static std::optional<std::complex<double>> direct_path_anchor_pilot(
+    IqSampleView reference, IqSampleView anchor);
+  static std::optional<std::complex<double>> direct_path_anchor_pilot(
+    blah2::iq::SampleView reference, blah2::iq::SampleView anchor);
   static std::optional<std::complex<double>> direct_path_anchor_pilot(
     const IqData& reference,
     const std::vector<std::unique_ptr<IqData>>& surveillance,

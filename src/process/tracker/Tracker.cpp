@@ -14,9 +14,11 @@ void Tracker::reset(bool lineageDiscontinuity)
 {
   const auto beams=spatialBeams,fineFactor=spatialFineFactor,tolerance=spatialTolerance;
   const auto delay=nativeDelay;const auto doppler=nativeDoppler;
+  const auto evidenceDepth=maximumEvidenceDepth;
   *this = Tracker(m, n, nDelete, cpi, maxAccInit, rangeRes, lambda,
     minInitiationSnr, adaptiveGate, dopplerRidge, normalizedInnovationGate,
     associationMaximumNis, birthExclusivity, recovery);
+  configureMaximumEvidenceDepth(evidenceDepth);
   configureSpatialAssociation(beams,fineFactor,tolerance);
   configureGrid(delay,doppler);
   pendingLineageReset=lineageDiscontinuity;
@@ -63,6 +65,8 @@ std::vector<TrackerQualificationState> Tracker::qualificationState()
     value.inactive=track.get_nInactive(i);value.measurements=track.get_nAssociated(i);
     value.updates=track.get_nUpdates(i);value.spatial=spatialForTrack(value.id);
     value.source=uint32_t(track.get_current_source(i));
+    if(value.source==uint32_t(Track::Source::detector)&&current.get_evidence().size()==1)
+      value.measurementEvidence=current.get_evidence().front();
     value.accelerationEstimated=track.get_acceleration_estimated(i);
     value.everConfirmed=previouslyConfirmed.count(value.id)!=0;
     const auto found=evidenceLedgers.find(value.id);
@@ -165,16 +169,17 @@ void Tracker::configureRecovery(TrackerRecoveryConfig config)
   evidenceEpoch = 0; evidenceEpochInitialized=false; frameSequence = 0; frameOrdinal = 0;
 }
 
+void Tracker::configureMaximumEvidenceDepth(uint32_t depth)
+{
+  if (depth != 1 && depth != 2 && depth != 4 && depth != 8)
+    throw std::invalid_argument("Invalid tracker evidence depth");
+  maximumEvidenceDepth = depth;
+}
+
 bool Tracker::validEvidence(const Detection::Evidence& value, bool requireCurrentEpoch) const
 {
-  if (!value.newestSequence ||
-      !tracker_confirmation::confirmationDepthValid(value.depth) ||
-      value.newestSequence != value.sequences[0] ||
-      (requireCurrentEpoch && evidenceEpochInitialized && value.epoch != evidenceEpoch)) return false;
-  for (uint8_t i = 1; i < value.depth; ++i)
-    if (!value.sequences[i] || value.sequences[i] >= value.sequences[i-1] ||
-        value.sequences[i-1] - value.sequences[i] != 1) return false;
-  return true;
+  return Detection::valid_evidence(value) &&
+    !(requireCurrentEpoch && evidenceEpochInitialized && value.epoch != evidenceEpoch);
 }
 
 bool Tracker::freshEvidence(const std::string& id, const Detection::Evidence& value) const
@@ -501,12 +506,13 @@ void Tracker::update(Detection *detection, uint64_t current)
     Detection prediction = predict(detectionCurrent, acc, T);
     const double delayPredict = prediction.get_delay().front();
     const double dopplerPredict = prediction.get_doppler().front();
-    const bool needsAccelerationEstimate = adaptiveGate &&
-      track.get_state(i)!="ACTIVE" && track.get_state(i)!="COASTING" &&
-      !track.get_acceleration_estimated(i);
-    // First reassociation must use the actual elapsed time since the seed,
-    // including all missed updates (not only the most recent CPI).
-    const double accelerationTime = needsAccelerationEstimate ?
+    const std::string trackState = track.get_state(i);
+    const bool adaptiveAssociation = tracker_association::adaptiveAssociationGate(
+      adaptiveGate, track.get_acceleration_estimated(i),
+      trackState == "COASTING", track.get_missed_seconds(i));
+    // First reassociation and confirmed-track reacquisition must use the actual
+    // elapsed time since the last measurement, including all missed updates.
+    const double accelerationTime = adaptiveAssociation ?
       tracker_association::associationElapsed(T,track.get_missed_seconds(i)) : T;
     const double resolution=1/(cpi*cpi);
     const double span=resolution*std::floor(maxAccInit/resolution);
@@ -520,7 +526,7 @@ void Tracker::update(Detection *detection, uint64_t current)
       ++diagnostics.pairs;
       if (doNotInitiate[j]) { ++diagnostics.pairClaimed; continue; }
       const auto gate=tracker_association::associationDecision(delay[j],doppler[j],
-        delayPredict,dopplerPredict,cpi,needsAccelerationEstimate,accelerationTime,
+        delayPredict,dopplerPredict,cpi,adaptiveAssociation,accelerationTime,
         span,q,normalizedInnovationGate,associationMaximumNis);
       if(!gate.accepted) {
         if(gate.rejection==2)++diagnostics.pairDelayRejected;
@@ -533,8 +539,11 @@ void Tracker::update(Detection *detection, uint64_t current)
           spatialBeams,spatialFineFactor,spatialTolerance)) {
         ++diagnostics.pairSpatialRejected;continue;
       }
+      // A new endpoint can share older source CPIs with the last measurement.
+      // That overlap forbids another confirmation vote, not a measured update.
       if ((evidence.empty() && evidenceEpochInitialized) ||
-          (!evidence.empty() && !freshEvidence(track.get_id(i),evidence[j]))) {
+          (!evidence.empty() && (!validEvidence(evidence[j]) ||
+           evidence[j].newestSequence!=frameSequence))) {
         ++diagnostics.pairLineageRejected;
         lineageNoBirth[j]=true;
         continue;
@@ -554,7 +563,11 @@ void Tracker::update(Detection *detection, uint64_t current)
       const bool quarantined=quarantine(i,delay[match],doppler[match]);
       if(quarantined)++diagnostics.stationaryQuarantined;
       const bool credit=creditEvidence(track.get_id(i),evidence.empty()?nullptr:&evidence[match]);
-      track.set_acceleration(i, (doppler[match] - detectionCurrent.get_doppler().front()) / accelerationTime);
+      const double updatedAcceleration = adaptiveAssociation &&
+          track.get_missed_seconds(i) > 0 ?
+        acc + (doppler[match] - dopplerPredict) / accelerationTime :
+        (doppler[match] - detectionCurrent.get_doppler().front()) / accelerationTime;
+      track.set_acceleration(i, updatedAcceleration);
       track.set_acceleration_estimated(i, true);
       track.set_nInactive(i, 0);
       track.set_missed_seconds(i,tracker_association::associationMissed(T,track.get_missed_seconds(i),true));
@@ -567,7 +580,9 @@ void Tracker::update(Detection *detection, uint64_t current)
         appendVote(i,credit);else promote(i, credit);
       // Record the measured sample after promotion so its display history is
       // paired with the state actually assigned to that measurement.
-      track.set_current(i, Detection(delay[match], doppler[match], snr[match]));
+      Detection measured(delay[match], doppler[match], snr[match]);
+      if (!evidence.empty()) measured.set_evidence({evidence[match]});
+      track.set_current(i, std::move(measured));
       if(spatialBeams)trackSpatial[track.get_id(i)]=detection->get_spatial()[match];
       if (track.get_state(i) == "ACTIVE" && previousState != "ACTIVE" && previousState != "COASTING")
         ++diagnostics.promotions;
@@ -665,10 +680,15 @@ void Tracker::initiate(Detection *detection)
       ++diagnostics.birthCapacityRejected; continue;
     }
     if (lineageNoBirth[i] || (evidence.empty() && evidenceEpochInitialized) ||
-        (!evidence.empty() && !validEvidence(evidence[i]))) {
+        (!evidence.empty() && (!validEvidence(evidence[i]) ||
+         evidence[i].newestSequence!=frameSequence))) {
       ++diagnostics.birthLineageRejected; continue;
     }
-    if (snr[i] < minInitiationSnr)
+    const uint32_t supportDepth = evidence.empty() ? 1u :
+      (validEvidence(evidence[i]) ? evidence[i].depth : 0u);
+    if (snr[i] < minInitiationSnr ||
+        !tracker_weak_birth::weakBirthSupportEligible(
+          snr[i], maximumEvidenceDepth, supportDepth))
     {
       ++diagnostics.birthSnrRejected;
       continue;
@@ -705,6 +725,7 @@ void Tracker::initiate(Detection *detection)
     for (size_t j = 0; j < accInit.size(); j++)
     {
       Detection detectionCurrent(delay[i], doppler[i], snr[i]);
+      if (!evidence.empty()) detectionCurrent.set_evidence({evidence[i]});
       index = track.add(detectionCurrent);
       // Public 16-bit IDs wrap. A still-live identity must never lend its
       // evidence votes to a newly seeded track after that wrap.

@@ -10,6 +10,8 @@
 #include "process/ambiguity/ResidentLaneBudget.h"
 #include "process/ambiguity/GpuLaneLease.h"
 #include "process/ambiguity/GpuWorkerLifetime.h"
+#include "process/ambiguity/ManifoldEvidence.h"
+#include "process/spectrum/SpectrumAnalyser.h"
 #include "process/analysis/StartupIq.h"
 #include "process/analysis/ReplayCoherentObserverViews.h"
 #include "process/conditioning/FmReferenceQualityFilter.h"
@@ -136,9 +138,8 @@ void validateAdvancedFeatures(const AdvancedFeatureConfig& config)
       config.trackerAccelerationModel != "adaptive_gate")
     throw std::invalid_argument(
       "Multi-illuminator tracker initiation mode is invalid");
-  if (config.bearingManifoldRecorder)
-    throw std::invalid_argument(
-      "Bearing calibration workers require an explicitly lane-bound artifact identity");
+  if (config.bearingManifoldRecorder && config.surveillanceFusionMode == "noncoherent")
+    throw std::invalid_argument("Manifold evidence requires explicit coherent lane geometry");
 }
 
 RadarPlan resolveRadarPlan(const RadarConfig& config, const Ambiguity& shape,
@@ -220,6 +221,12 @@ struct RadarBank::Context
   bool residentProductRoute = false;
   bool residentRequired = false;
   std::optional<resident::Coordinator::Publication> residentProducts;
+  std::shared_ptr<const resident::Config> residentConfiguration;
+  std::optional<RadarFrame::ResidentDiagnostics> residentDiagnostics;
+  std::unique_ptr<SpectrumAnalyser> referenceSpectrumAnalyser;
+  std::string referenceSpectrum;
+  std::optional<std::complex<double>> directPathPilot;
+  std::unique_ptr<Detection> residentDetections;
   std::shared_ptr<Map<std::complex<double>>> residentFused;
   bool borrowedStages = false;
   bool preferBorrowedStages = false;
@@ -242,17 +249,63 @@ struct RadarBank::Context
     atscPilotProjectionMetrics;
   std::optional<LiveTemporalIdentity> liveTemporalIdentity;
   uint64_t processingEpoch = 1;
+  std::optional<temporal_gpu::Config> temporalCandidate;
+  uint64_t temporalReservationBytes = 0;
+  uint64_t temporalMappingBytes = 0;
   NativeCafObserver nativeObserver;
   bool nativeObserverFailed = false;
   LaneHealthStatus health;
+  struct StagedCpi {
+    RadarFrame frame;
+    pipeline::Position position;
+    std::optional<qualification_observer::Frame> qualification;
+    bool residentDetectorObserved = false;
+    uint64_t residentEvaluated = 0, residentCfar = 0;
+    std::vector<std::shared_ptr<Map<std::complex<double>>>> manifoldMaps;
+    std::vector<std::complex<double>> referenceWeights;
+    std::vector<double> actualGainDb;
+    uint64_t publicationTimestamp = 0;
+  };
+  utility::FixedExecutor* productExecutor = nullptr;
+  std::future<void> pendingProduct;
+  stream_profile::Worker productProfile{"canonical-products"};
+  uint64_t pendingPublication = 0;
+  std::optional<RadarFrame> completedProduct;
+  std::vector<RadarFrame> readyProducts;
+
+  void collectPending()
+  {
+    if (!pendingProduct.valid()) return;
+    pendingProduct.get();
+    if (!completedProduct) throw std::logic_error("CPI product task returned no frame");
+    auto& frame = *completedProduct;
+    ++health.acceptedCpis;
+    health.hasLastCpi = true;
+    health.lastAccepted = true;
+    health.lastFirstInputSample = frame.firstInputSample;
+    health.lastEndInputSample = frame.endInputSample;
+    health.lastReason.clear();
+    readyProducts.push_back(std::move(frame));
+    completedProduct.reset();
+  }
+
+  void discardPending() noexcept
+  {
+    if (pendingProduct.valid()) try { pendingProduct.get(); } catch (...) {}
+    completedProduct.reset();
+    readyProducts.clear();
+  }
+
+  ~Context() { discardPending(); }
 
   Context(uint32_t captureRateHz, std::size_t channelCount,
     iq::SignalDefinition value, RadarConfig radar,
     const Acceleration::BackendFactory& backendFactory,
     std::shared_ptr<resident::LaneBudget> budget, uint32_t laneIndex,
-    bool residentSelectable, const std::string& residentDevice)
+    bool residentSelectable, const std::string& residentDevice,
+    std::size_t temporalWorkers, std::size_t clutterWorkerSlots)
     : definition(std::move(value)), captureRate(captureRateHz),
-      samples(uint32_t(std::llround(radar.cpiSeconds * definition.outputRateHz))),
+      samples(resolveCpiSamples(definition.outputRateHz, radar.cpiSeconds)),
       decimation(captureRateHz / definition.outputRateHz),
       config(scaleRadarConfigForLane(applyLaneTopology(std::move(radar), definition),
         definition.outputRateHz)),
@@ -261,8 +314,8 @@ struct RadarBank::Context
     residentBudget = std::move(budget);
     portableBackendFactory = backendFactory;
     qualificationLaneIndex = laneIndex;
-    residentRequired = config.advanced.surveillanceFusionMode == "noise_whitened_beam_bank" ||
-      config.advanced.bearing || config.advanced.trackerBeamToleranceConfigured;
+    residentRequired = requiresResidentProducts(config.advanced);
+    (void)selectRequiredResidentRoute(config.accelerationMode, residentRequired);
     if (config.advanced.surveillanceFusionMode == "noncoherent" &&
         (!definition.detectionManifoldFile.empty() || !definition.bearingManifoldFile.empty()))
       throw std::invalid_argument("Lane manifold files require coherent geometry");
@@ -393,10 +446,8 @@ struct RadarBank::Context
     const auto plan = resolveRadarPlan(config, *ambiguity.front(),
       definition.outputRateHz, definition.frequencyHz, samples, residentProductRoute);
     products = std::make_unique<pipeline::ProductStages>(plan);
-    // Reference conditioning is causal but currently host-side. AUTO must skip
-    // the resident frontend in that topology and continue to the portable GPU
-    // worker, which consumes the conditioned reference. Treating this as a
-    // failed resident allocation incorrectly suppressed every GPU fallback.
+    // Host-conditioned reference needs the portable GPU frontend. Skipping
+    // incompatible residency must preserve that independent fallback.
     const bool residentReferenceCompatible =
       !fmReferenceFilter && !atscPilotProjector &&
       config.reference.protectionRelativeSteering.empty() &&
@@ -407,6 +458,11 @@ struct RadarBank::Context
         "Selected resident products do not support configured host reference conditioning");
     if (!residentReferenceCompatible)
       residentProductRoute = false;
+    if (residentSelectable && !residentReferenceCompatible)
+      std::cerr << "GPU resident frontend skipped lane=" << gpuDiagnosticString(definition.id)
+        << " reason=host-reference-conditioning pilot=" << bool(atscPilotProjector)
+        << " fm=" << bool(fmReferenceFilter)
+        << " temporal_backend=unqualified\n";
     if (config.stages.clutter && config.accelerationMode == "gpu-resident" &&
         !residentReferenceCompatible)
       throw std::invalid_argument(
@@ -432,7 +488,10 @@ struct RadarBank::Context
         frontend.correlation = shape.get_n_corr();
         frontend.sampleRate = definition.outputRateHz;
         frontend.middle = shape.get_doppler_middle();
-        frontend.spectrumBins = 1;
+        const double spectrumBandwidth = resolveReferenceSpectrumBandwidth(
+          config.referenceSpectrumBandwidthHz, definition.outputRateHz);
+        frontend.spectrumBins = resolveReferenceSpectrumBins(samples,
+          definition.outputRateHz, spectrumBandwidth);
         frontend.epoch = uint64_t(laneIndex) + 1;
         frontend.device = residentDevice;
         frontend.surveillanceChannels = config.surveillanceChannels;
@@ -447,7 +506,7 @@ struct RadarBank::Context
         frontend.reference.powerIterations = config.reference.powerIterations;
         frontend.reference.covarianceSmoothing = config.reference.covarianceSmoothing;
         frontend.reference.diagonalLoading = config.reference.diagonalLoading;
-        frontend.reference.bandwidthHz = definition.outputRateHz;
+        frontend.reference.bandwidthHz = spectrumBandwidth;
         frontend.reference.centreHz = definition.frequencyHz;
         if (residentProductRoute) {
           const auto& geometry = *config.coherentFusion;
@@ -477,22 +536,32 @@ struct RadarBank::Context
           config.bearingPublication.minimumUncertaintyDeg = std::min(90.0,
             .443 * speedOfLight / definition.frequencyHz / aperture * 180 / std::acos(-1.0));
         }
+        // The qualified temporal/detector boundary does not require spatial
+        // refinement or resident tracking. Keep ridge/recovery on ProductStages.
+        if (!coherentFusion && config.stages.detection)
+          frontend.detector = plan.residentDetector();
         frontend.presence = resident::wire::mandatoryPresence(frontend) |
           resident::bit(resident::Section::filtered) |
           resident::bit(resident::Section::fullReference);
+        if (config.advanced.bearingManifoldRecorder)
+          frontend.presence |= resident::bit(resident::Section::detectionCells);
+        if (config.residentProductTemplate)
+          frontend.presence |= config.residentProductTemplate->presence &
+            resident::bit(resident::Section::causalTrace);
         residentAllocationLimit = residentBudget->allocationLimit(laneIndex,
           resident::makeLayout(frontend, uint64_t(sysconf(_SC_PAGESIZE))).bytes);
         GpuProcessOptions options;
         options.offlineTransportTrace = config.offlineReplay;
         options.qualificationLane = laneIndex;
         options.allocationLimitBytes = residentAllocationLimit;
-        options.startupMs = gpuCpiStartupDeadlineMs(
-          config.cpiSeconds * 1000.0, options.startupMs);
+        options.startupMs = gpuResidentStartupDeadlineMs(
+          config.cpiSeconds * 1000.0, options.startupMs, residentRequired);
         if (!config.offlineReplay)
           options.frameMs = gpuCpiFrameDeadlineMs(
             config.cpiSeconds * 1000.0, options.frameMs);
         std::lock_guard<std::mutex> lease(residentBudget->execution);
         residentFrontend = std::make_unique<resident::Coordinator>(frontend, options);
+        residentConfiguration = std::make_shared<const resident::Config>(frontend);
         residentStatus = residentFrontend->status();
         residentStatus.requested = config.accelerationMode;
       } catch (const std::exception& error) {
@@ -500,6 +569,8 @@ struct RadarBank::Context
         if (std::string(error.what()).find("allocation") != std::string::npos)
           residentStatus.reason = "aggregate-gpu-capacity-exhausted: " + residentStatus.reason;
         residentFrontend.reset();
+        std::cerr << "GPU resident frontend fallback lane=" << gpuDiagnosticString(definition.id)
+          << " phase=construct reason=" << gpuDiagnosticString(residentStatus.reason) << '\n';
         if (residentRequired) throw;
         residentProductRoute = false;
       }
@@ -507,6 +578,43 @@ struct RadarBank::Context
     if (residentRequired && !residentFrontend)
       throw std::invalid_argument("Selected resident products require an available qualified resident backend");
     if (!residentFrontend) residentProductRoute = false;
+    // Temporal admission is capability- and budget-driven for AUTO as well as
+    // explicit GPU mode. The aggregate lane budget below reserves both stage
+    // mappings before either worker starts, so unsupported or over-budget
+    // hardware cleanly retains the identical host ProductStages path.
+    // A separate temporal worker must not reserve capacity required by an
+    // actually selected portable clutter worker. AUTO does not offer portable
+    // clutter because its filtered-IQ download/re-upload is slower than host
+    // clutter; it therefore remains eligible for the temporal GPU worker.
+    // Basing this on configured clutter alone disabled both routes and caused
+    // the measured CPU-clutter + CPU-temporal regression.
+    const bool portableClutterRequired = !residentFrontend &&
+      shouldOfferPortableGpuClutter(config.accelerationMode,
+        config.stages.clutter);
+    if (shouldAttemptTemporalProducts(config.accelerationMode, residentSelectable,
+          bool(coherentFusion), config.stages.detection,
+          plan.products().integrationCpis, portableClutterRequired) &&
+        residentBudget && residentBudget->additionalWorkerAvailable(laneIndex)) {
+      temporal_gpu::Config candidate;
+      candidate.sampleRate = definition.outputRateHz;
+      candidate.device = residentDevice;
+      candidate.delayAxis.assign(ambiguity.front()->result()->delay.begin(), ambiguity.front()->result()->delay.end());
+      candidate.dopplerAxis.assign(ambiguity.front()->result()->doppler.begin(), ambiguity.front()->result()->doppler.end());
+      candidate.detector = plan.residentDetector();
+      candidate.delayDriftPerHz = plan.products().delayDriftPerHz;
+      temporal_gpu::validate(candidate);
+      // Two independent stage workers share, rather than duplicate, the lane's
+      // existing aggregate reservation. Size temporal's share from its complete
+      // geometry so a small map worker does not strand portable clutter memory.
+      const auto reservation = temporal_gpu::memoryReservation(candidate,
+        uint64_t(sysconf(_SC_PAGESIZE)));
+      if (reservation.bytes() < residentBudget->bytesPerSession &&
+          residentBudget->bytesPerSession - reservation.bytes() >= (16ULL << 20)) {
+        temporalCandidate = std::move(candidate);
+        temporalReservationBytes = reservation.bytes();
+        temporalMappingBytes = reservation.mappingBytes;
+      }
+    }
     initializePortableAcceleration();
     preferBorrowedStages = config.stages.clutter && config.borrowedClutter.value_or(
       !config.arrayReference && config.surveillanceChannels.size() == 1);
@@ -516,9 +624,26 @@ struct RadarBank::Context
     stages = std::make_unique<pipeline::RawIqStages>(
       pipeline::RawIqStages::Config{config.clutterDelayMin,
         config.clutterDelayMax, samples, config.surveillanceChannels.size(),
-        config.workers, borrowed, config.reference, config.stages.clutter});
+        config.workers, borrowed, config.reference, config.stages.clutter,
+        config.stages.detection && config.advanced.detectorIntegrationCpis > 1 ? temporalWorkers : 1,
+        clutterWorkerSlots});
     directFloatBorrowed = borrowed && !fmReferenceFilter &&
       !config.arrayReference && config.surveillanceChannels.size() == 1;
+    if (config.referenceSpectrumBandwidthHz)
+      referenceSpectrumAnalyser = std::make_unique<SpectrumAnalyser>(samples,
+        *config.referenceSpectrumBandwidthHz, definition.frequencyHz, definition.outputRateHz);
+  }
+
+  uint64_t signalTimestamp(uint64_t first) const
+  {
+    return liveTemporalIdentity && liveTemporalIdentity->signalTimestampMs ?
+      *liveTemporalIdentity->signalTimestampMs : detection::signalTimeMilliseconds(
+        first + uint64_t(samples) * decimation, captureRate);
+  }
+
+  uint64_t publicationTimestamp(uint64_t first) const
+  {
+    return liveTemporalIdentity ? liveTemporalIdentity->timestampMs : signalTimestamp(first);
   }
 
   void initializePortableAcceleration()
@@ -526,6 +651,12 @@ struct RadarBank::Context
       if (acceleration || !shouldAttemptPortableFrontend(config.accelerationMode,
             bool(residentFrontend), residentRequired)) return;
       const auto& shape = *ownedAmbiguity.front();
+      // Portable GPU clutter would copy a full filtered CPI back to the host,
+      // then upload it to this same worker again for CAF.  AUTO avoids that
+      // duplicate transport and retains GPU CAF; explicit GPU mode still
+      // exposes portable clutter for qualification and controlled use.
+      const bool portableGpuClutter = shouldOfferPortableGpuClutter(
+        config.accelerationMode, config.stages.clutter);
       const int64_t clutterBins = int64_t(config.clutterDelayMax) -
         config.clutterDelayMin;
       if (clutterBins <= 0 || uint64_t(clutterBins) > UINT32_MAX)
@@ -535,6 +666,7 @@ struct RadarBank::Context
       const Acceleration::BackendFactory boundedFactory =
         [budget = residentBudget, laneIndex = qualificationLaneIndex,
           backendFactory = portableBackendFactory,
+          temporalReservation = temporalReservationBytes,
           cpiSeconds = config.cpiSeconds, offline = config.offlineReplay](const GpuGeometry& geometry,
             const std::string& device) {
           try {
@@ -543,7 +675,7 @@ struct RadarBank::Context
           options.offlineTransportTrace = offline;
           options.qualificationLane = laneIndex;
           options.allocationLimitBytes = budget->allocationLimit(laneIndex,
-            gpuProcessMappingBytes(geometry));
+            gpuProcessMappingBytes(geometry), temporalReservation);
           options.startupMs = gpuCpiStartupDeadlineMs(
             cpiSeconds * 1000.0, options.startupMs);
           if (!offline)
@@ -571,10 +703,11 @@ struct RadarBank::Context
       acceleration = std::make_unique<Acceleration>(config.accelerationMode,
         GpuGeometry{shape.get_nfft(), shape.get_n_doppler_bins(),
           shape.get_n_delay_bins(), uint32_t(channels.size()), config.delayMin,
-          config.stages.clutter ? samples : 0u,
-          config.stages.clutter ? uint32_t(clutterBins) : 0u, config.clutterDelayMin},
+          portableGpuClutter ? samples : 0u,
+          portableGpuClutter ? uint32_t(clutterBins) : 0u, config.clutterDelayMin},
         shape.get_n_corr(), definition.outputRateHz,
-        shape.get_doppler_middle(), config.accelerationDevice, boundedFactory);
+        shape.get_doppler_middle(), config.accelerationDevice, boundedFactory,
+        Acceleration::TimeSource{}, config.observationExecutor);
   }
 
   void selectCpuStages()
@@ -593,8 +726,10 @@ struct RadarBank::Context
       !config.arrayReference && config.surveillanceChannels.size() == 1;
   }
 
-  void clear(const char* reason = "explicit_reset")
+  void clear(const char* reason = "explicit_reset", bool retainProducts = false)
   {
+    if (retainProducts) collectPending();
+    else discardPending();
     pendingCount = 0;
     positioned = false;
     pendingFirstInputSample = 0;
@@ -603,6 +738,8 @@ struct RadarBank::Context
 
   void resetAdaptiveState(const char* reason = "clutter_reference_rejected")
   {
+    // Product history belongs exclusively to its task until completion.
+    collectPending();
     if (residentFrontend) {
       std::lock_guard<std::mutex> lease(residentBudget->execution);
       residentFrontend->resetInput();
@@ -632,7 +769,7 @@ struct RadarBank::Context
     collect(reference); collect(conditionedReference); collect(projectedReference);
   }
 
-  void resetTracker() { products->resetTracker(); }
+  void resetTracker() { collectPending(); products->resetTracker(); }
 
   std::vector<RadarFrame> consume(
     const iq::CoherentSamples& input)
@@ -644,10 +781,9 @@ struct RadarBank::Context
       profileRecord.begin=stream_profile::Activity::capture(true);
       profileRecord.time.fill(stream_profile::Clock::now());}
     input.validateStorage();
-    // FP64 bank ingress is initially CPU-only. The portable worker stores FP32;
-    // resident precision admission needs paired evidence before this expands.
-    if (input.isDouble() && config.accelerationMode != "cpu")
-      throw std::invalid_argument("Canonical FP64 input requires CPU acceleration until backend precision qualification");
+    // Preserve FP64 ingress through the host/reference owners. Each backend's
+    // existing numerical qualification and precision guard admits its stage;
+    // unsupported clutter must not disable independently qualified GPU CAF.
     if (input.channelCount() != ownedChannels.size() ||
         input.inputSamplesPerOutput != decimation)
       throw std::invalid_argument("Channelized illuminator topology changed");
@@ -657,7 +793,11 @@ struct RadarBank::Context
     for (std::size_t channel=0;channel<input.channelCount();++channel)
       if (input.visitChannel(channel, channelSize) != count)
         throw std::invalid_argument("Channelized illuminator channels are unpaired");
-    if (!count) return {};
+    if (!count) {
+      auto result = std::move(readyProducts);
+      readyProducts.clear();
+      return result;
+    }
     if (!input.hasFirstInputSample)
       throw std::invalid_argument("Channelized illuminator has no sample position");
     if (count > (std::numeric_limits<uint64_t>::max() - input.firstInputSample) / decimation)
@@ -674,7 +814,7 @@ struct RadarBank::Context
         // The channelizer has already discarded its pre-gap FIR history.  Do
         // the same for clutter, tracker, and partial-CPI state so no adaptive
         // evidence crosses a missing-sample boundary.
-        clear("input_discontinuity");
+        clear("input_discontinuity", true);
         pendingFirstInputSample = input.firstInputSample;
         positioned = true;
       }
@@ -684,7 +824,6 @@ struct RadarBank::Context
       pendingFirstInputSample = input.firstInputSample;
       positioned = true;
     }
-    std::vector<RadarFrame> result;
     std::size_t offset = 0;
     while (offset < count)
     {
@@ -711,9 +850,15 @@ struct RadarBank::Context
       {
         if (directFloatBorrowed && !input.isDouble())
         {
-          if (auto frame = process_float_cpi(input, offset,
-                pendingFirstInputSample))
-            result.push_back(std::move(*frame));
+          process_float_cpi(input, offset, pendingFirstInputSample);
+          pendingFirstInputSample += uint64_t(samples) * decimation;
+          offset += samples;
+          continue;
+        }
+        if (residentFrontend && input.borrowed)
+        {
+          process_resident_borrowed_cpi(input, offset,
+            pendingFirstInputSample);
           pendingFirstInputSample += uint64_t(samples) * decimation;
           offset += samples;
           continue;
@@ -729,8 +874,7 @@ struct RadarBank::Context
         else inputProcessing.widenedSamples += uint64_t(samples) * ownedChannels.size();
         inputProcessing.contiguousSamples += uint64_t(samples) * ownedChannels.size();
         inputProcessing.ingestionMs += elapsedMs(ingestionStart);
-        if (auto frame = process_loaded_cpi(pendingFirstInputSample))
-          result.push_back(std::move(*frame));
+        process_loaded_cpi(pendingFirstInputSample);
         pendingFirstInputSample += uint64_t(samples) * decimation;
         offset += samples;
         continue;
@@ -752,8 +896,7 @@ struct RadarBank::Context
       offset += copied;
       if (pendingCount == samples)
       {
-        if (auto frame = process_loaded_cpi(pendingFirstInputSample))
-          result.push_back(std::move(*frame));
+        process_loaded_cpi(pendingFirstInputSample);
         pendingFirstInputSample += uint64_t(samples) * decimation;
         pendingCount = 0;
       }
@@ -761,6 +904,8 @@ struct RadarBank::Context
     if(profileActive){profileRecord.time[1]=profileRecord.time[2]=profileRecord.time[3]=stream_profile::Clock::now();
       profileRecord.stages=profileStages;streamProfile.record(profileRecord);}
     profileActive=false;
+    auto result = std::move(readyProducts);
+    readyProducts.clear();
     return result;
   }
 
@@ -772,13 +917,21 @@ struct RadarBank::Context
     f.captureEpoch=liveTemporalIdentity?liveTemporalIdentity->captureEpoch:0;
     f.samplePositionAvailable=liveTemporalIdentity&&liveTemporalIdentity->samplePositionAvailable;
     f.captureFirst=first;f.captureEnd=first+uint64_t(samples)*decimation;
+    f.inputSampleInterval=std::array<uint64_t,2>{f.captureFirst,f.captureEnd};
+    if(liveTemporalIdentity&&liveTemporalIdentity->captureSamples){
+      const auto& capture=*liveTemporalIdentity->captureSamples;
+      if(capture[1]<=capture[0]||capture[1]-capture[0]!=uint64_t(samples)*decimation||
+          capture[0]>first||first-capture[0]>=decimation)
+        throw std::invalid_argument("Qualification CPI lacks matching raw capture and canonical input intervals");
+      f.captureFirst=capture[0];f.captureEnd=capture[1];
+    }
     f.frequencyHz=definition.frequencyHz;f.sampleRateHz=definition.outputRateHz;
     f.inputSamplesPerOutput=decimation;f.channelIds=config.surveillanceChannels;
     f.referenceChannelIds=config.arrayReference?config.referenceChannels:std::vector<uint32_t>{config.referenceChannel};
     if(liveTemporalIdentity)f.actualGainDb=liveTemporalIdentity->inputGainDb;
     f.backend=residentFrontend?"vulkan-resident":acceleration?acceleration->status().active:"cpu";
     f.device=residentFrontend?residentStatus.device:acceleration?acceleration->status().device:"";
-    f.productBackend=residentProductRoute?"vulkan-resident":"cpu";
+    f.productBackend=residentFrontend&&residentFrontend->config().detector.enabled?"vulkan-resident":"cpu";
     f.fusionMode=config.advanced.surveillanceFusionMode;f.integrationCpis=config.advanced.detectorIntegrationCpis;
     if(config.coherentFusion){f.beamCount=config.coherentFusion->beams;f.positionsM=config.coherentFusion->positionsM;
       f.directPathAzimuthRad=config.coherentFusion->directPathAzimuthRad;f.directPathNullDb=config.coherentFusion->directPathNullDb;}
@@ -798,6 +951,14 @@ struct RadarBank::Context
       stages->reference().process_into(referenceChannels, reference);
     else
       selectedReference = ownedChannels[config.referenceChannel].get();
+    directPathPilot.reset();
+    if (nativeObserver)
+      directPathPilot = ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+        selectedReference->sample_view(), channels.front()->sample_view());
+    if (referenceSpectrumAnalyser) {
+      referenceSpectrumAnalyser->process(selectedReference);
+      referenceSpectrum = selectedReference->to_json(publicationTimestamp(pendingFirstInputSample));
+    }
     if (fmReferenceFilter)
     {
       fmReferenceFilter->process(*selectedReference, conditionedReference);
@@ -839,6 +1000,8 @@ struct RadarBank::Context
             [&](size_t c,size_t i){return borrowedStages?views.at(c).filteredSurveillance[i]:channels.at(c)->sample_view().at(i);},
             config.stages.clutter,config.clutterDelayMin,config.clutterDelayMax,
             gpu?(cpu?"cpu+vulkan-qualification":"vulkan"):"cpu",gpu,cpu);
+          if (replay_gpu_qualification::clutterActive())
+            qualificationClutter->checkpointProof = replay_gpu_qualification::state().clutterProof.encode();
         }
         if(profileActive){profileFiltered=CostClock::now();
           profileStages[0]+=stream_profile::ms(profileFiltered,profileStart);}
@@ -851,6 +1014,8 @@ struct RadarBank::Context
       acceleration->clutterTiming().gpuExecuted;
     clutterCpuExecuted = config.stages.clutter &&
       (!acceleration || acceleration->clutterTiming().cpuExecuted);
+    if (acceleration && liveTemporalIdentity)
+      replay_gpu_qualification::requireClutterSteady(*acceleration, true);
     return accepted;
   }
 
@@ -873,7 +1038,7 @@ struct RadarBank::Context
           map->data[row][column] = output.maps.data[channel * cells +
             uint64_t(column) * shape.doppler + (row + shape.doppler / 2 + 1) % shape.doppler];
     }
-    if (residentProductRoute) {
+    if (residentFrontend->config().detector.enabled) {
       if (output.fused.size != cells)
         throw std::runtime_error("Resident fused product geometry differs");
       residentFused = std::make_shared<Map<std::complex<double>>>(*ownedAmbiguity.front()->result());
@@ -894,12 +1059,15 @@ struct RadarBank::Context
       replay_gpu_qualification::current(), "cpu-oracle-reset");
   }
 
-  std::optional<RadarFrame> process_loaded_cpi(uint64_t first)
+  template<class BeginResident,class SampleAt,class PrepareHost>
+  void process_cpi(uint64_t first,BeginResident&& beginResident,
+      SampleAt&& sampleAt,PrepareHost&& prepareHost)
   {
     applyQualificationCpuReset();
+    if (acceleration) replay_gpu_qualification::requireClutterSteady(*acceleration, false);
     if(qualificationObserver){++qualificationSequence;
       qualificationObserver->input(qualificationFrame(first),ownedChannels.size(),samples,
-        [&](size_t c,size_t i){return ownedChannels.at(c)->sample_view().at(i);});}
+        std::forward<SampleAt>(sampleAt));}
     if (detectionCalibration || bearingCalibration) {
       if (!liveTemporalIdentity || liveTemporalIdentity->inputGainDb.size() != ownedChannels.size())
         throw std::runtime_error("Measured lane manifold requires frame-bound actual gain metadata");
@@ -912,6 +1080,8 @@ struct RadarBank::Context
     residentExecuted = false;
     residentGpuCompleted = false;
     residentProducts.reset();
+    residentDiagnostics.reset();
+    residentDetections.reset();
     bool qualificationResidentRecovery = false;
     if (residentFrontend) {
       try {
@@ -919,16 +1089,40 @@ struct RadarBank::Context
             !liveTemporalIdentity->samplePositionAvailable)
           throw std::runtime_error("Resident temporal input sample lineage unavailable; temporal products cannot be admitted");
         std::lock_guard<std::mutex> lease(residentBudget->execution);
-        residentFrontend->begin(ownedChannels, {++residentLogical, ++residentConsumed,
-          detection::signalTimeMilliseconds(first + uint64_t(samples) * decimation,
-            captureRate)});
+        beginResident({++residentLogical, ++residentConsumed,
+          signalTimestamp(first)});
         importResidentMaps();
-        if (residentProductRoute)
-          residentProducts = residentFrontend->format(
-            detection::signalTimeMilliseconds(first + uint64_t(samples) * decimation, captureRate),
-            config.bearingPublication);
+        if (residentFrontend->config().detector.enabled) {
+          std::vector<double> gains;
+          if (liveTemporalIdentity) for (const auto channel : config.surveillanceChannels)
+            if (channel < liveTemporalIdentity->inputGainDb.size())
+              gains.push_back(liveTemporalIdentity->inputGainDb[channel]);
+          residentProducts = residentFrontend->format(publicationTimestamp(first),
+            config.bearingPublication,config.advanced.bearingManifoldRecorder,
+            config.manifoldEvidence,{gains.data(),gains.size()},
+            !liveTemporalIdentity||liveTemporalIdentity->samplePositionAvailable,
+            config.offlineReplay);
+          referenceSpectrum = residentProducts->spectrum;
+          if (!residentProductRoute)
+            residentDetections = residentFrontend->hostDetections(
+              !liveTemporalIdentity||liveTemporalIdentity->samplePositionAvailable);
+        }
+        else if (referenceSpectrumAnalyser)
+          referenceSpectrum = residentFrontend->format(publicationTimestamp(first)).spectrum;
+        const auto& prepared = residentFrontend->prepared();
+        if (config.advanced.residentDiagnostics)
+          residentDiagnostics.emplace(residentConfiguration, residentLogical, residentConsumed, prepared);
         residentFrontend->commit();
+        // Product strings/maps and diagnostic bytes now own this CPI. Release
+        // the device transaction before the next stage; socket errors remain
+        // fail-stop and never trigger replay of an already committed frame.
         residentFrontend->published();
+        if (residentDiagnostics && residentConfiguration->replay.maxBytes &&
+            residentLogical <= residentConfiguration->replay.maxFrames) {
+          if (!liveTemporalIdentity || !liveTemporalIdentity->samplePositionAvailable)
+            throw std::runtime_error("Resident replay snapshot requires exact input lineage");
+          residentDiagnostics->snapshot = residentFrontend->snapshot();
+        }
         residentExecuted = true;
         clutterGpuExecuted = true;
         clutterCpuExecuted = false;
@@ -946,6 +1140,7 @@ struct RadarBank::Context
         if (residentRequired) throw;
         residentProductRoute = false;
         residentProducts.reset();
+        residentDetections.reset();
         resetAdaptiveState("resident_frontend_failure");
         initializePortableAcceleration();
         qualificationResidentRecovery = true;
@@ -955,17 +1150,58 @@ struct RadarBank::Context
         selectCpuStages();
       }
     }
-    if (residentExecuted) return finish_processed_cpi(first);
+    if (residentExecuted) return queue_processed_cpi(first);
+    prepareHost();
     if (!process_loaded_dsp()) {
       reject(first, "clutter_reference_rejected");
       resetAdaptiveState();
-      return std::nullopt;
+      return;
     }
-    auto result=finish_processed_cpi(first);
+    queue_processed_cpi(first);
     if(qualificationResidentRecovery&&replay_gpu_qualification::enabled())
       replay_gpu_qualification::emit("cpu-recovery-complete","resident",qualificationLaneIndex,
         replay_gpu_qualification::current(),{}, {},residentLogical,residentConsumed);
-    return result;
+  }
+
+  void process_loaded_cpi(uint64_t first)
+  {
+    process_cpi(first,
+      [&](resident::Frame frame) { residentFrontend->begin(ownedChannels, frame); },
+      [&](size_t channel,size_t index) {
+        return ownedChannels.at(channel)->sample_view().at(index);
+      }, [] {});
+  }
+
+  void process_resident_borrowed_cpi(const iq::CoherentSamples& input,
+      std::size_t offset,uint64_t first)
+  {
+    bool hostPrepared=false;
+    const auto prepareHost=[&] {
+      if(hostPrepared)return;
+      const auto started=CostClock::now();
+      for(std::size_t channel=0;channel<ownedChannels.size();++channel){
+        auto& destination=ownedChannels[channel]->resize_contiguous_for_write(samples);
+        input.copyChannelTo(channel,destination.data(),samples,offset);
+      }
+      if(input.isDouble())
+        inputProcessing.copiedSamples+=uint64_t(samples)*ownedChannels.size();
+      else
+        inputProcessing.widenedSamples+=uint64_t(samples)*ownedChannels.size();
+      inputProcessing.contiguousSamples+=uint64_t(samples)*ownedChannels.size();
+      inputProcessing.ingestionMs+=elapsedMs(started);
+      inputProcessing.path=input.isDouble()?"resident_fallback_contiguous_double":
+        "resident_fallback_contiguous_float";
+      hostPrepared=true;
+    };
+    inputProcessing.path=input.isDouble()?"resident_borrowed_double":
+      "resident_borrowed_float";
+    process_cpi(first,
+      [&](resident::Frame frame){residentFrontend->begin(input,offset,frame);},
+      [&](size_t channel,size_t index){
+        return input.visitChannel(channel,[&](const auto& values){
+          return std::complex<double>(values.at(offset+index));
+        });
+      },prepareHost);
   }
 
   void prepareStartup()
@@ -999,24 +1235,18 @@ struct RadarBank::Context
           if (resident::allocationProof({output.preparedEvidence.data + 256, 832}).limit >
               residentAllocationLimit)
             throw std::runtime_error("Resident lane allocation receipt exceeds reservation");
-          if (residentProductRoute) {
+          if (residentFrontend->config().detector.enabled) {
             const uint64_t timestamp = 1000 + uint64_t(frame) * samples * 1000 / definition.outputRateHz;
             std::vector<Map<std::complex<double>>*> maps;
             for (const auto& processor : ownedAmbiguity) maps.push_back(processor->result());
             std::shared_ptr<Map<std::complex<double>>> oracleMap;
             const auto oracleFusion = residentFrontend->fuseOracle(maps, fusion,
               coherentFusion.get(), oracleMap, stages->reference().get_metrics());
-            auto oracle = startupProducts.process(oracleMap,
-              {1, uint64_t(frame) * samples, uint64_t(frame + 1) * samples, timestamp, true},
-              true, {}, &oracleFusion.beams, oracleFusion.spatialAt);
-            auto& found = oracle.detections;
-            auto& tracked = oracle.tracks;
             const auto products = residentFrontend->format(timestamp, config.bearingPublication);
             residentFrontend->checkProducts(products,
-              oracleMap->to_json_km(timestamp, definition.outputRateHz),
-              found ? found->to_json_km(timestamp, definition.outputRateHz) : std::string{},
-              tracked ? tracked->to_json(timestamp) : std::string{},
-              oracle.integration ? &*oracle.integration : nullptr, &startupProducts.tracker);
+              oracleMap,
+              startupProducts, timestamp,
+              {1, uint64_t(frame) * samples, uint64_t(frame + 1) * samples, timestamp, true},oracleFusion);
           } else residentFrontend->checkFrontendProducts();
           residentFrontend->commit();
         }, [&] { stages->resetReference(); });
@@ -1024,17 +1254,24 @@ struct RadarBank::Context
         residentStatus.requested = config.accelerationMode;
         residentStatus.reason = residentProductRoute ?
           "Qualified resident coherent products; lane-bound RF/site/calibration; serialized aggregate lease" :
+          residentFrontend->config().detector.enabled ?
+          "Qualified resident temporal/CFAR; canonical host tracker; serialized aggregate lease" :
           "Qualified resident reference/clutter/CAF; shared FP64 host products; serialized aggregate lease";
         if (config.accelerationMode == "auto") {
           // No diagnostic transaction may consume the new production namespace.
           residentStatus.cpuMs = 0; residentStatus.gpuMs = 0;
           residentStatus.reason += "; AUTO timing unavailable (private correctness qualification only)";
         }
+        std::cerr << "GPU resident qualification complete lane=" << gpuDiagnosticString(definition.id)
+          << " temporal=" << residentFrontend->config().detector.enabled
+          << " tracker=" << (residentFrontend->config().tracker.enabled ? "resident" : "host") << '\n';
       } catch (const std::exception& error) {
         residentFrontend.reset();
         residentStatus.active = "cpu";
         residentStatus.state = "fallback";
         residentStatus.reason = std::string("Resident lane qualification failed: ") + error.what();
+        std::cerr << "GPU resident frontend fallback lane=" << gpuDiagnosticString(definition.id)
+          << " phase=qualify reason=" << gpuDiagnosticString(residentStatus.reason) << '\n';
         if (residentRequired) throw;
         residentProductRoute = false;
         stages->resetReference();
@@ -1044,9 +1281,32 @@ struct RadarBank::Context
     }
     if (!residentFrontend) {
       if (acceleration && acceleration->startupPending())
+      {
         acceleration->prepareStartup(prepareFrame);
+        acceleration->retryClutterQualificationAfterStartup();
+      }
       else
         prepareFrame(0); // CPU/fallback must also finish first-use DSP work.
+      if (temporalCandidate) {
+        try {
+          GpuProcessOptions options;
+          options.allocationLimitBytes = residentBudget->allocationLimit(qualificationLaneIndex,
+            temporalMappingBytes, residentBudget->bytesPerSession - temporalReservationBytes);
+          options.startupMs = gpuCpiStartupDeadlineMs(config.cpiSeconds * 1000.0, options.startupMs);
+          if (!config.offlineReplay) options.frameMs = gpuCpiFrameDeadlineMs(config.cpiSeconds * 1000.0, options.frameMs);
+          options.offlineTransportTrace = config.offlineReplay; options.qualificationLane = qualificationLaneIndex;
+          std::lock_guard<std::mutex> lease(residentBudget->execution);
+          if (!gpu_worker_lifetime::replacementAvailable())
+            throw std::runtime_error("Temporal GPU reservation retained by an unreaped worker");
+          products->prepareTemporal(*temporalCandidate, options);
+          std::cerr << "GPU temporal qualification complete lane=" << gpuDiagnosticString(definition.id)
+            << " backend=vulkan-temporal tracker=host fusion=host rows=" << temporalCandidate->dopplerAxis.size()
+            << " columns=" << temporalCandidate->delayAxis.size() << '\n';
+        } catch (const std::exception& error) {
+          std::cerr << "GPU temporal fallback lane=" << gpuDiagnosticString(definition.id)
+            << " phase=qualify reason=" << gpuDiagnosticString(error.what()) << '\n';
+        }
+      }
     }
     selectCpuStages(); // Finish any fallback workspace planning before capture.
     // Reset private reference state before live IQ. FFT planning happens here,
@@ -1057,6 +1317,8 @@ struct RadarBank::Context
     if (atscPilotProjector) atscPilotProjector->reset();
     atscPilotProjectionMetrics.reset();
     reference.clear();
+    referenceSpectrum.clear();
+    directPathPilot.reset();
     conditionedReference.clear();
     projectedReference.clear();
     qualificationReference.clear();
@@ -1067,7 +1329,7 @@ struct RadarBank::Context
     inputProcessing = {};
   }
 
-  std::optional<RadarFrame> process_float_cpi(
+  void process_float_cpi(
     const iq::CoherentSamples& input,
     std::size_t offset, uint64_t first)
   {
@@ -1077,6 +1339,18 @@ struct RadarBank::Context
       qualificationObserver->input(qualificationFrame(first),input.channelCount(),samples,
         [&](size_t c,size_t i){return std::complex<double>(input.channel(c).at(offset+i));});}
     const auto* rawReference = input.channel(config.referenceChannel).data() + offset;
+    directPathPilot.reset();
+    if(nativeObserver){
+      const auto anchor=input.channel(config.surveillanceChannels.front());
+      directPathPilot=ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+        iq::SampleView{rawReference,samples},
+        iq::SampleView{anchor.data()+offset,samples});
+    }
+    if(referenceSpectrumAnalyser){
+      referenceSpectrumAnalyser->process(
+        iq::SampleView{rawReference,samples},&reference);
+      referenceSpectrum=reference.to_json(publicationTimestamp(first));
+    }
     const std::complex<double>* projected = nullptr;
     if (atscPilot && atscPilotProjector) {
       const auto projectionStart = CostClock::now();
@@ -1100,7 +1374,7 @@ struct RadarBank::Context
           surveillance, samples)) {
       reject(first, "clutter_reference_rejected");
       resetAdaptiveState();
-      return std::nullopt;
+      return;
     }
     clutterGpuExecuted = false;
     clutterCpuExecuted = true;
@@ -1115,7 +1389,7 @@ struct RadarBank::Context
     if(profileActive)profileStages[0]+=stream_profile::ms(profileAmbiguityStart,profileClutterStart);
     process_borrowed_ambiguity(nullptr, projected);
     if(profileActive)profileStages[1]+=stream_profile::ms(CostClock::now(),profileAmbiguityStart);
-    return finish_processed_cpi(first);
+    queue_processed_cpi(first);
   }
 
   void process_borrowed_ambiguity(const IqData* qualifiedReference = nullptr,
@@ -1164,7 +1438,7 @@ struct RadarBank::Context
       runAmbiguity();
   }
 
-  RadarFrame finish_processed_cpi(uint64_t first)
+  StagedCpi stage_processed_cpi(uint64_t first)
   {
     stream_profile::Duration profileProducts(profileActive,profileStages[2]);
     std::vector<Map<std::complex<double>>*> maps;
@@ -1181,6 +1455,8 @@ struct RadarBank::Context
       view.channelIds = config.surveillanceChannels;
       view.referenceChannelIds = config.arrayReference ?
         config.referenceChannels : std::vector<uint32_t>{config.referenceChannel};
+      view.directPathPilot = directPathPilot;
+      if (directPathPilot) view.pilotAnchorChannel = config.surveillanceChannels.front();
       view.maps.assign(maps.begin(), maps.end());
       if (config.arrayReference)
         view.referenceWeights = residentExecuted ? residentReferenceWeights :
@@ -1210,7 +1486,7 @@ struct RadarBank::Context
       auto products=residentExecuted?qualification_observer::residentProducts(
         residentFrontend->config(),residentFrontend->prepared(),
         residentFrontend->observedSharedReservationBytes(),residentBudget.get()):qualification_observer::hostProducts(maps,*map);
-      if(residentExecuted&&!residentProductRoute){
+      if(residentExecuted&&!residentFrontend->config().detector.enabled){
         products.fused=[map,columns=map->get_nCols()](size_t i){return map->data.at(i/columns).at(i%columns);};
         products.fusedBeamIdsAvailable=false;
       }
@@ -1224,46 +1500,40 @@ struct RadarBank::Context
     }
     map->set_metrics();
     const uint64_t end = first + uint64_t(samples - 1) * decimation;
-    const uint64_t timestamp = detection::signalTimeMilliseconds(
-      first + uint64_t(samples) * decimation, captureRate);
-    pipeline::Products processed;
-    CfarDetector1D::Trials observedTrials;
+    const uint64_t timestamp = signalTimestamp(first);
+    StagedCpi staged;
+    staged.position = {liveTemporalIdentity ? liveTemporalIdentity->captureEpoch : processingEpoch,
+      first, first + uint64_t(samples) * decimation, timestamp,
+      !liveTemporalIdentity || liveTemporalIdentity->samplePositionAvailable};
+    auto& result = staged.frame;
+    result.referenceSpectrum = std::move(referenceSpectrum);
+    result.residentDiagnostics = std::move(residentDiagnostics);
+    staged.publicationTimestamp = publicationTimestamp(first);
+    if (config.advanced.bearingManifoldRecorder && !residentProducts) {
+      for (const auto* source : maps)
+        staged.manifoldMaps.push_back(std::make_shared<Map<std::complex<double>>>(*source));
+      staged.referenceWeights = stages->reference().get_metrics().weights;
+      if (!liveTemporalIdentity || liveTemporalIdentity->inputGainDb.size() != ownedChannels.size())
+        throw std::runtime_error("Manifold evidence requires frame-bound actual gains");
+      for (const auto channel : config.surveillanceChannels)
+        staged.actualGainDb.push_back(liveTemporalIdentity->inputGainDb[channel]);
+    }
     if (residentProducts) {
-      processed.integration = resident::temporalPublication(residentFrontend->config(),
-        *residentProducts,liveTemporalIdentity?liveTemporalIdentity->captureEpoch:processingEpoch,
+      result.detectorIntegration = resident::temporalPublication(residentFrontend->config(),
+        *residentProducts,staged.position.epoch,
         first,first+uint64_t(samples)*decimation);
-      // Native products remain authoritative; these empty containers only
-      // preserve the existing publication/storage interface.
-      processed.detections = std::make_unique<Detection>(
-        std::vector<double>{}, std::vector<double>{}, std::vector<double>{});
-      processed.tracks = std::make_unique<Track>();
-    } else {
-      processed = products->process(map, {
-        liveTemporalIdentity ? liveTemporalIdentity->captureEpoch : processingEpoch,
-        first, first + uint64_t(samples) * decimation, timestamp,
-        !liveTemporalIdentity || liveTemporalIdentity->samplePositionAvailable},
-        true, {}, nullptr, {}, qualificationObserver ? &observedTrials : nullptr);
     }
     if (qualificationObserver) {
+      staged.qualification = qualificationFrame(first);
       if (residentProducts) {
         const auto& native=residentFrontend->prepared();
-        if(config.stages.detection&&!native.detectorObserved)
-          throw std::runtime_error("Resident replay lacks evaluated detector population");
-        qualificationObserver->detector(qualificationFrame(first),config.stages.detection,
-          config.stages.detection&&(!processed.integration||processed.integration->ready),
-          "vulkan-resident",native.evaluatedCells,native.cfarCount);
-      } else qualificationObserver->detector(qualificationFrame(first),config.stages.detection,
-        config.stages.detection&&(!processed.integration||processed.integration->ready),
-        "cpu",observedTrials.evaluated,observedTrials.accepted,observedTrials.nonfinite);
+        staged.residentDetectorObserved = native.detectorObserved;
+        staged.residentEvaluated = native.evaluatedCells;
+        staged.residentCfar = native.cfarCount;
+      }
     }
-    ++health.acceptedCpis;
-    health.hasLastCpi = true;
-    health.lastAccepted = true;
-    health.lastFirstInputSample = first;
-    health.lastEndInputSample = end;
-    health.lastReason.clear();
-    RadarFrame result;
     result.illuminatorId = definition.id;
+    result.resolvedProductPlan = products->planIdentity();
     result.frequencyHz = definition.frequencyHz;
     if (config.coherentFusion) {
       result.transmitterLocation = definition.transmitterLocation;
@@ -1271,6 +1541,7 @@ struct RadarBank::Context
     }
     result.firstInputSample = first;
     result.endInputSample = end;
+    result.publicationSequence = liveTemporalIdentity ? liveTemporalIdentity->publicationSequence : 0;
     result.inputSamplesPerOutput = decimation;
     result.channelIds = config.surveillanceChannels;
     result.referenceChannelIds = config.arrayReference ?
@@ -1280,7 +1551,6 @@ struct RadarBank::Context
     result.inputProcessing = inputProcessing;
     result.detectionEnabled = config.stages.detection;
     result.trackingEnabled = config.stages.tracking;
-    result.detectorIntegration = std::move(processed.integration);
     inputProcessing = {};
     result.atscReferenceRequested = definition.atscReferenceMode;
     if (definition.atscReferenceMode == "automatic" && !atscPilot)
@@ -1296,21 +1566,13 @@ struct RadarBank::Context
       result.atscReferenceReason = atscPilotProjectionMetrics ?
         atscPilotProjectionMetrics->reason : "pilot_not_observed";
     }
-    result.trackerDiagnostics = products->tracker.frame_diagnostics();
     result.trackerMinimumSnrDb = config.trackerMinimumSnrDb;
     result.trackerMinimumSnrOverridden =
       config.trackerMinimumSnrDbByIlluminator.count(definition.id) != 0;
     result.map = std::move(map);
     result.residentProducts = std::move(residentProducts);
-    result.residentTemporalExecuted = result.residentProducts &&
-      result.detectorIntegration && result.detectorIntegration->availableCpis > 0;
-    result.detections = std::move(processed.detections);
-    result.tracks = std::move(processed.tracks);
-    // Keep the existing transport schema while execution metadata records
-    // disabled stages. Empty containers cannot invent detections or tracks.
-    if (!result.detections) result.detections = std::make_unique<Detection>(
-      std::vector<double>{}, std::vector<double>{}, std::vector<double>{});
-    if (!result.tracks) result.tracks = std::make_unique<Track>();
+    if (result.residentProducts) result.manifoldEvidence = result.residentProducts->manifoldEvidence;
+    result.detections = std::move(residentDetections);
     if (atscPilot)
     {
       atscPilot->reset();
@@ -1330,6 +1592,13 @@ struct RadarBank::Context
     {
       result.acceleration = acceleration->status();
       result.clutterAcceleration = acceleration->clutterStatus();
+      if (config.accelerationMode == "auto" && config.stages.clutter) {
+        // This owner deliberately omits portable clutter geometry in AUTO.
+        // Publish that route decision instead of implying missing config.
+        result.clutterAcceleration.state = "selected";
+        result.clutterAcceleration.reason =
+          "AUTO selected CPU clutter to avoid the portable GPU filtered-IQ round trip";
+      }
       if (residentAttempted && !residentFrontend) {
         result.acceleration.reason += "; " + residentStatus.reason;
         result.clutterAcceleration.reason += "; " + residentStatus.reason;
@@ -1350,11 +1619,92 @@ struct RadarBank::Context
       result.ambiguityGpuExecuted = false;
       result.ambiguityCpuExecuted = true;
     }
+    return staged;
+  }
+
+  RadarFrame complete_processed_cpi(StagedCpi staged)
+  {
+    // Only this ordered product task may access temporal/detector/tracker
+    // state. Every frontend-owned value it needs was captured before launch.
+    auto result = std::move(staged.frame);
+    stream_profile::WorkScope profile(productProfile, result.firstInputSample,
+      staged.position.epoch, result.frequencyHz);
+    auto& map = result.map;
+    pipeline::Products processed;
+    CfarDetector1D::Trials observedTrials;
+    if (result.residentProducts) {
+      processed.integration = std::move(result.detectorIntegration);
+      if (result.detections) {
+        result.residentProducts->trackerOnHost = true;
+        processed.detections = std::move(result.detections);
+        processed = products->track(map, staged.position, std::move(processed));
+        if (processed.tracks)
+          result.residentProducts->tracks = processed.tracks->to_json(staged.position.timestampMs);
+      } else {
+        processed.detections = std::make_unique<Detection>(
+          std::vector<double>{}, std::vector<double>{}, std::vector<double>{});
+        processed.tracks = std::make_unique<Track>();
+      }
+    } else {
+      processed = products->process(map, staged.position, true, {}, nullptr, {},
+        staged.qualification ? &observedTrials : nullptr, &stages->executor());
+    }
+    if (staged.qualification) {
+      const auto& identity = *staged.qualification;
+      if (result.residentProducts) {
+        if(config.stages.detection&&!staged.residentDetectorObserved)
+          throw std::runtime_error("Resident replay lacks evaluated detector population");
+        qualificationObserver->detector(identity,config.stages.detection,
+          config.stages.detection&&(!processed.integration||processed.integration->ready),
+          "vulkan-resident",staged.residentEvaluated,staged.residentCfar);
+      } else qualificationObserver->detector(identity,config.stages.detection,
+        config.stages.detection&&(!processed.integration||processed.integration->ready),
+        products->temporalAccelerated() ? "vulkan-temporal" : "cpu",
+        observedTrials.evaluated,observedTrials.accepted,observedTrials.nonfinite);
+      if (config.stages.detection && !processed.detections)
+        throw std::runtime_error("Qualification replay lacks complete candidate output");
+      if (processed.detections)
+        qualificationObserver->temporalScores(identity,*processed.detections);
+    }
+    result.detectorIntegration = std::move(processed.integration);
+    result.trackerDiagnostics = result.residentProducts && !result.residentProducts->trackerOnHost ?
+      result.residentProducts->trackerDiagnostics : products->tracker.frame_diagnostics();
+    result.residentTemporalExecuted = result.residentProducts &&
+      result.detectorIntegration && result.detectorIntegration->availableCpis > 0;
+    if (products->temporalAccelerated()) result.temporalDevice = products->temporalDevice();
+    result.detections = std::move(processed.detections);
+    result.tracks = std::move(processed.tracks);
+    if (!staged.manifoldMaps.empty()) {
+      std::vector<Map<std::complex<double>>*> maps;
+      for (const auto& source : staged.manifoldMaps) maps.push_back(source.get());
+      result.manifoldEvidence = manifold_evidence::cpu(staged.publicationTimestamp,
+        definition.frequencyHz, definition.outputRateHz, *result.detections, maps,
+        staged.referenceWeights, staged.actualGainDb);
+    }
+    if (!result.detections) result.detections = std::make_unique<Detection>(
+      std::vector<double>{}, std::vector<double>{}, std::vector<double>{});
+    if (!result.tracks) result.tracks = std::make_unique<Track>();
+    profile.completed();
     return result;
+  }
+
+  void queue_processed_cpi(uint64_t first)
+  {
+    auto staged = std::make_shared<StagedCpi>(stage_processed_cpi(first));
+    // N+1 owns its immutable map and diagnostics before we join N. Only then
+    // may N+1 enter the same ordered temporal/detector/tracker owner.
+    collectPending();
+    pendingPublication = staged->frame.publicationSequence;
+    pendingProduct = productExecutor->submit([this, staged] {
+      completedProduct = complete_processed_cpi(std::move(*staged));
+    });
   }
 
   void reject(uint64_t first, std::string reason)
   {
+    collectPending();
+    if (qualificationObserver)
+      qualificationObserver->rejected(qualificationFrame(first), reason);
     ++health.rejectedCpis;
     health.hasLastCpi = true;
     health.lastAccepted = false;
@@ -1364,7 +1714,11 @@ struct RadarBank::Context
   }
 };
 
-RadarBank::~RadarBank() = default;
+RadarBank::~RadarBank()
+{
+  // Join while all lane state and both executors still exist.
+  for (auto& context : contexts_) context->discardPending();
+}
 
 void RadarBank::setNativeCafObserver(NativeCafObserver observer)
 {
@@ -1417,40 +1771,55 @@ RadarBank::RadarBank(uint32_t captureRateHz,
     std::max<std::size_t>(1, available - 1), illuminators.size());
   const std::size_t outerWorkers = config_.laneWorkers ?
     std::min(config_.laneWorkers, outerMaximum) : outerMaximum;
+  // Frontend and temporal work share each lane's bounded pool; overlap does
+  // not allocate another inner DSP pool or increase this FFT worker budget.
+  const std::size_t temporalWorkers = cap_fft_threads_for_lanes(8, outerWorkers, available);
+  const std::size_t legacyClutterSlots = configured_clutter_worker_slots();
+  const std::size_t totalClutterWorkers = configured_clutter_total_worker_budget();
+  const auto clutterWorkerSlots = resolve_clutter_worker_slots(illuminators.size(),
+    legacyClutterSlots, totalClutterWorkers, available);
   auto laneConfig = config_;
   laneConfig.workers = std::max<std::size_t>(1,
-    std::min(config_.workers, available / outerWorkers));
+    std::min(config_.workers, temporalWorkers));
   contexts_.reserve(illuminators.size());
   std::shared_ptr<resident::LaneBudget> residentBudget;
   bool residentSelectable = config_.accelerationMode == "gpu-resident";
+  const bool residentRequired = requiresResidentProducts(config_.advanced);
+  (void)selectRequiredResidentRoute(config_.accelerationMode, residentRequired);
   std::string residentDevice = config_.accelerationDevice;
 #ifdef VECTORWARP_RESIDENT_GPU
   constexpr bool residentBuilt = true;
 #else
   constexpr bool residentBuilt = false;
 #endif
+  if (residentRequired && !residentBuilt)
+    throw std::invalid_argument("Selected radar features require a qualified resident backend; this cohort does not provide it");
   if (config_.accelerationMode != "cpu")
     residentBudget = std::make_shared<resident::LaneBudget>(uint32_t(illuminators.size()),
       config_.residentMaximumSessions, config_.residentMemoryMaximumBytes);
   if (config_.accelerationMode == "gpu-resident" ||
-      (config_.accelerationMode == "auto" && !backendFactory && residentBuilt)) {
+      ((config_.accelerationMode == "auto" || config_.accelerationMode == "gpu") && !backendFactory && residentBuilt)) {
     try {
       // The native caller may already have pinned the exact resident ID. AUTO
       // uses the same isolated enumeration and strict selector, never a vendor.
-      if (config_.accelerationMode == "auto")
+      if (config_.accelerationMode != "gpu-resident")
         residentDevice = selectResidentGpuDevice(queryGpuDriverStatus(),
           config_.accelerationDevice);
       residentSelectable = true;
-    } catch (const std::exception&) {
-      if (config_.accelerationMode == "gpu-resident") throw;
+    } catch (const std::exception& error) {
+      if (config_.accelerationMode == "gpu-resident" || residentRequired) throw;
+      std::cerr << "GPU resident capability unavailable reason=" << gpuDiagnosticString(error.what()) << '\n';
       // Portable-stage AUTO retains its own precise device/fallback receipt.
     }
   }
-  for (const auto& illuminator : illuminators)
+  for (std::size_t lane = 0; lane < illuminators.size(); ++lane)
     contexts_.push_back(std::make_unique<Context>(captureRateHz_,
-      channelCount_, illuminator, laneConfig, backendFactory, residentBudget,
-      uint32_t(contexts_.size()), residentSelectable, residentDevice));
+      channelCount_, illuminators[lane], laneConfig, backendFactory, residentBudget,
+      uint32_t(contexts_.size()), residentSelectable, residentDevice, temporalWorkers,
+      clutterWorkerSlots[lane]));
   executor_ = std::make_unique<utility::FixedExecutor>(outerWorkers);
+  productExecutor_ = std::make_unique<utility::FixedExecutor>(outerWorkers);
+  for (auto& context : contexts_) context->productExecutor = productExecutor_.get();
 }
 
 void RadarBank::prepareStartup()
@@ -1478,26 +1847,40 @@ std::vector<RadarFrame> RadarBank::process(
   std::vector<iq::SignalBlock> input,
   std::optional<LiveTemporalIdentity> liveIdentity)
 {
-  for (const auto& context : contexts_)
-    if (context->nativeObserverFailed)
-      throw std::logic_error("Cannot reuse a lane after a native CAF observer failure");
-  if (input.size() != contexts_.size())
-    throw std::invalid_argument("Multi-illuminator output set changed");
-  inputStarted_ = true;
-  std::unordered_map<std::string, iq::SignalBlock*> byId;
-  for (auto& illuminator : input)
-    if (!byId.emplace(illuminator.id, &illuminator).second)
-      throw std::invalid_argument("Multi-illuminator output IDs are duplicated");
-  // Validate the complete identity set before advancing any adaptive context.
-  for (const auto& context : contexts_)
-  {
-    const auto found = byId.find(context->definition.id);
-    if (found == byId.end() ||
-        found->second->frequencyHz != context->definition.frequencyHz)
-      throw std::invalid_argument("Multi-illuminator output identity changed");
-  }
+  return processImpl(std::move(input), std::move(liveIdentity), false);
+}
+
+std::vector<RadarFrame> RadarBank::processPipelined(
+  std::vector<iq::SignalBlock> input,
+  std::optional<LiveTemporalIdentity> liveIdentity)
+{
+  return processImpl(std::move(input), std::move(liveIdentity), true);
+}
+
+std::vector<RadarFrame> RadarBank::processImpl(
+  std::vector<iq::SignalBlock> input,
+  std::optional<LiveTemporalIdentity> liveIdentity, bool deferProducts)
+{
   try
   {
+    for (const auto& context : contexts_)
+      if (context->nativeObserverFailed)
+        throw std::logic_error("Cannot reuse a lane after a native CAF observer failure");
+    if (input.size() != contexts_.size())
+      throw std::invalid_argument("Multi-illuminator output set changed");
+    inputStarted_ = true;
+    std::unordered_map<std::string, iq::SignalBlock*> byId;
+    for (auto& illuminator : input)
+      if (!byId.emplace(illuminator.id, &illuminator).second)
+        throw std::invalid_argument("Multi-illuminator output IDs are duplicated");
+    // Validate the complete identity set before advancing any adaptive context.
+    for (const auto& context : contexts_)
+    {
+      const auto found = byId.find(context->definition.id);
+      if (found == byId.end() ||
+          found->second->frequencyHz != context->definition.frequencyHz)
+        throw std::invalid_argument("Multi-illuminator output identity changed");
+    }
     std::vector<std::vector<RadarFrame>> perContext(contexts_.size());
     executor_->parallel_for(contexts_.size(), [&](std::size_t index) {
       auto& context = *contexts_[index];
@@ -1507,10 +1890,16 @@ std::vector<RadarFrame> RadarBank::process(
            (previous->captureEpoch != liveIdentity->captureEpoch ||
             previous->inputGainDb != liveIdentity->inputGainDb ||
             previous->samplePositionAvailable != liveIdentity->samplePositionAvailable))))
-        context.clear("capture_identity_changed");
+        context.clear("capture_identity_changed", true);
       context.liveTemporalIdentity = liveIdentity;
       perContext[index] = contexts_[index]->consume(
         byId.at(contexts_[index]->definition.id)->samples);
+      if (!deferProducts) {
+        context.collectPending();
+        for (auto& frame : context.readyProducts)
+          perContext[index].push_back(std::move(frame));
+        context.readyProducts.clear();
+      }
     });
     std::vector<RadarFrame> result;
     for (auto& frames : perContext)
@@ -1524,12 +1913,42 @@ std::vector<RadarFrame> RadarBank::process(
   }
 }
 
+std::vector<RadarFrame> RadarBank::drain()
+{
+  try {
+    executor_->parallel_for(contexts_.size(), [&](std::size_t index) {
+      contexts_[index]->collectPending();
+    });
+    std::vector<RadarFrame> result;
+    for (auto& context : contexts_) {
+      for (auto& frame : context->readyProducts) result.push_back(std::move(frame));
+      context->readyProducts.clear();
+    }
+    return result;
+  } catch (...) { reset(); throw; }
+}
+
+std::vector<uint64_t> RadarBank::pendingPublicationSequences() const
+{
+  std::vector<uint64_t> result;
+  for (const auto& context : contexts_)
+    if (context->pendingProduct.valid()) result.push_back(context->pendingPublication);
+  return result;
+}
+
 std::vector<LaneHealthStatus> RadarBank::laneHealth() const
 {
   std::vector<LaneHealthStatus> result;
   result.reserve(contexts_.size());
   for (const auto& context : contexts_) result.push_back(context->health);
   return result;
+}
+
+bool RadarBank::prefersNativeFloatCapture() const
+{
+  return startupPrepared_ && !contexts_.empty() &&
+    std::all_of(contexts_.begin(), contexts_.end(),
+    [](const auto& context) { return bool(context->residentFrontend); });
 }
 
 void RadarBank::reset()

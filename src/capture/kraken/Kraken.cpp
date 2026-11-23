@@ -314,6 +314,19 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
         std::memory_order_relaxed);
       samplePositionAvailable.store(true, std::memory_order_release);
     }
+    else if (samplePositionAvailable.load(std::memory_order_acquire))
+    {
+      // Clip retention is optional and may briefly lose its try-lock while
+      // the coherent IQ stream remains contiguous. Preserve the independent
+      // inference sample chronology; the recorder accounts the same skipped
+      // samples when it next acquires its lock. Real upstream gaps already
+      // clear availability and advance the processing epoch above.
+      const uint64_t previous = nextEpochSample.load(std::memory_order_relaxed);
+      if (previous > UINT64_MAX - header.samplesPerChannel)
+        throw std::overflow_error("Kraken inference sample position exhausted");
+      nextEpochSample.store(previous + header.samplesPerChannel,
+        std::memory_order_release);
+    }
     else samplePositionAvailable.store(false, std::memory_order_release);
     const bool queueOverflow = std::any_of(buffers.begin(), buffers.end(),
       [&](IqData* buffer) {

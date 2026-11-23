@@ -13,8 +13,7 @@ struct GpuProcessOptions {
   std::string argument;
   unsigned startupMs = 30000;
   unsigned frameMs = 5000;
-  // Wideband workers pre-touch the shared mapping and execute/reset one
-  // maximum-size capture before accepting live input. Tests may disable it.
+  // Pre-touch and execute/reset one maximum-size capture; tests may disable it.
   bool warmup = true;
   // Live capture ignores inherited transport/clutter profiler settings.
   // Explicit offline callers may collect bounded diagnostics for teardown.
@@ -26,11 +25,8 @@ struct GpuProcessOptions {
   uint32_t qualificationLane = 0;
 };
 
-// Shader/pipeline construction is a one-time cost and may exceed one CPI, but
-// an optional accelerator that cannot become ready within a bounded number of
-// capture intervals must not hold acquisition startup for the transport's old
-// 30-second default. Short CPIs retain a five-second driver/cache allowance;
-// long CPIs may use up to twenty intervals, never beyond the transport bound.
+// Optional GPU startup allows twenty CPIs with a five-second driver/cache floor,
+// capped by the transport maximum so failed acceleration cannot stall capture.
 inline unsigned gpuCpiStartupDeadlineMs(double cpiMilliseconds,
   unsigned transportMaximumMs, double cpiAllowance = 20,
   unsigned minimumMs = 5000)
@@ -44,13 +40,17 @@ inline unsigned gpuCpiStartupDeadlineMs(double cpiMilliseconds,
   return static_cast<unsigned>(std::min(double(transportMaximumMs), available));
 }
 
-// A live frame wait must leave capture-queue recovery headroom. The historical
-// five-second transport default consumes ten 0.5-second CPIs before failing,
-// which can fill an otherwise healthy bounded input queue before the caller can
-// recover. Permit three CPI intervals (with a small scheduling floor): this
-// tolerates one bounded OS/driver scheduling excursion while retaining at
-// least half of the normal seven-CPI live input queue for recovery, while
-// retaining the transport's explicit upper bound for long/offline frames.
+// Required residency has no fallback; retain the transport bound for smaller
+// clutter-batch retries. Optional routes keep the CPI-derived deadline.
+inline unsigned gpuResidentStartupDeadlineMs(double cpiMilliseconds,
+  unsigned transportMaximumMs, bool required)
+{
+  return required ? transportMaximumMs :
+    gpuCpiStartupDeadlineMs(cpiMilliseconds, transportMaximumMs);
+}
+
+// Three CPIs with a scheduling floor leave recovery room in a seven-CPI queue;
+// the transport maximum still bounds long or offline frames.
 inline unsigned gpuCpiFrameDeadlineMs(double cpiMilliseconds,
   unsigned transportMaximumMs, double cpiAllowance = 3,
   unsigned minimumMs = 500)

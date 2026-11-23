@@ -29,7 +29,8 @@ target_link_libraries(blah2RadarDsp PUBLIC blah2RadarData blah2IqData
   ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_THREADS_LIBRARY}
   ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
 add_library(blah2Acceleration STATIC EXCLUDE_FROM_ALL ${PROJECT_ROOT}/src/process/ambiguity/Acceleration.cpp)
-target_link_libraries(blah2Acceleration PUBLIC blah2RadarDsp blah2GpuProcess)
+target_link_libraries(blah2Acceleration PUBLIC
+  blah2RadarDsp blah2GpuProcess blah2FixedExecutor)
 
 # Production orchestration shared by the live executable and raw-IQ replay.
 add_library(blah2ProductionRawIq STATIC EXCLUDE_FROM_ALL ${PROJECT_ROOT}/src/process/pipeline/RawIqStages.cpp)

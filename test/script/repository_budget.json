@@ -5605,6 +5605,1853 @@
           43244
         ]
       }
+    },
+    {
+      "owner": "Release budget maintenance, 2026-11-20",
+      "purpose": "Required downward ratchet after current candidate consolidation; each listed measured metric is below its existing sealed ceiling.",
+      "rejected_reuse": "Retaining deleted headroom would permit unrelated future growth and violates the sealed ratchet policy.",
+      "cleanup_plan": "These exact lower ceilings remain enforced; further reductions require chained downward adjustments.",
+      "changes": {
+        "lines:tools": [
+          1997,
+          1996
+        ],
+        "oversized_bytes:html/js/insights.js": [
+          173199,
+          172430
+        ],
+        "oversized_bytes:html/lib/blah2.css": [
+          150371,
+          150223
+        ],
+        "oversized_lines:html/js/insights.js": [
+          2269,
+          2256
+        ],
+        "context_characters:build-release": [
+          652382,
+          652253
+        ],
+        "context_characters:release-ci/contracts": [
+          415863,
+          415487
+        ],
+        "context_characters:ui-insights": [
+          202223,
+          201453
+        ],
+        "context_characters:ui-presentation/contracts": [
+          639942,
+          639450
+        ],
+        "context_dynamic:operational-tools": [
+          364,
+          358
+        ],
+        "context_lines:build-release": [
+          12592,
+          12590
+        ],
+        "context_lines:release-ci/contracts": [
+          7841,
+          7832
+        ],
+        "context_lines:ui-insights": [
+          2787,
+          2774
+        ],
+        "context_lines:ui-presentation/contracts": [
+          10435,
+          10430
+        ],
+        "context_tokens:build-release": [
+          162640,
+          162639
+        ],
+        "context_tokens:release-ci/contracts": [
+          109321,
+          109293
+        ],
+        "context_tokens:ui-insights": [
+          56484,
+          56483
+        ]
+      }
+    },
+    {
+      "owner": "VectorWarp release candidate maintainability review, 2026-11-20",
+      "purpose": "Exact candidate accounting for the retained canonical evidence, configuration, native qualification, build/release, API and UI work. The remaining HTML interval module is one shared browser/Node evaluation owner; it is not a duplicate radar path. Metrics below their existing ceilings are ratcheted downward in this same chained review.",
+      "rejected_reuse": "Deleting or copying the shared interval owner would break its direct API, browser and regression consumers; deleting qualification, integration or release evidence merely to reduce accounting would remove required coverage. Reuse existing canonical owners and retain one measured implementation per responsibility.",
+      "cleanup_plan": "Every listed ceiling equals the current measured source after consolidation. These are sealed exception debt, not reusable headroom: future reductions must append exact downward chains, and future growth needs a separate owner-specific review. Do not add alternate radar math, processing routes, worker ABIs or duplicate UI/API owners.",
+      "changes": {
+        "context_characters:build-integration": [
+          99885,
+          100548
+        ],
+        "context_characters:build-integration/contracts": [
+          1356995,
+          1376178
+        ],
+        "context_characters:build-release": [
+          652253,
+          652480
+        ],
+        "context_characters:build-release/contracts": [
+          347619,
+          356004
+        ],
+        "context_characters:canonical-data": [
+          148978,
+          151568
+        ],
+        "context_characters:configuration-policy": [
+          182206,
+          202513
+        ],
+        "context_characters:configuration-policy/contracts": [
+          151360,
+          155461
+        ],
+        "context_characters:evidence-api": [
+          281565,
+          293546
+        ],
+        "context_characters:evidence-api/contracts": [
+          78876,
+          83857
+        ],
+        "context_characters:ingress-usrp/contracts": [
+          28707,
+          29200
+        ],
+        "context_characters:installation": [
+          186149,
+          186293
+        ],
+        "context_characters:installation/contracts": [
+          228389,
+          242141
+        ],
+        "context_characters:native-ambiguity": [
+          644148,
+          688653
+        ],
+        "context_characters:native-ambiguity/contracts": [
+          160066,
+          182525
+        ],
+        "context_characters:native-analysis": [
+          107229,
+          114270
+        ],
+        "context_characters:native-analysis/contracts": [
+          95167,
+          100430
+        ],
+        "context_characters:native-detection": [
+          68484,
+          69874
+        ],
+        "context_characters:native-detection/contracts": [
+          45800,
+          54377
+        ],
+        "context_characters:native-integration": [
+          64664,
+          72661
+        ],
+        "context_characters:native-integration/contracts": [
+          35548,
+          39838
+        ],
+        "context_characters:native-pipeline": [
+          114712,
+          131248
+        ],
+        "context_characters:native-pipeline/contracts": [
+          206066,
+          282349
+        ],
+        "context_characters:native-runtime": [
+          221422,
+          221613
+        ],
+        "context_characters:native-runtime/contracts": [
+          270628,
+          293947
+        ],
+        "context_characters:native-tracker": [
+          73378,
+          74170
+        ],
+        "context_characters:native-tracker/contracts": [
+          10306,
+          10841
+        ],
+        "context_characters:operational-tools": [
+          598141,
+          600224
+        ],
+        "context_characters:operational-tools/contracts": [
+          480979,
+          488850
+        ],
+        "context_characters:production": [
+          6772278,
+          6899428
+        ],
+        "context_characters:qualified-private-gpu": [
+          345924,
+          350023
+        ],
+        "context_characters:receiver-control-api": [
+          209365,
+          209571
+        ],
+        "context_characters:receiver-control-api/contracts": [
+          24333,
+          31449
+        ],
+        "context_characters:release-ci": [
+          140233,
+          137624
+        ],
+        "context_characters:release-ci/contracts": [
+          415487,
+          360459
+        ],
+        "context_characters:replay-evidence-tools/contracts": [
+          160251,
+          162785
+        ],
+        "context_characters:runtime-api": [
+          446989,
+          452275
+        ],
+        "context_characters:runtime-api/contracts": [
+          744750,
+          776760
+        ],
+        "context_characters:ui-presentation": [
+          270492,
+          275112
+        ],
+        "context_characters:ui-settings/contracts": [
+          29245,
+          29523
+        ],
+        "context_characters:ui-shared/contracts": [
+          20519,
+          20797
+        ],
+        "context_contract:configuration-policy->api/receiver-journal.js": [
+          0,
+          1
+        ],
+        "context_contract:evidence-api->html/js/measured_track_coverage.js": [
+          0,
+          1
+        ],
+        "context_contract:native-ambiguity->src/process/tracker/TrackerDiagnosticsJson.h": [
+          0,
+          1
+        ],
+        "context_contract:native-pipeline->src/process/ambiguity/GpuResultJson.private.h": [
+          0,
+          1
+        ],
+        "context_contract:release-ci->script/install-native.sh": [
+          1,
+          0
+        ],
+        "context_contract:release-ci->script/package-native.sh": [
+          1,
+          0
+        ],
+        "context_contract:release-ci->script/smoke-native-package.sh": [
+          1,
+          0
+        ],
+        "context_dynamic:build-release": [
+          147,
+          148
+        ],
+        "context_dynamic:native-ambiguity": [
+          376,
+          379
+        ],
+        "context_dynamic:native-tracker": [
+          29,
+          31
+        ],
+        "context_files:configuration-policy/contracts": [
+          7,
+          8
+        ],
+        "context_files:evidence-api/contracts": [
+          8,
+          9
+        ],
+        "context_files:native-ambiguity/contracts": [
+          24,
+          25
+        ],
+        "context_files:native-pipeline/contracts": [
+          33,
+          34
+        ],
+        "context_files:production": [
+          573,
+          574
+        ],
+        "context_files:release-ci/contracts": [
+          37,
+          34
+        ],
+        "context_files:ui-presentation": [
+          35,
+          36
+        ],
+        "context_imports:build-release": [
+          58,
+          59
+        ],
+        "context_imports:configuration-policy": [
+          8,
+          9
+        ],
+        "context_imports:evidence-api": [
+          10,
+          12
+        ],
+        "context_imports:native-ambiguity": [
+          39,
+          41
+        ],
+        "context_imports:native-analysis": [
+          24,
+          25
+        ],
+        "context_imports:native-pipeline": [
+          40,
+          42
+        ],
+        "context_imports:release-ci": [
+          59,
+          50
+        ],
+        "context_lines:build-integration": [
+          1865,
+          1873
+        ],
+        "context_lines:build-integration/contracts": [
+          27678,
+          27990
+        ],
+        "context_lines:build-release": [
+          12590,
+          12582
+        ],
+        "context_lines:build-release/contracts": [
+          7124,
+          7249
+        ],
+        "context_lines:canonical-data": [
+          4058,
+          4109
+        ],
+        "context_lines:configuration-policy": [
+          2672,
+          2984
+        ],
+        "context_lines:configuration-policy/contracts": [
+          2643,
+          2722
+        ],
+        "context_lines:evidence-api": [
+          5018,
+          5203
+        ],
+        "context_lines:evidence-api/contracts": [
+          1359,
+          1450
+        ],
+        "context_lines:ingress-usrp/contracts": [
+          691,
+          698
+        ],
+        "context_lines:installation": [
+          3605,
+          3607
+        ],
+        "context_lines:installation/contracts": [
+          3909,
+          4110
+        ],
+        "context_lines:native-ambiguity": [
+          11987,
+          12679
+        ],
+        "context_lines:native-ambiguity/contracts": [
+          3467,
+          3854
+        ],
+        "context_lines:native-analysis": [
+          2075,
+          2204
+        ],
+        "context_lines:native-analysis/contracts": [
+          2136,
+          2253
+        ],
+        "context_lines:native-detection": [
+          1609,
+          1634
+        ],
+        "context_lines:native-detection/contracts": [
+          1182,
+          1344
+        ],
+        "context_lines:native-integration": [
+          1370,
+          1521
+        ],
+        "context_lines:native-integration/contracts": [
+          816,
+          916
+        ],
+        "context_lines:native-pipeline": [
+          2360,
+          2614
+        ],
+        "context_lines:native-pipeline/contracts": [
+          4197,
+          5430
+        ],
+        "context_lines:native-runtime": [
+          3984,
+          3988
+        ],
+        "context_lines:native-runtime/contracts": [
+          5967,
+          6291
+        ],
+        "context_lines:native-tracker": [
+          1523,
+          1533
+        ],
+        "context_lines:native-tracker/contracts": [
+          303,
+          313
+        ],
+        "context_lines:operational-tools": [
+          11205,
+          11234
+        ],
+        "context_lines:operational-tools/contracts": [
+          8456,
+          8582
+        ],
+        "context_lines:production": [
+          125797,
+          127828
+        ],
+        "context_lines:qualified-private-gpu": [
+          5918,
+          5985
+        ],
+        "context_lines:receiver-control-api": [
+          3838,
+          3841
+        ],
+        "context_lines:receiver-control-api/contracts": [
+          479,
+          594
+        ],
+        "context_lines:release-ci": [
+          2665,
+          2642
+        ],
+        "context_lines:release-ci/contracts": [
+          7832,
+          6875
+        ],
+        "context_lines:replay-evidence-tools/contracts": [
+          3246,
+          3294
+        ],
+        "context_lines:runtime-api": [
+          8019,
+          8093
+        ],
+        "context_lines:runtime-api/contracts": [
+          12854,
+          13343
+        ],
+        "context_lines:ui-presentation": [
+          2879,
+          2960
+        ],
+        "context_lines:ui-settings/contracts": [
+          514,
+          522
+        ],
+        "context_lines:ui-shared/contracts": [
+          377,
+          385
+        ],
+        "context_tokens:build-integration": [
+          16172,
+          16247
+        ],
+        "context_tokens:build-integration/contracts": [
+          333969,
+          338881
+        ],
+        "context_tokens:build-release": [
+          162639,
+          162807
+        ],
+        "context_tokens:build-release/contracts": [
+          82948,
+          85026
+        ],
+        "context_tokens:canonical-data": [
+          36552,
+          37233
+        ],
+        "context_tokens:configuration-policy": [
+          44451,
+          49369
+        ],
+        "context_tokens:configuration-policy/contracts": [
+          38192,
+          39175
+        ],
+        "context_tokens:evidence-api": [
+          64973,
+          67916
+        ],
+        "context_tokens:evidence-api/contracts": [
+          19533,
+          20837
+        ],
+        "context_tokens:ingress-usrp/contracts": [
+          7514,
+          7673
+        ],
+        "context_tokens:installation": [
+          48707,
+          48736
+        ],
+        "context_tokens:installation/contracts": [
+          53999,
+          57351
+        ],
+        "context_tokens:native-ambiguity": [
+          176233,
+          189095
+        ],
+        "context_tokens:native-ambiguity/contracts": [
+          39000,
+          44430
+        ],
+        "context_tokens:native-analysis": [
+          29590,
+          31449
+        ],
+        "context_tokens:native-analysis/contracts": [
+          24440,
+          25990
+        ],
+        "context_tokens:native-detection": [
+          16529,
+          16832
+        ],
+        "context_tokens:native-detection/contracts": [
+          10855,
+          12967
+        ],
+        "context_tokens:native-integration": [
+          15966,
+          17970
+        ],
+        "context_tokens:native-integration/contracts": [
+          9253,
+          10549
+        ],
+        "context_tokens:native-pipeline": [
+          23295,
+          26954
+        ],
+        "context_tokens:native-pipeline/contracts": [
+          53288,
+          76462
+        ],
+        "context_tokens:native-runtime": [
+          44352,
+          44356
+        ],
+        "context_tokens:native-runtime/contracts": [
+          68784,
+          74953
+        ],
+        "context_tokens:native-tracker": [
+          18703,
+          18889
+        ],
+        "context_tokens:native-tracker/contracts": [
+          2503,
+          2603
+        ],
+        "context_tokens:operational-tools": [
+          145870,
+          146513
+        ],
+        "context_tokens:operational-tools/contracts": [
+          121901,
+          123756
+        ],
+        "context_tokens:production": [
+          1699928,
+          1732913
+        ],
+        "context_tokens:qualified-private-gpu": [
+          101592,
+          102456
+        ],
+        "context_tokens:receiver-control-api": [
+          50523,
+          50573
+        ],
+        "context_tokens:receiver-control-api/contracts": [
+          5856,
+          7539
+        ],
+        "context_tokens:release-ci": [
+          31432,
+          30753
+        ],
+        "context_tokens:release-ci/contracts": [
+          109293,
+          94043
+        ],
+        "context_tokens:replay-evidence-tools/contracts": [
+          40195,
+          40813
+        ],
+        "context_tokens:runtime-api": [
+          111296,
+          112478
+        ],
+        "context_tokens:runtime-api/contracts": [
+          176575,
+          184388
+        ],
+        "context_tokens:ui-presentation": [
+          84149,
+          85385
+        ],
+        "context_tokens:ui-presentation/contracts": [
+          168993,
+          169040
+        ],
+        "context_tokens:ui-settings/contracts": [
+          6870,
+          6918
+        ],
+        "context_tokens:ui-shared/contracts": [
+          4823,
+          4871
+        ],
+        "files:html": [
+          48,
+          49
+        ],
+        "lines:.github": [
+          2665,
+          2642
+        ],
+        "lines:api": [
+          25060,
+          25626
+        ],
+        "lines:cmake": [
+          1245,
+          1253
+        ],
+        "lines:contrib": [
+          344,
+          346
+        ],
+        "lines:core": [
+          5918,
+          5985
+        ],
+        "lines:html": [
+          13314,
+          13390
+        ],
+        "lines:script": [
+          27830,
+          27850
+        ],
+        "lines:src": [
+          43244,
+          44560
+        ],
+        "oversized_bytes:api/server.js": [
+          131858,
+          132697
+        ],
+        "oversized_bytes:src/blah2.cpp": [
+          221422,
+          221613
+        ],
+        "oversized_lines:api/config-manager.js": [
+          1535,
+          1724
+        ],
+        "oversized_lines:api/evidence-statistics.js": [
+          2091,
+          2257
+        ],
+        "oversized_lines:api/server.js": [
+          2352,
+          2364
+        ],
+        "oversized_lines:src/blah2.cpp": [
+          3984,
+          3988
+        ],
+        "oversized_lines:src/process/pipeline/CanonicalRadar.cpp": [
+          1540,
+          1620
+        ]
+      }
+    },
+    {
+      "owner": "VectorWarp release-candidate freeze review, 2026-11-20",
+      "purpose": "Exact mandatory downward ratchet after frozen CI review measured smaller build-release, production and release-ci contract packets.",
+      "rejected_reuse": "Retaining deleted headroom would permit unrelated future growth and violates the sealed repository-budget ratchet policy.",
+      "cleanup_plan": "These exact lower ceilings are sealed; future reductions require another chained downward adjustment and no removed capacity may be reused.",
+      "changes": {
+        "context_characters:build-release": [
+          652480,
+          652423
+        ],
+        "context_characters:production": [
+          6899428,
+          6899371
+        ],
+        "context_characters:release-ci/contracts": [
+          360459,
+          360403
+        ],
+        "context_tokens:release-ci/contracts": [
+          94043,
+          94037
+        ]
+      }
+    },
+    {
+      "owner": "Temporal GPU contention cleanup review, 2026-11-20",
+      "purpose": "Exact mandatory downward ratchet after replacing per-cell temporal workgroups and global CFAR counter atomics with the bitwise-qualified canonical kernel.",
+      "rejected_reuse": "Retaining the removed kernel headroom would allow unrelated future growth and violate the sealed repository-budget ratchet policy.",
+      "cleanup_plan": "Keep the reduced canonical GPU owner and production packet ceilings; any further reduction requires another exact chained adjustment.",
+      "changes": {
+        "lines:core": [
+          5985,
+          5974
+        ],
+        "context_characters:production": [
+          6899371,
+          6898350
+        ],
+        "context_characters:qualified-private-gpu": [
+          350023,
+          349002
+        ],
+        "context_lines:production": [
+          127828,
+          127817
+        ],
+        "context_lines:qualified-private-gpu": [
+          5985,
+          5974
+        ],
+        "context_tokens:production": [
+          1732913,
+          1732665
+        ],
+        "context_tokens:qualified-private-gpu": [
+          102456,
+          102208
+        ]
+      }
+    },
+    {
+      "owner": "Resident coordinator consolidation cleanup, 2026-11-20",
+      "purpose": "Exact mandatory downward ratchet after removing the stale include for a diagnostic already consolidated into the canonical coordinator owner.",
+      "rejected_reuse": "The removed duplicate-owner reference is not reusable headroom for unrelated growth.",
+      "cleanup_plan": "Keep the consolidated coordinator include graph and these lower exact owner/contract ceilings.",
+      "changes": {
+        "lines:src": [44560, 44559],
+        "context_characters:native-ambiguity": [688653, 688611],
+        "context_characters:native-pipeline/contracts": [282349, 282307],
+        "context_characters:native-runtime/contracts": [293947, 293905],
+        "context_characters:production": [6898350, 6898308],
+        "context_lines:native-ambiguity": [12679, 12678],
+        "context_lines:native-pipeline/contracts": [5430, 5429],
+        "context_lines:native-runtime/contracts": [6291, 6290],
+        "context_lines:production": [127817, 127816],
+        "context_tokens:native-ambiguity": [189095, 189088],
+        "context_tokens:native-pipeline/contracts": [76462, 76455],
+        "context_tokens:native-runtime/contracts": [74953, 74946],
+        "context_tokens:production": [1732665, 1732658]
+      }
+    },
+    {
+      "owner": "Portable clutter workspace reuse review, 2026-11-20",
+      "purpose": "Remove the redundant full-CPI correlation allocation by reusing the fenced correction-FIR output workspace without changing numerical stages or lane reservations.",
+      "rejected_reuse": "Increasing memory ceilings or serializing qualification would not remove the per-worker duplicate allocation; preserve the existing capacity fallback.",
+      "cleanup_plan": "Retain one shared workspace with existing FFT and copy barriers; verify direct-convolution and physical clutter parity before cadence acceptance. Seal the exact smaller source packets.",
+      "changes": {
+        "context_characters:build-integration/contracts": [1376178, 1376142],
+        "context_characters:native-ambiguity": [688611, 688575],
+        "context_characters:production": [6898308, 6898272],
+        "context_tokens:build-integration/contracts": [338881, 338873],
+        "context_tokens:native-ambiguity": [189088, 189080],
+        "context_tokens:production": [1732658, 1732650]
+      }
+    },
+    {
+      "owner": "2026-11-22 build-integration architecture source review",
+      "purpose": "Canonical CMake registrations expose existing RapidJSON/executor dependencies and add native-clutter and private-startup-calibration regression consumers. No parallel processing implementation or external dependency identity is introduced. Regression consumers: test/packaging/test_gpu_platform_contract.py; test/gpu/TestStartupIqCalibration.cpp; test/gpu/TestClutterReplaySoftware.cpp.",
+      "rejected_reuse": "Duplicated compile/link lists or test-only copies of production stages would weaken actual-owner validation. Reuse ProcessingLibraries and existing GPU test registration.",
+      "cleanup_plan": "Retain warning-as-error, native-stage/recording/replay fixtures and full direct source contract costs. Cross-platform native execution remains a build obligation, not an architecture metric.",
+      "changes": {
+        "context_characters:build-integration": [100548, 100959],
+        "context_characters:build-integration/contracts": [1376142, 1385137],
+        "context_lines:build-integration": [1873, 1880],
+        "context_lines:build-integration/contracts": [27990, 28254],
+        "context_tokens:build-integration": [16247, 16279],
+        "context_tokens:build-integration/contracts": [338873, 341527]
+      }
+    },
+    {
+      "owner": "2026-11-22 build-release architecture source review",
+      "purpose": "Only the complete directly imported build-release source packets change in this adjustment, reflecting current canonical server/plan/artifact contracts; the owner implementation is already at its exact ceiling. Regression consumers: test/packaging/test_artifact_plan.py; test/packaging/test_release_ci.py; test/macos/release_agent_test.py.",
+      "rejected_reuse": "Do not hide changed dependencies by dropping real references or splitting an unchanged release owner. Import accounting includes the full first-party direct contract.",
+      "cleanup_plan": "Retain artifact identity, platform packaging and install regression consumers. Remove a reference only when its actual consumer is retired; imported growth grants no unrelated owner headroom.",
+      "changes": {
+        "context_characters:build-release/contracts": [356004, 365354],
+        "context_lines:build-release/contracts": [7249, 7407],
+        "context_tokens:build-release/contracts": [85026, 87044]
+      }
+    },
+    {
+      "owner": "2026-11-22 canonical-data architecture source review",
+      "purpose": "Detection owns exact evidence identity/support validation and the bounded replay score serializer; Track and StreamProfile expose measurement lineage and canonical stage telemetry. Additive public metadata preserves ordinary consumers. Regression consumers: test/json/TestJsonOutput.cpp; test/gpu/TestGpuResultJson.cpp; test/recording/TestReplayCoherentObserver.cpp.",
+      "rejected_reuse": "Reusing rounded public presentation JSON for calibration loses numerical precision; duplicate backend serializers would fork lineage rules. One Detection serializer and exact support validator feed CPU/GPU adapters and replay.",
+      "cleanup_plan": "Keep metadata validation, exact uint64 identities and public/replay output regressions. Do not fund unrelated growth from removed data code or present metadata-only/public monitor maps as native numerical parity. Retained reviews: /tmp/vectorwarp-exact-replay-review-20261122-astra.md.",
+      "changes": {
+        "context_characters:canonical-data": [151568, 154194],
+        "context_lines:canonical-data": [4109, 4159],
+        "context_tokens:canonical-data": [37233, 37952]
+      }
+    },
+    {
+      "owner": "2026-11-22 capture-recording architecture source review",
+      "purpose": "RecordingFileCache.h is one shared 16 MiB writeback/digest policy for canonical and Kraken writers. Existing RecordingWriter batches unchanged callback records in bounded 1 MiB allocations; Source's existing control thread prepares successors. Versioned run lineage preserves original ingress frames and older v1 reading. Regression consumers: test/recording/TestRecording.cpp; test/capture/PortableClipRecorderFixture.cpp; test/capture/KrakenClipRecorderFixture.cpp; test/capture/UsrpIngressFixture.cpp.",
+      "rejected_reuse": "Recording.cpp's private File wrapper cannot serve header-only digest/Kraken consumers; Sha256 should not own file I/O and public Recording.h should not expose platform cache headers. Reuse one cache helper, digest implementation, writer and control thread instead of per-recorder copies or detached workers.",
+      "cleanup_plan": "Keep the new header only while its independent writer/digest consumers require shared I/O policy. Retain byte SHA oracles, cursor/mutation checks, 64 MiB capacity, asynchronous EIO, abort, successor-stall/cancel and v1/v2 lineage coverage; no test deletion or capture promotion. Retained reviews: /var/tmp/homeportal-cache-review-packet-20261122.json; /var/tmp/homeportal-recorder-batching-review-20261122.json; /var/tmp/homeportal-recorder-batching-opposition-20261122.json.",
+      "changes": {
+        "context_characters:capture-recording": [228414, 241213],
+        "context_characters:capture-recording/contracts": [30701, 30812],
+        "context_files:capture-recording": [24, 25],
+        "context_lines:capture-recording": [4709, 4996],
+        "context_lines:capture-recording/contracts": [867, 870],
+        "context_tokens:capture-recording": [56856, 59592],
+        "context_tokens:capture-recording/contracts": [6967, 6981]
+      }
+    },
+    {
+      "owner": "2026-11-22 configuration-policy architecture source review",
+      "purpose": "Existing config-manager/config-store own independently pinned configured intent and fresh native resolved-plan acceptance. API callers now consume the browser/CommonJS processing_capabilities owner directly, removing the obsolete four-line API forwarding module. Regression consumers: api/effective-radar-plan.test.js; api/config-manager.test.js; api/config-profiles.test.js; api/config-server.test.js; api/processing-capabilities.test.js; test/ui/processing-capability-dom.test.js.",
+      "rejected_reuse": "Do not self-pin the deployed configuration, duplicate capability rules, weaken temporal confirmation constraints or retain an alias without a compatibility consumer. Native RadarPlan still owns resolved numerical behavior.",
+      "cleanup_plan": "Seal removal of processing-capabilities.js and its obsolete imports. Retain configured-plan, Settings persistence/refusal, migration and runtime receipt tests; pins remain independently reviewed and absent pins remain explicit.",
+      "changes": {
+        "context_characters:configuration-policy": [202513, 203128],
+        "context_characters:configuration-policy/contracts": [155461, 156123],
+        "context_contract:configuration-policy->api/processing-capabilities.js": [1, 0],
+        "context_files:configuration-policy/contracts": [8, 7],
+        "context_imports:configuration-policy": [9, 8],
+        "context_lines:configuration-policy": [2984, 3001],
+        "context_lines:configuration-policy/contracts": [2722, 2725],
+        "context_tokens:configuration-policy": [49369, 49487],
+        "context_tokens:configuration-policy/contracts": [39175, 39253],
+        "oversized_lines:api/config-manager.js": [1724, 1728]
+      }
+    },
+    {
+      "owner": "2026-11-22 evidence-api architecture source review",
+      "purpose": "Existing evidence statistics retains exact measured-track interval support, bounded 24-hour compact pass history, staggered ledger flushing and immutable scoring/sensitivity cohorts. Evidence/recording callers consume canonical capabilities directly after alias removal. Regression consumers: api/evidence-statistics.test.js; api/evidence-statistics-flush.test.js; api/evidence-statistics-retention.test.js; api/measured-track-coverage.test.js; api/multi-illuminator-evidence.test.js.",
+      "rejected_reuse": "Do not duplicate interval unions or retain full trajectories solely for distance-view totals. The shared measured coverage owner supplies interval math; existing ledger supplies state/persistence and independently captured truth remains evaluation-only.",
+      "cleanup_plan": "Retain eligibility witnesses, policy/epoch rejection, exact support, retained-window, bounded flush/history and all negative controls. evidence-statistics.js crosses the oversized-byte threshold and remains explicit debt; future cleanup must consolidate state/coverage serialization without discarding evidence. Retained reviews: /var/tmp/vectorwarp-detection-cohort-hardening-review-20261120.json; /var/tmp/vectorwarp-sensitivity-provenance-review-20261120.json; /tmp/vectorwarp-kiosk-federation-audit-20261122.json.",
+      "changes": {
+        "context_characters:evidence-api": [293546, 300688],
+        "context_characters:evidence-api/contracts": [83857, 96302],
+        "context_contract:evidence-api->api/processing-capabilities.js": [1, 0],
+        "context_contract:evidence-api->html/js/processing_capabilities.js": [0, 1],
+        "context_lines:evidence-api": [5203, 5330],
+        "context_lines:evidence-api/contracts": [1450, 1661],
+        "context_tokens:evidence-api": [67916, 69461],
+        "context_tokens:evidence-api/contracts": [20837, 23861],
+        "oversized_bytes:api/evidence-statistics.js": [0, 135776],
+        "oversized_lines:api/evidence-statistics.js": [2257, 2361]
+      }
+    },
+    {
+      "owner": "2026-11-22 geolocation-api architecture source review",
+      "purpose": "adsb-source replaces the shared round-robin exchange cursor with existing per-source paced/backoff reads and separates presentation age from evaluation freshness. No ADS-B field enters native radar inference. Regression consumers: api/adsb-source.test.js; api/evidence-statistics.test.js.",
+      "rejected_reuse": "Reuse each source slot's existing pacing/cache state rather than add another fetch loop or let one provider suppress another. Presentation freshness must not widen evaluation eligibility.",
+      "cleanup_plan": "Retain per-provider cadence, failed-payload last-good, backoff and freshness regression coverage. Evaluation contract versioning preserves old cohorts; no sensitivity or inference claim follows from budget accounting. Retained reviews: /var/tmp/vectorwarp-sensitivity-provenance-review-20261120.json.",
+      "changes": {
+        "context_characters:geolocation-api": [250510, 251320],
+        "context_lines:geolocation-api": [4219, 4226],
+        "context_tokens:geolocation-api": [62476, 62589]
+      }
+    },
+    {
+      "owner": "2026-11-22 ingress-hackrf architecture source review",
+      "purpose": "Only the HackRF adapter's full shared Source/Recording contract packet grows for deferred recording-control preparation. Adapter implementation does not grow in this adjustment. Regression consumers: test/capture/HackRfSettingsFixture.cpp.",
+      "rejected_reuse": "A receiver-specific recording state machine would duplicate canonical control and change timing semantics. Reuse Source and keep physical ingress differences at the boundary.",
+      "cleanup_plan": "Retain HackRfSettingsFixture control-pump and acquisition assertions. Remove no actual import or regression to hide shared contract growth. Retained reviews: /var/tmp/homeportal-recorder-batching-opposition-20261122.json.",
+      "changes": {
+        "context_characters:ingress-hackrf/contracts": [14173, 14532],
+        "context_lines:ingress-hackrf/contracts": [394, 401],
+        "context_tokens:ingress-hackrf/contracts": [3145, 3200]
+      }
+    },
+    {
+      "owner": "2026-11-22 ingress-kraken architecture source review",
+      "purpose": "Kraken ingress maintains inference sample chronology when optional clip retention misses its try-lock. Its existing clip writer consumes the shared RecordingFileCache policy for writeback/durability; no downstream radar path is added. Regression consumers: test/capture/KrakenClipRecorderFixture.cpp; test/capture/KrakenStreamFixture.cpp.",
+      "rejected_reuse": "Do not tie canonical inference epoch advancement to optional recording lock success or copy cache syscalls into the adapter. Shared Source and recording policy remain the only applicable contracts.",
+      "cleanup_plan": "Retain capture continuity, original bytes, abort/flush and bounded clip fixtures. Remove adapter imports only when their actual consumers retire; full changed Source/recording contract costs remain visible. Retained reviews: /var/tmp/homeportal-cache-review-packet-20261122.json; /var/tmp/homeportal-recorder-batching-opposition-20261122.json.",
+      "changes": {
+        "context_characters:ingress-kraken": [68140, 69282],
+        "context_characters:ingress-kraken/contracts": [44521, 51750],
+        "context_contract:ingress-kraken->src/capture/RecordingFileCache.h": [0, 1],
+        "context_files:ingress-kraken/contracts": [7, 8],
+        "context_imports:ingress-kraken": [7, 8],
+        "context_lines:ingress-kraken": [1704, 1726],
+        "context_lines:ingress-kraken/contracts": [1024, 1184],
+        "context_tokens:ingress-kraken": [15497, 15684],
+        "context_tokens:ingress-kraken/contracts": [10701, 12391]
+      }
+    },
+    {
+      "owner": "2026-11-22 ingress-rspduo architecture source review",
+      "purpose": "Only the RSPduo adapter's full shared Source/Recording contract packet grows for deferred recording-control preparation. Adapter implementation does not grow in this adjustment. Regression consumers: test/capture/RspDuoFailureFixture.cpp.",
+      "rejected_reuse": "A receiver-specific recording state machine would duplicate canonical control and change timing semantics. Reuse Source and keep physical ingress differences at the boundary.",
+      "cleanup_plan": "Retain RspDuoFailureFixture control-pump and structured failure assertions. Remove no actual import or regression to hide shared contract growth. Retained reviews: /var/tmp/homeportal-recorder-batching-opposition-20261122.json.",
+      "changes": {
+        "context_characters:ingress-rspduo/contracts": [20358, 20717],
+        "context_lines:ingress-rspduo/contracts": [505, 512],
+        "context_tokens:ingress-rspduo/contracts": [4682, 4737]
+      }
+    },
+    {
+      "owner": "2026-11-22 ingress-usrp architecture source review",
+      "purpose": "Only the USRP adapter's full shared Source/Recording contract packet grows for deferred recording-control preparation. Adapter implementation does not grow in this adjustment. Regression consumers: test/capture/UsrpIngressFixture.cpp.",
+      "rejected_reuse": "A receiver-specific recording state machine would duplicate canonical control and change timing semantics. Reuse Source and keep physical ingress differences at the boundary.",
+      "cleanup_plan": "Retain UsrpIngressFixture successor-stall, cancellation, actual epoch/first-sample and acquisition latency assertions. Remove no actual import or regression to hide shared contract growth. Retained reviews: /var/tmp/homeportal-recorder-batching-opposition-20261122.json.",
+      "changes": {
+        "context_characters:ingress-usrp/contracts": [29200, 29559],
+        "context_lines:ingress-usrp/contracts": [698, 705],
+        "context_tokens:ingress-usrp/contracts": [7673, 7728]
+      }
+    },
+    {
+      "owner": "2026-11-22 installation architecture source review",
+      "purpose": "Existing systemd service definitions preserve processor restart participation after API restart and provide the bounded watchdog's declared wait window. Installation also imports the changed canonical API/config artifacts. Regression consumers: test/packaging/test_package_upgrade.py; api/release-runtime-retirement.test.js; script/vectorwarp-health-watchdog.test.js.",
+      "rejected_reuse": "New service owners or unbounded recovery loops would duplicate lifecycle responsibility. Reuse the existing API/processor relationship and watchdog.",
+      "cleanup_plan": "Retain package upgrade, role masking, startup refusal and watchdog timeout tests. This source-size review does not install, activate or release these service changes.",
+      "changes": {
+        "context_characters:installation": [186293, 186537],
+        "context_characters:installation/contracts": [242141, 243555],
+        "context_lines:installation": [3607, 3611],
+        "context_lines:installation/contracts": [4110, 4133],
+        "context_tokens:installation": [48736, 48782],
+        "context_tokens:installation/contracts": [57351, 57596]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-ambiguity architecture source review",
+      "purpose": "Existing resident transport/qualification gains ABI18 canonical tracker diagnostics, checked FP64 host-detection handoff and map-only temporal capability. Private stimulus calibration and same-map oracle checks protect discontinuous decisions; shared memory quotas include host staging while preserving narrow backend fallback. Regression consumers: test/gpu/TestGpuResidentProcess.cpp; test/gpu/TestGpuResidentWire.cpp; test/gpu/TestReplayGpuQualification.cpp; test/gpu/TestGpuResultJson.cpp; test/script/test_gpu_lane_budget_contract.py.",
+      "rejected_reuse": "Reuse the existing worker/module/session, canonical Tracker diagnostics and Detection adapter. A full parallel processor, CPU shadow on production frames, JSON-rounded host tracker feed or global GPU disable would violate stage ownership.",
+      "cleanup_plan": "Retain protocol/ABI refusal, capacity reservation, abort/reset, exact diagnostics and CPU-oracle tests. Preserve the existing explicit capability boundaries and physical qualification gates; large packets remain debt. Additional C++ import lexical counts are retained exactly. Retained reviews: /var/tmp/vectorwarp-temporal-oppositional-review-20261120.json; /var/tmp/vectorwarp-direct-canonical-handoff.json; /tmp/vectorwarp-exact-replay-review-20261122-astra.md.",
+      "changes": {
+        "context_characters:native-ambiguity": [688575, 702809],
+        "context_characters:native-ambiguity/contracts": [182525, 195468],
+        "context_contract:native-ambiguity->src/process/tracker/Tracker.h": [0, 1],
+        "context_dynamic:native-ambiguity": [379, 388],
+        "context_files:native-ambiguity/contracts": [25, 26],
+        "context_imports:native-ambiguity": [41, 44],
+        "context_lines:native-ambiguity": [12678, 12892],
+        "context_lines:native-ambiguity/contracts": [3854, 4160],
+        "context_tokens:native-ambiguity": [189080, 192444],
+        "context_tokens:native-ambiguity/contracts": [44430, 46948]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-analysis architecture source review",
+      "purpose": "Existing startup and replay observer owners add bounded negative-control stimulus calibration, moving positive controls, raw/native interval checks and full-precision temporal-score evidence. PublicationFifo preserves each asynchronous output's original capture identity. Regression consumers: test/gpu/TestStartupIqCalibration.cpp; test/recording/TestReplayCoherentObserver.cpp; test/script/test_temporal_score_evidence_contract.py.",
+      "rejected_reuse": "Reuse existing private startup/replay observers and the canonical Detection evidence serializer; do not add a live evaluator, source-grid rebasing, an alternative processor or a second publication queue owner.",
+      "cleanup_plan": "Preserve exclusive bounded replay output, startup-state disposal, exact-grid and positive/negative regressions. The lexical computed-load count includes C++ import calls and is accounting, not a claim of dynamic code loading. No new processing directory or runtime diagnostic service. Retained reviews: /tmp/vectorwarp-exact-replay-review-20261122-astra.md; /var/tmp/vectorwarp-cross-cpi-handoff.json.",
+      "changes": {
+        "context_characters:native-analysis": [114270, 121279],
+        "context_characters:native-analysis/contracts": [100430, 113421],
+        "context_contract:native-analysis->src/data/Detection.h": [0, 1],
+        "context_dynamic:native-analysis": [99, 102],
+        "context_files:native-analysis/contracts": [17, 18],
+        "context_imports:native-analysis": [25, 27],
+        "context_lines:native-analysis": [2204, 2331],
+        "context_lines:native-analysis/contracts": [2253, 2534],
+        "context_tokens:native-analysis": [31449, 33272],
+        "context_tokens:native-analysis/contracts": [25990, 29016]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-clutter architecture source review",
+      "purpose": "Existing WienerHopf uses the shared configured worker policy and retains workspace/FFT barriers while supporting bounded canonical lane concurrency. No second clutter implementation is added. Regression consumers: test/unit/process/clutter/TestClutterFft.cpp; test/unit/process/clutter/TestWienerHopfLoading.cpp; test/gpu/TestClutterReplaySoftware.cpp.",
+      "rejected_reuse": "Do not enlarge capture queues or make receiver-specific clutter implementations to mask compute demand. Reuse the existing numerical owner and narrow GPU capacity fallback.",
+      "cleanup_plan": "Retain direct-convolution, float/FP64, worker-count and physical clutter parity contracts. The explicit smaller shared workspace adjustment from earlier history stays sealed. Retained reviews: /var/tmp/vectorwarp-direct-canonical-handoff.json; /var/tmp/vectorwarp-homeportal-temporal-capacity-review-20261120.json.",
+      "changes": {
+        "context_characters:native-clutter": [45027, 45733],
+        "context_lines:native-clutter": [1025, 1039],
+        "context_tokens:native-clutter": [10539, 10676]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-conditioning architecture source review",
+      "purpose": "ArrayReferenceSynthesizer accepts canonical borrowed SampleView input for direct/float ingress and preserves configured applied-gain semantics. The implementation remains the common reference-conditioning owner. Regression consumers: test/unit/process/conditioning/TestArrayReferenceSynthesizer.cpp; test/unit/process/analysis/TestMultiIlluminatorRadar.cpp.",
+      "rejected_reuse": "Materializing or copying each full CPI solely for old container signatures wastes memory; a receiver/precision-specific conditioning implementation would fork mathematics. Reuse the existing sample-view processing template.",
+      "cleanup_plan": "Retain array-reference numerical/gain parity and borrowed-lifetime regressions; no alternative algorithm or processing directory is retained. Full directly consumed canonical-data costs remain counted. Retained reviews: /var/tmp/vectorwarp-direct-canonical-handoff.json.",
+      "changes": {
+        "context_characters:native-conditioning": [84759, 85672],
+        "context_characters:native-conditioning/contracts": [26354, 27112],
+        "context_imports:native-conditioning": [9, 10],
+        "context_lines:native-conditioning": [2081, 2107],
+        "context_lines:native-conditioning/contracts": [657, 670],
+        "context_tokens:native-conditioning": [20046, 20238],
+        "context_tokens:native-conditioning/contracts": [5954, 6110]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-detection architecture source review",
+      "purpose": "Only the existing detector owner's complete direct data/temporal contract packet grows; its implementation ceilings do not increase in this adjustment. Regression consumers: test/unit/process/analysis/TestTemporalEvidence.cpp; test/recording/TestReplayDetectorObservation.cpp.",
+      "rejected_reuse": "Reusing the canonical Detection evidence contract avoids another detection serializer or mathematical owner. Do not count only selected foreign declarations to conceal dependencies.",
+      "cleanup_plan": "Retain detector support/depth/lineage and disabled-stage regressions, with complete directly consumed contracts. No threshold or detector behavior is authorized by accounting.",
+      "changes": {
+        "context_characters:native-detection/contracts": [54377, 57476],
+        "context_lines:native-detection/contracts": [1344, 1395],
+        "context_tokens:native-detection/contracts": [12967, 13446]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-integration architecture source review",
+      "purpose": "Only the existing integration owner's full Detection/data direct contract packet changes here; its current implementation ceilings already cover the reviewed temporal optimization. Regression consumers: test/unit/process/analysis/TestTemporalEvidence.cpp; test/gpu/TestGpuTbdFractional.cpp.",
+      "rejected_reuse": "A copied data contract or separate bank processor would fork evidence semantics. Reuse the canonical data and temporal owners.",
+      "cleanup_plan": "Retain ordered sums, support lineage, edges/ties/warmup/reset and adversarial-null regressions. Earlier exact optimizer reductions remain sealed; this entry supplies no integration implementation headroom. Retained reviews: /var/tmp/vectorwarp-temporal-oppositional-review-20261120.json.",
+      "changes": {
+        "context_characters:native-integration/contracts": [39838, 42845],
+        "context_lines:native-integration/contracts": [916, 966],
+        "context_tokens:native-integration/contracts": [10549, 11345]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-pipeline architecture source review",
+      "purpose": "RadarBank now owns direct ingress, bounded cross-CPI staged products, ordered joins and EOF/reset drains. ProductStages owns private startup qualification, map-only temporal worker admission and the same host tracker. Raw public capture bounds and channelized-grid lineage stay separate. Optional spectrum, cutout/manifold and resident diagnostic publication preserve former direct features. Regression consumers: test/unit/process/analysis/TestMultiIlluminatorRadar.cpp; test/recording/TestReplayCoherentObserver.cpp; test/recording/TestReplayDetectorObservation.cpp.",
+      "rejected_reuse": "Reuse the canonical pipeline instead of retaining the deleted runtime graph, receiver routes or a second host detector/tracker. Independent startup ProductStages exists only during qualification and transfers a reset worker; it cannot process live shadow traffic.",
+      "cleanup_plan": "Retain exact owner/oversized debt with native-runtime's mandatory reduction; future consolidation must preserve order, lifetime, raw/native intervals, warmup/reset, disabled stages and CPU/GPU/AUTO parity. No tolerances, live defaults or hardware gates change in this accounting review. Retained reviews: /var/tmp/vectorwarp-direct-canonical-handoff.json; /var/tmp/vectorwarp-cross-cpi-handoff.json; /tmp/vectorwarp-exact-replay-review-20261122-astra.md.",
+      "changes": {
+        "context_characters:native-pipeline": [131248, 153483],
+        "context_characters:native-pipeline/contracts": [282307, 300371],
+        "context_contract:native-pipeline->src/process/ambiguity/ManifoldEvidence.h": [0, 1],
+        "context_contract:native-pipeline->src/process/spectrum/SpectrumAnalyser.h": [0, 1],
+        "context_files:native-pipeline/contracts": [34, 36],
+        "context_imports:native-pipeline": [42, 44],
+        "context_lines:native-pipeline": [2614, 3075],
+        "context_lines:native-pipeline/contracts": [5429, 5754],
+        "context_tokens:native-pipeline": [26954, 31283],
+        "context_tokens:native-pipeline/contracts": [76455, 81005],
+        "oversized_lines:src/process/pipeline/CanonicalRadar.cpp": [1620, 1961]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-runtime architecture source review",
+      "purpose": "Direct and channelized ingress now invoke one RadarBank and one publication FIFO/drain. Removed the direct RawIqStages/Acceleration/ProductStages/Coordinator orchestration and, in this review, its unused timing helper, vectors and seven obsolete numerical includes. The remaining runtime only wires ingress, configuration, schedules and publication. Regression consumers: test/unit/process/analysis/TestMultiIlluminatorRadar.cpp; test/script/test_native_output_pathway_contract.py; test/script/test_capture_startup_preparation.py; test/script/test_homeportal_float_shadow_contract.py.",
+      "rejected_reuse": "Retaining the old direct path or moving it into a different file would preserve duplicate stage ownership. Native pipeline owns stages; runtime retains the direct legacy socket adapter, exact publication time and capture accounting.",
+      "cleanup_plan": "Keep all 509 removed runtime lines and obsolete direct imports ratcheted away. Canonical direct/channelized, disabled-stage, raw-interval, EOF/reset and native-output regressions remain. This source review is not a rebuild or runtime qualification. Retained reviews: /var/tmp/vectorwarp-direct-canonical-handoff.json; /var/tmp/vectorwarp-cross-cpi-handoff.json; /tmp/vectorwarp-exact-replay-review-20261122-astra.md.",
+      "changes": {
+        "context_characters:native-runtime": [221613, 192366],
+        "context_characters:native-runtime/contracts": [293905, 280313],
+        "context_contract:native-runtime->src/process/analysis/StartupIq.h": [1, 0],
+        "context_contract:native-runtime->src/process/clutter/WienerHopf.h": [1, 0],
+        "context_contract:native-runtime->src/process/detection/Centroid.h": [1, 0],
+        "context_contract:native-runtime->src/process/detection/CfarDetector1D.h": [1, 0],
+        "context_contract:native-runtime->src/process/detection/Interpolate.h": [1, 0],
+        "context_contract:native-runtime->src/process/fusion/Noncoherent.h": [1, 0],
+        "context_contract:native-runtime->src/process/pipeline/RawIqStages.h": [1, 0],
+        "context_files:native-runtime/contracts": [54, 47],
+        "context_imports:native-runtime": [54, 47],
+        "context_lines:native-runtime": [3988, 3479],
+        "context_lines:native-runtime/contracts": [6290, 5899],
+        "context_tokens:native-runtime": [44356, 38921],
+        "context_tokens:native-runtime/contracts": [74946, 71274],
+        "oversized_bytes:src/blah2.cpp": [221613, 192366],
+        "oversized_lines:src/blah2.cpp": [3988, 3479]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-spectrum architecture source review",
+      "purpose": "SpectrumAnalyser adds a SampleView overload that forwards to its existing processSamples implementation, allowing canonical borrowed direct inputs to preserve spectrum output. Regression consumers: test/unit/process/analysis/TestMultiIlluminatorRadar.cpp.",
+      "rejected_reuse": "Copying a full CPI or adding another spectrum processor would duplicate representation/algorithm ownership. The explicit CanonicalSignal dependency expresses the actual borrowed-input contract.",
+      "cleanup_plan": "Retain one numerical implementation, direct spectrum parity and borrowed lifetime coverage. Remove the adapter only if its supported caller retires; count the complete foreign contract. Retained reviews: /var/tmp/vectorwarp-direct-canonical-handoff.json.",
+      "changes": {
+        "context_characters:native-spectrum": [6545, 6758],
+        "context_characters:native-spectrum/contracts": [7642, 12791],
+        "context_contract:native-spectrum->src/data/CanonicalSignal.h": [0, 1],
+        "context_files:native-spectrum/contracts": [1, 2],
+        "context_imports:native-spectrum": [1, 2],
+        "context_lines:native-spectrum": [205, 212],
+        "context_lines:native-spectrum/contracts": [213, 346],
+        "context_tokens:native-spectrum": [1610, 1664],
+        "context_tokens:native-spectrum/contracts": [1755, 2979]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-tracker architecture source review",
+      "purpose": "Canonical tracker contracts now expose one field inventory for frame diagnostics and the shared below-7 dB birth-support rule; configured temporal evidence depth survives resets. Private GPU and serializers consume this owner. Regression consumers: test/unit/process/tracker/TestTracker.cpp; test/gpu/TestGpuTrackerCorrectness.cpp; test/gpu/TestGpuResultJson.cpp.",
+      "rejected_reuse": "Duplicated CPU/GPU diagnostic schemas or weak-return thresholds would drift. Reuse shared admission/prediction/confirmation and the existing tracker lifecycle instead of a second tracker or settings toggle.",
+      "cleanup_plan": "Keep 1/2/4/8-depth parity, exact diagnostic accounting and reset/negative regressions. Existing candidate evidence remains bounded; budget acceptance does not authorize changed thresholds or promotion. Retained reviews: /var/tmp/vectorwarp-weak-birth-handoff-20261121.md; /tmp/vectorwarp-live-health-review-20261122.IUGlpR/followup-source-review.md.",
+      "changes": {
+        "context_characters:native-tracker": [74170, 77945],
+        "context_characters:native-tracker/contracts": [10841, 11219],
+        "context_lines:native-tracker": [1533, 1603],
+        "context_lines:native-tracker/contracts": [313, 319],
+        "context_tokens:native-tracker": [18889, 19480],
+        "context_tokens:native-tracker/contracts": [2603, 2670]
+      }
+    },
+    {
+      "owner": "2026-11-22 native-utility architecture source review",
+      "purpose": "ProcessingThreads owns validation and distribution of clutter worker slots across the canonical bank. Legacy per-instance configuration and the explicit total selector preserve their distinct scopes and reject conflicting settings. Regression consumers: test/unit/process/utility/TestProcessingThreads.cpp.",
+      "rejected_reuse": "Keeping environment parsing in each clutter/pipeline caller would duplicate policy; silently reinterpreting legacy worker counts as totals would change existing deployments. Reuse one bounded parser/distributor.",
+      "cleanup_plan": "Retain 1..8 validation, conflicts, active-lane floor and cache/CPU clamps in TestProcessingThreads. Do not add hostnames, devices or local-service topology to general scheduling policy.",
+      "changes": {
+        "context_characters:native-utility": [19104, 22410],
+        "context_lines:native-utility": [548, 616],
+        "context_tokens:native-utility": [5272, 6036]
+      }
+    },
+    {
+      "owner": "2026-11-22 operational-tools architecture source review",
+      "purpose": "Existing soak identity and two-node evaluator enforce exact uint64 receiver/capture continuity, process-root package identity, overlay refusal, coordinator role and five hash-bound radar outcome checks. Existing watchdog uses bounded readiness/recovery windows. Regression consumers: test/script/test_soak_identity.py; test/script/test_two_node_soak.py; script/vectorwarp-health-watchdog.test.js; test/script/test_run_isolated_iq_replay.py.",
+      "rejected_reuse": "Process service state and sampled frames cannot substitute for capture/deadline/detection/track/false-track evidence. Reuse the identity/evaluator owners rather than create alternate acceptance endpoints or silently rebase counters.",
+      "cleanup_plan": "Keep role/process-root/overlay, retired-work, exact-counter and per-check negative tests. Full 24-hour and physical/radar qualification remain independent requirements; no live probing, restart or acceptance occurs in this budget review.",
+      "changes": {
+        "context_characters:operational-tools": [600224, 607179],
+        "context_characters:operational-tools/contracts": [488850, 496108],
+        "context_lines:operational-tools": [11234, 11359],
+        "context_lines:operational-tools/contracts": [8582, 8695],
+        "context_tokens:operational-tools": [146513, 148072],
+        "context_tokens:operational-tools/contracts": [123756, 125145]
+      }
+    },
+    {
+      "owner": "2026-11-22 qualified-private-gpu architecture source review",
+      "purpose": "Private GPU kernels retain canonical temporal/CFAR mathematics and shared weak-birth policy while exposing canonical per-frame tracker diagnostics through ABI18. Map-only dispatch reuses the resident MapStage/Stage implementation and exact status/lineage contracts. Regression consumers: test/gpu/TestGpuTbdFractional.cpp; test/gpu/TestGpuTrackerCorrectness.cpp; test/gpu/TestGpuTrackerAdmission.cpp; test/gpu/TestResidentReplayShaders.cpp.",
+      "rejected_reuse": "A second temporal shader or backend-specific tracker policy would duplicate numerical ownership. Reuse canonical shared policy/diagnostic fields and the qualified private implementation; keep frozen scalar/kernel oracles test-only.",
+      "cleanup_plan": "Preserve exact CPU/software-Vulkan equality, failure/rollback/reset, partial-workgroup and weak-support regressions. No physical speedup or live false-track improvement is approved by this source-size exception. Retained reviews: /var/tmp/vectorwarp-temporal-oppositional-review-20261120.json; /var/tmp/vectorwarp-weak-birth-handoff-20261121.md.",
+      "changes": {
+        "context_characters:qualified-private-gpu": [349002, 357304],
+        "context_characters:qualified-private-gpu/contracts": [85788, 99800],
+        "context_contract:qualified-private-gpu->src/process/tracker/Tracker.h": [0, 1],
+        "context_files:qualified-private-gpu/contracts": [10, 11],
+        "context_imports:qualified-private-gpu": [14, 15],
+        "context_lines:qualified-private-gpu": [5974, 6093],
+        "context_lines:qualified-private-gpu/contracts": [1639, 1964],
+        "context_tokens:qualified-private-gpu": [102208, 104191],
+        "context_tokens:qualified-private-gpu/contracts": [22704, 25402]
+      }
+    },
+    {
+      "owner": "2026-11-22 receiver-control-api architecture source review",
+      "purpose": "receiver-start-check rechecks configuration and required-plan identity after receiver verification, and retries only named transient local Kraken readiness failures under the managed Linux-service boundary. Regression consumers: api/receiver-journal.test.js; api/config-server.test.js.",
+      "rejected_reuse": "Reuse the existing startup/journal gate and capability error codes; broad retries would conceal invalid settings and a separate device-specific config projection would duplicate policy.",
+      "cleanup_plan": "Retain changed-during-verification, invalid pin and readiness refusal/retry tests. No receiver SDK, physical capability or scientific setting is introduced by this adapter accounting.",
+      "changes": {
+        "context_characters:receiver-control-api": [209571, 210477],
+        "context_lines:receiver-control-api": [3841, 3868],
+        "context_tokens:receiver-control-api": [50573, 50747]
+      }
+    },
+    {
+      "owner": "2026-11-22 recording-api architecture source review",
+      "purpose": "Recording adapters consume the canonical capability contract directly after removing the processing-capabilities alias. The implementation and contract metrics record that direct ownership change; recorder stop acknowledgement remains in runtime-api's existing server owner. Regression consumers: api/recording-replay-topology.test.js; api/capture-trigger-queue.test.js.",
+      "rejected_reuse": "Do not reinstate the obsolete alias or duplicate capability validation in a recording adapter. Reuse canonical processing_capabilities and preserve topology/format compatibility.",
+      "cleanup_plan": "Keep configuration/topology compatibility and recording regression consumers. Full directly imported capability costs remain counted; no additional recording pipeline or worker.",
+      "changes": {
+        "context_characters:recording-api": [97041, 97050],
+        "context_characters:recording-api/contracts": [157, 9379],
+        "context_contract:recording-api->api/processing-capabilities.js": [1, 0],
+        "context_contract:recording-api->html/js/processing_capabilities.js": [0, 1],
+        "context_lines:recording-api/contracts": [4, 150],
+        "context_tokens:recording-api": [24294, 24297],
+        "context_tokens:recording-api/contracts": [38, 2196]
+      }
+    },
+    {
+      "owner": "2026-11-22 release-ci architecture source review",
+      "purpose": "Existing CI runs the actual browser all-routes/responsive fixture with retained artifacts and the soak-identity regression on supported platforms; redundant inline workflow source checks were removed in favor of their test owner. Regression consumers: test/packaging/test_ci_workflows.py; test/packaging/test_release_ci.py; test/browser/all-routes-layout.cjs.",
+      "rejected_reuse": "Do not duplicate workflow parsing assertions inline or add another qualification graph. Existing packaging/CI tests and browser route runner are canonical.",
+      "cleanup_plan": "Preserve hosted Linux/macOS, release artifact/source identity and browser evidence checks. No passing source suite substitutes for hosted/native or physical qualification.",
+      "changes": {
+        "context_characters:release-ci": [137624, 137679],
+        "context_lines:release-ci": [2642, 2643],
+        "context_tokens:release-ci": [30753, 30763]
+      }
+    },
+    {
+      "owner": "2026-11-22 replay-evidence-tools architecture source review",
+      "purpose": "Only the existing replay tools' full directly consumed native/data/qualification contracts change; no new replay processor or tool implementation is introduced in this adjustment. Regression consumers: test/script/test_run_isolated_iq_replay.py; test/recording/TestReplayCoherentObserver.cpp.",
+      "rejected_reuse": "Copying older native contracts into replay or normalizing raw capture keys would hide source drift. Reuse the canonical observer, plan and evidence serializers.",
+      "cleanup_plan": "Keep exact raw/native-grid and same-IQ lineage acceptance, bounded exclusive observer outputs and immutable cohort rules. No tool-only context shrink may hide its actual native contracts. Retained reviews: /tmp/vectorwarp-exact-replay-review-20261122-astra.md.",
+      "changes": {
+        "context_characters:replay-evidence-tools/contracts": [162785, 169127],
+        "context_lines:replay-evidence-tools/contracts": [3294, 3407],
+        "context_tokens:replay-evidence-tools/contracts": [40813, 42136]
+      }
+    },
+    {
+      "owner": "2026-11-22 runtime-api architecture source review",
+      "purpose": "Existing runtime/publication owners share tracker ingestion, observe immutable native plans, align presentation history and report health over the configured tracker confirmation horizon. Server/federation consume the shared measured-coverage kiosk projection; obsolete statistics-display wrapper is removed. Server recording state preserves pendingStop through expired processor telemetry until fresh native completion acknowledgement. Regression consumers: api/radar-performance-health.test.js; api/tracker-ingestion.test.js; api/frame-liveness.test.js; api/presentation-history.test.js; api/node-federation-statistics.test.js; api/config-server.test.js.",
+      "rejected_reuse": "Duplicating legacy/envelope tracker admission, hiding real degraded radar status or keeping a one-consumer kiosk wrapper would split ownership. Reuse tracker-ingestion, RadarPerformanceHealth and measured_track_coverage.",
+      "cleanup_plan": "Retain timestamp/plan refusal, tracker-ingestion parity, stale-node/cache exclusion, reporting-window and recording-stop acknowledgement tests. Native thresholds are unchanged; accounting does not prove physical tracking quality. Recording state remains in the existing server owner. Retained reviews: /tmp/vectorwarp-live-health-review-20261122.IUGlpR/followup-source-review.md; /tmp/vectorwarp-kiosk-federation-audit-20261122.json; /var/tmp/vectorwarp-recording-stop-ack-review-20261122.json.",
+      "changes": {
+        "context_characters:runtime-api": [452275, 459246],
+        "context_characters:runtime-api/contracts": [776760, 793262],
+        "context_contract:runtime-api->html/js/measured_track_coverage.js": [0, 1],
+        "context_files:runtime-api/contracts": [35, 36],
+        "context_imports:runtime-api": [39, 42],
+        "context_lines:runtime-api": [8093, 8200],
+        "context_lines:runtime-api/contracts": [13343, 13642],
+        "context_tokens:runtime-api": [112478, 113833],
+        "context_tokens:runtime-api/contracts": [184388, 188289],
+        "oversized_bytes:api/server.js": [132697, 134149],
+        "oversized_lines:api/server.js": [2364, 2383]
+      }
+    },
+    {
+      "owner": "2026-11-22 ui-insights architecture source review",
+      "purpose": "Existing insights/fusion presenters consume common cache lifecycle and exact interval unions, enforce matching evaluation policy, and preserve focus/menu/layout across partial/error/recovery states. Regression consumers: test/ui/insights-interaction-state.test.js; test/ui/fusion-aircraft.test.js; test/browser/statistics-kiosk-fixture.cjs.",
+      "rejected_reuse": "Do not compute another union, blend mixed evaluation policies, or duplicate fetch lifecycle in page renderers. Shared measured coverage and common controllers remain canonical.",
+      "cleanup_plan": "Retain live association freshness, policy refusal, bridge-interval ordering, DOM interactions and responsive browser evidence. Oversized insights source stays explicit debt; no test or meaningful empty/error state is deleted to meet size. Retained reviews: /var/tmp/vectorwarp-detection-cohort-hardening-review-20261120.json; /tmp/vectorwarp-kiosk-federation-audit-20261122.json.",
+      "changes": {
+        "context_characters:ui-insights": [201453, 205074],
+        "context_characters:ui-insights/contracts": [118873, 121231],
+        "context_lines:ui-insights": [2774, 2823],
+        "context_lines:ui-insights/contracts": [2209, 2246],
+        "context_tokens:ui-insights": [56483, 57373],
+        "context_tokens:ui-insights/contracts": [31171, 31667],
+        "oversized_bytes:html/js/insights.js": [172430, 175631],
+        "oversized_lines:html/js/insights.js": [2256, 2297]
+      }
+    },
+    {
+      "owner": "2026-11-22 ui-presentation architecture source review",
+      "purpose": "Shared measured_track_coverage supplies browser/Node interval unions and lossless kiosk projection; the redundant statistics-display module is folded into this existing owner. Routes only update cache identity and existing distance-view layout. Regression consumers: api/measured-track-coverage.test.js; test/ui/asset-cache-contract.test.js; test/browser/all-routes-layout.cjs.",
+      "rejected_reuse": "Separate API/browser coverage implementations or one-consumer forwarding modules would duplicate ownership. Projection must preserve every pass and interval rather than truncate evidence.",
+      "cleanup_plan": "Retain exact full/kiosk aggregate equivalence, chronological bridge merging and cache-busting route tests. Keep the removed wrapper absent and retain responsive 320..1440px regression evidence. Retained reviews: /tmp/vectorwarp-kiosk-federation-audit-20261122.json.",
+      "changes": {
+        "context_characters:ui-presentation": [275112, 278335],
+        "context_characters:ui-presentation/contracts": [639450, 646082],
+        "context_lines:ui-presentation": [2960, 3025],
+        "context_lines:ui-presentation/contracts": [10430, 10529],
+        "context_tokens:ui-presentation": [85385, 86251],
+        "context_tokens:ui-presentation/contracts": [169040, 170575]
+      }
+    },
+    {
+      "owner": "2026-11-22 ui-settings architecture source review",
+      "purpose": "Only the settings owner's complete canonical config_profiles and processing_capabilities direct packet changes; settings renderer implementation does not grow in this adjustment. Regression consumers: test/ui/processing-capability-dom.test.js; api/config-profiles.test.js; api/effective-radar-plan.test.js.",
+      "rejected_reuse": "Another settings projection or legacy alias would duplicate configuration ownership. Reuse the canonical shared field/capability owner.",
+      "cleanup_plan": "Retain DOM capability refusal, temporal confirmation, settings persistence and effective-plan regressions. Complete imported contracts remain counted without granting renderer implementation headroom.",
+      "changes": {
+        "context_characters:ui-settings/contracts": [29523, 30176],
+        "context_lines:ui-settings/contracts": [522, 535],
+        "context_tokens:ui-settings/contracts": [6918, 7067]
+      }
+    },
+    {
+      "owner": "2026-11-22 ui-shared architecture source review",
+      "purpose": "common.js owns bounded per-node last-good statistics caches, coordinator/radar role selection and explicit stopped/stale invalidation. Cached transport recovery preserves original timestamps and visible cache state. Recording controls now preserve pendingStop and refuse repeat actions until fresh completion acknowledgement, using the existing status renderer. Regression consumers: test/ui/federation-statistics-cache.test.js; test/ui/frame-updates.test.js; test/ui/common.test.js.",
+      "rejected_reuse": "Separate page caches would duplicate freshness and lifecycle rules; generic cache reuse for live associations would show stale support. Reuse the shared controller with explicit endpoint capability.",
+      "cleanup_plan": "Retain bounded 32-entry/90-second behavior, all-failed/partial/catalog recovery, stopped-node rejection and frame update tests. No implementation prose or extra settings are added to UI. Keep stop-pending/stale/recovery DOM coverage. Retained reviews: /tmp/vectorwarp-kiosk-federation-audit-20261122.json; /var/tmp/vectorwarp-recording-stop-ack-review-20261122.json.",
+      "changes": {
+        "context_characters:ui-shared": [123442, 125800],
+        "context_lines:ui-shared": [2296, 2333],
+        "context_tokens:ui-shared": [32384, 32880],
+        "oversized_lines:html/js/common.js": [2209, 2246]
+      }
+    },
+    {
+      "owner": "2026-11-22 exact production aggregate architecture accounting",
+      "purpose": "Aggregate only the 34 individually reviewed canonical owners above: +1529 production lines, +81333 characters, +18651 lexical tokens and one shared RecordingFileCache header versus the prior exact ceilings. Direct runtime orchestration is removed; kiosk projection and capabilities use existing shared owners. No new external dependency, configuration copy or processing directory is introduced.",
+      "rejected_reuse": "Blanket snapshot rebasing, deleting behavioral/evidence tests, hiding foreign contracts, moving code between files or retaining a duplicate processing route would not justify growth. Review each owner and exact contract edge before these aggregate ceilings.",
+      "cleanup_plan": "Preserve both original snapshot hashes and all 131 earlier adjustments. Seal every exact reduction and these current aggregate counts, with no reusable headroom. Oversized owners remain debt. Native build, whole-pass positive/negative replay, physical hardware, CPI/capture health and release acceptance remain separate; this budget review changes no live service and grants no rollout authority.",
+      "changes": {
+        "context_characters:production": [6898272, 6979605],
+        "context_files:production": [574, 575],
+        "context_lines:production": [127816, 129345],
+        "context_tokens:production": [1732650, 1751301],
+        "files:src": [212, 213],
+        "lines:.github": [2642, 2643],
+        "lines:api": [25626, 25898],
+        "lines:cmake": [1253, 1260],
+        "lines:contrib": [346, 350],
+        "lines:core": [5974, 6093],
+        "lines:html": [13390, 13554],
+        "lines:src": [44559, 45396],
+        "lines:tools": [1996, 2121]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional runtime-api review",
+      "purpose": "Retain complete canonical tracker rejection reasons, qualify health over the native confirmation window, read receiver availability from the installed artifact, and route coordinator statistics to federation. Cached federation rows retain values but degrade health while stale.",
+      "rejected_reuse": "Import the canonical causal and receiver contracts rather than copying names or maintaining service-specific capability lists. Existing federation and health owners are extended.",
+      "cleanup_plan": "Keep malformed/legacy diagnostic, hypothesis count, coordinator role, stale-cache and artifact-manifest regression tests. No detector or tracker decisions change.",
+      "changes": {
+        "context_characters:runtime-api": [
+          459246,
+          462838
+        ],
+        "context_characters:runtime-api/contracts": [
+          793262,
+          829605
+        ],
+        "context_contract:runtime-api->api/causal-funnel-contract.js": [
+          0,
+          1
+        ],
+        "context_contract:runtime-api->api/receiver-manager.js": [
+          0,
+          1
+        ],
+        "context_files:runtime-api/contracts": [
+          36,
+          38
+        ],
+        "context_imports:runtime-api": [
+          42,
+          44
+        ],
+        "context_lines:runtime-api": [
+          8200,
+          8264
+        ],
+        "context_lines:runtime-api/contracts": [
+          13642,
+          14375
+        ],
+        "context_tokens:runtime-api": [
+          113833,
+          114801
+        ],
+        "context_tokens:runtime-api/contracts": [
+          188289,
+          197353
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional evidence-api review",
+      "purpose": "One shared rejection-key contract preserves all native admission reasons in causal evidence. Measured coverage resumes after caps, extends sorted unions incrementally, and enforces a ledger-wide retention bound.",
+      "rejected_reuse": "The existing causal contract and evidence ledger own these changes; parallel recorders, lossy averaging and silently complete truncated coverage were rejected.",
+      "cleanup_plan": "Keep long sparse pass, overlap, incomplete-prefix, global-cap, persistence and causal roundtrip tests. Retain exact counts and mark evicted interval evidence incomplete.",
+      "changes": {
+        "context_characters:evidence-api": [
+          300688,
+          303510
+        ],
+        "context_characters:evidence-api/contracts": [
+          96302,
+          97138
+        ],
+        "context_lines:evidence-api": [
+          5330,
+          5371
+        ],
+        "context_lines:evidence-api/contracts": [
+          1661,
+          1680
+        ],
+        "context_tokens:evidence-api": [
+          69461,
+          70099
+        ],
+        "context_tokens:evidence-api/contracts": [
+          23861,
+          24072
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional ui-presentation review",
+      "purpose": "The existing measured-coverage mathematics adds incremental sorted union for ingestion while sharing exact interval semantics with the UI.",
+      "rejected_reuse": "Reuse the same interval owner instead of a separate API union algorithm or approximate display percentages.",
+      "cleanup_plan": "Maintain exact fractional, overlap, sparse-gap and out-of-order interval tests; do not add parallel per-page statistics code.",
+      "changes": {
+        "context_characters:ui-presentation": [
+          278335,
+          279171
+        ],
+        "context_lines:ui-presentation": [
+          3025,
+          3044
+        ],
+        "context_tokens:ui-presentation": [
+          86251,
+          86462
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional build-release review",
+      "purpose": "Native candidates now emit BUILD-RECEIPT.json and installed-byte pins before activation; build and package paths retain one artifact identity. Foreign contract growth comes from reviewed API and finalizer changes.",
+      "rejected_reuse": "Use existing build receipt and cohort hash owners rather than service-environment identities or a second manifest format.",
+      "cleanup_plan": "Retain artifact identity, package-upgrade, post-BRP native/adapter pin and soak binding tests; do not weaken source-clean release gates.",
+      "changes": {
+        "context_characters:build-release": [
+          652423,
+          652584
+        ],
+        "context_characters:build-release/contracts": [
+          365354,
+          366611
+        ],
+        "context_lines:build-release": [
+          12582,
+          12584
+        ],
+        "context_lines:build-release/contracts": [
+          7407,
+          7427
+        ],
+        "context_tokens:build-release": [
+          162807,
+          162867
+        ],
+        "context_tokens:build-release/contracts": [
+          87044,
+          87367
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional installation review",
+      "purpose": "The package artifact contract now requires BUILD-RECEIPT.json. Its direct server contract includes the reviewed coordinator/statistics ownership changes.",
+      "rejected_reuse": "Extend the canonical artifact requirement list rather than rely on optional host environment metadata.",
+      "cleanup_plan": "Keep package inventory and immutable cohort acceptance tests; no device-specific installation path is introduced.",
+      "changes": {
+        "context_characters:installation": [
+          186537,
+          186558
+        ],
+        "context_characters:installation/contracts": [
+          243555,
+          244184
+        ],
+        "context_lines:installation/contracts": [
+          4133,
+          4144
+        ],
+        "context_tokens:installation": [
+          48782,
+          48790
+        ],
+        "context_tokens:installation/contracts": [
+          57596,
+          57762
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional operational-tools review",
+      "purpose": "Artifact validation verifies native build receipt identity and final installed hashes through existing cohort tooling; direct build/server contract growth is fully accounted.",
+      "rejected_reuse": "Reuse the installed-byte hash owner and current artifact validator instead of duplicated hashing or divergent package checks.",
+      "cleanup_plan": "Keep malformed, duplicate, missing and post-BRP hash checks plus configuration/cohort portability tests.",
+      "changes": {
+        "context_characters:operational-tools": [
+          607179,
+          607807
+        ],
+        "context_characters:operational-tools/contracts": [
+          496108,
+          496919
+        ],
+        "context_lines:operational-tools": [
+          11359,
+          11368
+        ],
+        "context_lines:operational-tools/contracts": [
+          8695,
+          8708
+        ],
+        "context_tokens:operational-tools": [
+          148072,
+          148229
+        ],
+        "context_tokens:operational-tools/contracts": [
+          125145,
+          125379
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional release-ci review",
+      "purpose": "Direct CI contract size reflects the reviewed native-build receipt and artifact-validation changes; no workflow or job count grows in this adjustment.",
+      "rejected_reuse": "Keep existing build and validation entrypoints rather than new platform-specific workflows.",
+      "cleanup_plan": "Retain package, source receipt and required CI dependency checks; physical and soak acceptance remain independent.",
+      "changes": {
+        "context_characters:release-ci/contracts": [
+          360403,
+          361192
+        ],
+        "context_lines:release-ci/contracts": [
+          6875,
+          6886
+        ],
+        "context_tokens:release-ci/contracts": [
+          94037,
+          94254
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 integrated oppositional production review",
+      "purpose": "Aggregate the seven reviewed owners: 135 production lines and 8060 characters added, with no production files, dependencies, settings or processing directories added. Oversized API owners remain explicit debt.",
+      "rejected_reuse": "A blind baseline refresh, source relocation or deleting meaningful tests cannot justify growth; exact owner and direct-contract changes are recorded individually.",
+      "cleanup_plan": "Preserve original snapshot and adjustment seals. Exact ceilings leave no unused allowance; future reductions must ratchet down. This reporting/provenance pass changes no radar math.",
+      "changes": {
+        "context_characters:production": [
+          6979605,
+          6987665
+        ],
+        "context_lines:production": [
+          129345,
+          129480
+        ],
+        "context_tokens:production": [
+          1751301,
+          1753343
+        ],
+        "lines:api": [
+          25898,
+          26003
+        ],
+        "lines:html": [
+          13554,
+          13573
+        ],
+        "lines:script": [
+          27850,
+          27861
+        ],
+        "oversized_bytes:api/evidence-statistics.js": [
+          135776,
+          138324
+        ],
+        "oversized_bytes:api/server.js": [
+          134149,
+          134778
+        ],
+        "oversized_lines:api/evidence-statistics.js": [
+          2361,
+          2401
+        ],
+        "oversized_lines:api/server.js": [
+          2383,
+          2394
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 statistics transport and primary catalog cross-owner review",
+      "purpose": "Evidence-api public statistics and scorecards omit raw eligibility events and interval bases after computing every aggregate metric; durable server evidence and explicit federation basis are retained. Runtime-api exposes the real single-primary channel with tracker freshness. Ui-shared preserves its primary query contract. Net production change: +8 lines, +628 characters, zero files/dependencies/settings/math changes.",
+      "rejected_reuse": "Reviewed runtime-api, evidence-api and ui-shared packets and their build-release, installation, operational-tools, ui-insights and ui-presentation direct consumers. Reuse existing summary, catalog and shared page owners; do not invent a duplicate compact endpoint, lossy percentages or a receiver-specific route.",
+      "cleanup_plan": "Ratchet evidence-statistics down by one line and 68 bytes. Keep large durable-evidence/summary-size tests, exact aggregate fractions, unchanged explicit federation basis, real HTTP primary freshness and browser query tests. Remove payloads rather than preserving a legacy bulk alias; maintain all prior seals and exact ceilings.",
+      "changes": {
+        "context_characters:build-release/contracts": [
+          366611,
+          367117
+        ],
+        "context_characters:evidence-api": [
+          303510,
+          303580
+        ],
+        "context_characters:installation/contracts": [
+          244184,
+          244690
+        ],
+        "context_characters:operational-tools/contracts": [
+          496919,
+          497477
+        ],
+        "context_characters:production": [
+          6987665,
+          6988293
+        ],
+        "context_characters:runtime-api": [
+          462838,
+          463344
+        ],
+        "context_characters:runtime-api/contracts": [
+          829605,
+          829675
+        ],
+        "context_characters:ui-insights/contracts": [
+          121231,
+          121283
+        ],
+        "context_characters:ui-presentation/contracts": [
+          646082,
+          646134
+        ],
+        "context_characters:ui-shared": [
+          125800,
+          125852
+        ],
+        "context_lines:build-release/contracts": [
+          7427,
+          7432
+        ],
+        "context_lines:evidence-api": [
+          5371,
+          5374
+        ],
+        "context_lines:installation/contracts": [
+          4144,
+          4149
+        ],
+        "context_lines:operational-tools/contracts": [
+          8708,
+          8713
+        ],
+        "context_lines:production": [
+          129480,
+          129488
+        ],
+        "context_lines:runtime-api": [
+          8264,
+          8269
+        ],
+        "context_lines:runtime-api/contracts": [
+          14375,
+          14378
+        ],
+        "context_tokens:build-release/contracts": [
+          87367,
+          87510
+        ],
+        "context_tokens:evidence-api": [
+          70099,
+          70117
+        ],
+        "context_tokens:installation/contracts": [
+          57762,
+          57905
+        ],
+        "context_tokens:operational-tools/contracts": [
+          125379,
+          125534
+        ],
+        "context_tokens:production": [
+          1753343,
+          1753516
+        ],
+        "context_tokens:runtime-api": [
+          114801,
+          114944
+        ],
+        "context_tokens:runtime-api/contracts": [
+          197353,
+          197371
+        ],
+        "context_tokens:ui-insights/contracts": [
+          31667,
+          31679
+        ],
+        "context_tokens:ui-presentation/contracts": [
+          170575,
+          170587
+        ],
+        "context_tokens:ui-shared": [
+          32880,
+          32892
+        ],
+        "lines:api": [
+          26003,
+          26011
+        ],
+        "oversized_bytes:api/evidence-statistics.js": [
+          138324,
+          138256
+        ],
+        "oversized_bytes:api/server.js": [
+          134778,
+          135284
+        ],
+        "oversized_lines:api/evidence-statistics.js": [
+          2401,
+          2400
+        ],
+        "oversized_lines:api/server.js": [
+          2394,
+          2399
+        ]
+      }
+    },
+    {
+      "owner": "2026-11-22 oppositional configuration-policy, operational-tools and build-release review",
+      "purpose": "Bind effective per-lane reference conditioning, initiation threshold and transmitter geometry to intended radar plans; recover stalled SDK capture through canonical startup; resolve RPM cohort helpers from their installed stable directory before following the release symlink. Consolidate duplicated startup and plan handling and package commentary. Exact source metrics decrease from the preceding reviewed ceilings.",
+      "rejected_reuse": "Separate receiver recovery loops, duplicate plan serializers and a helper copy inside each release were rejected. Existing canonical startup, plan and stable integration owners retain their contracts.",
+      "cleanup_plan": "Downward-only exact ceilings; preserve original snapshots and sealed history. Retain plan, recovery, real RPM-layout/symlink/tamper, architecture and owner-packet checks; live qualification remains separate.",
+      "changes": {
+        "context_characters:build-release": [652584, 652525],
+        "context_characters:build-release/contracts": [367117, 367109],
+        "context_characters:configuration-policy": [203128, 202924],
+        "context_characters:installation/contracts": [244690, 244486],
+        "context_characters:operational-tools": [607807, 607345],
+        "context_characters:operational-tools/contracts": [497477, 497418],
+        "context_characters:production": [6988293, 6987568],
+        "context_characters:runtime-api/contracts": [829675, 829471],
+        "context_lines:configuration-policy": [3001, 2996],
+        "context_lines:installation/contracts": [4149, 4144],
+        "context_lines:operational-tools": [11368, 11354],
+        "context_lines:production": [129488, 129469],
+        "context_lines:runtime-api/contracts": [14378, 14373],
+        "context_tokens:build-release": [162867, 162859],
+        "context_tokens:build-release/contracts": [87510, 87508],
+        "context_tokens:configuration-policy": [49487, 49484],
+        "context_tokens:installation/contracts": [57905, 57902],
+        "context_tokens:operational-tools": [148229, 148086],
+        "context_tokens:operational-tools/contracts": [125534, 125526],
+        "context_tokens:production": [1753516, 1753362],
+        "context_tokens:runtime-api/contracts": [197371, 197368],
+        "lines:api": [26011, 26006],
+        "lines:script": [27861, 27847],
+        "oversized_lines:api/config-manager.js": [1728, 1723]
+      }
+    },
+    {
+      "owner": "2026-11-22 final merge native-ambiguity and native-pipeline review",
+      "purpose": "Preserve ABI18 and the required-resident startup deadline while consolidating repeated timing and reference-fallback commentary in GpuProcess.h and CanonicalRadar.cpp. No executable code or test coverage is removed. The final production source is two lines, 464 characters and 117 lexical tokens below the preceding reviewed ceilings.",
+      "rejected_reuse": "Reject relaxing ceilings or removing startup retries, interface binding, qualification, or regression coverage. Existing deadline helpers and the canonical frontend remain the sole behavior owners; shorten their repeated historical explanation instead.",
+      "cleanup_plan": "Append thirteen exact downward ratchets without changing any snapshot or earlier adjustment. Retain required-resident and optional-startup behavior, ABI18, owner review packets, architecture guards, budget regressions and current CI/package policy checks; hosted builds and live qualification remain separate.",
+      "changes": {
+        "context_characters:build-integration/contracts": [1385137, 1384995],
+        "context_characters:native-ambiguity": [702809, 702487],
+        "context_characters:native-pipeline": [153483, 153341],
+        "context_characters:production": [6987568, 6987104],
+        "context_lines:build-integration/contracts": [28254, 28252],
+        "context_lines:native-pipeline": [3075, 3073],
+        "context_lines:production": [129469, 129467],
+        "context_tokens:build-integration/contracts": [341527, 341498],
+        "context_tokens:native-ambiguity": [192444, 192356],
+        "context_tokens:native-pipeline": [31283, 31254],
+        "context_tokens:production": [1753362, 1753245],
+        "lines:src": [45396, 45394],
+        "oversized_lines:src/process/pipeline/CanonicalRadar.cpp": [1961, 1959]
+      }
+    },
+    {
+      "owner": "2026-11-22 canonical offline map publication and qualification evidence review",
+      "purpose": "Restore complete two-decimal canonical map serialization for offline replay in both normal and drain publication; keep live display pooling, quarter-dB precision and cadence unchanged. Consolidate repeated publication commentary. Production decreases by two lines, 137 characters and 24 lexical tokens; streaming map-shard retention and comparison stay in the existing offline test/evidence owners.",
+      "rejected_reuse": "Do not widen parity tolerance, compare pooled presentation cells, skip later map frames, change DSP or add a second publisher. Reuse multi_map_json's existing canonical serializer and the existing replay/evidence lifecycle with bounded exact map shards.",
+      "cleanup_plan": "Preserve snapshots and prior adjustments; apply twelve exact downward ratchets. Require complete-map admission, pinned sharded evidence, all-frame detection/tracker comparisons, stream bound and EOF tests, source publication guards, budget and architecture checks. Native replay and same-IQ physical parity must pass separately before acceptance.",
+      "changes": {
+        "context_characters:build-integration/contracts": [1384995, 1384858],
+        "context_characters:native-runtime": [192366, 192229],
+        "context_characters:production": [6987104, 6986967],
+        "context_lines:build-integration/contracts": [28252, 28250],
+        "context_lines:native-runtime": [3479, 3477],
+        "context_lines:production": [129467, 129465],
+        "context_tokens:build-integration/contracts": [341498, 341474],
+        "context_tokens:native-runtime": [38921, 38897],
+        "context_tokens:production": [1753245, 1753221],
+        "lines:src": [45394, 45392],
+        "oversized_bytes:src/blah2.cpp": [192366, 192229],
+        "oversized_lines:src/blah2.cpp": [3479, 3477]
+      }
+    },
+    {
+      "owner": "2026-11-22 reviewed canonical GPU input cache and shared free-memory budget",
+      "purpose": "Admit one optional device-local canonical input copy using driver-reported free memory, an explicit physical-heap safety reserve and unchanged aggregate quotas. Reuse existing device extension discovery; remove obsolete allocator overloads and consolidate identical timed submit/wait/reset sequences. Required production growth is 17 lines and 415 characters, while production lexical tokens decrease by 21. Shared budget contracts retain explicit unsupported-driver and exhausted-memory fallback.",
+      "rejected_reuse": "The old heap-size quarter cap cannot admit the measured resident input cache on otherwise available VRAM. Do not add device IDs, host tuning, math forks, alias owners, hidden contract files, compressed source or an unrelated cleanup. Existing mapped-buffer fallback and canonical allocation accounting remain authoritative.",
+      "cleanup_plan": "Parent review approved these exact thirteen increases and six downward ratchets with no spare headroom. Preserve sealed history and require resident input cache, lane budget, GPU efficiency, architecture, repository budget and diff checks. Rebuild both Vulkan backends and perform physical same-IQ numerical and deadline qualification before live promotion; this source review does not claim hardware acceptance.",
+      "changes": {
+        "context_characters:build-integration/contracts": [1384858, 1384905],
+        "context_characters:native-ambiguity": [702487, 703501],
+        "context_characters:native-ambiguity/contracts": [195468, 195444],
+        "context_characters:native-analysis/contracts": [113421, 113430],
+        "context_characters:production": [6986967, 6987382],
+        "context_characters:qualified-private-gpu": [357304, 356705],
+        "context_characters:qualified-private-gpu/contracts": [99800, 101000],
+        "context_lines:native-ambiguity": [12892, 12909],
+        "context_lines:native-ambiguity/contracts": [4160, 4159],
+        "context_lines:production": [129465, 129482],
+        "context_lines:qualified-private-gpu/contracts": [1964, 1983],
+        "context_tokens:build-integration/contracts": [341474, 341499],
+        "context_tokens:native-ambiguity": [192356, 192577],
+        "context_tokens:native-ambiguity/contracts": [46948, 46940],
+        "context_tokens:native-analysis/contracts": [29016, 29018],
+        "context_tokens:production": [1753221, 1753200],
+        "context_tokens:qualified-private-gpu": [104191, 103949],
+        "context_tokens:qualified-private-gpu/contracts": [25402, 25632],
+        "lines:src": [45392, 45409]
+      }
+    },
+    {
+      "owner": "2026-11-22 pre-CI first-run and stale-source cleanup review",
+      "purpose": "Fix neutral-to-Kraken profile initialization and distinguish invalid ADS-B snapshots from transport outages while removing redundant comments. Update only stale packaging, UI and deployment contracts. Production shrinks by three lines, 106 characters and 10 lexical tokens.",
+      "rejected_reuse": "Do not retain deleted headroom, weaken source freshness, restore fixed no-op settings, duplicate receiver profiles or move radar behavior into adapter-specific routes.",
+      "cleanup_plan": "Preserve the canonical receiver and ADS-B source owners, all functional and packaging tests, and every prior sealed adjustment. These exact reductions leave no spare allowance; future reductions ratchet downward.",
+      "changes": {
+        "context_characters:build-release/contracts": [367109, 367084],
+        "context_characters:configuration-policy": [202924, 202899],
+        "context_characters:configuration-policy/contracts": [156123, 156042],
+        "context_characters:geolocation-api": [251320, 251239],
+        "context_characters:operational-tools/contracts": [497418, 497393],
+        "context_characters:production": [6987382, 6987276],
+        "context_characters:receiver-control-api/contracts": [31449, 31424],
+        "context_characters:runtime-api/contracts": [829471, 829446],
+        "context_lines:build-release/contracts": [7432, 7431],
+        "context_lines:configuration-policy": [2996, 2995],
+        "context_lines:configuration-policy/contracts": [2725, 2723],
+        "context_lines:geolocation-api": [4226, 4224],
+        "context_lines:operational-tools/contracts": [8713, 8712],
+        "context_lines:production": [129482, 129479],
+        "context_lines:receiver-control-api/contracts": [594, 593],
+        "context_lines:runtime-api/contracts": [14373, 14372],
+        "context_tokens:configuration-policy/contracts": [39253, 39243],
+        "context_tokens:geolocation-api": [62589, 62579],
+        "context_tokens:production": [1753200, 1753190],
+        "lines:api": [26006, 26003]
+      }
     }
   ],
   "context_snapshot": {

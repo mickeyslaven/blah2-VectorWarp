@@ -374,9 +374,12 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   assert.equal(triggerQueue.request().pending, true,
     'The ADS-B sampler must enqueue capture without any detector frame');
   assert.deepEqual(triggerQueue.request().eventIds,
-    [statistics.status().eligibility_events[0].id]);
-  assert.equal(statistics.status().eligibility_events[0].capture_state, 'trigger_pending');
+    [statistics.state.eligibilityEvents[0].id]);
+  assert.equal(statistics.state.eligibilityEvents[0].capture_state, 'trigger_pending');
   clock += 1000;
+  // This capture assertion expects a fresh matched detection at +1 s; cached
+  // projection expiry is covered independently in evidence-statistics.test.js.
+  aircraft.abc123.timestamp = clock / 1000;
   statistics.acceptDetection({timestamp: clock, delay: [10], doppler: [100], snr: [9.25]});
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
   assert.equal(triggerQueue.request().clipRevision, 1,
@@ -394,13 +397,13 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
     geometry: {bearing_deg_true: 84, slant_range_km: 20, elevation_deg: 10}}};
   sampler();
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
-  const droppedEvent = statistics.status().eligibility_events.at(-1);
+  const droppedEvent = statistics.state.eligibilityEvents.at(-1);
   assert.equal(droppedEvent.capture_state, 'dropped');
   assert.equal(droppedEvent.capture_failure, 'queue-capacity');
   assert.equal(triggerQueue.acknowledge(1, null,
     {file: '/clips/eligibility-1.mchq', samples: 12000000}), true);
   statistics.acceptCaptureEvents(triggerQueue.eventsForRevision(1));
-  const completedEvent = statistics.status().eligibility_events[0];
+  const completedEvent = statistics.state.eligibilityEvents[0];
   assert.equal(completedEvent.capture_state, 'acknowledged');
   assert.deepEqual(completedEvent.capture_clip_revisions, [1]);
   assert.equal(completedEvent.capture_file, '/clips/eligibility-1.mchq');
@@ -435,6 +438,7 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
   assert.equal(periodicQueue.clips.length, 1, 'Initial ADS-B-only capture remains the first window');
   periodicClock += 1000;
+  periodicAircraft.abc123.timestamp = periodicClock / 1000;
   periodicStats.acceptDetection({timestamp: periodicClock, delay: [10], doppler: [100]});
   while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
   periodicClock += 9000; periodicAircraft.abc123.timestamp = periodicClock / 1000;
@@ -443,6 +447,7 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   assert.equal(periodicQueue.clips.length, 2,
     'A physically eligible pass schedules the first periodic child without detector evidence');
   periodicClock += 1000;
+  periodicAircraft.abc123.timestamp = periodicClock / 1000;
   periodicStats.acceptDetection({timestamp: periodicClock, delay: [10], doppler: [100]});
   while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
   periodicClock += 9000; periodicAircraft.abc123.timestamp = periodicClock / 1000;
@@ -453,7 +458,7 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   periodicSampler();
   while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
   assert.equal(periodicQueue.clips.length, 3, 'Periodic snapshots stop at the per-pass cap');
-  const parentEvent = periodicStats.status().eligibility_events[0];
+  const parentEvent = periodicStats.state.eligibilityEvents[0];
   assert.equal(periodicStats.status().eligibility_event_count, 1,
     'Child captures must not inflate eligibility-event denominators');
   assert.equal(parentEvent.capture_windows.length, 3);
@@ -463,10 +468,10 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
       {file: `/clips/${clip.revision}.mchq`, samples: clip.revision});
     periodicStats.acceptCaptureEvents(periodicQueue.eventsForRevision(clip.revision));
   }
-  const classified = periodicStats.status().eligibility_events[0].capture_windows;
+  const classified = periodicStats.state.eligibilityEvents[0].capture_windows;
   assert.deepEqual(classified.map(item => item.detected_frames), [1, 1, 0],
     'Later periodic evidence stays on its own capture window rather than the initial clip');
-  const legacy = periodicStats.status().eligibility_events[0];
+  const legacy = periodicStats.state.eligibilityEvents[0];
   assert.equal(legacy.capture_state, 'acknowledged');
   assert.equal(legacy.capture_file, '/clips/1.mchq');
   assert.equal(legacy.capture_samples, 1,

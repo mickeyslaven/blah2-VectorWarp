@@ -11,6 +11,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -144,10 +145,11 @@ blah2::IqClipRequest request(uint64_t revision, int64_t start, int64_t end)
     {"pass-" + std::to_string(revision)}};
 }
 
-blah2::IqClipStatus wait(blah2::KrakenClipRecorder& recorder, uint64_t revision)
+blah2::IqClipStatus wait(blah2::KrakenClipRecorder& recorder, uint64_t revision,
+    std::chrono::seconds timeout = std::chrono::seconds(3))
 {
   const auto deadline = std::chrono::steady_clock::now() +
-    std::chrono::seconds(3);
+    timeout;
   while (std::chrono::steady_clock::now() < deadline)
   {
     auto status = recorder.status();
@@ -438,6 +440,41 @@ int main()
         metadata["eventTime"]["exact"] == false &&
         metadata["eventTime"]["uncertaintyBounded"] == false &&
         metadata["eventTime"]["uncertaintyNs"].IsNull());
+    }
+
+    // Native raw writes cross two full cache windows while their incremental
+    // hash remains bound to exact original payload and conditioning boundaries.
+    {
+      // Keep each synthetic Heimdall frame within the wire protocol's 65,536
+      // sample limit while making the complete clip cross two cache windows.
+      constexpr unsigned samples = 60000, frames = 60;
+      auto largeOptions = options;
+      largeOptions.ringSeconds = largeOptions.maximumClipSeconds = 2.0;
+      largeOptions.lateClaimGuardSeconds = 0;
+      blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
+        SAMPLE_RATE, FREQUENCY, largeOptions);
+      for (unsigned index = 0; index < frames; ++index)
+        ingest(recorder, frame(index, samples));
+      const auto largePosition = recorder.position();
+      const int64_t largeStartMs = largePosition.epochEstimateNanoseconds /
+        1000000LL;
+      recorder.request(request(90, largeStartMs, largeStartMs + 1500));
+      const auto status = wait(recorder, 90, std::chrono::seconds(25));
+      if (!status.error.empty())
+        std::cerr << "Large native clip failed: " << status.error << '\n';
+      assert(status.error.empty() && status.samples == uint64_t(frames) * samples);
+      const auto metadata = json_file(status.file + ".json");
+      assert(metadata["dataBytes"].GetUint64() == std::filesystem::file_size(status.file));
+      assert(metadata["dataBytes"].GetUint64() > 2 * blah2::RecordingFileCache<>::windowBytes);
+      blah2::ReplayOptions read{"mchq", "Kraken", CHANNELS, SAMPLE_RATE, FREQUENCY, 0};
+      read.expectedRecordingSha256 = metadata["dataSha256"].GetString();
+      blah2::RecordingReader replay(status.file, read);
+      blah2::IqBlock recovered;
+      for (unsigned index = 0; index < frames; ++index) {
+        assert(replay.read(recovered));
+        assert(recovered == frame(index, samples).decoded);
+      }
+      assert(!replay.read(recovered) && replay.provenance().frames.size() == frames);
     }
 
     // Millisecond clip bounds normally cut through Heimdall frames. Both end

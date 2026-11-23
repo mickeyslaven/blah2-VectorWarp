@@ -71,7 +71,8 @@ try {
   fs.copyFileSync(path.join(__dirname, '../config/config.yml'), path.join(packaged, 'config-examples/config.yml'));
   for (const file of ['config-store.js', 'config-generate.js'])
     fs.copyFileSync(path.join(__dirname, file), path.join(packaged, 'api', file));
-  for (const file of ['config-manager.js', 'config-rules.js', 'manifold-recorder.js'])
+  for (const file of ['config-manager.js', 'config-rules.js', 'manifold-recorder.js',
+    'receiver-journal.js'])
     fs.symlinkSync(path.join(__dirname, file), path.join(packaged, 'api', file));
   fs.symlinkSync(path.join(__dirname, '../html'), path.join(packaged, 'html'));
   fs.symlinkSync(path.dirname(path.dirname(require.resolve('js-yaml/package.json'))),

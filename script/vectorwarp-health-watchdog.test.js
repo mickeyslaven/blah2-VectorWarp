@@ -1,8 +1,34 @@
 'use strict';
 const assert = require('assert');
-const {receiverSettlement, requested, sameSettings, synchronizeAfterRestart, applicationInterlock} =
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const {EventEmitter} = require('events');
+const {receiverSettlement, requested, sameSettings, synchronizeAfterRestart, applicationInterlock,
+  processorProgress, FRAME_RECOVERY_TIMEOUT_MS, RECEIVER_READINESS_TIMEOUT_MS} =
   require('./vectorwarp-health-watchdog');
 const {evaluateFrameLiveness} = require('../api/frame-liveness');
+
+const stat = '42 (worker (resident)) S 1 2 3 4 5 6 7 8 9 10 123 456 999 888 0 0 1 0 45678';
+assert.equal(processorProgress(42, filename => {
+  assert.equal(filename, '/proc/42/stat');
+  return stat;
+}), 579, 'count only exact parent user/system ticks, not child ticks');
+assert.equal(processorProgress(43, () => stat), null, 'wrong process identity fails closed');
+for (const value of [stat.replace('123', '-1'), stat.replace('456', '1e3'),
+  stat.replace('123', '9007199254740992'), '42 malformed', '42 (worker) S'])
+  assert.equal(processorProgress(42, () => value), null);
+assert.equal(processorProgress(42, () => { throw new Error('process exited'); }), null);
+assert.equal(processorProgress(0, () => { throw new Error('must not read'); }), null);
+
+// The installed oneshot must not truncate its own receiver/frame wait budget.
+const unit = fs.readFileSync(path.join(__dirname,
+  '../contrib/systemd/vectorwarp-health-watchdog.service.in'), 'utf8');
+const unitTimeoutMs = Number(/^TimeoutStartSec=(\d+)$/m.exec(unit)?.[1]) * 1000;
+assert(Number.isFinite(unitTimeoutMs));
+assert(unitTimeoutMs >= FRAME_RECOVERY_TIMEOUT_MS + RECEIVER_READINESS_TIMEOUT_MS + 120000,
+  'packaged watchdog allows frame/receiver deadlines plus bounded service-transition headroom');
+assert(unitTimeoutMs <= 600000, 'the watchdog oneshot retains an explicit hard upper bound');
 
 const config = {capture: {fc: 563000000, fs: 2400000, device: {type: 'Kraken',
   channel_count: 5, heimdall: {gain: 2, channel_gains: [19.7, 25.4, 20.7, 25.4, 22.9]}}}};
@@ -66,6 +92,58 @@ assert.equal(skippedDecision.action, 'start-processor',
   'a processor skipped during gain verification must be retriggered after exact receipt verification');
 
 (async () => {
+  // Exercise the real recovery/controller code with inert service/HTTP ports.
+  // No test may stop or restart a host service.
+  for (const receiver of ['Usrp', 'RspDuo', 'HackRF']) {
+    const operations = [];
+    let clock = 100000, active = true, revision = 'original', changeOnStop = false;
+    let replay = false, publish = true, changeOnResponse = false;
+    const sandbox = {__dirname, module: {exports: {}}, console,
+      Date: class extends Date {static now() {return clock;}}, process,
+      setTimeout(callback, delay) {clock += delay; queueMicrotask(callback);}};
+    sandbox.require = name => {
+      if (name.endsWith('/config-store')) return {readConfig: () => ({exists: true,
+        validation: {valid: true}, revision, config: {capture: {device: {type: receiver},
+          replay: {state: replay}}, network: {ip: '127.0.0.1', ports: {api: 1}}}})};
+      if (name === 'child_process') return {execFileSync: (_file, args) => {
+        operations.push(args.join(' '));
+        if (args[0] === 'stop') {active = false; if (changeOnStop) revision = 'changed';}
+        if (args[0] === 'start') active = true;
+        if (args[0] === 'is-active' && !active) throw new Error('inactive');
+        return args[0] === 'show' ? '42' : '';
+      }};
+      if (name === 'http') return {get: (_options, callback) => {
+        const request = new EventEmitter(), response = new EventEmitter();
+        response.statusCode = 200; response.setEncoding = () => {};
+        queueMicrotask(() => {callback(response);
+          if (changeOnResponse) revision = 'changed-during-response';
+          response.emit('data', JSON.stringify({lastFrameAt: publish ? clock : 1}));
+          response.emit('end');});
+        return request;
+      }};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'vectorwarp-health-watchdog.js'), 'utf8'), sandbox);
+    const {recover} = sandbox.module.exports;
+    const result = await recover('/inert/config', 1);
+    assert.equal(result.configRevision, 'original');
+    assert.equal(result.firstRecoveredFrameAt, clock);
+    assert.deepEqual(operations.slice(0, 2), ['stop vectorwarp-processor.service', 'start vectorwarp-processor.service']);
+    assert(!operations.some(value => value.includes('heimdall')), 'SDK capture must not operate Kraken ingress');
+    changeOnResponse = true;
+    await assert.rejects(recover('/inert/config', 1), /configuration revision changed/);
+    changeOnResponse = false; revision = 'original';
+    operations.length = 0; changeOnStop = true;
+    await assert.rejects(recover('/inert/config', 1), /configuration revision changed/);
+    assert.deepEqual(operations, ['stop vectorwarp-processor.service']);
+    operations.length = 0; replay = true;
+    await assert.rejects(recover('/inert/config', 1), /limited to live input/);
+    assert.deepEqual(operations, []);
+    replay = false; changeOnStop = false; publish = false;
+    const began = clock;
+    await assert.rejects(recover('/inert/config', 1), /frames did not advance/);
+    assert(clock - began <= FRAME_RECOVERY_TIMEOUT_MS, 'frame recovery stays bounded');
+  }
   let attempts = 0, clock = 0;
   const recovered = await synchronizeAfterRestart(config, {
     factory: () => ({synchronize: async () => {

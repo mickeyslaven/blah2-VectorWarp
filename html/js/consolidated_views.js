@@ -41,11 +41,11 @@
       window.xTitle = 'Timestamp';
       window.yTitle = 'Stage time (ms)';
       content.innerHTML = '<section class="timing-summary" id="presentation-timing" aria-live="polite"><div><strong>Connecting</strong><span>Presentation timing</span></div></section><section class="panel"><div class="visualization" id="data"></div></section>';
-      load('../../js/plot_timing.js?v=ui-consistency-30');
+      load('../../js/plot_timing.js?v=ui-consistency-32');
     } else {
       document.body.dataset.insightView = view;
       content.innerHTML = '<div id="view-root"></div>';
-      load('../../js/insights.js?v=ui-consistency-30');
+      load('../../js/insights.js?v=stats-policy-34');
     }
   } else if (kind === 'signal') {
     if (view === 'maxhold') {
@@ -54,8 +54,8 @@
       // lane's live map instead.
       window.urlMap = '/api/map';
       window.vectorwarpMapMode = 'maxhold';
-      load('../../js/plot_map.js?v=ui-consistency-30');
-    } else load('../../js/plot_spectrum.js?v=ui-consistency-30');
+      load('../../js/plot_map.js?v=ui-consistency-32');
+    } else load('../../js/plot_spectrum.js?v=ui-consistency-32');
   } else if (kind === 'detection') {
     const variables = {
       range: ['Timestamp', 'Bistatic Range (km)', 'timestamp', 'delay'],
@@ -64,6 +64,6 @@
     }[view];
     [window.xTitle, window.yTitle, window.xVariable, window.yVariable] = variables;
     window.vectorwarpDetectionHistory = view !== 'range-doppler';
-    load('../../js/plot_detection.js?v=ui-consistency-30');
+    load('../../js/plot_detection.js?v=ui-consistency-32');
   }
 }());

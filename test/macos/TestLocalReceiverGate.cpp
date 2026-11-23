@@ -1,4 +1,6 @@
 #include <iostream>
+#include <cstdlib>
+#include <unistd.h>
 #include <vector>
 #include "capture/LocalReceiverGate.h"
 

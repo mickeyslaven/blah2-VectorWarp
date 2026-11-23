@@ -6,6 +6,7 @@ const {createEvidenceStatisticsLanes, provisionalTimingFrame, defaultEvidenceSta
 const {DelayDopplerHistory} = require('./adsb-geometry');
 const {forGeographicLane} = require('./replay-geographic-sites');
 const {effectiveDelayConfig} = require('../html/js/config_profiles');
+const measuredCoverage = require('../html/js/measured_track_coverage');
 const {SuspiciousTrackLedger} = require('./suspicious-track-ledger');
 
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -55,6 +56,13 @@ function associationStatistics(value) {
   const exactTimed = Number(value?.data_quality?.exact_timed_aircraft_cpis) || 0;
   return {
     scope: 'current-setup-lifetime',
+    evaluation_contract_hash: value?.evaluation_contract_hash || null,
+    evaluation_policy_hash: value?.evaluation_policy_hash || null,
+    timing_policy: value?.timing_policy || null,
+    decision_grade: value?.decision_grade === true,
+    warning: value?.warning || null,
+    evaluation_contract_started_at: value?.evaluation_contract_started_at ?? null,
+    sensitivity_epoch: value?.sensitivity_epoch || null,
     denominator_semantics: window.denominator_semantics ||
       'finalized passes with >=3 detector-searchable, fresh-truth CPIs',
     eligible_adsb_passes: eligible,
@@ -243,6 +251,7 @@ function aggregateAssociationStatistics(channels, passSets = [], directionalPass
     timing: {exact_timed_aircraft_cpis: exactTimed, audited_aircraft_cpis: audited,
       exact_fraction: audited ? exactTimed / audited : null},
     track_population: aggregateTrackPopulations(channels),
+    measured_track_coverage: measuredCoverage.aggregate(channels.map(channel => channel.measured_track_basis)),
     unique_aircraft_passes: deduplicatedAssociationStatistics(passSets, directionalPassSets,
       channels.map(channel => channel.identity?.illuminator || channel.selected_channel))};
 }
@@ -437,6 +446,14 @@ class MultiIlluminatorEvidence {
     });
   }
 
+  associationWindow({timing = 'provisional', durationMs = 24 * 60 * 60 * 1000} = {}) {
+    const channels = [...this.lanes.values()].map(lane => ({channel: lane.illuminator.id,
+      ...(timing === 'exact' ? lane.exact : lane.operational).associationWindow(durationMs)}));
+    return {duration_ms: durationMs, complete: channels.length > 0 && channels.every(row => row.complete),
+      retained_since: channels.length ? Math.max(...channels.map(row => row.retained_since)) : null,
+      channels};
+  }
+
   response(kind, {illuminator, timing = 'exact', options = {}} = {}) {
     const selected = illuminator === undefined ? null : this.lane(illuminator);
     if (illuminator !== undefined && !selected) return null;
@@ -445,11 +462,16 @@ class MultiIlluminatorEvidence {
       const value = kind === 'scorecard' ? statistics.liveStatus() :
         kind === 'coverage' ? statistics.radarCoverage(options) : statistics.status(options);
       return {...value, identity: identity(lane.illuminator, statistics),
+        measured_track_basis: statistics.measuredTrackBasis(),
         selected_channel: lane.illuminator.id, timing_policy: timing,
         association_statistics: associationStatistics(value),
         scope: 'single-illuminator'};
     };
-    if (selected) return render(selected);
+    const present = value => {
+      const {measured_track_basis, ...summary} = value;
+      return summary;
+    };
+    if (selected) return present(render(selected));
     const lanes = [...this.lanes.values()];
     const channels = lanes.map(render);
     const passSets = lanes.map(lane => {
@@ -466,24 +488,37 @@ class MultiIlluminatorEvidence {
       definition: 'Channel results remain independent. The explicit overall association rollup sums channel opportunities and does not deduplicate an aircraft observed by multiple channels.',
       overall_association_statistics: aggregateAssociationStatistics(channels, passSets,
         directionalPassSets),
-      illuminators: channels};
+      illuminators: channels.map(present)};
   }
 
-  associationBasis({timing = 'exact'} = {}) {
+  associationBasis({timing = 'exact', compact = false, kiosk = false} = {}) {
     const channels = [...this.lanes.values()].map(lane => {
       const statistics = timing === 'provisional' ? lane.operational : lane.exact;
       const status = statistics.liveStatus();
+      if (compact) return {identity: identity(lane.illuminator, statistics),
+        selected_channel: lane.illuminator.id, updated_at: status.updated_at,
+        association_statistics: associationStatistics(status)};
       const population = status.track_population || {};
-      return {identity: identity(lane.illuminator, statistics),
+      const channel = {identity: identity(lane.illuminator, statistics),
+        measured_track_basis: statistics.measuredTrackBasis(),
         selected_channel: lane.illuminator.id, updated_at: status.updated_at,
         association_statistics: associationStatistics(status),
         track_population: {...population,
           aircraft_like_candidates: (population.aircraft_like_candidates || []).slice(0, 10)},
         passes: typeof statistics.associationPasses === 'function' ?
           statistics.associationPasses() : []};
+      return kiosk ? measuredCoverage.kioskAssociationChannel(channel) : channel;
     });
     return {schema: 'vectorwarp-association-basis-v1', timing_policy: timing,
       channels};
+  }
+
+  activeAssociations({timing = 'provisional'} = {}) {
+    return [...this.lanes.values()].map(lane => {
+      const statistics = timing === 'provisional' ? lane.operational : lane.exact;
+      return {selected_channel: lane.illuminator.id,
+        active_passes: statistics.activeAssociations()};
+    });
   }
 
   close() {

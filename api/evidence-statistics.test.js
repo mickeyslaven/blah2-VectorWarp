@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates,
-  assignments, delayBand, limits, standardizedComparison, siteKey,
+  assignments, delayBand, limits, standardizedComparison, siteKey, siteDescriptor,
   provisionalTimingFrame, defaultEvidenceStatisticsPath,
   defaultProvisionalEvidenceStatisticsPath} = require('./evidence-statistics');
 
@@ -155,6 +155,12 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   resumedStats.state.active.abc123.associationEligibleFrames = 3;
   resumedStats.finish('abc123');
   assert.equal(resumedStats.associationPasses().length, 1);
+  resumedStats.state.passes[0].evaluationContractHash = 'previous-scoring-contract';
+  assert.equal(resumedStats.associationPasses().length, 0,
+    'federation must reject an explicitly different evaluator');
+  assert.equal(resumedStats.liveStatus().current_setup_lifetime.passes, 0,
+    'Current-setup headlines must reject an explicitly different evaluator too');
+  delete resumedStats.state.passes[0].evaluationContractHash;
   resumedStats.state.liveScoreContract.startedAt = clock + 1;
   assert.equal(resumedStats.associationPasses().length, 0,
     'federation must not mix finalized passes from an earlier scoring contract');
@@ -242,6 +248,9 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     'The live hour view must include a currently eligible pass');
   assert.equal(result.windows.hour.live_to_date.detected_passes, 1);
   assert.equal(result.windows.hour.live_to_date.tracked_passes, 1);
+  assert.deepEqual(stats.activeAssociations(), [{hex: 'abc123', flight: 'TEST1',
+    detected_cpis: 3, tracked_cpis: 3, last_at: clock - 1000}],
+  'The map association feed reads bounded active counters without building a scorecard');
   clock += 121000;
   source.get = async () => ({});
   stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
@@ -255,24 +264,25 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(result.windows.hour.cpi_exposure.eligible_seconds, 1.5);
   assert.equal(result.windows.hour.cpi_exposure.detected_percent, 100);
   assert.equal(result.windows.hour.cpi_exposure.missed_detection_percent, 0);
-  assert.equal(result.eligibility_events.length, 1,
+  assert.equal(stats.state.eligibilityEvents.length, 1,
     'A pass must emit only one eligibility event across repeated opportunities');
   assert.equal(result.eligibility_event_count, 1);
-  assert.equal(result.eligibility_events[0].state, 'finalized');
-  assert.equal(result.eligibility_events[0].outcome, 'tracked');
-  assert.equal(result.eligibility_events[0].first_detection_at, 1_800_000_000_000);
-  assert.equal(result.eligibility_events[0].first_track_at, 1_800_000_000_000);
+  assert.equal(stats.state.eligibilityEvents[0].state, 'finalized');
+  assert.equal(stats.state.eligibilityEvents[0].outcome, 'tracked');
+  assert.equal(stats.state.eligibilityEvents[0].first_detection_at, 1_800_000_000_000);
+  assert.equal(stats.state.eligibilityEvents[0].first_track_at, 1_800_000_000_000);
   assert.equal(trackCaptures.length, 1, 'Only the first matched track frame triggers a capture');
   assert.equal(trackCaptures[0].timestamp, 1_800_000_000_000);
-  assert.equal(result.eligibility_events[0].predicted.delay_km, 10);
-  assert.equal(result.eligibility_events[0].truth_samples.length, 3);
-  assert.equal(result.eligibility_events[0].truth_samples[0].provenance.source_id,
+  assert.equal(stats.state.eligibilityEvents[0].predicted.delay_km, 10);
+  assert.equal(stats.state.eligibilityEvents[0].truth_samples.length, 3);
+  assert.equal(stats.state.eligibilityEvents[0].truth_samples[0].provenance.source_id,
     'local-readsb');
-  assert.deepEqual(result.eligibility_events[0].truth_samples.map(item => item.timestamp_ms),
+  assert.deepEqual(stats.state.eligibilityEvents[0].truth_samples.map(item => item.timestamp_ms),
     [1_800_000_000_000, 1_800_000_001_000, 1_800_000_002_000]);
-  assert.equal(result.eligibility_events[0].capture_state, 'not_integrated');
+  assert.equal(stats.state.eligibilityEvents[0].capture_state, 'not_integrated');
   for (const field of ['receiver_epoch', 'config_epoch', 'site_epoch'])
-    assert.match(result.eligibility_events[0][field], /^[0-9a-f]{64}$/);
+    assert.match(stats.state.eligibilityEvents[0][field], /^[0-9a-f]{64}$/);
+  stats.persist(); // Explicit durability boundary; periodic writes are queued.
   const stored = JSON.parse(fs.readFileSync(filename, 'utf8'));
   assert.equal(stored.schema, 'vectorwarp-evidence-statistics-v2');
   assert.equal(stored.passes[0].firstTruth.altitude_geom_ft, 12000);
@@ -338,8 +348,8 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   fs.writeFileSync(filename, JSON.stringify(legacy));
   const recovered = new EvidenceStatistics(config, source, {filename, now: () => clock});
   assert.equal(recovered.status().windows.lifetime.tracked_passes, 1);
-  assert.equal(recovered.status().eligibility_events[0].capture_state, 'failed');
-  assert.equal(recovered.status().eligibility_events[0].capture_failure,
+  assert.equal(recovered.state.eligibilityEvents[0].capture_state, 'failed');
+  assert.equal(recovered.state.eligibilityEvents[0].capture_failure,
     'API restarted before capture acknowledgement');
   recovered.close();
   assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).schema,
@@ -364,17 +374,17 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   while (outage.running) await new Promise(resolve => setImmediate(resolve));
   let outageStatus = outage.status();
   assert.equal(emitted, 1, 'ADS-B eligibility must emit while the detector is silent');
-  assert.equal(outageStatus.eligibility_events.length, 1);
-  assert.equal(outageStatus.eligibility_events[0].state, 'pending');
+  assert.equal(outage.state.eligibilityEvents.length, 1);
+  assert.equal(outage.state.eligibilityEvents[0].state, 'pending');
   outageClock += 121000;
   outageSource.get = async () => ({});
   sampler();
   while (outage.running) await new Promise(resolve => setImmediate(resolve));
   outageStatus = outage.status();
   assert.equal(emitted, 1, 'Pass finalization must not re-emit eligibility');
-  assert.equal(outageStatus.eligibility_events[0].state, 'finalized');
-  assert.equal(outageStatus.eligibility_events[0].outcome, 'insufficient_opportunities');
-  assert.equal(outageStatus.eligibility_events[0].eligible_frames, 1);
+  assert.equal(outage.state.eligibilityEvents[0].state, 'finalized');
+  assert.equal(outage.state.eligibilityEvents[0].outcome, 'insufficient_opportunities');
+  assert.equal(outage.state.eligibilityEvents[0].eligible_frames, 1);
   assert.equal(outageStatus.windows.lifetime.eligible_passes, 0,
     'One captured opportunity must stay outside the three-frame denominator');
   outage.close();
@@ -393,7 +403,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     while (retention.running) await new Promise(resolve => setImmediate(resolve));
     retentionClock += 1000;
   }
-  const retained = retention.status().eligibility_events[0].truth_samples;
+  const retained = retention.state.eligibilityEvents[0].truth_samples;
   assert.equal(retained.length, 30);
   assert.deepEqual(retained.map(item => item.timestamp_ms),
     Array.from({length: 30}, (_, index) => 2_000_000_035_000 + index * 1000),
@@ -426,7 +436,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   let uncertainTruthCalls = 0;
   const uncertainStats = new EvidenceStatistics(config, {getAt() {
     uncertainTruthCalls += 1; return Promise.resolve({});
-  }}, {filename: path.join(directory, 'uncertain-event-time.json'),
+  }}, {filename: path.join(directory, 'uncertain-event-time.json'), now: () => clock,
     setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
   uncertainStats.acceptTiming({timestamp: 1500, captureSamplePositionAvailable: true,
     captureEpoch: 1, captureFirstEpochSample: 0, captureEndEpochSample: 1200000,
@@ -537,6 +547,56 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(ambiguityDiagnostics.ambiguous_points, 1,
     'Discarded near-tied detections must remain visible in scorecard diagnostics');
 
+  // Continuity is a chronological CPI run, not adjacent eligible observations
+  // after stale truth, detector exclusions, or an absent radar interval.
+  for (const [name, offsets, excluded] of [
+    ['normal-cadence', Array.from({length: 40}, (_, index) => index * 500), null],
+    ['missing-cadence', [0, 500, 4000, 4500, 12000, 12500], null],
+    ['reverse-truth-joins', [1500, 1000, 500, 0], null],
+    ['out-of-map', [0, 500, 1000, 1500, 2000], {delay: 1000}],
+    ['below-floor', [0, 500, 1000, 1500, 2000], {delay: 0}],
+    ['stale-truth', [0, 500, 1000, 1500, 2000], {timestamp: clock / 1000 - 10}],
+    ['invalid-truth', [0, 500, 1000, 1500, 2000], {
+      provenance: {...prediction.provenance, projection_model: 'nearest_hold'}}]
+  ]) {
+    const continuityStats = new EvidenceStatistics(config, source, {
+      filename: path.join(directory, `continuity-${name}.json`), now: () => clock,
+      setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+    for (const offset of offsets) {
+      const at = clock + offset, association = {frame_timestamp_ms: at,
+        kind: 'detection', cell_index: 0};
+      continuityStats.observe('continuity', {...prediction, timestamp: at / 1000,
+        ...(offset === 1000 ? excluded : null)}, at, association, association);
+    }
+    const pass = continuityStats.state.active.continuity;
+    const quality = continuityStats.liveStatus().active_passes[0].track_quality;
+    const expected = excluded ? 4 : offsets.length;
+    assert.deepEqual([pass.eligibleFrames, pass.detectedFrames, pass.trackedFrames],
+      [expected, expected, expected], `${name}: continuity must preserve exposure and yield`);
+    const longest = name === 'normal-cadence' ? 40 : name === 'reverse-truth-joins' ? 4 : 2;
+    assert.equal(quality.longest_consecutive_detected_cpis, longest, name);
+    assert.equal(quality.longest_consecutive_operationally_tracked_cpis, longest, name);
+    assert.equal(quality.detection_reacquisitions, 0,
+      `${name}: an unobserved gap is not an observed miss/reacquisition`);
+    assert.equal(quality.continuity_complete_for_pass, true, name);
+    assert.ok(pass.qualityCpi.continuity.tail.length <= 32, 'Continuity retention stays bounded');
+    if (name === 'normal-cadence') {
+      delete pass.qualityCpi.continuity; // State written by the older scoring contract.
+      pass.qualityCpi.longestTrackedRun = 999;
+      assert.equal(continuityStats.liveStatus().active_passes[0].track_quality
+        .longest_consecutive_operationally_tracked_cpis, null,
+      'Legacy eligible-observation runs cannot be presented as chronological continuity');
+      const at = clock + 20000, association = {frame_timestamp_ms: at, kind: 'detection', cell_index: 0};
+      continuityStats.observe('continuity', {...prediction, timestamp: at / 1000}, at,
+        association, association);
+      const migrated = continuityStats.liveStatus().active_passes[0].track_quality;
+      assert.equal(migrated.longest_consecutive_operationally_tracked_cpis, 1);
+      assert.equal(migrated.continuity_complete_for_pass, false);
+      assert.equal(pass.trackedFrames, 41);
+    }
+    continuityStats.close();
+  }
+
   const floorStats = new EvidenceStatistics(config, source, {
     filename: path.join(directory, 'detector-floor.json'), now: () => clock,
     setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
@@ -629,18 +689,20 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     assert.equal(noNotch.state.active.abc123.dopplerNotchFrames, 0);
     noNotch.close();
   }
-  // Simulate loading a pre-mask-version ledger. Keep its exact pass identity
-  // and counts, but never mix those counts into the new site's denominator.
+  // The v4 ledger mixed position-fit/stored-offset evaluation with reported
+  // kinematics/aging original observations. Keep its evidence as historical.
   const legacyNotchState = JSON.parse(fs.readFileSync(notchFilename, 'utf8'));
-  const legacyKey = 'legacy-pre-doppler-mask-site';
-  legacyNotchState.sites = {[legacyKey]: {detection: {minDelay: 5, minDoppler: 15}}};
+  const legacyKey = 'legacy-v4-truth-policy-site';
+  legacyNotchState.sites = {[legacyKey]: {...siteDescriptor(notchConfig),
+    detector_eligibility_version: 4}};
   for (const item of legacyNotchState.passes) {
     item.siteKey = legacyKey;
+    delete item.evaluationContractHash;
     delete item.dopplerNotchFrames;
   }
   legacyNotchState.rollup = {...legacyNotchState.rollup, siteKey: legacyKey,
     passes: 20, eligible: 17, detected: 6, tracked: 2};
-  legacyNotchState.liveScoreContract = {hash: 'legacy-v1-contract', startedAt: clock - 100000};
+  legacyNotchState.liveScoreContract = {hash: 'legacy-v4-contract', startedAt: clock - 100000};
   const historicalPasses = structuredClone(legacyNotchState.passes);
   const historicalRollup = structuredClone(legacyNotchState.rollup);
   fs.writeFileSync(notchFilename, JSON.stringify(legacyNotchState));
@@ -653,8 +715,76 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     'Preserve compacted historical counts across the versioned site rollover');
   assert.equal(migratedNotch.associationPasses().length, 0);
   assert.equal(migratedNotch.status().windows.lifetime.eligible_passes, 0);
+  assert.equal(migratedNotch.liveStatus().current_setup_lifetime.eligible_passes, 0);
+  assert.equal(migratedNotch.measuredTrackBasis().aircraft.length, 0);
   assert.equal(migratedNotch.state.liveScoreContract.startedAt, clock + 10000);
+  assert.equal(siteDescriptor(notchConfig).detector_eligibility_version, 6);
+  assert.equal(migratedNotch.liveStatus().evaluation_contract.truth_doppler_policy,
+    'reported-kinematic-with-position-fit-fallback-v1');
+  assert.equal(migratedNotch.liveStatus().evaluation_contract.truth_freshness_policy,
+    'original-observation-offset-plus-prediction-age-v1');
+  const policyHash = migratedNotch.liveStatus().evaluation_policy_hash;
+  assert.match(policyHash, /^[0-9a-f]{64}$/);
+  for (const [name, changed, samePolicy] of [
+    ['geometry', {...notchConfig, capture: {...notchConfig.capture, fs: 1200000},
+      process: {...notchConfig.process, detection: {minDelay: 10, minDoppler: 25}}}, true],
+    ['truth-age', {...notchConfig, process: {...notchConfig.process, bearing: {
+      ...notchConfig.process.bearing, manifold_recorder: {
+        ...notchConfig.process.bearing.manifold_recorder, max_truth_age_s: 2}}}}, false]
+  ]) {
+    const other = new EvidenceStatistics(changed, source, {
+      filename: path.join(directory, `policy-${name}.json`), now: () => clock + 10000,
+      setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+    assert.notEqual(other.scoreContractHash, migratedNotch.scoreContractHash);
+    assert.equal(other.liveStatus().evaluation_policy_hash === policyHash, samePolicy,
+      'Channel geometry may differ; truth/scoring policy must match for additive totals');
+    other.close();
+  }
   migratedNotch.close();
+
+  const bufferedOptions = {filename: path.join(directory, 'buffered-cohort.json'),
+    now: () => clock + 10000, timingPolicy: 'provisional',
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}};
+  const buffered = new EvidenceStatistics(config, source, bufferedOptions);
+  for (let index = 0; index < 3; ++index) {
+    const at = clock + 9000 + index * 500;
+    buffered.observe('abc123', {...prediction, timestamp: at / 1000}, at,
+      {frame_timestamp_ms: at, cell_index: 0, kind: 'detection'}, null);
+  }
+  assert.equal(buffered.liveStatus().active_passes.length, 1,
+    'A buffered first CPI predating API startup still belongs to its actual evaluator');
+  buffered.finish('abc123');
+  const bufferedPass = buffered.state.passes[0];
+  assert.equal(bufferedPass.evaluationContractHash, buffered.scoreContractHash);
+  assert.equal(buffered.isLivePass({...bufferedPass,
+    evaluationContractHash: 'previous-policy', startedAt: clock + 11000}), false,
+  'A newer event timestamp cannot override an explicit old contract');
+  const unknownPass = {...bufferedPass};
+  delete unknownPass.evaluationContractHash;
+  assert.equal(buffered.isLivePass(unknownPass), false,
+    'Do not relabel unversioned historical evidence from before the cohort boundary');
+  buffered.close();
+  const restoredBuffered = new EvidenceStatistics(config, source, bufferedOptions);
+  assert.equal(restoredBuffered.liveStatus().windows.lifetime.eligible_passes, 1);
+  assert.equal(restoredBuffered.liveStatus().current_setup_lifetime.detected_passes, 1);
+  assert.equal(restoredBuffered.associationPasses().length, 1,
+    'Channel totals and deduplicated-pass inputs retain the same buffered cohort after restart');
+  assert.equal(restoredBuffered.measuredTrackBasis().aircraft.length, 1);
+  Object.assign(restoredBuffered.state.rollup, {passes: 20, eligible: 17,
+    associationEligible: 17, detected: 6, tracked: 2});
+  restoredBuffered.close();
+
+  const changedTiming = new EvidenceStatistics(config, source,
+    {...bufferedOptions, timingPolicy: 'exact'});
+  assert.notEqual(changedTiming.key, buffered.key,
+    'A contract-only timing change starts a separate site cohort without a config change');
+  assert.equal(changedTiming.liveStatus().current_setup_lifetime.eligible_passes, 0);
+  assert.equal(changedTiming.associationPasses().length, 0);
+  assert.deepEqual(changedTiming.state.passes, restoredBuffered.state.passes,
+    'Prior-contract pass identities and counts remain archived');
+  assert.deepEqual(changedTiming.state.sites[buffered.key].finalized_rollup,
+    restoredBuffered.state.rollup, 'Prior-contract compacted counts remain archived');
+  changedTiming.close();
 
   const pass = (band, detected) => ({geometryBands: {[band]: {eligibleFrames: 10}},
     detectedFrames: detected ? 3 : 0, trackedFrames: detected ? 3 : 0});
@@ -792,6 +922,57 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.ok(fs.statSync(path.join(directory, 'bounded-state.json')).size < 8 * 1024 * 1024,
     'Bounded synthetic state must remain well below the loader safety cap');
   boundedState.close();
+  const witnessFilename = path.join(directory, 'searchable-miss-witnesses.json');
+  const witnesses = new EvidenceStatistics(config, source, {
+    filename: witnessFilename, timingPolicy: 'provisional', now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  for (const hex of ['miss', 'detected']) {
+    for (let index = 0; index < 40; ++index) {
+      const at = clock + index * 500;
+      const candidate = hex === 'detected' ? {frame_timestamp_ms: at,
+        cell_index: 0, kind: 'detection'} : null;
+      witnesses.observe(hex, {...prediction,
+        timestamp: at / 1000 - (index >= 3 && index % 2 ? 10 : 0),
+        delay: index < 3 || index % 2 ? 10 : 1000}, at, candidate, null);
+    }
+    assert.equal(witnesses.state.active[hex].cpiAudit.length, 16);
+    witnesses.finish(hex);
+    const pass = witnesses.state.passes.at(-1);
+    assert.equal(pass.cpiAudit.length, 4);
+    assert.deepEqual(pass.cpiAudit.map(row => row.timestamp_ms),
+      [clock, clock + 500, clock + 1000, clock + 19500],
+      'Preserve scored witnesses for hits and misses through stale and out-of-window tails');
+    assert.deepEqual(pass.cpiAudit.map(row => row.scored), [true, true, true, false]);
+    assert.equal(pass.cpiAudit[0].prediction_timestamp_s, clock / 1000);
+    assert.equal(pass.cpiAudit[0].observation_time_offset_s, .1);
+    assert.equal(pass.cpiAudit[0].doppler_position_fit_hz, 104);
+    assert.equal(pass.cpiAudit[0].doppler_kinematic_hz, 100);
+    assert.equal(pass.cpiAudit[0].provenance, undefined,
+      'Scalar audit witnesses must not duplicate provider metadata or aircraft positions');
+    assert.equal(pass.eligibleFrames, 3);
+    assert.equal(pass.detectedFrames, hex === 'detected' ? 3 : 0);
+  }
+  witnesses.close();
+  const restoredWitnesses = new EvidenceStatistics(config, source, {
+    filename: witnessFilename, timingPolicy: 'provisional', now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  assert.deepEqual(restoredWitnesses.state.passes,
+    JSON.parse(JSON.stringify(witnesses.state.passes)),
+    'Restart compaction preserves the same bounded diagnostic witnesses');
+  restoredWitnesses.close();
+  const missingOffsets = new EvidenceStatistics(config, source, {
+    filename: path.join(directory, 'missing-truth-offset.json'), now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  for (const [index, offset] of [null, false, undefined, '0'].entries()) {
+    const hex = `offset-${index}`;
+    missingOffsets.observe(hex, {...prediction, timestamp: clock / 1000,
+      provenance: {...prediction.provenance, observation_time_offset_s: offset}}, clock,
+    {frame_timestamp_ms: clock, cell_index: 0, kind: 'detection'}, null);
+    assert.equal(missingOffsets.state.active[hex].eligibleFrames, 0,
+      'Missing or nonnumeric observation offsets cannot coerce into fresh truth');
+    assert.equal(missingOffsets.state.active[hex].cpiAudit[0].truth_reason, 'stale-observation');
+  }
+  missingOffsets.close();
   const uncertaintyConfig = JSON.parse(JSON.stringify(config));
   uncertaintyConfig.truth.adsb.uncertainty_association = {enable: true};
   const uncertaintyStats = new EvidenceStatistics(uncertaintyConfig, source, {
@@ -915,6 +1096,73 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   }
   assert.equal(sampledUncertainty.state.active.abc123.associationAbstainedFrames, 3);
   sampledUncertainty.close();
+  // A capture restart is not a new aircraft pass, but it is a new sensitivity
+  // run. Retain operational counts and explicitly exclude mixed/unknown runs.
+  const runFile = path.join(directory, 'sample-run-state.json');
+  const makeRunStats = () => new EvidenceStatistics(config, source,
+    {filename: runFile, timingPolicy: 'provisional', now: () => clock,
+      setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  let runStats = makeRunStats();
+  runStats.queue = () => {};
+  const runTiming = (at, first, epoch = 0) => {
+    runStats.acceptTiming({timestamp: at, captureSamplePositionAvailable: true,
+      captureEpoch: epoch, captureFirstEpochSample: first, captureEndEpochSample: first + 1200000,
+      eventTime: {exact: false, estimateAvailable: true, source: 'native_sample_clock'}});
+    return runStats.recentTiming.at(-1);
+  };
+  const runObserve = (hex, at, first, epoch = 0) => runStats.observe(hex,
+    {...prediction, timestamp: at / 1000}, at, null, null, runTiming(at, first, epoch));
+  for (let i = 0; i < 3; i++) runObserve('abc123', clock + i * 500, i * 1200000);
+  const firstRun = runStats.state.sensitivityEpoch.id;
+  runStats.finish('abc123');
+  for (let i = 3; i < 6; i++) runObserve('def456', clock + i * 500, i * 1200000);
+  runObserve('def456', clock + 3000, 0);
+  const secondRun = runStats.state.sensitivityEpoch.id;
+  assert.notEqual(firstRun, secondRun, 'same capture epoch with sample reversal starts a run');
+  assert.equal(runStats.state.active.def456.frames, 4, 'restart must not manufacture finalized misses');
+  assert.equal(runStats.state.active.def456.sensitivityEpochMixed, true);
+  runStats.finish('def456');
+  for (let i = 1; i <= 3; i++) runObserve('fedcba', clock + 3000 + i * 500, i * 1200000);
+  runStats.finish('fedcba');
+  assert.equal(runStats.associationPasses().length, 3, 'all operational history remains available');
+  assert.equal(runStats.associationPasses({sensitivityEpochId: secondRun}).length, 1);
+  assert.equal(runStats.liveStatus().mix_adjusted_previous_hour_comparison
+    .excluded_cross_run_or_unknown_passes, 2);
+  assert.equal(runStats.liveStatus().sensitivity_epoch.id, secondRun);
+  runTiming(clock + 4500, 3600000); // Exact duplicate must not create a run.
+  assert.equal(runStats.state.sensitivityEpoch.id, secondRun);
+  runTiming(clock + 1250, 2400000); // Late old-run delivery cannot roll back provenance.
+  assert.equal(runStats.state.sensitivityEpoch.id, secondRun);
+  assert.equal(runStats.recentTiming.at(-1).sensitivity_epoch_id, null);
+  runStats.close();
+  runStats = makeRunStats(); runStats.queue = () => {};
+  runTiming(clock + 5000, 4800000);
+  assert.equal(runStats.state.sensitivityEpoch.id, secondRun,
+    'API restart preserves a continuing native sample run');
+  runTiming(clock + 5500, 6000000, 1);
+  assert.notEqual(runStats.state.sensitivityEpoch.id, secondRun,
+    'capture epoch change also starts a new run without requiring external UTC');
+  runStats.state.passes[0].sensitivityEpochId = undefined;
+  assert.equal(runStats.associationPasses({sensitivityEpochId: firstRun}).length, 0,
+    'legacy unknown provenance fails closed for sensitivity selection');
+  runStats.close();
+  const scanConfig = JSON.parse(JSON.stringify(config));
+  scanConfig.capture.aircraft_clips = {unmatched_motion: {enabled: true}};
+  const scanStats = new EvidenceStatistics(scanConfig, source, {
+    filename: path.join(directory, 'scan-cadence.json'), now: () => clock,
+    timingPolicy: 'provisional', setIntervalFn: () => ({unref() {}}),
+    clearIntervalFn() {}});
+  let populationScans = 0;
+  scanStats.trackPopulation.snapshot = () => { populationScans += 1;
+    return {capture_candidates: []}; };
+  scanStats.emitUnmatchedMotionCapture(clock);
+  scanStats.emitUnmatchedMotionCapture(clock + 500);
+  scanStats.emitUnmatchedMotionCapture(clock + 4999);
+  assert.equal(populationScans, 1,
+    'A missing unmatched-motion candidate must not rescan retained tracks every CPI');
+  scanStats.emitUnmatchedMotionCapture(clock + 5000);
+  assert.equal(populationScans, 2, 'Unmatched-motion candidates remain periodically discoverable');
+  scanStats.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

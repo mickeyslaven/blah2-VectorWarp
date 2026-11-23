@@ -16,20 +16,44 @@ constexpr uint32_t hostCoherent = 0x4;
 constexpr uint32_t hostCached = 0x8;
 constexpr uint32_t noType = std::numeric_limits<uint32_t>::max();
 constexpr uint64_t maximumDeviceBytes = 2ULL << 30;
+constexpr uint64_t maximumAggregateBytes = 4ULL << 30;
 inline uint64_t heapBudget(uint64_t heapBytes) {
   return std::min(maximumDeviceBytes, heapBytes / 4);
 }
 
 struct AllocationPolicy {
   uint64_t bytes = 0;
+  uint64_t deviceBytes = 0;
   bool separateHostHeaps = true;
+  bool aggregateIncludesHostHeaps = false;
 };
+
+struct Type { uint32_t flags = 0, heap = 0; };
+struct Heap {
+  uint64_t bytes = 0;
+  bool device = false;
+  // UINT64_MAX means the driver did not expose a free-memory budget.
+  uint64_t available = UINT64_MAX;
+};
+struct Properties { std::vector<Type> types; std::vector<Heap> heaps; };
+
+inline uint64_t heapAllowance(const Heap& heap) {
+  if (heap.available == UINT64_MAX) return heapBudget(heap.bytes);
+  const uint64_t available = std::min(heap.bytes, heap.available);
+  // Reserve one quarter of physical capacity beyond memory already in use.
+  const uint64_t reserve = heap.bytes / 4;
+  return std::min(maximumDeviceBytes, available > reserve ? available - reserve : 0);
+}
 
 // A supervisor's lane reservation covers both host and device allocations.
 // Parse without stoull's whitespace/sign acceptance or an unbounded copy, and
 // never let an override enlarge the device's conservative default allowance.
-inline AllocationPolicy allocationPolicy(uint64_t heapBytes, const char* bounded) {
-  AllocationPolicy policy{heapBudget(heapBytes), bounded == nullptr};
+inline AllocationPolicy allocationPolicy(const Properties& properties, const char* bounded) {
+  uint64_t deviceBytes = 0;
+  for (const auto& heap : properties.heaps)
+    if (heap.device) deviceBytes = std::max(deviceBytes, heapAllowance(heap));
+  if (!deviceBytes) throw std::runtime_error("GPU memory safety reserve leaves no allocation budget");
+  AllocationPolicy policy{deviceBytes, deviceBytes, true, false};
   if (!bounded) return policy;
   uint64_t requested = 0;
   unsigned count = 0;
@@ -37,19 +61,17 @@ inline AllocationPolicy allocationPolicy(uint64_t heapBytes, const char* bounded
     if (++count > 20 || *digit < '0' || *digit > '9')
       throw std::invalid_argument("GPU lane allocation ceiling is invalid");
     const uint64_t value = uint64_t(*digit - '0');
-    if (requested > (maximumDeviceBytes - value) / 10)
+    if (requested > (maximumAggregateBytes - value) / 10)
       throw std::invalid_argument("GPU lane allocation ceiling exceeds policy");
     requested = requested * 10 + value;
   }
   if (!count || !requested)
     throw std::invalid_argument("GPU lane allocation ceiling must be positive");
-  policy.bytes = std::min(policy.bytes, requested);
+  policy.bytes = requested;
+  // The supervisor quota never rewrites the hardware-derived device proof.
+  policy.aggregateIncludesHostHeaps = true;
   return policy;
 }
-
-struct Type { uint32_t flags = 0, heap = 0; };
-struct Heap { uint64_t bytes = 0; bool device = false; };
-struct Properties { std::vector<Type> types; std::vector<Heap> heaps; };
 
 // Reserve actual Vulkan allocation sizes, including FFT-owned tables/scratch.
 // Types that alias one heap must share its allowance. Subtraction before the
@@ -72,22 +94,20 @@ private:
   bool reject(uint32_t type,uint64_t bytes,const char* reason) {
     const uint32_t heap=type<properties_.types.size()?properties_.types[type].heap:noType;
     rejection_={reason,type,heap,bytes,used_,heap<heapUsed_.size()?heapUsed_[heap]:0,
-      heap<properties_.heaps.size()?heapBudget(properties_.heaps[heap].bytes):0,
+      heap<properties_.heaps.size()?heapAllowance(properties_.heaps[heap]):0,
       deviceUsed_,bytes>UINT64_MAX-used_?UINT64_MAX:used_+bytes};
     return false;
   }
 public:
-  AllocationBudget(uint64_t limit, Properties properties,
-      bool separateHostHeaps = false)
-    : properties_(std::move(properties)), limit_(limit), deviceLimit_(limit),
-      separateHostHeaps_(separateHostHeaps), heapUsed_(properties_.heaps.size()) {
-    // A discrete GPU can expose staging and mapped tracker buffers from a
-    // separate system-memory heap. Keep the conservative aggregate device
-    // ceiling, but do not charge those host allocations against VRAM as well
-    // as their own per-heap allowance.
-    if (separateHostHeaps_) {
+  AllocationBudget(AllocationPolicy policy, Properties properties)
+    : properties_(std::move(properties)), limit_(policy.bytes),
+      deviceLimit_(policy.deviceBytes), separateHostHeaps_(policy.separateHostHeaps),
+      heapUsed_(properties_.heaps.size()) {
+    if (!limit_ || !deviceLimit_)
+      throw std::invalid_argument("GPU allocation policy is invalid");
+    if (separateHostHeaps_ && !policy.aggregateIncludesHostHeaps) {
       for (const auto& heap : properties_.heaps) if (!heap.device) {
-        const uint64_t allowance = heapBudget(heap.bytes);
+        const uint64_t allowance = heapAllowance(heap);
         limit_ = allowance > std::numeric_limits<uint64_t>::max() - limit_ ?
           std::numeric_limits<uint64_t>::max() : limit_ + allowance;
       }
@@ -101,7 +121,7 @@ public:
     if (heap >= heapUsed_.size()) return reject(type,bytes,"invalid-heap");
     if (separateHostHeaps_ && properties_.heaps[heap].device &&
         bytes > deviceLimit_ - deviceUsed_) return reject(type,bytes,"device-budget");
-    const auto heapLimit = heapBudget(properties_.heaps[heap].bytes);
+    const auto heapLimit = heapAllowance(properties_.heaps[heap]);
     if (bytes > heapLimit - heapUsed_[heap]) return reject(type,bytes,"heap-budget");
     heapUsed_[heap] += bytes; used_ += bytes; peak_ = std::max(peak_, used_);
     if (properties_.heaps[heap].device) {
@@ -121,6 +141,7 @@ public:
   uint64_t deviceUsed() const { return deviceUsed_; }
   uint64_t devicePeak() const { return devicePeak_; }
   uint64_t deviceLimit() const { return deviceLimit_; }
+  uint64_t heapLimit(uint32_t heap) const { return heapAllowance(properties_.heaps.at(heap)); }
   const Rejection& lastRejection() const { return rejection_; }
   void clearRejection() { rejection_={}; }
   // Call after releasing a failed driver allocation's reservation. Distinguish

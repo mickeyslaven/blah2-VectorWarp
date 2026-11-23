@@ -119,11 +119,23 @@ function processingCapabilities(config) {
 
 // Admission facts shared by API refusal and UI availability. Callers retain
 // distinct enabled-state checks, diagnostics and dormant-value behavior.
+function residentRouteRequired(config) {
+  const process = config.process || {};
+  return process.surveillance_fusion?.mode === 'noise_whitened_beam_bank' ||
+    process.bearing?.enable === true ||
+    (process.tracker?.beam_tolerance !== undefined && process.tracker.beam_tolerance !== 4294967295) ||
+    process.evidence?.causal_funnel?.enabled === true ||
+    config.capture?.replay?.resident_snapshot?.enabled === true;
+}
+function residentRouteRequested(config) {
+  const mode = config.process?.performance?.acceleration ?? 'auto';
+  return mode === 'gpu-resident' || (mode === 'auto' && residentRouteRequired(config));
+}
 function experimentalSettingSupport(config, topology = processingCapabilities(config)) {
   const process = config.process || {}, multi = process.multi_illuminator?.enabled === true;
   const replay = config.capture?.replay?.state === true;
   const hostFrontend = ['cpu', 'gpu'].includes(process.performance?.acceleration);
-  const residentProducts = process.performance?.acceleration === 'gpu-resident' &&
+  const residentProducts = residentRouteRequested(config) &&
     (process.surveillance_fusion?.mode ?? 'noncoherent') !== 'noncoherent';
   return {residentProducts,
     targetProtection: !multi && hostFrontend && topology.coherentSurveillance &&
@@ -133,5 +145,6 @@ function experimentalSettingSupport(config, topology = processingCapabilities(co
     ridgeBirth: !residentProducts && process.detection?.enable === true && process.tracker?.enable === true};
 }
 
-return {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon, experimentalSettingSupport};
+return {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon,
+  residentRouteRequired, residentRouteRequested, experimentalSettingSupport};
 });

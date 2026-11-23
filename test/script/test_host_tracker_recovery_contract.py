@@ -15,6 +15,7 @@ class HostTrackerRecoveryContract(unittest.TestCase):
         cls.tests = (ROOT / "test/unit/process/tracker/TestTracker.cpp").read_text()
         cls.integration = (ROOT / "src/process/detection/DetectorIntegration.h").read_text()
         cls.policy = (ROOT / "src/process/tracker/AssociationContract.h").read_text()
+        cls.gpu = (ROOT / "core/GpuTracker.private.h").read_text()
 
     def test_disabled_default_and_shared_wiring(self):
         self.assertIn("bool stationaryClutter = false", self.header)
@@ -44,6 +45,16 @@ class HostTrackerRecoveryContract(unittest.TestCase):
         self.assertIn("votes.size() > n", self.source)
         self.assertIn("stationaryCells.size() >= recovery.maximumStationaryCells", self.source)
         self.assertIn("track.get_n()+accInit.size()>65535", self.source)
+
+    def test_weak_births_require_real_temporal_support_on_cpu_and_gpu(self):
+        self.assertIn("weakBirthSupportEligible(double snr,uint maximumDepth,uint supportDepth)", self.policy)
+        self.assertIn("result.configureMaximumEvidenceDepth(config_.integrationCpis)", self.algorithm)
+        self.assertIn("const auto evidenceDepth=maximumEvidenceDepth", self.source)
+        self.assertIn("configureMaximumEvidenceDepth(evidenceDepth)", self.source)
+        self.assertEqual(self.source.count("tracker_weak_birth::weakBirthSupportEligible("), 1)
+        self.assertIn("// SHARED_WEAK_BIRTH_CONTRACT", self.gpu)
+        self.assertIn("tracker_weak_birth::shaderSource", self.gpu)
+        self.assertIn("!weakBirthSupportEligible(sd(at+4u),post[74],detectorSupportDepth(i))", self.gpu)
 
     def test_stationary_capacity_is_not_clutter_evidence(self):
         classifier=self.source.split("bool Tracker::stationary(",1)[1].split(

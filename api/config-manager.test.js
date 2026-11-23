@@ -324,9 +324,9 @@ for (const backend of ['cpu', 'auto', 'gpu', 'gpu-resident']) {
   const result = validateConfig(configured);
   assert.equal(result.valid, true, `${backend} coherent lanes: ${result.errors.join('; ')}`);
 }
-for (const feature of ['noise-whitened', 'bearing', 'beam-history']) {
+for (const backend of ['gpu-resident', 'auto']) for (const feature of ['noise-whitened', 'bearing', 'beam-history']) {
   const configured = clone(coherentLanes);
-  configured.process.performance.acceleration = 'gpu-resident';
+  configured.process.performance.acceleration = backend;
   configured.process.tracker.gpu_capacity = 128;
   if (feature === 'noise-whitened') configured.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
   if (feature === 'bearing') {
@@ -482,16 +482,22 @@ for (const mutate of [
 }
 const nonresidentWhitenedFusion = clone(whitenedFusion);
 nonresidentWhitenedFusion.process.performance.acceleration = 'auto';
-assert.equal(validateConfig(nonresidentWhitenedFusion).valid, false,
-  'noise-whitened beam-bank fusion requires resident acceleration');
+assert.equal(validateConfig(nonresidentWhitenedFusion).valid, true,
+  'AUTO selects required noise-whitened resident products');
+assert.equal(nonresidentWhitenedFusion.process.performance.acceleration, 'auto');
+for (const backend of ['cpu', 'gpu']) {
+  const invalid = clone(nonresidentWhitenedFusion);
+  invalid.process.performance.acceleration = backend;
+  assert.equal(validateConfig(invalid).valid, false, 'Explicit nonresident modes cannot discard whitening');
+}
 const adaptiveTracker = clone(whitenedFusion);
 adaptiveTracker.process.tracker.initiate.acceleration_model = 'adaptive_gate';
 assert.equal(validateConfig(adaptiveTracker).valid, true,
   'adaptive tracker initiation accepts resident acceleration');
 const nonresidentAdaptiveTracker = clone(adaptiveTracker);
 nonresidentAdaptiveTracker.process.performance.acceleration = 'auto';
-assert.equal(validateConfig(nonresidentAdaptiveTracker).valid, false,
-  'the remaining beam-bank features still require resident acceleration');
+assert.equal(validateConfig(nonresidentAdaptiveTracker).valid, true,
+  'AUTO retains required beam-bank features with adaptive tracking');
 const stationaryClutterTracker = clone(adaptiveTracker);
 stationaryClutterTracker.process.tracker.initiate.stationary_clutter = {
   enable: true, persistence_cpis: 8, max_doppler_hz: 15};
@@ -507,8 +513,8 @@ assert.equal(validateConfig(instantStationaryClutter).valid, false,
   'persistent clutter initiation requires temporal evidence');
 const nonresidentStationaryClutter = clone(stationaryClutterTracker);
 nonresidentStationaryClutter.process.performance.acceleration = 'auto';
-assert.equal(validateConfig(nonresidentStationaryClutter).valid, false,
-  'persistent clutter initiation requires resident acceleration');
+assert.equal(validateConfig(nonresidentStationaryClutter).valid, true,
+  'AUTO retains required beam-bank features with stationary-clutter tracking');
 const temporalTracker = clone(stationaryClutterTracker);
 temporalTracker.process.detection.track_before_detect = {
   enable: true, max_cpis: 8, motion_bins: 1};
@@ -600,6 +606,11 @@ Object.assign(projectedBearing.capture.device.array_geometry,
 const projectedBearingValidation = validateConfig(projectedBearing);
 assert.equal(projectedBearingValidation.valid, true,
   `projected fixed-site model accepts its explicit geometry/backend contract: ${projectedBearingValidation.errors.join('; ')}`);
+const automaticProjectedBearing = clone(projectedBearing);
+automaticProjectedBearing.process.performance.acceleration = 'auto';
+assert.equal(validateConfig(automaticProjectedBearing).valid, true,
+  'AUTO selects the required resident fixed-site projection');
+assert.equal(automaticProjectedBearing.process.performance.acceleration, 'auto');
 for (const state of [false, true]) for (const format of ['auto', 'blah2']) {
   const candidate = clone(projectedBearing);
   Object.assign(candidate.capture.replay, {state, format});
@@ -1083,6 +1094,10 @@ residentSnapshotReplay.capture.replay.resident_snapshot = {enabled: true,
   rf_profile_sha256: 'B'.repeat(64), rf_profile_file: '/var/tmp/replay.json'};
 assert.equal(validateConfig(residentSnapshotReplay).valid, true,
   'Bounded resident snapshot export is accepted for offline GPU-resident replay');
+const automaticSnapshotReplay = clone(residentSnapshotReplay);
+automaticSnapshotReplay.process.performance.acceleration = 'auto';
+assert.equal(validateConfig(automaticSnapshotReplay).valid, true,
+  'AUTO selects required resident snapshot support without altering replay constraints');
 for (const mutate of [
   value => { value.capture.replay.state = false; },
   value => { value.process.performance.acceleration = 'cpu'; },

@@ -31,9 +31,11 @@ function page(origin, apiOrigin = origin) {
       if (target.origin !== apiOrigin) return {ok: true, status: 200, text: async () => '<html>Static web server</html>'};
       if (options.method === 'PUT' && state.failWrite) throw new Error('Response lost');
       if (target.pathname === '/api/system/status' && state.failStatus) throw new Error('Status delayed');
+      if (target.pathname === '/capture/status' && state.failCapture) throw new Error('Recorder status unavailable');
       const status = {serverId: 'test-api', ...state};
       const data = target.pathname === '/api/system/status' ? status :
         target.pathname === '/api/adsb/status' ? state.adsb :
+        target.pathname === '/capture/status' ? state.capture || {} :
         target.pathname === '/api/receivers' ? state.receivers : {};
       return {ok: true, status: 200, text: async () =>
         state.stallBody && target.pathname !== '/api/system/status' ? new Promise(() => {}) : JSON.stringify(data)};
@@ -67,6 +69,49 @@ function page(origin, apiOrigin = origin) {
   const toggle = explicit.calls.find(call => call.url === 'http://radar.local:3456/capture/toggle');
   assert.equal(toggle.method, 'POST');
   assert.equal(toggle.headers['X-VectorWarp-Intent'], 'recording-toggle-v1');
+
+  const recording = page('http://radar.local:9876');
+  const recordingLabels = Object.fromEntries(['status', 'copy', 'toggle', 'pause']
+    .map(name => ['.recording-' + name, {innerHTML: '', textContent: ''}]));
+  recording.labels['recording-control'] = {classList: {toggle() {}},
+    querySelector: selector => recordingLabels[selector]};
+  recording.state.capture = {requested: false, recording: true, pendingStop: true,
+    processorFresh: true, acknowledged: false, available: true, recordingFile: '/tmp/closing.blah2'};
+  await recording.context.readRecordingState();
+  assert.match(recordingLabels['.recording-status'].innerHTML, /Finalizing recording/);
+  assert.equal(recordingLabels['.recording-toggle'].disabled, true);
+  assert.equal(recordingLabels['.recording-pause'].hidden, true);
+  recording.state.failCapture = true;
+  await recording.context.readRecordingState();
+  assert.match(recordingLabels['.recording-status'].innerHTML, /Recording status unavailable/,
+    'A failed status request cannot keep finalization looking healthy');
+  recording.state.failCapture = false;
+  recording.state.capture.processorFresh = false;
+  await recording.context.readRecordingState();
+  assert.match(recordingLabels['.recording-status'].innerHTML, /Recording status unavailable/);
+  assert.match(recordingLabels['.recording-copy'].textContent, /stale.*stop confirmation/);
+  const recordingCalls = recording.calls.length;
+  await recording.context.toggleRecording();
+  await recording.context.pauseRecording();
+  assert.equal(recording.calls.length, recordingCalls,
+    'Keyboard and button actions wait for the pending stop to be acknowledged');
+  recording.state.capture = {...recording.state.capture, pendingStop: false,
+    processorFresh: true, recording: false, acknowledged: true};
+  await recording.context.readRecordingState();
+  assert.match(recordingLabels['.recording-status'].innerHTML, /Not recording/);
+  assert.equal(recordingLabels['.recording-toggle'].disabled, false);
+  recording.state.capture = {...recording.state.capture, requested: true, recording: true};
+  await recording.context.readRecordingState();
+  recording.state.capture = {...recording.state.capture, paused: true, pendingStop: true,
+    requested: false, recording: true, acknowledged: false};
+  await recording.context.pauseRecording();
+  assert.match(recordingLabels['.recording-status'].innerHTML, /Finalizing recording/);
+  assert.doesNotMatch(recordingLabels['.recording-copy'].textContent, /safely finalized/);
+  recording.state.capture = {...recording.state.capture, pendingStop: false,
+    recording: false, acknowledged: true};
+  await recording.context.readRecordingState();
+  assert.match(recordingLabels['.recording-status'].innerHTML, /PAUSED/);
+  assert.match(recordingLabels['.recording-copy'].textContent, /safely finalized/);
 
   const test = page('http://radar.local:9876');
   const stableStatus = {writes: 0, innerHTML: '', replaceChildren(...children) {

@@ -502,9 +502,7 @@ const ingestRoute = serverSource.slice(serverSource.indexOf('function acceptIllu
 assert.match(ingestRoute,
   /multiIlluminatorTrackFuser\.update\(cohort\)/,
   'Every newly completed capture cohort advances fusion without a browser poll');
-assert.match(ingestRoute, /item\.map\?\.presentation_only === true/,
-  'Presentation-only maps are identified before scientific map support');
-assert.match(ingestRoute, /multiSiteMapSupportTracker\.unavailable/,
-  'Presentation-only maps explicitly disable scientific map support');
+assert.doesNotMatch(ingestRoute, /multiSiteMapSupportTracker/,
+  'Retired diagnostic map-support inference cannot return through ingestion');
 
 console.log('Three-dimensional held-out-truth bistatic localization, uncertainty and adversarial tracking passed.');

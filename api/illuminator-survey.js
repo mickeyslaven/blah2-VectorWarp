@@ -1,5 +1,5 @@
 'use strict';
-const {processingCapabilities} = require('./processing-capabilities');
+const {processingCapabilities} = require('../html/js/processing_capabilities');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const count = value => Number.isSafeInteger(value) && value >= 0;

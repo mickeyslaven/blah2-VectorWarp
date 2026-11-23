@@ -160,8 +160,7 @@ run install -d -m 0755 "$NODE_TARGET/bin"
 run install -m 0755 "$NODE_RUNTIME/bin/node" "$NODE_TARGET/bin/node"
 run install -m 0644 "$NODE_RUNTIME/LICENSE" "$NODE_TARGET/LICENSE"
 
-# The source/native installer intentionally uses the administrator's system
-# Node. Binary release packages instead use the verified private runtime.
+# Bind packaged units and helpers to the verified private Node runtime.
 sed -i 's|--node /usr/bin/node|--node /opt/vectorwarp/runtime/node/bin/node|' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-heimdall.service"
 sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/node |' \
@@ -315,19 +314,21 @@ else
   if rpm -qp --requires "$WORK_DIR/$ASSET" | grep -Fxq /usr/bin/node; then
     die 'RPM incorrectly depends on system Node instead of its private runtime'
   fi
-  if ! $TEST_ONLY; then
-    extracted="$WORK_DIR/rpm-verify"
-    install -d "$extracted"
-    (cd "$extracted" && rpm2cpio "$WORK_DIR/$ASSET" | cpio -idm --quiet)
-    python3 - "$extracted/opt/vectorwarp/current/receiver-source/rspduo/kit.json" \
-      "$extracted/opt/vectorwarp/current/bin/libblah2-capture-core.so.1" <<'PY'
-import hashlib, json, pathlib, sys
-kit, core = map(pathlib.Path, sys.argv[1:])
-value = json.loads(kit.read_text(encoding='utf-8'))
-if hashlib.sha256(core.read_bytes()).hexdigest() != value.get('core_sha256'):
+  extracted="$WORK_DIR/rpm-verify"
+  install -d "$extracted"
+  (cd "$extracted" && rpm2cpio "$WORK_DIR/$ASSET" | cpio -idm --quiet)
+  python3 - "$extracted/opt/vectorwarp/current" "$TEST_ONLY" <<'PY'
+import json, pathlib, runpy, sys
+root = pathlib.Path(sys.argv[1])
+identity = runpy.run_path(str(root.parent / 'libexec/vectorwarp-cohort-check'))
+root = root.resolve()
+identity['check_declared_hashes'](root)
+if sys.argv[2] == 'true':
+    sys.exit(0)
+value = json.loads((root / 'receiver-source/rspduo/kit.json').read_text())
+if identity['file_hash'](root / 'bin/libblah2-capture-core.so.1') != value.get('core_sha256'):
     raise SystemExit('final RPM core hash does not match local RSPduo kit')
 PY
-  fi
   MANIFEST_RELEASE=$RPM_RELEASE
 fi
 

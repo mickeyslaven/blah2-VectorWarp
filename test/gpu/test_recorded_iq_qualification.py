@@ -88,6 +88,8 @@ def golden_fixture():
                 "doppler": 100, "n": 3, "measured": True, "associated_delay": [1.1, 1.2]}])
         for frame in stream["products"]["detection"]:
             frame.update(delay=[1], doppler=[100])
+        for frame in stream["products"]["map"]:
+            frame.update(nRows=1, nCols=2, data=[[3.62, 3.63]])
     for frame in baseline["products"]["timing"]:
         for stage in ("acceleration", "clutterAcceleration"):
             frame[stage] = {"active": "cpu", "cpuExecuted": True, "gpuExecuted": False}
@@ -373,6 +375,41 @@ class MeasuredQualificationTest(unittest.TestCase):
             bad = copy.deepcopy(run);bad["products"]["track"][-1]["data"][0][field] = value
             with self.assertRaises((AssertionError, ValueError), msg=field):
                 measured.golden_pair(baseline, bad, pair, plan)
+
+    def test_golden_rejects_presentation_omitted_and_partial_native_maps(self):
+        plan, run, baseline, pair = golden_fixture()
+        for change in ({"presentation_only": True}, {"presentation_precision_db": .25},
+                       {"data_omitted": True}, {"data": [[3.62]]}, {"nRows": 2}):
+            for candidate in (True, False):
+                bad = copy.deepcopy(run if candidate else baseline)
+                bad["products"]["map"][0].update(change)
+                with self.assertRaisesRegex(ValueError, "Golden .*map"):
+                    measured.golden_pair(baseline if candidate else bad, bad if candidate else run, pair, plan)
+
+    def test_golden_streamed_map_pins_keep_all_cells_and_fixed_tolerance(self):
+        plan, run, baseline, pair = golden_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, source in (("cpu", baseline), ("gpu", run)):
+                stream = measured.corpus.MapEvidenceStream(root / name)
+                encoded = b"".join(measured.canonical(item) for item in source["products"]["map"])
+                retained = b"".join(stream.feed("map", encoded[i:i+7]) for i in range(0, len(encoded), 7))
+                stream.finish()
+                source["products"]["map"] = [json.loads(row) for row in retained.splitlines()]
+            evidence = measured.Evidence(root / "evidence")
+            result = measured.golden_pair(baseline, run, pair, plan, root=root, evidence=evidence)
+            self.assertEqual(result["counts"]["frames"], 2)
+            self.assertEqual(len(result["mapEvidenceSha256"]), 1)
+            reference = run["products"]["map"][0]["dataArtifact"]
+            self.assertEqual(json.loads((evidence.root / (reference["sha256"] + ".json")).read_text()), [[3.62, 3.63]])
+            self.assertIsNone(evidence.values[reference["sha256"]])
+            path = Path(reference["path"])
+            path.write_bytes(measured.canonical([[3.65, 3.63]]))
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                measured.golden_pair(baseline, run, pair, plan, root=root)
+            reference["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(AssertionError, "single.map.data"):
+                measured.golden_pair(baseline, run, pair, plan, root=root)
 
     def test_golden_plan_identity_covers_native_frontend_geometry_and_manifold_changes(self):
         plan, run, baseline, pair = golden_fixture()

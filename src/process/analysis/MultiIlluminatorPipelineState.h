@@ -5,6 +5,8 @@
 #include "process/ambiguity/AccelerationStatus.h"
 
 #include <cstdint>
+#include <algorithm>
+#include <deque>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -13,6 +15,16 @@
 
 namespace blah2::multi_illuminator
 {
+
+// A failing next-input advance may synchronously drain and reset the pipeline.
+// Complete publication of the older result first so products, timing and
+// timestamps retain the same FIFO order across that recovery boundary.
+template <typename Complete, typename Advance>
+void publish_then_advance(Complete&& complete, Advance&& advance)
+{
+  std::forward<Complete>(complete)();
+  std::forward<Advance>(advance)();
+}
 
 // Metadata is delayed with the channelized frame as one value. Keeping these
 // fields inseparable prevents split-frame overlap from publishing prior IQ
@@ -35,6 +47,51 @@ struct PublicationContext
   AccelerationStatus acceleration;
   bool publishFullMap = false;
   std::vector<double> inputGainDb;
+  std::optional<uint64_t> signalTimestampMs;
+  double capturePrepareMs = 0;
+};
+
+// Product completion can differ by lane after a rejection or reset. Bind each
+// result by its opaque input token, retaining only returned or in-flight CPIs.
+class PublicationFifo
+{
+public:
+  explicit PublicationFifo(std::size_t maximum) : maximum_(maximum) {}
+  uint64_t append(PublicationContext context) {
+    if (entries_.size() >= maximum_ || sequence_ == UINT64_MAX)
+      throw std::logic_error("CPI publication FIFO capacity exhausted");
+    entries_.emplace_back(++sequence_, std::move(context));
+    return sequence_;
+  }
+  const PublicationContext& at(uint64_t sequence) const {
+    for (const auto& entry : entries_) if (entry.first == sequence) return entry.second;
+    throw std::logic_error("CPI product has no publication context");
+  }
+  // Copy only contexts represented by completed products, in input order.
+  // A newer ingress/fallback may reset the FIFO before timing is emitted.
+  template <typename Frame>
+  std::vector<std::pair<uint64_t, PublicationContext>> snapshotsFor(
+      const std::vector<Frame>& frames) const {
+    for (const auto& frame : frames) (void)at(frame.publicationSequence);
+    std::vector<std::pair<uint64_t, PublicationContext>> result;
+    for (const auto& entry : entries_)
+      if (std::any_of(frames.begin(), frames.end(), [&](const auto& frame) {
+          return frame.publicationSequence == entry.first;
+        })) result.push_back(entry);
+    return result;
+  }
+  void retain(const std::vector<uint64_t>& sequences) {
+    for (auto sequence : sequences) (void)at(sequence);
+    entries_.erase(std::remove_if(entries_.begin(), entries_.end(), [&](const auto& entry) {
+      return std::find(sequences.begin(), sequences.end(), entry.first) == sequences.end();
+    }), entries_.end());
+  }
+  void reset() { entries_.clear(); }
+  std::size_t size() const { return entries_.size(); }
+private:
+  std::size_t maximum_;
+  uint64_t sequence_ = 0;
+  std::deque<std::pair<uint64_t, PublicationContext>> entries_;
 };
 
 template <typename Payload>

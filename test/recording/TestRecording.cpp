@@ -5,16 +5,58 @@
 #include "capture/Source.h"
 #include "capture/rspduo/SampleSequence.h"
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+// Interpose only in this test executable: exercise the real writer's stall,
+// failure, batching, and queue bound without adding production I/O hooks.
+namespace recording_write_fixture {
+std::atomic<bool> armed{false}, blocked{false}, entered{false}, fail{false}, headers{false};
+std::atomic<unsigned> calls{0};
+dev_t device=0; ino_t inode=0;
+}
+extern "C" ssize_t write(int fd,const void* bytes,size_t size) {
+  using namespace recording_write_fixture;
+  struct stat status{};
+  const bool header = headers.load() && size >= 8 && !std::memcmp(bytes,"BLAH2IQ\0",8);
+  if(armed.load() && (header || (!headers.load() && !::fstat(fd,&status) &&
+      status.st_dev==device && status.st_ino==inode))) {
+    ++calls; entered=true;
+    while(blocked.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if(fail.load()) { errno=EIO; return -1; }
+  }
+  return ::syscall(SYS_write,fd,bytes,size);
+}
+struct RecordingWriteFixture {
+  explicit RecordingWriteFixture(const std::filesystem::path& path,bool stall=false,
+      bool nextHeader=false) {
+    struct stat status{};
+    if(::stat(path.c_str(),&status)) throw std::runtime_error("Cannot inspect injected recording");
+    using namespace recording_write_fixture;
+    device=status.st_dev; inode=status.st_ino; calls=0; entered=false; fail=false;
+    blocked=stall; headers=nextHeader; armed=true;
+  }
+  ~RecordingWriteFixture() { recording_write_fixture::blocked=false; recording_write_fixture::armed=false; }
+  void await_write() {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while(!recording_write_fixture::entered && std::chrono::steady_clock::now()<deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if(!recording_write_fixture::entered) throw std::runtime_error("Injected write did not start");
+  }
+};
+#endif
 
 using namespace blah2;
 class MockSource final : public Source {
@@ -51,6 +93,315 @@ void write(const std::filesystem::path& path,const std::vector<uint8_t>& bytes) 
   std::ofstream stream(path,std::ios::binary); stream.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());
 }
 
+struct CacheFixtureIo {
+  struct Call { char operation; uint64_t offset, bytes; bool wait; };
+  static inline std::vector<Call> calls;
+  static inline bool supported=true, failWriteback=false, failFlush=false;
+  static void reset() { calls.clear(); supported=true; failWriteback=failFlush=false; }
+  static void prepare(int) {}
+  static bool writeback(int, uint64_t offset, uint64_t bytes, bool wait) {
+    calls.push_back({'w',offset,bytes,wait});
+    if(failWriteback) throw std::runtime_error("injected writeback failure");
+    return supported;
+  }
+  static void flush(int) {
+    calls.push_back({'f',0,0,false});
+    if(failFlush) throw std::runtime_error("injected flush failure");
+  }
+  static void discard(int, uint64_t offset, uint64_t bytes) {
+    calls.push_back({'d',offset,bytes,false});
+  }
+};
+
+struct MutatingDigestIo : RecordingFileCacheIo {
+  static inline int mutationFd = -1;
+  static inline bool mutated = false;
+  static void discard(int, uint64_t, uint64_t) {
+    if (mutated) return;
+    const uint8_t byte = 0;
+    const timespec times[2]{{1234567890,0}, {1234567891,0}};
+    // Rewrite an already consumed sample without changing the file size. Pin
+    // mtime explicitly so the test also works on coarse timestamp filesystems.
+    mutated = ::pwrite(mutationFd, &byte, 1, 83) == 1 && !::futimens(mutationFd, times);
+  }
+};
+
+void recording_cache_tests(const std::filesystem::path& directory) {
+  using Cache = RecordingFileCache<CacheFixtureIo>;
+  constexpr auto window = Cache::windowBytes;
+  CacheFixtureIo::reset(); Cache writer;
+  writer.written(1,window-1);
+  require(CacheFixtureIo::calls.empty(),"Partial cache window triggered writeback");
+  writer.written(1,window+17);
+  require(CacheFixtureIo::calls.size()==1 && CacheFixtureIo::calls[0].operation=='w' &&
+    !CacheFixtureIo::calls[0].wait && CacheFixtureIo::calls[0].bytes==window,
+    "First complete window was not submitted asynchronously");
+  writer.written(1,2*window+31);
+  const auto& calls=CacheFixtureIo::calls;
+  require(calls.size()==4 && calls[1].operation=='w' && calls[1].wait &&
+    calls[1].offset==0 && calls[1].bytes==window && calls[2].operation=='d' &&
+    calls[2].offset==0 && calls[2].bytes==window && calls[3].operation=='w' &&
+    !calls[3].wait && calls[3].offset==window && calls[3].bytes==window,
+    "Writer discarded pending bytes before writeback completion or crossed its range");
+  CacheFixtureIo::failWriteback=true;
+  rejects([&]{writer.written(1,3*window);},"Writeback error was hidden");
+  require(calls.back().operation=='w',"Failed writeback discarded uncompleted bytes");
+
+  CacheFixtureIo::reset(); Cache fallback; CacheFixtureIo::supported=false;
+  fallback.written(1,window);
+  require(calls.size()==3 && calls[1].operation=='f' && calls[2].operation=='d',
+    "Unsupported range writeback did not flush before discarding");
+  CacheFixtureIo::failFlush=true;
+  rejects([&]{fallback.written(1,2*window);},"Fallback flush failure was hidden");
+  require(calls.back().operation=='f',"Failed fallback flush discarded bytes");
+
+  CacheFixtureIo::reset(); Cache reader;
+  reader.consumed(1,window-1); reader.consumed(1,window+23);
+  reader.consumed(1,window+23,true);
+  require(calls.size()==2 && calls[0].operation=='d' && calls[0].offset==0 &&
+    calls[0].bytes==window && calls[1].operation=='d' && calls[1].offset==window &&
+    calls[1].bytes==23,"Digest cache policy discarded unread bytes or retained its tail");
+  Cache::durable(1,window+23);
+  require(calls.back().offset==0 && calls.back().bytes==window+23,
+    "Durable completion failed to discard the rewritten recording header");
+
+  // Exercise multiple cache windows, exact sample replay, and completion.
+  const auto filename=directory/"cache-window.blah2iq";
+  const IqBlock block(2,std::vector<std::complex<float>>(262144,{0.125f,-0.5f}));
+  {
+    RecordingWriter recording(filename,{2,1000,100000000,0,"blah2"});
+    for(unsigned i=0;i<9;++i) recording.append(block);
+    recording.close();
+  }
+  require(std::filesystem::file_size(filename)==64+9*(16+262144ULL*16),
+    "Cache management changed the recording byte count");
+  // Independent Python struct.pack/hashlib oracle: v1 header, nine complete
+  // channel-major binary32 blocks, and the final sample-count/complete fields.
+  const std::string expected = "f20a82a830969590fef87d732bcc2ce85912e28d42e2a59fc52c5f558df2cf9e";
+  uint64_t hashedBytes = 0;
+  require(acquisition::fileDigest(filename, &hashedBytes)==expected &&
+    hashedBytes==std::filesystem::file_size(filename),
+    "Cache management changed bytes or the acquisition digest");
+  const int digestFd = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC);
+  require(digestFd >= 0 && ::lseek(digestFd, 117, SEEK_SET)==117, "Cannot position digest fixture");
+  CacheFixtureIo::reset();
+  const auto integrity = acquisition::fileDigest<CacheFixtureIo>(digestFd);
+  const auto position = ::lseek(digestFd, 0, SEEK_CUR); ::close(digestFd);
+  require(integrity.first==hashedBytes && integrity.second==expected && position==117,
+    "Shared full-file verification changed the replay cursor or digest");
+  require(calls.size()==3 && calls[0].operation=='d' && calls[0].offset==0 && calls[0].bytes==window &&
+    calls[1].operation=='d' && calls[1].offset==window && calls[1].bytes==window &&
+    calls[2].operation=='d' && calls[2].offset==2*window && calls[2].bytes==hashedBytes-2*window,
+    "Shared full-file verification failed to evict consumed windows and tail");
+  ReplayOptions options{"blah2","Usrp",2,1000,100000000,0};
+  options.expectedRecordingSha256 = expected;
+  RecordingReader replay(filename,options);
+  IqBlock recovered; unsigned count=0;
+  while(replay.read(recovered)) {
+    require(recovered==block,"Cache writeback changed exact IQ samples"); ++count;
+  }
+  require(count==9 && replay.metadata().samples==9*262144ULL,
+    "Cache writeback changed completion or block lineage");
+  const int mutationFd = ::open(filename.c_str(), O_WRONLY | O_CLOEXEC);
+  require(mutationFd >= 0, "Cannot open digest mutation fixture");
+  const timespec before[2]{{1234567890,0}, {1234567890,0}};
+  require(!::futimens(mutationFd, before), "Cannot initialize digest mutation timestamp");
+  MutatingDigestIo::mutationFd = mutationFd;
+  bool changed = false;
+  try { (void)acquisition::fileDigest<MutatingDigestIo>(filename); }
+  catch (const std::runtime_error&) { changed = true; }
+  ::close(mutationFd);
+  require(MutatingDigestIo::mutated && changed,
+    "Acquisition digest accepted a same-size overwrite of already hashed bytes");
+}
+
+void recording_batch_tests(const std::filesystem::path& directory) {
+  const auto path=directory/"callback-batches.blah2iq";
+  IqBlock callback(2,std::vector<std::complex<float>>(4086));
+  for(unsigned channel=0;channel<2;++channel)
+    for(unsigned i=0;i<4086;++i)
+      callback[channel][i] = {float(16*channel+i%251)/256, -float(32*channel+i%127+1)/128};
+  RecordingWriter writer(path,{2,24576000,548000000,0,"blah2"});
+#if defined(__linux__)
+  RecordingWriteFixture writes(path);
+#endif
+  for(unsigned i=0;i<41;++i) writer.append(callback);
+  writer.append_slice(callback,11,17);
+  writer.close();
+  require(writer.samples()==41*4086+17,"Batching changed accepted sample accounting");
+#if defined(__linux__)
+  require(recording_write_fixture::calls==4,
+    "Callback batches did not use two full writes, one tail, and one completion header");
+#endif
+  // Independent struct.pack/hashlib oracle, including all original callback
+  // headers, sequence offsets, channel order, and the short final slice.
+  require(acquisition::fileDigest(path)=="1dfbd75c2a6648ff790c642fc553c2b3b89f15ce494e306ad023d3f9a95c2128",
+    "Callback batching changed exact on-disk bytes");
+  RecordingReader reader(path,{"blah2","Usrp",2,24576000,548000000,0});
+  IqBlock actual;
+  for(unsigned i=0;i<41;++i)
+    require(reader.read(actual) && actual==callback,"Batching changed callback boundaries");
+  IqBlock tail(2);
+  for(unsigned channel=0;channel<2;++channel)
+    tail[channel].assign(callback[channel].begin()+11,callback[channel].begin()+28);
+  require(reader.read(actual) && actual==tail &&
+    !reader.read(actual),"Batching lost or extended its partial tail");
+
+  const auto abortedPath=directory/"aborted-batch.blah2iq";
+  RecordingWriter aborted(abortedPath,{2,24576000,548000000,0,"blah2"});
+  aborted.append(callback); aborted.abort();
+  require(aborted.abort_ready(),"Unpublished partial batch retained a disk operation");
+  rejects([&]{aborted.append(callback);},"Aborted recording accepted more IQ");
+  rejects([&]{aborted.close();},"Aborted recording was finalized");
+  rejects([&]{RecordingReader invalid(abortedPath,{"blah2","Usrp",2,24576000,548000000,0});},
+    "Aborted recording was admitted to replay");
+
+#if defined(__linux__)
+  {
+    const auto queuedPath=directory/"bounded-stalled-writer.blah2iq";
+    RecordingWriter queued(queuedPath,{2,24576000,548000000,0,"blah2"});
+    RecordingWriteFixture stalled(queuedPath,true);
+    unsigned accepted=0;
+    for(;accepted<17;++accepted) queued.append(callback);
+    stalled.await_write();
+    bool full=false;
+    try { for(;accepted<2048;++accepted) queued.append(callback); }
+    catch(const std::runtime_error& error) { full=std::string(error.what()).find("bounded write queue is full")!=std::string::npos; }
+    require(full && uint64_t(accepted)*(16+4086*16)<=(64ULL<<20) &&
+      uint64_t(accepted+1)*(16+4086*16)>(63ULL<<20),
+      "Stalled writer did not enforce its 64 MiB capacity including in-flight/partial batches");
+    require(!queued.abort_ready(),"Abort concealed an in-flight disk operation");
+    recording_write_fixture::blocked=false;
+    rejects([&]{queued.close();},"Queue exhaustion produced a complete recording");
+    rejects([&]{RecordingReader invalid(queuedPath,{"blah2","Usrp",2,24576000,548000000,0});},
+      "Queue-exhausted recording was admitted to replay");
+  }
+  {
+    const auto failurePath=directory/"failed-batch-write.blah2iq";
+    RecordingWriter failed(failurePath,{2,24576000,548000000,0,"blah2"});
+    RecordingWriteFixture disk(failurePath,true);
+    for(unsigned i=0;i<17;++i) failed.append(callback);
+    disk.await_write();
+    recording_write_fixture::fail=true;
+    recording_write_fixture::blocked=false;
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while(!failed.abort_ready() && std::chrono::steady_clock::now()<deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    require(failed.abort_ready(),"Asynchronous writer failure did not retire its in-flight batch");
+    rejects([&]{failed.append(callback);},"Asynchronous disk failure accepted later callback IQ");
+    require(failed.samples()==17*4086,"Failed callback advanced accepted sample accounting");
+    rejects([&]{failed.close();},"Injected disk failure was hidden");
+    rejects([&]{RecordingReader invalid(failurePath,{"blah2","Usrp",2,24576000,548000000,0});},
+      "Disk-failed recording was admitted to replay");
+  }
+  {
+    bool save=false;
+    MockSource source(directory.string(),&save);
+    const auto oldPath=source.open_file();
+    RecordingWriteFixture disk(oldPath,true);
+    for(unsigned i=0;i<17;++i) source.record_block(callback);
+    disk.await_write();
+    auto stopped=std::async(std::launch::async,[&]{source.recording_epoch_discontinuity("injected stalled epoch");});
+    const bool returned=stopped.wait_for(std::chrono::milliseconds(250))==std::future_status::ready;
+    if(!returned) recording_write_fixture::blocked=false;
+    stopped.get();
+    require(returned,"Receiver failure waited for a stalled disk worker");
+    source.record_block(callback);
+    source.service_recording(); // Must also refuse to join the stalled writer.
+    require(source.recording_status().resumePending && !source.recording_status().active,
+      "Epoch rollover joined a disk-blocked writer in the receiver callback");
+    recording_write_fixture::blocked=false;
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while(!source.recording_status().active && std::chrono::steady_clock::now()<deadline) {
+      source.service_recording();
+      source.record_block(callback);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(source.recording_status().active && source.recording_status().samples==4086 &&
+      source.recording_status().file!=oldPath,"Idle aborted epoch did not resume with fresh bytes");
+    source.close_file();
+    rejects([&]{RecordingReader invalid(oldPath,{"blah2","Mock",2,24576000,548000000,0});},
+      "Aborted pre-boundary epoch was finalized during rollover");
+  }
+  for(bool cancel : {false,true}) {
+    bool save=false;
+    BackendFixtureSource source("Usrp",directory.string(),&save,"{}");
+    const auto oldPath=source.open_file();
+    source.record_block(callback,{true,7,100,0,2400000,{},{},{},{}});
+    source.recording_epoch_discontinuity("prepare next epoch");
+    RecordingWriteFixture disk(oldPath,true,true);
+    auto prepared=std::async(std::launch::async,[&]{source.service_recording();});
+    // Release the injected disk before future destruction on every assertion.
+    struct ReleaseDisk { ~ReleaseDisk() { recording_write_fixture::blocked=false; } } release;
+    disk.await_write();
+    auto ingress=std::async(std::launch::async,[&]{
+      source.record_block(callback,{true,8,200,0,2400000,{},{},{},{}});
+      if(cancel) source.recording_discontinuity("terminal fault while preparing");
+    });
+    const bool returned=ingress.wait_for(std::chrono::milliseconds(250))==std::future_status::ready;
+    if(!returned) recording_write_fixture::blocked=false;
+    ingress.get();
+    require(returned,"Resume header I/O held the acquisition state lock");
+    require(!source.recording_status().active,"Pending resume fabricated active recording");
+    recording_write_fixture::blocked=false;
+    prepared.get();
+    source.record_block(callback,{true,0,900,0,2400000,{},{},{},{}});
+    const auto state=source.recording_status();
+    require(cancel ? (!state.active && !state.resumePending) :
+      (state.active && !state.resumePending && state.samples==4086),
+      "Prepared resume ignored cancellation or lost its first accepted block");
+    if(!cancel) {
+      source.close_file();
+      RecordingReader resumed(state.file,{"blah2","Usrp",2,2400000,527000000,0});
+      require(resumed.provenance().epoch==0 && resumed.provenance().sourceFirstSample==900 &&
+        resumed.read(actual) && actual==callback && !resumed.read(actual),
+        "Control preparation substituted an earlier epoch/position or unaccepted IQ");
+    }
+  }
+#endif
+}
+
+void acquisition_run_tests() {
+  // Sixteen seconds at the production UHD rate, without allocating 6 GiB IQ.
+  constexpr uint64_t rate = 24576000, block = 4086, duration = 16;
+  constexpr uint64_t blocks = (rate * duration + block - 1) / block;
+  const uint64_t first = 9007199254740993ULL;
+  std::vector<RecordingFrameLineage> frames;
+  for (uint64_t index = 0; index < blocks; ++index)
+    require(acquisition::appendFrame(frames, {index + 1, first + index * block, block, 0, block}),
+      "UHD callback granularity exhausted exact acquisition before 32 CPIs");
+  require(frames.size() == 1 && frames.front().repeat == blocks &&
+    frames.front().sourceCount == block && frames.front().count == block,
+    "Run compression lost original UHD callback boundaries");
+  const auto json = acquisition::serialize(nullptr, "Usrp", 2, rate, 548000000,
+    7, first, first + blocks * block, true, frames);
+  require(json.size() < 1024, "Constant-rate lineage metadata grew with recording duration");
+  auto bad = frames;
+  require(!acquisition::appendFrame(bad, {blocks + 1, first + blocks * block + 1, block, 0, block}),
+    "Run compression erased a source-sample gap");
+  require(!acquisition::appendFrame(bad, {blocks + 2, first + blocks * block, block, 0, block}),
+    "Run compression erased an ingress-sequence gap");
+  require(acquisition::appendFrame(frames, {blocks + 1, first + blocks * block, 10, 0, 10}) && frames.size() == 2,
+    "Changed callback size did not start a new exact run");
+  std::vector<RecordingFrameLineage> alternating;
+  uint64_t sample = 0;
+  for (size_t index = 0; index < acquisition::maximumFrames; ++index) {
+    const uint64_t count = 1 + index % 2;
+    require(acquisition::appendFrame(alternating, {index + 1, sample, count, 0, count}), "Bounded run rejected early");
+    sample += count;
+  }
+  require(!acquisition::appendFrame(alternating, {acquisition::maximumFrames + 1, sample, 1, 0, 1}) &&
+    alternating.size() == acquisition::maximumFrames, "Variable callback lineage exceeded its memory bound");
+  std::vector<RecordingFrameLineage> native;
+  require(acquisition::appendFrame(native, {1, 0, 4, 0, 4, {1,2,3,4}}) &&
+    acquisition::appendFrame(native, {2, 4, 4, 0, 4, {1,2,3,4}}) && native.size() == 2,
+    "Native conditioning frame means were merged");
+  std::vector<RecordingFrameLineage> edge;
+  require(acquisition::appendFrame(edge, {1, 0, 4, 2, 2}) &&
+    acquisition::appendFrame(edge, {2, 4, 4, 0, 4}) && edge.size() == 2,
+    "Trimmed acquisition edge was merged");
+}
+
 void acquisition_contract_tests(const std::filesystem::path& directory) {
   unsigned serial = 0;
   const auto save = [&](const std::string& json, unsigned channels) {
@@ -81,6 +432,77 @@ void acquisition_contract_tests(const std::filesystem::path& directory) {
     } else { metadata.context.referenceChannels = {0}; metadata.context.surveillanceChannels = {1}; }
     metadata.context.manifoldSha256 = {{"bearing", std::string(64, 'c')}, {"detection", std::string(64, 'd')}};
     metadata.context.configurationSha256 = std::string(64, 'a'); metadata.context.codeSha256 = std::string(64, 'b');
+    // The same float-frame contract serves every receiver; capability strength
+    // still comes from its actual gain/geometry metadata, never compression.
+    {
+      std::vector<RecordingFrameLineage> frames;
+      for (uint64_t index = 0; index < 3; ++index)
+        require(acquisition::appendFrame(frames, {17 + index, 100 + 4 * index, 4, 0, 4}), "Cannot append exact run");
+      const auto runJson = acquisition::serialize(&metadata, receiver, channels, 1000, 100000000,
+        7, 100, 112, true, frames);
+      const auto saveRun = [&](const std::string& value, unsigned blockSize = 4) {
+        const auto name = directory / ("acquisition-run-" + std::to_string(++serial) + ".blah2iq");
+        RecordingWriter writer(name, {channels,1000,100000000,0,"blah2",value});
+        for (unsigned at = 0; at < 12; at += blockSize)
+          writer.append(IqBlock(channels, std::vector<std::complex<float>>(blockSize, {0.125f,-0.5f})));
+        writer.close(); return name;
+      };
+      const auto path = saveRun(runJson);
+      ReplayOptions runOptions{"blah2",receiver,channels,1000,100000000,0};
+      runOptions.expectedRecordingSha256 = hash(path);
+      RecordingReader reader(path, runOptions);
+      require(reader.provenance().frames.size() == 1 && reader.provenance().frames[0].repeat == 3 &&
+        reader.provenance().frames[0].sourceCount == 4 && reader.provenance().exactAcquisition == readback,
+        "Compressed acquisition changed exactness or expanded its bounded metadata");
+      IqBlock data;
+      for (unsigned index = 0; index < 3; ++index)
+        require(reader.read(data) && data[0].size() == 4 && data[0][3] == std::complex<float>(0.125f,-0.5f),
+          "Compressed metadata changed native replay blocks");
+      require(!reader.read(data), "Compressed acquisition replay did not reach EOF");
+      for (const char* repeat : {"0", "2", "4", "18446744073709551615"}) {
+        rapidjson::Document altered; altered.Parse(runJson.c_str());
+        altered["frames"][0]["repeat"].SetString(repeat, altered.GetAllocator());
+        const auto invalid = saveRun(acquisition::encode(altered));
+        rejects([&] { RecordingReader bad(invalid, {"blah2",receiver,channels,1000,100000000,0}); },
+          "Invalid repeated lineage was accepted");
+      }
+      for (const char* field : {"schema", "sequence", "sliceOffset"}) {
+        rapidjson::Document altered; altered.Parse(runJson.c_str());
+        if (std::string(field) == "schema") altered["schema"].SetString("vectorwarp-recording-acquisition-v1");
+        else altered["frames"][0][field].SetString(
+          std::string(field) == "sequence" ? "18446744073709551615" : "1",
+          altered.GetAllocator());
+        const auto invalid = saveRun(acquisition::encode(altered));
+        rejects([&] { RecordingReader bad(invalid, {"blah2",receiver,channels,1000,100000000,0}); },
+          "Frame-run version, overflow or slice violation was accepted");
+      }
+      const auto mismatched = saveRun(runJson, 6);
+      rejects([&] { RecordingReader bad(mismatched, {"blah2",receiver,channels,1000,100000000,0}); },
+        "Frame run did not match stored callback boundaries");
+      // A v2 contract with no repeated entries must still bind the actual
+      // block boundaries; removing repeat must not downgrade validation.
+      for (bool explicitRepeat : {false, true}) {
+        rapidjson::Document singleton; singleton.Parse(runJson.c_str());
+        auto& frame = singleton["frames"][0];
+        frame["sourceCount"].SetString("12"); frame["count"].SetString("12");
+        if (explicitRepeat) frame["repeat"].SetString("1");
+        else frame.RemoveMember("repeat");
+        const auto singleJson = acquisition::encode(singleton);
+        const auto invalid = saveRun(singleJson);
+        rejects([&] { RecordingReader bad(invalid, {"blah2",receiver,channels,1000,100000000,0}); },
+          "Unrepeated v2 lineage bypassed stored callback boundaries");
+        const auto valid = saveRun(singleJson, 12);
+        RecordingReader single(valid, {"blah2",receiver,channels,1000,100000000,0});
+        require(single.provenance().frames.size() == 1 && single.provenance().frames[0].repeat == 1,
+          "Valid unrepeated v2 lineage was rejected");
+        singleton["schema"].SetString("vectorwarp-recording-acquisition-v1");
+        frame.RemoveMember("repeat");
+        const auto legacy = saveRun(acquisition::encode(singleton));
+        RecordingReader compatible(legacy, {"blah2",receiver,channels,1000,100000000,0});
+        require(compatible.provenance().acquisitionIntegrityValid,
+          "Existing v1 lineage semantics changed");
+      }
+    }
     metadata.context.geographicSitesJson = R"({"schema":"vectorwarp-recorded-geographic-sites-v1","provenance":"operator-configured-at-acquisition","rx":{"latitude":40.1,"longitude":-80.2,"altitude":300.0,"site_id":"recorded-rx"},"tx":{"latitude":40.5,"longitude":-80.0,"altitude":450.0},"illuminators":{"lane-a":{"frequencyHz":100000000,"transmitter":{"latitude":40.5,"longitude":-80.0,"altitude":450.0,"site_id":"tower-a"}},"lane-b":{"frequencyHz":101000000,"transmitter":{"latitude":40.6,"longitude":-79.5,"altitude":500.0}}}})";
     const uint64_t first = 9007199254740993ULL;
     const auto json = acquisition::serialize(&metadata, receiver, channels, 1000, 100000000,
@@ -277,6 +699,9 @@ int main() try {
   const auto directory=std::filesystem::path(temporary), path=directory/"fixture.iq";
   auto cleanup=[&] { std::filesystem::remove_all(directory); };
   try {
+    acquisition_run_tests();
+    recording_cache_tests(directory);
+    recording_batch_tests(directory);
     acquisition_contract_tests(directory);
     const uint32_t maxSample=std::numeric_limits<uint32_t>::max();
     require(rspduo_sequence::continues(maxSample,maxSample) &&
@@ -480,10 +905,16 @@ int main() try {
       context.configurationSha256 = std::string(64, 'a'); context.codeSha256 = std::string(64, 'b');
       live.set_recording_context(context);
       const auto recorded=live.open_file();
-      live.record_block({{{1,2},{3,4}},{{5,6},{7,8}}}, live.sample_time_position());
+      const uint64_t callbacks = acquisition::maximumFrames + 1;
+      for (uint64_t index = 0; index < callbacks; ++index) {
+        auto position = live.sample_time_position(); position.nextSample += 2 * index;
+        live.record_block({{{1,2},{3,4}},{{5,6},{7,8}}}, position);
+      }
       live.close_file();
       ReplayOptions qualified{"auto",fixture.first,2,2400000,527000000,0};
       RecordingReader replay(recorded,qualified);
+      require(replay.provenance().frames.size() == 1 && replay.provenance().frames[0].repeat == callbacks,
+        "Manual source lost bounded exact lineage after 4096 callbacks");
       require(std::filesystem::exists(recorded + ".acquisition.json"), "Manual source omitted acquisition manifest");
       auto exact = qualified; exact.requireExactAcquisition = true;
       exact.expectedRecordingSha256 = replay.provenance().recordingSha256;
@@ -530,6 +961,23 @@ int main() try {
       std::filesystem::remove(recorded+".provenance.json");
     }
 
+    for (bool epochChange : {false, true}) {
+      BackendFixtureSource live("Usrp",directory.string(),&save,"{}");
+      RecordingContext context; context.configurationSha256 = std::string(64, 'a');
+      context.codeSha256 = std::string(64, 'b'); live.set_recording_context(context);
+      const auto recorded = live.open_file();
+      auto position = live.sample_time_position();
+      live.record_block({{{1,2}},{{3,4}}},position);
+      ++position.nextSample;
+      if (epochChange) ++position.epoch;
+      else { context.configurationSha256 = std::string(64, 'c'); live.set_recording_context(context); }
+      live.record_block({{{5,6}},{{7,8}}},position);
+      live.close_file();
+      RecordingReader unqualified(recorded,{"blah2","Usrp",2,2400000,527000000,0});
+      require(!unqualified.provenance().acquisitionIntegrityValid && unqualified.provenance().frames.empty(),
+        "Frame-run compression crossed an epoch or settings boundary");
+    }
+
     MockSource unpaired(directory.string(),&save);
     unpaired.open_file();
     unpaired.record_channel(0,0,{{1,1},{2,2}});
@@ -565,6 +1013,7 @@ int main() try {
     const auto transition=segmented.recording_status();
     require(!transition.active && transition.resumePending && transition.samples==1,
       "Qualified epoch rollover did not retain a bounded resume request");
+    segmented.service_recording();
     segmented.record_block({{{5,6}},{{7,8}}});
     const auto resumed=segmented.recording_status();
     require(resumed.active && !resumed.resumePending && resumed.samples==1 &&

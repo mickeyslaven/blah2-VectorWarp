@@ -16,10 +16,96 @@ SDRplay, HackRF, replay). Operating system code may differ only for device and
 GPU transport. Detector, temporal integration, tracker, lineage, statistics,
 and publication semantics must not fork by receiver or OS.
 
+## Pinned effective configuration acceptance
+
+The existing `api/config-manager.js` owns the configured radar-plan projection
+and SHA-256. `api/config-store.js` applies the independently reviewed requirement
+on reads, Settings writes and migrations. Linux receiver startup and macOS setup
+admission consume that same result. No device, OS, backend or direct/channelized
+route may silently disable a configured stage. Native `pipeline::RadarPlan`
+remains the resolved numerical owner; a configuration report does not prove
+native execution, numerical parity or radar outcomes.
+
+Inspect a staged, valid configuration with
+`node api/config-store.js plan CONFIG`. After selecting and qualifying the
+intended behavior, preview its requirement with, for example,
+`node api/config-store.js pin-preview CONFIG temporal_cpis=2 detection=true tracking=true`.
+This command only prints JSON. Review and retain that artifact independently
+of the mutable configuration, and run
+`node api/config-store.js accept CONFIG REQUIREMENT` in deployment acceptance.
+Do not generate the expectation from the deployed configuration during acceptance:
+that would certify the very regression the comparison must detect.
+
+Set `VECTORWARP_REQUIRED_RADAR_PLAN` to the immutable requirement path in both
+the API and processor startup environments. An explicitly required file that is
+missing, malformed or mismatched blocks startup and writes. A neighboring
+`CONFIG.radar-plan.json` is also recognized, but the environment path is required
+when disappearance of that file must fail closed. Existing installations without
+a pin remain usable and are explicitly reported `unpinned`; they have no promoted
+behavior acceptance. Requirements are never created, widened or rewritten by a
+preset, Settings save or migration. A deliberate scientific change requires a new
+reviewed requirement. Backend, scheduling, truth source and transport changes do
+not rewrite scientific intent.
+
+`/api/runtime/plan` distinguishes loaded and saved configuration plans and checks
+both against the current requirement. A hash includes every lane's physical grid,
+mapping, geometry and processing policy. It excludes backend/worker selection,
+ingress naming, output paths, recorder settings and display labels. Required
+feature assertions apply to every enabled lane and catch a missing promotion
+even if someone supplies the hash of a downgraded plan. Calibration selections
+remain conservatively bound by their configured paths; moving a selected file
+requires reviewed repinning and independent content-provenance verification.
+
+This gate preserves the configured temporal depth. It never forces 2/4/8 CPIs
+or widens confirmation. For depth D and M independent confirmations, existing
+admission requires N >= 1 + D*(M-1) and delete >= D-1. Those changes need replay
+evidence for initiation latency, continuity and false tracks. Keep exact package,
+native resolved-plan/execution receipts, same-IQ numerical comparisons, positive
+and negative radar outcomes, and cadence/loss evidence as separate required
+acceptance inputs. Source/configuration checks alone cannot authorize rollout.
+
+### Ordinary native-output acceptance
+
+Ordinary map, detection and tracker products now include `resolved_product_plan`:
+the verbatim serialized identity from the existing native `RadarPlan` owner.
+Direct processing uses `radarPlan.identity()`; channelized frames carry
+`ProductStages::planIdentity()`. No numerical fields are reconstructed by the API.
+This identity is a JSON string, not a reformatted nested object; hash its exact
+UTF-8 contents with SHA-256. Backend and input transport do not change the plan.
+
+For managed runtime acceptance, extend the independently reviewed requirement
+with `resolved_products`, an object mapping each report lane's
+`configured_sha256` to its qualified native identity SHA-256. Equivalent direct
+and channelized lanes use the same key, independent of lane names or hardware.
+Obtain native identities from independent same-IQ qualification before rollout;
+do not self-pin whatever the target happens to report. The native plan binds its
+derived numerical fields; the API compares only directly corresponding stage,
+temporal-depth and tracker M/N/delete settings against configuration intent.
+
+`/api/runtime/plan` additionally exposes the session owner's compact `observation`
+and `execution` assessment. Capture that endpoint response and run
+`node api/config-store.js accept-runtime CONFIG REQUIREMENT REPORT` promptly
+(receipts expire after five seconds). This read-only gate independently rechecks
+raw receipts, exact loaded revision, native pins, stage execution and exact
+half-open source lineage. It never trusts an embedded acceptance boolean. Missing
+identity/pin/stage, stopped or stale input, restart generations, detector warmup
+and mixed-CPI snapshots fail closed. Since streams publish asynchronously, retry
+a bounded fresh observation when products straddle adjacent CPIs; do not loosen
+the lineage check. Unsupported products, including a required bearing product
+not published by a route, cannot qualify that route.
+
+Legacy config-only pins still permit configured-intent admission but cannot pass
+runtime execution acceptance. This is a reporting/capability gate, not a proof
+of detections, track continuity, numerical parity or RF outcomes. Startup checks
+intent before capture; execution qualification necessarily follows startup and
+warmup. Direct native launches must be wrapped by the managed config gate; an
+environment variable alone is not a check inside the native executable.
+
 ## Achieved source contract
 
-Resident ABI 15 now separates canonical input count, reference mapping, and
-surveillance mapping. It accepts array-reference identity mappings and normal,
+Resident ABI 18 adds canonical tracker-frame diagnostics and retains the input
+count, reference mapping, and surveillance mapping introduced in ABI 15.
+It accepts array-reference identity mappings and normal,
 reversed, or sparse dedicated-reference mappings, so paired USRP/B210 and
 RSPduo captures no longer need a receiver-specific DSP route. Channelizer
 outputs now feed bounded persistent resident sessions when admitted: at most
@@ -101,7 +187,7 @@ below do not qualify these newly changed execution paths.
 1. **One algorithm contract.** Parse detector/tracker/integration settings once
    into a receiver-independent contract. Adapt that contract into resident and
    temporary CPU-oracle configuration. No route-specific defaults.
-2. **Generalize resident topology (implemented in ABI 15).** Give the resident ABI separate canonical
+2. **Generalize resident topology (introduced in ABI 15; retained in ABI 18).** Give the resident ABI separate canonical
    input channel count, reference channel mapping, and surveillance channel
    mapping. Size per-channel maps by surveillance count, not input count. Keep
    strict bounds, uniqueness, and mapping validation.
@@ -139,11 +225,12 @@ sample/clock lineage, RF bandwidth and measured geometry/calibration. In
 particular, paired HackRF sample synchronization does not certify coherence.
 
 Explicit remaining software limits must not be described as physics: the
-current resident fusion ABI represents an exact regular polygon, FP64 resident
-shaders are not a macOS backend, and live manifold/diagnostic calibration workers
-still require a lane-bound artifact orchestration extension. Existing per-lane
-calibration files and ordinary coherent processing are not blocked by those
-worker limitations. These boundaries remain fail-closed and visible.
+current resident fusion ABI represents an exact regular polygon and FP64 resident
+shaders are not a macOS backend. Manifold fitting and known-angle diagnostics use
+retained lane-bound evidence offline; release calibration UI reports recorder,
+reference stability and configured static models, not live calibration workers.
+Existing per-lane calibration files and ordinary coherent processing remain
+supported. Backend boundaries remain fail-closed and visible.
 
 ## GPU portability milestone
 

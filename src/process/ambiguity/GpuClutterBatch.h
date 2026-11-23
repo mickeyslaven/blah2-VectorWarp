@@ -3,11 +3,33 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <stdexcept>
 
 namespace blah2 {
+enum class ClutterTwiddlePolicy { lut, native };
+inline ClutterTwiddlePolicy clutterTwiddlePolicy(const char* setting) {
+  if (!setting) return ClutterTwiddlePolicy::lut;
+  if (std::strcmp(setting, "lut") == 0) return ClutterTwiddlePolicy::lut;
+  if (std::strcmp(setting, "native") == 0) return ClutterTwiddlePolicy::native;
+  throw std::invalid_argument("BLAH2_GPU_CLUTTER_TWIDDLES must be lut or native");
+}
+// Keep the default LUT-only: isolated stage timing cannot admit native clutter
+// safely under shared wideband/CAF/temporal contention. Native twiddles require
+// an explicit override until whole-bank performance qualification exists.
+// Numerical qualification and every hard allocation cap remain unchanged.
+template<class Attempt>
+uint32_t selectClutterBatch(uint32_t channels, const char* setting, Attempt attempt) {
+  if (!channels || channels > 8)
+    throw std::invalid_argument("Invalid GPU clutter construction channel count");
+  const auto policy = clutterTwiddlePolicy(setting);
+  for (uint32_t batch = channels; batch > 0; --batch) {
+    if (attempt(batch, policy == ClutterTwiddlePolicy::lut)) return batch;
+  }
+  return 0;
+}
 // Rotate once at the frame boundary, then convert two contiguous iterator
 // ranges. This is the same circular delay as (i-delay)%N, without a division
 // and random-access deque lookup for every sample. INT32_MIN is widened

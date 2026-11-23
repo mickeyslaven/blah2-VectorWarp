@@ -49,7 +49,7 @@ class Evidence:
         self.root, self.values, self.bytes = root, {}, 0
         root.mkdir()
 
-    def put(self, value):
+    def put(self, value, *, retain=True):
         body = canonical(value)
         require(len(body) <= MAX_BYTES, "Measurement exceeds 64 MiB")
         digest = hashlib.sha256(body).hexdigest()
@@ -57,8 +57,10 @@ class Evidence:
             require(self.bytes + len(body) <= 1 << 30, "Retained evidence exceeds 1 GiB")
             with (self.root / (digest + ".json")).open("xb") as output:
                 output.write(body)
-            self.values[digest] = value
+            self.values[digest] = value if retain else None
             self.bytes += len(body)
+        elif retain and self.values[digest] is None:
+            self.values[digest] = value
         return digest
 
 
@@ -199,7 +201,7 @@ def process_contract(run):
     return process
 
 
-def golden_pair(baseline, candidate, pair, plan):
+def golden_pair(baseline, candidate, pair, plan, *, root=Path("."), evidence=None):
     """Full retained public products, not counts or a reimplemented tracker.
 
     Public output is rounded to two decimals: preserve the existing .020001
@@ -220,7 +222,7 @@ def golden_pair(baseline, candidate, pair, plan):
     expected = observations(baseline, "products")
     actual = observations(candidate, "products")
     detectors = observations(candidate, "detector")
-    identities, counts = {}, {"frames": 0, "detections": 0, "operationalTrackFrames": 0}
+    identities, map_evidence, counts = {}, set(), {"frames": 0, "detections": 0, "operationalTrackFrames": 0}
     states, lifecycle, previous = set(), [], {}
     mode = candidate["config"]["process"]["performance"]["acceleration"]
     require(mode in ("cpu", "gpu", "gpu-resident"), "Golden execution requires an explicit backend")
@@ -262,7 +264,27 @@ def golden_pair(baseline, candidate, pair, plan):
                     else:
                         require(execution.get("cpuExecuted") is True, "Golden CPU execution is absent")
             for name in ("map", "detections", "tracks"):
-                a, b = corpus.semantic(first[name]), corpus.semantic(second[name])
+                products = [first[name], second[name]]
+                if name == "map":
+                    products = [dict(item) for item in products]
+                    for item in products:
+                        require(not any(field in item for field in
+                            ("presentation_only", "presentationStride", "presentation_precision_db", "data_omitted")),
+                            "Golden replay requires complete native maps, not presentation or omitted data")
+                        if "dataArtifact" in item:
+                            require("data" not in item, "Golden map has ambiguous inline and retained data")
+                            reference = item.pop("dataArtifact")
+                            item["data"] = pinned(reference, root)
+                            map_evidence.add(reference["sha256"])
+                            if evidence:
+                                require(evidence.put(item["data"], retain=False) == reference["sha256"],
+                                        "Golden map shard is not canonical")
+                        require((item.get("nRows"), item.get("nCols")) ==
+                            (actual[key]["rows"], actual[key]["columns"]) and
+                            isinstance(item.get("data"), list) and len(item["data"]) == item["nRows"] and
+                            all(isinstance(row, list) and len(row) == item["nCols"] for row in item["data"]),
+                            "Golden map lacks complete native cell coverage")
+                a, b = (corpus.semantic(item) for item in products)
                 for item in (a, b):
                     if isinstance(item.get("detector_integration"), dict):
                         item["detector_integration"].pop("backend", None)
@@ -299,6 +321,7 @@ def golden_pair(baseline, candidate, pair, plan):
         require(field in counts and type(minimum) is int and minimum >= 0 and counts[field] >= minimum,
                 "Golden replay lacks required positive/continuity exposure")
     return {"plans": identities, "counts": counts, "trackStates": sorted(states), "lifecycle": lifecycle,
+            "mapEvidenceSha256": sorted(map_evidence),
             "recordingSha256": candidate["acquisition"]["recording_sha256"], "mode": mode,
             "detectionDelayUnit": "km", "trackerDelayUnit": "km", "dopplerUnit": "Hz",
             "tolerance": {"serializedAbsolute": corpus.parity.ABS_TOLERANCE,
@@ -371,8 +394,9 @@ def capture_run(plan, name, root, output):
     timeout = spec.get("timeoutSeconds", 180)
     require(type(timeout) in (int, float) and 0 < timeout <= 1800, "Golden capture deadline exceeds 30 minutes")
     corpus.replay.MAX_RETAINED_OUTPUT = MAX_BYTES
+    map_evidence = corpus.MapEvidenceStream(output.with_name(output.name + ".maps"))
     run = corpus.run_case(binary, device, {"variant": {"lanes": lanes}, "mode": mode, "noGap": True},
-        recording, {}, timeout=timeout, configuration=config)
+        recording, {}, timeout=timeout, configuration=config, map_evidence=map_evidence)
     require(calibrations == {name: {"sha256": corpus.parity.digest(path)} for name, path in paths.items()},
             "Calibration changed during golden capture")
     run.update(sourceSha=plan["sourceSha"], artifacts=plan["artifacts"], acquisition=acquisition,
@@ -862,7 +886,8 @@ def produce(plan, root, output, policy_bytes, *, golden_only=False):
                     pair.setdefault(key, {})[field] = max(pair.get(key, {}).get(field, 0), value) if key == "minimumCounts" else value
             pair["requiredTrackStates"] = sorted(set(pair.get("requiredTrackStates", [])) |
                                                   set(feature.get("requiredTrackStates", [])))
-        measured = golden_pair(runs[pair["baseline"]], runs[pair["candidate"]], pair, plan)
+        measured = golden_pair(runs[pair["baseline"]], runs[pair["candidate"]], pair, plan,
+                               root=root, evidence=evidence)
         measured["id"] = pair["id"]
         measured["evidenceSha256"] = evidence.put({"pair": pair, "baseline": runs[pair["baseline"]],
             "candidate": runs[pair["candidate"]]})

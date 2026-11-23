@@ -175,9 +175,21 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     Math.max(pollMs, Math.min(60000, config.truth.adsb.exchange_poll_interval * 1000)) :
     Math.max(pollMs, 2000);
   const exchangeSlots = slots.filter(slot => slot.state.kind === 'exchange');
-  let exchangeCursor = 0;
-  let nextExchangePollAt = 0;
-  let lastExchangeSource = null;
+  // Each configured provider owns its interval. Sharing one interval across N
+  // providers made strict evaluation lose every source between round-robin
+  // turns whenever N * interval exceeded max_position_age. Presentation gets
+  // a small I/O margin, while scoring retains the configured strict age.
+  const presentationAgeSeconds = Math.min(30, Math.max(geometry.maxAge,
+    (exchangePollMs + sourceTimeoutMs) / 1000 + pollMs / 1000 + 1));
+  function sourceRetryInterval(slot) {
+    const interval = slot.state.kind === 'exchange' ? exchangePollMs : pollMs;
+    // An initially unavailable configured source must still recover at the
+    // declared cadence. Exponential backoff applies after a validated snapshot
+    // exists, where that snapshot can safely bridge transport failures.
+    const failures = slot.lastValue ?
+      Math.max(0, Number(slot.state.consecutive_failures) || 0) : 0;
+    return interval * Math.min(8, 2 ** failures);
+  }
   const cpiMs = Number.isFinite(config.process?.data?.cpi) ?
     Math.max(1, config.process.data.cpi * 1000) : 500;
   const associationLagMs = Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
@@ -215,9 +227,13 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     try {
       const selection = await resolveSource(slot);
       let data;
+      // Transport errors retain the last validated frame and use exponential
+      // retry backoff. Only a successfully received but invalid payload may
+      // clear that frame; treating timeouts/HTTP failures as invalid snapshots
+      // erased good truth and defeated the backoff cadence.
+      const payload = await selection.read();
       try {
-        data = validateAircraftData(await selection.read(),
-          {now, maxAgeSeconds: geometry.maxAge});
+        data = validateAircraftData(payload, {now, maxAgeSeconds: geometry.maxAge});
       } catch (error) {
         // A transport failure may temporarily reuse a prior validated frame;
         // invalid or stale payloads must never make that fallback look healthy.
@@ -267,8 +283,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   }
   async function readSourcePaced(slot) {
     const interval = slot.state.kind === 'exchange' ? exchangePollMs : pollMs;
-    const failures = Math.max(0, Number(slot.state.consecutive_failures) || 0);
-    const retryInterval = interval * Math.min(8, 2 ** failures);
+    const retryInterval = sourceRetryInterval(slot);
     if (Number.isFinite(slot.retryAfterAt) && now() < slot.retryAfterAt) {
       if (slot.lastValue) return slot.lastValue;
       throw new Error('ADS-B source Retry-After backoff active');
@@ -295,32 +310,20 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       throw error;
     }
   }
-  function nextExchangeSlot() {
-    if (!exchangeSlots.length || now() < nextExchangePollAt) return null;
-    for (let offset = 0; offset < exchangeSlots.length; offset += 1) {
-      const index = (exchangeCursor + offset) % exchangeSlots.length;
-      const slot = exchangeSlots[index];
-      if (Number.isFinite(slot.retryAfterAt) && now() < slot.retryAfterAt) continue;
-      exchangeCursor = (index + 1) % exchangeSlots.length;
-      nextExchangePollAt = now() + exchangePollMs;
-      lastExchangeSource = slot.configured;
-      return slot;
-    }
-    nextExchangePollAt = now() + Math.min(exchangePollMs, 1000);
-    return null;
-  }
   function providerPoolStatus() {
     return {enabled: exchangeSlots.length > 0, sources: exchangeSlots.length,
-      strategy: 'round_robin', poll_interval_ms: exchangePollMs,
-      last_source: lastExchangeSource, next_poll_at: nextExchangePollAt || null};
+      strategy: 'independent_per_provider', poll_interval_ms: exchangePollMs,
+      next_poll_at: exchangeSlots.length ? Math.min(...exchangeSlots.map(slot =>
+        (slot.lastAttemptAt || 0) + sourceRetryInterval(slot))) : null};
   }
   async function rawSnapshots() {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    const selectedExchange = nextExchangeSlot();
-    const refreshSlots = slots.filter(slot => slot.state.kind !== 'exchange');
-    if (selectedExchange) refreshSlots.push(selectedExchange);
+    // readSourcePaced independently reuses or backs off each source. Calling
+    // every slot here does not multiply network reads between intervals, but it
+    // prevents one slow/failed provider from stealing another provider's turn.
+    const refreshSlots = slots;
     entry.promise = Promise.allSettled(refreshSlots.map(readSourcePaced)).then(results => {
       const healthy = slots.map(slot => slot.lastValue).filter(Boolean);
       if (!healthy.length) throw new Error(`All ADS-B sources failed: ${results.map((result, index) =>
@@ -402,7 +405,9 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     // Accept any observation already allowed by max_position_age and project it
     // to now. This avoids the delayed-scoring request time rejecting otherwise
     // fresh feeder snapshots and making every aircraft flash on and off.
-    const data = await rawAircraft(undefined, {maxObservationOffsetSeconds: geometry.maxAge},
+    const data = await rawAircraft(undefined, {
+      maxPositionAgeSeconds: presentationAgeSeconds,
+      maxObservationOffsetSeconds: presentationAgeSeconds},
       presentationSnapshots);
     if (kind === 'aircraft') return data;
     return presentationGeometry.update(data).data;
@@ -412,8 +417,9 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
     if (preview) throw new Error('Preview: no live ADS-B connection');
     if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
-    const data = await rawAircraft(targetAtMs,
-      {maxObservationOffsetSeconds: geometry.maxAge}, presentationSnapshots);
+    const data = await rawAircraft(targetAtMs, {
+      maxPositionAgeSeconds: presentationAgeSeconds,
+      maxObservationOffsetSeconds: presentationAgeSeconds}, presentationSnapshots);
     if (kind === 'aircraft') return data;
     return presentationGeometry.update(data).data;
   }
@@ -450,6 +456,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const degraded = online && sources.some(source => source.healthy === false);
     return {enabled: true, online, degraded, source: sources[0], sources,
       fusion: fusionState, provider_pool: providerPoolStatus(),
+      presentation_max_position_age_s: presentationAgeSeconds,
       association_lag_cpis: associationLagMs / cpiMs,
       association_lag_ms: associationLagMs,
       aircraft: {available: online, ...(!online ? {message: 'No healthy ADS-B source'} : {})},

@@ -55,11 +55,13 @@ private:
   // even when recording is disabled so adaptive DSP never spans incompatible
   // hardware/sample epochs.
   std::atomic<uint64_t> processingEpoch{0};
+  std::mutex recordingControlMutex;
   mutable std::mutex recordingMutex;
   std::atomic<bool> recordingActive{false};
   std::atomic<bool> recordingResumePending{false};
+  bool recordingResumePrepared = false;
   std::unique_ptr<blah2::RecordingWriter> recordingWriter;
-  std::string recordingFile, recordingError;
+  std::string recordingFile, recordingError, recordingFailureProvenance;
   uint64_t recordedSamples = 0;
   std::vector<std::deque<std::complex<float>>> pendingChannels;
   std::vector<uint64_t> pendingStarts;
@@ -78,11 +80,14 @@ private:
   bool manualRecordingPositionAvailable = false, manualRecordingBounded = true;
   std::shared_ptr<const blah2::RecordingBlockMetadata> recording_block_metadata(uint64_t epoch);
   std::string open_file_locked(const SampleTimePosition* startPosition = nullptr);
+  void prepare_recording_locked();
+  bool activate_recording_locked();
   void record_block_locked(const blah2::IqBlock& samples,
     const SampleTimePosition* startPosition);
   void recording_failed(const std::string& error);
   void flush_recording_locked();
   void write_recording_provenance_locked(bool complete);
+  std::string recording_provenance_locked(bool complete) const;
 
 public:
 
@@ -144,13 +149,15 @@ public:
   virtual void request_clip(const blah2::IqClipRequest& request);
   virtual blah2::IqClipStatus clip_status() const;
   RecordingStatus recording_status() const;
+  // Capture's existing control loop prepares a successor outside the ingress
+  // state lock. Callbacks only activate it and bind their actual first sample.
+  void service_recording();
   uint64_t processing_epoch() const { return processingEpoch.load(std::memory_order_acquire); }
   // Preserve a partial file for diagnosis, but never mark it complete after a
   // receiver reports a gap, reset, overrun, or malformed callback.
   void recording_discontinuity(const std::string& error);
-  // Close only the ambiguous epoch, then lazily start a new file on the first
-  // qualified post-boundary block. This preserves receiver operation without
-  // ever joining samples from different hardware-setting epochs.
+  // Abort only the ambiguous epoch. The control loop prepares its successor;
+  // the first subsequently accepted block binds the new acquisition position.
   void recording_epoch_discontinuity(const std::string& error,
     bool advanceProcessingEpoch=true);
   void advance_processing_epoch() noexcept {

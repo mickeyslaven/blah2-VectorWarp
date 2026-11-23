@@ -198,6 +198,57 @@ public:
     doppler_.clear();
   }
 
+  struct PathAudit {
+    std::array<double, 8> samples{};
+    std::array<uint64_t, 8> cells{};
+    double mean = -1;
+    bool valid = false;
+  };
+  // Read-only, bounded fail-path oracle. The reader supplies exact input power
+  // and the one-based beam (zero means unknown), not display-map magnitudes.
+  template<class Reader>
+  PathAudit auditPathWith(uint64_t cell, uint32_t depth, int dr, int dc,
+    bool baseline, Reader&& read) const
+  {
+    PathAudit result;
+    if ((depth != 2 && depth != 4 && depth != 8) || depth > frames_.size() ||
+        cell >= uint64_t(rows_) * columns_ || dr < -int(config_.dopplerMotionBins) ||
+        dr > int(config_.dopplerMotionBins) || dc < -int(config_.delayMotionBins) ||
+        dc > int(config_.delayMotionBins) || (baseline && (depth != 2 || dr || dc)))
+      return result;
+    const uint32_t row = cell / columns_, column = cell % columns_;
+    const auto newest = read(0, cell);
+    double sum = 0;
+    for (uint32_t age = 0; age < depth; ++age) {
+      const int rr = int(row) - dr * int(age);
+      if (rr < 0 || rr >= int(rows_)) return result;
+      const int cc = track_before_detect::delayPathColumn(int(column), dc, age,
+        baseline ? 0 : config_.delayDriftPerHz, doppler_[row], doppler_[rr]);
+      if (cc < 0 || cc >= int(columns_)) return result;
+      const uint64_t source = uint64_t(rr) * columns_ + uint32_t(cc);
+      const auto sample = read(age, source);
+      if (!std::isfinite(sample.first) || sample.first < 0) return result;
+      if (config_.beamTolerance != UINT32_MAX && newest.second && sample.second) {
+        if (newest.second > config_.beamCount || sample.second > config_.beamCount) return result;
+        const uint32_t delta = newest.second > sample.second ?
+          newest.second - sample.second : sample.second - newest.second;
+        if (std::min(delta, config_.beamCount - delta) > config_.beamTolerance) return result;
+      }
+      result.cells[age] = source; result.samples[age] = sample.first;
+      sum += sample.first;
+    }
+    result.valid = std::isfinite(sum);
+    if (result.valid) result.mean = sum / depth;
+    return result;
+  }
+  PathAudit auditPath(uint64_t cell, uint32_t depth, int dr, int dc, bool baseline) const
+  {
+    return auditPathWith(cell, depth, dr, dc, baseline, [&](uint32_t age, uint64_t source) {
+      const auto& frame = frames_[frames_.size() - 1 - age];
+      return std::make_pair(frame.power[source], frame.beams.empty() ? 0u : frame.beams[source]);
+    });
+  }
+
   Result process(Map<std::complex<double>>& map, uint64_t epoch,
     uint64_t sequence, const EvidenceWorkBudget* budget = nullptr,
     const std::vector<uint32_t>* beams = nullptr)
@@ -288,8 +339,76 @@ public:
     using Metrics = Map<std::complex<double>>::MetricAccumulator;
     Metrics selectedMetrics;
     std::array<Metrics, 4> bankMetrics{};
-    for (uint32_t row = 0; row < rows; ++row)
+    const bool parallel = budget && budget->executor;
+    // Workers own disjoint rows. Allocate validity before dispatch so a first
+    // invalid path cannot resize shared storage; restore the empty/all-valid
+    // representation after joining. Metrics still reduce in row-major order.
+    if (parallel)
+      for (auto& bank : result.banks)
+        if (bank.ready) bank.validCells.resize(uint64_t(rows) * columns, 1);
+    const auto compute = [&](uint32_t begin, uint32_t end, double* levels) {
+    // Keep at most one bounded sum row per worker. Each path visits contiguous
+    // columns, but every cell adds ages and considers paths in scalar order.
+    // Beam gates retain the scalar path because their valid sets have holes.
+    const bool pathMajor = !beamGated && result.banks[1].ready &&
+      uint64_t(columns) * sizeof(double) <= temporalTileScratchBytes / 8;
+    std::vector<double> pathSums(pathMajor ? columns : 0);
+    for (uint32_t row = begin; row < end; ++row)
     {
+      // The Q16 displacement depends on row/path/age, not delay column or
+      // residual delay motion. Compute it once with the scalar oracle. Keep
+      // this row-local and bounded (33 paths * 8 ages), with no cached epoch
+      // state and no change to power summation order or path tie-breaking.
+      std::array<std::array<int, 8>, 33> delayOffsets{};
+      if (result.banks[1].ready)
+        for (int dr = -int(config_.dopplerMotionBins);
+             dr <= int(config_.dopplerMotionBins); ++dr)
+          for (uint32_t age = 0; age < readyDepth; ++age) {
+            const int rr = int(row) - dr * int(age);
+            if (rr < 0 || rr >= int(rows)) break;
+            delayOffsets[dr + int(config_.dopplerMotionBins)][age] =
+              track_before_detect::delayPathColumn(0, 0, age,
+                config_.delayDriftPerHz, doppler_[row], doppler_[rr]);
+          }
+      if (pathMajor) {
+        const uint64_t rowCell = uint64_t(row) * columns;
+        for (std::size_t bank = 1; bank < result.banks.size(); ++bank)
+          if (result.banks[bank].ready)
+            std::fill_n(result.banks[bank].detectorPower.data() + rowCell, columns, -1.);
+        for (int dr = -int(config_.dopplerMotionBins);
+             dr <= int(config_.dopplerMotionBins); ++dr)
+          for (int dc = -int(config_.delayMotionBins);
+               dc <= int(config_.delayMotionBins); ++dc) {
+            std::fill(pathSums.begin(), pathSums.end(), 0.);
+            int first = 0, last = int(columns);
+            for (uint32_t age = 0; age < readyDepth; ++age) {
+              if (budget) budget->check();
+              const int rr = int(row) - dr * int(age);
+              if (rr < 0 || rr >= int(rows)) break;
+              const int shift = -dc * int(age) +
+                delayOffsets[dr + int(config_.dopplerMotionBins)][age];
+              first = std::max(first, -shift);
+              last = std::min(last, int(columns) - shift);
+              if (first >= last) break;
+              const auto* source = powerByAge[age] + uint64_t(rr) * columns;
+              for (int column = first; column < last; ++column)
+                pathSums[column] += source[column + shift];
+              const uint32_t depth = age + 1;
+              if (depth == 2 || depth == 4 || depth == 8) {
+                auto& output = result.banks[depth == 2 ? 1 : depth == 4 ? 2 : 3];
+                auto* best = output.detectorPower.data() + rowCell;
+                auto* motion = output.motion.data() + rowCell;
+                for (int column = first; column < last; ++column) {
+                  const double mean = pathSums[column] / depth;
+                  if (track_before_detect::temporalPathBetter(mean, best[column], false)) {
+                    best[column] = mean;
+                    motion[column] = {int8_t(dc), int8_t(dr)};
+                  }
+                }
+              }
+            }
+          }
+      }
       for (uint32_t column = 0; column < columns; ++column)
       {
         const uint64_t cell = uint64_t(row) * columns + column;
@@ -306,7 +425,7 @@ public:
           write(result.banks[0], cell, row, column, baseline,
             {});
           bankLevels[0] = Metrics::level(result.banks[0].map->data[row][column]);
-          if (valid) bankMetrics[0].addLevel(bankLevels[0]);
+          if (valid) { if (!levels) bankMetrics[0].addLevel(bankLevels[0]); }
           else {
             auto& validity = result.banks[0].validCells;
             if (validity.empty()) validity.resize(uint64_t(rows) * columns, 1);
@@ -321,7 +440,13 @@ public:
         // that would change rounding and strict-threshold decisions.
         std::array<double, 3> bestPower{-1, -1, -1};
         std::array<EvidenceMotion, 3> bestMotion{};
-        if (result.banks[1].ready)
+        if (pathMajor) {
+          for (std::size_t bank = 1; bank < result.banks.size(); ++bank)
+            if (result.banks[bank].ready) {
+              bestPower[bank - 1] = result.banks[bank].detectorPower[cell];
+              bestMotion[bank - 1] = result.banks[bank].motion[cell];
+            }
+        } else if (result.banks[1].ready)
           for (int dr = -int(config_.dopplerMotionBins);
                dr <= int(config_.dopplerMotionBins); ++dr)
             for (int dc = -int(config_.delayMotionBins);
@@ -332,8 +457,8 @@ public:
               {
                 const int rr = int(row) - dr * int(age);
                 if (rr < 0 || rr >= int(rows)) break;
-                const int cc = track_before_detect::delayPathColumn(int(column),
-                  dc, age, config_.delayDriftPerHz, doppler_[row], doppler_[rr]);
+                const int cc = int(column) - dc * int(age) +
+                  delayOffsets[dr + int(config_.dopplerMotionBins)][age];
                 if (cc < 0 || cc >= int(columns)) break;
                 if (!compatible(cell, age, uint64_t(rr) * columns + uint32_t(cc))) break;
                 sum += powerByAge[age][uint64_t(rr) * columns + uint32_t(cc)];
@@ -367,7 +492,7 @@ public:
           write(output, cell, row, column, best, bestMotion[bank - 1]);
           if (output.validCells.empty() || output.validCells[cell]) {
             bankLevels[bank] = Metrics::level(output.map->data[row][column]);
-            bankMetrics[bank].addLevel(bankLevels[bank]);
+            if (!levels) bankMetrics[bank].addLevel(bankLevels[bank]);
           }
           if (best > selected)
           {
@@ -380,10 +505,33 @@ public:
         result.selectedBank[cell] = selectedBank;
         // Selection copies one complete bank cell, so its level is exactly
         // that bank's level. Each map still reduces in row-major order.
-        selectedMetrics.addLevel(selectedBank ? bankLevels[selectedBank - 1] :
-          Metrics::level(result.map->data[row][column]));
+        const double selectedLevel = selectedBank ? bankLevels[selectedBank - 1] :
+          Metrics::level(result.map->data[row][column]);
+        if (levels) {
+          const uint64_t at = (uint64_t(row - begin) * columns + column) * 5;
+          levels[at] = selectedLevel;
+          for (std::size_t bank = 0; bank < bankLevels.size(); ++bank)
+            levels[at + bank + 1] = bankLevels[bank];
+        } else selectedMetrics.addLevel(selectedLevel);
       }
     }
+    };
+    if (parallel)
+      orderedRowTiles(rows, columns, 5, *budget, compute,
+        [&](uint32_t begin, uint32_t end, const double* levels) {
+          for (uint64_t offset = 0; offset < uint64_t(end - begin) * columns; ++offset) {
+            selectedMetrics.addLevel(levels[5 * offset]);
+            const uint64_t cell = uint64_t(begin) * columns + offset;
+            for (std::size_t bank = 0; bank < result.banks.size(); ++bank)
+              if (result.banks[bank].ready && result.banks[bank].validCells[cell])
+                bankMetrics[bank].addLevel(levels[5 * offset + bank + 1]);
+          }
+        });
+    else compute(0, rows, nullptr);
+    if (parallel)
+      for (auto& bank : result.banks)
+        if (std::all_of(bank.validCells.begin(), bank.validCells.end(),
+            [](uint8_t valid) { return valid != 0; })) bank.validCells.clear();
     selectedMetrics.apply(*result.map);
     for (std::size_t bank = 0; bank < result.banks.size(); ++bank)
       if (result.banks[bank].ready) bankMetrics[bank].apply(*result.banks[bank].map);

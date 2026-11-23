@@ -1,12 +1,24 @@
 // Opt-in tiny physical Vulkan test of the actual resident reference shaders.
 // No capture, radar, FFT plans, service access or software-device fallback.
 #include "../../core/VulkanBackend.private.cpp"
+#include "process/ambiguity/GpuResidentProof.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include <random>
 
 namespace {
 void require(bool condition, const char* reason) {
   if (!condition) throw std::runtime_error(reason);
+}
+void checkScaleAwareOracle() {
+  const std::complex<double> expected(7458.767, -3112.25);
+  const std::complex<double> actual(expected.real() + 1.875e-12, expected.imag());
+  require(std::abs(actual-expected) > 1e-12,
+    "High-amplitude fixture did not exceed the retired absolute tolerance");
+  require(::blah2::resident::referenceOracleClose(actual, expected),
+    "Scale-aware reference oracle rejected valid FP64 reduction-order error");
+  require(!::blah2::resident::referenceOracleClose(
+    {expected.real() + 1e-7, expected.imag()}, expected),
+    "Scale-aware reference oracle accepted material reference error");
 }
 void run(blah2::Context& context, uint32_t samples, uint32_t channels) {
   using namespace blah2;
@@ -115,7 +127,8 @@ void run(blah2::Context& context, uint32_t samples, uint32_t channels) {
     for (uint32_t n = 0; n < samples; ++n) {
       const double error = std::abs(actual[n] - expected->view_data()[n]);
       maxError = std::max(maxError, error);
-      require(std::isfinite(error) && error < 1e-12, "Resident reference oracle rejected frame");
+      require(::blah2::resident::referenceOracleClose(actual[n], expected->view_data()[n]),
+        "Resident reference oracle rejected frame");
     }
     const auto& metrics = cpu.get_metrics();
     if (scaled) {
@@ -148,6 +161,7 @@ void run(blah2::Context& context, uint32_t samples, uint32_t channels) {
 }
 int main() {
   try {
+    checkScaleAwareOracle();
     auto instance = std::make_shared<blah2::Instance>();
     const auto candidates = blah2::enumerate(*instance);
     require(!candidates.empty(), "No physical Vulkan device available");

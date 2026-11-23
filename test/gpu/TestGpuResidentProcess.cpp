@@ -1,4 +1,5 @@
 #include "GpuResidentWire.h"
+#include "GpuResidentBackend.h"
 #include "GpuResidentQualification.h"
 #include "CpuEvidenceDouble.h"
 #include "ResidentReplayFixture.h"
@@ -381,7 +382,7 @@ void startupQualification(const std::string&exe){
    auto changed=session(exe,mutation);check(changed->qualificationIdentity()!=identity,
     "Changed module/driver retained private qualification identity");changed.reset();reaped();
   }
-  reject([&]{session(exe,"image-absent");},"Legacy control without image hash admitted ABI17");reaped();
+  reject([&]{session(exe,"image-absent");},"Legacy control without image hash admitted ABI18");reaped();
   setenv("VECTORWARP_TEST_RESIDENT_MODE","normal",1);
   auto config=configuration();++config.reference.analysisInterval;
   blah2::GpuProcessOptions options;options.executable=exe;options.startupMs=2000;options.frameMs=2000;
@@ -415,9 +416,39 @@ void failure(const std::string&exe,const char*mode){
 }
 }
 int main(int argc,char**argv)try{
+ if(argc==2&&std::strcmp(argv[1],"--temporal-v1")==0){
+  class TemporalDouble final:public blah2::temporal_gpu::Backend {
+   uint32_t count_,depth_,available_=0;
+  public:
+   explicit TemporalDouble(const blah2::temporal_gpu::Config& c):count_(uint32_t(c.delayAxis.size()*c.dopplerAxis.size())),depth_(c.detector.integrationCpis){}
+   void reset()override{available_=0;}
+   void process(const std::complex<double>* input,blah2::temporal_gpu::Output& output)override{
+    if(input[0].real()<0)throw std::runtime_error("injected temporal rejection");
+    output.metrics.available=available_=std::min(available_+1,depth_);output.metrics.count=0;
+    for(uint32_t i=0;i<count_;++i)output.display[i]=input[i].real();
+   }
+  };
+  return blah2::temporal_gpu::runWorker([](const auto& c){return std::make_unique<TemporalDouble>(c);});
+ }
  if(argc==2&&std::strcmp(argv[1],"--resident-v5")==0)return runWorker([](const Config&c,const Mapping&m){return std::make_unique<Double>(c,m);});
  setenv("BLAH2_REPLAY_GPU_QUALIFICATION","untrusted-inherited-recipe",1);
  check(argc==1,"Unexpected CPU process fixture argument");const std::string exe=argv[0];
+ {
+  blah2::temporal_gpu::Config config;config.sampleRate=6144000;config.device="cpu-test-double";
+  config.detector.enabled=true;config.detector.guard=2;config.detector.train=6;config.detector.pfa=1e-6;
+  config.detector.centroidDopplerResolution=2;config.detector.integrationCpis=8;
+  for(int i=0;i<1261;++i)config.delayAxis.push_back(i-31);
+  config.dopplerAxis={-2,0,2};
+  blah2::GpuProcessOptions options;options.executable=exe;options.startupMs=2000;options.frameMs=150;
+  auto temporal=blah2::temporal_gpu::createProcess(config,options);
+  std::fill_n(temporal->input(),config.delayAxis.size()*config.dopplerAxis.size(),std::complex<double>{7,0});
+  for(uint64_t i=1;i<=9;++i){const auto& out=temporal->process(i);
+   check(out.metrics.available==std::min(uint64_t(8),i)&&out.display[1260]==7,"Temporal map transport/warmup differs");}
+  temporal->reset();check(temporal->process(10).metrics.available==1,"Temporal reset retained history");
+  reject([&]{temporal->process(10);},"Temporal duplicate sequence admitted");
+  temporal->input()[0]={-1,0};reject([&]{temporal->process(11);},"Temporal numeric rejection accepted");
+  reject([&]{temporal->input();},"Failed temporal worker retained input");temporal.reset();reaped();
+ }
  worker_isolation_fixture::verify([&](bool absent){
   blah2::GpuProcessOptions options;options.executable=absent?exe+".absent":exe;
   options.startupMs=2000;options.frameMs=150;

@@ -307,15 +307,26 @@ esac
         self.assertNotIn('start vectorwarp-api.service', self.log.read_text())
         self.assertNotIn('stop vectorwarp-receiver.service', self.log.read_text())
 
-    def test_stopped_api_and_processor_remain_stopped_after_upgrade(self):
+    def test_upgrade_restores_only_previously_active_api_and_helpers(self):
         post = self.script('packaging/activate-upgrade')
-        self.state.write_text('api=0\nprocessor=0\nsocket=1\nbroker=0\n')
-        self.state.chmod(0o600)
-        result = self.call(post)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('start vectorwarp-receiver.socket', self.log.read_text())
-        self.assertNotIn('start vectorwarp-api.service', self.log.read_text())
-        self.assertNotIn('start vectorwarp-processor.service', self.log.read_text())
+        # Retain web repair without reviving the old unconditional API enable:
+        # stopped web/radar and boot policy are operator intent, not failures.
+        for api in (0, 1):
+            for socket, broker in ((0, 0), (1, 0), (0, 1), (1, 1)):
+                with self.subTest(api=api, socket=socket, broker=broker):
+                    self.log.unlink(missing_ok=True)
+                    self.state.write_text(f'api={api}\nprocessor=0\nsocket={socket}\nbroker={broker}\n')
+                    self.state.chmod(0o600)
+                    result = self.call(post)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    calls = self.log.read_text().splitlines()
+                    self.assertEqual([call for call in calls if call.startswith(('start ', 'enable '))],
+                                     [f'start {unit}' for active, unit in (
+                                         (socket, 'vectorwarp-receiver.socket'),
+                                         (broker, 'vectorwarp-receiver.service'),
+                                         (api, 'vectorwarp-api.service')) if active])
+                    self.assertFalse(self.state.exists())
+                    self.assertFalse((self.base / 'preserve-config.env').exists())
 
     def test_postinst_consumed_state_never_replays_activation(self):
         helper = self.tools / 'activate-upgrade'

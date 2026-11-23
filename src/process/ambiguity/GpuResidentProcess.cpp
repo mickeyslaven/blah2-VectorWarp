@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 #include "GpuResidentWire.h"
+#include "GpuResidentBackend.h"
 #include "GpuResidentProof.h"
 #include "capture/Sha256.h"
 #include "GpuArtifactBinding.h"
@@ -134,7 +135,8 @@ class Process final:public Session {
   "Resident acknowledged temporal readiness/device history differ");
  if(v.cfar.data)require(v.cfar.size==proof.postprocessStatus[16],"Resident CFAR diagnostic union/status differ");
  if(v.centroid.data)require(v.centroid.size==proof.postprocessStatus[17],"Resident centroid diagnostic union/status differ");
- if(config_.tracker.enabled)require(v.trackerCheckpoint.size==proof.trackerStatus[24]&&v.trackerNoOp==(proof.trackerStatus[2]==1),"Resident tracker result/status differs");}v.delayKm={delayKm_.data(),delayKm_.size()};
+ if(config_.tracker.enabled){require(v.trackerCheckpoint.size==proof.trackerStatus[24]&&v.trackerNoOp==(proof.trackerStatus[2]==1),"Resident tracker result/status differs");
+  v.trackerDiagnostics=proof.trackerDiagnostics;}}v.delayKm={delayKm_.data(),delayKm_.size()};
  return v;}
  template<class F>decltype(auto) guarded(F&& f){try{return f();}catch(...){stop();
  throw;}}
@@ -407,3 +409,133 @@ int runWorker(Factory create){
  return 1;}
 }
 } // namespace blah2::resident
+
+// Map-only capability shares the canonical worker lifetime/isolation owner,
+// but has its own protocol and never reinterprets a resident IQ mapping.
+namespace blah2::temporal_gpu {
+namespace {
+using Clock=std::chrono::steady_clock;
+struct Message {
+ uint32_t tag=protocol,op=0;
+ uint64_t nonce=0,sequence=0;
+ Metrics metrics{};
+ char reason[256]{};
+};
+void sendMessage(int fd,const Message& message){
+ const auto* p=reinterpret_cast<const uint8_t*>(&message);size_t left=sizeof(message);
+ while(left){const auto n=send(fd,p,left,MSG_NOSIGNAL|MSG_DONTWAIT);
+  if(n<0&&errno==EINTR)continue;
+  if(n<=0)throw std::runtime_error("Temporal GPU worker send failed");
+  p+=n;left-=size_t(n);
+ }
+}
+Message receiveMessage(int fd,Clock::time_point deadline){
+ Message message{};auto* p=reinterpret_cast<uint8_t*>(&message);size_t left=sizeof(message);
+ while(left){gpu_receive_deadline::waitReadable(fd,deadline,"Temporal GPU worker deadline exceeded");
+  const auto n=recv(fd,p,left,MSG_DONTWAIT);
+  if(n<0&&(errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK))continue;
+  if(n<=0)throw std::runtime_error("Temporal GPU worker stopped");
+  p+=n;left-=size_t(n);
+ }
+ if(message.tag!=protocol)throw std::runtime_error("Temporal GPU protocol mismatch");
+ return message;
+}
+class Process final:public Session {
+ Layout layout_;
+ GpuProcessOptions options_;
+ std::unique_ptr<gpu_worker_transport::Child> child_;
+ uint8_t* data_=nullptr;
+ uint64_t nonce_=0,last_=0;
+ Output output_;
+ Message exchange(uint32_t op,uint64_t sequence,uint32_t timeout){
+  try{Message request{};request.op=op;request.nonce=nonce_;request.sequence=sequence;
+   sendMessage(child_->fd(),request);
+   auto reply=receiveMessage(child_->fd(),Clock::now()+std::chrono::milliseconds(timeout));
+   if(reply.nonce!=nonce_||reply.sequence!=sequence)
+    throw std::runtime_error("Temporal GPU response identity mismatch");
+   if(reply.op!=op){reply.reason[sizeof(reply.reason)-1]=0;
+    throw std::runtime_error(std::string("Temporal GPU worker rejected: ")+reply.reason);}
+   return reply;
+  }catch(...){child_.reset();data_=nullptr;throw;}
+ }
+public:
+ Process(const Config& config,GpuProcessOptions options)
+  :layout_(layout(uint32_t(config.dopplerAxis.size()),uint32_t(config.delayAxis.size()))),options_(std::move(options)){
+  validate(config);
+  if(!options_.argument.empty()&&options_.argument!="--temporal-v1")
+   throw std::invalid_argument("Temporal worker route must be explicit");
+  options_.argument="--temporal-v1";
+  if(getentropy(&nonce_,sizeof(nonce_))||!nonce_)throw std::runtime_error("Temporal GPU nonce unavailable");
+  child_=std::make_unique<gpu_worker_transport::Child>(gpu_worker_transport::resident,layout_.bytes,options_,
+   [&](uint8_t* p,uint64_t bytes){data_=p;Header header{};
+    header.rows=uint32_t(config.dopplerAxis.size());header.columns=uint32_t(config.delayAxis.size());
+    header.sampleRate=config.sampleRate;header.detector=config.detector;header.drift=config.delayDriftPerHz;
+    header.bytes=bytes;header.nonce=nonce_;std::memcpy(header.device,config.device.c_str(),config.device.size());
+    std::memcpy(p,&header,sizeof(header));
+    std::memcpy(p+layout_.delay,config.delayAxis.data(),config.delayAxis.size()*4);
+    std::memcpy(p+layout_.doppler,config.dopplerAxis.data(),config.dopplerAxis.size()*8);
+   },config.device);
+  output_=outputs(data_,layout_);exchange(1,0,options_.startupMs);
+ }
+ ~Process()override{if(child_)try{exchange(4,last_,std::min(500u,options_.startupMs));}catch(...){} }
+ std::complex<double>* input()override{
+  if(!data_)throw std::runtime_error("Temporal GPU worker unavailable");
+  return reinterpret_cast<std::complex<double>*>(data_+layout_.input);
+ }
+ const Output& process(uint64_t sequence)override{
+  if(!child_||!sequence||sequence<=last_)throw std::runtime_error("Temporal GPU sequence is not increasing");
+  const auto reply=exchange(2,sequence,options_.frameMs);last_=sequence;output_.metrics=reply.metrics;
+  if(output_.metrics.count>layout_.count||!output_.metrics.available||output_.metrics.available>8)
+   throw std::runtime_error("Temporal GPU output population invalid");
+  return output_;
+ }
+ void reset()override{if(!child_)throw std::runtime_error("Temporal GPU worker unavailable");
+  exchange(3,last_,options_.frameMs);}
+};
+}
+std::unique_ptr<Session> createProcess(const Config& c,const GpuProcessOptions& o){return std::make_unique<Process>(c,o);}
+int runWorker(const Factory& factory){
+ if(!factory||!gpu_worker_lifetime::protectWorker())return 2;
+ void* address=MAP_FAILED;size_t bytes=0;Message current{};bool received=false;
+ std::unique_ptr<Backend> backend;
+ try{
+  gpu_artifact_binding::workerStart();struct stat info{};
+  if(fstat(4,&info)||info.st_size<int64_t(sizeof(Header))||uint64_t(info.st_size)>(128ULL<<20))
+   throw std::runtime_error("Temporal GPU shared size invalid");
+#ifndef __APPLE__
+  const int seals=fcntl(4,F_GET_SEALS),required=F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL;
+  if(seals<0||(seals&required)!=required)throw std::runtime_error("Temporal GPU mapping is not size sealed");
+#endif
+  bytes=size_t(info.st_size);address=mmap(nullptr,bytes,PROT_READ|PROT_WRITE,MAP_SHARED,4,0);
+  if(address==MAP_FAILED)throw std::runtime_error("Temporal GPU mapping failed");
+  close(4);auto* data=static_cast<uint8_t*>(address);Header header{};std::memcpy(&header,data,sizeof(header));
+  const auto l=layout(header.rows,header.columns);
+  if(header.tag!=protocol||header.bytes!=bytes||l.bytes!=bytes||!header.nonce||
+     !std::memchr(header.device,0,sizeof(header.device)))throw std::runtime_error("Temporal GPU setup identity invalid");
+  Config config;config.detector=header.detector;config.sampleRate=header.sampleRate;
+  config.delayDriftPerHz=header.drift;config.device=header.device;
+  config.delayAxis.resize(header.columns);config.dopplerAxis.resize(header.rows);
+  std::memcpy(config.delayAxis.data(),data+l.delay,header.columns*4);
+  std::memcpy(config.dopplerAxis.data(),data+l.doppler,header.rows*8);validate(config);
+  auto out=outputs(data,l);uint64_t last=0;bool initialized=false;
+  for(;;){current=receiveMessage(3,Clock::now()+std::chrono::hours(24));received=true;
+   if(current.nonce!=header.nonce||std::memcmp(data,&header,sizeof(header)))
+    throw std::runtime_error("Temporal GPU request identity changed");
+   if(!initialized){if(current.op!=1||current.sequence)throw std::runtime_error("Temporal GPU initialize required");
+    backend=factory(config);if(!backend)throw std::runtime_error("Temporal GPU factory returned null");initialized=true;
+   }else if(current.op==2){if(!current.sequence||current.sequence<=last)
+     throw std::runtime_error("Temporal GPU input sequence replayed");
+    backend->process(reinterpret_cast<const std::complex<double>*>(data+l.input),out);
+    current.metrics=out.metrics;last=current.sequence;
+   }else if((current.op==3||current.op==4)&&current.sequence==last){
+    if(current.op==3)backend->reset();else backend.reset();
+   }else throw std::runtime_error("Temporal GPU operation out of order");
+   sendMessage(3,current);if(current.op==4)break;
+  }
+  munmap(address,bytes);close(3);return 0;
+ }catch(const std::exception& error){
+  if(received)try{current.op=0;std::strncpy(current.reason,error.what(),sizeof(current.reason)-1);sendMessage(3,current);}catch(...){}
+  backend.reset();if(address!=MAP_FAILED)munmap(address,bytes);close(3);close(4);return 1;
+ }
+}
+} // namespace blah2::temporal_gpu

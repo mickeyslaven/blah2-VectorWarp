@@ -68,6 +68,29 @@ TEST_CASE("direct-path diagnostic pilot preserves normalized weighted channel ph
   REQUIRE_FALSE(pilot({3, 1}));
 }
 
+TEST_CASE("native float pilot matches explicitly widened double precision math")
+{
+  const std::vector<std::complex<float>> reference{
+    {1.0f, .125f}, {-.75f, 2.0f}, {.00003125f, -.5f}, {3.25f, -1.5f}};
+  std::vector<std::complex<float>> anchor(reference.size());
+  const std::complex<float> gain{.625f, -.375f};
+  std::transform(reference.begin(), reference.end(), anchor.begin(),
+    [&](const auto value) { return value * gain; });
+  const auto native = ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+    blah2::iq::SampleView{reference.data(), reference.size()},
+    blah2::iq::SampleView{anchor.data(), anchor.size()});
+  const std::vector<std::complex<double>> widenedReference(
+    reference.begin(), reference.end());
+  const std::vector<std::complex<double>> widenedAnchor(
+    anchor.begin(), anchor.end());
+  const auto widened = ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+    IqSampleView{widenedReference.data(), widenedReference.size()},
+    IqSampleView{widenedAnchor.data(), widenedAnchor.size()});
+  REQUIRE(native);
+  REQUIRE(widened);
+  REQUIRE(std::abs(*native - *widened) < 1e-15);
+}
+
 TEST_CASE("array reference coherently combines two to eight channels")
 {
   constexpr std::size_t samples = 1024;

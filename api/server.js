@@ -7,15 +7,16 @@ const crypto = require('crypto');
 const path = require('path');
 const os = require('os');
 const zlib = require('zlib');
-const {buildMetadata} = require('./build-metadata');
+const {buildMetadata, compiledReceiverTypes} = require('./build-metadata');
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
-const {getDeviceProfiles, validateConfig, FIELD_RULES, publicationPolicyError} = require('./config-manager.js');
+const {getDeviceProfiles, validateConfig, FIELD_RULES, publicationPolicyError,
+  assessResolvedRadarPlans} = require('./config-manager.js');
 const {readNativeProcessingCapabilities, readGpuDriverStatus,
   enrichNativeProcessingCapabilities} =
   require('./native-processing-capabilities.js');
 const {readConfig, writable, saveConfig, migrateKnownDefaults,
-  preserveConfigBytesDuringUpgrade} = require('./config-store.js');
+  preserveConfigBytesDuringUpgrade, checkRadarPlan} = require('./config-store.js');
 const {getUpstreamStatus} = require('./upstream-status.js');
 const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./receiver-routes.js');
 const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
@@ -35,17 +36,18 @@ const {createRemoteIdSource} = require('./remote-id-source.js');
 const {createAircraftPhotoLookup} = require('./aircraft-photo.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createCausalFunnelRecorder} = require('./causal-funnel-recorder.js');
-const {createCausalFunnelProducer, createMultiIlluminatorCausalFrame} =
-  require('./causal-funnel-producer.js');
+const {createCausalFunnelProducer} = require('./causal-funnel-producer.js');
+const {ingestTrackerFrame} = require('./tracker-ingestion.js');
 const {buildArrayCalibrationStatus} = require('./array-calibration-status.js');
 const {diagnoseUpstreamArrayChannels} = require('./array-channel-health.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {buildObservationBundle} = require('./radar-observation-bundle.js');
 const {createEvidenceStatisticsLanes, provisionalTimingFrame,
-  defaultProvisionalEvidenceStatisticsPath} =
+  defaultProvisionalEvidenceStatisticsPath, compactAssociationPass} =
   require('./evidence-statistics.js');
 const {MultiIlluminatorEvidence, primaryRadarContext, associationStatistics} =
   require('./multi-illuminator-evidence.js');
+const {kioskAssociationChannel} = require('../html/js/measured_track_coverage');
 const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
@@ -72,6 +74,8 @@ const {MultiIlluminatorTrackFuser, validateFusionAgainstAdsb, siteCatalog} =
   require('./multi-illuminator-track-fusion.js');
 const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const {RadarPerformanceHealth} = require('./radar-performance-health.js');
+const {installNodeFederation, nodeRole} = require('./node-federation');
+const localRadar = nodeRole() === 'radar';
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
 // parse config file
@@ -189,17 +193,17 @@ const automaticCaptureCallbacks = {
     captureTriggerQueue.acceptUnmatchedMotionEvent(event, timestamp))
 };
 const {exact: evidenceStatistics, operational: provisionalEvidenceStatistics} =
-  createEvidenceStatisticsLanes(primaryRadar.config, primaryRadar.source, {operational: {
+  localRadar ? createEvidenceStatisticsLanes(primaryRadar.config, primaryRadar.source, {operational: {
     filename: defaultProvisionalEvidenceStatisticsPath(primaryRadar.config),
     // Per-lane statistics own capture callbacks in multi-illuminator mode.
-    ...(primaryRadar.illuminator ? {} : automaticCaptureCallbacks)}});
+    ...(primaryRadar.illuminator ? {} : automaticCaptureCallbacks)}}) : {};
 const captureEvidenceStatistics = provisionalEvidenceStatistics;
-const multiIlluminatorEvidence = new MultiIlluminatorEvidence(config, adsbSource,
-  {dependencies: automaticCaptureCallbacks});
-const captureAdmissionEvidence = multiIlluminatorEvidence.enabled ?
+const multiIlluminatorEvidence = localRadar ? new MultiIlluminatorEvidence(config, adsbSource,
+  {dependencies: automaticCaptureCallbacks}) : null;
+const captureAdmissionEvidence = multiIlluminatorEvidence?.enabled ?
   multiIlluminatorEvidence : captureEvidenceStatistics;
 const oprsEventRecorder = createOprsEventRecorder(primaryRadar.config,
-  {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
+  {filename: localRadar ? process.env.BLAH2_OPRS_EVENTS_PATH : null});
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
@@ -641,7 +645,7 @@ installMapImageryRoutes(app);
 const federationNodeId = process.env.VECTORWARP_NODE_ID ||
   os.hostname().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) ||
   'vectorwarp-node';
-const nodeFederation = require('./node-federation').installNodeFederation(app, undefined, {config});
+const nodeFederation = installNodeFederation(app, undefined, {config});
 app.options('*', (req, res) => {
   if (['/api/config', '/api/config/validate', '/capture/toggle'].includes(req.path) && !configWriteOriginAllowed(req))
     return res.status(403).json({ok: false,
@@ -649,6 +653,14 @@ app.options('*', (req, res) => {
   res.sendStatus(204);
 });
 app.use((req, res, next) => {
+  if (!localRadar && ['/api/association/passes', '/api/live-scorecard',
+    '/api/live-scorecard/provisional', '/api/live-scorecard/association-basis',
+    '/api/live-aircraft-associations', '/api/suspicious-track-ledger',
+    '/api/radar/coverage', '/api/processor/status', '/capture/request',
+    '/capture/toggle', '/capture/pause'].includes(req.path))
+    return res.status(409).json({available: false, node_role: 'coordinator',
+      reason: 'This node coordinates radar nodes; select a connected radar node.',
+      statistics_url: '/api/federation/statistics-summary'});
   if (retiredPublicationError && /^\/api\/(radar|map|detection|tracker|bearing|locations|illuminators)(\/|$)/.test(req.path))
     return res.status(503).json({available: false, data: [], reason: retiredPublicationError});
   if (req.query.presentation === 'aligned' && presentationDelayMs === null)
@@ -678,7 +690,7 @@ function restartCommandAvailable() {
 }
 
 function configuredReceiverTypes() {
-  return process.env.BLAH2_RECEIVER_TYPES?.split(',').map(item => item.trim()).filter(Boolean) || null;
+  return compiledReceiverTypes();
 }
 const localSdrplayHelper = process.env.BLAH2_SDRPLAY_BUILD_HELPER ||
   '/opt/vectorwarp/libexec/vectorwarp-build-sdrplay';
@@ -741,18 +753,21 @@ function selectedIlluminator(req) {
 app.get('/api/illuminators/live', (req, res) => {
   const geographic = geographicContext(config);
   const resolved = geographicConfig(config);
-  const configured = (resolved.process?.multi_illuminator?.illuminators || [])
-    .filter(item => item?.enabled === true);
   const multi=config.process?.multi_illuminator||{};
+  const configured = multi.enabled === true ? (resolved.process?.multi_illuminator?.illuminators || [])
+    .filter(item => item?.enabled === true) : localRadar ? [{id: 'primary',
+      standard: 'Single channel', frequency_hz: resolved.capture?.fc,
+      output_sample_rate_hz: resolved.capture?.fs, transmitter: resolved.location?.tx}] : [];
+  const primary = multi.enabled === true ? null : JSON.parse(radarSession.products.tracker || 'null');
   const radius=Number.isFinite(Number(multi.co_location_radius_m))?Number(multi.co_location_radius_m)/1000:.1;
   const catalog=siteCatalog(configured,resolved.location?.rx,radius,
     multi.transmitter_site_grouping||'automatic');
-  res.json({enabled: config.process?.multi_illuminator?.enabled === true,
+  res.json({enabled: configured.length > 0,
     geographic_provenance: geographic,
     primary: configured[0]?.id || null,
     illuminators: configured.map(item => {
-      const live = illuminatorFrames.latest(item.id);
-      return {id: item.id, standard: item.standard,
+      const live = multi.enabled === true ? illuminatorFrames.latest(item.id) : primary;
+      return {id: item.id, standard: item.standard, api_illuminator: multi.enabled === true,
         transmitter: item.transmitter,
         transmitter_site: catalog.get(item.id)?.identity || null,
         frequency_hz: item.frequency_hz,
@@ -776,7 +791,9 @@ app.get('/api/illuminators/live', (req, res) => {
         ambiguity_cpu_executed: live?.ambiguityCpuExecuted ?? null,
         clutter_gpu_executed: live?.clutterGpuExecuted ?? null,
         clutter_cpu_executed: live?.clutterCpuExecuted ?? null,
-        available: Boolean(live), first_input_sample: live?.first_input_sample ?? null,
+        available: Boolean(live) && (multi.enabled === true || radarSession.fresh('tracker',
+          Math.max(10000, (config.process?.data?.cpi || 1) * 3000))),
+        first_input_sample: live?.first_input_sample ?? null,
         end_input_sample: live?.end_input_sample ?? null,
         timestamp: live?.timestamp ?? null};
     })});
@@ -887,9 +904,15 @@ app.get('/api/association/passes', async (req, res, next) => {
       multiIlluminatorEvidence.associationPasses({timing, durationMs}) :
       (timing === 'exact' ? evidenceStatistics : provisionalEvidenceStatistics)
         .associationPasses({durationMs}).map(pass => ({...pass, channel: 'primary'}));
+    const responsePasses = String(req.query.compact) === 'true' ?
+      passes.map(compactAssociationPass) : passes;
+    const statisticsWindow = multiIlluminatorEvidence.enabled ?
+      multiIlluminatorEvidence.associationWindow({timing, durationMs}) :
+      (timing === 'exact' ? evidenceStatistics : provisionalEvidenceStatistics).associationWindow(durationMs);
     await sendDisplayResponse(req, res, {schema: 'vectorwarp-association-passes-v1',
       scope: 'node-all-channels', timing_policy: timing,
-      window: 'past-24-hours-finalized-passes', passes});
+      window: 'past-24-hours-finalized-passes', statistics_window: statisticsWindow,
+      passes: responsePasses});
   } catch (error) { next(error); }
 });
 app.get('/api/live-scorecard', async (req, res, next) => {
@@ -918,11 +941,10 @@ app.get('/api/live-scorecard/provisional', async (req, res, next) => {
 // large and should not be polled by a visualization every few seconds.
 app.get('/api/live-aircraft-associations', async (_req, res, next) => {
   try {
-    const status = multiIlluminatorEvidence.enabled ?
-      multiIlluminatorEvidence.response('scorecard', {timing: 'provisional'}) :
-      provisionalEvidenceStatistics.liveStatus();
-    const channels = Array.isArray(status?.illuminators) ? status.illuminators :
-      [{selected_channel: 'primary', ...status}];
+    const channels = multiIlluminatorEvidence.enabled ?
+      multiIlluminatorEvidence.activeAssociations({timing: 'provisional'}) :
+      [{selected_channel: 'primary',
+        active_passes: provisionalEvidenceStatistics.activeAssociations()}];
     const byAircraft = new Map();
     for (const channel of channels) for (const pass of channel.active_passes || []) {
       const hex = String(pass?.hex || '').trim().toLowerCase();
@@ -952,21 +974,30 @@ app.get('/api/live-aircraft-associations', async (_req, res, next) => {
 app.get('/api/live-scorecard/association-basis', async (req, res, next) => {
   try {
     const timing = req.query.timing === 'exact' ? 'exact' : 'provisional';
+    const compact = String(req.query.compact) === 'true';
+    const kiosk = req.query.display === 'kiosk';
     if (multiIlluminatorEvidence.enabled)
       return await sendDisplayResponse(req, res,
-        multiIlluminatorEvidence.associationBasis({timing}));
+        multiIlluminatorEvidence.associationBasis({timing, compact, kiosk}));
     const statistics = timing === 'exact' ? evidenceStatistics :
       provisionalEvidenceStatistics;
     const status = statistics.liveStatus();
+    if (compact)
+      return await sendDisplayResponse(req, res, {
+        schema: 'vectorwarp-association-basis-v1', timing_policy: timing,
+        channels: [{selected_channel: 'primary', updated_at: status.updated_at,
+          association_statistics: associationStatistics(status)}]});
     const population = status.track_population || {};
-    await sendDisplayResponse(req, res, {schema: 'vectorwarp-association-basis-v1',
-      timing_policy: timing, channels: [{selected_channel: 'primary',
+    const channel = {selected_channel: 'primary',
+        measured_track_basis: statistics.measuredTrackBasis(),
         updated_at: status.updated_at,
         association_statistics: associationStatistics(status),
         track_population: {...population,
           aircraft_like_candidates: (population.aircraft_like_candidates || []).slice(0, 10)},
         passes: typeof statistics.associationPasses === 'function' ?
-          statistics.associationPasses() : []}]});
+          statistics.associationPasses() : []};
+    await sendDisplayResponse(req, res, {schema: 'vectorwarp-association-basis-v1',
+      timing_policy: timing, channels: [kiosk ? kioskAssociationChannel(channel) : channel]});
   } catch (error) { next(error); }
 });
 app.get('/api/suspicious-track-ledger', async (req, res, next) => {
@@ -979,6 +1010,7 @@ app.get('/api/suspicious-track-ledger', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 function recordingPasses() {
+  if (!localRadar) return [];
   const scorecard = provisionalEvidenceStatistics.liveStatus();
   const subjects = [...captureEvidenceStatistics.recordingSubjects(),
     ...(scorecard.active_passes || []), ...(scorecard.recent_finalized_passes || [])];
@@ -1055,6 +1087,14 @@ app.get('/api/runtime/config', (req, res) => {
   // API startup snapshot, not hardware acknowledgement. Do not relabel frames
   // with newly saved tuning/site settings until the services have restarted.
   res.json(config);
+});
+app.get('/api/runtime/plan', (req, res) => {
+  const document = readConfig(configFile);
+  const loaded = checkRadarPlan(config, configFile), observation = radarSession.planObservation();
+  res.json({loaded, saved: document.radarPlan, observation,
+    execution: assessResolvedRadarPlans(loaded, observation),
+    loadedRevision: startupDocument.revision, savedRevision: document.revision,
+    restartRequired: startupDocument.revision !== document.revision});
 });
 app.get('/api/receiver/gain', (req, res) => res.json({
   policy: config.capture?.device?.heimdall?.gain_control || 'fixed',
@@ -1167,7 +1207,7 @@ app.get('/api/system/status', async (req, res) => {
       totalSamples: processor.totalSamples, positionSamples: processor.positionSamples,
       sampleRate: processor.sampleRate, file: processor.file
     } : null;
-    return res.json({radar, rfInputQuality: inputQuality, trackingPerformance,
+    return res.json({radar, node_role: nodeRole(), rfInputQuality: inputQuality, trackingPerformance,
       adsbEnabled: config.truth?.adsb?.enabled === true,
       remoteIdEnabled: config.truth?.remote_id?.enabled === true,
       recordedAdsb: processor?.input === 'replay' && recordingTimeline.has(processor.file),
@@ -1253,7 +1293,7 @@ app.get('/api/system/status', async (req, res) => {
       associationLagMs: Number.isSafeInteger(adsb?.association_lag_ms) ? adsb.association_lag_ms : null
     }
   };
-  res.json({serverId, configRevision: document.revision,
+  res.json({serverId, node_role: nodeRole(), configRevision: document.revision,
     build: releaseBuild,
     system: {os: os.platform(), architecture: os.arch(), kernel: os.release()},
     uptimeSeconds: Math.floor(process.uptime()),
@@ -1382,8 +1422,7 @@ const receiverManagement = installReceiverRoutes(app, {
     activeSdrplayStartup(null)?.inProgress === true,
   processorStatus: () => radarSession.currentProcessor(),
   preview: process.env.BLAH2_PREVIEW === 'true',
-  compiledLiveTypes: process.env.BLAH2_RECEIVER_TYPES ?
-    process.env.BLAH2_RECEIVER_TYPES.split(',').map(value => value.trim()).filter(Boolean) : null
+  compiledLiveTypes: configuredReceiverTypes()
 });
 if (macRspduoBuild) installMacRspduoBuildRoutes(app, {allowedOrigins: receiverOrigins, build: macRspduoBuild,
   transactionBusy: () => configWriteInProgress || receiverManagement.busy() ||
@@ -2014,7 +2053,14 @@ app.get('/capture/status', (req, res) => {
   const processor = radarSession.currentProcessor();
   const replay = processor?.input === 'replay' || config.capture.replay?.state === true;
   const acknowledgement = processor && processor.input === 'live' ? processor : null;
-  const recording = acknowledgement?.recording === true;
+  const previous = radarSession.processorStatus?.value;
+  // Closing includes the artifact digest and can outlast telemetry freshness.
+  // Retain the last observation only for that unacknowledged stop; it must not
+  // attest fresh processor health or imply that finalization has completed.
+  const pendingStop = !capture && previous?.input === 'live' && previous.recording === true &&
+    previous.recordingRequestId !== captureRevision;
+  const observed = acknowledgement || (pendingStop ? previous : null);
+  const recording = observed?.recording === true;
   const recordingError = acknowledgement?.recordingError || null;
   const acknowledged = acknowledgement && acknowledgement.recordingRequestId === captureRevision &&
     acknowledgement.recording === capture;
@@ -2033,10 +2079,12 @@ app.get('/capture/status', (req, res) => {
     paused: capturePaused,
     revision: captureRevision,
     acknowledged: acknowledged === true,
+    pendingStop,
+    processorFresh: acknowledgement !== null,
     recording,
-    recordingFile: acknowledgement?.recordingFile || '',
+    recordingFile: observed?.recordingFile || '',
     recordingError,
-    recordedSamples: acknowledgement?.recordedSamples || 0,
+    recordedSamples: observed?.recordedSamples || 0,
     startedAt: recording ? captureStartedAt : null,
     elapsedSeconds: recording && captureStartedAt ?
       Math.max(0, Math.floor((now - captureStartedAt) / 1000)) : 0,
@@ -2160,6 +2208,7 @@ app.listen(PORT, HOST, () => {
 });
 
 function listenData(server, name) {
+  if (!localRadar) return;
   server.on('error', error => {
     const message = bindMessage(`${name} data port`, error.code);
     serviceErrors.set(name, message);
@@ -2184,9 +2233,9 @@ function jsonStreamServer(name, onFrame) {
   return net.createServer(socket => {
     const connection = radarSession.open(name);
     const telemetry = name === 'timestamp' || name === 'timing';
-    const feed = jsonFrames(frame => {
+    const feed = jsonFrames((frame, parsed) => {
       if ((gainPublicationBlocked || retiredPublicationError) && !telemetry) return;
-      if (onFrame(frame, connection) === false && telemetry) return;
+      if (onFrame(frame, connection, parsed) === false && telemetry) return;
       connection.firstFrame = false;
       // A new complete frame proves this listener and connection recovered.
       serviceErrors.delete(name);
@@ -2209,10 +2258,12 @@ function jsonStreamServer(name, onFrame) {
 
 // One admission path publishes both legacy sockets and primary illuminator views.
 // These adapters only apply product-specific consumers; the store owns retention.
-function observeRadarProduct(name, frame, {admitHealth = true, connection, history = true}, published) {
+function observeRadarProduct(name, frame,
+    {admitHealth = true, connection, history = true, parsed = frame, publishedParsed}, published) {
+  if (!localRadar) return;
   switch (name) {
   case 'map': {
-    const at = frameTimestamp(frame);
+    const at = frameTimestamp(parsed);
     if (Number.isSafeInteger(at))
       void recordingTimeline.track(at, Promise.all([eventTruthAt(adsbSource, 'aircraft', at),
         eventTruthAt(adsbSource, 'delayDoppler', at)])
@@ -2221,52 +2272,47 @@ function observeRadarProduct(name, frame, {admitHealth = true, connection, histo
     break;
   }
   case 'detection':
-    trackerForwarder.accept(frame);
-    evidenceStatistics.acceptDetection(frame);
-    provisionalEvidenceStatistics.acceptDetection(frame);
-    oprsEventRecorder.acceptDetection(frame);
+    trackerForwarder.accept(parsed);
+    evidenceStatistics.acceptDetection(parsed);
+    provisionalEvidenceStatistics.acceptDetection(parsed);
+    oprsEventRecorder.acceptDetection(parsed);
     break;
   case 'tracker': {
-    if (admitHealth) radarPerformanceHealth.accept(frame,
-      {resetOnTimestampRegression: connection?.firstFrame === true ||
-        radarSession.processorStatus?.value?.input === 'replay'});
-    evidenceStatistics.acceptTracker(published);
-    provisionalEvidenceStatistics.acceptTracker(published);
-    oprsEventRecorder.acceptTracker(published);
+    ingestTrackerFrame({tracker: publishedParsed ?? published, healthTracker: parsed,
+      channel: 'primary',
+      diagnostics: parsed?.trackerDiagnostics,
+      resetOnTimestampRegression: connection?.firstFrame === true ||
+        radarSession.processorStatus?.value?.input === 'replay',
+      radarPerformanceHealth: admitHealth ? radarPerformanceHealth : null,
+      evidenceConsumers: [evidenceStatistics, provisionalEvidenceStatistics, oprsEventRecorder]});
     break;
   }
   case 'bearing':
     if (connection?.firstFrame) bearingHypotheses.reset();
-    evidenceStatistics.acceptBearing(frame);
+    evidenceStatistics.acceptBearing(parsed);
     break;
   case 'timing':
     if (history) {
-      oprsEventRecorder.acceptTiming(frame);
-      evidenceStatistics.acceptTiming(frame);
-      provisionalEvidenceStatistics.acceptTiming(provisionalTimingFrame(JSON.parse(frame)));
+      oprsEventRecorder.acceptTiming(parsed);
+      evidenceStatistics.acceptTiming(parsed);
+      provisionalEvidenceStatistics.acceptTiming(provisionalTimingFrame(parsed));
     }
     break;
   }
 }
 for (const [port, name] of [['map', 'map'], ['detection', 'detection'], ['track', 'tracker']])
-  listenData(jsonStreamServer(port, (frame, connection) =>
-    radarSession.acceptProduct(name, frame, {connection})), port);
+  listenData(jsonStreamServer(port, (frame, connection, parsed) =>
+    radarSession.acceptProduct(name, frame, {connection, parsed})), port);
 
-function acceptIlluminatorFrame(frame, connection = {}) {
-  const {value, duplicate} = radarSession.acceptIlluminator(frame, connection);
-  if (!duplicate && causalFunnelRecorder.status().api_ingest_enabled) {
-    try {
-      const maximum = Number(config.process?.evidence?.causal_funnel?.max_candidates) || 32;
-      causalFunnelRecorder.accept(createMultiIlluminatorCausalFrame(value, maximum));
-    } catch (_) {
-      // Malformed optional diagnostics must never interrupt radar publication.
-    }
-  }
+function acceptIlluminatorFrame(frame, connection = {}, parsed) {
+  const {value, map, duplicate} = radarSession.acceptIlluminator(frame, connection, parsed);
   if (!duplicate) {
-    radarPerformanceHealth.accept(value.tracks,
-      {channel: value.id, diagnostics: value.trackerDiagnostics,
-        resetOnTimestampRegression: radarSession.processorStatus?.value?.input === 'replay'});
-    multiIlluminatorEvidence.accept(value);
+    ingestTrackerFrame({tracker: value.tracks, channel: value.id,
+      diagnostics: value.trackerDiagnostics,
+      resetOnTimestampRegression: radarSession.processorStatus?.value?.input === 'replay',
+      radarPerformanceHealth, multiIlluminatorEvidence, causalFunnelRecorder,
+      causalFrame: value,
+      causalMaximum: Number(config.process?.evidence?.causal_funnel?.max_candidates) || 32});
   }
   const fusionIds = (config.process?.multi_illuminator?.illuminators || [])
     .filter(item => item?.enabled === true).map(item => item.id);
@@ -2276,7 +2322,7 @@ function acceptIlluminatorFrame(frame, connection = {}) {
       multiIlluminatorTrackFuser.update(cohort);
     }
   }
-  if (radarSession.publishPrimary(value, duplicate))
+  if (radarSession.publishPrimary(value, duplicate, map))
     for (const name of ['map', 'detection', 'track']) serviceErrors.delete(name);
   if (duplicate) return;
   const geometry = recordingIlluminatorAdsbGeometry.get(value.id);
@@ -2299,26 +2345,27 @@ if (config.process?.multi_illuminator?.enabled === true &&
 }
 
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
-  const server_bearing = jsonStreamServer('bearing', (frame, connection) =>
-    radarSession.acceptProduct('bearing', frame, {connection}));
+  const server_bearing = jsonStreamServer('bearing', (frame, connection, parsed) =>
+    radarSession.acceptProduct('bearing', frame, {connection, parsed}));
   listenData(server_bearing, 'bearing');
 }
 
 if (manifoldRecorder.status().enabled &&
     Number.isInteger(config.network?.ports?.manifold)) {
-  const server_manifold = jsonStreamServer('manifold', frame => manifoldRecorder.accept(frame));
+  const server_manifold = jsonStreamServer('manifold', (frame, _connection, parsed) =>
+    manifoldRecorder.accept(frame, parsed));
   listenData(server_manifold, 'manifold');
 }
 
 if (causalFunnelRecorder.status().native_enabled &&
     Number.isInteger(config.network?.ports?.causal_funnel)) {
-  const server_causal_funnel = jsonStreamServer('causal_funnel', frame =>
-    causalFunnelRecorder.accept(frame, {nativeTransport: true}));
+  const server_causal_funnel = jsonStreamServer('causal_funnel', (frame, _connection, parsed) =>
+    causalFunnelRecorder.accept(frame, {nativeTransport: true, parsed}));
   listenData(server_causal_funnel, 'causal_funnel');
 }
 
-listenData(jsonStreamServer('timestamp', (frame, connection) => {
-  const value = JSON.parse(frame)?.timestamp;
+listenData(jsonStreamServer('timestamp', (frame, connection, parsed) => {
+  const value = parsed.timestamp;
   if (!Number.isSafeInteger(value) || value < 0)
     throw new Error('Expected a non-negative safe-integer radar timestamp');
   if (!radarSession.activate(connection)) return false;
@@ -2327,23 +2374,23 @@ listenData(jsonStreamServer('timestamp', (frame, connection) => {
   if (!gainPublicationBlocked && !retiredPublicationError) radarSession.acceptProduct('timestamp', String(value));
 }), 'timestamp');
 
-listenData(jsonStreamServer('timing', (frame, connection) => {
+listenData(jsonStreamServer('timing', (frame, connection, parsed) => {
   if (!radarSession.activate(connection)) return false;
   // Terminal capture accounting is telemetry, not another scientific CPI.
   radarSession.acceptProduct('timing', frame,
-    {history: JSON.parse(frame).captureTerminal !== true});
+    {history: parsed.captureTerminal !== true, parsed});
 }), 'timing');
 
-listenData(jsonStreamServer('iqdata', frame =>
-  radarSession.acceptProduct('iqdata', frame)), 'iqdata');
-gainMonitor.start();
+listenData(jsonStreamServer('iqdata', (frame, _connection, parsed) =>
+  radarSession.acceptProduct('iqdata', frame, {parsed})), 'iqdata');
+if (localRadar) gainMonitor.start();
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
-  evidenceStatistics.close();
-  provisionalEvidenceStatistics.close();
-  multiIlluminatorEvidence.close();
+  evidenceStatistics?.close();
+  provisionalEvidenceStatistics?.close();
+  multiIlluminatorEvidence?.close();
   oprsEventRecorder.close();
   gainMonitor.stop();
   try { await recordingTimeline.stop(null, Date.now()); }

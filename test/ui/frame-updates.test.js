@@ -208,13 +208,14 @@ function clockedPage(cpi = .5) {
   shared.fetchCachedJsonResource = async url => {
     if (url.includes('failed')) throw new Error('offline');
     return url.includes('/api/system/status') ?
-      {radar: 'receiving', processorFresh: !url.includes('stale')} : {timestamp: 1234};
+      {radar: url.includes('fresh remote') ? 'degraded' : 'receiving',
+        processorFresh: !url.includes('stale'), processor: {state: 'live'}} : {timestamp: 1234};
   };
   const network = await shared.readFederatedRadar('/api/live-scorecard', {nodes: [
     {id: 'local', local: true}, {id: 'fresh remote'}, {id: 'stale'}, {id: 'failed'}
   ]});
   assert.deepEqual(network.map(row => row.node.id), ['local', 'fresh remote'],
-    'Network aggregation retains only fresh, receiving nodes; partial transport failure is isolated');
+    'Network aggregation retains fresh live processors, including degraded nodes; partial transport failure is isolated');
 
   // Bundle contracts exercise actual alignment and failure isolation before
   // renderer math. These must remain independent of the page's DOM layout.
@@ -269,6 +270,10 @@ function clockedPage(cpi = .5) {
   assert.ok(!bundleReads.some(read => read.url.pathname === '/api/live-aircraft-associations'),
     'The network lane never reduces federated evidence to the coordinator-local association feed');
   failedSources.clear();
+  bundleReads.length = 0;
+  await shared.readRadarDisplayBundle('network');
+  assert.equal(bundleReads.find(read => read.url.pathname === '/api/adsb')?.url.searchParams.get('presentation'),
+    'latest', 'The network display requests the coherent presentation population');
   selection.enabled = false;
   const singleTruth = await shared.readRadarDisplayTruth(runtime, 5678);
   assert.equal(singleTruth.aircraft[1]._lane_geometry_current, true, 'Single-site Remote ID geometry remains supported');

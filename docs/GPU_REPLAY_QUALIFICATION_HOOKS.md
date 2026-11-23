@@ -170,7 +170,25 @@ geometry and manifold identities against the recorded contract. Full YAML/code
 hashes identify the producer; replay necessarily has a different input/qualification
 configuration, so these are not silently substituted into processing settings.
 
-Acquisition metadata is bounded to 1 MiB, 4,096 frame slices, 64 KiB each for
+Manual canonical float recordings use `vectorwarp-recording-acquisition-v2`
+when adjacent complete frames have equal sizes. Each run retains the original
+ingress sequence, source size and decimal `repeat` count; every represented
+frame must be contiguous in the same epoch and settings. Readers validate the
+run against actual stored block boundaries without expanding it. Changed sizes
+start another run; trimmed slices and native ADC conditioning frames remain
+individual entries. Existing v1 acquisition contracts remain readable, and
+older readers refuse v2 rather than silently ignoring its repeated frames.
+
+Canonical and native recording writers share a 16 MiB cache-window policy:
+completed windows finish writeback before eviction, and final completion still
+requires filesystem synchronization. Linux range writeback falls back to
+filesystem synchronization when unsupported; Darwin also requests file-local
+uncached I/O. Cache eviction is advisory. Portable clip finalization, manual
+manifests and replay verification share the same bounded sequential digest
+reader, which preserves replay cursors and rejects detected file mutations.
+Native Kraken hashes its bytes as they are written, without another read pass.
+
+Acquisition metadata is bounded to 1 MiB, 4,096 frame slices/runs, 64 KiB each for
 receiver details and geometry, and 32 manifold identities. Portable clips fail
 if these bounds/settings continuity cannot be retained; manual/native recordings
 can finish with an explicit incomplete manifest when frame lineage exceeds its
@@ -247,9 +265,22 @@ For operational CPI sizes, the same observer accepts `summary_only: true`.
 It omits IQ/CAF arrays but retains native plan, axes and detector-population
 observations. This mode permits at most 256 frames, 16,777,216 samples/channel,
 4,194,304 map cells and 256 MiB of observer output. It cannot request clutter
-sample snapshots. The replay runner still retains every public map, detection,
-track/history, bearing and exact publication interval; summary mode is not
-counts-only qualification. Small synthetic fixtures retain full complex parity.
+sample snapshots. Public maps can be pooled/quantized presentation rasters or
+metadata-only updates; they are not native numerical-map evidence. The runner
+retains those public products, detections, track/history, candidate scores,
+bearing and exact publication intervals. Full native CAF parity still requires
+the bounded complex observer; summary-mode success cannot substitute for it.
+Small synthetic fixtures retain full complex parity.
+
+Observer `captureFirst`/`captureEnd` identify the raw capture CPI supplied by
+the canonical ingress/publication owner. Additive `input_lineage` identifies
+the actual decimated output grid in original sample units. A non-grid-aligned
+recording start can give these equal-width intervals different first samples;
+neither is rebased. Clutter checkpoint proofs remain bound to `input_lineage`.
+Both identities survive deferred products and are checked at each observed
+stage. Temporal GPU startup qualification owns private clocks/tracker state;
+only its verified, reset worker transfers to production, so CPU/GPU/AUTO begin
+with identical public evidence generations under the same input/reset events.
 
 `test/gpu/recorded_iq_qualification.py --capture NAME` collects one `captureRuns`
 entry from an independently pinned plan using the existing corpus lifecycle.

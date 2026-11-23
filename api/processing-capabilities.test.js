@@ -1,10 +1,34 @@
 'use strict';
 
 const assert = require('assert/strict');
-const {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon} = require('./processing-capabilities');
+const {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon,
+  residentRouteRequired, residentRouteRequested} = require('../html/js/processing_capabilities');
 const {validateConfig} = require('./config-manager');
 
 const load = type => require('./config-store').configurationForReceiver(type);
+for (const feature of ['whitening', 'bearing', 'beam-history', 'causal', 'snapshot']) {
+  const config = {capture: {replay: {}}, process: {performance: {acceleration: 'auto'}}};
+  if (feature === 'whitening') config.process.surveillance_fusion = {mode: 'noise_whitened_beam_bank'};
+  if (feature === 'bearing') config.process.bearing = {enable: true};
+  if (feature === 'beam-history') config.process.tracker = {beam_tolerance: 0};
+  if (feature === 'causal') config.process.evidence = {causal_funnel: {enabled: true}};
+  if (feature === 'snapshot') config.capture.replay.resident_snapshot = {enabled: true};
+  const before = structuredClone(config);
+  assert.equal(residentRouteRequired(config), true, feature);
+  assert.equal(residentRouteRequested(config), true, feature);
+  assert.deepEqual(config, before, 'Backend selection must not rewrite requested AUTO');
+  delete config.process.performance;
+  assert.equal(residentRouteRequested(config), true, `${feature}: omitted mode means AUTO`);
+  for (const mode of ['cpu', 'gpu']) {
+    config.process.performance = {acceleration: mode};
+    assert.equal(residentRouteRequested(config), false, `${feature}: ${mode} cannot silently select resident`);
+  }
+}
+assert.equal(residentRouteRequired({process: {tracker: {gpu_capacity: 4096,
+  initiate: {stationary_clutter: {enable: true}}}}}), false,
+  'Host-supported tracker settings do not force resident processing');
+assert.equal(residentRouteRequested({process: {performance: {acceleration: 'auto'}}}), false,
+  'Ordinary AUTO retains its independent portable admission');
 function coherentPair(name) {
   const config = load(name);
   config.capture.device.array_geometry = {

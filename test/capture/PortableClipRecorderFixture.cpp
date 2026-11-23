@@ -20,8 +20,8 @@ blah2::IqBlock block(unsigned first, unsigned count) {
   return result;
 }
 
-blah2::IqClipStatus wait(blah2::PortableClipRecorder& recorder) {
-  for (unsigned attempt = 0; attempt < 200; ++attempt) {
+blah2::IqClipStatus wait(blah2::PortableClipRecorder& recorder, unsigned attempts = 200) {
+  for (unsigned attempt = 0; attempt < attempts; ++attempt) {
     const auto status = recorder.status();
     if (status.terminal) return status;
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -155,6 +155,37 @@ int main() {
     recorder.discontinuity("test sample gap");
     const auto gap = recorder.status();
     assert(gap.terminal && gap.revision == 3 && gap.error == "test sample gap");
+
+    // A portable clip crosses two full cache windows. Its sidecar digest,
+    // embedded lineage and full replay must bind the same finalized bytes.
+    {
+      constexpr unsigned frameSamples = 262144, frames = 9;
+      auto largeOptions = options;
+      largeOptions.ringSeconds = largeOptions.maximumClipSeconds = frames;
+      blah2::PortableClipRecorder large(directory.string(), "Usrp", 2,
+        frameSamples, 204640000, largeOptions);
+      for (unsigned index = 0; index < frames; ++index)
+        assert(ingest_when_available(large, index * frameSamples, frameSamples,
+          19, int64_t(index + 1) * 1000000000, acquisition));
+      large.request({99, 4500, 0, 9000, {"cache-window"}, {"cache-window"}});
+      const auto complete = wait(large, 2000);
+      assert(complete.error.empty() && complete.samples == uint64_t(frames) * frameSamples);
+      std::ifstream sidecar(complete.file + ".json");
+      const std::string text(std::istreambuf_iterator<char>(sidecar), {});
+      rapidjson::Document contract; contract.Parse(text.c_str());
+      assert(!contract.HasParseError() && contract.IsObject());
+      assert(contract["dataBytes"].GetUint64() == std::filesystem::file_size(complete.file));
+      assert(contract["dataBytes"].GetUint64() > 2 * blah2::RecordingFileCache<>::windowBytes);
+      blah2::ReplayOptions read{"blah2", "Usrp", 2, frameSamples, 204640000, 0};
+      read.expectedRecordingSha256 = contract["dataSha256"].GetString();
+      blah2::RecordingReader replay(complete.file, read);
+      blah2::IqBlock recovered;
+      for (unsigned index = 0; index < frames; ++index) {
+        assert(replay.read(recovered));
+        assert(recovered == block(index * frameSamples, frameSamples));
+      }
+      assert(!replay.read(recovered) && replay.provenance().frames.size() == frames);
+    }
 
     std::filesystem::remove_all(directory);
     std::cout << "portable bounded clip recorder checks passed\n";

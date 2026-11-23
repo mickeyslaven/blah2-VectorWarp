@@ -51,7 +51,7 @@ assert.match(mapLayers,/function syncBearingOverlayLayers\(map, rows\)/);
 assert.match(source,/selectedIsRadar \? radarAircraftTrackHistories : aircraftTrackHistories/,'position-source trails stay separate');
 assert.match(source,/item\._radar_position \? radarVisualSemantics.colors.independent : aircraftAltitudeColor\(item\)/);
 const page=fs.readFileSync(require.resolve('../../html/display/locations/index.html'),'utf8');
-assert.match(page,/fusion_aircraft\.js\?v=[\w.-]+.*insights\.js\?v=ui-consistency-30/);
+assert.match(page,/fusion_aircraft\.js\?v=[\w.-]+.*insights\.js\?v=[\w.-]+/);
 const mapLayerWindow = {};
 vm.runInNewContext(mapLayers, {window: mapLayerWindow});
 const layers = mapLayerWindow.VectorWarpLocationMapLayers.createMapLayers({

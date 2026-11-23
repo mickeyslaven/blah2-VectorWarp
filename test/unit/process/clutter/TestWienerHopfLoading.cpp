@@ -1,6 +1,8 @@
 #include "process/clutter/WienerHopf.h"
 
 #include <cmath>
+#include <cstdlib>
+#include <unistd.h>
 #include <iostream>
 #include <limits>
 #include <stdexcept>

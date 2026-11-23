@@ -49,14 +49,17 @@ struct CpuEvidenceDouble {
   w.u32(1600+124,c.fusion.mode==FusionMode::noncoherent?0:c.fusion.beams);
   w.u32(1600+16,21);w.u32(1600+48,21);w.u32(1600+92,1);w.u32(1600+96,1);w.u32(1600+100,21);w.u32(1600+104,1);
   w.u32(1728+8,2);w.u64(1728+32,17);w.u64(1728+40,p.frame.logicalId);w.u64(1728+48,p.frame.consumedSequence);w.u64(1728+56,c.epoch);w.u64(1728+64,p.frame.signalTimestampMs);w.u32(1728+96,32);
-  w.u32(1728+12,4);w.u32(1728+16,21);w.u64(1728+208,p.frame.logicalId);w.u64(1984,16383);for(size_t i=0;i<14;++i)w.f64(2000+8*i,1);
-  const size_t a=2112;w.u64(a,p.frame.logicalId);w.u32(a+12,channels);w.u32(a+16,channels);
+  w.u32(1728+12,4);w.u32(1728+16,21);w.u64(1728+208,p.frame.logicalId);
+  w.u32(1728+38*4,1);
+  wire::writeTrackerDiagnostics(w,evidence::prepared::trackerDiagnostics,{});
+  w.u64(evidence::prepared::times,16383);for(size_t i=0;i<14;++i)w.f64(evidence::prepared::times+16+8*i,1);
+  const size_t a=evidence::prepared::nativeBatches;w.u64(a,p.frame.logicalId);w.u32(a+12,channels);w.u32(a+16,channels);
   const uint32_t native[]={0,0,0,0,0,channels,64*channels,64*channels,2*channels,2*channels,64*channels,channels,0,0,0,0};for(size_t i=0;i<16;++i)w.u32(a+24+4*i,native[i]);
   w.u32(a+88+12,64*channels);w.u32(a+88+16,
    (c.replay.maxBytes||(p.diagnosticPresence&(bit(Section::filtered)|bit(Section::tail)))?64:63)*channels);
   w.u32(a+88+20,63*channels);for(size_t i=0;i<9;++i)w.f64(a+152+8*i,1);
   w.f64(a+224,1);w.f64(a+232,1);w.f64(a+240,1);
-  const size_t h=4160;w.u32(h,1);w.u32(h+4,128);w.u64(h+8,p.frame.logicalId);w.u64(h+24,10000);w.u64(h+40,10000);
+  const size_t h=evidence::prepared::hostSummary;w.u32(h,1);w.u32(h+4,128);w.u64(h+8,p.frame.logicalId);w.u64(h+24,10000);w.u64(h+40,10000);
   w.u32(h+52,2048);w.u32(h+60,128);w.u32(h+68,1);w.u32(h+72,5);w.f64(h+80,.01);
  }
  void control(const Packet&p,Phase phase){Writer w{m.bytes(Section::controlEvidence)};w.zero();w.u32(0,1);w.u32(4,512);w.u32(8,uint32_t(phase));

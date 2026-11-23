@@ -231,6 +231,8 @@ struct WorkRecord {
   bool processAccounting=false;
   Activity processBegin,processEnd;
   std::array<double,3> stages{};
+  bool temporalStages=false;
+  std::array<double,6> gpuStages{};
 };
 class Worker {
   const char* role_;
@@ -260,7 +262,12 @@ public:
     line.append(" peer_pid=%lld outcome=%d phase1_us=%llu phase2_us=%llu",r.peer,r.outcome,
       static_cast<unsigned long long>(micros(r.time[1])),
       static_cast<unsigned long long>(micros(r.time[2])));
-    line.append(" clutter_ms=%.6f ambiguity_ms=%.6f products_ms=%.6f",
+    if(r.temporalStages){
+      line.append(" gpu_upload_ms=%.6f gpu_execute_ms=%.6f gpu_readback_ms=%.6f",
+        r.stages[0],r.stages[1],r.stages[2]);
+      line.append(" gpu_map_ms=%.6f gpu_cfar_ms=%.6f gpu_centroid_ms=%.6f gpu_interpolation_ms=%.6f gpu_compact_ms=%.6f gpu_output_ms=%.6f",
+        r.gpuStages[0],r.gpuStages[1],r.gpuStages[2],r.gpuStages[3],r.gpuStages[4],r.gpuStages[5]);
+    }else line.append(" clutter_ms=%.6f ambiguity_ms=%.6f products_ms=%.6f",
       r.stages[0],r.stages[1],r.stages[2]);
     activity(line,r.begin,r.end,"thread");
     if(r.processAccounting)activity(line,r.processBegin,r.processEnd,"process");
@@ -274,8 +281,8 @@ class WorkScope {
   unsigned marked_=0;
 public:
   WorkRecord record;
-  WorkScope(Worker& worker,uint64_t sequence,uint64_t identity,long long peer=0,bool process=false)
-    :worker_(worker),enabled_(worker.enabled()) {
+  WorkScope(Worker& worker,uint64_t sequence,uint64_t identity,long long peer=0,bool process=false,bool enabled=true)
+    :worker_(worker),enabled_(enabled&&worker.enabled()) {
     if(enabled_){record.sequence=sequence;record.identity=identity;record.peer=peer;
       record.outcome=-1;record.begin=Activity::capture(true);record.time.fill(Clock::now());
       record.processAccounting=process;record.processBegin=Activity::capture(process,true);}

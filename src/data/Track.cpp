@@ -63,6 +63,7 @@ void Track::set_predicted_current(uint64_t index, Detection predicted, Source so
 {
   if(source!=Source::prediction)
     throw std::invalid_argument("Predicted track position cannot be labelled measured");
+  predicted.set_evidence({});
   current.at(index) = std::move(predicted);
   currentSource.at(index) = uint8_t(source);
 }
@@ -277,6 +278,11 @@ std::string Track::to_json(uint64_t timestamp)
       object1.AddMember("measured",currentSource.at(i)==uint8_t(Source::detector),allocator);
       object1.AddMember("source",rapidjson::Value(currentSource.at(i)==uint8_t(Source::detector)?
         "detector":"prediction",allocator),allocator);
+      if (currentSource.at(i)==uint8_t(Source::detector)) {
+        const auto& evidence=current.at(i).get_evidence();
+        object1.AddMember("measurement_evidence", evidence.size()==1 ?
+          Detection::evidence_json(evidence.front(),allocator,true) : rapidjson::Value(),allocator);
+      }
       rapidjson::Value associatedDelay(rapidjson::kArrayType);
       rapidjson::Value associatedDoppler(rapidjson::kArrayType);
       rapidjson::Value associatedState(rapidjson::kArrayType);

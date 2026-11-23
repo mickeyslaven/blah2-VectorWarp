@@ -1,5 +1,7 @@
 #include "process/ambiguity/ClutterReplayCheckpoint.private.h"
 #include <iostream>
+#include <cstdlib>
+#include <unistd.h>
 #include <limits>
 namespace c=blah2::clutter_replay;
 template<class F>void rejects(F f){try{f();}catch(const std::exception&){return;}

@@ -1,6 +1,8 @@
 #pragma once
 #include "RecordingAcquisition.h"
 #include "Sha256.h"
+#include "RecordingFileCache.h"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cmath>
@@ -10,6 +12,7 @@
 #include <unistd.h>
 #include <set>
 #include <stdexcept>
+#include <utility>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -17,6 +20,28 @@
 namespace blah2::acquisition {
 constexpr size_t maximumJsonBytes = 1U << 20;
 constexpr size_t maximumFrames = 4096;
+// Keep callback granularity without retaining one allocation per callback.
+// The caller owns epoch/settings continuity; gaps and sequence loss fail closed.
+inline bool appendFrame(std::vector<RecordingFrameLineage>& frames, RecordingFrameLineage frame) {
+  if (!frame.ingressSequence || frame.repeat != 1 || !frame.count || !frame.sourceCount ||
+      frame.sourceFirst > UINT64_MAX - frame.sourceCount || frame.sliceOffset > frame.sourceCount ||
+      frame.count > frame.sourceCount - frame.sliceOffset) return false;
+  if (!frames.empty()) {
+    auto& last = frames.back();
+    if (last.ingressSequence > UINT64_MAX - last.repeat ||
+        frame.ingressSequence != last.ingressSequence + last.repeat ||
+        last.repeat > (UINT64_MAX - last.sourceFirst - last.sliceOffset) / last.count ||
+        frame.sourceFirst + frame.sliceOffset != last.sourceFirst + last.sliceOffset + last.count * last.repeat)
+      return false;
+    if (!last.sliceOffset && !frame.sliceOffset && last.count == last.sourceCount &&
+        frame.count == frame.sourceCount && last.count == frame.count &&
+        last.originalMeanIq.empty() && frame.originalMeanIq.empty()) {
+      ++last.repeat; return true;
+    }
+  }
+  if (frames.size() >= maximumFrames) return false;
+  frames.push_back(std::move(frame)); return true;
+}
 inline bool sha256(const std::string& value) {
   return value.size() == 64 && value.find_first_not_of("0123456789abcdef") == std::string::npos;
 }
@@ -74,7 +99,9 @@ inline std::string serialize(const RecordingBlockMetadata* metadata,
   const auto string = [&](rapidjson::Value& object, const char* key, const std::string& value) {
     object.AddMember(rapidjson::Value(key, a), rapidjson::Value(value.c_str(), value.size(), a), a);
   };
-  string(doc, "schema", "vectorwarp-recording-acquisition-v1");
+  const bool runs = std::any_of(frames.begin(), frames.end(),
+    [](const auto& frame) { return frame.repeat != 1; });
+  string(doc, "schema", runs ? "vectorwarp-recording-acquisition-v2" : "vectorwarp-recording-acquisition-v1");
   string(doc, "receiver", receiver);
   doc.AddMember("channels", channels, a); doc.AddMember("sampleRateHz", rate, a);
   doc.AddMember("frequencyHz", frequency, a);
@@ -91,6 +118,7 @@ inline std::string serialize(const RecordingBlockMetadata* metadata,
     string(value, "sourceCount", std::to_string(frame.sourceCount));
     string(value, "sliceOffset", std::to_string(frame.sliceOffset));
     string(value, "count", std::to_string(frame.count));
+    if (frame.repeat != 1) string(value, "repeat", std::to_string(frame.repeat));
     if (!frame.originalMeanIq.empty()) {
       if (frame.originalMeanIq.size() != channels * 2)
         throw std::invalid_argument("Original frame conditioning has invalid dimensions");
@@ -170,26 +198,55 @@ inline std::string serialize(const RecordingBlockMetadata* metadata,
   if (result.size() > maximumJsonBytes) throw std::invalid_argument("Recording acquisition metadata exceeds bound");
   return result;
 }
-inline std::string fileDigest(const std::string& path) {
+template<class Io = RecordingFileCacheIo>
+inline std::pair<uint64_t, std::string> fileDigest(int fd) {
+  struct stat before{}, after{};
+  if (::fstat(fd, &before) || !S_ISREG(before.st_mode) || before.st_size < 0)
+    throw std::runtime_error("Acquisition recording must be a regular file");
+  Sha256 hash; std::array<uint8_t,65536> bytes{}; uint64_t total = 0;
+  Io::prepare(fd);
+  RecordingFileCache<Io> cache;
+  // Bound work to the original length and leave the caller's replay cursor
+  // untouched. A growing or truncated file cannot extend this verification.
+  while (total < static_cast<uint64_t>(before.st_size)) {
+    const auto requested = static_cast<size_t>(std::min<uint64_t>(bytes.size(), before.st_size - total));
+    const auto count = ::pread(fd, bytes.data(), requested, static_cast<off_t>(total));
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) throw std::runtime_error("Cannot hash finalized recording");
+    hash.update(bytes.data(), count); total += count;
+    cache.consumed(fd, total);
+  }
+  cache.consumed(fd, total, true);
+  // Size alone misses overwrites of bytes already hashed. Check modification
+  // and change times (not access time) before accepting the complete digest.
+  const bool changed = ::fstat(fd, &after) || before.st_size != after.st_size ||
+#if defined(__APPLE__)
+    before.st_mtimespec.tv_sec != after.st_mtimespec.tv_sec ||
+    before.st_mtimespec.tv_nsec != after.st_mtimespec.tv_nsec ||
+    before.st_ctimespec.tv_sec != after.st_ctimespec.tv_sec ||
+    before.st_ctimespec.tv_nsec != after.st_ctimespec.tv_nsec;
+#else
+    before.st_mtim.tv_sec != after.st_mtim.tv_sec || before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+    before.st_ctim.tv_sec != after.st_ctim.tv_sec || before.st_ctim.tv_nsec != after.st_ctim.tv_nsec;
+#endif
+  if (changed) throw std::runtime_error("Recording changed during acquisition finalization");
+  return {total, hash.finish()};
+}
+template<class Io = RecordingFileCacheIo>
+inline std::string fileDigest(const std::string& path, uint64_t* size = nullptr) {
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   if (fd < 0) throw std::runtime_error("Cannot open finalized recording for acquisition digest");
-  struct stat before{}, after{};
-  if (::fstat(fd, &before) || !S_ISREG(before.st_mode)) {
-    ::close(fd); throw std::runtime_error("Acquisition recording must be a regular file");
-  }
-  Sha256 hash; std::array<uint8_t,65536> bytes{}; uint64_t total = 0;
-  for (;;) {
-    const auto count = ::read(fd, bytes.data(), bytes.size());
-    if (count < 0 && errno == EINTR) continue;
-    if (count < 0) { ::close(fd); throw std::runtime_error("Cannot hash finalized recording"); }
-    if (!count) break;
-    hash.update(bytes.data(), count); total += count;
-  }
-  const bool changed = ::fstat(fd, &after) || before.st_size != after.st_size ||
-    total != static_cast<uint64_t>(after.st_size);
+  std::pair<uint64_t, std::string> result;
+  try {
+    result = fileDigest<Io>(fd);
+    struct stat opened{}, named{};
+    if (::fstat(fd, &opened) || ::lstat(path.c_str(), &named) ||
+        opened.st_dev != named.st_dev || opened.st_ino != named.st_ino)
+      throw std::runtime_error("Recording path changed during acquisition finalization");
+    if (size) *size = result.first;
+  } catch (...) { ::close(fd); throw; }
   ::close(fd);
-  if (changed) throw std::runtime_error("Recording changed during acquisition finalization");
-  return hash.finish();
+  return std::move(result.second);
 }
 
 // Both identities must be pinned independently by an exact-acquisition corpus.

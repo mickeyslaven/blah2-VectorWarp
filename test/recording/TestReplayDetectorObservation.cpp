@@ -3,6 +3,8 @@
 #include <rapidjson/document.h>
 #include <fstream>
 #include <iostream>
+#include <cstdlib>
+#include <unistd.h>
 using namespace blah2::qualification_observer;
 namespace {
 void check(bool ok){if(!ok)throw std::runtime_error("Detector observation regression");}

@@ -38,9 +38,31 @@ class ArtifactPlanTests(unittest.TestCase):
         for name in ("receiver-source/rspduo/kit.json", "systemd/vectorwarp-sdrplay-build.service.in",
                      "libexec/vectorwarp-build-sdrplay.py"): self.put(name)
         compiled, local = plan.profile(backend)
-        return self.put(".vectorwarp-build", (
-            f"build_id=stable\nbackend={backend}\ncompiled_receivers={','.join(compiled)}\n"
+        source_commit = "a" * 40
+        manifest = self.put(".vectorwarp-build", (
+            f"build_id=stable\nsource_commit={source_commit}\nbackend={backend}\ncompiled_receivers={','.join(compiled)}\n"
             f"local_build_receivers={','.join(local)}\ntest_only={str(backend == 'open-test').lower()}\ngpu=AUTO\n").encode())
+        self.put("BUILD-RECEIPT.json", json.dumps({"schema": 1, "version": "stable",
+            "sourceCommit": source_commit, "package": "native-candidate"}).encode(), 0o644)
+        manifest.write_text(manifest.read_text() + "".join(f"{key}={value}\n"
+            for key, value in plan.IDENTITY["installed_hashes"](self.root).items()))
+        return manifest
+
+    def test_package_receipt_must_match_native_manifest(self):
+        self.artifact()
+        receipt = self.root / "BUILD-RECEIPT.json"
+        good = receipt.read_bytes()
+        for value in ({"schema": 1, "version": "other", "sourceCommit": "a" * 40,
+                       "package": "native-candidate"},
+                      {"schema": 1, "version": "stable", "sourceCommit": "b" * 40,
+                       "package": "native-candidate"},
+                      {"schema": 1, "version": "stable", "sourceCommit": "a" * 40,
+                       "package": "source"}):
+            receipt.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ValueError, "receipt disagrees"):
+                plan.validate(self.root, "package")
+        receipt.write_bytes(good)
+        self.assertEqual(plan.validate(self.root, "package")["build_id"], "stable")
 
     def test_current_build_install_and_package_accept_same_receiver_contract(self):
         for backend in ("all", "open-test"):
@@ -68,6 +90,26 @@ class ArtifactPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "historical mixed"): plan.validate(self.root, "install")
         mixed.unlink(); mixed.symlink_to("absent")
         with self.assertRaisesRegex(ValueError, "historical mixed"): plan.validate(self.root, "install")
+
+    def test_package_and_install_reject_stale_or_partial_native_hashes(self):
+        manifest = self.artifact()
+        original = manifest.read_text()
+        module = self.root / "bin/blah2-gpu-resident-vulkan.so"
+        module.write_bytes(b"a different resident build")
+        for level in ("install", "package"):
+            with self.subTest(level=level), self.assertRaisesRegex(ValueError, "installed bytes"):
+                plan.validate(self.root, level)
+        module.write_bytes(b"fixture")
+        manifest.write_text("\n".join(line for line in original.splitlines()
+                                    if not line.startswith("gpu_worker_sha256=")) + "\n")
+        for level in ("install", "package"):
+            with self.subTest(level=level), self.assertRaisesRegex(ValueError, "incomplete"):
+                plan.validate(self.root, level)
+        manifest.write_text("\n".join(line for line in original.splitlines()
+                                    if not line.split("=", 1)[0].endswith("_sha256")) + "\n")
+        self.assertEqual(plan.validate(self.root, "install")["artifact_hash_provenance"], "legacy-unpinned")
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            plan.validate(self.root, "package")
 
     def test_install_only_keeps_existing_pre_manifest_compatibility(self):
         self.artifact()

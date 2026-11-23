@@ -4,6 +4,7 @@
 #include <array>
 #include <cassert>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -282,6 +283,7 @@ int main() {
     const auto incompleteRecording = receiver.recording_status();
     assert(!incompleteRecording.active && incompleteRecording.resumePending &&
       incompleteRecording.samples == 4 && !incompleteRecording.error.empty());
+    receiver.service_recording(); // Control context publishes failure/prepares successor.
     std::ifstream provenance(path + ".provenance.json");
     assert(provenance);
     rapidjson::IStreamWrapper stream(provenance);

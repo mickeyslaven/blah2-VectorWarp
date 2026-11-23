@@ -16,7 +16,14 @@ MAX_RECEIPT = 4096
 MAX_RECEIPTS = 1024
 MODULES = {"portable": ("blah2-gpu-vulkan.so", 4),
            "wideband": ("blah2-gpu-wideband-vulkan.so", 1),
-           "resident": ("blah2-gpu-resident-vulkan.so", 15)}
+           "resident": ("blah2-gpu-resident-vulkan.so", 18)}
+FACTORIES = {
+    "portable": {"blah2_gpu_create": (4, ""),
+                 "blah2_gpu_driver_status": (4, "--driver-status")},
+    "wideband": {"blah2_gpu_create_wideband": (1, "--wideband-v1")},
+    "resident": {"blah2_gpu_create_resident": (18, "--resident-v5"),
+                 "blah2_gpu_create_temporal": (1, "--temporal-v1")},
+}
 
 
 def stamp(info):
@@ -166,7 +173,7 @@ def verify_files(binding, roles=None):
 
 def validate(binding, output, processor_pid, require_worker=True):
     """Reject absent/late receipts, not merely a matching final directory hash."""
-    workers, spawned, attempted, loaded = {}, set(), [], []
+    workers, spawned, attempted, loaded, interfaces = {}, set(), [], [], {}
     for line in output.splitlines():
         if PREFIX not in line:
             continue
@@ -205,8 +212,11 @@ def validate(binding, output, processor_pid, require_worker=True):
             if worker != {"phase": "attempt", "role": role}:
                 raise ValueError("missing/late GPU module load receipt")
             expected = binding["artifacts"].get(role)
-            if expected is None or item.get("module") != expected or item.get("abi") != MODULES[role][1]:
+            interface = FACTORIES[role].get(item.get("factory"))
+            if expected is None or item.get("module") != expected or interface is None or \
+                    (item.get("abi"), item.get("workerMode")) != interface:
                 raise ValueError("unexpected module path, hash or ABI")
+            interfaces[pid] = (item["factory"], item["workerMode"])
             identity = item.get("driverStatus", {})
             devices = identity.get("devices", [])
             if identity.get("available") is not True or not devices or any(
@@ -222,6 +232,8 @@ def validate(binding, output, processor_pid, require_worker=True):
         elif event == "backend-start":
             if worker != {"phase": "loaded", "role": role}:
                 raise ValueError("backend construction preceded module receipt")
+            if (item.get("factory"), item.get("workerMode")) != interfaces[pid]:
+                raise ValueError("backend factory or worker mode differs from loaded interface")
             worker["phase"] = "construct"
         else:
             raise ValueError("unknown GPU artifact receipt event")

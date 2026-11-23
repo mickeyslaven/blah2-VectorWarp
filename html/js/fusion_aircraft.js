@@ -79,10 +79,18 @@
       item.qualification?.qualified !== false && radarPoint(item, receiver));
   }
   function aircraft(adsb, result, receiver, histories = new Map()) {
-    const records = new Map(adsb.map(value => [value.key, {...value, id: `adsb:${value.key}`,
-      source: 'adsb', state: state(value.association),
-      name: String(value.item.flight || value.item.hex || 'Aircraft').trim(),
-      channels: unique(value.association?.channels || [])}]));
+    const records = new Map();
+    for (const [index, value] of adsb.entries()) {
+      // Federation, browser history and radar validation must agree on one
+      // identity spelling.  Otherwise an upper-case/feed-specific key can
+      // survive beside the same lower-case radar match and draw two aircraft
+      // at nearly the same position.
+      const identity = hex(value.item?.hex || value.key) || `anonymous-${index}`;
+      records.set(identity, {...value, key: identity, id: `adsb:${identity}`,
+        source: 'adsb', state: state(value.association),
+        name: String(value.item.flight || value.item.hex || 'Aircraft').trim(),
+        channels: unique(value.association?.channels || [])});
+    }
     const validation = result?.validation;
     const matches = validation?.held_out_truth === true && validation.adsb_used_by_solver !== true &&
       (!validation.target_kind || validation.target_kind === 'operational-fused-tracks') ? validation.matches || [] : [];

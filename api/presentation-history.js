@@ -29,8 +29,8 @@ class PresentationHistory {
     this.entries = [];
     this.bytes = 0;
   }
-  add(frame, arrivedAt = Date.now(), input = frame) {
-    const timestamp = frameTimestamp(frame);
+  add(frame, arrivedAt = Date.now(), input = frame, parsed = frame) {
+    const timestamp = frameTimestamp(parsed);
     if (timestamp === null) return;
     const size = value => Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value));
     const bytes = size(frame) + (input === frame ? 0 : size(input));
@@ -177,6 +177,7 @@ class RadarSessionStore extends IlluminatorFrameHistory {
     this.connections = {};
     this.restartGeneration = 0;
     this.processorStatus = null;
+    this.planProducts = new Map();
   }
   get lastFrameAt() { return this.channel('timestamp').receivedAt; }
   get timestampConnections() { return this.channel('timestamp').sequence; }
@@ -202,16 +203,42 @@ class RadarSessionStore extends IlluminatorFrameHistory {
     if (!this.eligible(connection) || channel.active !== connection.id) return false;
     channel.active = 0; channel.receivedAt = null;
     this.products[connection.name] = '';
+    if (connection.name === 'timestamp') this.planProducts.clear();
     return true;
   }
   invalidate(name) {
     const channel = this.channel(name);
     channel.generation += 1; channel.active = 0; channel.receivedAt = null;
     this.products[name] = '';
+    if (name === 'timestamp') this.planProducts.clear();
   }
   restart() {
     this.restartGeneration += 1;
+    this.processorStatus = null;
     for (const name of ['timestamp', 'timing']) this.invalidate(name);
+  }
+  clear() { super.clear(); this.planProducts?.clear(); }
+  retainPlanProduct(name, frame, connection) {
+    if (!['map', 'detection', 'tracker', 'bearing'].includes(name) ||
+        (connection?.name && !this.eligible(connection))) return;
+    const value = typeof frame === 'string' ? JSON.parse(frame) : frame;
+    const lane = value?.illuminator_id || 'primary';
+    // Bound snapshots to configured lanes; there is no independent history or
+    // stale fallback. Reset and connection ownership remain in this store.
+    const ids = this.config.process?.multi_illuminator?.enabled === true ?
+      (this.config.process.multi_illuminator.illuminators || []).filter(item => item.enabled).map(item => item.id) : ['primary'];
+    if (!ids.includes(lane)) return;
+    this.planProducts.set(`${lane}:${name}`, {lane_id: lane, product: name,
+      received_at: this.now(), generation: this.restartGeneration,
+      frame: {resolved_product_plan: value?.resolved_product_plan,
+        input_lineage: value?.input_lineage, product_stage_execution: value?.product_stage_execution}});
+  }
+  planObservation() {
+    const processor = this.currentProcessor();
+    return {schema: 'vectorwarp-runtime-plan-observation-v1', observed_at: this.now(),
+      generation: this.restartGeneration, input: processor?.input,
+      processor_fresh: !!processor && ['playing', 'draining', 'live'].includes(processor.state),
+      products: [...this.planProducts.values()]};
   }
   generation(name) {
     const channel = this.channel(name);
@@ -228,13 +255,19 @@ class RadarSessionStore extends IlluminatorFrameHistory {
     // Exact bytes preserve uint64 identities and equal-time CPIs.
     if (options.duplicate === true || options.history !== false && history?.entries
         .some(entry => entry.input === frame)) return false;
-    this.stashes[name]?.update_data(frame);
-    this.onProduct(name, frame, options, published);
-    if (options.history !== false) history?.add(published, this.now(), frame);
+    const parsed = options.parsed ?? frame;
+    // Channelized products are admitted once from their authoritative envelope,
+    // never refreshed by the legacy primary aliases.
+    if (this.config.process?.multi_illuminator?.enabled !== true)
+      this.retainPlanProduct(name, parsed, options.connection);
+    const publishedParsed = published === frame ? parsed : published;
+    this.stashes[name]?.update_data(parsed);
+    this.onProduct(name, frame, {...options, parsed, publishedParsed}, published);
+    if (options.history !== false) history?.add(published, this.now(), frame, publishedParsed);
     return true;
   }
-  acceptIlluminator(frame, connection = {}) {
-    const value = parseIlluminatorFrame(frame);
+  acceptIlluminator(frame, connection = {}, parsed) {
+    const {value, map} = parseIlluminatorFrame(frame, parsed);
     if (value?.schema !== 'vectorwarp-multi-illuminator-frame-v1' ||
         typeof value.id !== 'string' ||
         !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.id) ||
@@ -272,16 +305,22 @@ class RadarSessionStore extends IlluminatorFrameHistory {
     const duplicate = this.exact(value.id, {timestamp: value.timestamp,
       firstInputSample: value.first_input_sample, endInputSample: value.end_input_sample});
     this.add(value, Buffer.byteLength(frame));
-    return {value, duplicate: !!duplicate};
+    if (!duplicate)
+      for (const [name, product] of [['map', value.map], ['detection', value.detections],
+        ['tracker', value.tracks], ['bearing', value.bearing]])
+        if (product?.illuminator_id === value.id) this.retainPlanProduct(name, product, connection);
+    return {value, map, duplicate: !!duplicate};
   }
-  publishPrimary(value, duplicate = false) {
+  publishPrimary(value, duplicate = false, map = value.map) {
     const primary = (this.config.process?.multi_illuminator?.illuminators || [])
       .find(item => item?.enabled === true);
     if (primary?.id !== value.id) return false;
     if (value.map?.data_omitted !== true)
-      this.acceptProduct('map', value.map_json || JSON.stringify(value.map));
-    this.acceptProduct('detection', JSON.stringify(value.detections), {duplicate});
-    this.acceptProduct('tracker', JSON.stringify(value.tracks), {admitHealth: false, duplicate});
+      this.acceptProduct('map', value.map_json || JSON.stringify(value.map),
+        {parsed: map?.data ? map : undefined});
+    this.acceptProduct('detection', JSON.stringify(value.detections), {duplicate, parsed: value.detections});
+    this.acceptProduct('tracker', JSON.stringify(value.tracks),
+      {admitHealth: false, duplicate, parsed: value.tracks});
     return true;
   }
   acceptProcessorStatus(checked, payload) {
@@ -302,7 +341,7 @@ function fresh(entry, now = Date.now(), maxAgeMs = 5000, inclusive = true) {
     now - entry.receivedAt <= maxAgeMs : now - entry.receivedAt < maxAgeMs);
 }
 
-function parseIlluminatorFrame(frame) {
+function parseIlluminatorFrame(frame, parsed = JSON.parse(frame)) {
   // Retain large matrices as JSON; evidence/fusion consume compact metadata.
   const mapKey = '"map":', detectionsKey = ',"detections":';
   // Production map follows any nested experimental maps, immediately before detections.
@@ -310,21 +349,20 @@ function parseIlluminatorFrame(frame) {
   const mapStart = productionMapStart < 0 ? -1 : productionMapStart + 1;
   const detectionsStart = mapStart < 0 ? -1 :
     frame.indexOf(detectionsKey, mapStart + mapKey.length);
-  if (mapStart < 0 || detectionsStart < 0) return JSON.parse(frame);
+  const map = parsed.map;
+  if (mapStart < 0 || detectionsStart < 0) return {value: parsed, map};
   const mapJson = frame.slice(mapStart + mapKey.length, detectionsStart);
-  const dataKey = ',"data":';
-  const dataStart = mapJson.indexOf(dataKey);
-  let mapSummary;
-  if (dataStart < 0) mapSummary = JSON.parse(mapJson);
-  else mapSummary = JSON.parse(`${mapJson.slice(0, dataStart)}}`);
-  const compact = `${frame.slice(0, mapStart + mapKey.length)}null` +
-    frame.slice(detectionsStart);
-  const value = JSON.parse(compact);
-  value.map = mapSummary;
+  // The framing owner has already validated every matrix value. Retain only
+  // its metadata here; the primary maxhold consumer receives the parsed matrix
+  // transiently, while exact publication continues to use the original bytes.
+  const value = {...parsed, map};
+  if (map && typeof map === 'object' && !Array.isArray(map)) {
+    value.map = {...map}; delete value.map.data;
+  }
   value.map_json = mapJson;
-  if (value.map && value.map.eventTime === undefined)
+  if (value.map && typeof value.map === 'object' && value.map.eventTime === undefined)
     value.map.eventTime = value.detections?.eventTime || value.tracks?.eventTime || null;
-  return value;
+  return {value, map};
 }
 
 module.exports = {RadarSessionStore, PresentationHistory, IlluminatorFrameHistory,

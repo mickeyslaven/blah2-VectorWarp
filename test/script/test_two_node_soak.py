@@ -30,7 +30,20 @@ def timing(cpi=10, drops=(0, 0), boundary=(0, 0)):
             "capture_backlog_ms": 500, "captureDroppedSamples": list(drops),
             "captureBoundaryDiscardedSamples": list(boundary),
             "captureStopDiscardedSamples": [0, 0], "inputDiscontinuity": False,
-            "captureTerminal": False}
+            "captureTerminal": False, "captureEpoch": 1}
+
+
+def receiver_status(epoch="1", discontinuities="0", discarded="0", section="recovery"):
+    value = status()
+    receipt = {"discontinuities": discontinuities, "requalifications": discontinuities}
+    if section == "recovery":
+        receipt.update(discardedBlocks=discontinuities, discardedSamplesPerChannel=discarded)
+        health = {"deviceTime": {"epoch": epoch}, "recovery": receipt}
+    else:
+        receipt.update(epoch=epoch, discardedSamples=[discarded, discarded])
+        health = {"pairing": receipt}
+    value["processor"] = {"receiverHealth": health}
+    return value
 
 
 class SoakEvaluation(unittest.TestCase):
@@ -70,6 +83,30 @@ class SoakEvaluation(unittest.TestCase):
         self.assertIn("node:cpi-not-advancing", failures)
         self.assertIn("node:capture-drops", failures)
 
+    def test_cpi_counter_reset_invalidates_cohort_after_recovery(self):
+        _, first = self.evaluate(frame=timing(cpi=100))
+        first["epoch"] = time.time() - 5
+        failures, _ = self.evaluate(frame=timing(cpi=20), previous=first)
+        self.assertIn("node:capture-cpi-counter-reset", failures)
+        started, rows = self.records([(0, []), (1, failures), (2, []), (12, [])], window=10)
+        self.assertFalse(self.summary(started, rows[-1:])["startupAccepted"])
+
+    def test_capture_counters_reject_javascript_rounding_and_keep_exact_strings(self):
+        self.assertIsNone(SOAK.numeric_list([2**53, 0]))
+        self.assertEqual(SOAK.numeric_list([str(2**64 - 1), "0"]), [2**64 - 1, 0])
+        _, first = self.evaluate(frame=timing(drops=(str(2**53 + 1), "0")))
+        first = json.loads(json.dumps(first))
+        self.assertEqual(first["counters"]["drops"], [str(2**53 + 1), "0"])
+        first["epoch"] = time.time() - 5
+        failures, _ = self.evaluate(frame=timing(cpi=20, drops=(str(2**53 + 2), "0")),
+                                   previous=first)
+        self.assertIn("node:capture-drops", failures)
+        self.assertNotIn("node:capture-drops-unverifiable", failures)
+
+    def test_fresh_degraded_radar_is_not_healthy(self):
+        failures, _ = self.evaluate(stat={**status(), "radar": "degraded"})
+        self.assertIn("node:radar-not-receiving", failures)
+
     def test_restart_is_one_observed_boundary(self):
         _, first = self.evaluate()
         first["epoch"] = time.time() - 5
@@ -77,11 +114,112 @@ class SoakEvaluation(unittest.TestCase):
         self.assertIn("node:process-restarted", failures)
         self.assertTrue(observation["restarted"])
 
+    def test_same_api_identity_cannot_hide_pid_restart_count_or_start_time_change(self):
+        process = {"release": "/release", "bootId": "boot",
+                   "units": {"vectorwarp-processor.service": {
+                       "ActiveState": "active", "Result": "success", "MainPID": "100",
+                       "NRestarts": "0", "ExecMainStartTimestampMonotonic": "123"}}}
+        _, first = SOAK.evaluate("node", status(), timing(), process, None, "vulkan", "cpu")
+        for key in ("MainPID", "NRestarts", "ExecMainStartTimestampMonotonic"):
+            changed = copy.deepcopy(process)
+            changed["units"]["vectorwarp-processor.service"][key] = "200"
+            failures, _ = SOAK.evaluate("node", status(), timing(cpi=20), changed,
+                                       first, "vulkan", "cpu")
+            self.assertIn("node:process-restarted", failures)
+
     def test_capture_epoch_change_resets_even_with_same_process_and_zero_counters(self):
         _, first = self.evaluate(frame={**timing(), "captureEpoch": 1})
         first["epoch"] = time.time() - 5
         failures, _ = self.evaluate(frame={**timing(cpi=20), "captureEpoch": 2}, previous=first)
         self.assertIn("node:capture-epoch-reset", failures)
+
+    def test_between_poll_receiver_recovery_is_sticky_despite_fresh_zero_drop_frame(self):
+        for section in ("recovery", "pairing"):
+            with self.subTest(section=section):
+                _, first = self.evaluate(stat=receiver_status(section=section))
+                first["epoch"] = time.time() - 5
+                stat = receiver_status(epoch="2", discontinuities="1", discarded="4096",
+                                       section=section)
+                failures, observation = self.evaluate(stat=stat, frame=timing(cpi=20), previous=first)
+                self.assertIn("node:capture-epoch-reset", failures)
+                self.assertIn("node:capture-receiver-loss", failures)
+                self.assertEqual(observation["receiverContinuity"]["counters"][
+                    f"{section}.discontinuities"], ["1"])
+                # The later clean sample and rolling-ledger eviction cannot
+                # restore this cohort's zero-loss claim.
+                observation["epoch"] = time.time() - 5
+                later, _ = self.evaluate(stat=stat, frame=timing(cpi=30), previous=observation)
+                self.assertEqual(later, [])
+                started, rows = self.records([(0, []), (1, failures), (2, later), (12, [])], window=10)
+                self.assertFalse(self.summary(started, rows[-1:])["startupAccepted"])
+
+    def test_receiver_loss_before_first_poll_cannot_be_a_clean_baseline(self):
+        for section in ("recovery", "pairing"):
+            failures, _ = self.evaluate(stat=receiver_status(discontinuities="3", discarded="0",
+                                                            section=section))
+            self.assertIn("node:preexisting-capture-loss", failures)
+
+    def test_cumulative_receiver_loss_is_detected_without_epoch_change(self):
+        _, first = self.evaluate(stat=receiver_status())
+        first["epoch"] = time.time() - 5
+        failures, _ = self.evaluate(stat=receiver_status(discarded="1"),
+                                   frame=timing(cpi=20), previous=first)
+        self.assertIn("node:capture-receiver-loss", failures)
+        self.assertNotIn("node:capture-epoch-reset", failures)
+
+    def test_relative_sample_and_gain_epoch_capabilities_share_the_same_gate(self):
+        for section in ("sampleTime", "gain"):
+            stat = status()
+            stat["processor"] = {"receiverHealth": {section: {"epoch": "1"}}}
+            _, first = self.evaluate(stat=stat)
+            first["epoch"] = time.time() - 5
+            stat["processor"]["receiverHealth"][section]["epoch"] = "2"
+            failures, _ = self.evaluate(stat=stat, frame=timing(cpi=20), previous=first)
+            self.assertIn("node:capture-epoch-reset", failures)
+
+    def test_exact_uint64_epochs_and_receiver_counters_survive_json_roundtrip(self):
+        epoch, count = str(2**64 - 2), str(2**53 + 1)
+        frame = {**timing(), "captureEpoch": 2**64, "eventTime": {"epoch": epoch}}
+        _, first = self.evaluate(stat=receiver_status(epoch=epoch, discarded=count), frame=frame)
+        first = json.loads(json.dumps(first))
+        self.assertEqual(first["captureEpoch"], epoch)
+        self.assertEqual(first["receiverContinuity"]["counters"][
+            "recovery.discardedSamplesPerChannel"], [count])
+        first["epoch"] = time.time() - 5
+        frame.update(nCpi=20, eventTime={"epoch": str(2**64 - 1)})
+        failures, _ = self.evaluate(stat=receiver_status(epoch=str(2**64 - 1),
+            discarded=str(int(count) + 1)), frame=frame, previous=first)
+        self.assertIn("node:capture-epoch-reset", failures)
+        self.assertIn("node:capture-receiver-loss", failures)
+        self.assertEqual(SOAK.compact_timing(frame)["eventTime"]["epoch"], str(2**64 - 1))
+
+    def test_missing_inexact_and_malformed_epoch_fail_closed(self):
+        for value in (None, False, -1, 1.5, 2**53, "01", "-1", str(2**64)):
+            with self.subTest(value=value):
+                failures, _ = self.evaluate(frame={**timing(), "captureEpoch": value})
+                self.assertIn("node:capture-epoch-unverifiable", failures)
+
+    def test_receiver_receipt_disappearance_reset_and_malformed_values_fail(self):
+        _, first = self.evaluate(stat=receiver_status(discarded="10"))
+        first["epoch"] = time.time() - 5
+        failures, _ = self.evaluate(frame=timing(cpi=20), previous=first)
+        self.assertIn("node:capture-receiver-unverifiable", failures)
+        failures, _ = self.evaluate(stat=receiver_status(), frame=timing(cpi=20), previous=first)
+        self.assertIn("node:capture-receiver-counter-reset", failures)
+        for value in (None, False, "01", str(2**64), 2**53, []):
+            with self.subTest(value=value):
+                failures, _ = self.evaluate(stat=receiver_status(discarded=value),
+                                           frame=timing(cpi=20), previous=first)
+                self.assertIn("node:capture-receiver-unverifiable", failures)
+
+    def test_process_restart_does_not_compare_epochs_or_receiver_counter_baselines(self):
+        _, first = self.evaluate(stat=receiver_status(epoch="3", discarded="10"))
+        stat = receiver_status(epoch="0")
+        stat["serverId"] = "new-process"
+        failures, _ = self.evaluate(stat=stat, frame={**timing(), "captureEpoch": 0}, previous=first)
+        self.assertIn("node:process-restarted", failures)
+        self.assertNotIn("node:capture-epoch-reset", failures)
+        self.assertNotIn("node:capture-receiver-counter-reset", failures)
 
     def test_reviewed_cadence_limit_is_enforced(self):
         _, first = self.evaluate()
@@ -314,14 +452,29 @@ class SoakEvaluation(unittest.TestCase):
 
     def test_regression_receipt_requires_exact_binding_policy_freshness_and_both_nodes(self):
         binding = {"expected": self.binding(), "sha256": "3" * 64}
-        receipt = {"schema": 1, "bindingSha256": "3" * 64, "policySha256": "1" * 64,
+        receipt = {"schema": 2, "bindingSha256": "3" * 64, "policySha256": "1" * 64,
                    "nodes": {name: {"retiredCpis": 0, "retiredSamples": 0,
+                             "checks": {key: {"accepted": True, "evidenceSha256": "4" * 64}
+                                        for key in SOAK.REGRESSION_CHECKS},
                              "qualifications": node["qualifications"]}
                              for name, node in binding["expected"]["nodes"].items()},
                    "evidenceSha256": "4" * 64,
                    "evaluationStartEpoch": 1, "evaluatedThroughEpoch": 100,
                    "regressionDetected": False}
         self.assertEqual(SOAK.verify_regression(receipt, binding, 100, 2), [])
+        for malformed in (None, [], "receipt", {**receipt, "schema": 1},
+                          {**receipt, "evidenceSha256": None}):
+            self.assertEqual(SOAK.verify_regression(malformed, binding, 100, 2),
+                             ["soak:regression-evidence-invalid"])
+        for key in SOAK.REGRESSION_CHECKS:
+            missing = copy.deepcopy(receipt)
+            del missing["nodes"]["hp"]["checks"][key]
+            self.assertEqual(SOAK.verify_regression(missing, binding, 100, 2),
+                             ["soak:regression-evidence-invalid"])
+            failed = copy.deepcopy(receipt)
+            failed["nodes"]["hp"]["checks"][key]["accepted"] = False
+            self.assertEqual(SOAK.verify_regression(failed, binding, 100, 2),
+                             ["soak:regression-detected"])
         for key, value in (("bindingSha256", "5" * 64), ("policySha256", "5" * 64),
                            ("nodes", ["hp"]), ("evaluatedThroughEpoch", 101),
                            ("evaluationStartEpoch", 3), ("regressionDetected", None)):

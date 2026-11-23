@@ -39,5 +39,8 @@ struct RecordingFrameLineage {
   // Native raw clips retain the original full-frame ADC I/Q means, even when
   // a clip edge trims that frame. Empty for already canonical float IQ.
   std::vector<double> originalMeanIq = {};
+  // Lossless run of consecutive, equal-size complete canonical float frames.
+  // Native ADC frames and trimmed slices retain repeat=1 and their own means.
+  uint64_t repeat = 1;
 };
 } // namespace blah2

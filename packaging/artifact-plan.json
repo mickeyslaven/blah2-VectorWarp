@@ -53,7 +53,7 @@
   "required": {
     "base": ["bin/blah2","api/server.js","html/index.html","config-examples/config.yml"],
     "build": ["bin/libblah2-capture-core.so.1"],
-    "package": [".vectorwarp-build","bin/blah2-gpu-worker","bin/blah2-gpu-vulkan.so","bin/blah2-gpu-wideband-vulkan.so","bin/blah2-gpu-resident-vulkan.so","bin/heimdall","share/heimdall/build.json","share/heimdall/sbom.cdx.json","share/heimdall/service.py","share/heimdall/controller.py","receiver-source/kraken/kit.json","libexec/vectorwarp-build-kraken.py","libexec/vectorwarp","libexec/vectorwarp-quiesce"]
+    "package": [".vectorwarp-build","BUILD-RECEIPT.json","bin/blah2-gpu-worker","bin/blah2-gpu-vulkan.so","bin/blah2-gpu-wideband-vulkan.so","bin/blah2-gpu-resident-vulkan.so","bin/heimdall","share/heimdall/build.json","share/heimdall/sbom.cdx.json","share/heimdall/service.py","share/heimdall/controller.py","receiver-source/kraken/kit.json","libexec/vectorwarp-build-kraken.py","libexec/vectorwarp","libexec/vectorwarp-quiesce"]
   },
   "notices": ["asio","cpp-httplib","rapidjson","ryml","VkFFT"],
   "forbidden": ["bin/blah2-mixed-worker"],

@@ -9,6 +9,13 @@ const {CausalFunnelRecorder, validateFrame} = require('./causal-funnel-recorder'
 const {createCausalFunnelProducer, createMultiIlluminatorCausalFrame} =
   require('./causal-funnel-producer');
 const {validateConfig} = require('./config-manager');
+const {birthRejectionLabels} = require('./causal-funnel-contract');
+
+const nativeTracker = fs.readFileSync(path.join(__dirname, '../src/process/tracker/Tracker.h'), 'utf8');
+const nativeRejections = [...nativeTracker.matchAll(/TRACKER_DIAGNOSTIC\([^,]+,"([^"]+)"\)/g)]
+  .map(match => match[1]).filter(field => /^(birth_|stationary_birth).*_rejected$/.test(field));
+assert.deepStrictEqual(Object.keys(birthRejectionLabels).sort(), nativeRejections.sort(),
+  'Health and causal evidence must cover every canonical native birth-rejection reason');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-causal-funnel-'));
 const config = {process: {evidence: {causal_funnel: {enabled: true,
@@ -27,8 +34,15 @@ const frame2 = () => ({schema: 'vectorwarp-causal-funnel-frame-v2', source: 'nat
   candidates: [{id: 'c7-0', kind: 'candidate', delay_km: 6.5, doppler_hz: -226.05,
     snr_db: 5.22, bearing_candidates_deg: [], reason: 'seeded', state: 0,
     previous_state: 0, measured: true, confirmation_credit: true, support_depth: 2}]});
+// CausalTraceJson emits reason 14 for an overlapping candidate without seed credit.
+const lineageOverlapFrame = {...frame2(), candidates: [{...frame2().candidates[0],
+  reason: 'lineage_overlap', confirmation_credit: null}]};
 
 assert.equal(validateFrame(JSON.parse(JSON.stringify(frame2()))).event_time_ns, '1794521720793000001');
+assert.doesNotThrow(() => validateFrame(lineageOverlapFrame));
+for (const reason of ['lineage_overlap_typo', 'unknown_reason', 'invalid', 14, null])
+  assert.throws(() => validateFrame({...lineageOverlapFrame,
+    candidates: [{...lineageOverlapFrame.candidates[0], reason}]}), /Invalid causal transition metadata/);
 for (const value of [1794521720793000000, '-1', '+1', '01', '1e18', '1.0', '',
   '18446744073709551616', '9'.repeat(100), null])
   assert.throws(() => validateFrame({...frame2(), event_time_ns: value}), /Invalid/);
@@ -75,6 +89,38 @@ assert.deepEqual(multiFrame.coverage, {candidates_total: 3, tracks_total: 2,
   candidates_retained: 2, tracks_retained: 0, truncated: true});
 assert.equal(multiFrame.lineage.input_epoch, '3');
 assert.equal(multiFrame.tracker_diagnostics.associations, 1);
+const rejectionCounters = Object.fromEntries(Object.keys(birthRejectionLabels)
+  .map((field, index) => [field, index + 1]));
+const rejectedFrame = createMultiIlluminatorCausalFrame({...multiInput,
+  trackerDiagnostics: {...multiInput.trackerDiagnostics, ...rejectionCounters}}, 2);
+assert.deepStrictEqual(validateFrame(JSON.parse(JSON.stringify(rejectedFrame))).tracker_diagnostics,
+  {...multiInput.trackerDiagnostics, ...rejectionCounters});
+for (const field of Object.keys(rejectionCounters)) {
+  assert.equal(Object.hasOwn(multiFrame.tracker_diagnostics, field), false,
+    'Older producers must retain missing counters rather than manufacture zero');
+  for (const value of [-1, .5, null, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => createMultiIlluminatorCausalFrame({...multiInput,
+      trackerDiagnostics: {[field]: value}}), /Invalid causal tracker diagnostic/);
+    assert.throws(() => validateFrame({...multiFrame,
+      tracker_diagnostics: {[field]: value}}), /Invalid causal tracker diagnostic/);
+  }
+}
+assert.deepEqual(multiFrame.candidates.map(candidate => candidate.support_depth), [1, 1]);
+assert.deepEqual(createMultiIlluminatorCausalFrame({...multiInput,
+  detections: {...multiInput.detections, evidence: [{cpis: 2}, {cpis: 4}, {cpis: 8}]}
+}).candidates.map(candidate => candidate.support_depth), [2, 4, 8],
+'Depth follows the selected native bank of each candidate, not the maximum configured bank');
+for (const cpis of [1, 2, 4, 8]) {
+  const supported = createMultiIlluminatorCausalFrame({...multiInput,
+    detections: {...multiInput.detections, evidence: [{cpis}, null, {cpis: 8}]}}, 2);
+  assert.deepEqual(validateFrame(supported).candidates.map(candidate => candidate.support_depth),
+    [cpis, 0], 'Retained candidates preserve aligned native support; null lineage is unknown');
+}
+for (const evidence of [null, {}, [], [{cpis: 2}],
+  [{}, null, null], [{cpis: 0}, null, null], [{cpis: 3}, null, null],
+  [{cpis: '8'}, null, null], [{cpis: NaN}, null, null]])
+  assert.throws(() => createMultiIlluminatorCausalFrame({...multiInput,
+    detections: {...multiInput.detections, evidence}}, 2), /detection evidence/);
 const singletonLane = createMultiIlluminatorCausalFrame({...multiInput,
   end_input_sample: multiInput.first_input_sample, capture_epoch: 0,
   capture_end_input_sample: multiInput.capture_first_input_sample + 1});
@@ -112,6 +158,43 @@ assert.throws(() => validateFrame({...multiFrame,
   assert.equal(row.epoch_id, 'causal-test-epoch');
   assert.equal(recorder.status().written, 1);
   assert.equal(recorder.status().truth_blind, true);
+  const rejectionConfig = JSON.parse(JSON.stringify(config));
+  rejectionConfig.process.evidence.causal_funnel.path = path.join(directory, 'birth-rejections');
+  const rejectionRecorder = new CausalFunnelRecorder(rejectionConfig);
+  assert.equal(rejectionRecorder.accept(rejectedFrame, {nativeTransport: true}), true);
+  await rejectionRecorder.flush();
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(rejectionRecorder.segmentFile(), 'utf8'))
+    .frame.tracker_diagnostics, rejectedFrame.tracker_diagnostics,
+  'Durable evidence preserves the exact complete rejection counters');
+  const overlapConfig = JSON.parse(JSON.stringify(config));
+  overlapConfig.process.evidence.causal_funnel.path = path.join(directory, 'lineage-overlap');
+  const overlapRecorder = new CausalFunnelRecorder(overlapConfig);
+  const originalParse = JSON.parse;
+  JSON.parse = () => { throw new Error('Validated causal evidence must not be reparsed'); };
+  try {
+    assert.equal(overlapRecorder.accept(JSON.stringify(lineageOverlapFrame),
+      {nativeTransport: true, parsed: lineageOverlapFrame}), true);
+    assert.equal(overlapRecorder.accept(' '.repeat(2 * 1024 * 1024),
+      {nativeTransport: true, parsed: lineageOverlapFrame}), false,
+    'Raw transport bytes remain bounded even when parsed validation is shared');
+  } finally { JSON.parse = originalParse; }
+  await overlapRecorder.flush();
+  assert.equal(overlapRecorder.status().accepted, 1);
+  assert.equal(overlapRecorder.status().written, 1);
+  assert.equal(overlapRecorder.status().native_received, 1);
+  assert.equal(overlapRecorder.status().rejected, 1);
+  assert.equal(overlapRecorder.status().dropped, 0);
+  assert.match(overlapRecorder.status().error, /byte bound/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(overlapRecorder.segmentFile(), 'utf8')).frame,
+    lineageOverlapFrame);
+  assert.equal(overlapRecorder.accept({...lineageOverlapFrame,
+    candidates: [{...lineageOverlapFrame.candidates[0], reason: 'unknown_reason'}]},
+  {nativeTransport: true}), false);
+  assert.equal(overlapRecorder.status().rejected, 2);
+  assert.equal(overlapRecorder.status().accepted, 1);
+  assert.equal(overlapRecorder.status().written, 1);
+  assert.equal(overlapRecorder.status().native_received, 1);
+  assert.equal(overlapRecorder.status().error, 'Invalid causal transition metadata');
   // Historical native-only v2 epochs omitted the now-explicit false default.
   // Resume without rewriting their manifest, but retain every actual guard.
   const legacyConfig = JSON.parse(JSON.stringify(config));
@@ -254,6 +337,8 @@ assert.throws(() => validateFrame({...multiFrame,
     location: {rx: {latitude: 1, longitude: 1, altitude: 1, name: 'rx'},
       tx: {latitude: 2, longitude: 2, altitude: 1, name: 'tx'}}, truth: {adsb: {enabled: false, tar1090: 'localhost:8080'}},
     save: {iq: false, map: false, detection: false, timing: false, path: '/tmp/', retention: {}}};
+  assert.match(validateConfig(full).errors.join('; '), /require the single-lane resident tracker/);
+  full.process.evidence = {causal_funnel: {...config.process.evidence.causal_funnel, enabled: false}};
   assert.equal(validateConfig(full).valid, true, validateConfig(full).errors.join('; '));
   full.process.evidence.causal_funnel.epoch_id = 'bad';
   assert.equal(validateConfig(full).valid, false);

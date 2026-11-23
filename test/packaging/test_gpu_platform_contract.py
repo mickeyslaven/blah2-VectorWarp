@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build policy and bounded compiler checks; no GPU, SDR, or installed service."""
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -80,6 +81,32 @@ class GpuPlatformPolicyTest(unittest.TestCase):
 
 
 class GpuBuildContractTest(unittest.TestCase):
+    def test_temporary_file_callers_declare_linux_and_darwin_functions_directly(self):
+        callers = []
+        for directory in ("src", "core", "test", "bench"):
+            for path in (ROOT / directory).rglob("*"):
+                if path.suffix not in (".c", ".cc", ".cpp", ".h", ".hpp"):
+                    continue
+                source = path.read_text()
+                if not re.search(r"\b(?:mkdtemp|mkstemp|mkstemps|mkostemp|mkostemps)\s*\(", source):
+                    continue
+                callers.append(path.relative_to(ROOT))
+                with self.subTest(source=callers[-1]):
+                    self.assertRegex(source, r"(?m)^\s*#\s*include\s*<(?:cstdlib|stdlib\.h)>")
+                    self.assertRegex(source, r"(?m)^\s*#\s*include\s*<unistd\.h>")
+        self.assertIn(pathlib.Path("test/json/TestJsonOutput.cpp"), callers)
+
+    @unittest.skipUnless(shutil.which("clang++"), "Clang required for strict declaration check")
+    def test_temporary_file_headers_compile_under_strict_cpp17(self):
+        source = """#include <cstdlib>
+#include <unistd.h>
+void declarations(char* pattern) { (void)::mkdtemp(pattern); (void)::mkstemp(pattern); }
+"""
+        result = subprocess.run([shutil.which("clang++"), "-std=c++17", "-Wall", "-Werror",
+                                 "-fsyntax-only", "-x", "c++", "-"], input=source, text=True,
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     @unittest.skipUnless(shutil.which("clang++"), "Clang required for private-field diagnostics")
     def test_submit_context_probe_compiles_and_refuses_unsupported_platform(self):
         prelude = r'''
@@ -289,15 +316,16 @@ int main() {
 
     def test_production_has_no_pi_specific_frozen_dsp_pipeline(self):
         processor = (ROOT / "src/blah2.cpp").read_text()
+        canonical = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
         cmake = (ROOT / "cmake/GpuAcceleration.cmake").read_text()
         bench_cmake = (ROOT / "bench/CMakeLists.txt").read_text()
-        for source in (processor, cmake, bench_cmake):
+        for source in (processor, canonical, cmake, bench_cmake):
             for token in ("VECTORWARP_MIXED_AUTO", "pi4Host", "blah2MixedWorker",
                           "process/mixed/", "mixed::"):
                 self.assertNotIn(token, source)
-        self.assertIn("blah2::Acceleration acceleration(", processor)
+        self.assertIn("std::make_unique<Acceleration>(", canonical)
         pipeline = (ROOT / "src/process/pipeline/RadarPipeline.h").read_text()
-        self.assertTrue("pipeline::processFrontend(" in processor)
+        self.assertIn("pipeline::processFrontend(", canonical)
         self.assertTrue("acceleration->processClutter(" in pipeline)
         self.assertTrue("acceleration->process(" in pipeline)
         for path in ("script/build-native.sh", "script/package-native.sh", "script/install-native.sh"):
@@ -453,10 +481,9 @@ int main() {
         self.assertIn("max-parallel: 1", qualification)
         self.assertIn("--source-sha", qualification)
         gate = (ROOT / ".github/workflows/gpu-receipt-gate.yml").read_text()
-        self.assertIn("'gpu-qualification.yml'", gate)
-        self.assertIn("run['headSha'] == sha", gate)
-        self.assertIn("run['event'] == 'workflow_dispatch'", gate)
-        self.assertIn("run['conclusion'] == 'success'", gate)
+        self.assertIn("script/verify-release-ci.py", gate)
+        self.assertIn("gate['collect'](sha, workflows=('gpu-qualification.yml',))", gate)
+        self.assertNotIn("'--status', 'success'", gate)
         self.assertIn("verify_qualification_receipts.py", gate)
         release = (ROOT / ".github/workflows/release-packages.yml").read_text()
         self.assertIn("needs: [validate, qualified-linux-gpu]", release)

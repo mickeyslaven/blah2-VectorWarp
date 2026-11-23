@@ -178,9 +178,9 @@ inline void spawned(pid_t pid,const std::string& path){if(active()){
 }}
 class Module {
  void* handle_=nullptr;
- std::string role_,key_,path_;
+ std::string role_,key_,path_,mode_;
 public:
- Module(const char* filename,const char* role):role_(role),key_(role){
+ Module(const char* filename,const char* role,const char* mode=""):role_(role),key_(role),mode_(mode){
   for(auto& c:key_)if(c>='a'&&c<='z')c=char(c-'a'+'A');
   if(active())emit("module-attempt",",\"role\":"+replay_gpu_qualification::quoted(role_));
   path_=gpuSiblingPath(filename);
@@ -206,9 +206,11 @@ public:
    const auto identity=status(1);
    verify(inspect(path_),key_); // Detect replacement during load/enumeration.
    const auto role=",\"role\":"+replay_gpu_qualification::quoted(role_);
+   const auto interface=",\"factory\":"+replay_gpu_qualification::quoted(symbol)+
+    ",\"workerMode\":"+replay_gpu_qualification::quoted(mode_);
    emit("module-loaded",role+",\"module\":"+json(image)+",\"abi\":"+std::to_string(abi)+
-    ",\"deviceRequest\":"+replay_gpu_qualification::quoted(device)+",\"driverStatus\":"+identity);
-   emit("backend-start",role);
+    interface+",\"deviceRequest\":"+replay_gpu_qualification::quoted(device)+",\"driverStatus\":"+identity);
+   emit("backend-start",role+interface);
   }
   return reinterpret_cast<Create>(address);
  }

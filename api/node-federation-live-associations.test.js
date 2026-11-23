@@ -44,9 +44,13 @@ test('merges live association evidence by aircraft and preserves channel/source 
 });
 
 test('federated live-association endpoint joins registered nodes and remains fail-soft', async t => {
+  let remoteState = 'live', remoteFresh = true;
   const remote = http.createServer((request, response) => {
-    if (request.url !== '/api/live-aircraft-associations') return response.writeHead(404).end();
+    if (!['/api/live-aircraft-associations','/api/system/status?summary=1'].includes(request.url))
+      return response.writeHead(404).end();
     response.writeHead(200, {'Content-Type': 'application/json', 'X-VectorWarp-Node-Id': 'remote'});
+    if (request.url.startsWith('/api/system/status')) return response.end(JSON.stringify({
+      radar:'degraded',processorFresh:remoteFresh,processor:{state:remoteState}}));
     response.end(JSON.stringify({associations: [{hex: 'abc123', tracked: true,
       channels: ['secondary'], sources: ['relay'], tracked_cpis: 3, last_at: 20}]}));
   });
@@ -67,6 +71,8 @@ test('federated live-association endpoint joins registered nodes and remains fai
   t.after(() => close(coordinator));
   const port = coordinator.address().port;
   installNodeFederation(app, registryFile, {config: {network: {ports: {api: port}}}});
+  app.get('/api/system/status', (_request,response)=>response.json({
+    radar:'receiving',processorFresh:true,processor:{state:'live'}}));
   app.get('/api/live-aircraft-associations', (_request, response) => response.json({associations: [
     {hex: 'ABC123', flight: 'TEST1', detected: true, channels: ['primary'], detected_cpis: 3, last_at: 10}
   ]}));
@@ -76,4 +82,16 @@ test('federated live-association endpoint joins registered nodes and remains fai
   assert.deepEqual(result.value.associations, [{hex: 'abc123', flight: 'TEST1', detected: true,
     tracked: true, channels: ['primary', 'secondary'], sources: ['Local', 'Remote', 'relay'],
     detected_cpis: 3, tracked_cpis: 3, last_at: 20}]);
+  for (const [state, fresh] of [['stopped',true],['live',false]]) {
+    remoteState=state; remoteFresh=fresh;
+    await new Promise(resolve=>setTimeout(resolve,800)); // expire only the bounded endpoint cache
+    const stopped = await getJson(`http://127.0.0.1:${port}/api/federation/live-aircraft-associations`);
+    assert.equal(stopped.value.associations.length,1);
+    assert.deepEqual(stopped.value.associations[0].sources,['Local'],
+      'Stopped or stale nodes cannot promote retained associations into live flags');
+    assert.equal(stopped.value.associations[0].tracked,false);
+    const historical = await getJson(`http://127.0.0.1:${remotePort}/api/live-aircraft-associations`);
+    assert.equal(historical.value.associations[0].tracked,true,
+      'Filtering live publication does not mutate historical evidence');
+  }
 });

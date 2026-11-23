@@ -1,5 +1,7 @@
 #pragma once
 #include "process/ambiguity/ClutterReplayCheckpoint.private.h"
+#include "data/Detection.h"
+#include "data/meta/StageExecution.h"
 // Qualification-only serialization of the samples/statistics actually consumed
 // by production. No DSP, oracle, truncation, or live-mode fallback lives here.
 #include <rapidjson/stringbuffer.h>
@@ -13,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -41,6 +44,12 @@ struct Frame {
   std::vector<std::array<double,3>> positionsM;
   std::string detectionManifoldFile,bearingManifoldFile;
   std::string resolvedProductPlan;
+  // Raw capture identity above and canonical output-grid lineage are distinct
+  // when acquisition starts between decimation positions. Never rebase either.
+  std::optional<std::array<uint64_t,2>> inputSampleInterval;
+  std::array<uint64_t,2> inputInterval() const {
+    return inputSampleInterval.value_or(std::array<uint64_t,2>{captureFirst,captureEnd});
+  }
 };
 struct ResidentAllocation {
   bool available=false,laneBudgetAvailable=false;
@@ -85,7 +94,7 @@ struct Products {
   bool residentProofAvailable=false;
   uint64_t logicalFrame=0,consumedSequence=0,nativeGeneration=0,residentGeneration=0;
   std::array<uint32_t,32> postprocessStatus{};
-  std::array<uint32_t,64> trackerStatus{};
+  std::array<uint32_t,66> trackerStatus{};
   ResidentAllocation residentAllocation;
 };
 // Owned copies made only at the opt-in production clutter boundary, before
@@ -116,11 +125,18 @@ class Observer {
   int fd_=-1;
   uint64_t bytes_=0;
   std::mutex mutex_;
-  struct Pending { uint64_t sequence,epoch,first,end; bool finished=false,detectorFinished=false; };
-  std::map<std::string,Pending> pending_;
+  struct Pending { uint64_t sequence,epoch,first,end; std::array<uint64_t,2> input;
+    bool finished=false,detectorFinished=false; };
+  // Product completion may lag exactly one CPI behind ingress.  Keep the
+  // bounded in-flight identities distinct instead of overwriting a lane's
+  // preceding observation before its temporal products complete.
+  using Key=std::pair<std::string,uint64_t>;
+  std::map<Key,Pending> pending_;
   struct ClutterInput { Frame frame;std::vector<std::vector<std::complex<double>>> samples;bool finished=false; };
-  std::map<std::string,ClutterInput> clutterInputs_;
+  std::map<Key,ClutterInput> clutterInputs_;
   std::map<std::string,uint32_t> counts_;
+  std::map<std::string,uint64_t> latestSequence_;
+  static Key key(const Frame& f) { return {f.lane,f.sequence}; }
   static void require(bool ok,const char* message) {
     if(!ok)throw std::runtime_error(message);
   }
@@ -135,6 +151,9 @@ class Observer {
     w.Key("stage");w.String(stage);w.Key("lane");w.String(f.lane.c_str());
     w.Key("sequence");w.Uint64(f.sequence);w.Key("captureEpoch");w.Uint64(f.captureEpoch);
     w.Key("captureFirst");w.Uint64(f.captureFirst);w.Key("captureEnd");w.Uint64(f.captureEnd);
+    rapidjson::Document lineage;const auto input=f.inputInterval();
+    w.Key("input_lineage");sample_interval_json(f.samplePositionAvailable,f.captureEpoch,
+      input[0],input[1],lineage.GetAllocator()).Accept(w);
     w.Key("sampleRateHz");w.Uint(f.sampleRateHz);w.Key("frequencyHz");w.Uint64(f.frequencyHz);
     w.Key("inputSamplesPerOutput");w.Uint(f.inputSamplesPerOutput);
     w.Key("backend");w.String(f.backend.c_str());w.Key("device");w.String(f.device.c_str());
@@ -193,10 +212,10 @@ public:
   void detector(const Frame& f,bool enabled,bool ready,const char* backend,
       uint64_t evaluated,uint64_t accepted,uint64_t nonfinite=0) {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto found=pending_.find(f.lane);
+    const auto found=pending_.find(key(f));
     require(found!=pending_.end()&&found->second.finished&&!found->second.detectorFinished&&
       found->second.sequence==f.sequence&&found->second.epoch==f.captureEpoch&&
-      found->second.first==f.captureFirst&&found->second.end==f.captureEnd,
+      found->second.first==f.captureFirst&&found->second.end==f.captureEnd&&found->second.input==f.inputInterval(),
       "Qualification detector observation has no exact product lineage");
     require(accepted<=evaluated&&nonfinite<=evaluated&&evaluated<=uint64_t(config_.maxMapCells)*4&&
       ((enabled&&ready)||(!evaluated&&!accepted&&!nonfinite)),
@@ -209,21 +228,62 @@ public:
     w.Key("accepted_cells");w.Uint64(accepted);
     w.Key("nonfinite_cells");w.Uint64(nonfinite);w.EndObject();publish(b);
     found->second.detectorFinished=true;
+    if(!enabled){clutterInputs_.erase(key(f));pending_.erase(found);}
+  }
+  // The only full-precision temporal-score export is the replay qualification
+  // artifact.  It is emitted after the detector accounting proves the exact
+  // frame was processed, and never travels on the display/publication socket.
+  void temporalScores(const Frame& f,const Detection& detections) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found=pending_.find(key(f));
+    require(found!=pending_.end()&&found->second.finished&&found->second.detectorFinished&&
+      found->second.sequence==f.sequence&&found->second.epoch==f.captureEpoch&&
+      found->second.first==f.captureFirst&&found->second.end==f.captureEnd&&found->second.input==f.inputInterval(),
+      "Qualification temporal-score observation has no exact completed lineage");
+    const auto payload=detections.to_calibration_evidence_json(f.captureEnd);
+    rapidjson::StringBuffer b;Writer w(b);identity(w,f,"temporal_scores");
+    w.Key("candidate_output_complete");w.Bool(true);
+    w.Key("candidate_output_truncated");w.Bool(false);
+    w.Key("candidate_evidence");w.RawValue(payload.data(),rapidjson::SizeType(payload.size()),rapidjson::kObjectType);
+    w.EndObject();publish(b);
+    clutterInputs_.erase(key(f));pending_.erase(found);
+  }
+  // A production rejection is a terminal input outcome, not a detector
+  // product. Retire its exact lineage so bounded cross-CPI overlap cannot
+  // strand observer state or fabricate downstream evidence.
+  void rejected(const Frame& f,const std::string& reason) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found=pending_.find(key(f));
+    require(found!=pending_.end()&&found->second.sequence==f.sequence&&
+      found->second.epoch==f.captureEpoch&&found->second.first==f.captureFirst&&
+      found->second.end==f.captureEnd&&found->second.input==f.inputInterval(),
+      "Qualification rejection has no exact input lineage");
+    require(!reason.empty()&&reason.size()<=96,
+      "Qualification rejection reason is invalid");
+    rapidjson::StringBuffer b;Writer w(b);identity(w,f,"rejected");
+    w.Key("terminal");w.Bool(true);w.Key("reason");w.String(reason.c_str());
+    w.EndObject();publish(b);
+    clutterInputs_.erase(key(f));pending_.erase(found);
   }
   bool observesClutter()const{return config_.clutter;}
   bool observesSamples()const{return !config_.summaryOnly;}
   template<class Sample> void input(const Frame& f,size_t channels,size_t samples,Sample sample) {
     std::lock_guard<std::mutex> lock(mutex_);
+    const auto input=f.inputInterval();
     require(!f.lane.empty()&&f.sequence&&f.samplePositionAvailable&&f.captureEnd>f.captureFirst&&
       f.sampleRateHz&&f.frequencyHz&&f.inputSamplesPerOutput&&channels&&channels<=8&&samples&&
       samples<=config_.maxSamplesPerChannel&&
-      f.captureEnd-f.captureFirst==samples*uint64_t(f.inputSamplesPerOutput),
+      f.captureEnd-f.captureFirst==samples*uint64_t(f.inputSamplesPerOutput)&&
+      input[1]>input[0]&&input[1]-input[0]==f.captureEnd-f.captureFirst&&
+      input[0]>=f.captureFirst&&input[0]-f.captureFirst<f.inputSamplesPerOutput,
       "Qualification observer input identity/shape invalid or exceeds budget");
     require(f.actualGainDb.empty()||f.actualGainDb.size()==channels,"Qualification observer gain topology differs");
     require(counts_.size()<8||counts_.count(f.lane),"Qualification observer lane budget exhausted");
-    auto previous=pending_.find(f.lane);
-    require(previous==pending_.end()||f.sequence>previous->second.sequence,
+    const auto previous=latestSequence_.find(f.lane);
+    require(previous==latestSequence_.end()||f.sequence>previous->second,
       "Qualification observer sequence was reused");
+    const auto lanePending=std::count_if(pending_.begin(),pending_.end(),[&](const auto& value){return value.first.first==f.lane;});
+    require(lanePending<2,"Qualification observer overlap exceeds one CPI per lane");
     require(counts_[f.lane]<config_.maxFrames,"Qualification observer frame budget exhausted");
     rapidjson::StringBuffer b;Writer w(b);identity(w,f,"input");
     w.Key("summary_only");w.Bool(config_.summaryOnly);w.Key("sample_count");w.Uint64(samples);
@@ -243,17 +303,19 @@ public:
         for(size_t i=0;i<samples;++i)values[i]=sample(f.channelIds[c],i);
       }
     }
-    publish(b);++counts_[f.lane];pending_[f.lane]={f.sequence,f.captureEpoch,f.captureFirst,f.captureEnd,false};
-    if(config_.clutter)clutterInputs_[f.lane]=std::move(clutterInput);
+    publish(b);++counts_[f.lane];latestSequence_[f.lane]=f.sequence;
+    pending_[key(f)]={f.sequence,f.captureEpoch,f.captureFirst,f.captureEnd,f.inputInterval(),false};
+    if(config_.clutter)clutterInputs_[key(f)]=std::move(clutterInput);
   }
   void clutter(const Frame& f,const Clutter& c) {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto found=clutterInputs_.find(f.lane);
+    const auto found=clutterInputs_.find(key(f));
     require(config_.clutter&&found!=clutterInputs_.end()&&!found->second.finished,
       "Qualification clutter observation disabled, missing or duplicated");
     const auto& original=found->second.frame;
     require(f.sequence==original.sequence&&f.captureEpoch==original.captureEpoch&&
       f.captureFirst==original.captureFirst&&f.captureEnd==original.captureEnd&&
+      f.inputInterval()==original.inputInterval()&&
       f.channelIds==original.channelIds&&f.referenceChannelIds==original.referenceChannelIds&&
       f.frequencyHz==original.frequencyHz&&f.sampleRateHz==original.sampleRateHz&&
       f.inputSamplesPerOutput==original.inputSamplesPerOutput,
@@ -273,7 +335,7 @@ public:
     if(!c.checkpointProof.empty()){
       const auto proof=clutter_replay::Proof::decode(c.checkpointProof);
       require(c.enabled&&c.gpuExecuted&&!c.cpuExecuted&&c.backend=="vulkan"&&
-        proof.frame.epoch==f.captureEpoch&&proof.frame.first==f.captureFirst&&proof.frame.end==f.captureEnd&&
+        proof.frame.epoch==f.captureEpoch&&proof.frame.first==f.inputInterval()[0]&&proof.frame.end==f.inputInterval()[1]&&
         (!proof.fixed||(clutter_replay::hex(proof.checkpoint)&&clutter_replay::hex(proof.prefix))),
         "Clutter checkpoint proof contradicts actual execution/lineage");
       fixed=proof.fixed;w.Key("checkpoint_proof");w.String(c.checkpointProof.c_str());
@@ -291,11 +353,12 @@ public:
   }
   void products(const Frame& f,const Products& p) {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto found=pending_.find(f.lane);
+    const auto found=pending_.find(key(f));
     require(found!=pending_.end()&&!found->second.finished&&found->second.sequence==f.sequence&&
-      found->second.epoch==f.captureEpoch&&found->second.first==f.captureFirst&&found->second.end==f.captureEnd,
+      found->second.epoch==f.captureEpoch&&found->second.first==f.captureFirst&&found->second.end==f.captureEnd&&
+      found->second.input==f.inputInterval(),
       "Qualification observer product has no exact input lineage");
-    require(!config_.clutter||(clutterInputs_.count(f.lane)&&clutterInputs_.at(f.lane).finished),
+    require(!config_.clutter||(clutterInputs_.count(key(f))&&clutterInputs_.at(key(f)).finished),
       "Qualification products lack the requested clutter observation");
     const uint64_t cells=uint64_t(p.rows)*p.columns;
     require(cells&&cells<=config_.maxMapCells&&p.channels&&p.channels<=8&&

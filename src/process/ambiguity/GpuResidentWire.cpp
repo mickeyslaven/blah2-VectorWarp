@@ -86,16 +86,17 @@ void validateConfig(const Config& c){
  require((d.integrationCpis==1||d.integrationCpis==2||d.integrationCpis==4||d.integrationCpis==8)&&
   motion.delay<=2&&motion.doppler<=(d.integrationCpis>2?16u:1u)&&
   (d.integrationCpis!=1||(!motion.delay&&!motion.doppler))&&
-  (d.integrationCpis<=2||f.mode!=FusionMode::noncoherent),
+  (d.integrationCpis<=2||(d.enabled&&(f.mode!=FusionMode::noncoherent||!c.tracker.enabled))),
   "Production replay temporal/TBD contract is invalid");
  if(motion.fractionalDelay){
-  require(d.enabled&&d.integrationCpis>2&&f.mode!=FusionMode::noncoherent,
-    "Fractional delay requires enabled coherent track-before-detect");
+  require(d.enabled&&d.integrationCpis>2,
+    "Fractional delay requires enabled track-before-detect");
   track_before_detect::validateDelayDrift(track_before_detect::delayDriftPerHz(
-    g.clutterSamples,f.frequencyHz),c.dopplerAxis);
+    g.clutterSamples,c.temporalCarrierHz()),c.dopplerAxis);
  }
  const auto& b=c.bearing;
- track_before_detect::validateRefinementGrid(d.integrationCpis,f.beams,b.enabled?b.scanBeams:0);
+ if(f.mode!=FusionMode::noncoherent)
+  track_before_detect::validateRefinementGrid(d.integrationCpis,f.beams,b.enabled?b.scanBeams:0);
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
  require(b.referenceAnchor==BearingReferenceAnchor::liveEigenbeam||
@@ -322,7 +323,7 @@ const auto&t=c.tracker;
  w.u32(584,t.stationaryClutter);
  w.u32(588,t.stationaryPersistenceCpis);
  w.f64(592,t.stationaryMaxDopplerHz);
- // 604..611 and policy bits 0..1 are reserved zero in ABI17.
+ // 604..611 and policy bits 0..1 remain reserved zero.
  w.u32(612,t.normalizedInnovationGate?4u:0u);
  w.u64(344,c.spectrumBins);
  w.u64(352,c.presence);

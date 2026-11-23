@@ -5,10 +5,13 @@ const path = require('path');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig, writeConfigAtomically, FIELD_RULES,
-  RETIRED_FIXED_SETTINGS, publicationPolicyError} = require('./config-manager');
+  RETIRED_FIXED_SETTINGS, publicationPolicyError, effectiveRadarPlan, radarPlanErrors,
+  assessResolvedRadarPlans} = require('./config-manager');
 const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
 const {siteFingerprint} = require('./manifold-recorder');
-const {legacyDelayReferenceRate, applyReceiverProfile} = require('../html/js/config_profiles');
+const {legacyDelayReferenceRate, applyReceiverProfile,
+  temporalConfirmationRequirements} = require('../html/js/config_profiles');
+const {createReceiverJournal} = require('./receiver-journal');
 
 // Source trees and macOS bundles use config/; native packages use
 // config-examples/. Both contain the same immutable canonical first-run YAML.
@@ -18,7 +21,6 @@ const canonicalPath = ['config', 'config-examples'].map(directory =>
 if (!canonicalPath) throw new Error('Canonical first-run configuration is missing from this installation.');
 const canonicalDefaults = yaml.load(fs.readFileSync(canonicalPath, 'utf8'));
 
-// Neutral first-run form, not a running radar configuration or site claim.
 function setupDefaults() {
   const config = JSON.parse(JSON.stringify(canonicalDefaults));
   if (process.env.VECTORWARP_MACOS_STATE)
@@ -31,7 +33,7 @@ function configurationForReceiver(type, base) {
   const profile = getDeviceProfiles().find(item => item.type === type);
   if (!profile) throw new Error(`Unknown receiver profile: ${type}`);
   const config = JSON.parse(JSON.stringify(base === undefined ? setupDefaults() : base));
-  return applyReceiverProfile(config, profile, base === undefined);
+  return applyReceiverProfile(config, profile, base === undefined || config.capture?.device?.type === 'Unconfigured');
 }
 
 function stripLegacyNoOps(config) {
@@ -64,7 +66,27 @@ function stripLegacyNoOps(config) {
   return config;
 }
 
-function readConfig(filename) {
+// A separately reviewed contract cannot be rewritten by Settings/presets or
+// upgrade migrations. The explicit environment path also detects a missing pin.
+function checkRadarPlan(config, filename, requiredFile = process.env.VECTORWARP_REQUIRED_RADAR_PLAN) {
+  const contractFile = requiredFile || `${filename}.radar-plan.json`;
+  try {
+    const report = effectiveRadarPlan(config);
+    if (!requiredFile && !fs.existsSync(contractFile))
+      return {...report, qualification: 'unpinned', errors: []};
+    if (fs.statSync(contractFile).size > 262144) throw new Error('Required radar plan exceeds 256 KiB');
+    const requirement = JSON.parse(fs.readFileSync(contractFile, 'utf8'));
+    const errors = radarPlanErrors(report, requirement);
+    return {...report, qualification: errors.length ? 'rejected' : 'matched', contractFile,
+      requirement_sha256: crypto.createHash('sha256').update(JSON.stringify(requirement)).digest('hex'),
+      required_features: requirement.required_features, resolved_products: requirement.resolved_products, errors};
+  } catch (error) {
+    return {schema: 'vectorwarp-radar-plan-report-v1', qualification: 'rejected',
+      contractFile, errors: [`Radar plan admission failed: ${error.message}`]};
+  }
+}
+
+function readConfig(filename, {requiredPlanFile} = {}) {
   let raw = '';
   let exists = false;
   let parsed;
@@ -197,8 +219,11 @@ function readConfig(filename) {
   const requiredDefaults = laneTransmittersComplete ?
     suppliedDefaults.filter(field => field !== 'location.tx') : suppliedDefaults;
   const validation = validateConfig(config);
+  const radarPlan = checkRadarPlan(config, filename, requiredPlanFile);
+  validation.errors.push(...radarPlan.errors);
+  validation.valid = validation.errors.length === 0;
   return {config, revision: crypto.createHash('sha256').update(exists ? raw : 'missing').digest('hex'),
-    exists, readError, suppliedDefaults: requiredDefaults, validation,
+    exists, readError, suppliedDefaults: requiredDefaults, validation, radarPlan,
     setupRequired: Boolean(readError || requiredDefaults.length || !validation.valid)};
 }
 
@@ -223,7 +248,7 @@ function writable(filename) {
 // retain a value that the stricter validator correctly rejects. Migrate only
 // that exact released default, preserve all other operator settings, and keep
 // the normal atomic backup/ownership behavior.
-function migrateKnownDefaults(filename) {
+function migrateKnownDefaults(filename, {report = value => console.error(JSON.stringify(value))} = {}) {
   let file;
   try { file = fs.lstatSync(filename); }
   catch (error) {
@@ -231,10 +256,14 @@ function migrateKnownDefaults(filename) {
     throw error;
   }
   if (!file.isFile() || file.isSymbolicLink() || file.size > 262144) return false;
-  let parsed;
-  try { parsed = yaml.load(fs.readFileSync(filename, 'utf8'), {schema: yaml.JSON_SCHEMA}); }
+  let parsed, raw;
+  try { raw = fs.readFileSync(filename, 'utf8'); parsed = yaml.load(raw, {schema: yaml.JSON_SCHEMA}); }
   catch (_) { return false; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  const revision = value => crypto.createHash('sha256').update(value).digest('hex');
+  const previousRevision = revision(raw), receiverFingerprint = revision(JSON.stringify(parsed.capture || {}));
+  const journal = createReceiverJournal(filename), predecessor = journal.load();
+  const trackerConfirmationChanges = [];
   const beforeRetirement = JSON.stringify(parsed);
   stripLegacyNoOps(parsed);
   let changed = JSON.stringify(parsed) !== beforeRetirement;
@@ -249,8 +278,49 @@ function migrateKnownDefaults(filename) {
     parsed.capture.device.address = 'type=b200';
     changed = true;
   }
+  // Released deep-TBD configurations predate disjoint confirmation. Repair only
+  // that already-enabled policy, never ordinary saves or a new preset selection.
+  const required = temporalConfirmationRequirements(parsed);
+  if (parsed.process?.detection?.enable === true &&
+      parsed.process.detection.track_before_detect?.enable === true && required) {
+    const {N, misses, minimumWindow, minimumMisses} = required;
+    const nextN = Math.max(N, minimumWindow), nextMisses = Math.max(misses, minimumMisses);
+    if (nextN !== N || nextMisses !== misses) {
+      const candidate = readConfig(filename).config;
+      candidate.process.tracker.initiate.N = nextN;
+      candidate.process.tracker.delete = nextMisses;
+      if (validateConfig(candidate).valid) {
+        parsed.process.tracker.initiate.N = nextN;
+        parsed.process.tracker.delete = nextMisses;
+        trackerConfirmationChanges.push(
+          {field: 'process.tracker.initiate.N', before: N, after: nextN},
+          {field: 'process.tracker.delete', before: misses, after: nextMisses});
+        changed = true;
+      }
+    }
+  }
   if (!changed) return false;
+  const planErrors = checkRadarPlan(parsed, filename).errors;
+  if (planErrors.length) throw new Error(planErrors.join('; '));
   writeConfigAtomically(filename, parsed);
+  const document = readConfig(filename);
+  const receipt = {schema: 'vectorwarp-config-migration-v1', previousRevision,
+    configRevision: document.revision, backup: `${filename}.bak`, trackerConfirmationChanges,
+    receiverJournalPreserved: false};
+  // Only an exact, previously verified Apply may cross this known migration.
+  // Direct edits, changed receiver selectors and unresolved transactions retain
+  // their interlock. Recheck the journal to avoid overwriting concurrent work.
+  if (document.validation.valid && predecessor.configRevision === previousRevision &&
+      predecessor.applicationVerified === true && predecessor.reconciliationRequired === false &&
+      ['not-required', 'already-matched', 'synchronized'].includes(predecessor.state) &&
+      receiverFingerprint === revision(JSON.stringify(parsed.capture || {})) &&
+      JSON.stringify(journal.load()) === JSON.stringify(predecessor)) {
+    receipt.receiverJournalPreserved = true;
+    journal.write({...predecessor, configRevision: document.revision,
+      receipt: {...predecessor.receipt, configRevision: document.revision,
+        configMigration: receipt}});
+  }
+  report(receipt);
   return true;
 }
 
@@ -305,9 +375,53 @@ function saveConfig(filename, candidate, expectedRevision) {
     error.status = 422;
     throw error;
   }
+  const planErrors = checkRadarPlan(prepared, filename).errors;
+  if (planErrors.length) {
+    const error = new Error(planErrors.join('; '));
+    error.status = 422;
+    throw error;
+  }
   writeConfigAtomically(filename, prepared);
   return readConfig(filename);
 }
 
 module.exports = {readConfig, writable, saveConfig, setupDefaults, configurationForReceiver,
-  migrateKnownDefaults, preserveConfigBytesDuringUpgrade, stripLegacyNoOps};
+  migrateKnownDefaults, preserveConfigBytesDuringUpgrade, stripLegacyNoOps, checkRadarPlan};
+
+// Read-only deployment/CI interface. pin-preview emits an artifact for review;
+// it never writes or weakens the independently managed requirement file.
+if (require.main === module) {
+  try {
+    const [command, filename, ...args] = process.argv.slice(2);
+    if (!['plan', 'pin-preview', 'accept', 'accept-runtime'].includes(command) || !filename ||
+        (command === 'accept' && args.length !== 1) || (command === 'plan' && args.length) ||
+        (command === 'accept-runtime' && args.length !== 2) ||
+        (command === 'pin-preview' && !args.length))
+      throw new Error('usage: config-store.js plan CONFIG | pin-preview CONFIG feature=JSON [...] | accept CONFIG REQUIREMENT | accept-runtime CONFIG REQUIREMENT REPORT');
+    const document = readConfig(filename, {requiredPlanFile: command.startsWith('accept') ? args[0] : undefined});
+    if (document.readError || !document.validation.valid)
+      throw new Error(document.readError || document.validation.errors.join('; '));
+    const required_features = {};
+    if (command === 'pin-preview') {
+      for (const argument of args) {
+        const equals = argument.indexOf('=');
+        if (equals < 1) throw new Error('Feature assertions must be feature=JSON');
+        required_features[argument.slice(0, equals)] = JSON.parse(argument.slice(equals + 1));
+      }
+      const requirement = {schema: 'vectorwarp-radar-plan-requirements-v1',
+        semantic_sha256: document.radarPlan.semantic_sha256, required_features};
+      const errors = radarPlanErrors(document.radarPlan, requirement);
+      if (errors.length) throw new Error(errors.join('; '));
+      console.log(JSON.stringify(requirement, null, 2));
+    } else if (command === 'accept-runtime') {
+      if (fs.statSync(args[1]).size > 262144) throw new Error('Runtime radar plan report exceeds 256 KiB');
+      const runtime = JSON.parse(fs.readFileSync(args[1], 'utf8'));
+      if (runtime.loadedRevision !== document.revision ||
+          runtime.loaded?.semantic_sha256 !== document.radarPlan.semantic_sha256)
+        throw new Error('Runtime radar plan does not attest this exact loaded configuration');
+      const result = assessResolvedRadarPlans(document.radarPlan, runtime.observation);
+      if (result.errors.length) throw new Error(result.errors.join('; '));
+      console.log(JSON.stringify(result, null, 2));
+    } else console.log(JSON.stringify(document.radarPlan, null, 2));
+  } catch (error) { console.error(error.message); process.exitCode = 78; }
+}

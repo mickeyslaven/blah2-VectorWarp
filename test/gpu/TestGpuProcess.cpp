@@ -188,7 +188,7 @@ int main() {
     check(inherited >= 100, "Cannot prepare inherited descriptor fixture");
     setenv("BLAH2_TEST_INHERITED_FD", std::to_string(inherited).c_str(), 1);
     std::vector<std::complex<float>> reference(128 * 21, {1.5f, -2}), surveillance(reference), output;
-    for (const std::string mode : {"ok", "fd-closed", "raw", "reject-clutter", "hang-clutter", "hang-init", "crash-init", "error-init",
+    for (const std::string mode : {"ok", "fd-closed", "raw", "capacity-clutter", "reject-clutter", "hang-clutter", "hang-init", "crash-init", "error-init",
         "hang-frame", "crash-frame", "error-frame", "bad-packet", "absent"}) {
       const auto start = std::chrono::steady_clock::now();
       blah2::GpuProcessOptions options;
@@ -250,7 +250,29 @@ int main() {
         } else {
           auto* clutter = dynamic_cast<blah2::GpuClutterFrameBackend*>(worker.get());
           check(clutter && !clutter->clutterAvailable(),
-            "Legacy worker advertised raw clutter support");
+            "Unavailable worker advertised raw clutter support");
+          if (mode == "capacity-clutter") {
+            bool rejected = false;
+            try { (void)clutter->processClutterFrame(); }
+            catch (const std::runtime_error& error) {
+              rejected = std::string(error.what()).find("unavailable") != std::string::npos;
+            }
+            check(rejected, "Capacity rejection was misreported as a precision rejection");
+            worker->process(reference, surveillance, output);
+            check(output.front() == reference.front(),
+              "Unavailable clutter stopped independently available ambiguity");
+            blah2::Acceleration acceleration("gpu",geometry,64,128000,0,"auto",
+              [&](const blah2::GpuGeometry& g,const std::string& device) {
+                return blah2::createGpuProcess(g,device,options);
+              });
+            check(acceleration.available() && !acceleration.clutterAvailable() &&
+              acceleration.clutterStatus().reason.find("unavailable") != std::string::npos &&
+              acceleration.clutterStatus().reason.find("precision") == std::string::npos,
+              "Capacity-unavailable clutter entered numeric qualification");
+            acceleration.retryClutterQualificationAfterStartup();
+            check(!acceleration.clutterAvailable() && acceleration.available(),
+              "Live RF retry reopened an unconstructed clutter pipeline");
+          }
         }
       } catch (const std::runtime_error& error) {
         failed = true;
@@ -266,7 +288,8 @@ int main() {
             "Clutter timeout lost its phase/deadline");
         std::cout << "Recovered " << mode << ": " << error.what() << '\n';
       }
-      check(failed == (mode != "ok" && mode != "fd-closed" && mode != "raw" && mode != "reject-clutter"),
+      check(failed == (mode != "ok" && mode != "fd-closed" && mode != "raw" &&
+          mode != "capacity-clutter" && mode != "reject-clutter"),
         "Worker failure expectation differs");
       check(std::chrono::steady_clock::now() - start < std::chrono::seconds(3), "GPU worker recovery was not bounded");
       int status;
@@ -313,7 +336,7 @@ int main() {
       check(nextSmooth(480209) == 486000 && nextSmooth(1) == 1 &&
         nextSmooth(uint64_t(UINT32_MAX)+1) == 0,
         "Smooth clutter convolution length differs");
-      AllocationBudget budget(40, {{{deviceLocal, 0}, {hostVisible, 1},
+      AllocationBudget budget({40,40,false,false}, {{{deviceLocal, 0}, {hostVisible, 1},
         {deviceLocal | hostVisible, 0}}, {{100, true}, {200, false}}});
       check(budget.reserve(0, 20) && !budget.reserve(2, 6) && budget.used() == 20,
         "Aliased Vulkan memory types exceeded their shared heap allowance");
@@ -334,8 +357,8 @@ int main() {
       check(!budget.reserve(0, UINT64_MAX) && !budget.reserve(99, 1) &&
         !budget.reserve(0, 0) && budget.used() == 25,
         "Invalid Vulkan allocation changed the budget");
-      AllocationBudget discrete(40, {{{deviceLocal, 0}, {hostVisible, 1},
-        {deviceLocal | hostVisible, 0}}, {{100, true}, {200, false}}}, true);
+      AllocationBudget discrete({40,40,true,false}, {{{deviceLocal, 0}, {hostVisible, 1},
+        {deviceLocal | hostVisible, 0}}, {{100, true}, {200, false}}});
       check(discrete.reserve(0, 20) && discrete.reserve(1, 40) &&
         discrete.used() == 60 && discrete.deviceUsed() == 20 &&
         discrete.limit() == 90 && discrete.deviceLimit() == 40 &&
@@ -345,35 +368,61 @@ int main() {
       check(heapBudget(2ULL << 30) == (512ULL << 20) &&
         heapBudget(64ULL << 30) == (2ULL << 30),
         "GPU allocation allowance did not scale with device capacity");
-      const auto unrestricted = allocationPolicy(64ULL << 30, nullptr);
-      const auto bounded = allocationPolicy(64ULL << 30, "40");
+      const Properties largeHeap{{{deviceLocal,0}},{{64ULL<<30,true}}};
+      const Properties smallHeap{{{deviceLocal,0}},{{100,true}}};
+      const auto unrestricted = allocationPolicy(largeHeap, nullptr);
+      const auto bounded = allocationPolicy(largeHeap, "40");
       check(unrestricted.bytes == maximumDeviceBytes && unrestricted.separateHostHeaps &&
-        bounded.bytes == 40 && !bounded.separateHostHeaps,
-        "Lane quota did not select one combined host/device allowance");
-      check(allocationPolicy(100, "40").bytes == 25 &&
-        allocationPolicy(64ULL << 30, "2147483648").bytes == maximumDeviceBytes,
-        "Allocation override enlarged hardware default or rejected policy boundary");
+        unrestricted.deviceBytes == maximumDeviceBytes &&
+        !unrestricted.aggregateIncludesHostHeaps && bounded.bytes == 40 &&
+        bounded.deviceBytes == maximumDeviceBytes && bounded.separateHostHeaps &&
+        bounded.aggregateIncludesHostHeaps,
+        "Lane quota did not preserve independent aggregate/device allowances");
+      check(allocationPolicy(smallHeap, "40").bytes == 40 &&
+        allocationPolicy(smallHeap, "40").deviceBytes == 25 &&
+        allocationPolicy(largeHeap, "2147483648").bytes == maximumDeviceBytes &&
+        allocationPolicy(largeHeap, "3221225472").bytes == (3ULL << 30) &&
+        allocationPolicy(largeHeap, "3221225472").deviceBytes == maximumDeviceBytes,
+        "Allocation override lost aggregate/device policy boundaries");
       for (const char* invalid : {"", "0", "-1", "+1", " 40", "40 ", "4x", "1.0",
-          "2147483649", "18446744073709551615", "18446744073709551616",
+          "4294967297", "18446744073709551615", "18446744073709551616",
           "000000000000000000000000000000000000000000000000001"}) {
         bool rejected = false;
-        try { (void)allocationPolicy(64ULL << 30, invalid); }
+        try { (void)allocationPolicy(largeHeap, invalid); }
         catch (const std::invalid_argument&) { rejected = true; }
         check(rejected, "Malformed or over-policy allocation quota was accepted");
       }
-      AllocationBudget boundedDiscrete(bounded.bytes,
-        {{{deviceLocal, 0}, {hostVisible, 1}}, {{400, true}, {800, false}}},
-        bounded.separateHostHeaps);
+      AllocationBudget boundedDiscrete(bounded,
+        {{{deviceLocal, 0}, {hostVisible, 1}}, {{400, true}, {800, false}}});
       check(boundedDiscrete.reserve(0, 20) && boundedDiscrete.reserve(1, 20) &&
         boundedDiscrete.used() == 40 && boundedDiscrete.limit() == 40 &&
+        boundedDiscrete.deviceLimit() == maximumDeviceBytes &&
         !boundedDiscrete.reserve(1, 1) && !boundedDiscrete.reserve(0, 1),
         "Portable/resident lane quota added a second host-heap allowance");
       boundedDiscrete.release(0, 20);
       check(boundedDiscrete.reserve(1, 20) && boundedDiscrete.used() == 40 &&
         !boundedDiscrete.reserve(0, 1),
         "Releasing device allocation let host memory escape the lane quota");
-      AllocationBudget large(heapBudget(64ULL << 30),
-        {{{deviceLocal, 0}}, {{64ULL << 30, true}}});
+      const Properties hpMemory{{{deviceLocal, 0}, {hostVisible, 1},
+        {deviceLocal | hostVisible, 0}},
+        {{1879048192ULL, true}, {6204497920ULL, false}}};
+      AllocationBudget hpBudget(allocationPolicy(hpMemory, "1073741824"), hpMemory);
+      check(hpBudget.limit() == (1ULL << 30) &&
+        hpBudget.deviceLimit() == 469762048ULL &&
+        hpBudget.reserve(0, 312105248ULL) &&
+        hpBudget.reserve(1, 113278848ULL) &&
+        hpBudget.reserve(2, 73745056ULL) &&
+        hpBudget.used() == 499129152ULL &&
+        hpBudget.deviceUsed() == 385850304ULL,
+        "Separate host staging was still charged against the HP device ceiling");
+      AllocationBudget tightHp(allocationPolicy(hpMemory, "469762048"), hpMemory);
+      check(tightHp.reserve(0, 312105248ULL) &&
+        tightHp.reserve(1, 113278848ULL) &&
+        !tightHp.reserve(2, 73745056ULL) &&
+        std::string(tightHp.lastRejection().reason) == "aggregate-budget" &&
+        tightHp.deviceUsed() == 312105248ULL,
+        "Independent heap accounting weakened the supervisor aggregate quota");
+      AllocationBudget large(unrestricted, largeHeap);
       check(large.reserve(0, 2ULL << 30) && !large.reserve(0, 1),
         "Large-device GPU allocation ceiling was not enforced");
       check(autoDirect(true, 0, 1ULL << 30, properties),

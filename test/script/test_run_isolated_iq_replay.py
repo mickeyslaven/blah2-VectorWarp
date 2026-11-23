@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import subprocess
@@ -22,15 +23,17 @@ SPEC.loader.exec_module(RUN)
 
 def artifact_events(binding, parent=987654, worker=987655, role="portable"):
     common = {"schema": 1, "nonce": binding["nonce"], "pid": worker, "parent": parent}
+    factory = next(iter(RUN.ARTIFACTS.FACTORIES[role]))
+    abi, mode = RUN.ARTIFACTS.FACTORIES[role][factory]
     return [dict(common, event="worker-spawn", pid=parent, parent=1, workerPid=worker,
                  executablePath=binding["artifacts"]["worker"]["path"]),
             dict(common, event="worker-start", worker=binding["artifacts"]["worker"]),
             dict(common, event="module-attempt", role=role),
             dict(common, event="module-loaded", role=role, module=binding["artifacts"][role],
-                 abi=RUN.ARTIFACTS.MODULES[role][1], deviceRequest="test-device",
+                 abi=abi, factory=factory, workerMode=mode, deviceRequest="test-device",
                  driverStatus={"available": True, "devices": [{"id": "test-device",
                      "vendorId": 123, "deviceId": 456, "driverVersionRaw": 789}]}),
-            dict(common, event="backend-start", role=role)]
+            dict(common, event="backend-start", role=role, factory=factory, workerMode=mode)]
 
 
 def artifact_log(events):
@@ -529,6 +532,34 @@ class GpuArtifactBinding(unittest.TestCase):
         self.assertEqual([value["role"] for value in result["loaded"]], ["portable"])
         (self.root / "blah2-gpu-resident-vulkan.so").write_bytes(b"unused replacement")
         self.assertTrue(self.validate()["passed"])
+
+    def test_resident_and_temporal_interfaces_share_one_pinned_module(self):
+        resident = artifact_events(self.binding, role="resident")
+        temporal = artifact_events(self.binding, worker=987656, role="resident")
+        temporal[3].update(abi=1, factory="blah2_gpu_create_temporal", workerMode="--temporal-v1")
+        temporal[4].update(factory="blah2_gpu_create_temporal", workerMode="--temporal-v1")
+        result = self.validate(resident + temporal)
+        self.assertEqual([item["abi"] for item in result["loaded"]], [18, 1])
+        self.assertEqual(result["loaded"][0]["module"], result["loaded"][1]["module"])
+        for field, value in (("abi", 18), ("factory", "blah2_gpu_create_resident"),
+                             ("workerMode", "--resident-v5"), ("factory", None)):
+            broken = copy.deepcopy(temporal)
+            broken[3][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "unexpected module"):
+                self.validate(broken)
+        broken = copy.deepcopy(temporal)
+        broken[4]["workerMode"] = "--resident-v5"
+        with self.assertRaisesRegex(ValueError, "backend factory or worker mode differs"):
+            self.validate(broken)
+
+    def test_resident_binding_matches_native_module_abi(self):
+        header = (Path(__file__).parents[2] / "src/process/ambiguity/GpuResidentBackend.h").read_text()
+        match = re.search(r"namespace blah2::resident\s*\{.*?constexpr unsigned moduleAbi\s*=\s*(\d+)\s*;",
+                          header, re.DOTALL)
+        self.assertIsNotNone(match)
+        expected = int(match.group(1))
+        self.assertEqual(RUN.ARTIFACTS.MODULES["resident"][1], expected)
+        self.assertEqual(RUN.ARTIFACTS.FACTORIES["resident"]["blah2_gpu_create_resident"][0], expected)
 
     def test_module_and_worker_replacement_are_rejected(self):
         for role in ("processor", "worker", "portable"):

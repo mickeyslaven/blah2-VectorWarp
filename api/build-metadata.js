@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const {RECEIVER_TYPES} = require('./receiver-manager');
 
 const commitPattern = /^[a-f0-9]{40}$/i;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/;
@@ -36,4 +37,32 @@ function buildMetadata(env = process.env, apiDirectory = __dirname) {
     package: env.BLAH2_PREVIEW === 'true' ? 'preview' : 'source'};
 }
 
-module.exports = {buildMetadata, readReceipt};
+function compiledReceiverTypes(env = process.env, apiDirectory = __dirname) {
+  const filename = path.resolve(apiDirectory, '../.vectorwarp-build');
+  let descriptor;
+  try {
+    descriptor = fs.openSync(filename, fs.constants.O_RDONLY |
+      (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size < 1 || stat.size > 65536) return [];
+    const fields = new Map();
+    for (const line of fs.readFileSync(descriptor, 'utf8').split('\n').filter(Boolean)) {
+      const match = /^([a-z][a-z0-9_]*)=([^\r\n]*)$/.exec(line);
+      if (!match || fields.has(match[1])) return [];
+      fields.set(match[1], match[2]);
+    }
+    const types = fields.get('compiled_receivers')?.split(',') || [];
+    if (!identifierPattern.test(fields.get('build_id') || '') ||
+        !commitPattern.test(fields.get('source_commit') || '') || !types.length ||
+        new Set(types).size !== types.length ||
+        types.some(type => !RECEIVER_TYPES.includes(type))) return [];
+    return types;
+  } catch (error) {
+    // Installed artifact declarations outrank stale service environments.
+    // Only absent manifests use the source/macOS lifecycle environment.
+    return error.code === 'ENOENT' ?
+      env.BLAH2_RECEIVER_TYPES?.split(',').map(item => item.trim()).filter(Boolean) || null : [];
+  } finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
+}
+
+module.exports = {buildMetadata, readReceipt, compiledReceiverTypes};

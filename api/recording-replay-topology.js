@@ -1,6 +1,6 @@
 'use strict';
 
-const {processingCapabilities} = require('./processing-capabilities');
+const {processingCapabilities} = require('../html/js/processing_capabilities');
 
 function recordingReplayTopology(config) {
   // A recording must retain the same physical roles as the live pipeline,

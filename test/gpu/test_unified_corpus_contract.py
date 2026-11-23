@@ -18,6 +18,41 @@ import unified_physical_corpus as corpus
 
 
 class UnifiedCorpusContractTest(unittest.TestCase):
+    def test_map_stream_retains_every_frame_and_pins_full_arrays(self):
+        values = [{"id": "lane", "map": {"nRows": 1, "nCols": 2, "data": [[index+.01, index+.02]]},
+                   "detections": {"delay": [index]}, "tracks": {"data": [{"n": index}]}}
+                  for index in range(1, 13)]
+        with tempfile.TemporaryDirectory() as temporary:
+            stream = corpus.MapEvidenceStream(Path(temporary) / "maps", limit=512, total=8192)
+            body = b"".join(fixtures.canonical(value) for value in values)
+            self.assertGreater(len(body), stream.limit)
+            chunks = [stream.feed("illuminator", body[i:i+13]) for i in range(0, len(body), 13)]
+            stream.finish()
+            actual = [json.loads(line) for line in b"".join(chunks).splitlines()]
+            self.assertEqual(len(actual), 12)
+            self.assertEqual([value["tracks"]["data"][0]["n"] for value in actual], list(range(1, 13)))
+            for expected, value in zip(values, actual):
+                reference = value["map"].pop("dataArtifact")
+                data = Path(reference["path"]).read_bytes()
+                self.assertEqual(hashlib.sha256(data).hexdigest(), reference["sha256"])
+                value["map"]["data"] = json.loads(data)
+                self.assertEqual(value, expected)
+            self.assertLess(len(b"".join(chunks)), 64 << 20)
+
+    def test_map_stream_bounds_and_partial_eof_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stream = corpus.MapEvidenceStream(root / "bounded", limit=80, total=10)
+            with self.assertRaisesRegex(AssertionError, "1 GiB"):
+                stream.feed("map", b'{"data":[[1.01,2.02,3.03]]}')
+            stream = corpus.MapEvidenceStream(root / "oversized", limit=10)
+            with self.assertRaisesRegex(AssertionError, "64 MiB"):
+                stream.feed("map", b'{"data":[[1.01,2.02,3.03]]}')
+            stream = corpus.MapEvidenceStream(root / "partial")
+            stream.feed("map", b'{"data":[')
+            with self.assertRaisesRegex(AssertionError, "EOF"):
+                stream.finish()
+
     def publication_unit_run(self, count=2):
         run = {"case": {"variant": {"lanes": 2, "statistic": "power"}, "mode": "auto",
                         "target": False, "fault": "commit"},
@@ -170,8 +205,13 @@ class UnifiedCorpusContractTest(unittest.TestCase):
 
     def test_bearing_publication_uses_same_lineage_annotation_as_radar_products(self):
         source = (Path(corpus.__file__).parents[2] / "src/blah2.cpp").read_text()
-        self.assertIn("if(bearingEnabled)socket_bearing->sendData(annotateRadar(", source)
-        self.assertNotIn("if(bearingEnabled)socket_bearing->sendData(attachEventTime(", source)
+        publisher = source.split("const auto publishRadarFrame =", 1)[1].split(
+            "// Finish first-use CPU/GPU qualification", 1)[0]
+        self.assertIn("if (bearingEnabled && frame.residentProducts)", publisher)
+        self.assertIn("socket_bearing->sendData(blah2::detection::annotateIntegration(", publisher)
+        self.assertIn("blah2::analysis::annotate_native_product(std::move(bearing),", publisher)
+        self.assertIn("native_product_identity(frame, publication)), frame.detectorIntegration)", publisher)
+        self.assertEqual(source.count("socket_bearing->sendData("), 1)
 
     def test_bearing_oracle_rejects_wrong_lane_track_coordinates_and_lineage(self):
         run = self.publication_unit_run()

@@ -8,6 +8,7 @@
 #include <fftw3.h>
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -19,6 +20,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -58,12 +60,23 @@ unsigned fftw_plan_flags() {
   if (std::string(mode) == "measure") return FFTW_MEASURE;
   throw std::invalid_argument("VECTORWARP_FFTW_PLAN must be estimate or measure");
 }
-uint32_t clutter_worker_slots() {
-  const char* value = std::getenv("VECTORWARP_CLUTTER_WORKERS");
-  if (!value || std::string(value) == "2") return 2;
-  if (std::string(value) == "1") return 1;
-  if (std::string(value) == "4") return 4;
-  throw std::invalid_argument("VECTORWARP_CLUTTER_WORKERS must be 1, 2, or 4");
+uint32_t clutter_worker_slots(uint32_t configured) {
+  std::size_t requested = configured;
+  if (!requested) {
+    const char* value = std::getenv("VECTORWARP_CLUTTER_WORKERS");
+    if (value && *value) {
+      const char* end = value + std::char_traits<char>::length(value);
+      const auto parsed = std::from_chars(value, end, requested);
+      if (parsed.ec != std::errc{} || parsed.ptr != end || !requested || requested > 8)
+        throw std::invalid_argument("VECTORWARP_CLUTTER_WORKERS must be an integer from 1 through 8");
+    }
+  }
+  // Direct/single-lane callers retain the historical two-slot default. A
+  // RadarBank passes its immutable per-lane share explicitly.
+  const std::size_t slots = requested ? requested : 2;
+  if (slots > 8)
+    throw std::invalid_argument("Clutter worker slots must be from 1 through 8");
+  return static_cast<uint32_t>(slots);
 }
 }
 
@@ -110,7 +123,7 @@ struct WienerHopf::Impl {
   std::vector<std::unique_ptr<vectorwarp_clutter::CorrelationWorker>> correlationWorkers;
 
   Impl(int32_t first, int32_t last, uint32_t count, bool sharedReference,
-       double loading)
+       double loading, uint32_t workerSlots)
       : delayMin(first), samples(count), relativeDiagonalLoading(loading),
         sharedReferenceWorkspace(sharedReference) {
     if (!std::isfinite(relativeDiagonalLoading) || relativeDiagonalLoading < 0 ||
@@ -158,7 +171,7 @@ struct WienerHopf::Impl {
     if (count == 1000000 &&
         first == -10 && taps == 410)
       planFlags = FFTW_MEASURE;
-    const uint32_t requestedWorkers = clutter_worker_slots();
+    const uint32_t requestedWorkers = clutter_worker_slots(workerSlots);
     try {
       if (blockedCorrelation) {
         blah2::set_fftw_planner_threads(1);
@@ -489,9 +502,9 @@ bool WienerHopf::PreparedReference::prepare(const IqData& reference)
 }
 
 WienerHopf::WienerHopf(int32_t first, int32_t last, uint32_t samples, Workspace workspace,
-                       double loading)
+                       double loading, uint32_t workerSlots)
   : impl_(std::make_unique<Impl>(first, last, samples,
-      workspace == Workspace::SharedReference, loading)) {}
+      workspace == Workspace::SharedReference, loading, workerSlots)) {}
 double WienerHopf::PreparedReference::cholesky_diagonal_ratio() const {
   if (!valid_) return std::numeric_limits<double>::quiet_NaN();
   double smallest = std::numeric_limits<double>::infinity(), largest = 0;

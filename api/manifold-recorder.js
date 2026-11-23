@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {compatibilityFingerprint} = require('./manifold-identity');
-const {processingCapabilities} = require('./processing-capabilities');
+const {processingCapabilities} = require('../html/js/processing_capabilities');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const normalize = value => ((value % 360) + 360) % 360;
@@ -287,9 +287,9 @@ class ManifoldRecorder {
 
   status() { return {...this.state, queued: this.latest !== null, active: this.running}; }
 
-  accept(text) {
+  accept(text, parsed) {
     if (!this.state.enabled) return;
-    try { this.latest = validateEvidence(JSON.parse(text)); }
+    try { this.latest = validateEvidence(parsed ?? JSON.parse(text)); }
     catch (error) { this.state.error = error.message; return; }
     if (!this.running) void this.drain();
   }

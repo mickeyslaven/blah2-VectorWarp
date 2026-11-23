@@ -535,6 +535,10 @@ function connect(port) {
     assert.equal(pausedCapture.body.paused, true);
     assert.equal(pausedCapture.body.segmented, true);
     assert.equal(pausedCapture.body.revision, 2);
+    const pausingCapture = (await request('GET', '/capture/status?summary=1')).body;
+    assert.equal(pausingCapture.pendingStop, true);
+    assert.equal(pausingCapture.processorFresh, true);
+    assert.equal(pausingCapture.acknowledged, false);
     assert.equal((await request('POST', '/api/processor/status', {
       ...liveRecording, recording: false, recordingRequestId: 2, recordingFile: ''
     })).status, 204);
@@ -556,10 +560,30 @@ function connect(port) {
     assert.equal(stoppedCapture.body.revision, 4);
     assert.equal(stoppedCapture.body.recording, true);
     assert.equal(stoppedCapture.body.startedAt, null);
+    const closingCapture = (await request('GET', '/capture/status?summary=1')).body;
+    assert.equal(closingCapture.pendingStop, true);
+    assert.equal(closingCapture.processorFresh, true);
+    assert.equal(closingCapture.acknowledged, false);
+    await new Promise(resolve => setTimeout(resolve, 5100));
+    const staleClosingCapture = (await request('GET', '/capture/status?summary=1')).body;
+    assert.equal(staleClosingCapture.pendingStop, true);
+    assert.equal(staleClosingCapture.processorFresh, false,
+      'Slow finalization cannot extend processor telemetry freshness');
+    assert.equal(staleClosingCapture.recording, true,
+      'An expired receipt must not present an unacknowledged stop as idle');
+    assert.equal(staleClosingCapture.recordingFile, '/tmp/new-segment.blah2');
+    assert.equal(staleClosingCapture.recordedSamples, 128);
+    assert.equal(staleClosingCapture.acknowledged, false);
+    assert.equal((await request('GET', '/api/system/status')).body.processor, null,
+      'Retained recording observations cannot make a stale processor healthy');
     assert.equal((await request('POST', '/api/processor/status', {
       ...liveRecording, recording: false, recordingRequestId: 4, recordingFile: ''
     })).status, 204);
-    assert.equal((await request('GET', '/capture/status')).body.acknowledged, true);
+    const finalizedCapture = (await request('GET', '/capture/status')).body;
+    assert.equal(finalizedCapture.acknowledged, true);
+    assert.equal(finalizedCapture.pendingStop, false);
+    assert.equal(finalizedCapture.processorFresh, true);
+    assert.equal(finalizedCapture.recording, false);
     assert.equal((await request('GET', '/capture/toggle')).status, 404);
     assert.equal((await request('POST', '/capture/toggle', undefined,
       {Origin: 'https://unrelated.example', 'X-VectorWarp-Intent': 'recording-toggle-v1'})).status, 403);
@@ -698,6 +722,12 @@ function connect(port) {
       0.25);
     assert.equal((await request('GET', '/api/runtime/config')).body.process.data.cpi,
       config.process.data.cpi, 'Saved timing must not impersonate the still-running configuration');
+    const plans = (await request('GET', '/api/runtime/plan')).body;
+    assert.equal(plans.loaded.qualification, 'unpinned');
+    assert.equal(plans.observation.schema, 'vectorwarp-runtime-plan-observation-v1');
+    assert.equal(plans.execution.qualification, 'rejected', 'Unpinned runtime cannot attest promoted execution');
+    assert.notEqual(plans.loaded.semantic_sha256, plans.saved.semantic_sha256);
+    assert.equal(plans.restartRequired, true, 'Saved intent cannot attest the loaded plan');
     assert.equal((await request('GET', '/api/config')).body.process.data.cpi, 0.25);
     assert.ok(fs.existsSync(`${filename}.bak`));
     assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).process.performance.fft_threads, 0);

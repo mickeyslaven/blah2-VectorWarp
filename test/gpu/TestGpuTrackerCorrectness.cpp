@@ -8,6 +8,7 @@
 #include "process/tracker/Tracker.h"
 #include "process/tracker/TrackerCheckpointOracle.h"
 #include "process/ambiguity/GpuResultJson.private.h"
+#include "process/analysis/StartupIq.h"
 
 namespace blah2 {namespace {namespace gpu_tracker {
 struct QualificationSnapshot {
@@ -31,6 +32,12 @@ using namespace blah2;
 constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 constexpr auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
 void require(bool value,const char* why){if(!value)throw std::runtime_error(why);}
+void sameDiagnostics(const TrackerFrameDiagnostics& actual,const TrackerFrameDiagnostics& expected){
+ require(actual.noOp==expected.noOp,"Tracker diagnostics no-op differs");
+ for(const auto& field:trackerDiagnosticFields)if(actual.*field.member!=expected.*field.member)
+  throw std::runtime_error(std::string("Tracker diagnostics differ: ")+field.name+
+   " actual="+std::to_string(actual.*field.member)+" expected="+std::to_string(expected.*field.member));
+}
 uint32_t* words(Buffer& buffer){return static_cast<uint32_t*>(buffer.mapped);}
 void real(uint32_t* target,uint32_t at,double value){std::memcpy(target+at,&value,8);}
 void clear(Buffer& buffer){std::memset(buffer.mapped,0,size_t(buffer.bytes));buffer.flush(0,buffer.bytes);}
@@ -55,7 +62,7 @@ void thresholdParity(Context& context,double threshold){
  Buffer post(context,128*4,host,preferred),scratch(context,layout.bytes,host,preferred);
  for(Buffer* b:{&post,&scratch})clear(*b);
  auto* p=words(post);p[32]=rows;p[33]=columns;p[39]=layout.flags;p[41]=layout.indices;
- p[44]=96;p[74]=4;p[75]=0;p[77]=UINT32_MAX;p[78]=1;p[86]=layout.direction;
+ p[44]=96;p[74]=1;p[75]=0;p[77]=UINT32_MAX;p[78]=0;p[86]=layout.direction;
  for(uint32_t row=0;row<rows;++row)real(p,96+2*row,4.0*(int(row)-1));
  post.flush(0,post.bytes);
  TrackerConfig config;config.enabled=true;config.capacity=8;config.m=2;config.n=3;config.nDelete=3;
@@ -114,7 +121,7 @@ void admissionReasons(Context& context){
  Buffer post(context,256*4,host,preferred),scratch(context,layout.bytes,host,preferred);
  for(Buffer* b:{&post,&scratch})clear(*b);
  auto* p=words(post);p[32]=rows;p[33]=columns;p[39]=layout.flags;p[41]=layout.indices;
- p[44]=128;p[74]=4;p[75]=0;p[77]=UINT32_MAX;p[78]=1;p[86]=layout.direction;
+ p[44]=128;p[74]=1;p[75]=0;p[77]=UINT32_MAX;p[78]=0;p[86]=layout.direction;
  for(uint32_t row=0;row<rows;++row)real(p,128+2*row,4.0*(int(row)-16));
  post.flush(0,post.bytes);
  TrackerConfig config;config.enabled=true;config.capacity=2;config.m=2;config.n=3;config.nDelete=3;
@@ -176,7 +183,7 @@ void admissionReasons(Context& context){
 
 void clutterParity(Context& context){
  constexpr uint32_t rows=601,columns=511,cells=rows*columns;
- Buffer metadata(context,512,host,preferred),bankA(context,512,host,preferred),bankB(context,512,host,preferred),
+ Buffer metadata(context,gpu_tracker::metadataHeaderWords*4,host,preferred),bankA(context,512,host,preferred),bankB(context,512,host,preferred),
   scratch(context,4096,host,preferred),post(context,8192,host,preferred),clutter(context,gpu_tracker::persistenceBytes(true,cells),host,preferred);
  for(Buffer* b:{&metadata,&bankA,&bankB,&scratch,&post,&clutter})clear(*b);
  auto sources=gpu_tracker::shaderSources();
@@ -455,10 +462,11 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
  config.minInitiationSnrDb=5;config.epoch=23;
  gpu_tracker::Stage stage(context,config,cells,post,scratch,layout,depth);
  ::Tracker portable(config.m,config.n,config.nDelete,config.cpi,config.maxAccInit,config.rangeRes,config.lambda,5,true);
+ portable.configureMaximumEvidenceDepth(depth);
  if(spatialMotion)portable.configureSpatialAssociation(12,4,0);
  std::vector<uint32_t> checkpoint(stage.checkpointWordCapacity());
  TrackerResult result;TrackerOutputs output{checkpoint.data(),checkpoint.size(),&result};
- uint64_t frame=0,stamp=1000,seedStamp=0;std::unique_ptr<::Track> tracks;
+ uint64_t frame=0,stamp=1000,seedStamp=0;std::unique_ptr<::Track> tracks;bool checkedHiddenRejection=false;
  auto advance=[&](bool hit,uint32_t support,double snr=8.0,bool duplicate=false){
   if(!duplicate){++frame;stamp+=spatialMotion?(frame%2?200:800):500;}
   auto* s=words(scratch);p[11]=hit;p[79]=depth>2?uint32_t(frame):0;
@@ -479,9 +487,26 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
   require(stage.prepare({frame,frame,stamp}),"temporal backend prepare rejected");
   stage.copyPrepared(output);stage.commit(result.token);
   tracks=portable.process(&detected,stamp);
-  tracker_qualification::compareCheckpoint(portable,checkpoint.data(),result.checkpointWords);
+  try{tracker_qualification::compareCheckpoint(portable,checkpoint.data(),result.checkpointWords);}
+  catch(const std::runtime_error& error){
+   throw std::runtime_error(std::string(error.what())+" depth="+std::to_string(depth)+
+    " frame="+std::to_string(frame)+" hit="+std::to_string(hit)+
+    " support="+std::to_string(support)+" snr="+std::to_string(snr)+
+    " gpu_tracks="+std::to_string(checkpoint[4])+" cpu_tracks="+
+    std::to_string(tracks->get_n()));
+  }
+  if(!checkedHiddenRejection&&checkpoint[4]){
+   auto corrupt=checkpoint;corrupt[32+14]^=1u;bool rejected=false;
+   try{tracker_qualification::compareCheckpoint(portable,corrupt.data(),result.checkpointWords);}
+   catch(const std::runtime_error&){rejected=true;}
+   require(rejected,"Same-input qualification hid a corrupted unpublished tracker state");
+   checkedHiddenRejection=true;
+  }
+  std::vector<uint64_t> sequences;
+  for(uint64_t sequence=frame-std::min<uint64_t>(frame,depth)+1;sequence<=frame;++sequence)sequences.push_back(sequence);
   const auto residentJson=gpu_result_json::trackerCheckpoint(stamp,{checkpoint.data(),size_t(result.checkpointWords)},
-    {config.capacity,config.epoch,frame,frame,spatialMotion?12u:0u,spatialMotion?48u:0u});
+    {config.capacity,config.epoch,frame,frame,spatialMotion?12u:0u,spatialMotion?48u:0u},
+    {config.epoch,frame,{sequences.data(),sequences.size()}});
   const auto portableJson=tracks->to_json(stamp);
   if(residentJson!=portableJson){
    std::cerr<<"temporal depth="<<depth<<" spatial_motion="<<spatialMotion<<" frame="<<frame
@@ -505,6 +530,12 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
   require(tracks->get_n()==1,"independent sequence fragmented");
   require((tracks->get_state(0)=="ACTIVE")== (i==config.n-1),"early or missing independent confirmation");
   if(i==0)advance(true,depth,8,true);}
+ const auto confirmedId=tracks->get_id(0);
+ for(uint32_t i=0;i<2*depth;++i){advance(true,depth);
+  require(tracks->get_n()==1&&tracks->get_id(0)==confirmedId&&tracks->get_state(0)=="ACTIVE"&&
+   tracks->get_current_source(0)==::Track::Source::detector,"overlap fragmented a confirmed measured track");
+  require(portable.frame_diagnostics().independentCredits==uint64_t((i+1)%depth==0),
+   "overlap supplied an independent confirmation vote");}
  for(uint32_t i=1;i<=config.nDelete;++i){advance(false,depth);require(tracks->get_n()==1&&tracks->get_state(0)=="COASTING","coast horizon shortened");}
  advance(false,depth);require(tracks->get_n()==0,"coast exceeded deletion horizon");
  // A single temporal impulse can never supply the four independent votes.
@@ -512,6 +543,14 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
  for(uint32_t i=1;i<config.n;++i){advance(i<depth,depth);require(checkpoint[20]==0,"one source impulse manufactured confirmation");}
  require(tracks->get_n()==0,"unconfirmed impulse escaped its bounded lifetime");
  reset();for(uint32_t i=0;i<config.n+depth;++i){advance(true,depth,4.99);require(tracks->get_n()==0,"subthreshold temporal evidence created a false track");}
+ if(depth>=4){
+  reset();advance(true,2,6);require(tracks->get_n()==0&&portable.frame_diagnostics().birthSnrRejected==1,
+   "shallow weak evidence initiated a deep temporal track");
+  reset();advance(true,4,6);require(tracks->get_n()==1,
+   "four-CPI weak evidence failed to initiate a deep temporal track");
+  reset();advance(true,2,7);require(tracks->get_n()==1,
+   "strong shallow evidence was incorrectly blocked by temporal birth policy");
+ }
  if(depth>1){auto impossible=config;impossible.n=tracker_confirmation::confirmationMinimumWindow(4,depth)-1;
   bool refused=false;try{gpu_tracker::validate(impossible,cells,depth);}catch(const std::invalid_argument&){refused=true;}
   require(refused,"resident accepted infeasible temporal initiation");
@@ -521,7 +560,64 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
   d.set_evidence({e});
   refused=false;try{invalid.process(&d,1000);}catch(const std::invalid_argument&){refused=true;}
   require(refused,"portable accepted infeasible temporal initiation");}
- std::cout<<"PASS tracker cross_backend depth="<<depth<<" spatial_motion="<<spatialMotion<<" initiation=1 overlap=1 duplicate=1 coast=1 impulse=1 threshold=1 feasibility=1\n";
+ std::cout<<"PASS tracker cross_backend depth="<<depth<<" spatial_motion="<<spatialMotion<<" initiation=1 overlap=1 duplicate=1 coast=1 impulse=1 threshold=1 weak_support=1 feasibility=1\n";
+}
+
+// Exact HP startup boundary: eight negative CPIs then32 baseline2 detections,
+// depth8/M4/N25/delete7, with the12-CPI all-Doppler stationary veto enabled.
+void startupMotionBackendParity(Context& context,bool moving){
+ constexpr uint32_t rows=65,columns=512,cells=rows*columns,depth=8;
+ const auto layout=gpu_postprocess::layout(rows,columns);
+ Buffer post(context,1024*4,host,preferred),scratch(context,layout.bytes,host,preferred);
+ for(Buffer* b:{&post,&scratch})clear(*b);
+ auto* p=words(post);p[32]=rows;p[33]=columns;p[34]=cells;p[39]=layout.flags;
+ p[41]=layout.indices;p[44]=96;p[45]=226;p[74]=depth;p[77]=UINT32_MAX;p[78]=1;p[86]=layout.direction;
+ std::deque<int> delays;std::deque<double> dopplers;
+ for(uint32_t r=0;r<rows;++r){dopplers.push_back(2.*(int(r)-32));real(p,96+2*r,dopplers.back());}
+ for(uint32_t c=0;c<columns;++c){delays.push_back(int(c));p[226+c]=c;}
+ TrackerConfig config;config.enabled=true;config.capacity=4;config.m=4;config.n=25;config.nDelete=7;
+ config.adaptiveGate=true;config.cpi=.5;config.maxAccInit=10;config.rangeRes=125;config.lambda=.589;
+ config.normalizedInnovationGate=true;config.minInitiationSnrDb=5;config.epoch=23;
+ config.stationaryClutter=true;config.stationaryPersistenceCpis=12;
+ gpu_tracker::Stage stage(context,config,cells,post,scratch,layout,depth);
+ TrackerRecoveryConfig recovery;recovery.stationaryClutter=true;recovery.persistenceCpis=12;
+ ::Tracker portable(4,25,7,.5,10,125,.589,5,true,{},true,9.210340371976184,{},recovery);
+ portable.configureGrid(delays,dopplers);
+ std::vector<uint32_t> checkpoint(stage.checkpointWordCapacity());TrackerResult result;
+ TrackerOutputs output{checkpoint.data(),checkpoint.size(),&result};std::unique_ptr<::Track> tracks;
+ startup::Target target{245,-16,2400000,1,{}};startup::TargetMotion motion;
+ for(uint64_t frame=1;frame<=40;++frame){
+  const bool hit=frame>8;p[11]=hit;p[79]=uint32_t(frame);auto* s=words(scratch);
+  ::Detection detected(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+  if(hit){
+   if(moving)motion.advance(target,unsigned(frame-9),dopplers,.5,-.589/125*.5,12);
+   const uint32_t cell=uint32_t(std::llround(target.dopplerHz/2)+32)*columns+target.delay;
+   s[layout.indices]=cell;s[layout.flags+cell]=1u|8u;
+   real(s,layout.records,target.delay);real(s,layout.records+2,target.dopplerHz);
+   real(s,layout.records+4,8);real(s,layout.records+6,target.delay*.125);
+   detected=::Detection(target.delay,target.dopplerHz,8);::Detection::Evidence e;
+   e.epoch=23;e.newestSequence=frame;e.depth=2;e.sequences[0]=frame;e.sequences[1]=frame-1;
+   detected.set_evidence({e});
+  }
+  post.flush(0,post.bytes);scratch.flush(0,scratch.bytes);
+  require(stage.prepare({frame,frame,500*frame}),"startup motion prepare rejected");
+  stage.copyPrepared(output);stage.commit(result.token);tracks=portable.process(&detected,500*frame);
+  tracker_qualification::compareCheckpoint(portable,checkpoint.data(),result.checkpointWords);
+  const uint64_t sequences[]{frame-1,frame};
+  require(gpu_result_json::trackerCheckpoint(500*frame,{checkpoint.data(),size_t(result.checkpointWords)},
+    {config.capacity,config.epoch,frame,frame},{config.epoch,frame,{sequences,2}})==tracks->to_json(500*frame),"startup motion publication parity differs");
+  if(hit)require(tracks->get_n()==1,"startup moving trajectory fragmented");
+ }
+ require(tracks->get_nAssociated(0)==32&&portable.frame_diagnostics().independentCredits==0,
+  "startup overlap lost measured updates or supplied duplicate credit");
+ const auto state=portable.qualificationState().front();
+ require(state.highWaterSequence==39&&state.updates==32&&
+  std::count(state.confirmationVotes.begin(),state.confirmationVotes.end(),uint8_t(1))==12,
+  "startup frame40 lineage differs from HP regression");
+ require(tracks->get_state(0)==(moving?"ACTIVE":"TENTATIVE"),"startup stationary/moving control state wrong");
+ require(portable.frame_diagnostics().stationaryQuarantined==uint64_t(!moving),"startup stationary protection changed");
+ std::cout<<"PASS startup depth=8 frame=40 M=4 N=25 moving="<<moving<<" updates=32 credit=0 state="
+  <<tracks->get_state(0)<<" checkpoint=1 json_bytes=1\n";
 }
 
 void stationaryBackendParity(Context& context,double maximum=0,double sign=0,double outside=2.01){
@@ -730,6 +826,7 @@ void stationaryLifecycleParity(Context& context,uint32_t depth,uint32_t capacity
   require(stage.prepare(f),"LC resident clock rejected host-admitted frame");
   require((stage.evidencePrepared()[2]==1)==noOp,"LC resident no-op disposition differs");
   stage.copyPrepared(output);stage.commit(result.token);portable.process(&detected,f.timestamp);
+  sameDiagnostics(result.diagnostics,portable.frame_diagnostics());
   require(portable.frame_diagnostics().noOp==noOp,"LC host no-op disposition differs");
   tracker_qualification::compareCheckpoint(portable,checkpoint.data(),result.checkpointWords);
   if(noOp)require(state()==before&&committed()==oldCheckpoint,"LC no-op changed committed occupancy/clock/checkpoint");
@@ -760,11 +857,16 @@ void stationaryLifecycleParity(Context& context,uint32_t depth,uint32_t capacity
  // LC-02: prepare/abort/reuse and late device validation failure must leave
  // both the occupied count/cells and accepted clock byte-identical.
  for(bool fail:{false,true}){reset();advance(frame(1,1000),10,4);
-  const auto before=state(),oldCheckpoint=committed();input(frame(2,2000),10,fail?10:4,true,fail);
+  const auto before=state(),oldCheckpoint=committed();const auto previousDiagnostics=result.diagnostics;
+  input(frame(2,2000),10,fail?10:4,true,fail);
   if(fail){require(!stage.prepare(frame(2,2000)),"LC injected post-paint failure was accepted");
    require(gpu_tracker::QualificationSnapshot::rejection(stage)==3162,"LC failure did not reach post-paint checkpoint validation");}
-  else{require(stage.prepare(frame(2,2000)),"LC abort fixture prepare failed");stage.abort(stage.preparedToken());}
+  else{require(stage.prepare(frame(2,2000)),"LC abort fixture prepare failed");
+   stage.copyPrepared(output);stage.abort(result.token);
+   bool refused=false;try{stage.copyPrepared(output);}catch(const std::logic_error&){refused=true;}
+   require(refused,"Aborted diagnostics remained prepared");}
   require(state()==before&&committed()==oldCheckpoint,"LC rejected/aborted painting mutated committed state");
+  stage.copyCommitted(output);sameDiagnostics(result.diagnostics,previousDiagnostics);
   advance(frame(2,2000),40,4);advance(frame(3,3000),10,10);
   require(checkpoint[4]==1,"LC discarded learning vetoed later accepted birth");
  }
@@ -899,6 +1001,7 @@ int main(int argc,char** argv){try{
    std::cout<<"COMPLETE tracker policy parity production_shader_execution=1 lifecycle=1\n";return 0;}
  }
  if(std::string(argv[1])=="--temporal-parity"){associationContractParity(context);
+  startupMotionBackendParity(context,false);startupMotionBackendParity(context,true);
   stationaryBackendParity(context);
   for(uint32_t depth:{1u,2u,4u,8u})temporalBackendParity(context,depth);
   for(uint32_t depth:{4u,8u}){temporalBackendParity(context,depth,true);}

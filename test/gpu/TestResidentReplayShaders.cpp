@@ -48,6 +48,8 @@ int main(){try{
   }
  for(bool replay:{false,true}){
   for(const auto& shader:blah2::gpu_postprocess::shaderSources(replay)){compile(shader.first,shader.second);++count;}
+  for(const auto& shader:blah2::gpu_postprocess::shaderSources(replay,64))if(shader.first=="tbd"){
+   compile("tbd-64",shader.second);++count;}
   for(bool coherent:{false,true}){const auto source=blah2::gpu_resident::fusionShader(coherent,replay);
    if(!replay&&source!=(coherent?blah2::gpu_resident::coherentFusionSource:blah2::gpu_resident::fusionSource))
     throw std::runtime_error("Default-off fusion source changed");

@@ -49,9 +49,11 @@ def fixture():
                    "steadyStateAccepted": True},
                "latest": {"epoch": 100000, "healthy": True, "failures": [], "nodes": {},
                    "monitorFreeBytes": 300_000_000_000,
-                   "regressionEvidence": {"schema": 1, "bindingSha256": hashlib.sha256(raw.encode()).hexdigest(),
+                   "regressionEvidence": {"schema": 2, "bindingSha256": hashlib.sha256(raw.encode()).hexdigest(),
                        "policySha256": "d" * 64,
                        "nodes": {name: {"retiredCpis": 0, "retiredSamples": 0,
+                           "checks": {key: {"accepted": True, "evidenceSha256": "f" * 64}
+                                      for key in gate.monitor.REGRESSION_CHECKS},
                            "qualifications": node["qualifications"]} for name in binding["nodes"]},
                        "evidenceSha256": "f" * 64, "evaluationStartEpoch": 13600,
                        "evaluatedThroughEpoch": 100000, "regressionDetected": False}}}
@@ -99,6 +101,8 @@ class ExactCandidatePromotion(unittest.TestCase):
                 latest["nodes"][name] = copy.deepcopy(measured)
                 latest["nodes"][name]["process"]["hostIdSha256"] = f"{index + 1:064x}"
                 regression["nodes"][name] = {"retiredCpis": 0, "retiredSamples": 0,
+                                           "checks": {key: {"accepted": True, "evidenceSha256": "f" * 64}
+                                                      for key in gate.monitor.REGRESSION_CHECKS},
                                            "qualifications": template["qualifications"]}
             envelope["bindingJson"] = json.dumps(binding)
             digest = hashlib.sha256(envelope["bindingJson"].encode()).hexdigest()
@@ -156,6 +160,11 @@ class ExactCandidatePromotion(unittest.TestCase):
             envelope, run, _ = fixture()
             envelope["summary"]["latest"]["regressionEvidence"][key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
+                gate.receipt(envelope, run, SOURCE)
+        for key in gate.monitor.REGRESSION_CHECKS:
+            envelope, run, _ = fixture()
+            envelope["summary"]["latest"]["regressionEvidence"]["nodes"]["hp"]["checks"][key]["accepted"] = False
+            with self.subTest(check=key), self.assertRaises(ValueError):
                 gate.receipt(envelope, run, SOURCE)
 
     def test_rebuild_or_deployment_mutation_cannot_replace_soaked_package(self):

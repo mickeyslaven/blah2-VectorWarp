@@ -2,6 +2,7 @@
 
 #include "process/analysis/MultiIlluminatorRadar.h"
 #include <algorithm>
+#include <optional>
 
 namespace blah2::multi_illuminator {
 struct AggregateStatus {
@@ -11,14 +12,18 @@ struct AggregateStatus {
 };
 
 inline AccelerationStatus aggregate_stage(const std::vector<RadarFrame>& frames,
-    bool clutter) {
-  if (frames.empty()) return {};
-  auto result = clutter ? frames.front().clutterAcceleration : frames.front().acceleration;
+    bool clutter, std::optional<uint64_t> publicationSequence = {}) {
+  const auto first = std::find_if(frames.begin(), frames.end(), [&](const auto& frame) {
+    return !publicationSequence || frame.publicationSequence == *publicationSequence;
+  });
+  if (first == frames.end()) return {};
+  auto result = clutter ? first->clutterAcceleration : first->acceleration;
   result.members.clear();
   result.gpuExecutionBackend.clear(); // Execution identity is per lane below.
   bool fallback = false, checking = false, allReady = true;
   std::string reasons;
   for (const auto& frame : frames) {
+    if (publicationSequence && frame.publicationSequence != *publicationSequence) continue;
     const auto& stage = clutter ? frame.clutterAcceleration : frame.acceleration;
     const bool positioned = frame.inputSamplesPerOutput &&
       frame.endInputSample <= UINT64_MAX - frame.inputSamplesPerOutput &&
@@ -52,11 +57,13 @@ inline AccelerationStatus aggregate_stage(const std::vector<RadarFrame>& frames,
   return result;
 }
 
-inline AggregateStatus aggregate_status(const std::vector<RadarFrame>& frames) {
+inline AggregateStatus aggregate_status(const std::vector<RadarFrame>& frames,
+    std::optional<uint64_t> publicationSequence = {}) {
   AggregateStatus result;
-  result.ambiguity = aggregate_stage(frames, false);
-  result.clutter = aggregate_stage(frames, true);
+  result.ambiguity = aggregate_stage(frames, false, publicationSequence);
+  result.clutter = aggregate_stage(frames, true, publicationSequence);
   for (const auto& frame : frames) {
+    if (publicationSequence && frame.publicationSequence != *publicationSequence) continue;
     result.ambiguityGpuExecuted |= frame.ambiguityGpuExecuted;
     result.ambiguityCpuExecuted |= frame.ambiguityCpuExecuted;
     result.clutterGpuExecuted |= frame.clutterGpuExecuted;

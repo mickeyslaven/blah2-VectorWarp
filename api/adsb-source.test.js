@@ -262,19 +262,63 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   await rotated.getPresentation('aircraft');
   clock += 101;
   await rotated.getPresentation('aircraft');
-  assert.deepEqual(rotatedReads, ['one.example'],
-    'The public provider pool issues no concurrent or duplicate request inside its global interval');
+  assert.deepEqual(rotatedReads, ['one.example', 'two.example'],
+    'Every public provider receives one initial read');
   clock += 900;
   await rotated.getPresentation('aircraft');
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(rotatedReads, ['one.example', 'two.example'],
-    'Public providers rotate instead of every node/provider being polled together');
+  assert.deepEqual(rotatedReads, ['one.example', 'two.example', 'one.example', 'two.example'],
+    'Each public provider refreshes after its own configured interval');
   clock += 1001;
   await rotated.getPresentation('aircraft');
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(rotatedReads, ['one.example', 'two.example', 'one.example'],
-    'Round-robin selection returns to the first healthy provider');
-  assert.equal((await rotated.status()).provider_pool.strategy, 'round_robin');
+  assert.deepEqual(rotatedReads, ['one.example', 'two.example', 'one.example', 'two.example',
+    'one.example', 'two.example']);
+  assert.equal((await rotated.status()).provider_pool.strategy, 'independent_per_provider');
+
+  const failoverReads = [];
+  const failoverConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    poll_interval: .1, exchange_poll_interval: 1,
+    sources: ['exchange:https://down.example/v2/point/1/2/60',
+      'exchange:https://up.example/v2/point/1/2/60']}}};
+  const failover = createAdsbSource(failoverConfig, {now: () => clock,
+    fetchJson: async url => {
+      failoverReads.push(url.hostname);
+      if (url.hostname === 'down.example') throw new Error('offline');
+      return {now: clock / 1000, ac: []};
+    }});
+  await failover.getPresentation('aircraft');
+  clock += 1001;
+  await failover.getPresentation('aircraft');
+  await new Promise(resolve => setImmediate(resolve));
+  clock += 1001;
+  await failover.getPresentation('aircraft');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(failoverReads, ['down.example','up.example','down.example','up.example',
+    'down.example','up.example'],
+    'An unavailable provider cannot delay the healthy provider cadence');
+  clock += 1001;
+  await failover.getPresentation('aircraft');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(failoverReads, ['down.example','up.example','down.example','up.example',
+    'down.example','up.example','down.example','up.example']);
+
+  const retainedConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    max_position_age: 2, poll_interval: .1, exchange_poll_interval: 4,
+    sources: ['exchange:https://one.example/v2/point/1/2/60',
+      'exchange:https://two.example/v2/point/1/2/60']}}};
+  const retained = createAdsbSource(retainedConfig, {now: () => clock,
+    fetchJson: async url => ({now: clock / 1000, ac: [{hex: url.hostname === 'one.example' ?
+      'abc001' : 'abc002', lat: 40.4, lon: -80.1, gs: 100, track: 90, seen_pos: 0}]})});
+  const retainedFirst = await retained.getPresentation('aircraft');
+  assert.deepEqual(retainedFirst.aircraft.map(item => item.hex), ['abc001','abc002']);
+  clock += 5000;
+  await retained.getPresentation('aircraft');
+  await new Promise(resolve => setImmediate(resolve));
+  const retainedRound = await retained.getPresentation('aircraft');
+  assert.deepEqual(retainedRound.aircraft.map(item => item.hex), ['abc001', 'abc002'],
+    'Presentation retains each validated public source for a complete provider-pool round');
+  assert.equal((await retained.status()).presentation_max_position_age_s, 6.6);
 
   let presentationRelease;
   let presentationReads = 0;

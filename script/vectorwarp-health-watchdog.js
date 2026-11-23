@@ -14,6 +14,8 @@ const {evaluateFrameLiveness} = require(path.join(apiRoot, 'frame-liveness'));
 
 const PROCESSOR = 'vectorwarp-processor.service';
 const HEIMDALL = 'vectorwarp-heimdall.service';
+const FRAME_RECOVERY_TIMEOUT_MS = 300000;
+const RECEIVER_READINESS_TIMEOUT_MS = 60000;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function systemctl(...args) {
@@ -28,6 +30,20 @@ function active(unit) {
 function pid(unit) {
   try { return Number(systemctl('show', '--property=MainPID', '--value', unit)) || 0; }
   catch (_) { return 0; }
+}
+
+function processorProgress(processorPid, readFile = fs.readFileSync) {
+  if (!Number.isInteger(processorPid) || processorPid <= 0) return null;
+  try {
+    const stat = readFile(`/proc/${processorPid}/stat`, 'utf8');
+    const endName = stat.lastIndexOf(') ');
+    if (!stat.startsWith(`${processorPid} (`) || endName < 0) return null;
+    const fields = stat.slice(endName + 2).trim().split(/\s+/);
+    const cpuFields = [fields[11], fields[12]];
+    if (!cpuFields.every(value => /^\d+$/.test(value))) return null;
+    const ticks = cpuFields.reduce((sum, value) => sum + Number(value), 0);
+    return Number.isSafeInteger(ticks) ? ticks : null;
+  } catch (_) { return null; }
 }
 
 function readState(filename) {
@@ -131,7 +147,7 @@ async function synchronizeAfterRestart(config, options = {}) {
   const factory = options.factory || createReceiverSynchronizer;
   const now = options.now || Date.now;
   const sleep = options.sleep || wait;
-  const timeoutMs = options.timeoutMs ?? 60000;
+  const timeoutMs = options.timeoutMs ?? RECEIVER_READINESS_TIMEOUT_MS;
   let receipt = null, lastConnectionError = null;
   const receiverDeadline = now() + timeoutMs;
   while (!receipt && now() < receiverDeadline) {
@@ -153,11 +169,14 @@ async function recover(configFile, baselineFrame) {
   const before = readConfig(configFile);
   if (!before.exists || before.readError || !before.validation.valid)
     throw new Error('active configuration is not valid');
-  if (before.config.capture?.replay?.state === true ||
-      before.config.capture?.device?.type !== 'Kraken')
-    throw new Error('automatic receiver recovery is limited to live Kraken input');
-  const wanted = requested(before.config);
+  if (before.config.capture?.replay?.state === true)
+    throw new Error('automatic receiver recovery is limited to live input');
   systemctl('stop', PROCESSOR);
+  // SDK receivers reopen their own capture device at processor startup. Only
+  // the externally owned Kraken ingress requires separate receiver recovery.
+  if (before.config.capture?.device?.type !== 'Kraken')
+    return startProcessor(configFile, baselineFrame, before.revision);
+  const wanted = requested(before.config);
   systemctl('restart', HEIMDALL);
   // systemctl reports the native process as started before its control socket
   // is listening. Retry only transport readiness; receiver/protocol failures
@@ -171,40 +190,20 @@ async function recover(configFile, baselineFrame) {
   createReceiverJournal(configFile).write(
     receiverSettlement(before.revision, wanted, receipt));
 
-  const deadline = Date.now() + 150000;
-  let lastError = null;
-  while (Date.now() < deadline) {
-    try { systemctl('start', PROCESSOR); } catch (error) { lastError = error; }
-    if (active(PROCESSOR)) break;
-    await wait(5000);
-  }
-  if (!active(PROCESSOR)) throw new Error(`processor did not start after calibration: ${lastError || 'blocked'}`);
-  while (Date.now() < deadline) {
-    try {
-      const status = await apiStatus(afterSync.config);
-      if (Number.isFinite(status.lastFrameAt) && status.lastFrameAt > (baselineFrame || 0) &&
-          Math.abs(Date.now() - status.lastFrameAt) < 30000) {
-        const final = readConfig(configFile);
-        if (final.revision !== before.revision)
-          throw new Error('configuration revision changed before frame recovery completed');
-        return {ok: true, configRevision: before.revision, requested: wanted,
-          receiverStatus: receipt.status, operations: receipt.operations,
-          processorPid: pid(PROCESSOR), firstRecoveredFrameAt: status.lastFrameAt};
-      }
-    } catch (error) { lastError = error; }
-    await wait(2000);
-  }
-  throw new Error(`processor started but frames did not advance: ${lastError || 'timeout'}`);
+  const recovered = await startProcessor(configFile, baselineFrame, before.revision);
+  return {...recovered, requested: wanted, receiverStatus: receipt.status, operations: receipt.operations};
 }
 
-async function startProcessor(configFile, baselineFrame) {
+async function startProcessor(configFile, baselineFrame, expectedRevision) {
   const document = readConfig(configFile);
   if (!document.exists || document.readError || !document.validation.valid)
     throw new Error('active configuration is not valid');
   if (document.config.capture?.replay?.state === true)
     throw new Error('automatic processor start is limited to live input');
   const revision = document.revision;
-  const deadline = Date.now() + 150000;
+  if (expectedRevision !== undefined && revision !== expectedRevision)
+    throw new Error('configuration revision changed during recovery; processor remains stopped');
+  const deadline = Date.now() + FRAME_RECOVERY_TIMEOUT_MS;
   let lastError = null;
   while (Date.now() < deadline) {
     const current = readConfig(configFile);
@@ -223,9 +222,12 @@ async function startProcessor(configFile, baselineFrame) {
         throw new Error('configuration revision changed before processor frames resumed');
       const status = await apiStatus(current.config);
       if (Number.isFinite(status.lastFrameAt) && status.lastFrameAt > (baselineFrame || 0) &&
-          Math.abs(Date.now() - status.lastFrameAt) < 30000)
+          Math.abs(Date.now() - status.lastFrameAt) < 30000) {
+        if (readConfig(configFile).revision !== revision)
+          throw new Error('configuration revision changed before processor frames resumed');
         return {ok: true, configRevision: revision, processorPid: pid(PROCESSOR),
           firstRecoveredFrameAt: status.lastFrameAt};
+      }
     } catch (error) { lastError = error; }
     await wait(2000);
   }
@@ -253,6 +255,7 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
   const decision = evaluateFrameLiveness({now: Date.now(), processorActive, processorPid,
+    processorProgress: processorProgress(processorPid),
     lastFrameAt: status?.lastFrameAt ?? null}, previous);
   const next = {...previous, ...decision.state, configRevision: document.revision,
     lastProbeAt: Date.now(), lastProbeReason: decision.reason};
@@ -290,5 +293,6 @@ async function main(argv = process.argv.slice(2)) {
 if (require.main === module)
   main().catch(error => { console.error(`VECTORWARP_LIVENESS_ALERT ${error.stack}`); process.exitCode = 1; });
 
-module.exports = {main, receiverSettlement, requested, sameSettings, startProcessor,
-  synchronizeAfterRestart, applicationInterlock, receiverApplicationVerified};
+module.exports = {main, recover, receiverSettlement, requested, sameSettings, startProcessor, processorProgress,
+  synchronizeAfterRestart, applicationInterlock, receiverApplicationVerified,
+  FRAME_RECOVERY_TIMEOUT_MS, RECEIVER_READINESS_TIMEOUT_MS};

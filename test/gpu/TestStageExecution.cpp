@@ -57,6 +57,8 @@ int main() {
       identity.firstInputSample = first;
       identity.endInputSample = first + 98;
       identity.inputSamplesPerOutput = 2;
+      const std::string resolvedPlan = "{\"schema\":\"vectorwarp-resolved-products-v1\",\"integrationCpis\":4}";
+      identity.resolvedProductPlan = resolvedPlan;
       rapidjson::Document product;
       product.Parse(blah2::analysis::annotate_native_product("{}", identity).c_str());
       require(!product.HasParseError() && product["input_lineage"]["available"].GetBool(),
@@ -65,6 +67,33 @@ int main() {
         std::to_string(epoch), "Product lineage changed the source epoch");
       require(std::string(product["input_lineage"]["endInputSampleExact"].GetString()) ==
         std::to_string(first + 100), "Product half-open interval differs");
+      for (const char* backend : {"cpu", "vulkan", "vulkan-resident"}) {
+        identity.productBackend = backend;
+        product.Parse(blah2::analysis::annotate_native_product("{}", identity).c_str());
+        require(std::string(product["resolved_product_plan"].GetString()) == resolvedPlan,
+          "Ordinary products changed the canonical resolved plan at a backend boundary");
+      }
+      identity.productBackend="vulkan-resident";identity.productDevice="qualified-device";
+      identity.temporalExecuted=true;identity.detectorExecuted=true;identity.trackerExecuted=true;
+      identity.trackerOnHost=true;
+      product.Parse(blah2::analysis::annotate_native_product("{}", identity).c_str());
+      const auto& stages=product["product_stage_execution"];
+      require(stages["temporal"]["execution"]["gpuExecuted"].GetBool()&&
+        stages["detector"]["execution"]["gpuExecuted"].GetBool()&&
+        !stages["tracker"]["execution"]["gpuExecuted"].GetBool()&&
+        stages["tracker"]["execution"]["cpuExecuted"].GetBool()&&
+        std::string(stages["tracker"]["backend"].GetString())=="cpu"&&
+        std::string(stages["tracker"]["device"].GetString()).empty(),
+        "Accelerated detector falsely labeled the canonical host tracker as GPU work");
+      identity.productBackend="vulkan-temporal";identity.fusionOnHost=true;
+      product.Parse(blah2::analysis::annotate_native_product("{}", identity).c_str());
+      const auto& mapStages=product["product_stage_execution"];
+      require(mapStages["fusion"]["execution"]["cpuExecuted"].GetBool()&&
+        !mapStages["fusion"]["execution"]["gpuExecuted"].GetBool()&&
+        mapStages["temporal"]["execution"]["gpuExecuted"].GetBool()&&
+        mapStages["detector"]["execution"]["gpuExecuted"].GetBool()&&
+        mapStages["tracker"]["execution"]["cpuExecuted"].GetBool(),
+        "Map-only temporal acceleration changed host fusion/tracker provenance");
     }
     for (const bool positioned : {false, true}) {
       const auto unavailable = blah2::stage_execution_json(false, true, true,

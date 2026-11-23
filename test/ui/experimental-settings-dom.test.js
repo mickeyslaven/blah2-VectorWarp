@@ -43,8 +43,8 @@ async function check(receiver, platform) {
         acceleration === 'cpu' || acceleration === 'gpu');
     }
     for (const key of ['doppler_window', 'input_phase_correction']) {
-      assert.deepEqual(FIELD_RULES[`process.multi_illuminator.${key}`].choices,
-        [key === 'doppler_window' ? 'rectangular' : 'off']);
+      assert.equal(FIELD_RULES[`process.multi_illuminator.${key}`], undefined,
+        `${key} is a retired fixed implementation detail, not a setting`);
       const draft = structuredClone(config);
       draft.process.multi_illuminator[key] =
         key === 'doppler_window' ? 'hann' : 'automatic';

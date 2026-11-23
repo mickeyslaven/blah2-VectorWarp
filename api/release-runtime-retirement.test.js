@@ -10,6 +10,8 @@ const yaml = require('js-yaml');
 const {FIELD_RULES, validateConfig} = require('./config-manager');
 const {configurationForReceiver, stripLegacyNoOps, migrateKnownDefaults,
   readConfig} = require('./config-store');
+const {createReceiverJournal} = require('./receiver-journal');
+const {evaluateConfigRevision} = require('./config-revision-guard');
 
 const retired = ['temporal_shadow', 'live_temporal_shadow', 'track_guided_shadow',
   'frequency_resolved_shadow', 'doppler_ridge_scrubber', 'manifold_automation',
@@ -33,6 +35,93 @@ for (const name of retired)
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-retired-runtime-'));
 try {
+  for (const receiver of ['Kraken', 'Usrp', 'RspDuo', 'HackRF']) {
+    for (const acceleration of receiver === 'Kraken' ? ['auto', 'gpu-resident'] : ['auto'])
+    for (const depth of [4, 8]) {
+      const config = configurationForReceiver(receiver);
+      config.process.performance.acceleration = acceleration;
+      if (acceleration === 'gpu-resident') {
+        // Exercise the resident noise-whitened shape as well as portable
+        // receiver defaults; never infer a processing mode from device name.
+        config.process.tracker.gpu_capacity = 128;
+        config.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
+        const channels = config.capture.device.surveillance_channels;
+        config.capture.device.array_geometry = {
+          shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
+          mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true,
+          x_axis_bearing_deg_true: 0, bearing_channels: [...channels],
+          elements: channels.map((daq_channel, index) => ({
+            id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
+            position: [.2 * Math.cos(2 * Math.PI * index / channels.length),
+              .2 * Math.sin(2 * Math.PI * index / channels.length), 0]
+          }))
+        };
+      }
+      if (receiver === 'HackRF') config.capture.device.serial = ['0001', '0002'];
+      Object.assign(config.process.detection.track_before_detect, {enable: true, max_cpis: depth});
+      Object.assign(config.process.tracker.initiate, {M: 4, N: 6});
+      config.process.tracker.delete = 3;
+      config.process.detection.temporal_shadow = {enabled: true};
+      const filename = path.join(directory, `${receiver}-${acceleration}-${depth}.yml`);
+      const before = yaml.dump(config), reports = [];
+      fs.writeFileSync(filename, before);
+      const original = readConfig(filename), journal = createReceiverJournal(filename);
+      journal.write({state: 'not-required', reconciliationRequired: false,
+        applicationVerified: true, configRevision: original.revision});
+      assert.equal(migrateKnownDefaults(filename, {report: receipt => reports.push(receipt)}), true);
+      const migrated = readConfig(filename);
+      const expected = stripLegacyNoOps(structuredClone(config));
+      expected.process.tracker.initiate.N = 1 + depth * 3;
+      expected.process.tracker.delete = depth - 1;
+      assert.deepEqual(yaml.load(fs.readFileSync(filename, 'utf8')), expected);
+      assert.equal(migrated.validation.valid, true, migrated.validation.errors.join('; '));
+      assert.equal(fs.readFileSync(filename + '.bak', 'utf8'), before);
+      assert.equal(reports.length, 1);
+      assert.deepEqual(reports[0].trackerConfirmationChanges, [
+        {field: 'process.tracker.initiate.N', before: 6, after: 1 + depth * 3},
+        {field: 'process.tracker.delete', before: 3, after: depth - 1}]);
+      assert.equal(reports[0].receiverJournalPreserved, true);
+      assert.equal(journal.load().receipt.configMigration.previousRevision, original.revision);
+      assert.equal(evaluateConfigRevision(migrated, journal.load()).quiesce, false);
+      assert.equal(migrateKnownDefaults(filename), false, 'temporal repair is idempotent');
+      // Arbitrary later direct edits do not inherit the migration's attestation.
+      expected.process.tracker.delete++;
+      fs.writeFileSync(filename, yaml.dump(expected));
+      assert.equal(migrateKnownDefaults(filename), false);
+      assert.equal(evaluateConfigRevision(readConfig(filename), journal.load()).quiesce, true);
+    }
+  }
+  for (const scenario of ['pending', 'stale', 'unverified', 'receiver-change', 'over-budget']) {
+    const config = configurationForReceiver('Usrp');
+    config.process.detection.temporal_shadow = {enabled: true};
+    Object.assign(config.process.detection.track_before_detect, {enable: true, max_cpis: 8});
+    Object.assign(config.process.tracker.initiate, {M: 4, N: 6});
+    config.process.tracker.delete = 3;
+    if (scenario === 'receiver-change') config.capture.device.address = 'localhost';
+    if (scenario === 'over-budget') config.process.tracker.initiate.M = 255;
+    const filename = path.join(directory, `${scenario}.yml`);
+    fs.writeFileSync(filename, yaml.dump(config));
+    const journal = createReceiverJournal(filename);
+    journal.write({state: scenario === 'pending' ? 'saved-pending' : 'not-required',
+      reconciliationRequired: scenario === 'pending', applicationVerified: scenario !== 'unverified',
+      configRevision: scenario === 'stale' ? 'prior' : readConfig(filename).revision});
+    const priorJournal = fs.readFileSync(journal.filename, 'utf8');
+    assert.equal(migrateKnownDefaults(filename, {report() {}}), true);
+    assert.equal(fs.readFileSync(journal.filename, 'utf8'), priorJournal, scenario);
+    if (scenario === 'over-budget')
+      assert.equal(readConfig(filename).config.process.tracker.initiate.N, 6,
+        'migration must not manufacture an invalid oversized confirmation window');
+  }
+  for (const enabled of [false, true]) {
+    const config = configurationForReceiver('Usrp');
+    Object.assign(config.process.detection.track_before_detect, {enable: enabled, max_cpis: 8});
+    Object.assign(config.process.tracker.initiate, {M: 4, N: enabled ? 40 : 6});
+    config.process.tracker.delete = enabled ? 20 : 3;
+    const filename = path.join(directory, `unchanged-${enabled}.yml`), raw = yaml.dump(config);
+    fs.writeFileSync(filename, raw);
+    assert.equal(migrateKnownDefaults(filename), false);
+    assert.equal(fs.readFileSync(filename, 'utf8'), raw, 'preserve disabled and already-valid policy');
+  }
   for (const scored of [false, true]) {
     const config = configurationForReceiver('Kraken');
     config.process.detection.live_temporal_shadow = {enabled: true, artifact_only: !scored,

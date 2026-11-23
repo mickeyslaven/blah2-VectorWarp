@@ -17,27 +17,27 @@ module.exports = function jsonFrames(onFrame, {maxBytes = MAX_FRAME_BYTES} = {})
   let pendingFrame = null;
 
   function ensureBound() {
-    if (Buffer.byteLength(buffer, 'utf8') + (pendingFrame ? Buffer.byteLength(pendingFrame, 'utf8') : 0) > maxBytes)
+    if (Buffer.byteLength(buffer, 'utf8') + (pendingFrame ? Buffer.byteLength(pendingFrame.frame, 'utf8') : 0) > maxBytes)
       throw new Error('Radar frame exceeds limit');
   }
 
-  function deliver(frame) {
+  function parse(frame) {
     try {
       const value = JSON.parse(frame);
       if (!value || Array.isArray(value) || typeof value !== 'object')
         throw new Error('Expected radar JSON object');
+      return value;
     } catch (error) {
       if (error.message === 'Expected radar JSON object') throw error;
       throw new Error(`Invalid radar JSON object: ${error.message}`);
     }
-    return onFrame(frame);
   }
 
   return function feed(chunk) {
     if (chunk && chunk.length) buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk);
     ensureBound();
     if (pendingFrame !== null) {
-      if (deliver(pendingFrame) === false) return false;
+      if (onFrame(pendingFrame.frame, pendingFrame.value) === false) return false;
       pendingFrame = null;
     }
     for (; scan < buffer.length; ++scan) {
@@ -64,8 +64,9 @@ module.exports = function jsonFrames(onFrame, {maxBytes = MAX_FRAME_BYTES} = {})
           buffer = buffer.slice(scan + 1);
           scan = -1;
           start = -1;
-          if (deliver(frame) === false) {
-            pendingFrame = frame;
+          const value = parse(frame);
+          if (onFrame(frame, value) === false) {
+            pendingFrame = {frame, value};
             scan = 0;
             return false;
           }

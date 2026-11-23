@@ -1,6 +1,8 @@
 #include "process/ambiguity/ReplayGpuQualification.h"
 #include "process/ambiguity/GpuArtifactBinding.h"
 #include <iostream>
+#include <cstdlib>
+#include <unistd.h>
 #include <chrono>
 #include <sys/wait.h>
 namespace q=blah2::replay_gpu_qualification;

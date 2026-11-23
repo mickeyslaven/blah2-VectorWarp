@@ -411,7 +411,7 @@ int main() {
       require(rejected, "Invalid FFTW plan mode accepted");
     }
     {
-      ScopedClutterWorkers invalid("3");
+      ScopedClutterWorkers invalid("9");
       bool rejected = false;
       try { WienerHopf filter(0, 8, 64); }
       catch (const std::invalid_argument&) { rejected = true; }
@@ -458,9 +458,10 @@ int main() {
     blah2::set_fftw_planner_threads(4);
     { ScopedClutterWorkers one("1"); run(20000, -10, 400, 8192); }
     blah2::set_fftw_planner_threads(1);
-    { ScopedClutterWorkers four("4"); run(20000, -10, 400, 8192); }
+    { ScopedClutterWorkers three("3"); run(20000, -10, 400, 8192); }
     require(blah2::fftw_planner_threads() == 1, "Serial clutter changed configured FFT budget");
     blah2::set_fftw_planner_threads(2);
+    { ScopedClutterWorkers two("2"); run(20000, -10, 400, 8192); }
     { ScopedClutterWorkers four("4"); run(20000, -10, 400, 8192); }
     require(blah2::fftw_planner_threads() == 2, "Threaded clutter changed configured FFT budget");
     blah2::set_fftw_planner_threads(4);

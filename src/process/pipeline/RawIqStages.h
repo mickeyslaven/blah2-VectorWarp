@@ -24,6 +24,12 @@ public:
     bool borrowed = false;
     ArrayReferenceSynthesizer::Config reference;
     bool eagerPlanning = false;
+    // Shares the existing pool after frontend work has joined. This capacity
+    // is allocated from the canonical signal-bank CPU budget, not path count.
+    size_t temporalWorkers = 1;
+    // A RadarBank supplies an immutable global clutter-budget share per lane.
+    // Zero retains the single-pipeline environment/default behavior.
+    size_t clutterWorkerSlots = 0;
   };
 
   explicit RawIqStages(Config config);

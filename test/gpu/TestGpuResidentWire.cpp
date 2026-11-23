@@ -1,6 +1,9 @@
 #include "GpuResidentWire.h"
 #include "TemporalCandidateCell.h"
 #include "GpuResidentInput.h"
+#include "GpuResidentProof.h"
+#include "CpuEvidenceDouble.h"
+#include "process/tracker/TrackerDiagnosticsJson.h"
 #include "ResidentReplayFixture.h"
 #include "../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
@@ -10,13 +13,13 @@
 
 using namespace blah2::resident;
 namespace {
-// Keep ABI17 module layout while the retired experimental slots stay zero.
+// ABI18 retains configuration padding; retired experimental slots stay zero.
 static_assert(offsetof(TrackerConfig,reservedPolicy)==80&&
  offsetof(TrackerConfig,normalizedInnovationGate)==83&&
  offsetof(TrackerConfig,reservedLimit)==84&&sizeof(TrackerConfig)==88,
- "Resident tracker ABI17 layout changed");
+ "Resident tracker configuration padding changed");
 static_assert(offsetof(OutputViews,causalTrace)==offsetof(OutputViews,reservedOutput)+
- sizeof(Span<const uint32_t>),"Resident output ABI17 padding changed");
+ sizeof(Span<const uint32_t>),"Resident output padding changed");
 unsigned checked=0, rejected=0;
 void check(bool ok,const char* label){++checked;if(!ok)throw std::runtime_error(label);}
 template<class F>void reject(F f,const char*label,const char*reason=nullptr){bool failed=false;
@@ -41,9 +44,9 @@ Config config(){
  return c;
 }
 void packetCases(){
- static_assert(moduleAbi==17&&protocol==0x42475211,"Tracker elapsed ABI/protocol changed without test review");
- validateModuleAbi(17);
- for(unsigned abi:{0u,14u,15u,16u,18u})reject([&]{validateModuleAbi(abi);},"Legacy/unknown module ABI accepted tracker elapsed semantics");
+ static_assert(moduleAbi==18&&protocol==0x42475212,"Tracker diagnostics ABI/protocol changed without test review");
+ validateModuleAbi(18);
+ for(unsigned abi:{0u,14u,15u,16u,17u,19u})reject([&]{validateModuleAbi(abi);},"Legacy/unknown module ABI accepted tracker diagnostics");
  for(uint32_t depth:{1u,2u,4u,8u}){
   track_before_detect::validateBeamHistory(depth,UINT32_MAX);
   if(depth==2)reject([&]{track_before_detect::validateBeamHistory(depth,0);},"Two-CPI beam history silently disabled");
@@ -72,6 +75,31 @@ void packetCases(){
   check(decoded.op==op&&!decoded.frame.logicalId&&wire::same(decoded.tracker,{}),
    "Input reset operation did not round trip");
  }
+}
+void trackerDiagnosticsCases(){
+ const auto c=config();const auto layout=makeLayout(c,4096);
+ std::vector<uint8_t> storage(layout.bytes);Mapping map{storage.data(),storage.size(),layout};
+ Packet packet;packet.phase=Phase::prepared;packet.frame={1,2,3000};packet.session={7,8};packet.epoch=c.epoch;
+ CpuEvidenceDouble fixture{c,map};fixture.prepared(packet);
+ auto raw=map.bytes(Section::preparedEvidence);wire::Writer writer{raw};
+ TrackerFrameDiagnostics expected;expected.noOp=true;uint64_t value=UINT64_C(0x100000000);
+ for(const auto& field:trackerDiagnosticFields)expected.*field.member=++value;
+ wire::writeTrackerDiagnostics(writer,evidence::prepared::trackerDiagnostics,expected);
+ writer.u32(evidence::prepared::trackerPreparedStatus+64*4,71);
+ writer.u32(evidence::prepared::trackerPreparedStatus+65*4,73);
+ const auto proof=preparedProof({raw.data,raw.size});
+ check(proof.trackerStatus[64]==71&&proof.trackerStatus[65]==73&&proof.gpuTimeMask==16383,
+  "Prepared tracker status overlapped diagnostics or timings");
+ const auto publication=annotateTrackerFrameDiagnostics("{\"timestamp\":3000,\"n\":0}",proof.trackerDiagnostics);
+ rapidjson::Document json;json.Parse(publication.c_str());check(!json.HasParseError(),"Tracker publication invalid JSON");
+ check(json["trackerDiagnostics"]["no_op"].GetBool(),"Prepared no-op flag lost in publication");
+ for(const auto& field:trackerDiagnosticFields)
+  check(json["trackerDiagnostics"][field.name].GetUint64()==expected.*field.member,
+   "Prepared tracker counter lost precision or omitted from publication");
+ writer.u32(evidence::prepared::trackerDiagnostics,0);
+ reject([&]{preparedProof({raw.data,raw.size});},"Absent diagnostics accepted as all-zero measurements");
+ writer.u32(evidence::prepared::trackerDiagnostics,1);writer.u32(evidence::prepared::trackerDiagnostics+4,2);
+ reject([&]{preparedProof({raw.data,raw.size});},"Malformed no-op flag accepted");
 }
 void configCases(){
  const auto c=config();validateConfig(c);const auto canonical=encodeConfig(c);
@@ -182,7 +210,25 @@ void configCases(){
   invalid.detector.integrationCpis=1;invalid.detector.integrationMotionBins=1;
   reject([&]{validateConfig(invalid);},"Single-CPI motion accepted at wire boundary",temporalReason);
   invalid.detector.integrationCpis=4;invalid.detector.integrationMotionBins=0;
-  reject([&]{validateConfig(invalid);},"Noncoherent4-CPI resident configuration accepted",temporalReason);
+  invalid.presence=wire::mandatoryPresence(invalid);
+  if(enabled)validateConfig(invalid);
+  else reject([&]{validateConfig(invalid);},"Disabled noncoherent4-CPI detector accepted",temporalReason);
+ }
+ for(uint32_t depth:{2u,4u,8u}){
+  auto detectorOnly=c;detectorOnly.tracker={};detectorOnly.detector.integrationCpis=depth;
+  detectorOnly.reference.centreHz=101100000;
+  detectorOnly.detector.integrationMotionBins=depth==2?1:track_before_detect::encodeMotionBins(2,4,true);
+  detectorOnly.presence=wire::mandatoryPresence(detectorOnly);validateConfig(detectorOnly);
+  const auto encoded=encodeConfig(detectorOnly);
+  const auto decoded=decodeConfig(bytes(encoded),bytes(d),bytes(f));
+  check(encodeConfig(decoded)==encoded&&!decoded.tracker.enabled&&decoded.temporalCarrierHz()==101100000,
+   "Noncoherent detector-only temporal carrier/ABI round trip differs");
+  if(depth>2){
+   auto bad=detectorOnly;bad.reference.centreHz=0;
+   reject([&]{validateConfig(bad);},"Fractional noncoherent detector omitted its carrier");
+   bad=detectorOnly;bad.tracker=c.tracker;bad.presence=wire::mandatoryPresence(bad);
+   reject([&]{validateConfig(bad);},"Unqualified noncoherent resident tracker admitted",temporalReason);
+  }
  }
  auto measured=bearing;for(uint32_t beam=0;beam<60;++beam)for(uint32_t channel=0;channel<2;++channel)
   measured.bearing.manifoldResponses.push_back(std::polar(1.0f,float(.1*beam+.2*channel)));
@@ -220,9 +266,9 @@ void configCases(){
  const auto normalizedDecoded=decodeConfig(bytes(normalizedBytes),bytes(d),bytes(f));
  check(normalizedDecoded.tracker.normalizedInnovationGate&&
   encodeConfig(normalizedDecoded)==normalizedBytes,
-  "Normalized tracker gate did not preserve its ABI17 encoding");
+  "Normalized tracker gate did not preserve its configuration encoding");
  const wire::Reader normalizedWire{bytes(normalizedBytes)};
- check(moduleAbi==17&&protocol==0x42475211&&normalizedWire.u32(604)==0&&
+ check(moduleAbi==18&&protocol==0x42475212&&normalizedWire.u32(604)==0&&
   normalizedWire.u32(608)==0&&normalizedWire.u32(612)==4,
   "Retired tracker wire slots or supported policy offset changed");
  for(const auto offset:{604u,608u,612u})for(const auto flag:{1u,2u}){
@@ -298,7 +344,7 @@ void mappingCases(){
  check(trackerHistoryCapacity(longHistory.tracker)==255&&trackerRecordWords(longHistory.tracker)==2060&&
   longLayout.at(Section::tracker0).capacityBytes==128+uint64_t(c.tracker.capacity)*8240,
   "Maximum confirmation window did not retain the full tracker history");
- check(l.at(Section::readyEvidence).capacityBytes==4096&&l.at(Section::preparedEvidence).capacityBytes==61888&&l.at(Section::controlEvidence).capacityBytes==512,"Evidence maximum capacity missing");
+ check(l.at(Section::readyEvidence).capacityBytes==4096&&l.at(Section::preparedEvidence).capacityBytes==62224&&l.at(Section::controlEvidence).capacityBytes==512,"Evidence maximum capacity missing");
  uint64_t end=1280;for(uint32_t i=0;i<l.count;++i){auto d=l.sections[i];check(!d.capacityBytes||d.offset%64==0,"Misaligned section");check(!d.capacityBytes||d.offset>=end,"Overlapping section");if(d.capacityBytes)end=d.offset+d.capacityBytes;}
  std::vector<uint8_t>data(size_t(l.bytes));Mapping map{data.data(),data.size(),l};const Nonce nonce{7,8};initializeMapping(map,c,nonce);validateMapping(map,c,nonce);
  auto corrupt=[&](size_t offset){const auto old=data[offset];data[offset]^=1;reject([&]{validateMapping(map,c,nonce);},"Tampered mapping accepted");data[offset]=old;};
@@ -381,6 +427,33 @@ void topologyCases(){
  check(output==before,"Malformed input partially overwrote canonical frame");
  capture.pop_back();
  reject([&]{copyCanonicalInput(c,{output.data(),output.size()},capture,samples);},"Coordinator accepted missing reference input");
+ // Borrowed canonical storage uses the same all-channel validation and order,
+ // including a non-zero slice offset used by direct and channelized routes.
+ auto borrowedStorage=std::make_shared<const std::vector<std::vector<std::complex<double>>>>(
+  std::vector<std::vector<std::complex<double>>>(2,
+   std::vector<std::complex<double>>(66)));
+ auto mutableBorrowed=std::make_shared<std::vector<std::vector<std::complex<double>>>>(*borrowedStorage);
+ std::fill((*mutableBorrowed)[0].begin(),(*mutableBorrowed)[0].end(),std::complex<double>{13,17});
+ std::fill((*mutableBorrowed)[1].begin(),(*mutableBorrowed)[1].end(),std::complex<double>{19,23});
+ borrowedStorage=mutableBorrowed;
+ blah2::iq::CoherentSamples coherent;
+ blah2::iq::BorrowedSamples::DoubleChannels borrowedViews;
+ for(const auto& channel:*borrowedStorage)
+  borrowedViews.emplace_back(channel.data(),channel.size());
+ coherent.borrowed=blah2::iq::BorrowedSamples{borrowedStorage,std::move(borrowedViews)};
+ copyCanonicalSignalInput(c,{output.data(),output.size()},coherent,2);
+ check(output[0]==(*borrowedStorage)[0][2]&&output[64]==(*borrowedStorage)[1][2],
+  "Borrowed resident input reordered or ignored its slice offset");
+ const auto borrowedBefore=output;
+ auto shortStorage=std::make_shared<const std::vector<std::vector<std::complex<double>>>>(
+  std::vector<std::vector<std::complex<double>>>{
+   std::vector<std::complex<double>>(66),std::vector<std::complex<double>>(65)});
+ blah2::iq::BorrowedSamples::DoubleChannels shortViews;
+ for(const auto& channel:*shortStorage)shortViews.emplace_back(channel.data(),channel.size());
+ coherent.borrowed=blah2::iq::BorrowedSamples{shortStorage,std::move(shortViews)};
+ reject([&]{copyCanonicalSignalInput(c,{output.data(),output.size()},coherent,2);},
+  "Borrowed coordinator accepted malformed later channel");
+ check(output==borrowedBefore,"Malformed borrowed input partially overwrote canonical frame");
 }
 void outputCases(){
  auto c=config();const auto ordinaryHash=wire::configHash(c);c.presence|=bit(Section::causalTrace);
@@ -435,4 +508,4 @@ void outputCases(){
  auto wrong=p;wrong.tracker.generation--;reject([&]{views(map,c,wrong);},"Stale prepared token accepted");wrong=p;wrong.phase=Phase::idle;reject([&]{views(map,c,wrong);},"Idle exposed outputs");wrong=p;wrong.presence^=bit(Section::canonical);reject([&]{views(map,c,wrong);},"Output presence substitution accepted");
 }
 }
-int main()try{packetCases();configCases();mappingCases();topologyCases();outputCases();std::cout<<"COMPLETE resident-wire CPU-only checks="<<checked<<" rejected="<<rejected<<" gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL resident-wire: "<<e.what()<<'\n';return 1;}
+int main()try{packetCases();trackerDiagnosticsCases();configCases();mappingCases();topologyCases();outputCases();std::cout<<"COMPLETE resident-wire CPU-only checks="<<checked<<" rejected="<<rejected<<" gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL resident-wire: "<<e.what()<<'\n';return 1;}

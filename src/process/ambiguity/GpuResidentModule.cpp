@@ -1,5 +1,6 @@
-// Adjacent resident ABI17 module. Older cohorts are rejected at admission.
+// Adjacent resident ABI18 module. Older cohorts are rejected at admission.
 #include "GpuResidentWire.h"
+#include "GpuResidentBackend.h"
 #include "capture/Sha256.h"
 #include "GpuResidentEvidenceLayout.h"
 #include <dlfcn.h>
@@ -64,7 +65,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.integrationDelayMotionBins=motion.delay;
  p.integrationDopplerMotionBins=motion.doppler;
  if(motion.fractionalDelay)p.integrationDelayDriftPerHz=
-  track_before_detect::delayDriftPerHz(c.geometry.clutterSamples,c.fusion.frequencyHz);
+  track_before_detect::delayDriftPerHz(c.geometry.clutterSamples,c.temporalCarrierHz());
  p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
  if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);
@@ -141,7 +142,7 @@ class ResidentModule final:public resident::Backend {
   w.u64(48,state.allocations.size());
   uint64_t sum=0;
   for(size_t i=0;i<properties.heaps.size();++i){const auto& h=properties.heaps[i];
-  const auto limit=gpu_memory::heapBudget(h.bytes);
+  const auto limit=b.heapLimit(uint32_t(i));
   rw::require(used[i]<=limit,"Resident heap budget invariant");
   sum=rw::add(sum,used[i]);
   size_t a=64+32*i;
@@ -170,7 +171,8 @@ class ResidentModule final:public resident::Backend {
   w.u32(44,1);
   w.u32(48,uint32_t(memory.heaps.size()));
   w.u32(52,uint32_t(memory.types.size()));
-  w.u64(56,gpu_memory::heapBudget(c.candidate.info.memoryBytes));
+  {std::lock_guard<std::mutex> lock(allocationsMutex);
+   w.u64(56,deviceAllocations.at(c.device).budget.deviceLimit());}
   w.u64(64,l.maxStorageBufferRange);
   w.u32(72,l.maxComputeSharedMemorySize);
   w.u32(76,l.maxComputeWorkGroupInvocations);
@@ -272,7 +274,8 @@ class ResidentModule final:public resident::Backend {
  times(w,a+96,*c.timestamps_,0,3);
  words(w,re::prepared::residentFinalStatus,pipeline_->finalEvidence_);
  words(w,re::prepared::postprocessStatus,pipeline_->work_->postprocessStage->evidenceStatus());
- if(config_.tracker.enabled)words(w,re::prepared::trackerPreparedStatus,pipeline_->tracker_->evidencePrepared());
+ if(config_.tracker.enabled){words(w,re::prepared::trackerPreparedStatus,pipeline_->tracker_->evidencePrepared());
+  rw::writeTrackerDiagnostics(w,re::prepared::trackerDiagnostics,trackerResult_.diagnostics);}
   uint64_t mask=3|(uint64_t(1)<<2)|(uint64_t(1)<<7);
   if(config_.detector.enabled)mask|=uint64_t(15)<<3;
   if(config_.tracker.enabled)mask|=uint64_t(63)<<8;
@@ -310,14 +313,14 @@ class ResidentModule final:public resident::Backend {
  for(size_t i=0;i<8;++i)w.u64(32+8*i,fields[i]);
  w.u64(96,valid|32);
  w.u64(104,++event_);
- // ABI17 initialization/reset ACK binds the loaded image without consuming IQ.
+ // Initialization/reset ACK binds the loaded image without consuming IQ.
  w.copy(112,imageHash_.data(),16);
  w.copy(488,imageHash_.data()+16,16);
  if((valid&1)&&pipeline_->tracker_){const auto& status=pipeline_->tracker_->evidenceControl();
-  // The control envelope reserves exactly 64 words before timing at byte 384.
-  // New tracker-only diagnostics remain available in prepared evidence.
-  rw::require(status.size()>=64,"Resident tracker control proof is short");
-  for(size_t i=0;i<64;++i)w.u32(128+4*i,status[i]);}
+  // ABI18 uses the former reserved tail for status words 64/65; all 66
+  // words survive without overwriting the timing block at byte 384.
+  rw::require(status.size()==66,"Resident tracker control proof shape differs");
+  for(size_t i=0;i<status.size();++i)w.u32(i<64?128+4*i:448+4*(i-64),status[i]);}
  if(pipeline_&&pipeline_->tracker_){const auto&t=pipeline_->tracker_->evidenceTimes();
  if(valid&2)w.f64(384,t.observed(6));
  if(valid&4)w.f64(392,t.observed(5));
@@ -371,28 +374,29 @@ public:
  return true;}
  bool finishRadar(const Packet& p)override{rw::require(ready_&&!prepared_,"Resident module radar phase invalid");
  ResidentFrameOutputs out;
+ const auto requested=[&](Section section){return (p.diagnosticPresence&resident::bit(section))!=0;};
  out.maps=pointer<std::complex<float>>(Section::maps);
  out.mapCount=count<std::complex<float>>(Section::maps);
  out.fused=pointer<std::complex<double>>(Section::fused);
  out.fusedCount=count<std::complex<double>>(Section::fused);
- out.filtered=pointer<std::complex<double>>(Section::filtered);
- out.filteredCount=count<std::complex<double>>(Section::filtered);
- out.tail=pointer<std::complex<double>>(Section::tail);
- out.tailCount=count<std::complex<double>>(Section::tail);
+ out.filtered=requested(Section::filtered)?pointer<std::complex<double>>(Section::filtered):nullptr;
+ out.filteredCount=out.filtered?count<std::complex<double>>(Section::filtered):0;
+ out.tail=requested(Section::tail)?pointer<std::complex<double>>(Section::tail):nullptr;
+ out.tailCount=out.tail?count<std::complex<double>>(Section::tail):0;
  auto& o=out.postprocess;
  o.metrics=&metrics_;
  o.display=pointer<double>(Section::display);
  o.displayCount=count<double>(Section::display);
  o.detections=pointer<PostprocessDetection>(Section::detections);
  o.detectionCapacity=count<PostprocessDetection>(Section::detections);
- o.levels=pointer<double>(Section::levels);
- o.levelCount=count<double>(Section::levels);
- o.unflooredSnr=pointer<double>(Section::unflooredSnr);
- o.unflooredSnrCount=count<double>(Section::unflooredSnr);
- o.cfar=pointer<PostprocessDetection>(Section::cfar);
- o.cfarCapacity=count<PostprocessDetection>(Section::cfar);
- o.centroid=pointer<PostprocessDetection>(Section::centroid);
- o.centroidCapacity=count<PostprocessDetection>(Section::centroid);
+ o.levels=requested(Section::levels)?pointer<double>(Section::levels):nullptr;
+ o.levelCount=o.levels?count<double>(Section::levels):0;
+ o.unflooredSnr=requested(Section::unflooredSnr)?pointer<double>(Section::unflooredSnr):nullptr;
+ o.unflooredSnrCount=o.unflooredSnr?count<double>(Section::unflooredSnr):0;
+ o.cfar=requested(Section::cfar)?pointer<PostprocessDetection>(Section::cfar):nullptr;
+ o.cfarCapacity=o.cfar?count<PostprocessDetection>(Section::cfar):0;
+ o.centroid=requested(Section::centroid)?pointer<PostprocessDetection>(Section::centroid):nullptr;
+ o.centroidCapacity=o.centroid?count<PostprocessDetection>(Section::centroid):0;
  o.decisionFlags=pointer<uint32_t>(Section::flags);
  o.decisionFlagCount=count<uint32_t>(Section::flags);
  o.detectionCells=pointer<uint32_t>(Section::detectionCells);
@@ -444,6 +448,7 @@ public:
  void abort(const Packet& p)override{rw::require(prepared_&&!committed_&&rw::same(p.tracker,token_),"Resident module abort mismatch");
  if(config_.tracker.enabled)pipeline_->abortTracker({token_.epoch,token_.transaction,token_.generation,token_.consumedSequence});
  prepared_=ready_=false;
+ trackerResult_={};rw::Writer{map_.bytes(Section::preparedEvidence)}.zero();
  control(p,resident::Phase::rejected);}
  void settle(const Packet& p)override{rw::require(prepared_&&committed_&&rw::same(p.tracker,token_),"Resident module settlement mismatch");
  control(p,resident::Phase::settled);
@@ -539,9 +544,54 @@ public:
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
  blah2::resident::validateModuleAbi(abi);
- if(!config||!map){throw std::runtime_error("Resident module ABI17 configuration/mapping absent");}
+ if(!config||!map){throw std::runtime_error("Resident module ABI18 configuration/mapping absent");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);
  throw std::runtime_error("Requested resident GPU is unavailable; no CPU fallback");
+}
+
+namespace blah2 { namespace {
+PostprocessConfig temporalConfig(const temporal_gpu::Config& c){
+ PostprocessConfig p;const auto& d=c.detector;p.enabled=true;p.detection=d.enabled;
+ p.pfa=d.pfa;p.minDoppler=d.minDoppler;p.centroidDopplerResolution=d.centroidDopplerResolution;
+ p.guard=d.guard;p.train=d.train;p.minDelay=d.minDelay;
+ p.centroidDelay=uint16_t(d.centroidDelay);p.centroidDoppler=uint16_t(d.centroidDoppler);
+ p.interpolateDelay=d.interpolateDelay;p.interpolateDoppler=d.interpolateDoppler;
+ p.integrationCpis=d.integrationCpis;const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
+ p.integrationDelayMotionBins=motion.delay;p.integrationDopplerMotionBins=motion.doppler;
+ p.integrationDelayDriftPerHz=c.delayDriftPerHz;p.integrationBeamTolerance=d.integrationBeamTolerance;
+ p.delayAxis=c.delayAxis;p.dopplerAxis=c.dopplerAxis;p.epoch=1;p.amplitudeOutput=true;return p;
+}
+class TemporalModule final:public temporal_gpu::Backend {
+ Context context_;
+ const size_t cells_;
+ gpu_postprocess::MapStage stage_;
+public:
+ TemporalModule(std::shared_ptr<Instance> instance,Candidate candidate,const temporal_gpu::Config& config)
+  :context_(std::move(instance),std::move(candidate)),cells_(config.delayAxis.size()*config.dopplerAxis.size()),
+   stage_(context_,temporalConfig(config),config.sampleRate){}
+ void reset()override{stage_.reset();}
+ void process(const std::complex<double>* input,temporal_gpu::Output& out)override{
+  using Clock=std::chrono::steady_clock;
+  const auto start=Clock::now();stage_.upload(input);const auto uploaded=Clock::now();
+  stage_.execute();const auto executed=Clock::now();PostprocessMetrics metrics;
+  static_assert(sizeof(temporal_gpu::Record)==sizeof(PostprocessDetection));
+  PostprocessOutputs output;output.metrics=&metrics;output.display=out.display;output.displayCount=cells_;
+  output.detections=reinterpret_cast<PostprocessDetection*>(out.records);output.detectionCapacity=cells_;
+  output.decisionFlags=out.flags;output.decisionFlagCount=cells_;
+  output.detectionCells=out.cells;output.detectionCellCapacity=cells_;stage_.readback(output);
+  const auto readback=Clock::now();const auto ms=[](auto a,auto b){return std::chrono::duration<double,std::milli>(a-b).count();};
+  out.metrics={metrics.availableCpis,metrics.detectionCount,metrics.cfarCount,metrics.evaluatedCells,
+   metrics.noisePower,metrics.maxPower,ms(uploaded,start),ms(executed,uploaded),ms(readback,executed),{}};
+  for(uint32_t i=0;i<6;++i)out.metrics.gpuMs[i]=stage_.milliseconds(i);
+ }
+};
+} }
+extern "C" blah2::temporal_gpu::Backend* blah2_gpu_create_temporal(unsigned abi,const blah2::temporal_gpu::Config* config){
+ if(abi!=blah2::temporal_gpu::moduleAbi||!config)throw std::runtime_error("Temporal module ABI1 required");
+ blah2::temporal_gpu::validate(*config);auto instance=std::make_shared<blah2::Instance>();
+ for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)
+  return new blah2::TemporalModule(instance,std::move(candidate),*config);
+ throw std::runtime_error("Requested temporal GPU unavailable");
 }

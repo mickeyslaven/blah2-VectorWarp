@@ -2,13 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const net = require('net');
+const crypto = require('crypto');
 const {sourceAddress} = require('./adsb-source');
 const {classifyAdsbSource, SOURCE_CHOICES} = require('./adsb-discovery');
 const {recordErrors} = require('../html/js/kraken_geometry');
 const {evaluateKrakenArray} = require('./kraken-array');
 const {effectiveDelayConfig, temporalConfirmationErrors} = require('../html/js/config_profiles');
 const {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon,
-  experimentalSettingSupport} = require('./processing-capabilities');
+  residentRouteRequested, experimentalSettingSupport} = require('../html/js/processing_capabilities');
 const FIELD_RULES = require('./config-rules')(SOURCE_CHOICES);
 
 // Upgrade-only values, absent from the advertised settings contract. Keep
@@ -140,6 +141,189 @@ function getDeviceProfiles() {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function canonicalPlanJson(value) {
+  if (Array.isArray(value)) return '[' + value.map(canonicalPlanJson).join(',') + ']';
+  if (isObject(value)) return '{' + Object.keys(value).filter(key => value[key] !== undefined)
+    .sort().map(key => JSON.stringify(key) + ':' + canonicalPlanJson(value[key])).join(',') + '}';
+  if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Non-finite radar plan value');
+  if (value === undefined) throw new Error('Missing radar plan value');
+  return JSON.stringify(value);
+}
+const planSha256 = value => crypto.createHash('sha256').update(canonicalPlanJson(value)).digest('hex');
+
+function effectiveRadarPlan(config) {
+  const p = config.process || {}, capture = config.capture || {};
+  const replay = capture.replay?.state === true ? capture.replay : {};
+  const topology = processingCapabilities(config);
+  const multi = p.multi_illuminator?.enabled === true;
+  const lanes = multi ? (p.multi_illuminator.illuminators || []).filter(lane => lane.enabled === true) :
+    [{id: 'primary', output_sample_rate_hz: replay.sample_rate_hz ?? capture.fs,
+      frequency_hz: replay.frequency_hz ?? capture.fc}];
+  if (!lanes.length) throw new Error('Radar plan has no enabled lanes');
+  const plans = lanes.map(lane => {
+    const rate = lane.output_sample_rate_hz;
+    const process = JSON.parse(JSON.stringify(effectiveDelayConfig(config, rate,
+      {scaleNeighborhoods: true}).process));
+    for (const name of ['performance', 'evidence', 'multi_illuminator', 'delay_reference_sample_rate_hz'])
+      delete process[name];
+    delete process.data.buffer;
+    delete process.tracker.profile;
+    delete process.tracker.gpu_capacity;
+    delete process.bearing?.manifold_recorder;
+    const reference = process.reference_synthesis = {...process.reference_synthesis,
+      mode: lane.reference_channel === undefined ? topology.referenceMode : 'dedicated',
+      channels: lane.reference_channel === undefined ? topology.referenceChannels : [lane.reference_channel]};
+    const detection = process.detection, tbd = detection.track_before_detect || {};
+    const depth = tbd.enable === true ? (tbd.max_cpis ?? 8) : (detection.integration_cpis ?? 1);
+    const motion = tbd.enable === true ? (tbd.motion_bins ?? 1) : (detection.integration_motion_bins ?? 0);
+    const features = {clutter: process.clutter.enable === true,
+      detection: detection.enable === true,
+      tracking: detection.enable === true && process.tracker.enable === true,
+      bearing: process.bearing?.enable === true,
+      temporal_cpis: detection.enable === true ? depth : 0,
+      delay_motion_bins: tbd.enable === true ? (tbd.delay_motion_bins ?? motion) : motion,
+      doppler_motion_bins: tbd.enable === true ? (tbd.doppler_motion_bins ?? motion) : motion,
+      fractional_delay: tbd.enable === true && tbd.fractional_delay === true};
+    for (const key of ['track_before_detect', 'integration_cpis', 'integration_motion_bins']) delete detection[key];
+    detection.temporal = {cpis: depth, delay_motion_bins: features.delay_motion_bins,
+      doppler_motion_bins: features.doppler_motion_bins, fractional_delay: features.fractional_delay};
+    if (process.clutter.followAmbiguity === true) {
+      process.clutter.delayMin = process.ambiguity.delayMin;
+      process.clutter.delayMax = process.ambiguity.delayMax + 1;
+    }
+    delete process.clutter.followAmbiguity;
+    const signal = {sample_rate_hz: rate, frequency_hz: lane.frequency_hz,
+      channel_count: topology.channelCount,
+      reference_channel: lane.reference_channel ?? topology.referenceChannel,
+      surveillance_channels: lane.surveillance_channels ?? topology.surveillanceChannels,
+      array_geometry: capture.device?.array_geometry,
+      transmitter_location: lane.transmitter ?? config.location?.tx,
+      radar_transmitter_location: lane.transmitter_location,
+      receiver_location: config.location?.rx};
+    // Bind geometry, not site labels.
+    for (const field of ['transmitter_location', 'radar_transmitter_location', 'receiver_location'])
+      if (signal[field]) signal[field] = Object.fromEntries(['latitude', 'longitude', 'altitude']
+        .map(key => [key, signal[field][key]]));
+    // Match canonical ATSC conditioning.
+    const atsc1 = ['ATSC', 'ATSC-1.0'].includes(lane.standard);
+    const referenceMode = lane.atsc_reference_mode ?? (atsc1 || lane.standard === 'ATSC-3.0' ? 'automatic' : 'raw');
+    if (referenceMode === 'pilot_aided' || (referenceMode === 'automatic' && atsc1 &&
+        reference.mode !== 'array_eigenbeam'))
+      reference.atsc_reference_mode = 'pilot_aided';
+    if (lane.standard === 'FM' && p.multi_illuminator?.experimental_fm_reference_quality_filter === true)
+      reference.fm_quality_filter = true;
+    if (lane.tracker_min_snr_db !== undefined) process.tracker.initiate.min_snr_db = lane.tracker_min_snr_db;
+    for (const field of ['detection_manifold_file', 'bearing_manifold_file'])
+      if (lane[field] !== undefined) signal[field] = lane[field];
+    return {id: lane.id, features, semantic: {signal, process},
+      configured_products: {'stages.clutter': features.clutter, 'stages.detection': features.detection,
+        'stages.tracking': features.tracking, integrationCpis: depth,
+        trackerM: process.tracker.initiate.M, trackerN: process.tracker.initiate.N,
+        trackerDelete: process.tracker.delete}};
+  });
+  const semantic = {schema: 'vectorwarp-configured-radar-plan-v1',
+    lanes: plans.map(lane => canonicalPlanJson(lane.semantic)).sort().map(value => JSON.parse(value))};
+  return {schema: 'vectorwarp-radar-plan-report-v1',
+    scope: 'configured-intent; native execution and outcome evidence required separately',
+    semantic_sha256: planSha256(semantic),
+    semantic, lanes: plans.map(({semantic, ...lane}) =>
+      ({...lane, configured_sha256: planSha256(semantic)}))};
+}
+
+function radarPlanErrors(report, requirement) {
+  if (!isObject(requirement) || requirement.schema !== 'vectorwarp-radar-plan-requirements-v1' ||
+      !/^[a-f0-9]{64}$/.test(requirement.semantic_sha256 || '') ||
+      !isObject(requirement.required_features) || !Object.keys(requirement.required_features).length ||
+      Object.keys(requirement).some(key => !['schema', 'semantic_sha256', 'required_features', 'resolved_products'].includes(key)) ||
+      (requirement.resolved_products !== undefined && (!isObject(requirement.resolved_products) ||
+        Object.entries(requirement.resolved_products).flat().some(value => !/^[a-f0-9]{64}$/.test(value)))))
+    return ['Required radar plan is malformed'];
+  const errors = [];
+  if (report.semantic_sha256 !== requirement.semantic_sha256)
+    errors.push('Effective radar plan differs from the independently pinned intended plan');
+  for (const [feature, expected] of Object.entries(requirement.required_features)) {
+    for (const lane of report.lanes) {
+      if (!Object.hasOwn(lane.features, feature) || lane.features[feature] !== expected)
+        errors.push(`Required radar feature ${feature}=${JSON.stringify(expected)} is absent in lane ${lane.id} (configured ${feature}=${JSON.stringify(lane.features[feature])})`);
+    }
+  }
+  if (requirement.resolved_products !== undefined && report.lanes.some(lane =>
+      !requirement.resolved_products[lane.configured_sha256]))
+    errors.push('Required native resolved plan is missing for a configured lane');
+  return errors;
+}
+
+function assessResolvedRadarPlans(configured, observation, {now = Date.now(), maxAgeMs = 5000} = {}) {
+  const errors = [...(configured.errors || [])], lanes = [];
+  const observedProducts = Array.isArray(observation?.products) ? observation.products : [];
+  const reject = message => errors.push(message);
+  if (configured.qualification !== 'matched') reject('Configured radar plan is not independently pinned');
+  if (observation?.schema !== 'vectorwarp-runtime-plan-observation-v1' ||
+      !Number.isSafeInteger(observation.generation) || observation.generation < 0 ||
+      !Number.isFinite(observation.observed_at) || observation.observed_at > now ||
+      now - observation.observed_at > maxAgeMs || observation.processor_fresh !== true ||
+      !['live', 'replay'].includes(observation.input) || !Array.isArray(observation.products))
+    reject('Native radar plan observation is missing, stale or outside an active processor session');
+  for (const lane of configured.lanes || []) {
+    const products = observedProducts.filter(item => item?.lane_id === lane.id);
+    const expectedHash = configured.resolved_products?.[lane.configured_sha256];
+    if (!expectedHash) reject(`Lane ${lane.id} has no independently qualified native plan pin`);
+    const required = ['map', ...(lane.features.detection ? ['detection'] : []),
+      ...(lane.features.tracking ? ['tracker'] : []), ...(lane.features.bearing ? ['bearing'] : [])];
+    let lineage = null, nativeHash = null;
+    for (const name of required) {
+      const matches = products.filter(item => item.product === name);
+      const item = matches[0], frame = item?.frame;
+      if (matches.length !== 1 || item.generation !== observation.generation ||
+          !Number.isFinite(item.received_at) || item.received_at > observation.observed_at ||
+          now - item.received_at > maxAgeMs || !isObject(frame)) {
+        reject(`Lane ${lane.id} ${name} has no fresh native plan product`); continue;
+      }
+      let native;
+      try {
+        if (typeof frame.resolved_product_plan !== 'string' || frame.resolved_product_plan.length > 32768)
+          throw new Error('missing identity');
+        native = JSON.parse(frame.resolved_product_plan);
+        if (native?.schema !== 'vectorwarp-resolved-products-v1') throw new Error('unknown schema');
+      } catch (_) { reject(`Lane ${lane.id} ${name} lacks the canonical native resolved plan`); continue; }
+      const hash = crypto.createHash('sha256').update(frame.resolved_product_plan).digest('hex');
+      if (hash !== expectedHash) reject(`Lane ${lane.id} ${name} native plan differs from its qualified pin`);
+      if (nativeHash && nativeHash !== hash) reject(`Lane ${lane.id} mixes native product plans`);
+      nativeHash = hash;
+      for (const [field, expected] of Object.entries(lane.configured_products || {}))
+        if (native[field] !== expected) reject(`Lane ${lane.id} native ${field} differs from configured intent`);
+      const input = frame.input_lineage;
+      const exact = value => typeof value === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(value) &&
+        BigInt(value) <= 18446744073709551615n;
+      if (input?.available !== true || input.sampleInterval !== 'half-open' ||
+          !['captureEpochExact', 'firstInputSampleExact', 'endInputSampleExact']
+          .every(key => exact(input[key])) || BigInt(input.endInputSampleExact) <= BigInt(input.firstInputSampleExact)) {
+        reject(`Lane ${lane.id} ${name} lacks exact input lineage`); continue;
+      }
+      const identity = [input.captureEpochExact, input.firstInputSampleExact, input.endInputSampleExact].join(':');
+      if (lineage && lineage !== identity) reject(`Lane ${lane.id} products do not share one input interval`);
+      lineage = identity;
+      const stages = ['fusion', ...(lane.features.temporal_cpis > 1 ? ['temporal'] : []),
+        ...(lane.features.detection ? ['detector'] : []), ...(lane.features.tracking ? ['tracker'] : []),
+        ...(lane.features.bearing ? ['bearing'] : [])];
+      for (const stage of stages) {
+        const receipt = frame.product_stage_execution?.[stage], execution = receipt?.execution;
+        if (!['cpu', 'vulkan', 'vulkan-resident', 'vulkan-temporal'].includes(receipt?.backend) ||
+            execution?.known !== true || execution.frameBound !== true || execution.available !== true ||
+            execution.sampleInterval !== 'half-open' || execution.provenance !== 'processor_stage_receipt' ||
+            (receipt.backend === 'cpu' ? execution.cpuExecuted !== true : execution.gpuExecuted !== true) ||
+            ['captureEpochExact', 'firstInputSampleExact', 'endInputSampleExact']
+              .some(key => execution[key] !== input[key]))
+          reject(`Lane ${lane.id} ${name} lacks frame-bound ${stage} execution`);
+      }
+    }
+    lanes.push({id: lane.id, configured_sha256: lane.configured_sha256, native_sha256: nativeHash, input_interval: lineage});
+  }
+  return {schema: 'vectorwarp-runtime-plan-acceptance-v1',
+    scope: 'native plan and stage reporting; numerical parity and radar outcomes require separate qualification',
+    qualification: errors.length ? 'rejected' : 'matched', errors: [...new Set(errors)], lanes};
 }
 
 function linuxServicePathPolicy(environment = process.env) {
@@ -312,6 +496,7 @@ function validateConfig(config, baseline = null, options = {}) {
   const residentSnapshot = replay.resident_snapshot === undefined ? null :
     requireObject(replay.resident_snapshot, 'capture.replay.resident_snapshot');
   const processConfig = requireObject(root.process, 'process');
+  const residentMode = residentRouteRequested(root);
   const evidence = processConfig.evidence === undefined ? null :
     requireObject(processConfig.evidence, 'process.evidence');
   const causalFunnel = evidence?.causal_funnel === undefined ? null :
@@ -323,6 +508,9 @@ function validateConfig(config, baseline = null, options = {}) {
   let clutter = requireObject(processConfig.clutter, 'process.clutter');
   let detection = requireObject(processConfig.detection, 'process.detection');
   const tracker = requireObject(processConfig.tracker, 'process.tracker');
+  if (causalFunnel?.enabled === true &&
+      (!residentMode || multiIlluminator?.enabled === true || tracker.enable !== true))
+    errors.push('Native causal diagnostics require the single-lane resident tracker with auto or gpu-resident acceleration');
   const initiate = requireObject(tracker.initiate, 'process.tracker.initiate');
   const network = requireObject(root.network, 'network');
   const ports = requireObject(network.ports, 'network.ports');
@@ -489,8 +677,8 @@ function validateConfig(config, baseline = null, options = {}) {
         errors.push('capture.replay.resident_snapshot.rf_profile_file must be a full absolute path');
       if (replay.state !== true)
         errors.push('resident snapshot export is restricted to offline replay');
-      if (processConfig.performance?.acceleration !== 'gpu-resident')
-        errors.push('resident snapshot export requires gpu-resident acceleration');
+      if (!residentMode)
+        errors.push('resident snapshot export requires auto or gpu-resident acceleration');
       if ((processConfig.surveillance_fusion?.mode ?? 'noncoherent') === 'noncoherent')
         errors.push('resident snapshot export requires an already selected coherent resident product route');
       if (multiIlluminator?.enabled === true)
@@ -842,7 +1030,7 @@ function validateConfig(config, baseline = null, options = {}) {
       number(ports.illuminator, 'network.ports.illuminator');
   }
   const cpiSamples = cpi !== null && sampleRate !== null ?
-    Math.floor(cpi * sampleRate) : null;
+    Math.round(cpi * sampleRate) : null;
   if (cpiSamples !== null && (cpiSamples < 2000 || cpiSamples > INT32_MAX))
     errors.push('process.data.cpi must produce 2,000–2,147,483,647 samples for the spectrum and FFT processors');
   if (cpi !== null && buffer !== null && sampleRate !== null &&
@@ -1025,7 +1213,7 @@ function validateConfig(config, baseline = null, options = {}) {
       if (detection.enable !== true || tracker.enable !== true)
         errors.push('Doppler ridge birth filtering requires enabled detection and tracking');
     }
-    if (performance.acceleration === 'gpu-resident') {
+    if (residentMode) {
       if (tracker.enable && tracker.gpu_capacity === undefined &&
           (processConfig.surveillance_fusion?.mode ?? 'noncoherent') !== 'noncoherent')
         errors.push('process.tracker.gpu_capacity is required for gpu-resident tracking');
@@ -1115,16 +1303,16 @@ function validateConfig(config, baseline = null, options = {}) {
         .map(element => element.daq_channel));
       if ((processingDevice.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
         errors.push(`${label} geometry must include every surveillance channel`);
-      if (processConfig.performance?.acceleration === 'gpu-resident' &&
+      if (residentMode &&
           processingDevice.array_geometry?.shape !== 'regular_polygon')
         errors.push(`gpu-resident ${label} fusion requires regular_polygon geometry`);
-      if (processConfig.performance?.acceleration === 'gpu-resident' &&
+      if (residentMode &&
           processingDevice.array_geometry?.shape === 'regular_polygon' &&
           !regularSurveillancePolygon(processingDevice.array_geometry, processingDevice.surveillance_channels))
         errors.push(`gpu-resident ${label} geometry must be an exact planar uniformly stepped regular polygon`);
       if (fusion.mode === 'noise_whitened_beam_bank' &&
-          processConfig.performance?.acceleration !== 'gpu-resident')
-        errors.push('noise_whitened_beam_bank fusion requires gpu-resident acceleration');
+          !residentMode)
+        errors.push('noise_whitened_beam_bank fusion requires auto or gpu-resident acceleration');
       const reference = {mode: capabilities.referenceMode,
         channels: capabilities.referenceChannels};
       const surveillance = processingDevice.surveillance_channels || [];
@@ -1144,7 +1332,7 @@ function validateConfig(config, baseline = null, options = {}) {
     if (!detection.enable)
       errors.push('track-before-detect requires process.detection.enable');
     const fusion = processConfig.surveillance_fusion;
-    if (processConfig.performance?.acceleration === 'gpu-resident' &&
+    if (residentMode &&
         ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion?.mode)) {
       const beams = fusion.beams ?? 12;
       const fine = processConfig.bearing?.enable ?
@@ -1167,7 +1355,7 @@ function validateConfig(config, baseline = null, options = {}) {
     else if (Number.isFinite(fusion.beams) &&
         tracker.beam_tolerance > Math.floor(fusion.beams / 2))
       errors.push('tracker beam_tolerance cannot exceed half the beam count');
-    if (processConfig.performance?.acceleration !== 'gpu-resident' ||
+    if (!residentMode ||
         !((detection.integration_cpis ?? 1) > 1 || trackBeforeDetect?.enable))
       errors.push('Tracker beam_tolerance requires active resident coherent temporal tracking');
   }
@@ -1188,7 +1376,7 @@ function validateConfig(config, baseline = null, options = {}) {
       if (processingDevice.channel_count !== 5 ||
           !allFive(processingDevice.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
           !allFive(reference?.channels) || clutter.enable !== true ||
-          processConfig.performance?.acceleration !== 'gpu-resident' ||
+          !residentMode ||
           bearing.enable !== true || bearing.method !== 'covariance_mvdr' ||
           bearing.manifold_file !== undefined || fusion?.mode !== 'coherent_beam_bank' ||
           (fusion.direct_path_null_db ?? 0) !== 0)
@@ -1252,7 +1440,7 @@ function validateConfig(config, baseline = null, options = {}) {
         errors.push('Bearing output requires enabled four/eight-CPI track-before-detect candidate maps');
       const fusion = processConfig.surveillance_fusion;
       if (!tracker.enable || !fusion || fusion.mode === 'noncoherent' ||
-          processConfig.performance?.acceleration !== 'gpu-resident')
+          !residentMode)
         errors.push('bearing output requires GPU-resident coherent tracking');
       if (!Number.isInteger(ports.bearing) || ports.bearing < 1 || ports.bearing > 65535)
         errors.push('network.ports.bearing is required when bearing output is enabled');
@@ -1532,4 +1720,4 @@ function writeConfigAtomically(filename, config) {
 
 module.exports = {KRAKEN_MAX_CHANNELS, getDeviceProfiles, validateConfig,
   linuxServicePathPolicy, FIELD_RULES, RETIRED_FIXED_SETTINGS, publicationPolicyError,
-  writeConfigAtomically};
+  writeConfigAtomically, effectiveRadarPlan, radarPlanErrors, assessResolvedRadarPlans};

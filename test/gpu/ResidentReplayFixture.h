@@ -19,7 +19,7 @@ inline ResidentReplaySnapshot fixture(const resident::Config& c,uint32_t availab
  const uint32_t windows=(96+2*rows+cols+1)&~1u,windowWords=tbd?14:8;
  const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
  const double delayScale=motion.fractionalDelay?track_before_detect::delayDriftPerHz(
-  c.geometry.clutterSamples,c.fusion.frequencyHz):0;
+  c.geometry.clutterSamples,c.temporalCarrierHz()):0;
  const uint32_t offsetBase=windows+windowWords*cols+2*rows+2*cols;
  const uint32_t offsetWords=tbd?track_before_detect::fractionalDelayTableWords(
   rows,depth,motion.doppler,delayScale):0;

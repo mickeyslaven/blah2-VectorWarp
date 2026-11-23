@@ -94,7 +94,7 @@ uint32_t bits=d.u32(36);
 float period=0;
 std::memcpy(&period,&bits,4);
 require(std::isfinite(period)&&period>0,"Resident device timestamp period invalid");
-require(d.u64(56)==std::min<uint64_t>(2ULL<<30,d.u64(120)/4),"Resident selected device budget differs");
+require(d.u64(56)&&d.u64(56)<=std::min<uint64_t>(2ULL<<30,d.u64(120)-d.u64(120)/4),"Resident selected device budget differs");
 size_t length=0;
 while(length<96&&device.data[160+length])++length;
 require(length<96&&std::string(reinterpret_cast<const char*>(device.data+160),length)==c.device,"Resident selected device selector differs");
@@ -122,7 +122,7 @@ uint64_t validateControl(const Config& c,const Packet& request,const Packet& res
  uint8_t imageNonzero=0;
  for(size_t i=0;i<16;++i)imageNonzero|=bytes.data[112+i]|bytes.data[488+i];
  require(imageNonzero,"Resident control module-image identity absent");
- r.zeros(448,8);
+ if(!(expectedMask&1))r.zeros(448,8);
  require(r.u32(456)==2,"Resident control CPU proof kind differs");
  // Reset coverage: reference learner, temporal detector history, and tracker.
  require(r.u32(480)==(inputReset?(3u|(c.tracker.enabled?4u:0u)):0u),"Resident input reset coverage differs");
@@ -173,7 +173,7 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  preparedReader.zeros(120,8);
  preparedReader.zeros(1376,32);
  preparedReader.zeros(1528,8);
- preparedReader.zeros(1992,8);
+ preparedReader.zeros(evidence::prepared::times+8,8);
  identity(prepared,c,p,Phase::prepared,c.stages());
  cpu(sub(prepared,1088,288),c);
  require(std::memcmp(ready.data+160,prepared.data+160,96)==0,"Resident prepared cohort/device identity differs");
@@ -212,7 +212,34 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  // associates. Removals are therefore bounded by the input population, not
  // only by the missed subset. The tracker stage enforces the same contract.
  if(t[2]==1){for(size_t i=26;i<=31;++i)require(!t[i],"Resident no-op tracker performed work");
- require(!t[55]&&!t[56]&&!t[57]&&t[54]==t[18],"Resident no-op tracker coverage differs");}else require(t[2]==2&&t[26]==t[18]&&t[27]+t[28]==t[18]&&t[29]<=t[18]&&t[20]==t[18]-t[29]&&t[55]==t[18]&&t[57]==t[19]&&t[56]==(t[19]+127)/128&&t[30]==t[22]&&t[31]==t[23]&&t[23]==t[20]+t[22]&&t[54]==t[23],"Resident tracker executed-work coverage differs");}if(!c.tracker.enabled)preparedReader.zeros(evidence::prepared::trackerPreparedStatus,256);
+ require(!t[55]&&!t[56]&&!t[57]&&t[54]==t[18],"Resident no-op tracker coverage differs");}else require(t[2]==2&&t[26]==t[18]&&t[27]+t[28]==t[18]&&t[29]<=t[18]&&t[20]==t[18]-t[29]&&t[55]==t[18]&&t[57]==t[19]&&t[56]==(t[19]+127)/128&&t[30]==t[22]&&t[31]==t[23]&&t[23]==t[20]+t[22]&&t[54]==t[23],"Resident tracker executed-work coverage differs");
+ const auto& d=b.trackerDiagnostics;
+ require(d.noOp==(t[2]==1)&&d.detections==t[19]&&d.tracksBefore==t[18]&&d.tracksAfter==t[54]&&
+  d.associations==t[27]&&d.misses==t[28]&&d.initiated==t[30]&&
+  wire::add(d.tentativeExpired,d.inactivityDeleted)==t[29]&&d.stationaryQuarantined==t[64],
+  "Resident tracker diagnostics/status differ");
+ uint64_t classified=0;for(auto value:{d.pairClaimed,d.pairDelayRejected,d.pairDopplerRejected,
+  d.pairInnovationRejected,d.pairSpatialRejected,d.pairLineageRejected,d.pairInGate})classified=wire::add(classified,value);
+ require(d.pairs==classified&&d.lineageResets<=1&&!d.birthRidgeRejected&&!d.birthExclusiveRejected,
+  "Resident tracker diagnostics classification differs");
+ if(d.noOp){for(const auto& field:trackerDiagnosticFields)
+  if(field.member!=&TrackerFrameDiagnostics::detections&&field.member!=&TrackerFrameDiagnostics::tracksBefore&&
+    field.member!=&TrackerFrameDiagnostics::tracksAfter&&field.member!=&TrackerFrameDiagnostics::stationaryCells&&
+    field.member!=&TrackerFrameDiagnostics::lineageResets)
+   require(d.*field.member==0,"Resident no-op tracker diagnostics performed work");}
+ else{require(d.birthCandidates==d.detections-d.associations&&
+  d.pairs<=wire::mul(d.tracksBefore,d.detections),"Resident tracker diagnostic populations differ");
+  const uint32_t hypotheses=t[38]&0x0fffffffu;
+  require(hypotheses&&d.initiated%hypotheses==0,"Resident diagnostic initiation hypotheses invalid");
+  uint64_t births=d.initiated/hypotheses;
+  for(auto value:{d.birthSnrRejected,d.birthDopplerCombRejected,d.birthRangeCombRejected,
+   d.stationaryBirthRejected,d.stationaryBirthCapacityRejected,d.birthCapacityRejected,d.birthLineageRejected})
+   births=wire::add(births,value);
+  require(births==d.birthCandidates&&d.independentCredits<=wire::add(d.associations,d.initiated)&&
+   d.creditedCpis>=d.independentCredits&&d.creditedCpis<=wire::mul(d.independentCredits,c.detector.integrationCpis)&&
+   d.promotions<=wire::add(d.associations,d.initiated),"Resident tracker diagnostic credit/birth coverage differs");}
+ }else{preparedReader.zeros(evidence::prepared::trackerPreparedStatus,264);
+  preparedReader.zeros(evidence::prepared::trackerDiagnostics,evidence::prepared::trackerDiagnosticsCapacity);}
  const uint64_t expectedTimes=135ULL|(c.detector.enabled?(15ULL<<3):0)|(c.tracker.enabled?(63ULL<<8):0);
  require(b.gpuTimeMask==expectedTimes,"Resident stage timing mask differs");
  for(size_t i=0;i<b.gpuMs.size();++i)if(!(expectedTimes&(1ULL<<i)))require(b.gpuMs[i]==0,"Resident disabled stage time is nonzero");

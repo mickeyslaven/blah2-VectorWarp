@@ -36,15 +36,18 @@ RawIqStages::RawIqStages(Config config)
   : config_(std::move(config)), reference_(config_.reference),
     filters_(config_.paths), executor_(std::make_unique<
       blah2::utility::FixedExecutor>(std::max<size_t>(1,
-        std::min(config_.workers, config_.paths)))) {
+        std::max(std::min(config_.workers, config_.paths), config_.temporalWorkers)))) {
   if (!config_.samples || !config_.paths)
     throw std::invalid_argument("Production raw-IQ geometry is empty");
+  if (config_.clutterWorkerSlots > 8)
+    throw std::invalid_argument("Production clutter worker slots exceed the supported maximum");
   // Borrowed workspaces plan before capture starts. Other CPU execution,
   // including GPU qualification, lazily plans the shared reference workspace.
   if (config_.borrowed)
     for (auto& filter : filters_)
       filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
-        config_.clutterDelayMax, config_.samples);
+        config_.clutterDelayMax, config_.samples, WienerHopf::Workspace::Pi,
+        0, uint32_t(config_.clutterWorkerSlots));
   else if (config_.eagerPlanning)
     initializeShared();
 }
@@ -69,7 +72,8 @@ void RawIqStages::resetReference() {
   if (config_.borrowed)
     for (auto& filter : filters_)
       filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
-        config_.clutterDelayMax, config_.samples);
+        config_.clutterDelayMax, config_.samples, WienerHopf::Workspace::Pi,
+        0, uint32_t(config_.clutterWorkerSlots));
   else if (config_.eagerPlanning)
     initializeShared();
 }
@@ -81,7 +85,8 @@ void RawIqStages::setBorrowed(bool borrowed) {
   if (borrowed) {
     for (auto& filter : filters)
       filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
-        config_.clutterDelayMax, config_.samples);
+        config_.clutterDelayMax, config_.samples, WienerHopf::Workspace::Pi,
+        0, uint32_t(config_.clutterWorkerSlots));
   } else if (config_.eagerPlanning) {
     prepared = std::make_unique<WienerHopf::PreparedReference>(
       config_.clutterDelayMin, config_.clutterDelayMax, config_.samples);

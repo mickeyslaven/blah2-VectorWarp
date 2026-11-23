@@ -40,6 +40,12 @@ int main() {
       "Kraken one-thread plans remain unchanged");
     check(blah2::cap_fft_threads_for_lanes(8, 2, 2) == 1,
       "Small hosts retain one runnable FFT thread per lane");
+    for (std::size_t cpus = 1; cpus <= 256; ++cpus) {
+      const auto budget = std::max<std::size_t>(1, cpus - 1);
+      const auto activeLanes = std::min<std::size_t>(3, budget);
+      check(activeLanes * blah2::cap_fft_threads_for_lanes(8, activeLanes, cpus) <= budget,
+        "Three-lane temporal borrowing preserves the CPUs-minus-one budget");
+    }
     check(blah2::choose_illuminator_lane_workers(16, 0, 16) == 3,
       "Sixteen lanes use the measured narrower cache-bound batch");
     check(blah2::choose_illuminator_lane_workers(12, 0, 16) == 4,
@@ -50,10 +56,35 @@ int main() {
       "Explicit lane workers are preserved within capacity");
     check(blah2::choose_illuminator_lane_workers(2, 8, 16) == 2,
       "Lane workers cannot exceed active illuminators");
+    const auto threeLaneClutter = blah2::distribute_clutter_worker_budget(3, 0, 16);
+    check(threeLaneClutter == std::vector<std::size_t>{3, 3, 2},
+      "Sixteen CPUs and three lanes split the eight-slot clutter budget 3/3/2");
+    check(blah2::distribute_clutter_worker_budget(1, 0, 16) ==
+      std::vector<std::size_t>{2}, "Single-lane clutter retains two slots");
+    check(blah2::distribute_clutter_worker_budget(3, 8, 16) ==
+      std::vector<std::size_t>{3, 3, 2}, "Explicit global clutter budget distributes fairly");
+    check(blah2::distribute_clutter_worker_budget(3, 8, 4) ==
+      std::vector<std::size_t>{1, 1, 1}, "Global clutter budget clamps to the hardware-safe bound");
+    check(blah2::distribute_clutter_worker_budget(4, 0, 4) ==
+      std::vector<std::size_t>{1, 1, 1, 1}, "Small hosts never assign zero clutter slots");
+    check(blah2::resolve_clutter_worker_slots(3, 2, 0, 16) ==
+      std::vector<std::size_t>{2, 2, 2}, "Legacy clutter override remains per lane");
     bool rejected = false;
     try { blah2::choose_processing_threads(2, 0, 257, 32); }
     catch (const std::invalid_argument&) { rejected = true; }
     check(rejected, "Reject unreasonable explicit FFT count");
+    rejected = false;
+    try { (void)blah2::distribute_clutter_worker_budget(3, 9, 16); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    check(rejected, "Reject clutter budgets above the bounded global maximum");
+    rejected = false;
+    try { (void)blah2::distribute_clutter_worker_budget(3, 2, 16); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    check(rejected, "Reject a global clutter budget smaller than active lanes");
+    rejected = false;
+    try { (void)blah2::resolve_clutter_worker_slots(3, 2, 8, 16); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    check(rejected, "Reject ambiguous legacy and global clutter overrides");
 
     std::map<std::string, std::string> files;
     const auto read = [&](const std::string& path) {

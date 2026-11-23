@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pure regression of the actual candidate predicate; no processor is launched."""
 import importlib.util
+import copy
 from pathlib import Path
 import sys
 import unittest
@@ -56,6 +57,57 @@ class LoopProgressPredicateTest(unittest.TestCase):
         self.assertFalse(module.loop_progress_observed([None, 'bad', 2, {}, progress(loops=1)]))
         self.assertTrue(module.loop_progress_observed([progress(), progress(state='stopped')]))
         self.assertFalse(module.loop_progress_observed([progress(loops=1), progress(state='stopped')]))
+
+
+class TemporalLoopComparisonTest(unittest.TestCase):
+    def trace(self):
+        return [{'integration': {'history_epoch': epoch, 'sequence': sequence,
+                'available_cpis': min(sequence, 2), 'ready': sequence > 1,
+                'support_sequences': [sequence, sequence - 1] if sequence > 1 else [1]},
+                 'tracks': {'data': [], 'n': 0, 'nActive': 0}, 'map': [epoch, sequence]}
+                for epoch in (1, 2, 3) for sequence in range(1, 7)]
+
+    def test_extra_scheduled_frames_do_not_change_two_complete_epochs(self):
+        trace = self.trace()
+        self.assertEqual(module.temporal_loop_prefix(trace[:12], 6),
+                         module.temporal_loop_prefix(trace[:17], 6))
+        changed = copy.deepcopy(trace)
+        changed[7]['map'] = [999]
+        self.assertNotEqual(module.temporal_loop_prefix(trace, 6),
+                            module.temporal_loop_prefix(changed, 6))
+
+    def test_incomplete_or_corrupt_epochs_are_rejected(self):
+        trace = self.trace()
+        with self.assertRaises(AssertionError):
+            module.temporal_loop_prefix(trace[:11], 6)
+        for field, value in [('sequence', 1), ('history_epoch', 99),
+                             ('support_sequences', [2, 6])]:
+            changed = copy.deepcopy(trace)
+            changed[7]['integration'][field] = value
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                module.temporal_loop_prefix(changed, 6)
+        changed = copy.deepcopy(trace)
+        changed[6]['tracks']['data'] = [{'id': 1}]
+        with self.assertRaises(AssertionError):
+            module.temporal_loop_prefix(changed, 6)
+
+    def test_every_window_is_checked_within_its_current_epoch(self):
+        trace = self.trace()
+        for index in range(12):
+            for field, value in [('support_sequences', [3, 6]),
+                                 ('support_sequences', [True]),
+                                 ('support_sequences', None),
+                                 ('available_cpis', 8), ('available_cpis', True),
+                                 ('ready', 1), ('sequence', True)]:
+                changed = copy.deepcopy(trace)
+                changed[index]['integration'][field] = value
+                with self.subTest(index=index, field=field, value=value), \
+                        self.assertRaises(AssertionError):
+                    module.temporal_loop_prefix(changed, 6)
+        # Sequence and support restart locally; they are not global counters.
+        prefix = module.temporal_loop_prefix(trace, 6)
+        self.assertEqual(prefix[6]['integration']['support_sequences'], [1])
+        self.assertEqual(prefix[7]['integration']['support_sequences'], [2, 1])
 
 
 if __name__ == '__main__':

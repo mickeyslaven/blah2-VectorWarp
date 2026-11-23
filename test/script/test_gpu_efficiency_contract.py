@@ -121,9 +121,97 @@ int main() {
         self.assertNotIn("readD(94u)", trajectory)
         self.assertIn("path/delayWidth)*m[74]+age", trajectory)
         constructor, append = source.split(" void append(VkCommandBuffer command)", 1)
-        self.assertIn("{offsetWords*2u,3,0,0,0}", constructor)
-        self.assertNotIn("{offsetWords*2u,3,0,0,0}", append)
+        self.assertIn("{offsetWords,3,0,0,0},tbdLocalSize_", constructor)
+        self.assertNotIn("{offsetWords,3,0,0,0}", append)
         self.assertIn("maxStorageBufferRange", constructor)
+
+    def test_tbd_uses_selected_portable_chunks_and_exact_dispatch_geometry(self):
+        source = (ROOT / "core/GpuPostprocess.private.h").read_text()
+        resources = (ROOT / "src/process/ambiguity/VulkanResources.private.h").read_text()
+        self.assertIn("inline constexpr uint32_t tbdLocalSize=32u", source)
+        self.assertIn("trajectories<=tbdLocalSize?tbdLocalSize:64u", source)
+        self.assertIn("pathBest2[TBD_LOCAL_SIZE]", source)
+        self.assertIn("for(uint stride=TBD_LOCAL_SIZE/2u;stride>0u;stride>>=1u)", source)
+        self.assertIn("shaderSources(config.replaySnapshot,tbdLocalSize_)", source)
+        self.assertIn("UINT32_MAX/tbdWorkgroupSize(c)", source)
+        self.assertIn("first+=tbdLocalSize_", source)
+        self.assertIn("{pathWork,1,first,0,0},tbdLocalSize_", source)
+        self.assertIn("append(VkCommandBuffer command, Push push, uint32_t workgroupSize=128u)", resources)
+        self.assertIn("(push.count + workgroupSize - 1u) / workgroupSize", resources)
+        parity = (ROOT / "test/gpu/TestGpuTbdFractional.cpp").read_text()
+        self.assertIn("first+=gpu_postprocess::tbdLocalSize", parity)
+        self.assertIn("Live-profile 15-trajectory lattice", parity)
+        self.assertIn("165 trajectories: six 32-lane chunks", parity)
+
+    @unittest.skipUnless(shutil.which("c++"), "C++ compiler required for the bounded dispatch mock")
+    def test_tbd_selected_sizes_and_two_dimensional_dispatch(self):
+        source = (ROOT / "core/GpuPostprocess.private.h").read_text()
+        selector = "inline constexpr uint32_t tbdLocalSize=" + source.split(
+            "inline constexpr uint32_t tbdLocalSize=", 1)[1].split("enum Counter", 1)[0]
+        resources = (ROOT / "src/process/ambiguity/VulkanResources.private.h").read_text()
+        method = "void append(VkCommandBuffer command, Push push, uint32_t workgroupSize=128u) {" + resources.split(
+            "void append(VkCommandBuffer command, Push push, uint32_t workgroupSize=128u) {", 1)[1].split(
+            "  template<class T>", 1)[0]
+        fixture = r'''
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <stdexcept>
+using VkCommandBuffer = uint64_t;
+struct PostprocessConfig { uint32_t integrationDelayMotionBins=0, integrationDopplerMotionBins=0; };
+struct Push { uint32_t count, a=0, b=0, c=0, d=0; };
+constexpr int VK_PIPELINE_BIND_POINT_COMPUTE=0, VK_SHADER_STAGE_COMPUTE_BIT=0;
+uint32_t dispatchX=0, dispatchY=0, dispatchZ=0;
+void vkCmdBindPipeline(...) {}
+void vkCmdBindDescriptorSets(...) {}
+void vkCmdPushConstants(...) {}
+void vkCmdDispatch(VkCommandBuffer, uint32_t x, uint32_t y, uint32_t z) {
+ dispatchX=x; dispatchY=y; dispatchZ=z;
+}
+'''
+        checks = r'''
+int main() {
+ Kernel kernel;
+ for(uint32_t delay=0;delay<=2;++delay)for(uint32_t doppler=0;doppler<=16;++doppler){
+  PostprocessConfig config{delay,doppler};const uint32_t paths=(2*delay+1)*(2*doppler+1);
+  assert(tbdWorkgroupSize(config)==(paths<=32?32u:64u));
+  assert((paths+tbdWorkgroupSize(config)-1)/tbdWorkgroupSize(config)==(paths+63)/64);
+ }
+ for(uint32_t size:{32u,64u,128u})for(uint32_t groups:{1u,65534u,65535u,65536u,757861u}){
+  // Counts on either side of a workgroup boundary, including dispatch row two.
+  for(uint32_t count:{groups*size-1u,groups*size,groups*size+1u}){
+   kernel.append(1,{count},size);
+   const uint64_t needed=(uint64_t(count)+size-1)/size;
+   assert(dispatchX==std::min<uint64_t>(needed,65535)&&dispatchZ==1);
+   assert(dispatchY==(needed+dispatchX-1)/dispatchX&&dispatchY<=65535);
+   for(uint32_t group:{0u,uint32_t(needed-1),dispatchX*dispatchY-1})for(uint32_t lane:{0u,size-1}){
+    const uint32_t x=group%dispatchX,y=group/dispatchX;
+    const uint64_t linear=uint64_t(x)*size+lane+uint64_t(y)*dispatchX*size;
+    assert(linear==uint64_t(group)*size+lane);
+   }
+  }
+ }
+ for(uint32_t cells:{1u,32u,65u,65535u,65536u,757861u}){
+  kernel.append(1,{128*cells});const auto oldX=dispatchX,oldY=dispatchY;
+  for(uint32_t size:{32u,64u}){
+   kernel.append(1,{size*cells},size);
+   assert(dispatchX==oldX&&dispatchY==oldY);
+  }
+ }
+ for(uint32_t size:{32u,64u}){
+  const uint32_t maxCells=UINT32_MAX/size;
+  kernel.append(1,{maxCells*size},size);
+  assert(uint64_t(dispatchX)*dispatchY>=maxCells);
+ }
+ try { kernel.append(1,{1},0); assert(false); } catch(const std::invalid_argument&) {}
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="vectorwarp-tbd-dispatch-") as directory:
+            executable = str(Path(directory) / "test")
+            program = fixture + selector + "struct Kernel { uint64_t pipeline=1,layout=2,set=3;\n" + method + "};\n" + checks
+            subprocess.run([shutil.which("c++"), "-std=c++17", "-x", "c++", "-", "-o", executable],
+                           input=program, text=True, check=True, capture_output=True, timeout=20)
+            subprocess.run([executable], check=True, capture_output=True, timeout=5)
 
     def test_input_reset_keeps_immutable_offsets(self):
         source = (ROOT / "core/GpuPostprocess.private.h").read_text()
@@ -185,8 +273,11 @@ int main() {
     def test_native_regressions_compare_old_gpu_math_and_clutter_bytes(self):
         source = (ROOT / "test/gpu/TestGpuTbdFractional.cpp").read_text()
         self.assertIn("legacyTbd=std::make_unique<Kernel>", source)
-        self.assertIn("std::memcmp(optimized.data(),observed.data()", source)
-        self.assertIn("optimizedFlags==flags", source)
+        self.assertIn("std::memcmp(first.data(),observed.data()", source)
+        self.assertIn("std::memcmp(expectedScratch.data(),scratch.mapped", source)
+        self.assertIn("first+=64u", source)
+        self.assertIn("boundary:{31u,63u}", source)
+        self.assertIn("firstFlags==flags&&firstMotion==motion", source)
         self.assertIn("fixture.parity(h,-.566,8,8,16)", source)
         self.assertIn("std::memcmp(staging.mapped,expected.data()", source)
         self.assertIn("for(uint32_t active:{2u,1u})", source)

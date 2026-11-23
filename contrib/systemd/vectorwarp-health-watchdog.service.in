@@ -5,7 +5,9 @@ After=network-online.target vectorwarp-api.service vectorwarp-processor.service
 
 [Service]
 Type=oneshot
-TimeoutStartSec=180
+# Allow the 300-second frame wait, 60-second receiver-readiness wait and
+# bounded service transitions; never run an unbounded recovery helper.
+TimeoutStartSec=600
 ExecStart=/usr/bin/node @PREFIX@/libexec/vectorwarp-health-watchdog.js @SYSCONFDIR@/config.yml /var/lib/vectorwarp-api/health-watchdog.json
 NoNewPrivileges=yes
 PrivateTmp=yes

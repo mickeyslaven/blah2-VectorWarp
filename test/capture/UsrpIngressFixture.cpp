@@ -3,6 +3,7 @@
 #include "data/CaptureChunkQueue.h"
 #include <uhd/usrp/multi_usrp.hpp>
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <future>
 #include <fstream>
@@ -246,10 +247,26 @@ int main() {
       Usrp radio("Usrp", 527000000, 2000000, directory, &save,
         "", "A:A A:B", {"RX2", "RX2"}, {10, 20});
       const auto path = radio.open_file();
-      uhd::fake.beforeReceive = [&] { if (uhd::fake.calls == 7) radio.stop(); };
+      unsigned preparedTicks = 0;
+      uhd::fake.beforeReceive = [&] {
+        // This fixture owns no Capture control thread. Service its equivalent
+        // control tick between receives, never inside a production callback.
+        if (uhd::fake.calls == 4) {
+          const auto pending = radio.recording_status();
+          assert(!pending.active && pending.resumePending && pending.file == path);
+        }
+        radio.service_recording();
+        if (uhd::fake.calls == 4) {
+          const auto prepared = radio.recording_status();
+          assert(!prepared.active && prepared.resumePending && prepared.samples == 0 &&
+            prepared.file != path && prepared.error.empty());
+          ++preparedTicks;
+        }
+        if (uhd::fake.calls == 7) radio.stop();
+      };
       radio.process(&a, &b);
       const auto status = radio.recording_status();
-      assert(status.active && !status.resumePending && status.samples == 21 &&
+      assert(preparedTicks == 1 && status.active && !status.resumePending && status.samples == 21 &&
         status.file != path && status.error.empty());
       radio.close_file();
       std::ifstream provenance(path + ".provenance.json");

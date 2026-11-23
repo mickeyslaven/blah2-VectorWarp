@@ -11,7 +11,8 @@ Config configuration(uint32_t cpis,bool coherent){Config c;c.inputChannels=2;aut
  const double r=1.0/(63.0/128000);c.dopplerAxis={-3*r,-2*r,-r,0,r,2*r,3*r};c.spectrumBins=64;c.reference.channels={0,1};c.reference.analysisSamples=64;
  c.detector.enabled=true;c.detector.guard=0;c.detector.train=2;c.detector.pfa=.001;c.detector.centroidDopplerResolution=2;c.detector.integrationCpis=cpis;
  if(coherent)c.fusion={FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
- if(cpis>2){c.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,1);c.detector.integrationBeamTolerance=1;}
+ if(cpis>2){c.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,1);
+  c.detector.integrationBeamTolerance=coherent?1:UINT32_MAX;}
  c.device="cpu-contract-only";rr::test::enable(c);return c;}
 void fractionalDiagnosticGeometry(){
  auto c=configuration(8,true);auto& g=c.geometry;
@@ -53,8 +54,28 @@ void fractionalDiagnosticGeometry(){
   "Fractional table not charged to the explicit export/shared-memory bound");
  c.replay.maxBytes=rr::requiredBytes(c)-1;reject([&]{validateConfig(c);});
 }
+void noncoherentFractionalCarrier(){
+ for(uint32_t cpis:{4u,8u}){
+  auto c=configuration(cpis,false);
+  c.reference.centreHz=509000000;
+  c.fusion.frequencyHz=0;
+  c.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,1,true);
+  rr::test::enable(c);validateConfig(c);
+  auto snapshot=rr::test::fixture(c,cpis);
+  const auto encoded=rr::encode(snapshot,c);
+  check(rr::encode(rr::decode(encoded.data(),encoded.size(),c,snapshot.identity),c)==encoded,
+   "Noncoherent fractional replay round trip differs");
+  const wire::Reader metadata{{snapshot.blocks[4].bytes.data(),snapshot.blocks[4].bytes.size()}};
+  check(metadata.f64(94*4)==-64.0/c.reference.centreHz,
+   "Noncoherent replay used fusion carrier instead of reference carrier");
+  wire::Writer{{snapshot.blocks[4].bytes.data(),snapshot.blocks[4].bytes.size()}}.
+   f64(94*4,-63.0/c.reference.centreHz);
+  reject([&]{rr::encode(snapshot,c);});
+ }
+}
 int main(){try{
  fractionalDiagnosticGeometry();
+ noncoherentFractionalCarrier();
  for(uint32_t cpis:{1u,2u,4u,8u}){const auto c=configuration(cpis,cpis>2);validateConfig(c);
   for(uint32_t available=1;available<=cpis+2;++available){auto s=rr::test::fixture(c,available);
    const auto encoded=rr::encode(s,c);check(encoded.size()==rr::requiredBytes(c),"Snapshot size differs");

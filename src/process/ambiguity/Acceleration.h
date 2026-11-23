@@ -2,6 +2,7 @@
 #include "Ambiguity.h"
 #include "GpuBackend.h"
 #include "AccelerationStatus.h"
+#include "process/utility/FixedExecutor.h"
 #include <functional>
 
 namespace blah2 {
@@ -22,12 +23,16 @@ public:
   using TimeSource = std::function<double()>;
   Acceleration(std::string mode, GpuGeometry geometry, uint32_t correlation,
     uint32_t sampleRate, double middle, std::string device = "auto", BackendFactory factory = {},
-    TimeSource timeSource = {});
+    TimeSource timeSource = {}, utility::FixedExecutor* executor = nullptr);
   ~Acceleration();
   // Run the existing numerical qualification before admitting capture. The
   // caller supplies private nonzero IQ and must not publish these frames.
   bool startupPending() const;
   void prepareStartup(const std::function<void(unsigned)>& processFrame);
+  // A private synthetic fixture can be numerically unsuitable for clutter
+  // while the real RF stream is valid. Re-open only the still-live backend;
+  // live frames remain CPU-owned until the ordinary oracle checks complete.
+  void retryClutterQualificationAfterStartup();
   // Poll transient worker recovery before the caller selects CPU/GPU stage
   // ownership for a new CPI. This must happen outside processClutter(): after
   // a clutter-worker fault the safe CPU borrowed path intentionally stops
@@ -86,6 +91,10 @@ private:
   unsigned checks_ = 0;
   std::vector<double> cpuTimes_, gpuTimes_;
   TimeSource timeSource_;
+  // Borrow the canonical process pool. Packing/import jobs are independent
+  // channel slices and never outlive processInput(); no private thread pool or
+  // receiver/OS-specific scheduling policy is introduced here.
+  utility::FixedExecutor* executor_ = nullptr;
   std::vector<std::complex<float>> reference_, surveillance_, output_;
   unsigned clutterChecks_ = 0;
   unsigned combinedChecks_ = 0;

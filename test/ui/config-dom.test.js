@@ -600,7 +600,8 @@ function change(input, value, event = 'input') {
         window.renderEditor();
         assert.equal(await window.validateActiveConfiguration(), false, 'browser rejects overlapping-window policy');
         assert.equal(window.document.getElementById('config-save').disabled, true);
-        assert.match(window.document.body.textContent, /Explicit replay qualification/);
+        assert.match(window.document.body.textContent,
+          /Qualify initiation latency, continuity and false tracks in replay/);
         window.setValue(['process', 'tracker', 'initiate', 'N'], 1 + depth * 3);
         window.setValue(['process', 'tracker', 'delete'], depth - 2);
         window.renderEditor();

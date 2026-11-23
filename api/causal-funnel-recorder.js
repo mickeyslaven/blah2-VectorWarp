@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const {exactUint64} = require('./causal-funnel-contract');
+const {exactUint64, trackerDiagnosticKeys} = require('./causal-funnel-contract');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const truthKey = /(?:^|_)(adsb|truth|aircraft|icao|hex|flight|callsign|latitude|longitude|altitude|position|identity)(?:$|_)/i;
@@ -26,15 +26,9 @@ const COVERAGE_KEYS = new Set(['candidates_total', 'tracks_total', 'candidates_r
   'tracks_retained', 'truncated']);
 const NATIVE_REASONS = new Set(['associated', 'minimum_snr', 'doppler_comb', 'range_comb',
   'persistent_occupancy', 'boundary', 'capacity', 'seeded', 'miss', 'tentative_expired',
-  'inactivity_deleted', 'confirmed', 'retained', 'reset_input', 'duplicate']);
+  'inactivity_deleted', 'confirmed', 'retained', 'lineage_overlap', 'reset_input', 'duplicate']);
 const PRODUCER_KEYS = new Set(['build_id', 'config_fingerprint']);
-const TRACKER_DIAGNOSTIC_KEYS = new Set(['no_op', 'detections', 'tracks_before',
-  'tracks_after', 'candidate_track_pairs', 'pair_already_claimed',
-  'pair_delay_rejected', 'pair_doppler_rejected', 'pair_innovation_rejected',
-  'pair_in_gate', 'associations', 'misses', 'promotions', 'tentative_expired',
-  'inactivity_deleted', 'birth_candidates', 'birth_snr_rejected',
-  'birth_ridge_rejected', 'initiated',
-]);
+const TRACKER_DIAGNOSTIC_KEYS = new Set(trackerDiagnosticKeys);
 const STAGES = new Set(['input', 'candidate_generation', 'candidate_pruning', 'association', 'branch_survival', 'track_publication', 'tracker_frame']);
 const REASONS = new Set(['interval', 'no_candidates', 'candidate_admitted', 'candidate_rejected',
   'branch_continues', 'branch_terminated', 'not_emitted', 'reset_input', 'duplicate']);
@@ -219,13 +213,13 @@ class CausalFunnelRecorder {
 
   status() { return {...this.state, queued: this.queue.length, queued_bytes: this.queueBytes, active: this.writing}; }
 
-  accept(text, {nativeTransport = false} = {}) {
+  accept(text, {nativeTransport = false, parsed} = {}) {
     if (!this.enabled) return false;
     let frame, record, bytes;
     try {
       const inputBytes = Buffer.byteLength(typeof text === 'string' ? text : JSON.stringify(text));
       if (inputBytes > this.options.max_file_mb * 1024 * 1024) throw new Error('Causal funnel frame exceeds byte bound');
-      frame = validateFrame(typeof text === 'string' ? JSON.parse(text) : text);
+      frame = validateFrame(parsed ?? (typeof text === 'string' ? JSON.parse(text) : text));
       record = {schema: 'vectorwarp-causal-funnel-record-v1', epoch_id: this.options.epoch_id,
         recorded_at_ms: this.now(), frame};
       bytes = Buffer.byteLength(`${JSON.stringify(record)}\n`);

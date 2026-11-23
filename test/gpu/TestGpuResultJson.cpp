@@ -9,6 +9,12 @@
 #include "data/meta/EventTime.h"
 #include "process/tracker/CausalTraceJson.h"
 #include "ResidentTemporalPublication.h"
+#include "GpuResidentQualification.h"
+#include "GpuResidentInput.h"
+#include "GpuResidentCoordinator.h"
+#include "process/analysis/StartupIq.h"
+#include "process/pipeline/RadarPipeline.h"
+#include "process/integration/TemporalEvidence.h"
 #include <complex>
 #include <vector>
 #include <deque>
@@ -16,12 +22,318 @@
 #include <limits>
 #include <filesystem>
 #include <fstream>
+#include <tuple>
+#include <set>
 namespace {
 using namespace blah2::gpu_result_json;
 void check(bool yes,const char*why){if(!yes)throw std::runtime_error(why);}
 template<class F>void rejects(F&&f){bool yes=false;try{f();}catch(const std::invalid_argument&){yes=true;}check(yes,"Malformed result view accepted");}
 template<class T> View<T> view(const std::vector<T>&v){return {v.data(),v.size()};}
 void same(const std::string&a,const std::string&b){check(a==b,"Legacy GPU-result JSON bytes differ");rapidjson::Document d;d.Parse(a.c_str());check(!d.HasParseError()&&d.IsObject(),"Malformed GPU-result JSON");}
+void diagnosticCases(){
+ using blah2::resident::QualificationHistory;
+ using blah2::integration::TemporalEvidence;
+ QualificationHistory<double> lifetime;double sample=1;
+ for(unsigned i=0;i<12;++i){sample=i;lifetime.retain(true,true,8,&sample,1);
+  check(lifetime.maps().size()==std::min(i+1,8u)&&lifetime.maps().front()[0]==i,
+   "Qualification diagnostic history lost its eight-map bound/order");}
+ check(lifetime.maps().back()[0]==4,"Qualification diagnostic history did not evict oldest");
+ lifetime.retain(false,true,8,nullptr,0);check(lifetime.maps().empty(),"Public frames retained diagnostic maps");
+ lifetime.retain(true,true,8,&sample,1);lifetime.retain(true,false,8,nullptr,0);
+ check(lifetime.maps().empty(),"Successful qualification retained diagnostic maps");
+ lifetime.retain(true,true,8,&sample,1);lifetime.clear();
+ check(lifetime.maps().empty(),"Reset/stop retained diagnostic maps");
+ rejects([&]{lifetime.retain(true,true,9,&sample,1);});
+ rejects([&]{lifetime.retain(true,true,8,&sample,(1u<<20)+1);});
+ constexpr unsigned rows=17,columns=65,cell=8*columns+32;
+ for(unsigned depth:{2u,4u,8u})for(double drift:{0.0,-.75}){
+  TemporalEvidence evidence({depth,1,1,drift});QualificationHistory<double> history;
+  TemporalEvidence::Result result;
+  for(unsigned frame=0;frame<depth;++frame){Map<std::complex<double>> map(rows,columns);
+   std::vector<double> power(rows*columns);
+   for(unsigned row=0;row<rows;++row)map.doppler.push_back(int(row)-8);
+   for(unsigned column=0;column<columns;++column)map.delay.push_back(column);
+   for(unsigned row=0;row<rows;++row)for(unsigned column=0;column<columns;++column){
+    const double amplitude=1+double((frame*31+row*7+column*13)%101)/17;
+    map.data[row][column]={amplitude,0};power[row*columns+column]=amplitude*amplitude;}
+   history.retain(true,true,depth,power.data(),power.size());result=evidence.process(map,1,frame+1);
+  }
+  for(unsigned bank=0;bank<4;++bank)if(result.banks[bank].ready){const auto& selected=result.banks[bank];
+   const auto motion=selected.motion[cell];
+   const auto cpu=evidence.auditPath(cell,selected.depth,motion.doppler,motion.delay,bank==0);
+   const auto resident=evidence.auditPathWith(cell,selected.depth,motion.doppler,motion.delay,bank==0,
+    [&](unsigned age,uint64_t source){return std::make_pair(history.maps().at(age).at(source),0u);});
+   check(cpu.valid&&resident.valid&&cpu.mean==selected.detectorPower[cell]&&cpu.mean==resident.mean&&
+    cpu.samples==resident.samples&&cpu.cells==resident.cells,"Path diagnostic disagrees with canonical selected bank");
+  }
+  check(!evidence.auditPath(0,depth,1,1,false).valid,"Path diagnostic admitted incomplete edge path");
+  evidence.reset();check(!evidence.auditPath(cell,depth,0,0,false).valid,"CPU path diagnostic retained reset history");
+ }
+ TemporalEvidence gated({4,0,0,0,4,0});
+ for(unsigned frame=0;frame<4;++frame){Map<std::complex<double>> map(1,1);map.delay={0};map.doppler={0};
+  map.data[0][0]={1,0};std::vector<uint32_t> beams{frame?1u:2u};gated.process(map,1,frame+1,nullptr,&beams);}
+ check(!gated.auditPath(0,4,0,0,false).valid,"Path diagnostic ignored beam gating");
+ std::cout<<"PASS startup-path-audit depths=2,4,8 fractional=1 beam_gate=1 history_max=8 lifecycle_clear=1 steady_retention=0\n";
+}
+void composedOracleCases(){
+ namespace resident=blah2::resident;namespace pipeline=blah2::pipeline;
+ constexpr unsigned rows=17,columns=65,cell=8*columns+32;
+ resident::Config config;config.geometry.doppler=rows;config.geometry.delays=columns;
+ config.sampleRate=2400000;config.fusion.mode=resident::FusionMode::coherentRegularPolygon;config.fusion.beams=4;
+ for(unsigned row=0;row<rows;++row)config.dopplerAxis.push_back(int(row)-8);
+ for(unsigned column=0;column<columns;++column)config.delayAxis.push_back(column);
+ const auto stateKey=[](const TrackerQualificationState& s){return std::tie(s.id,s.state,s.spatial,s.source,
+  s.delay,s.doppler,s.acceleration,s.missedSeconds,s.inactive,s.measurements,s.updates,s.epoch,
+  s.highWaterSequence,s.accelerationEstimated,s.everConfirmed,s.lineageKnown,s.confirmationVotes);};
+ for(unsigned depth:{2u,4u,8u}){
+  pipeline::ProductConfig p;p.integrationCpis=depth;p.integrationMotion=depth==2?1:track_before_detect::encodeMotionBins(1,0);
+  p.minimumDoppler=0;p.centroidDelay=0;p.centroidDoppler=0;p.trackerM=1;p.trackerN=8;p.trackerDelete=8;
+  p.maximumAcceleration=0;p.minimumSnr=0;p.beamCount=4;
+  const pipeline::RadarPlan plan(p);
+  pipeline::ProductStages independent(plan),sameInput(plan),residentInput(plan),corruptInput(plan);
+  for(unsigned frame=0;frame<depth;++frame){
+   std::vector<std::complex<double>> cpu(rows*columns,{1,2}),gpu=cpu,bad;
+   if(frame+2==depth){cpu[cell-1]={100*(1+1e-7),2};gpu[cell-1]={100*(1-1e-7),2};
+    cpu[cell+1]=gpu[cell+1]={100,2};}
+   if(frame+1==depth)cpu[cell]=gpu[cell]={100,2};
+   bad=gpu;if(frame+1==depth){bad[cell]={1,2};bad[cell+5*columns+20]={100,2};}
+   const pipeline::Position position{1,frame*100u,(frame+1)*100u,1000+frame*500u,true};
+   const auto raw=[&](const auto& input){
+    Map<std::complex<double>> map(rows,columns);std::vector<uint32_t> beams;
+    resident::copyProductOracleInput(config,{input.data(),input.size()},map,beams);map.set_metrics();
+    return map.to_json_km(position.timestampMs,config.sampleRate);
+   };
+   // Independent frontend acceptance happens before either temporal owner.
+   // It must still catch corruption even if downstream products agree with it.
+   compareOracleJson(raw(cpu),raw(gpu),"independent raw fused map");
+   if(frame+1==depth)rejects([&]{compareOracleJson(raw(cpu),raw(bad),"corrupt raw fused map");});
+   const auto run=[&](pipeline::ProductStages& stages,const auto& input){
+    auto map=std::make_unique<Map<std::complex<double>>>(rows,columns);std::vector<uint32_t> beams;
+    resident::copyProductOracleInput(config,{input.data(),input.size()},*map,beams);map->set_metrics();
+    check(beams[cell]==3&&map->data[8][32].imag()==0,"Oracle confused beam annotation with complex power");
+    auto products=stages.process(map,position,true,{},&beams,[](uint32_t,uint32_t){return 3u;});
+    return std::make_pair(std::move(map),std::move(products));
+   };
+   auto expected=run(independent,cpu),actual=run(residentInput,gpu),oracle=run(sameInput,gpu),corrupted=run(corruptInput,bad);
+   const auto stamp=position.timestampMs;
+   compareOracleJson(actual.first->to_json_km(stamp,config.sampleRate),oracle.first->to_json_km(stamp,config.sampleRate),"same-input map");
+   compareOracleJson(actual.second.detections->to_json_km(stamp,config.sampleRate),oracle.second.detections->to_json_km(stamp,config.sampleRate),"same-input lineage");
+   compareOracleJson(actual.second.tracks->to_json(stamp),oracle.second.tracks->to_json(stamp),"same-input tracks");
+   const auto a=residentInput.tracker.qualificationState(),b=sameInput.tracker.qualificationState();
+   check(a.size()==b.size(),"Same-input hidden tracker population differs");
+   for(size_t i=0;i<a.size();++i)check(stateKey(a[i])==stateKey(b[i]),"Same-input hidden tracker state differs");
+   if(frame+1==depth){
+    const auto& left=expected.second.integration->evidence->banks[depth==8?3:depth==4?2:1];
+    const auto& right=actual.second.integration->evidence->banks[depth==8?3:depth==4?2:1];
+    check(left.motion[cell].delay==1&&right.motion[cell].delay==-1,"Perturbation fixture did not reverse exact argmax");
+    // Existing independent numerical acceptance remains; it is not an exact
+    // argmax equivalence relation across different, tolerated frontend inputs.
+    compareOracleJson(expected.first->to_json_km(stamp,config.sampleRate),actual.first->to_json_km(stamp,config.sampleRate),"independent map");
+    rejects([&]{compareOracleJson(expected.second.detections->to_json_km(stamp,config.sampleRate),
+     actual.second.detections->to_json_km(stamp,config.sampleRate),"different-input exact lineage");});
+    rejects([&]{compareOracleJson(expected.first->to_json_km(stamp,config.sampleRate),
+     corrupted.first->to_json_km(stamp,config.sampleRate),"corrupt independent map");});
+    check(!a.empty(),"Same-input hidden tracker check was vacuous");
+    const auto badState=corruptInput.tracker.qualificationState();
+    bool different=a.size()!=badState.size();
+    for(size_t i=0;!different&&i<a.size();++i)different=stateKey(a[i])!=stateKey(badState[i]);
+    check(different,"Meaningful input corruption left hidden tracker unchanged");
+   }
+  }
+ }
+ for(unsigned depth:{1u,2u,4u,8u}){
+  const unsigned count=resident::Qualification::startupCount(8,depth);
+  const resident::Qualification qualification(count,depth);
+  check(qualification.maximumFrames()==count+depth-1&&
+   qualification.maximumFrames()<=resident::Qualification::maximumStartupFrames,
+   "Startup progress frame count differs from qualification bound");
+ }
+ for(unsigned depth:{2u,4u,8u}){
+  // A raw log-display rejection is not equivalent to an integrated-display
+  // rejection: weak current cells have very different relative conditioning.
+  // Preserve the original strict integrated contract, without widening it.
+  blah2::detection::DetectorIntegration cpu(depth,0),gpu(depth,0),corrupt(depth,0);
+  for(unsigned frame=0;frame<2;++frame){
+   const auto make=[&](double amplitude){
+    auto map=std::make_unique<Map<std::complex<double>>>(rows,columns);
+    std::vector<std::complex<double>> input(rows*columns,{1,2});
+    if(frame)input[cell]={amplitude,2};
+    std::vector<uint32_t> beams;
+    resident::copyProductOracleInput(config,{input.data(),input.size()},*map,beams);map->set_metrics();
+    return map;
+   };
+   auto a=make(std::pow(10.,-11.51/10.)),b=make(std::pow(10.,-11.49/10.)),bad=make(1000);
+   if(frame)rejects([&]{compareOracleJson(a->to_json_km(frame,config.sampleRate),
+    b->to_json_km(frame,config.sampleRate),"raw boundary is not integrated boundary");});
+   cpu.process(a,1,frame*100,(frame+1)*100,true);
+   gpu.process(b,1,frame*100,(frame+1)*100,true);
+   corrupt.process(bad,1,frame*100,(frame+1)*100,true);
+   compareOracleJson(a->to_json_km(frame,config.sampleRate),b->to_json_km(frame,config.sampleRate),
+    "unchanged independent integrated boundary");
+   if(frame)rejects([&]{compareOracleJson(a->to_json_km(frame,config.sampleRate),
+    bad->to_json_km(frame,config.sampleRate),"corrupt independent integrated boundary");});
+  }
+ }
+ Map<std::complex<double>> output(rows,columns);std::vector<uint32_t> beams;
+ std::vector<std::complex<double>> invalid(rows*columns,{1,4});
+ rejects([&]{resident::copyProductOracleInput(config,{invalid.data(),invalid.size()},output,beams);});
+ invalid[0]={std::numeric_limits<double>::quiet_NaN(),0};
+ rejects([&]{resident::copyProductOracleInput(config,{invalid.data(),invalid.size()},output,beams);});
+ std::cout<<"PASS stage-composed-oracle depths=2,4,8 perturbation_reverses_argmax=1 same_input_lineage_and_hidden_tracker=1 independent_integrated_corruption_rejected=1 raw_boundary_not_equivalent=1 startup_progress_bounded=1\n";
+}
+void hostTrackerHandoffCases(){
+ namespace pipeline=blah2::pipeline;
+ for(uint32_t depth:{2u,4u,8u}){
+  pipeline::ProductConfig p;p.integrationCpis=depth;p.minimumSnr=-100;p.maximumAcceleration=0;
+  p.trackerM=2;p.trackerN=16;p.trackerDelete=16;p.rangeResolution=50;
+  p.ridgeBirth={true,3,2,.25};
+  pipeline::ProductStages oracle{pipeline::RadarPlan(p)},handoff{pipeline::RadarPlan(p)};
+  auto map=std::make_unique<Map<std::complex<double>>>(41,512);
+  for(unsigned r=0;r<41;++r)map->doppler.push_back(100+r);
+  for(unsigned c=0;c<512;++c)map->delay.push_back(c);
+  bool ridgeRejected=false;
+  for(uint32_t frame=0;frame<10;++frame){
+   const uint64_t epoch=frame<5?UINT64_C(9007199254740993):UINT64_C(9007199254740995);
+   const uint64_t newest=UINT64_C(9007199254741093)+frame;
+   const uint8_t bank=depth==2?1:depth==4?3:4;
+   Detection::Evidence evidence{epoch,newest,uint8_t(depth),bank,0,0,{}};
+   std::vector<uint64_t> sequences(depth);
+   for(uint32_t age=0;age<depth;++age){evidence.sequences[age]=newest-age;sequences[depth-1-age]=newest-age;}
+   std::vector<blah2::resident::DetectionRecord> records{{32+20.0*frame,120,12,0},{42+20.0*frame,121,12,0}};
+   std::vector<uint32_t> flags(2,4u|(1u<<(bank+2))|(2u<<17)|(16u<<20)),cells{0,1};
+   auto decoded=hostDetections(view(records),view(flags),view(cells),epoch,view(sequences),depth);
+   Detection expected({records[0].delay,records[1].delay},{120,121},{12,12});
+   expected.set_evidence({evidence,evidence});expected.set_evidence_identity(epoch,newest);
+   std::optional<blah2::detection::IntegrationMetrics> metadata(std::in_place);
+   metadata->cpis=depth;metadata->ready=true;metadata->historyReset=frame==0||frame==5;
+   const uint64_t timestamp=1000+frame*500;
+   oracle.tracker.configureGrid(map->delay,map->doppler);
+   auto expectedTracks=blah2::detection::trackProducts(expected,oracle.tracker,timestamp,metadata);
+   pipeline::Products products;products.detections=std::make_unique<Detection>(std::move(decoded));products.integration=metadata;
+   auto actual=handoff.track(map,{epoch,frame*100u,(frame+1)*100u,timestamp,true},std::move(products));
+   check(actual.detections->to_json(timestamp)==expected.to_json(timestamp),"Host handoff changed exact evidence/records");
+   check(actual.tracks->to_json(timestamp)==expectedTracks->to_json(timestamp),"Host detector handoff changed tracker outcomes");
+   check(handoff.tracker.frame_diagnostics().birthRidgeRejected==oracle.tracker.frame_diagnostics().birthRidgeRejected,
+    "Host detector handoff changed Doppler-ridge birth rejection");
+   ridgeRejected=ridgeRejected||handoff.tracker.frame_diagnostics().birthRidgeRejected>0;
+   if(frame==5)check(!handoff.tracker.frame_diagnostics().birthRidgeRejected,"Input reset retained a learned ridge");
+  }
+  check(ridgeRejected,"Host tracker handoff fixture never exercised ridge rejection");
+ }
+ std::cout<<"PASS host-tracker-handoff depths=2,4,8 fp64_records=1 exact_support=1 ridge_birth=1 reset=1\n";
+}
+
+void privateConfirmationCases(){
+ namespace resident=blah2::resident;namespace pipeline=blah2::pipeline;
+ constexpr unsigned rows=33,columns=65;
+ // A fixed echo is a negative control with all-Doppler quarantine enabled.
+ // The positive uses the production private-IQ trajectory, not relaxed gates.
+ for(const auto [amplitude,moving]:{std::pair{8.,false},std::pair{4.,true},std::pair{100.,false}}){
+  pipeline::ProductConfig p;p.integrationCpis=8;
+  p.integrationMotion=track_before_detect::encodeMotionBins(2,4,true);
+  p.delayDriftPerHz=-2400000./509000000.*.5;p.pfa=1e-5/12;
+  p.minimumDelay=5;p.minimumDoppler=15;p.trackerM=4;p.trackerN=25;p.trackerDelete=7;
+  p.minimumSnr=5;p.rangeResolution=299792458./2400000.;p.wavelength=299792458./509000000.;
+  p.recovery.stationaryClutter=true;p.recovery.persistenceCpis=12;p.recovery.maximumDopplerHz=0;
+  pipeline::ProductStages stages{pipeline::RadarPlan(p)};
+  resident::Qualification controls(resident::Qualification::startupCount(8,8,4,25,7),8);
+  check(controls.maximumFrames()==40,"Private M4/depth8 confirmation deadline changed");
+  blah2::startup::Target target{32,-16,2400000,amplitude,{}};
+  if(moving)target.amplitude*=std::acos(-1.0)/2; // Same private moving-stimulus margin as Coordinator.
+  blah2::startup::TargetMotion motion;
+  bool rejected=false;uint64_t stationarySuppressed=0,rangeCombRejected=0;
+  for(unsigned frame=0;frame<40;++frame){
+   auto map=std::make_unique<Map<std::complex<double>>>(rows,columns);
+   for(unsigned row=0;row<rows;++row){map->doppler.push_back((int(row)-16)*2);
+    for(unsigned col=0;col<columns;++col)map->data[row][col]={1,0};}
+   for(unsigned col=0;col<columns;++col)map->delay.push_back(col);
+   if(frame>=8){
+    if(moving)motion.advance(target,frame-8,map->doppler,p.cpiSeconds,p.delayDriftPerHz,p.recovery.persistenceCpis);
+    const auto row=std::llround(target.dopplerHz/2)+16;
+    check(row>=0&&row<rows&&target.delay<columns,"Private moving control left map geometry");
+    map->data[size_t(row)][target.delay]={target.amplitude,0};
+   }
+   map->set_metrics();
+   const auto products=stages.process(map,{1,frame*100u,(frame+1)*100u,1000+frame*500u,true});
+   uint64_t confirmed=0;const auto states=stages.tracker.qualificationState();
+   for(const auto& s:states)confirmed+=s.state==2||s.state==3;
+   stationarySuppressed+=stages.tracker.frame_diagnostics().stationaryQuarantined+
+    stages.tracker.frame_diagnostics().stationaryBirthRejected;
+   rangeCombRejected+=stages.tracker.frame_diagnostics().birthRangeCombRejected;
+   try{controls.control(frame>=8,frame>=8?frame>=15:frame>=7,
+    products.detections->get_nDetections(),states.size(),confirmed,true,frame>=39);}
+   catch(const std::logic_error& error){
+    const bool expectedReason=std::string(error.what())==
+     "Private qualification positive control produced no matching detection/track";
+    if(frame!=39||moving||!expectedReason){std::ostringstream message;
+     message<<"Private control failed: "<<error.what()<<" frame="<<frame+1<<" amplitude="<<target.amplitude
+      <<" moving="<<moving<<" detections="<<products.detections->get_nDetections()
+      <<" tracks="<<states.size()<<" confirmed="<<confirmed
+      <<resident::controlDiagnostic(&stages.tracker,{},target.delay,target.dopplerHz,2);
+     throw std::runtime_error(message.str());
+    }
+    rejected=true;
+   }
+  }
+  if(moving){check(!rejected&&stationarySuppressed==0,"Moving positive control failed M4/depth8 confirmation");controls.requireControls();}
+  else if(amplitude==8)check(rejected&&stationarySuppressed>0,
+   "Fixed positive echo unexpectedly escaped stationary quarantine");
+  else check(rejected&&rangeCombRejected>0,
+   "Overstrong positive control unexpectedly evaded the range-comb control regression");
+  const std::array<resident::DetectionRecord,3> records{{{32,-16,20},{32.25,-6,10},{40,-16,8}}};
+  const auto diagnostic=resident::controlDiagnostic(&stages.tracker,{records.data(),records.size()},32,-16,2);
+  check(diagnostic.size()<=4096&&diagnostic.find("range_comb_peers=1")!=std::string::npos&&
+   diagnostic.find("maximum_votes=")!=std::string::npos&&
+   diagnostic.find("\"birth_range_comb_rejected\"")!=std::string::npos,
+   "Private failure audit lost bounded lineage/rejection evidence");
+ }
+ rejects([]{resident::controlDiagnostic(nullptr,{},0,0,0);});
+ std::cout<<"PASS private-confirmation M=4 N=25 delete=7 depth=8 frames=40 moving_confirms=1 fixed_quarantined=1 overstrong_range_comb_rejects=1 fail_audit_bounded=1\n";
+}
+void oracleCases(){
+ const auto compare=[](const std::string& left,const std::string& right){
+  compareOracleJson(left,right,"fixture oracle");
+ };
+ compare("{\"data\":[[1.0,2.0]],\"timestamp\":9007199254740993}",
+  "{\"timestamp\":9007199254740993,\"data\":[[1.01,2.0]]}");
+ const auto mismatch=[&](const std::string& left,const std::string& right,
+     const std::vector<std::string>& evidence){
+  std::string error;try{compare(left,right);}catch(const std::invalid_argument& e){error=e.what();}
+  check(!error.empty()&&error.size()<600,"Oracle accepted mismatch or emitted unbounded output");
+  for(const auto& field:evidence)check(error.find(field)!=std::string::npos,
+   "Oracle first-mismatch diagnostic lost path/type/value/tolerance");
+ };
+ mismatch("{\"data\":[[1.0,2.0,4.0]]}","{\"data\":[[1.0,2.02,5.0]]}",
+  {"path=$.data[0][1]","expected_type=double","actual_type=double","expected=2 ","actual=2.02","tolerance="});
+ mismatch("{\"timestamp\":9007199254740993}","{\"timestamp\":9007199254740994}",
+  {"path=$.timestamp","reason=integer","expected=9007199254740993","actual=9007199254740994","tolerance=0"});
+ mismatch("{\"data\":[[1.0]]}","{\"data\":[[1.0,2.0]]}",
+  {"path=$.data[0]","reason=array-size","expected=size:1","actual=size:2"});
+ mismatch("{\"data\":1}","{\"data\":\"1\"}",
+  {"path=$.data","reason=type","expected_type=int64","actual_type=string"});
+ mismatch("{\"data\":null}","{\"other\":null}",{"path=$.data","reason=missing-member"});
+ mismatch("{\"data\":null}","{}",{"path=$","reason=member-count"});
+ mismatch("{\"data\":\"left\"}","{\"data\":\"right\"}",{"path=$.data","reason=string"});
+ mismatch("{\"data\":true}","{\"data\":false}",{"path=$.data","expected_type=bool"});
+ rejects([&]{compare("{", "{}");});
+ rapidjson::Value finiteValue(1.0),nonfinite(std::numeric_limits<double>::quiet_NaN());
+ rejects([&]{compareOracleJson(finiteValue,nonfinite,"nonfinite oracle");});
+ rapidjson::Document left,right;
+ const char* lineage="{\"delay\":[1.0,2.0],\"doppler\":[3.0,4.0],\"snr\":[5.0,6.0],\"evidence\":[{\"bank\":2,\"delay_motion_bins\":1},{\"bank\":3,\"delay_motion_bins\":1,\"doppler_motion_bins\":-2,\"support_sequences_exact\":[\"9\",\"8\",\"7\",\"6\"]}]}";
+ left.Parse(lineage);right.Parse(lineage);right["evidence"][1]["delay_motion_bins"].SetInt(0);
+ std::vector<uint32_t> flags(9),cells{0,4};flags[4]=4u|(1u<<5)|(2u<<17)|(14u<<20)|(4u<<26);
+ size_t index=SIZE_MAX;
+ const auto detail=oracleLineageDiagnostic(left,right,view(flags),view(cells),3,3,8,index);
+ check(index==1&&detail.size()<1600,"Lineage receipt selected wrong candidate or was unbounded");
+ for(const char* field:{"lineage_index=1","gpu_cell=4","raw_flags=0x","decoded_bank=3",
+   "decoded_delay_motion=0","decoded_doppler_motion=-2","gpu_source_cell=3",
+   "cpu={delay=2,doppler=4,snr=6,","delay_motion_bins=1,","delay_motion_bins=0,","support_sequences_exact=[9,8,7,6]"})
+  check(detail.find(field)!=std::string::npos,"Lineage receipt omitted bounded source evidence");
+ rejects([&]{compareOracleJson(left,right,"lineage still fails");});
+ check(oracleLineageDiagnostic(left,left,view(flags),view(cells),3,3,8,index).empty()&&index==SIZE_MAX,
+  "Equal evidence manufactured a lineage diagnostic");
+ std::cout<<"PASS startup-product-oracle first_path=1 exact_uint64=1 shape_types=1 bounded_diagnostic=1 unchanged_tolerance=1\n";
+}
 void spectrumCases(){
  for(const std::vector<std::complex<double>>&values:std::vector<std::vector<std::complex<double>>>{{},{{0,0},{1e-15,0},{1,0},{-3,4}},{{1e200,1e200},{std::numeric_limits<double>::max()/2,std::numeric_limits<double>::max()/2}}}){
   IqData cpu(uint32_t(values.size()));std::vector<double>frequency,db;for(size_t i=0;i<values.size();++i){frequency.push_back(101234.5+i*.125);db.push_back(20*std::log10(std::max(1e-15,std::abs(values[i]))));}
@@ -61,9 +373,29 @@ void detectionCases(){
   support.bank=uint8_t(bank);support.delayMotion=int8_t(dc);support.dopplerMotion=int8_t(dr);
   for(size_t age=0;age<depth;++age){support.sequences[age]=sequences[depth-1-age];}
   expected.set_evidence({support});
+  expected.set_evidence_identity(support.epoch,support.newestSequence);
   const auto base=detectionRecords(17,View<Record>{records.data(),records.size()});
   same(temporalEvidence(base,view(flags),view(cells),support.epoch,view(sequences),depth),expected.to_json_km(17,fs));
+  auto handoff=hostDetections(view(records),view(flags),view(cells),support.epoch,view(sequences),depth);
+  check(handoff.get_delay()==expected.get_delay()&&handoff.get_doppler()==expected.get_doppler()&&
+   handoff.get_snr()==expected.get_snr(),"Host detector handoff rounded FP64 records");
+  same(handoff.to_json_km(17,fs),expected.to_json_km(17,fs));
+  auto gap=sequences;--gap[0];
+  rejects([&]{hostDetections(view(records),view(flags),view(cells),support.epoch,view(gap),depth);});
+  Detection empty(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+  const auto absent=empty.to_json_km(17,fs);
+  empty.set_evidence_identity(support.epoch,support.newestSequence);
+  same(temporalEvidence(absent,{}, {},support.epoch,view(sequences),depth),empty.to_json_km(17,fs));
   sequences.pop_back();rejects([&]{temporalEvidence(base,view(flags),view(cells),support.epoch,view(sequences),depth);});
+ }
+ for(bool hit:{false,true}){
+  Detection expected=hit?Detection(1,2,3):Detection(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+  const auto base=expected.to_json_km(17,fs);Detection::Evidence identity;
+  identity.epoch=UINT64_C(9007199254740993);identity.newestSequence=UINT64_C(9007199254740995);
+  identity.depth=1;identity.sequences[0]=identity.newestSequence;
+  expected.set_evidence_identity(identity.epoch,identity.newestSequence);
+  if(hit)expected.set_evidence({identity});
+  same(singleCpiEvidence(base,identity.epoch,identity.newestSequence),expected.to_json_km(17,fs));
  }
  for(int dr=-1;dr<=1;++dr)for(int dc=-1;dc<=1;++dc){
   const uint32_t code=1+uint32_t(dc+1)+3*uint32_t(dr+1);
@@ -77,8 +409,12 @@ void detectionCases(){
  struct Acknowledgement {uint32_t availableCpis=1;bool detectorReady=false;
   uint64_t temporalEpoch=7,newestSequence=11;std::array<uint64_t,8>supportSequences{11};} acknowledgement;
  blah2::resident::Config temporalConfig;temporalConfig.detector.integrationCpis=8;
+ temporalConfig.geometry.clutterSamples=250001;temporalConfig.reference.centreHz=101100000;
+ temporalConfig.detector.integrationMotionBins=track_before_detect::encodeMotionBins(2,4,true);
  auto warm=blah2::resident::temporalPublication(temporalConfig,acknowledgement,17,100,200);
  check(warm&&!warm->ready&&warm->availableCpis==1&&warm->historyReset,"Resident warmup was reported ready");
+ check(warm->delayDriftPerHz==-250001.0/101100000,
+  "Noncoherent temporal publication used fusion/capture frequency instead of lane carrier");
  acknowledgement.availableCpis=2;acknowledgement.detectorReady=true;acknowledgement.newestSequence=12;acknowledgement.supportSequences={12,11};
  auto ready=blah2::resident::temporalPublication(temporalConfig,acknowledgement,17,200,300);
  check(ready&&ready->ready&&ready->availableCpis==2&&ready->firstInputSample==100,"Mature two-CPI baseline hidden until maximum bank depth");
@@ -241,6 +577,8 @@ void trackCases(){
    std::string(value["data"][0]["source"].GetString())==source&&value["data"][0]["associated_measured"].Size()==history,
    "Schema5 measurement provenance differs");};
  const auto ordinaryJson=trackerCheckpoint(UINT64_MAX,raw(),binding);
+ {rapidjson::Document missing;missing.Parse(ordinaryJson.c_str());
+  check(missing["data"][0]["measurement_evidence"].IsNull(),"Absent measurement support must remain unavailable");}
  provenance(ordinaryJson,true,"detector");
  same(ordinaryJson,cpu.to_json(UINT64_MAX));
  {const auto source=Track::Source::prediction;
@@ -391,6 +729,27 @@ void trackCases(){
   "Schema5 ordinary history encoding differs from record schema");
  bank[27]=1;
  same(trackerCheckpoint(UINT64_MAX,raw(),binding),cpu.to_json(UINT64_MAX));
+ for(uint32_t depth:{1u,2u,4u,8u}){
+  std::set<std::string> support;const auto saved=bank[newestState];
+  bank[newestState]=2u|4u|(depth<<5u);
+  for(uint64_t frame=0;frame<3;++frame){
+   std::vector<uint64_t> sequences(depth);
+   for(uint64_t age=0;age<depth;++age)sequences[age]=UINT64_C(9007199254740993)+frame+age;
+   const MeasurementWindow window{UINT64_C(9007199254741093),binding.consumedSequence,view(sequences)};
+   const auto json=trackerCheckpoint(99,raw(),binding,window);rapidjson::Document value;value.Parse(json.c_str());
+   const auto& evidence=value["data"][0]["measurement_evidence"];
+   check(evidence["cpis"].GetUint()==depth&&evidence["support_sequences_exact"].Size()==depth,
+    "GPU measured support depth differs");
+   check(std::string(evidence["newest_sequence_exact"].GetString())==std::to_string(sequences.back()),
+    "GPU measured support loses integer precision");
+   for(const auto& sequence:evidence["support_sequences_exact"].GetArray())support.insert(sequence.GetString());
+   same(json,trackerCheckpoint(99,raw(),binding,window)); // Formatting a no-op cannot add support.
+   auto wrong=window;++wrong.consumedSequence;rejects([&]{trackerCheckpoint(99,raw(),binding,wrong);});
+   sequences.back()=0;rejects([&]{trackerCheckpoint(99,raw(),binding,window);});
+  }
+  check(support.size()==depth+2u,"Overlapping GPU support cannot be deduplicated");
+  bank[newestState]=saved;
+ }
  real(timing,-1);rejects([&]{trackerCheckpoint(0,raw(),binding);});real(timing,0);
  pair(timing+2,0);rejects([&]{trackerCheckpoint(0,raw(),binding);});pair(timing+2,501);
  bank[27]=2;rejects([&]{trackerCheckpoint(0,raw(),binding);});
@@ -405,7 +764,7 @@ void trackCases(){
  std::cout<<"PASS serializer-track gpu_selected_slice=100 schema5_only=1 legacy_refused=1 binding_rejects=1 hex_ids=1 uint64_counts=1 tentative_omitted=1\n";
 }
 }
-int main()try{spectrumCases();mapCases();detectionCases();trackCases();
+int main()try{diagnosticCases();composedOracleCases();hostTrackerHandoffCases();privateConfirmationCases();oracleCases();spectrumCases();mapCases();detectionCases();trackCases();
  namespace trace=blah2::causal_trace;std::array<uint32_t,trace::words> t{};t[0]=1;t[1]=1;
  const uint64_t times[]={UINT64_C(9007199254740993),17,UINT64_C(1794521720793),8};
  std::memcpy(t.data()+4,times,sizeof(times));auto*r=t.data()+trace::headerWords;
@@ -429,4 +788,4 @@ int main()try{spectrumCases();mapCases();detectionCases();trackCases();
  d.Parse(trace::json(t.data(),t.size(),.125,1,7).c_str());
  check(d["candidates"].Size()==7&&d["coverage"]["truncated"].GetBool(),"causal prefix bound");
  t[8]=UINT32_MAX;t[9]=UINT32_MAX;rejects([&]{trace::json(t.data(),t.size(),1,1,64);});
- std::cout<<"COMPLETE GPU-result JSON CPU compatibility groups=5 exact_causal_time=1 bounded_prefix=1 candidate_dsp_math=0 gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL GPU-result JSON: "<<e.what()<<'\n';return 1;}
+ std::cout<<"COMPLETE GPU-result JSON CPU compatibility groups=8 exact_causal_time=1 bounded_prefix=1 candidate_dsp_math=0 gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL GPU-result JSON: "<<e.what()<<'\n';return 1;}

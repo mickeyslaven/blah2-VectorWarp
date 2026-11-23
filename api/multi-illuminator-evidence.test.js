@@ -5,13 +5,23 @@ const path = require('path');
 const {laneConfig, statisticsFilename, associationStatistics, MultiIlluminatorEvidence} =
   require('./multi-illuminator-evidence');
 
-const associationSummary = associationStatistics({current_setup_lifetime: {
+const policyIdentity = {evaluation_contract_hash: 'a'.repeat(64),
+  evaluation_policy_hash: '5'.repeat(64), evaluation_contract_started_at: 1000,
+  sensitivity_epoch: {id: 'c'.repeat(64), started_at: 1000, capture_epoch: 0}};
+const associationSummary = associationStatistics({...policyIdentity, current_setup_lifetime: {
   eligible_passes: 2, association_eligible_passes: 1,
   detected_passes: 1, tracked_passes: 1}});
 assert.equal(associationSummary.eligible_adsb_passes, 1,
   'association yields must exclude unresolved presence-only passes');
 assert.equal(associationSummary.detection.yield, 1);
 assert.equal(associationSummary.tracking.tracked_of_eligible_yield, 1);
+for (const [field, value] of Object.entries(policyIdentity))
+  assert.equal(associationSummary[field], value,
+    'Every association summary must retain its scoring-cohort identity');
+assert.equal(associationStatistics({}).evaluation_policy_hash, null,
+  'Unknown scoring policy must not be assigned the current policy');
+assert.equal(associationStatistics({}).sensitivity_epoch, null,
+  'Unknown detector-run provenance must not be assigned a current run');
 
 const config = {capture: {fc: 100000000, fs: 2400000}, location: {
   rx: {latitude: 40, longitude: -80, altitude: 300},
@@ -43,7 +53,10 @@ function fakeStatistics(lane, timing) {
     acceptDetection(value) { this.accepted.push(['detection', value]); },
     acceptTracker(value) { this.accepted.push(['tracker', value]); },
     acceptTiming(value) { this.accepted.push(['timing', value]); },
-    liveStatus() { return {schema: 'score', accepted: this.accepted.length}; },
+    activeAssociations() { return [{hex: 'abc123', flight: 'TEST1',
+      detected_cpis: 2, tracked_cpis: 1, last_at: 2000}]; },
+    liveStatus() { return {schema: 'score', accepted: this.accepted.length, ...policyIdentity}; },
+    measuredTrackBasis() { return {version: 1, complete: true, aircraft: []}; },
     radarCoverage() { return {schema: 'coverage', points: []}; },
     status() { return {schema: 'statistics'}; }, close() { this.closed = true; }};
 }
@@ -82,6 +95,34 @@ assert.equal(aggregate.scope, 'all-illuminators-non-merged');
 assert.equal(aggregate.illuminators.length, 2);
 assert.equal(aggregate.points, undefined, 'aggregate must not merge unlike lane coverage');
 assert.equal(evidence.response('scorecard', {illuminator: 'missing'}), null);
+assert.ok(evidence.associationBasis().channels.every(channel =>
+  Object.entries(policyIdentity).every(([field, value]) => channel.association_statistics[field] === value)),
+  'Federated association bases preserve the evaluator identity for each illuminator');
+const compactBasis = evidence.associationBasis({timing: 'provisional', compact: true});
+assert.ok(compactBasis.channels.every(channel =>
+  channel.measured_track_basis === undefined && channel.track_population === undefined &&
+  channel.passes === undefined),
+  'Federation summary basis excludes detailed evidence that has a separate endpoint');
+assert.ok(compactBasis.channels.every(channel =>
+  Object.entries(policyIdentity).every(([field, value]) =>
+    channel.association_statistics[field] === value)),
+  'Compact federation basis preserves association counters and evaluator identity');
+const activeAssociations = evidence.activeAssociations({timing: 'provisional'});
+assert.deepEqual(activeAssociations.map(channel => channel.selected_channel), ['fm-a', 'fm-b']);
+assert.ok(activeAssociations.every(channel => channel.active_passes.length === 1),
+  'Live map associations use bounded active-pass counters for every lane');
+for (const lane of created) lane.exact.measuredTrackBasis = () => ({version: 1, complete: true,
+  aircraft: [{hex: 'abc123', eligible: [[0, 8192000]], scored: [[0, 8192000]],
+    measured: Array.from({length: 8192}, (_, index) => [index * 1000, index * 1000 + 250])}]});
+const publicStatistics = evidence.response('statistics');
+assert.equal(publicStatistics.overall_association_statistics.measured_track_coverage.fraction, .25);
+assert.ok(publicStatistics.illuminators.every(channel => channel.measured_track_basis === undefined));
+assert.ok(Buffer.byteLength(JSON.stringify(publicStatistics)) < 64 * 1024,
+  'Summary size must not scale with retained per-CPI interval evidence');
+assert.equal(evidence.response('statistics', {illuminator: 'fm-a'}).measured_track_basis, undefined);
+assert.equal(evidence.response('scorecard', {illuminator: 'fm-a'}).measured_track_basis, undefined);
+assert.equal(evidence.associationBasis().channels[0].measured_track_basis.aircraft[0].measured.length, 8192,
+  'The explicit federation evidence contract retains its full interval basis');
 evidence.close();
 assert.ok(created.every(value => value.exact.closed && value.operational.closed));
 assert.equal(fakeSuspiciousLedger.closed, true);

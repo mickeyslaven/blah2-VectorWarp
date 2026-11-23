@@ -42,6 +42,12 @@ inline void compareCheckpoint(Tracker& tracker,const uint32_t* words,size_t coun
     const size_t newest=r+16+8*((head+length-1)%history);
     require(words[newest+7]==t.spatial,"spatial history");
     require(((words[newest+6]&4u)?1u:(words[newest+6]&8u)?2u:0u)==t.source,"measurement provenance");
+    if(t.measurementEvidence.depth){const auto& evidence=t.measurementEvidence;
+      require(t.source==1&&Detection::valid_evidence(evidence),"current measurement evidence");
+      require((words[newest+6]>>(words[27]?5u:4u))==evidence.depth,"current measurement support depth");
+      require(evidence.epoch==(binding?binding->cpuEvidenceEpoch:pair(10))&&
+        evidence.newestSequence==(binding?binding->cpuNewestSequence:pair(14)),"current measurement clock binding");
+    }
     require(t.confirmationVotes.size()<=length,"confirmation window length");
     for(size_t j=0;j<t.confirmationVotes.size();++j){const size_t at=r+16+8*((head+length-t.confirmationVotes.size()+j)%history)+6;
       require(bool(words[at]&(words[27]?16u:4u))==bool(t.confirmationVotes[j]),"independent confirmation credit");}

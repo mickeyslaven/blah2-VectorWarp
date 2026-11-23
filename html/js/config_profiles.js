@@ -172,19 +172,26 @@
 
   // Admission mirror of process/tracker/ConfirmationContract.h. N counts CPI
   // endpoints, not overlapping detections. Presets never widen these limits.
-  function temporalConfirmationErrors(config) {
+  function temporalConfirmationRequirements(config) {
     const tracker = config?.process?.tracker;
-    if (tracker?.enable !== true) return [];
+    if (tracker?.enable !== true) return null;
     const detection = config.process.detection || {}, tbd = detection.track_before_detect;
     const depth = tbd?.enable === true ? (tbd.max_cpis ?? 8) : (detection.integration_cpis ?? 1);
     const {M, N} = tracker.initiate || {}, misses = tracker.delete;
     if (![1, 2, 4, 8].includes(depth) || ![M, N, misses].every(Number.isInteger) || M < 1)
-      return []; // Field validators report malformed values.
+      return null; // Field validators report malformed values.
     const minimumWindow = 1 + depth * (M - 1), minimumMisses = depth - 1;
+    return {depth, M, N, misses, minimumWindow, minimumMisses};
+  }
+
+  function temporalConfirmationErrors(config) {
+    const required = temporalConfirmationRequirements(config);
+    if (!required) return [];
+    const {depth, M, N, misses, minimumWindow, minimumMisses} = required;
     return N >= minimumWindow && misses >= minimumMisses ? [] : [
       `process.tracker.initiate.N must be >= ${minimumWindow} and process.tracker.delete must be >= ${minimumMisses} ` +
       `for disjoint ${depth}-CPI confirmation (M=${M}; N >= 1 + depth*(M-1)). ` +
-      'Explicit replay qualification of initiation latency, continuity and false tracks is required before changing these limits; defaults are not migrated.'];
+      'Qualify initiation latency, continuity and false tracks in replay before changing these limits.'];
   }
 
   function applyWeakTargetMode(config, mode) {
@@ -372,6 +379,7 @@
 
   return {scaleDelayBin, effectiveDelayConfig, legacyDelayReferenceRate,
     detectionProfiles, trackingProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
-    detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode, temporalConfirmationErrors,
+    detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode,
+    temporalConfirmationErrors, temporalConfirmationRequirements,
     applyTrackingProfile, processingMode, applyProcessingMode, applyReceiverProfile, associationGates, assignments};
 });

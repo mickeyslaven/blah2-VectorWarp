@@ -1,5 +1,4 @@
 #include "PortableClipRecorder.h"
-#include "Sha256.h"
 #include "RecordingAcquisitionJson.h"
 
 #include <algorithm>
@@ -22,24 +21,6 @@ constexpr std::size_t MAX_IDS = 4096;
 bool valid_id(const std::string& value) { return !value.empty() && value.size() <= 256; }
 std::string system_error(const std::string& message) {
   return message + ": " + std::strerror(errno);
-}
-std::pair<uint64_t,std::string> digest_file(const std::string& path) {
-  const int fd=::open(path.c_str(),O_RDONLY|O_CLOEXEC);
-  if(fd<0) throw std::runtime_error(system_error("Cannot hash clip"));
-  Sha256 digest; uint64_t size=0; std::array<uint8_t,65536> bytes{};
-  for(;;) {
-    const auto count=::read(fd,bytes.data(),bytes.size());
-    if(count<0&&errno==EINTR) continue;
-    if(count<0) {
-      const auto error=system_error("Cannot hash clip");
-      ::close(fd);
-      throw std::runtime_error(error);
-    }
-    if(!count) break;
-    digest.update(bytes.data(),static_cast<std::size_t>(count));
-    size+=static_cast<uint64_t>(count);
-  }
-  ::close(fd); return {size,digest.finish()};
 }
 void write_synced(const std::string& path,const std::string& value) {
   const int fd=::open(path.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0640);
@@ -334,7 +315,8 @@ IqClipStatus PortableClipRecorder::write_job(Job& job) {
   if (!written) throw std::runtime_error("IQ clip contains no writable samples");
   output.close();
   if(::chmod(partial.c_str(),0640))throw std::runtime_error(system_error("Cannot set clip permissions"));
-  const auto integrity=digest_file(partial);
+  uint64_t dataBytes = 0;
+  const auto dataSha256 = acquisition::fileDigest(partial, &dataBytes);
   rapidjson::Document document(rapidjson::kObjectType); auto& allocator=document.GetAllocator();
   document.AddMember("schema","vectorwarp-portable-iq-clip-v1",allocator);
   document.AddMember("clipRevision",job.request.revision,allocator);
@@ -343,10 +325,10 @@ IqClipStatus PortableClipRecorder::write_job(Job& job) {
   document.AddMember("windowEnd",job.request.windowEndMs,allocator);
   document.AddMember("channels",channels,allocator); document.AddMember("sampleRate",sampleRate,allocator);
   document.AddMember("frequency",frequency,allocator); document.AddMember("samplesPerChannel",written,allocator);
-  document.AddMember("dataBytes",integrity.first,allocator); document.AddMember("createdAt",stamp,allocator);
+  document.AddMember("dataBytes",dataBytes,allocator); document.AddMember("createdAt",stamp,allocator);
   document.AddMember("format","blah2iq",allocator); document.AddMember("receiver",rapidjson::Value(receiver.c_str(),allocator),allocator);
   document.AddMember("encoding","float32-complex-channel-major-blocks",allocator);
-  document.AddMember("dataSha256",rapidjson::Value(integrity.second.c_str(),allocator),allocator);
+  document.AddMember("dataSha256",rapidjson::Value(dataSha256.c_str(),allocator),allocator);
   document.AddMember("epoch",job.epoch,allocator); document.AddMember("firstEpochSample",job.first,allocator);
   document.AddMember("endEpochSample",job.end,allocator);
   auto strings=[&](const char* name,const std::vector<std::string>& values){rapidjson::Value array(rapidjson::kArrayType);

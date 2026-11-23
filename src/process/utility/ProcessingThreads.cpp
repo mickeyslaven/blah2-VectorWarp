@@ -1,9 +1,12 @@
 #include "ProcessingThreads.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #ifdef __linux__
 #include <sched.h>
@@ -145,5 +148,57 @@ std::size_t choose_illuminator_lane_workers(std::size_t activeLanes,
   // at sixteen: the narrower 16-lane batch reduced p95 in every paired run.
   const std::size_t measuredCacheBound = activeLanes >= 16 ? 3 : 4;
   return std::min({activeLanes, budget, measuredCacheBound});
+}
+
+std::size_t configured_clutter_budget(const char* variable) {
+  const char* value = std::getenv(variable);
+  if (!value || !*value) return 0;
+  std::size_t result = 0;
+  const char* end = value + std::char_traits<char>::length(value);
+  const auto parsed = std::from_chars(value, end, result);
+  if (parsed.ec != std::errc{} || parsed.ptr != end || result < 1 || result > 8)
+    throw std::invalid_argument(std::string(variable) +
+      " must be an integer from 1 through 8");
+  return result;
+}
+
+std::size_t configured_clutter_worker_slots() {
+  return configured_clutter_budget("VECTORWARP_CLUTTER_WORKERS");
+}
+
+std::size_t configured_clutter_total_worker_budget() {
+  return configured_clutter_budget("VECTORWARP_CLUTTER_TOTAL_WORKERS");
+}
+
+std::vector<std::size_t> distribute_clutter_worker_budget(std::size_t lanes,
+    std::size_t configuredWorkers, std::size_t availableCpus) {
+  if (!lanes || configuredWorkers > 8)
+    throw std::invalid_argument("Clutter lanes need 1-8 configured workers");
+  const std::size_t available = std::max<std::size_t>(1, availableCpus);
+  // Retain the single-lane default. For a bank, reserve one CPU when possible
+  // and bound cache/memory-heavy blocked-transform slots at eight, while
+  // retaining one caller slot for every configured lane.
+  const std::size_t automatic = lanes == 1 ? std::min<std::size_t>(2, available) :
+    std::max(lanes, std::min<std::size_t>(8, std::max<std::size_t>(1, available - 1)));
+  if (configuredWorkers && configuredWorkers < lanes)
+    throw std::invalid_argument("VECTORWARP_CLUTTER_TOTAL_WORKERS is smaller than the active lane count");
+  const std::size_t total = configuredWorkers ?
+    std::min(configuredWorkers, automatic) : automatic;
+  std::vector<std::size_t> result(lanes, total / lanes);
+  for (std::size_t lane = 0; lane < total % lanes; ++lane) ++result[lane];
+  return result;
+}
+
+std::vector<std::size_t> resolve_clutter_worker_slots(std::size_t lanes,
+    std::size_t legacyWorkers, std::size_t totalWorkers,
+    std::size_t availableCpus) {
+  if (legacyWorkers && totalWorkers)
+    throw std::invalid_argument("Set either VECTORWARP_CLUTTER_WORKERS or VECTORWARP_CLUTTER_TOTAL_WORKERS, not both");
+  if (legacyWorkers) {
+    if (legacyWorkers > 8)
+      throw std::invalid_argument("Legacy clutter worker slots exceed the supported maximum");
+    return std::vector<std::size_t>(lanes, legacyWorkers);
+  }
+  return distribute_clutter_worker_budget(lanes, totalWorkers, availableCpus);
 }
 }

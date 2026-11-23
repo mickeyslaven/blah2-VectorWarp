@@ -22,6 +22,18 @@ test('large association reads require an explicit bounded allowance', async t =>
     /byte limit is invalid/);
 });
 
+test('network summary uses the bounded association basis contract', () => {
+  const source = require('node:fs').readFileSync(
+    require.resolve(process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation'),
+    'utf8');
+  assert.match(source,
+    /association-basis\?timing=provisional&compact=true'[\s\S]*?2500, 512 \* 1024/,
+    'network polling must not transfer the full measured-track evidence ledger');
+  assert.match(source,
+    /association\/passes\?timing=provisional&compact=true'[\s\S]*?2500,\s*8 \* 1024 \* 1024/,
+    'network polling must request the compact recent-pass transport');
+});
+
 function node(id, eligible, detected, tracked, pass) {
   return {id, label: id.toUpperCase(), local: id === 'alpha', available: true,
     radar: 'receiving', processor_fresh: true, config_match: true,
@@ -33,7 +45,8 @@ function node(id, eligible, detected, tracked, pass) {
 
 test('compacts single-node scorecard with provenance', () => {
   const value = compactNodeStatistics({id: 'beta', label: 'Remote Node', local: false},
-    {radar: 'receiving', processorFresh: true, configRevision: 'a', loadedRevision: 'a',
+    {radar: 'receiving', processorFresh: true, processor: {state: 'live'},
+      configRevision: 'a', loadedRevision: 'a',
       featureDiagnostics: {trackingPerformance: {status: 'healthy'}}},
     {cpi: 430, capture_backlog_ms: 500, captureDroppedSamples: [2, 2]},
     {current_setup_lifetime: {eligible_passes: 10, detected_passes: 4, tracked_passes: 3},
@@ -45,7 +58,7 @@ test('compacts single-node scorecard with provenance', () => {
 });
 
 test('reports queued work rather than the receiver in-flight CPI', () => {
-  const status = {radar: 'receiving', processorFresh: true,
+  const status = {radar: 'receiving', processorFresh: true, processor: {state: 'live'},
     featureDiagnostics: {processing: {configuredCpiMs: 500}}};
   const scorecard = {current_setup_lifetime: {}, recent_scored_passes: []};
   const staged = compactNodeStatistics({id: 'beta'}, status,
@@ -55,6 +68,21 @@ test('reports queued work rather than the receiver in-flight CPI', () => {
   const explicit = compactNodeStatistics({id: 'alpha'}, status,
     {cpi: 430, capture_backlog_ms: 910, capture_queue_ready_cpis: 1}, scorecard);
   assert.equal(explicit.timing.backlog_ms, 500);
+});
+
+test('display-only coordinators are not counted as radar nodes', () => {
+  const value = compactNodeStatistics({id: 'display', label: 'Display', local: true, role: 'coordinator'},
+    {radar: 'no-data', processorFresh: false, processor: null}, {},
+    {current_setup_lifetime: {}, recent_scored_passes: []});
+  assert.equal(value.available, false);
+  const result = combineNodeStatistics([value, node('radar', 1, 1, 1,
+    {hex: 'abc123', started_at: 1, finalized_at: 2, eligible_cpis: 3})]);
+  assert.equal(result.health.status, 'healthy');
+  assert.equal(result.health.nodes_total, 1);
+  assert.deepEqual(result.health.coordinator_nodes, ['display']);
+  const failedRadar = compactNodeStatistics({id: 'failed', local: true},
+    {radar: 'no-data', processorFresh: false, processor: null}, {}, {});
+  assert.deepEqual(combineNodeStatistics([failedRadar]).health.unhealthy_nodes, ['failed']);
 });
 
 test('combines aligned node opportunities and deduplicates aircraft passes', () => {
@@ -104,4 +132,43 @@ test('network health degrades when any registered node is unavailable', () => {
   const result = combineNodeStatistics([good, {id: 'beta', available: false}]);
   assert.equal(result.health.status, 'degraded');
   assert.deepEqual(result.health.unhealthy_nodes, ['beta']);
+});
+
+test('cached statistics remain visible without certifying stale node health', () => {
+  const cached = {...node('alpha', 1, 1, 1, {hex: 'a00001', started_at: 1,
+    finalized_at: 2, eligible_cpis: 3, outcome: 'tracked'}),
+    stale: true, stale_reason: 'request timed out'};
+  const result = combineNodeStatistics([cached]);
+  assert.equal(result.system_wide_unique_passes.eligible_adsb_passes, 1);
+  assert.equal(result.nodes[0].stale, true);
+  assert.equal(result.health.status, 'degraded');
+  assert.deepEqual(result.health.unhealthy_nodes, ['alpha']);
+});
+
+test('compact and deduplicated network statistics preserve scoring and restart provenance', () => {
+  const pass = {pass_id: 'pass-1', hex: 'abc123', started_at: 1000, finalized_at: 2000,
+    channel: 'primary', eligible_cpis: 6, detected_cpis: 3, detected: true,
+    site_epoch: 'site', evaluation_contract_hash: 'contract', evaluation_policy_hash: 'policy',
+    timing_policy: 'provisional', decision_grade: false,
+    sensitivity_epoch_id: null, sensitivity_epoch_mixed: true};
+  const compact = compactNodeStatistics({id: 'alpha'},
+    {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
+    {timing_policy: 'provisional', channels: [{selected_channel: 'primary', association_statistics: {
+      evaluation_contract_hash: 'contract', evaluation_policy_hash: 'policy',
+      timing_policy: 'provisional', decision_grade: false, sensitivity_epoch: {id: 'new-run'}}}]},
+    {timing_policy: 'provisional', statistics_window: {complete: false}, passes: [pass]});
+  const combined = combineNodeStatistics([compact]);
+  assert.equal(combined.nodes[0].passes[0].evaluation_contract_hash, 'contract');
+  assert.equal(combined.channels[0].evaluation_policy_hash, 'policy');
+  const provenance = combined.unique_recent_passes.passes[0].provenance[0];
+  assert.equal(provenance.node, 'alpha');
+  assert.equal(provenance.sensitivity_epoch_mixed, true);
+  assert.equal(provenance.decision_grade, false);
+  assert.equal(combined.evaluation.mixed_epoch_pass_rows, 1);
+  assert.equal(combined.evaluation.decision_grade, false);
+  assert.equal(combined.evaluation.complete_24h_window, false);
+  assert.equal(combined.evaluation.policy_compatible, true);
+  const other = structuredClone(compact);
+  other.id = 'beta'; other.channels[0].evaluation_policy_hash = 'different-policy';
+  assert.equal(combineNodeStatistics([compact, other]).evaluation.policy_compatible, false);
 });

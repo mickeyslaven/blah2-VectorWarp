@@ -53,6 +53,34 @@ struct IntegrationMetrics {
   std::shared_ptr<integration::TemporalEvidence::Result> evidence;
 };
 
+// Canonical CPI identity for every detector depth. Sample positions validate
+// continuity; they are never substituted for the logical CPI sequence.
+class DetectorEvidenceClock {
+  uint64_t generation_ = 1, sequence_ = 0, captureEpoch_ = 0, firstSample_ = 0, nextSample_ = 0;
+  bool positioned_ = false;
+public:
+  void reset() {
+    sequence_ = 0; positioned_ = false;
+    if (++generation_ == 0) throw std::overflow_error("Detector evidence generation exhausted");
+  }
+  bool observe(uint64_t epoch, uint64_t first, uint64_t end, bool available, bool& changed,
+      bool reuseDuplicate = false) {
+    if (reuseDuplicate && available && positioned_ && epoch == captureEpoch_ &&
+        first == firstSample_ && end == nextSample_) { changed = false; return true; }
+    changed = !available || end <= first ||
+      (positioned_ && (epoch != captureEpoch_ || first != nextSample_));
+    if (changed) reset();
+    if (!available || end <= first) return false;
+    captureEpoch_ = epoch; firstSample_ = first; nextSample_ = end; positioned_ = true;
+    if (sequence_ == UINT64_MAX) throw std::overflow_error("Detector evidence sequence exhausted");
+    ++sequence_; return true;
+  }
+  Detection::Evidence current() const {
+    Detection::Evidence result; result.epoch = generation_; result.newestSequence = sequence_;
+    result.depth = sequence_ ? 1 : 0; result.sequences[0] = sequence_; return result;
+  }
+};
+
 // The same power integration and Gamma-CFAR warm-up contract is used after
 // CPU or portable-GPU CAFs, regardless of channelization or receiver. Capture
 // intervals are half-open and expressed in original input sample units.
@@ -61,11 +89,11 @@ class DetectorIntegration {
   const track_before_detect::MotionBins motion_;
   const double delayDriftPerHz_;
   integration::TemporalEvidence evidence_;
-  uint64_t generation_ = 1, sequence_ = 0, captureEpoch_ = 0, nextSample_ = 0,
-    previousFirst_ = 0;
-  bool positioned_ = false;
+  DetectorEvidenceClock clock_;
+  uint64_t previousFirst_ = 0;
   std::deque<uint64_t> firstSamples_;
 public:
+  const integration::TemporalEvidence& diagnosticEvidence() const noexcept { return evidence_; }
   explicit DetectorIntegration(uint32_t motionBins)
     : DetectorIntegration(2, motionBins) {}
   DetectorIntegration(uint32_t maximumCpis, uint32_t motionBins,
@@ -82,15 +110,14 @@ public:
       throw std::invalid_argument("Fractional temporal integration requires sample/carrier geometry");
   }
   void reset() {
-    evidence_.reset(); sequence_ = 0; positioned_ = false;
+    evidence_.reset(); clock_.reset();
     firstSamples_.clear();
-    if (++generation_ == 0)
-      throw std::overflow_error("Detector integration generation exhausted");
   }
   template <typename MapOwner>
   IntegrationMetrics process(MapOwner& map,
       uint64_t captureEpoch, uint64_t first, uint64_t end, bool positionAvailable,
-      const std::vector<uint32_t>* beams = nullptr) {
+      const std::vector<uint32_t>* beams = nullptr,
+      utility::FixedExecutor* executor = nullptr) {
     IntegrationMetrics metrics;
     metrics.cpis = maximumCpis_; metrics.motionBins = motionBins_;
     metrics.delayMotionBins = motion_.delay;
@@ -104,18 +131,16 @@ public:
       maximumCpis_, motionBins_);
     metrics.workingBytesBound = budget.workingBytes;
     metrics.pathSamplesBound = budget.pathSamples;
-    if (!positionAvailable || end <= first) {
-      reset(); metrics.historyReset = true; return metrics;
-    }
-    if (positioned_ && (captureEpoch != captureEpoch_ || first != nextSample_)) {
-      reset(); metrics.historyReset = true;
-    }
-    captureEpoch_ = captureEpoch; nextSample_ = end; positioned_ = true;
-    if (sequence_ == UINT64_MAX)
-      throw std::overflow_error("Detector integration sequence exhausted");
+    const bool available = clock_.observe(captureEpoch, first, end, positionAvailable, metrics.historyReset);
+    if (metrics.historyReset) { evidence_.reset(); firstSamples_.clear(); }
+    if (!available) return metrics;
+    const auto identity = clock_.current();
     const auto started = std::chrono::steady_clock::now();
+    const integration::EvidenceWorkBudget work{
+      std::chrono::steady_clock::time_point::max(), nullptr, executor};
     auto integrated = std::make_shared<integration::TemporalEvidence::Result>(
-      evidence_.process(*map, generation_, ++sequence_, nullptr, beams));
+      evidence_.process(*map, identity.epoch, identity.newestSequence,
+        executor && executor->size() > 1 ? &work : nullptr, beams));
     metrics.processingMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - started).count();
     metrics.availableCpis = integrated->availableCpis;

@@ -31,8 +31,6 @@ const SOURCE_CHOICES = Object.freeze([
     label: source.label, mode: 'local'}))
 ]);
 
-// The selection values remain stable across platforms. Locations are a local
-// allowlist; the browser cannot turn ADS-B discovery into an arbitrary file read.
 function localFileSources({platform = process.platform, arch = process.arch,
   home = os.homedir(), brewPrefix = process.env.HOMEBREW_PREFIX} = {}) {
   if (platform !== 'darwin') return LOCAL_SOURCES;
@@ -70,10 +68,10 @@ function classifyAdsbSource(value) {
 
 function validateAircraftData(data, {now = Date.now, maxAgeSeconds = 30} = {}) {
   if (!Number.isFinite(data?.now) || !Array.isArray(data?.aircraft))
-    throw new Error('Invalid aircraft data');
+    throw Object.assign(new Error('Invalid aircraft data'), {invalidSnapshot: true});
   const age = now() / 1000 - data.now;
   if (age > maxAgeSeconds || age < -maxAgeSeconds)
-    throw new Error('ADS-B aircraft data is stale or its clock is incorrect');
+    throw Object.assign(new Error('ADS-B aircraft data is stale or its clock is incorrect'), {invalidSnapshot: true});
   return data;
 }
 

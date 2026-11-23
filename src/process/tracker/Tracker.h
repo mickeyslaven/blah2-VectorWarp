@@ -67,6 +67,49 @@ struct TrackerFrameDiagnostics {
     stationaryCells=0, stationaryCapacityRejected=0, stationaryBirthCapacityRejected=0;
 };
 
+// One field order supplies JSON, the resident ABI and device counter storage.
+// Entries are append-only within an ABI; bool noOp is encoded separately.
+struct TrackerDiagnosticField {const char* name; const char* memberName;
+  uint64_t TrackerFrameDiagnostics::*member;};
+#define TRACKER_DIAGNOSTIC(member, name) {name, #member, &TrackerFrameDiagnostics::member}
+inline constexpr TrackerDiagnosticField trackerDiagnosticFields[]={
+  TRACKER_DIAGNOSTIC(detections,"detections"),
+  TRACKER_DIAGNOSTIC(tracksBefore,"tracks_before"),
+  TRACKER_DIAGNOSTIC(tracksAfter,"tracks_after"),
+  TRACKER_DIAGNOSTIC(pairs,"candidate_track_pairs"),
+  TRACKER_DIAGNOSTIC(pairClaimed,"pair_already_claimed"),
+  TRACKER_DIAGNOSTIC(pairDelayRejected,"pair_delay_rejected"),
+  TRACKER_DIAGNOSTIC(pairDopplerRejected,"pair_doppler_rejected"),
+  TRACKER_DIAGNOSTIC(pairInnovationRejected,"pair_innovation_rejected"),
+  TRACKER_DIAGNOSTIC(pairSpatialRejected,"pair_spatial_rejected"),
+  TRACKER_DIAGNOSTIC(pairInGate,"pair_in_gate"),
+  TRACKER_DIAGNOSTIC(pairLineageRejected,"pair_lineage_rejected"),
+  TRACKER_DIAGNOSTIC(associations,"associations"),
+  TRACKER_DIAGNOSTIC(misses,"misses"),
+  TRACKER_DIAGNOSTIC(promotions,"promotions"),
+  TRACKER_DIAGNOSTIC(tentativeExpired,"tentative_expired"),
+  TRACKER_DIAGNOSTIC(inactivityDeleted,"inactivity_deleted"),
+  TRACKER_DIAGNOSTIC(birthCandidates,"birth_candidates"),
+  TRACKER_DIAGNOSTIC(birthSnrRejected,"birth_snr_rejected"),
+  TRACKER_DIAGNOSTIC(birthRidgeRejected,"birth_ridge_rejected"),
+  TRACKER_DIAGNOSTIC(birthDopplerCombRejected,"birth_doppler_comb_rejected"),
+  TRACKER_DIAGNOSTIC(birthRangeCombRejected,"birth_range_comb_rejected"),
+  TRACKER_DIAGNOSTIC(initiated,"initiated"),
+  TRACKER_DIAGNOSTIC(lineageResets,"lineage_resets"),
+  TRACKER_DIAGNOSTIC(birthLineageRejected,"birth_lineage_rejected"),
+  TRACKER_DIAGNOSTIC(birthCapacityRejected,"birth_capacity_rejected"),
+  TRACKER_DIAGNOSTIC(independentCredits,"independent_credits"),
+  TRACKER_DIAGNOSTIC(creditedCpis,"credited_source_cpis"),
+  TRACKER_DIAGNOSTIC(stationaryBirthRejected,"stationary_birth_rejected"),
+  TRACKER_DIAGNOSTIC(stationaryBirthCapacityRejected,"stationary_birth_capacity_rejected"),
+  TRACKER_DIAGNOSTIC(stationaryQuarantined,"stationary_quarantined"),
+  TRACKER_DIAGNOSTIC(stationaryCells,"stationary_cells"),
+  TRACKER_DIAGNOSTIC(stationaryCapacityRejected,"stationary_cell_capacity_rejected"),
+  TRACKER_DIAGNOSTIC(birthExclusiveRejected,"birth_exclusive_rejected")
+};
+#undef TRACKER_DIAGNOSTIC
+inline constexpr size_t trackerDiagnosticCount=sizeof(trackerDiagnosticFields)/sizeof(*trackerDiagnosticFields);
+
 
 // Startup/replay oracle view only. No resident checkpoint is fed back into
 // inference and no evaluation truth is present.
@@ -77,6 +120,7 @@ struct TrackerQualificationState {
   uint64_t inactive=0,measurements=0,updates=0,epoch=0,highWaterSequence=0;
   bool accelerationEstimated=false,everConfirmed=false,lineageKnown=false;
   std::vector<uint8_t> confirmationVotes;
+  Detection::Evidence measurementEvidence{};
 };
 
 class Tracker
@@ -118,6 +162,7 @@ private:
   /// receiver's native delay and Doppler bins, so the contract is independent
   /// of SDR sample rate, carrier frequency, operating system and backend.
   bool normalizedInnovationGate;
+  uint32_t maximumEvidenceDepth=1;
   uint32_t spatialBeams=0, spatialFineFactor=1, spatialTolerance=UINT32_MAX;
   // The latest spatial observation is retained across prediction/coast,
   // exactly as resident history carries its last spatial word forward.
@@ -222,6 +267,7 @@ public:
   /// @return Pointer to track data.
   std::unique_ptr<Track> process(Detection *detection, uint64_t timestamp);
   void configureRecovery(TrackerRecoveryConfig config);
+  void configureMaximumEvidenceDepth(uint32_t depth);
   void configureGrid(const std::deque<int>& delay,const std::deque<double>& doppler);
   void configureSpatialAssociation(uint32_t beams,uint32_t fineFactor,uint32_t tolerance);
   uint32_t spatialForTrack(const std::string& id) const {

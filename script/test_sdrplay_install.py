@@ -2,6 +2,7 @@
 """Source-only contract checks for the fixed SDRplay first-install hook."""
 
 from pathlib import Path
+import json
 import os
 import shutil
 import subprocess
@@ -14,12 +15,14 @@ URL = 'https://sdrplay.com/hardware-api/'
 
 
 class SdrplayInstallContractTest(unittest.TestCase):
-    def test_build_and_native_install_keep_new_helpers_optional(self):
-        build = (ROOT / 'script/build-native.sh').read_text()
+    def test_canonical_artifact_stage_and_native_install_keep_new_helpers_optional(self):
+        plan = json.loads((ROOT / 'packaging/artifact-plan.json').read_text())
         install = (ROOT / 'script/install-native.sh').read_text()
-        self.assertIn('vectorwarp-sdrplay-service.py', build)
-        self.assertIn('vectorwarp-prepare-sdrplay.js', build)
-        self.assertIn('if [[ -f $SOURCE_DIR/script/vectorwarp-sdrplay-service.py ]]', build)
+        staged = {item[0]: (item[1], item[2]) for item in plan['stage']['linux']}
+        self.assertEqual(staged['script/vectorwarp-sdrplay-service.py'],
+                         ('libexec/vectorwarp-sdrplay-service.py', '0755'))
+        self.assertEqual(staged['script/vectorwarp-prepare-sdrplay.js'],
+                         ('libexec/vectorwarp-prepare-sdrplay.js', '0644'))
         self.assertIn('render "$ARTIFACT/libexec/vectorwarp-sdrplay-service.py"', install)
         self.assertIn('install -m 0755 "$temporary/vectorwarp-sdrplay-service" "$target_prefix/libexec/vectorwarp-sdrplay-service"', install)
         self.assertIn('install -m 0644 "$ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js"', install)

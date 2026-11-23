@@ -127,9 +127,13 @@ function fetchHttp(url, options = {}) {
     }
     unavailable = true;
     await new Promise(resolve => setTimeout(resolve, 1100));
-    const failed = await fetchHttp(base + '/api/adsb');
-    assert.equal(failed.status, 503, 'native API must preserve upstream errors');
-    assert.ok((await failed.json()).error);
+    const cached = await fetchHttp(base + '/api/adsb');
+    assert.equal(cached.status, 200, 'a bounded validated snapshot bridges a transport outage');
+    assert.ok(Array.isArray((await cached.json()).aircraft),
+      'cached transport fallback must retain the readsb response contract');
+    const failed = await (await fetchHttp(base + '/api/adsb/status')).json();
+    assert.equal(failed.online, false, 'health must still expose the upstream outage');
+    assert.match(failed.source.message, /503/);
 
     const apiUnit = fs.readFileSync(path.resolve(__dirname,
       '../../contrib/systemd/vectorwarp-api.service.in'), 'utf8');
@@ -147,6 +151,8 @@ function fetchHttp(url, options = {}) {
     assert.match(apiUnit, /SupplementaryGroups=.*vectorwarp-config.*vectorwarp/,
       'API needs read-only processor-group access to hash completed IQ captures');
     assert.match(apiUnit, /BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@/);
+    assert.match(apiUnit, /Wants=vectorwarp-processor\.service/,
+      'an API restart must bring its quiesced processor back online');
     assert.match(apiUnit, /ExecCondition=\/usr\/bin\/node @PREFIX@\/libexec\/vectorwarp-check-node-version/);
     assert.match(processorUnit, /User=vectorwarp/);
     assert.match(processorUnit, /ExecCondition=.*receiver-start-check\.js/);
@@ -169,7 +175,7 @@ function fetchHttp(url, options = {}) {
     assert.match(helper, /"\$#" -ne 0/);
     assert.match(installer, /PREFIX=\/opt\/vectorwarp/);
     assert.match(installer, /no VectorWarp service was enabled or started/);
-    console.log('Native deployment acceptance passed: one-origin UI/API, config save, raw ADS-B, error propagation and scoped non-root units.');
+    console.log('Native deployment acceptance passed: one-origin UI/API, config save, bounded ADS-B fallback, outage health and scoped non-root units.');
   } finally {
     child.kill('SIGTERM');
     await new Promise(resolve => child.exitCode !== null ? resolve() : child.once('exit', resolve));

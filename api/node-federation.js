@@ -8,6 +8,7 @@ const http = require('http');
 const https = require('https');
 const {geometryCatalog, CooperativeDetectionTracker} = require('./cooperative-detection-tracker');
 const {FederatedGeographicFusion} = require('./federated-geographic-fusion');
+const {compactAssociationPass} = require('./evidence-statistics');
 
 const HTTP_AGENT = new http.Agent({keepAlive: true, maxSockets: 16, maxFreeSockets: 8,
   timeout: 5000});
@@ -32,6 +33,12 @@ const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ACTIVE = 8;
 const MAX_LIVE_ASSOCIATIONS = 1024;
 
+function nodeRole(environment = process.env) {
+  const role = environment.VECTORWARP_NODE_ROLE || 'radar';
+  if (!['radar', 'coordinator'].includes(role)) throw new Error('Invalid VectorWarp node role');
+  return role;
+}
+
 function nodeCapabilities(config = {}) {
   const multi = config.process?.multi_illuminator;
   const standards = [...new Set((multi?.illuminators || [])
@@ -44,6 +51,7 @@ function nodeCapabilities(config = {}) {
   if (config.truth?.adsb?.enabled === true) resources.push('adsb');
   if (config.truth?.remote_id?.enabled === true) resources.push('remote-id');
   return {schema: 'vectorwarp-node-capabilities-v1', protocol_version: 1,
+    node_role: nodeRole(),
     federation: {read_only: true, aggregate_identity_merge: false,
       mutations_local_only: true},
     resources, receiver: {type: config.capture?.device?.type || null,
@@ -101,7 +109,9 @@ function registry(filename) {
       token = fs.readFileSync(tokenPath, 'utf8').trim();
       if (!/^[\x21-\x7e]+$/.test(token)) throw new Error('Invalid token');
     }
-    return {id: node.id, label: node.label, origin: url.origin, token,
+    if (node.role !== undefined && !['radar', 'coordinator'].includes(node.role))
+      throw new Error('Invalid node role');
+    return {id: node.id, label: node.label, origin: url.origin, token, role: node.role || 'radar',
       expectedIdentity: node.expectedIdentity, stored: {...node}};
   });
 }
@@ -202,7 +212,8 @@ async function discoverLocalNode(host, port, label) {
     throw new Error('The address is not a compatible VectorWarp node');
   const cleanLabel = typeof label === 'string' && label.trim() ? label.trim() : identity;
   if (cleanLabel.length > 80) throw new Error('Node label is too long');
-  return {id: identity, label: cleanLabel, expectedIdentity: identity, url: origin};
+  return {id: identity, label: cleanLabel, expectedIdentity: identity, url: origin,
+    role: capabilitiesResult.value.node_role === 'coordinator' ? 'coordinator' : 'radar'};
 }
 
 function saveRegistry(filename, nodes) {
@@ -284,10 +295,7 @@ function compactPass(value) {
   const detected = value.detected === true ||
     ['detected_not_tracked', 'tracked'].includes(value.outcome);
   const tracked = value.tracked === true || value.outcome === 'tracked';
-  return {pass_id: value.pass_id ?? null, hex: value.hex ?? null,
-    flight: value.flight ?? null, started_at: value.started_at ?? null,
-    finalized_at: value.finalized_at ?? null, outcome: value.outcome ?? null,
-    channel: value.channel ?? null,
+  return {...compactAssociationPass(value),
     eligible_cpis: Number(value.eligible_cpis) || (value.eligible === false ? 0 : 3),
     detected_cpis: Number(value.detected_cpis) || (detected ? 3 : 0),
     tracked_cpis: Number(value.tracked_cpis) || (tracked ? 3 : 0),
@@ -312,6 +320,11 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
   const channels = channelRows.length ? channelRows.map((row, index) => {
     const value = row?.association_statistics || {};
     return {id: row?.identity?.illuminator || row?.selected_channel || `channel-${index + 1}`,
+      evaluation_contract_hash: value.evaluation_contract_hash || null,
+      evaluation_policy_hash: value.evaluation_policy_hash || null,
+      timing_policy: value.timing_policy || scorecard?.timing_policy || null,
+      decision_grade: value.decision_grade === true,
+      warning: value.warning || null, sensitivity_epoch: value.sensitivity_epoch || null,
       eligible: Number(value.eligible_adsb_passes) || 0,
       detected: Number(value.detection?.associated_passes) || 0,
       tracked: Number(value.tracking?.associated_passes) || 0};
@@ -336,10 +349,14 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
   const queuedBacklogMs = Number.isFinite(readyCpis) && readyCpis >= 0 && cadenceMs > 0 ?
     readyCpis * cadenceMs : Number.isFinite(rawBacklogMs) && cadenceMs > 0 ?
       Math.max(0, rawBacklogMs - cadenceMs) : Number.isFinite(rawBacklogMs) ? rawBacklogMs : null;
+  const radarAvailable = status?.processorFresh === true && status?.processor?.state === 'live';
   return {id: entry.id, label: entry.label || entry.id, local: entry.local === true,
-    available: true, radar: status?.radar || 'unknown', processor_fresh: status?.processorFresh === true,
+    role: entry.role === 'coordinator' || status?.node_role === 'coordinator' ? 'coordinator' : 'radar',
+    available: radarAvailable, radar: status?.radar || 'unknown', processor_fresh: status?.processorFresh === true,
     config_match: status?.configRevision && status?.loadedRevision ?
       status.configRevision === status.loadedRevision : true,
+    statistics_window: associationPasses?.statistics_window || null,
+    timing_policy: associationPasses?.timing_policy || scorecard?.timing_policy || null,
     tracking_status: tracking.status || 'unknown', channels: channels.map(row => ({...row,
       node: entry.id, key: `${entry.id}:${row.id}`})), association, passes,
     timing: {cpi_ms: Number(timing?.cpi) || null,
@@ -383,7 +400,14 @@ function deduplicatePasses(nodes) {
     eligible: group.passes.some(pass => pass.eligible === true || pass.eligible_cpis >= 3),
     detected: group.passes.some(pass => pass.detected === true ||
       ['detected_not_tracked', 'tracked'].includes(pass.outcome)),
-    tracked: group.passes.some(pass => pass.tracked === true || pass.outcome === 'tracked')}));
+    tracked: group.passes.some(pass => pass.tracked === true || pass.outcome === 'tracked'),
+    provenance: group.passes.map((pass, index) => ({node: group.nodes[index], pass_id: pass.pass_id || null,
+      channel: pass.channel || 'primary', site_epoch: pass.site_epoch || null,
+      evaluation_contract_hash: pass.evaluation_contract_hash || null,
+      evaluation_policy_hash: pass.evaluation_policy_hash || null,
+      timing_policy: pass.timing_policy || null, decision_grade: pass.decision_grade === true,
+      sensitivity_epoch_id: pass.sensitivity_epoch_id || null,
+      sensitivity_epoch_mixed: pass.sensitivity_epoch_mixed === true}))}));
 }
 
 function alignNodeStatistics(nodes) {
@@ -407,7 +431,8 @@ function alignNodeStatistics(nodes) {
       const detected = values.filter(pass => pass.detected === true ||
         ['detected_not_tracked', 'tracked'].includes(pass.outcome)).length;
       const tracked = values.filter(pass => pass.tracked === true || pass.outcome === 'tracked').length;
-      return {id, eligible, detected, tracked, node: node.id, key: `${node.id}:${id}`};
+      return {...(node.channels || []).find(channel => channel.id === id),
+        id, eligible, detected, tracked, node: node.id, key: `${node.id}:${id}`};
     });
     const unique = deduplicatePasses([{...node, passes}]).filter(pass => pass.eligible);
     const detected = unique.filter(pass => pass.detected);
@@ -418,47 +443,14 @@ function alignNodeStatistics(nodes) {
 }
 
 function combineNodeStatistics(nodes, cooperative = null) {
-  const rawAvailable = nodes.filter(node => node?.available);
+  const radarNodes = nodes.filter(node => node?.role !== 'coordinator');
+  const rawAvailable = radarNodes.filter(node => node?.available);
   const alignment = alignNodeStatistics(rawAvailable);
   const available = alignment.nodes;
   const channels = available.flatMap(node => node.channels || []);
   const association = channels.reduce((sum, row) => ({eligible: sum.eligible + row.eligible,
     detected: sum.detected + row.detected, tracked: sum.tracked + row.tracked}),
   {eligible: 0, detected: 0, tracked: 0});
-  const passGroups = [];
-  // Kept structurally for compatibility with older coverage; the canonical
-  // deduplicator below owns the aligned pass population.
-  const passRows = [].flatMap(node => (node.passes || []).map(pass => ({node, pass})))
-    .filter(({pass}) => String(pass.hex || pass.flight || '').trim() &&
-      Number.isFinite(Number(pass.started_at)))
-    .sort((left, right) => {
-      const identity = String(left.pass.hex || left.pass.flight).trim().toLowerCase()
-        .localeCompare(String(right.pass.hex || right.pass.flight).trim().toLowerCase());
-      return identity || Number(left.pass.started_at) - Number(right.pass.started_at);
-    });
-  for (const {node, pass} of passRows) {
-    const identity = String(pass.hex || pass.flight || '').trim().toLowerCase();
-    const startedAt = Number(pass.started_at);
-    const finalizedAt = Number(pass.finalized_at) || startedAt;
-    let group = passGroups.at(-1);
-    if (!group || group.identity !== identity || startedAt > group.finalized_at + 30000)
-      group = null;
-    if (!group) { group = {identity, started_at: startedAt, finalized_at: finalizedAt,
-      nodes: [], passes: []}; passGroups.push(group); }
-    group.started_at = Math.min(group.started_at, startedAt);
-    group.finalized_at = Math.max(group.finalized_at, finalizedAt);
-    group.nodes.push(node.id); group.passes.push(pass);
-  }
-  const legacyUniquePasses = passGroups.map(group => ({identity: group.identity,
-    started_at: Math.min(...group.passes.map(pass => Number(pass.started_at))),
-    finalized_at: Math.max(...group.passes.map(pass => Number(pass.finalized_at) || 0)),
-    nodes: [...new Set(group.nodes)].sort(),
-    channels: [...new Set(group.passes.map(pass => pass.channel).filter(Boolean))].sort(),
-    eligible: group.passes.some(pass => pass.eligible === true || pass.eligible_cpis >= 3),
-    detected: group.passes.some(pass => pass.detected === true ||
-      ['detected_not_tracked', 'tracked'].includes(pass.outcome)),
-    tracked: group.passes.some(pass => pass.tracked === true || pass.outcome === 'tracked')}));
-  void legacyUniquePasses;
   const uniquePasses = deduplicatePasses(available);
   const eligibleUnique = uniquePasses.filter(pass => pass.eligible);
   const detectedUnique = eligibleUnique.filter(pass => pass.detected);
@@ -480,15 +472,24 @@ function combineNodeStatistics(nodes, cooperative = null) {
     detected_not_tracked: detectedUnique.length - trackedUnique.length,
     passes: uniquePasses.sort((a, b) => b.started_at - a.started_at).slice(0, 100)};
   const cooperativeTracks = cooperative?.available ? cooperative.tracks || [] : [];
-  const unhealthy = nodes.filter(node => !node?.available || node.radar !== 'receiving' ||
+  const unhealthy = radarNodes.filter(node => !node?.available || node.stale === true || node.radar !== 'receiving' ||
     node.processor_fresh !== true || node.config_match !== true || node.tracking_status === 'degraded' ||
     (node.timing?.cadence_ms > 0 && node.timing?.cpi_ms > node.timing.cadence_ms * 1.1) ||
     (node.timing?.cadence_ms > 0 && node.timing?.backlog_ms > node.timing.cadence_ms * 1.25));
   return {schema: 'vectorwarp-network-statistics-v1', scope: 'all-nodes',
     updated_at: Date.now(), statistics_window: {basis: 'common-retained-finalized-passes',
       started_at: alignment.commonStart, alignment_pending: alignment.alignmentPending},
-    health: {status: unhealthy.length ? 'degraded' : 'healthy',
-      nodes_total: nodes.length, nodes_available: available.length,
+    evaluation: {decision_grade: false,
+      warning: 'Operational retained-pass observations are not a soak regression acceptance decision.',
+      policy_hashes: [...new Set(channels.map(row => row.evaluation_policy_hash).filter(Boolean))],
+      policy_compatible: channels.length > 0 && channels.every(row => row.evaluation_policy_hash) &&
+        new Set(channels.map(row => row.evaluation_policy_hash)).size === 1,
+      complete_24h_window: available.length > 0 && available.every(node => node.statistics_window?.complete === true),
+      mixed_epoch_pass_rows: available.reduce((sum, node) => sum +
+        node.passes.filter(pass => pass.sensitivity_epoch_mixed).length, 0)},
+    health: {status: unhealthy.length ? 'degraded' : radarNodes.length ? 'healthy' : 'no-radar-nodes',
+      nodes_total: radarNodes.length, nodes_available: available.length,
+      coordinator_nodes: nodes.filter(node => node?.role === 'coordinator').map(node => node.id),
       unhealthy_nodes: unhealthy.map(node => node?.id).filter(Boolean),
       maximum_cpi_ms: Math.max(0, ...available.map(node => node.timing?.cpi_ms || 0)),
       maximum_backlog_ms: Math.max(0, ...available.map(node => node.timing?.backlog_ms || 0)),
@@ -519,6 +520,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
     .replace(/^-+|-+$/g, '').slice(0, 32);
   const identity = process.env.VECTORWARP_NODE_ID || hostnameIdentity || 'vectorwarp-node';
   const localLabel = process.env.VECTORWARP_NODE_LABEL || 'Local';
+  const localRole = nodeRole();
   if (identity && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(identity)) throw new Error('Invalid node identity');
   const trackerConfig = config?.process?.tracker || {};
   const cooperativeTracker = new CooperativeDetectionTracker({
@@ -535,6 +537,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   let cooperativeBusy = false, cooperativeLastPollAt = null, cooperativeLastError = null;
   let networkStatisticsCache = null, networkStatisticsCacheAt = 0;
   let networkStatisticsPromise = null;
+  const networkNodeStatisticsCache = new Map();
   let liveAssociationCache = null, liveAssociationCacheAt = 0;
   let liveAssociationPromise = null;
   let cooperativeTotalSourceCount = 0, cooperativeSourceCount = 0, cooperativeAvailableSources = 0;
@@ -543,9 +546,9 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
     configuredBindAddress === '::' ? '::1' : configuredBindAddress;
   const localOrigin = `http://${net.isIP(localAddress) === 6 ? `[${localAddress}]` : localAddress}:${configuredApiPort(config)}`;
   const cooperativeEntries = () => [{id: identity, label: localLabel,
-    expectedIdentity: identity, origin: localOrigin, local: true}, ...nodes.map(node => ({id: node.id,
+    expectedIdentity: identity, origin: localOrigin, local: true, role: localRole}, ...nodes.map(node => ({id: node.id,
     label: node.label, expectedIdentity: node.expectedIdentity, origin: node.origin, token: node.token,
-    local: false}))];
+    local: false, role: node.role || 'radar'}))];
   async function cooperativeRead(entry, pathname, timeoutMs = 900,
       maxBytes = 2 * 1024 * 1024) {
     const result = await probeJson(entry.origin, pathname, timeoutMs, maxBytes,
@@ -564,7 +567,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
     if (cooperativeBusy) return;
     cooperativeBusy = true;
     try {
-      const entries = cooperativeEntries();
+      const entries = cooperativeEntries().filter(entry => entry.role !== 'coordinator');
       const configurations = await Promise.all(entries.map(async entry => {
         try { return {entry, config: await cooperativeConfig(entry)}; }
         catch (_) { return {entry, config: null}; }
@@ -621,8 +624,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   let active = 0;
   let discoveries = 0;
   app.get('/api/federation/nodes', (_req, res) => res.json({local_only: true, nodes: [
-    {id: 'local', identity: identity || null, label: localLabel, local: true},
-    ...nodes.map(({id, label}) => ({id, identity: id, label, local: false}))]}));
+    {id: 'local', identity: identity || null, label: localLabel, local: true, role: localRole},
+    ...nodes.map(({id, label, role}) => ({id, identity: id, label, local: false, role}))]}));
   app.get('/api/federation/cooperative', (_req, res) => res.json({
     ...cooperativeTracker.snapshot(), coordinator: identity,
     polling: {last_poll_at: cooperativeLastPollAt, busy: cooperativeBusy,
@@ -637,8 +640,17 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
         return res.json(liveAssociationCache);
       if (!liveAssociationPromise) liveAssociationPromise = (async () => {
         const rows = await Promise.all(cooperativeEntries().map(async entry => {
-          try { return {entry, value: await cooperativeRead(entry,
-            '/api/live-aircraft-associations', 1500, 512 * 1024)}; }
+          if (entry.role === 'coordinator') return null;
+          try {
+            const [status, value] = await Promise.all([
+              cooperativeRead(entry, '/api/system/status?summary=1', 1500, 512 * 1024),
+              cooperativeRead(entry, '/api/live-aircraft-associations', 1500, 512 * 1024)]);
+            // The evidence owner intentionally retains active-pass history
+            // across stops. A fresh wrapper timestamp cannot make those
+            // historical detected/tracked flags current live evidence.
+            if (status?.processorFresh !== true || status?.processor?.state !== 'live') return null;
+            return {entry, value};
+          }
           catch (_) { return null; }
         }));
         return {schema: 'vectorwarp-federated-live-aircraft-associations-v1', timestamp: Date.now(),
@@ -649,26 +661,37 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
       res.json(liveAssociationCache);
     } finally { liveAssociationPromise = null; }
   });
-  app.get('/api/federation/statistics-summary', async (_req, res) => {
+  app.get(localRole === 'coordinator' ? ['/api/statistics', '/api/federation/statistics-summary'] :
+    '/api/federation/statistics-summary', async (_req, res) => {
     try {
-      if (networkStatisticsCache && Date.now() - networkStatisticsCacheAt < 2000)
+      if (networkStatisticsCache && Date.now() - networkStatisticsCacheAt < 5000)
         return res.json(networkStatisticsCache);
       if (!networkStatisticsPromise) networkStatisticsPromise = (async () => {
         const rows = await Promise.all(cooperativeEntries().map(async entry => {
+          if (entry.role === 'coordinator') return {id: entry.id, label: entry.label,
+            role: 'coordinator', local: entry.local, available: false, channels: [], passes: []};
           try {
             const [status, timing, scorecard, associationPasses] = await Promise.all([
               cooperativeRead(entry, '/api/system/status', 2500),
               cooperativeRead(entry, '/api/timing', 2500),
               cooperativeRead(entry,
-                '/api/live-scorecard/association-basis?timing=provisional', 3500,
-                8 * 1024 * 1024),
+                '/api/live-scorecard/association-basis?timing=provisional&compact=true',
+                2500, 512 * 1024),
               cooperativeRead(entry,
-                '/api/association/passes?timing=provisional', 3500,
+                '/api/association/passes?timing=provisional&compact=true', 2500,
                 8 * 1024 * 1024)]);
-            return compactNodeStatistics(entry, status, timing, scorecard,
+            const value = compactNodeStatistics(entry, status, timing, scorecard,
               associationPasses);
-          } catch (error) { return {id: entry.id, label: entry.label, local: entry.local,
-            available: false, error: error.message, channels: [], passes: []}; }
+            if (value.available) networkNodeStatisticsCache.set(entry.id,
+              {value, updatedAt: Date.now()});
+            return value;
+          } catch (error) {
+            const cached = networkNodeStatisticsCache.get(entry.id);
+            if (cached && Date.now() - cached.updatedAt <= 30000)
+              return {...cached.value, stale: true, stale_reason: error.message};
+            return {id: entry.id, label: entry.label, local: entry.local, role: entry.role,
+              available: false, error: error.message, channels: [], passes: []};
+          }
         }));
         return combineNodeStatistics(rows, cooperativeTracker.snapshot());
       })();
@@ -855,7 +878,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   cooperativeInitial.unref();
   return {geographicFusionSnapshot: () => geographicFusion.snapshot()};
 }
-module.exports = {installNodeFederation, registry, safeConfig, nodeCapabilities, READS,
+module.exports = {installNodeFederation, registry, safeConfig, nodeCapabilities, nodeRole, READS,
   localNodeOrigin, probeJson, discoverLocalNode, cooperativeSources, compactNodeStatistics,
   combineNodeStatistics, deduplicatePasses, alignNodeStatistics, defaultRegistryPath,
   configuredApiPort, mergeLiveAircraftAssociations};

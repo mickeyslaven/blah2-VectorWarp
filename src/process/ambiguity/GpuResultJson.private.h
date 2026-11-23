@@ -1,5 +1,6 @@
 #pragma once
 #include "TemporalCandidateCell.h"
+#include "data/Detection.h"
 // GPU-result views only: validation and legacy JSON formatting; no DSP math.
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -9,6 +10,8 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <array>
@@ -32,10 +35,115 @@ double delay=0,doppler=0,acceleration=0;
 uint64_t associated=0;
 HistoryView history;
 bool measurementKnown=false,measured=false;
-uint32_t source=0;}; // 0 prediction/legacy, 1 detector
+uint32_t source=0;
+Detection::Evidence measurementEvidence{};}; // 0 prediction/legacy, 1 detector
+// Actual accepted input identities, oldest first, bound to this checkpoint.
+struct MeasurementWindow {uint64_t epoch=0,consumedSequence=0;View<uint64_t> sequences;};
 struct TrackView {uint64_t timestamp=0,total=0,tentative=0,associated=0,active=0,coasting=0;
 View<PublishedTrack> published;};
 inline void require(bool yes,const char*why){if(!yes)throw std::invalid_argument(why);}
+// Startup-only product oracle. Preserve exact structural/integer checks and
+// two-place display tolerance; report one bounded mismatch, never whole maps.
+inline void compareOracleJson(const rapidjson::Value& expected,const rapidjson::Value& actual,
+ const char* label,const std::string& path="$"){
+ const auto type=[](const rapidjson::Value& value){
+  if(value.IsNumber())return value.IsInt64()?"int64":value.IsUint64()?"uint64":"double";
+  const char* names[]={"null","bool","bool","object","array","string","number"};
+  return names[value.GetType()];
+ };
+ const auto fail=[&](const char* reason,double tolerance=0,const std::string& location=""){
+  std::ostringstream message;message<<std::setprecision(17)<<label<<" path="<<(location.empty()?path:location)
+   <<" reason="<<reason<<" expected_type="<<type(expected)<<" actual_type="<<type(actual);
+  const auto value=[&](const rapidjson::Value& v){
+   if(v.IsInt64())message<<v.GetInt64();else if(v.IsUint64())message<<v.GetUint64();
+   else if(v.IsNumber())message<<v.GetDouble();else if(v.IsArray())message<<"size:"<<v.Size();
+   else if(v.IsObject())message<<"members:"<<v.MemberCount();
+   else if(v.IsString())message<<"length:"<<v.GetStringLength();
+   else if(v.IsBool())message<<(v.GetBool()?"true":"false");else message<<"null";
+  };
+  message<<" expected=";value(expected);message<<" actual=";value(actual);
+  if(expected.IsNumber()&&actual.IsNumber())message<<" tolerance="<<tolerance;
+  throw std::invalid_argument(message.str());
+ };
+ if(expected.GetType()!=actual.GetType())fail("type");
+ if(expected.IsObject()){
+  if(expected.MemberCount()!=actual.MemberCount())fail("member-count");
+  for(auto member=expected.MemberBegin();member!=expected.MemberEnd();++member){
+   const auto child=(path+"."+std::string(member->name.GetString(),
+    std::min<rapidjson::SizeType>(member->name.GetStringLength(),64))).substr(0,192);
+   if(!actual.HasMember(member->name.GetString()))fail("missing-member",0,child);
+   compareOracleJson(member->value,actual[member->name.GetString()],label,child);
+  }
+ }else if(expected.IsArray()){
+  if(expected.Size()!=actual.Size())fail("array-size");
+  for(rapidjson::SizeType i=0;i<expected.Size();++i)
+   compareOracleJson(expected[i],actual[i],label,(path+"["+std::to_string(i)+"]").substr(0,192));
+ }else if(expected.IsNumber()){
+  const double left=expected.GetDouble(),right=actual.GetDouble();
+  if(expected.IsInt64()&&actual.IsInt64()){
+   if(expected.GetInt64()!=actual.GetInt64())fail("integer");
+  }else if(expected.IsUint64()&&actual.IsUint64()){
+   if(expected.GetUint64()!=actual.GetUint64())fail("integer");
+  }else{
+   const double tolerance=0.010001+1e-7*std::max({1.0,std::abs(left),std::abs(right)});
+   if(!std::isfinite(left)||!std::isfinite(right)||std::abs(left-right)>tolerance)
+    fail("number",tolerance);
+  }
+ }else if(expected.IsString()){
+  if(std::string(expected.GetString())!=actual.GetString())fail("string");
+ }else if(expected.IsBool()){
+  if(expected.GetBool()!=actual.GetBool())fail("boolean");
+ }else if(!expected.IsNull()||!actual.IsNull())fail("null");
+}
+inline void compareOracleJson(const std::string& expected,const std::string& actual,const char* label){
+ rapidjson::Document left,right;
+ left.Parse<rapidjson::kParseFullPrecisionFlag>(expected.c_str());
+ right.Parse<rapidjson::kParseFullPrecisionFlag>(actual.c_str());
+ require(!left.HasParseError()&&!right.HasParseError(),label);
+ compareOracleJson(left,right,label);
+}
+// Fail-only lineage receipt: one candidate, bounded scalar fields and at most
+// eight support identifiers. Never dump maps or alter the comparator's verdict.
+inline std::string oracleLineageDiagnostic(const rapidjson::Value& expected,
+ const rapidjson::Value& actual,View<uint32_t> flags,View<uint32_t> cells,
+ uint32_t rows,uint32_t columns,uint32_t maximum,size_t& index){
+ index=SIZE_MAX;
+ if(!expected.IsObject()||!actual.IsObject()||!expected.HasMember("evidence")||
+  !actual.HasMember("evidence")||!expected["evidence"].IsArray()||!actual["evidence"].IsArray())return {};
+ const auto count=std::min(expected["evidence"].Size(),actual["evidence"].Size());
+ for(rapidjson::SizeType i=0;i<count;++i){
+  try{compareOracleJson(expected["evidence"][i],actual["evidence"][i],"lineage");}
+  catch(const std::invalid_argument&){index=i;break;}
+ }
+ if(index==SIZE_MAX)return {};
+ std::ostringstream out;out<<std::setprecision(17)<<" lineage_index="<<index;
+ if(cells.data&&index<cells.count){const uint32_t cell=cells.data[index];out<<" gpu_cell="<<cell;
+  if(flags.data&&cell<flags.count){const uint32_t flag=flags.data[cell],bank=(flag>>3)&15u;
+   out<<" raw_flags=0x"<<std::hex<<flag<<std::dec<<" decoded_bank="
+    <<((bank&8)?4:(bank&4)?3:(bank&2)?2:(bank&1)?1:0)
+    <<" decoded_delay_motion="<<(int((flag>>17)&7)-2)<<" decoded_doppler_motion="<<(int((flag>>20)&63)-16);
+   try{out<<" gpu_source_cell="<<temporal_candidate::sourceCell(cell,flag,rows,columns,maximum);}
+   catch(const std::invalid_argument&){out<<"invalid";}
+  }
+ }
+ const auto scalar=[&](const rapidjson::Value& value){
+  if(value.IsInt64())out<<value.GetInt64();else if(value.IsUint64())out<<value.GetUint64();
+  else if(value.IsNumber())out<<value.GetDouble();
+  else if(value.IsString())out<<std::string(value.GetString(),std::min<rapidjson::SizeType>(value.GetStringLength(),64));
+  else out<<"invalid";
+ };
+ const auto candidate=[&](const char* label,const rapidjson::Value& product){out<<' '<<label<<"={";
+  for(const char* field:{"delay","doppler","snr"})if(product.HasMember(field)&&product[field].IsArray()&&index<product[field].Size()){
+   out<<field<<'=';scalar(product[field][rapidjson::SizeType(index)]);out<<',';}
+  const auto& evidence=product["evidence"][rapidjson::SizeType(index)];
+  if(evidence.IsObject())for(const char* field:{"kind","epoch_exact","newest_sequence_exact","cpis","bank","delay_motion_bins","doppler_motion_bins","support_sequences_exact"})
+   if(evidence.HasMember(field)){out<<field<<'=';const auto& value=evidence[field];
+    if(value.IsArray()){out<<'[';for(rapidjson::SizeType i=0;i<std::min<rapidjson::SizeType>(value.Size(),8);++i){if(i)out<<',';scalar(value[i]);}out<<']';}
+    else {scalar(value);}out<<',';}
+  out<<'}';
+ };
+ candidate("cpu",expected);candidate("gpu",actual);return out.str();
+}
 inline bool validFineSpatialEvidence(uint32_t spatial,uint32_t fineBeams){
  const uint32_t primary=spatial&127u,secondary=(spatial>>7u)&127u,tertiary=(spatial>>14u)&127u;
  return primary>0&&primary<=fineBeams&&secondary<=fineBeams&&tertiary<=fineBeams;
@@ -203,7 +311,9 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
  w.Key("n");
  w.Uint64(t.associated);
  if(t.measurementKnown){w.Key("measured");w.Bool(t.measured);
-  w.Key("source");w.String(t.source==1?"detector":"prediction");}
+  w.Key("source");w.String(t.source==1?"detector":"prediction");
+  if(t.measured){w.Key("measurement_evidence");rapidjson::Document storage;
+   Detection::evidence_json(t.measurementEvidence,storage.GetAllocator(),true).Accept(w);}}
  w.Key("associated_delay");
  array(w,t.history.delay);
  w.Key("associated_doppler");
@@ -232,15 +342,13 @@ inline std::vector<uint32_t> temporalSourceCells(View<uint32_t> flags,View<uint3
   result.push_back(temporal_candidate::sourceCell(key,value,rows,columns,maximumCpis));}
  return result;
 }
-inline std::string temporalEvidence(std::string base,View<uint32_t> flags,
+// One lossless ABI lineage decoder serves JSON publication and host tracking.
+inline std::vector<Detection::Evidence> temporalCandidates(View<uint32_t> flags,
  View<uint32_t> cells,uint64_t epoch,View<uint64_t> sequences,uint32_t maximum){
  shape(flags);shape(cells);shape(sequences);
  require((maximum==2||maximum==4||maximum==8)&&epoch&&sequences.count&&
   sequences.count<=maximum,"Invalid resident temporal publication history");
- rapidjson::Document d;d.Parse(base.c_str());require(!d.HasParseError()&&d.IsObject()&&
-  d.HasMember("snr")&&d["snr"].IsArray()&&d["snr"].Size()==cells.count,
-  "Resident temporal publication candidate count differs");
- auto& allocator=d.GetAllocator();rapidjson::Value evidence(rapidjson::kArrayType);
+ std::vector<Detection::Evidence> evidence; evidence.reserve(cells.count);
  for(size_t i=0;i<cells.count;++i){require(cells.data[i]<flags.count,"Resident temporal publication cell invalid");
   const uint32_t value=flags.data[cells.data[i]],qualified=(value>>3)&15;
   require((value&4)&&qualified&&!(qualified&(qualified-1)),"Resident originating bank ambiguous");
@@ -248,19 +356,66 @@ inline std::string temporalEvidence(std::string base,View<uint32_t> flags,
    depth=bank>2?1u<<(bank-1):2;
   require(depth<=maximum&&depth<=sequences.count,"Resident temporal publication support incomplete");
   require(bank!=1||(((value>>17)&7)==2&&((value>>20)&63)==16),"Resident baseline contains motion lineage");
-  rapidjson::Value item(rapidjson::kObjectType),support(rapidjson::kArrayType);
-  item.AddMember("kind","temporal_power",allocator);
-  item.AddMember("epoch_exact",rapidjson::Value(std::to_string(epoch).c_str(),allocator),allocator);
-  item.AddMember("newest_sequence_exact",rapidjson::Value(std::to_string(sequences.data[sequences.count-1]).c_str(),allocator),allocator);
-  item.AddMember("cpis",depth,allocator);item.AddMember("bank",bank,allocator);
-  item.AddMember("delay_motion_bins",int((value>>17)&7)-2,allocator);
-  item.AddMember("doppler_motion_bins",int((value>>20)&63)-16,allocator);
+  Detection::Evidence item{epoch,sequences.data[sequences.count-1],uint8_t(depth),uint8_t(bank),
+   int8_t(int((value>>17)&7)-2),int8_t(int((value>>20)&63)-16),{}};
   for(size_t age=0;age<depth;++age){const size_t j=sequences.count-1-age;
    require(sequences.data[j]&&(j==0||sequences.data[j]>sequences.data[j-1]),"Resident temporal publication sequence is not strictly increasing");
-   support.PushBack(rapidjson::Value(std::to_string(sequences.data[j]).c_str(),allocator),allocator);}
-  item.AddMember("support_sequences_exact",support,allocator);evidence.PushBack(item,allocator);}
+   item.sequences[age]=sequences.data[j];}
+  require(Detection::valid_evidence(item),"Resident temporal candidate evidence invalid");
+  evidence.push_back(item);}
+ return evidence;
+}
+inline std::string temporalEvidence(std::string base,View<uint32_t> flags,
+ View<uint32_t> cells,uint64_t epoch,View<uint64_t> sequences,uint32_t maximum){
+ const auto candidates=temporalCandidates(flags,cells,epoch,sequences,maximum);
+ rapidjson::Document d;d.Parse(base.c_str());require(!d.HasParseError()&&d.IsObject()&&
+  d.HasMember("snr")&&d["snr"].IsArray()&&d["snr"].Size()==cells.count,
+  "Resident temporal publication candidate count differs");
+ auto& allocator=d.GetAllocator();rapidjson::Value evidence(rapidjson::kArrayType);
+ d.AddMember("evidence_identity",Detection::identity_json(epoch,sequences.data[sequences.count-1],allocator),allocator);
+ for(const auto& item:candidates)evidence.PushBack(Detection::evidence_json(item,allocator),allocator);
  if(cells.count)d.AddMember("evidence",evidence,allocator);
  rapidjson::StringBuffer buffer;rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);d.Accept(writer);return buffer.GetString();
+}
+inline std::string singleCpiEvidence(std::string base,uint64_t epoch,uint64_t sequence){
+ rapidjson::Document d;d.Parse(base.c_str());require(!d.HasParseError()&&d.IsObject()&&
+  d.HasMember("snr")&&d["snr"].IsArray(),"Resident single-CPI candidate product invalid");
+ Detection::Evidence identity;identity.epoch=epoch;identity.newestSequence=sequence;
+ identity.depth=1;identity.sequences[0]=sequence;
+ require(Detection::valid_evidence(identity),"Resident single-CPI identity unavailable");
+ auto& allocator=d.GetAllocator();rapidjson::Value evidence(rapidjson::kArrayType);
+ d.AddMember("evidence_identity",Detection::identity_json(epoch,sequence,allocator),allocator);
+ for(rapidjson::SizeType i=0;i<d["snr"].Size();++i)
+  evidence.PushBack(Detection::evidence_json(identity,allocator),allocator);
+ if(!evidence.Empty())d.AddMember("evidence",evidence,allocator);
+ rapidjson::StringBuffer buffer;rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);d.Accept(writer);
+ return buffer.GetString();
+}
+// Unrounded detector ABI handoff. Numeric records and acknowledged input
+// support are copied, never recomputed from a display grid or JSON product.
+template<class Record> inline Detection hostDetections(View<Record> records,
+ View<uint32_t> flags,View<uint32_t> cells,uint64_t epoch,
+ View<uint64_t> sequences,uint32_t maximum,bool inputLineageAvailable=true){
+ shape(records);shape(sequences);
+ std::vector<double> delay,doppler,snr;
+ delay.reserve(records.count);doppler.reserve(records.count);snr.reserve(records.count);
+ for(size_t i=0;i<records.count;++i){const auto& d=records.data[i];
+  finite(d.delay);finite(d.doppler);finite(d.snr);
+  delay.push_back(d.delay);doppler.push_back(d.doppler);snr.push_back(d.snr);}
+ Detection result(std::move(delay),std::move(doppler),std::move(snr));
+ if(maximum>1){
+  require(records.count==cells.count,"Resident host detector candidate count differs");
+  result.set_evidence(temporalCandidates(flags,cells,epoch,sequences,maximum));
+ }else if(inputLineageAvailable){
+  require(maximum==1&&sequences.count==1,"Resident host single-CPI support invalid");
+  Detection::Evidence identity{epoch,sequences.data[0],1,0,0,0,{}};
+  identity.sequences[0]=identity.newestSequence;
+  require(Detection::valid_evidence(identity),"Resident host single-CPI evidence invalid");
+  result.set_evidence(std::vector<Detection::Evidence>(records.count,identity));
+ }
+ if(maximum>1||inputLineageAvailable)
+  result.set_evidence_identity(epoch,sequences.data[sequences.count-1]);
+ return result;
 }
 template<class Record> inline std::string detectionRecords(uint64_t timestamp,View<Record> v){
  shape(v);
@@ -406,8 +561,12 @@ inline bool validHistoryMetadata(uint32_t word,HistoryEncoding encoding){
 // The bank is an already committed GPU checkpoint. Decode/copy only its valid
 // prefix and its GPU-selected publication slices; no tracker transition/ID,
 // prediction, count, or display-window computation occurs here.
-inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const CheckpointBinding&binding){
+inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const CheckpointBinding&binding,
+ const MeasurementWindow& measurement={}){
  shape(bank);
+ shape(measurement.sequences);
+ require(!measurement.sequences.count||(measurement.sequences.count<=8&&
+  measurement.consumedSequence==binding.consumedSequence),"GPU measurement window binding differs");
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
  const uint32_t recordBytes=w[1],historyCapacity=w[3];
@@ -476,6 +635,16 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   rows[ordinal]={identity&65535u,state,realPair(w,base),realPair(w,base+2),realPair(w,base+6),measured,
    {{h.d.data(),h.d.size()},{h.f.data(),h.f.size()},{h.s.data(),h.s.size()},{h.m.data(),h.m.size()}},
    true,(newestPrivate&4u)!=0u,(newestPrivate&4u)!=0u?1u:0u};
+  if((newestPrivate&4u)&&measurement.sequences.count){
+   auto& evidence=rows[ordinal].measurementEvidence;
+   evidence.epoch=measurement.epoch;
+   evidence.newestSequence=measurement.sequences.data[measurement.sequences.count-1];
+   evidence.depth=uint8_t(newestPrivate>>(encoding==HistoryEncoding::disjointCredit?5u:4u));
+   require(evidence.depth<=measurement.sequences.count,"GPU measurement support incomplete");
+   for(uint8_t age=0;age<evidence.depth;++age)
+    evidence.sequences[age]=measurement.sequences.data[measurement.sequences.count-1-age];
+   require(Detection::valid_evidence(evidence),"GPU measurement support invalid");
+  }
   ++ordinal;
  }
  require(observed==counts&&ordinal==published,"GPU tracker record/header counts differ");

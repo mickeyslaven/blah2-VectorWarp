@@ -21,6 +21,8 @@ struct PostprocessConfig {
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
  bool replaySnapshot=false;
+ bool amplitudeOutput=false; // Map-only adapter returns canonical amplitudes, not display dB.
+ bool deviceHistory=false; // Map-only reset initializes the ring on device.
 };
 struct PostprocessDetection { double delay=0,doppler=0,snr=0,delayKm=0; };
 static_assert(sizeof(PostprocessDetection)==32,"Postprocess record layout changed");
@@ -49,6 +51,14 @@ struct PostprocessOutputs {
  size_t detectionCellCapacity=0; // final stable grid keys (deduplicated for multi-bank evidence)
 };
 namespace gpu_postprocess {
+// Smaller lattices need only 32 lanes. Retain 64-lane chunks for larger
+// envelopes so their dispatch/barrier count cannot increase. Both sizes fit
+// the 128-invocation minimum required by the other resident shaders.
+inline constexpr uint32_t tbdLocalSize=32u;
+inline uint32_t tbdWorkgroupSize(const PostprocessConfig& c){
+ const uint64_t trajectories=(2ULL*c.integrationDelayMotionBins+1)*(2ULL*c.integrationDopplerMotionBins+1);
+ return trajectories<=tbdLocalSize?tbdLocalSize:64u;
+}
 enum Counter : uint32_t {error=0,levelCells=1,metricCells=2,displayCells=3,cfarCells=4,
  trainingAdds=5,cfarAccepted=6,centroidExamined=7,centroidKept=8,interpolationExamined=9,
  interpolationRejected=10,detectionCount=11,compactCells=12,recordCells=13,diagnosticCount=14,
@@ -107,17 +117,17 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
  track_before_detect::validateBeamHistory(c.integrationCpis,c.integrationBeamTolerance);
- track_before_detect::validateRefinementGrid(c.integrationCpis,c.beamCount,c.bearingScanBeams);
+ if(c.beamCount)track_before_detect::validateRefinementGrid(c.integrationCpis,c.beamCount,c.bearingScanBeams);
  track_before_detect::validateDelayDrift(c.integrationDelayDriftPerHz,c.dopplerAxis);
  if(c.integrationDelayDriftPerHz!=0&&!tbd)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED fractional delay requires TBD");
- if(tbd&&l.cells>UINT32_MAX/128u)
+ if(tbd&&l.cells>UINT32_MAX/tbdWorkgroupSize(c))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED TBD workgroup count");
  if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
     c.integrationDelayMotionBins>(tbd?2u:1u)||c.integrationDopplerMotionBins>(tbd?16u:1u)||
     (!tbd&&c.integrationCpis!=2&&(c.integrationDelayMotionBins||c.integrationDopplerMotionBins))||
-    (tbd&&(!c.detection||!c.beamCount))||
-    (c.bearingScanBeams&&(!tbd||c.bearingCandidatePeaks!=3||c.bearingMethod>1||c.bearingReferenceAnchor>2||
+    (tbd&&!c.detection)||
+    (c.bearingScanBeams&&(!tbd||!c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||c.bearingReferenceAnchor>2||
       c.bearingGuardRadius>3||c.bearingTrainingRadius<=c.bearingGuardRadius||
       c.bearingTrainingRadius>6||!std::isfinite(c.bearingDiagonalLoading)||
       c.bearingDiagonalLoading<=0||c.bearingDiagonalLoading>1))||
@@ -222,23 +232,20 @@ int fractionalDelayOffset(double scale,uint row,uint olderRow,uint age){
 }
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
-shared double pathBest2[64],pathBest4[64],pathBest8[64];
-shared uint pathCode2[64],pathCode4[64],pathCode8[64];
+shared double pathBest2[TBD_LOCAL_SIZE],pathBest4[TBD_LOCAL_SIZE],pathBest8[TBD_LOCAL_SIZE];
+shared uint pathCode2[TBD_LOCAL_SIZE],pathCode4[TBD_LOCAL_SIZE],pathCode8[TBD_LOCAL_SIZE];
 void main(){uint lane=gl_LocalInvocationID.x;
  // Setup-only, on this same device: preserve the original precise FP64/Q16
  // operations, including ties and subnormal handling, without host rounding.
- if(p.a==3u){uint at=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*64u;
-  if(at>=p.count/2u)return;
+ if(p.a==3u){uint at=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*TBD_LOCAL_SIZE;
+  if(at>=p.count)return;
   uint width=2u*m[93]+1u,age=at%m[74],path=at/m[74],row=path/width;
   int dr=int(path%width)-int(m[93]),rr=int(row)-dr*int(age);
   int offset=rr<0||rr>=int(m[32])?0:fractionalDelayOffset(readD(94u),row,uint(rr),age);
   m[m[35]+at]=uint(offset);return;
  }
  uint groupCell=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x;
- // The trajectory phase needs one workgroup per cell.  The initialize/select
- // phases need only one invocation per cell; mapping those phases linearly
- // avoids scheduling 63 idle lanes for every map cell.
- uint linearCell=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*64u;
+ uint linearCell=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*TBD_LOCAL_SIZE;
  uint i=p.a==1u?groupCell:linearCell;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  if(p.a==0u){
@@ -252,9 +259,6 @@ void main(){uint lane=gl_LocalInvocationID.x;
    tbdBanks[(bank+1u)*m[34]+i]=available>=length?-1.0LF:packDouble2x32(uvec2(0u,0x7ff80000u));}
   return;
  }
- // One workgroup owns one map cell. Its lanes evaluate distinct motion paths
- // concurrently, then lane zero reduces exact 2/4/8-CPI maxima in shared
- // memory. Large configured envelopes use ordered 128-path chunks.
  if(p.a==1u){uint delayWidth=2u*m[76]+1u,total=(2u*m[93]+1u)*delayWidth,path=p.b+lane;
   double best2=-1.0LF,best4=-1.0LF,best8=-1.0LF;
   if(path<total){int dr=int(path/delayWidth)-int(m[93]),dc=int(path%delayWidth)-int(m[76]);
@@ -274,11 +278,7 @@ void main(){uint lane=gl_LocalInvocationID.x;
   }
   pathBest2[lane]=best2;pathBest4[lane]=best4;pathBest8[lane]=best8;
   pathCode2[lane]=path;pathCode4[lane]=path;pathCode8[lane]=path;barrier();
-  // Reduce the trajectory maxima across the wavefront.  The previous lane-zero
-  // loop serialized up to 45 paths for every map cell, leaving the other lanes
-  // idle after their trajectory evaluation.  This tree preserves the same max
-  // operation (including the -1 sentinel) while taking logarithmic steps.
-  for(uint stride=32u;stride>0u;stride>>=1u){if(lane<stride){
+  for(uint stride=TBD_LOCAL_SIZE/2u;stride>0u;stride>>=1u){if(lane<stride){
    if(temporalPathBetter(pathBest2[lane+stride],pathBest2[lane],pathCode2[lane+stride]<pathCode2[lane])){pathBest2[lane]=pathBest2[lane+stride];pathCode2[lane]=pathCode2[lane+stride];}
    if(temporalPathBetter(pathBest4[lane+stride],pathBest4[lane],pathCode4[lane+stride]<pathCode4[lane])){pathBest4[lane]=pathBest4[lane+stride];pathCode4[lane]=pathCode4[lane+stride];}
    if(temporalPathBetter(pathBest8[lane+stride],pathBest8[lane],pathCode8[lane+stride]<pathCode8[lane])){pathBest8[lane]=pathBest8[lane+stride];pathCode8[lane]=pathCode8[lane+stride];}}barrier();}
@@ -340,20 +340,20 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
   // and interpolation use bankSnr() from the originating bank instead.
   precise double snr=readS(m[36]+2u*i)-noise;
   if(!finiteD(snr)){reject(204u);return;}writeS(m[38]+2u*i,snr);}
- else {if(m[78]!=0u){double amplitude=sqrt(max(currentPower[i],0.0LF));
-   precise double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
-   precise double value=level-noise;if(!finiteD(value)){reject(204u);return;}writeS(m[37]+2u*i,value);}
-  else {precise double value=readS(m[36]+2u*i)-noise;if(!finiteD(value)){reject(204u);return;}writeS(m[37]+2u*i,value);}
+ else {
+  // Metrics and display consume the same selected map, including temporal
+  // integration. currentPower is only the newest CPI's unintegrated input.
+  precise double value=p.a==3u?sqrt(readS(m[37]+2u*i)):readS(m[36]+2u*i)-noise;if(!finiteD(value)){reject(204u);return;}writeS(m[37]+2u*i,value);
   atomicAdd(m[3],1u);}
 }
 )glsl";
 const char* cfarBody=R"glsl(
 double detectorPower(uint i){return p.a==0u?readS(m[37]+2u*i):tbdBanks[(p.a-1u)*m[34]+i];}
-void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;uint pass=p.c!=0u?p.a:0u;
+void cfarCell(inout uvec4 counts){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;uint pass=p.c!=0u?p.a:0u;
  if(p.b!=0u){s[bankFlags(pass,i)]=pass==0u?s[m[39]+i]&0xffffff00u:0u;s[bankKeep(pass,i)]=0u;}
- uint row=i/m[33],column=i%m[33];atomicAdd(m[4],1u);
+ uint row=i/m[33],column=i%m[33];counts.x=1u;
  if(abs(dopplerAt(row))<readD(52u)||delayAt(column)<double(int(m[51])))return;
- uint at=m[46]+m[84]*column,n=m[at+4u];if(n==0u)return;atomicAdd(m[5],n);double cut=detectorPower(i);if(!finiteD(cut)||(p.a!=0u&&cut<0.0LF))return;
+ uint at=m[46]+m[84]*column,n=m[at+4u];if(n==0u)return;counts.y=n;double cut=detectorPower(i);if(!finiteD(cut)||(p.a!=0u&&cut<0.0LF))return;
  precise double train=0.0LF;for(uint j=m[at];j<m[at+1u];++j){double value=detectorPower(row*m[33]+j);if(p.a!=0u&&(!finiteD(value)||value<0.0LF)){--n;continue;}train=train+value;}
  for(uint j=m[at+2u];j<m[at+3u];++j){double value=detectorPower(row*m[33]+j);if(p.a!=0u&&(!finiteD(value)||value<0.0LF)){--n;continue;}train=train+value;}
  if(n==0u)return;
@@ -363,9 +363,18 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;uint pass=p.c!=0u?p.a:
  precise double threshold=alpha*train;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
  if(p.a==0u&&m[74]==2u&&m[28]==0u)return;
- if(p.d!=0)atomicAdd(m[63],1u);
- if(cut>threshold){uint previous=atomicOr(s[bankFlags(pass,i)],1u|(p.a==0u?(m[74]==2u?(m[76]!=0u||m[93]!=0u?16u:8u):0u):(1u<<(p.a+2u))));if((previous&1u)==0u)atomicAdd(m[6],1u);
+ if(m[59]!=0u)counts.z=1u;
+ if(cut>threshold){uint previous=atomicOr(s[bankFlags(pass,i)],1u|(p.a==0u?(m[74]==2u?(m[76]!=0u||m[93]!=0u?16u:8u):0u):(1u<<(p.a+2u))));if((previous&1u)==0u)counts.w=1u;
   uint record=bankRecord(pass,i);writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,bankSnr(pass,i));}
+}
+// Integer-only coverage reduction: every invocation reaches every barrier,
+// including excluded/padded cells. CFAR arithmetic and early exits stay above.
+shared uvec4 cfarCounts[128];
+void main(){uvec4 counts=uvec4(0u);cfarCell(counts);uint lane=gl_LocalInvocationID.x;
+ cfarCounts[lane]=counts;barrier();
+ for(uint stride=64u;stride>0u;stride>>=1u){if(lane<stride)cfarCounts[lane]+=cfarCounts[lane+stride];barrier();}
+ if(lane==0u){uvec4 ids=uvec4(4u,5u,63u,6u);
+  for(uint field=0u;field<4u;++field)if(cfarCounts[0][field]!=0u)atomicAdd(m[ids[field]],cfarCounts[0][field]);}
 }
 )glsl";
 const char* refineBody=R"glsl(
@@ -508,7 +517,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;
   int sourceDc=int(source%m[33])-int(i%m[33]),sourceDr=int(source/m[33])-int(i/m[33]);
   if(abs(sourceDc)>1||abs(sourceDr)>1){reject(211u);return;}
   uint sourceCode=1u+uint(sourceDc+1)+3u*uint(sourceDr+1);
-  s[m[39]+i]=(s[m[39]+i]&3u)|4u|(1u<<(pass+2u))|((uint(fused[source].y)+1u)<<8u)|((uint(dc+2)|(uint(dr+16)<<3u))<<17u)|(sourceCode<<26u);
+  s[m[39]+i]=(s[m[39]+i]&3u)|4u|(1u<<(pass+2u))|(m[75]==0u?0u:(uint(fused[source].y)+1u)<<8u)|((uint(dc+2)|(uint(dr+16)<<3u))<<17u)|(sourceCode<<26u);
   s[m[40]+i]=1u;return;}
  if(p.a==4u){if(s[m[40]+i]==0u)s[m[39]+i]&=~4u;return;}
  if((s[m[39]+i]&4u)==0u)return;uint record=m[42]+6u*i;
@@ -560,14 +569,16 @@ void main(){uint i=indexOf();if(i>=(p.a==0u?m[11]:m[14])||m[0]!=0u)return;uint c
  atomicAdd(m[p.a==0u?13u:(p.a==1u?16u:17u)],1u);
 }
 )glsl";
-inline std::vector<std::pair<std::string,std::string>> shaderSources(bool replaySnapshot=false){
+inline std::vector<std::pair<std::string,std::string>> shaderSources(bool replaySnapshot=false,uint32_t localSize=tbdLocalSize){
+ if(localSize!=32u&&localSize!=64u)throw std::invalid_argument("TBD workgroup size unsupported");
  const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody},{"metrics_finish",metricsFinishBody},{"temporal_merge",temporalMergeBody}};
  std::vector<std::pair<std::string,std::string>> result;
  for(const auto& b:bodies){std::string prefix=common;
   prefix+=track_before_detect::pathRankingShaderSource;
   if(std::string(b.first)=="tbd"){const auto at=prefix.find("layout(local_size_x=128)");
    if(at==std::string::npos)throw std::logic_error("TBD local size declaration missing");
-   prefix.replace(at,std::string("layout(local_size_x=128)").size(),"layout(local_size_x=64)");}
+   prefix.replace(at,std::string("layout(local_size_x=128)").size(),"layout(local_size_x="+std::to_string(localSize)+")");
+   prefix+="\n#define TBD_LOCAL_SIZE "+std::to_string(localSize)+"u\n";}
   std::string body=b.second;
   if(replaySnapshot&&std::string(b.first)=="cfar"){
    prefix+="layout(binding=9) buffer ReplayStatistics { double replayStatistics[]; };\n";
@@ -596,6 +607,7 @@ class Stage {
  std::array<uint32_t,32> evidenceStatus_{};
  Context& context_;
  const PostprocessConfig config_;
+ const uint32_t tbdLocalSize_;
  bool observeDetector_=false;
  const uint32_t rows_,columns_;
  const Layout layout_;
@@ -630,30 +642,59 @@ class Stage {
    barrier(command.command);
    hostRead(command.command);
    check(vkEndCommandBuffer(command.command),"postprocess readback recording");
-   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-   submit.commandBufferCount=1;
-   submit.pCommandBuffers=&command.command;
-   check(gpu_host::call(context_.hostTiming,"vkQueueSubmit",0,[&]{return vkQueueSubmit(context_.queue,1,&submit,context_.fence);}),"postprocess readback submit");
-   check(gpu_host::call(context_.hostTiming,"vkWaitForFences",0,[&]{return vkWaitForFences(context_.device,1,&context_.fence,VK_TRUE,UINT64_MAX);}),"postprocess readback fence");
-   check(gpu_host::call(context_.hostTiming,"vkResetFences",0,[&]{return vkResetFences(context_.device,1,&context_.fence);}),"postprocess readback fence reset");
+   gpu_reference::submitAndWait(context_,command.command,"postprocess readback");
    staging_.invalidate(0,chunk);
    std::memcpy(static_cast<unsigned char*>(target)+done,staging_.mapped,size_t(chunk));
    done+=chunk;
   }
  }
+ struct ReadbackCopy { uint64_t source=0,destination=0,bytes=0; void* target=nullptr; };
+ bool copyTogether(std::vector<ReadbackCopy>& copies){
+  uint64_t total=0;
+  for(auto& copy:copies){
+   if(!copy.bytes)continue;
+   total=(total+3u)&~uint64_t(3u);copy.destination=total;
+   if(copy.bytes>staging_.bytes-total)return false;
+   total+=copy.bytes;
+  }
+  if(!total)return true;
+  gpu_reference::CommandOwner command(context_);command.allocate();
+  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  check(vkBeginCommandBuffer(command.command,&begin),"postprocess batched readback recording");
+  barrier(command.command);
+  for(const auto& copy:copies)if(copy.bytes){
+   VkBufferCopy region{copy.source,copy.destination,copy.bytes};
+   vkCmdCopyBuffer(command.command,scratch_.handle,staging_.handle,1,&region);
+  }
+  barrier(command.command);hostRead(command.command);
+  check(vkEndCommandBuffer(command.command),"postprocess batched readback recording");
+  gpu_reference::submitAndWait(context_,command.command,"postprocess batched readback");
+  staging_.invalidate(0,total);
+  for(const auto& copy:copies)if(copy.bytes)
+   std::memcpy(copy.target,static_cast<const unsigned char*>(staging_.mapped)+copy.destination,
+     size_t(copy.bytes));
+  return true;
+ }
 public:
  const auto& evidenceStatus()const{return evidenceStatus_;}
- // Enabled only for the authenticated per-frame replay diagnostic request.
- // CUT counting happens in the dispatched CFAR kernel after all exclusions.
- void observeDetector(bool enabled){observeDetector_=enabled;}
+ // Called at a fenced frame boundary. Resident commands are recorded once,
+ // so this per-frame request must live in metadata, not a baked push constant.
+ // CUT counting remains inside the dispatched CFAR kernel after exclusions.
+ void observeDetector(bool enabled){
+  if(enabled==observeDetector_)return;
+  metadata_->invalidate(59*4,4);
+  static_cast<uint32_t*>(metadata_->mapped)[59]=enabled?1u:0u;
+  metadata_->flush(59*4,4);observeDetector_=enabled;
+ }
  const gpu_native::Timestamps& evidenceTimes()const{return *timestamps_;}
+ double milliseconds(uint32_t stage){return timestamps_->milliseconds(stage);}
  Stage(Context& context,const PostprocessConfig& config,uint32_t rows,uint32_t columns,uint32_t fs,Buffer& fused,Buffer& scratch,Buffer& staging,
   Buffer* channelMaps=nullptr,Buffer* refinementWeights=nullptr,uint32_t channels=0,uint32_t refinementBeams=0)
-  :context_(context),config_(config),rows_(rows),columns_(columns),layout_(validate(config,rows,columns,fs)),fused_(fused),scratch_(scratch),staging_(staging){
+  :context_(context),config_(config),tbdLocalSize_(tbdWorkgroupSize(config)),rows_(rows),columns_(columns),layout_(validate(config,rows,columns,fs)),fused_(fused),scratch_(scratch),staging_(staging){
   const bool tbd=config.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config.integrationCpis):0;
   const uint32_t detectorPasses=tbd?track_before_detect::detectorPassCount(config.integrationCpis):1u;
-  if(tbd&&(!channelMaps||!refinementWeights||!channels||
+  if(tbd&&config.beamCount&&(!channelMaps||!refinementWeights||!channels||
     refinementBeams!=(config.bearingScanBeams?config.bearingScanBeams:config.beamCount*4u)))
    throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED track-before-detect refinement binding");
   if(config.bearingScanBeams){std::vector<bool> used(channels,false);
@@ -766,10 +807,13 @@ public:
   std::memcpy(metadata_->mapped,words.data(),words.size()*4);
   metadata_->flush(0,metadata_->bytes);
   integration_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*8,
-   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-  auto* history=static_cast<double*>(integration_->mapped);
-  std::fill(history,history+layout_.cells*(tbd?config.integrationCpis:1u),std::numeric_limits<double>::quiet_NaN());
-  integration_->flush(0,integration_->bytes);
+   config.deviceHistory?VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT:VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+   config.deviceHistory?VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT:VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+  if(!config.deviceHistory){
+   auto* history=static_cast<double*>(integration_->mapped);
+   std::fill(history,history+layout_.cells*(tbd?config.integrationCpis:1u),std::numeric_limits<double>::quiet_NaN());
+   integration_->flush(0,integration_->bytes);
+  }
   currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   const uint64_t angleWords=track_before_detect::angleHistoryWords(layout_.cells,
@@ -782,11 +826,11 @@ public:
    uint64_t(layout_.cells)*detectorPasses*40,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
   Buffer* bankBinding=tbd?tbdBanks_.get():currentPower_.get();
-  Buffer* mapBinding=tbd?channelMaps:&fused_;
-  Buffer* weightBinding=tbd?refinementWeights:currentPower_.get();
+  Buffer* mapBinding=tbd&&config.beamCount?channelMaps:&fused_;
+  Buffer* weightBinding=tbd&&config.beamCount?refinementWeights:currentPower_.get();
   std::vector<Buffer*> bindings{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),bankBinding,mapBinding,weightBinding,angleHistory_.get()};
   if(replayStatistics_)bindings.push_back(replayStatistics_.get());
-  for(const auto& source:shaderSources(config.replaySnapshot))kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),bindings));
+  for(const auto& source:shaderSources(config.replaySnapshot,tbdLocalSize_))kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),bindings));
   if(offsetWords){
    gpu_reference::CommandOwner command(context);command.allocate();
    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -795,8 +839,7 @@ public:
    upload.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;upload.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
    vkCmdPipelineBarrier(command.command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
     0,1,&upload,0,nullptr,0,nullptr);
-   // Kernel's generic dispatcher counts 128 lanes; TBD uses 64 lanes.
-   kernels_[10]->append(command.command,{offsetWords*2u,3,0,0,0});barrier(command.command);
+   kernels_[10]->append(command.command,{offsetWords,3,0,0,0},tbdLocalSize_);barrier(command.command);
    check(vkEndCommandBuffer(command.command),"fractional offsets recording end");
    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&command.command;
    check(vkQueueSubmit(context.queue,1,&submit,context.fence),"fractional offsets submit");
@@ -834,6 +877,10 @@ public:
  void append(VkCommandBuffer command){
   const bool tbd=config_.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):0;
+  VkMemoryBarrier observation{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  observation.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;observation.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+   0,1,&observation,0,nullptr,0,nullptr);
   vkCmdFillBuffer(command,metadata_->handle,0,statusWords*4,0);
   vkCmdFillBuffer(command,metadata_->handle,61*4,2*4,0);
   vkCmdFillBuffer(command,metadata_->handle,63*4,4,0);
@@ -842,12 +889,11 @@ public:
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
   barrier(command);
   if(tbd){
-   const uint32_t work=layout_.cells*128u;
-   const uint32_t linearWork=layout_.cells*2u; // Kernel dispatch is normalized to 128 lanes; this shader uses 64.
-   kernels_[10]->append(command,{linearWork,0,0,0,0});barrier(command);
+   const uint32_t pathWork=layout_.cells*tbdLocalSize_;
+   kernels_[10]->append(command,{layout_.cells,0,0,0,0},tbdLocalSize_);barrier(command);
    const uint32_t trajectories=(2u*config_.integrationDelayMotionBins+1u)*(2u*config_.integrationDopplerMotionBins+1u);
-   for(uint32_t first=0;first<trajectories;first+=64u){kernels_[10]->append(command,{work,1,first,0,0});barrier(command);}
-   kernels_[10]->append(command,{linearWork,2,0,0,0});barrier(command);
+   for(uint32_t first=0;first<trajectories;first+=tbdLocalSize_){kernels_[10]->append(command,{pathWork,1,first,0,0},tbdLocalSize_);barrier(command);}
+   kernels_[10]->append(command,{layout_.cells,2,0,0,0},tbdLocalSize_);barrier(command);
   }
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
    vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);barrier(command);}
@@ -862,8 +908,8 @@ public:
    if(tbd)for(uint32_t pass=1;pass<=banks+1u;++pass){
     kernels_[1]->append(command,{layout_.cells,pass,0,0,0});barrier(command);
     kernels_[13]->append(command,{1,pass,0,0,0});barrier(command);
-    kernels_[3]->append(command,{layout_.cells,pass,1,1,observeDetector_?1:0});barrier(command);}
-   else {kernels_[3]->append(command,{layout_.cells,0,1,0,observeDetector_?1:0});barrier(command);}
+    kernels_[3]->append(command,{layout_.cells,pass,1,1,0});barrier(command);}
+   else {kernels_[3]->append(command,{layout_.cells,0,1,0,0});barrier(command);}
    timestamps_->end(command,1);
    for(uint32_t stage=2;stage<=3;++stage){timestamps_->begin(command,stage);
     if(tbd)for(uint32_t pass=1;pass<=banks+1u;++pass){kernels_[stage+2]->append(command,{layout_.cells,0,pass,0,0});barrier(command);}
@@ -875,14 +921,14 @@ public:
     kernels_[14]->append(command,{layout_.cells,2,0,0,0});barrier(command);
     kernels_[14]->append(command,{layout_.cells,3,0,0,0});barrier(command);
     kernels_[14]->append(command,{layout_.cells,4,0,0,0});barrier(command);
-    kernels_[12]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
+    if(config_.beamCount){kernels_[12]->append(command,{layout_.cells,0,0,0,0});barrier(command);}}
    appendStableCompaction(command,kernels_,layout_.cells,0);
    kernels_[7]->append(command,{layout_.cells,0,0,0,0});
    barrier(command);
    timestamps_->end(command,4);
   }
   timestamps_->begin(command,5);
-  kernels_[2]->append(command,{layout_.cells,1,0,0,0});
+  kernels_[2]->append(command,{layout_.cells,config_.amplitudeOutput?3u:1u,0,0,0});
   barrier(command);
   timestamps_->end(command,5);
   if(tbd){kernels_[11]->append(command,{1,0,0,0,0});barrier(command);}
@@ -905,7 +951,8 @@ public:
     s[centroidExamined]!=s[cfarAccepted]||s[centroidKept]>s[centroidExamined]||s[interpolationExamined]!=s[centroidKept]||
     s[interpolationRejected]>s[interpolationExamined]||s[detectionCount]>s[interpolationExamined]-s[interpolationRejected]||
     (!tbd&&s[detectionCount]!=s[interpolationExamined]-s[interpolationRejected])||
-    s[compactCells]!=layout_.cells||s[recordCells]!=s[detectionCount]||(tbd&&s[refinedCandidates]!=s[detectionCount]))throw std::runtime_error("GPU postprocess detection coverage mismatch");}
+    s[compactCells]!=layout_.cells||s[recordCells]!=s[detectionCount]||
+    s[refinedCandidates]!=(tbd&&config_.beamCount?s[detectionCount]:0u))throw std::runtime_error("GPU postprocess detection coverage mismatch");}
   else for(uint32_t i=cfarCells;i<=centroidDiagnosticRecords;++i)if(s[i])throw std::runtime_error("Disabled GPU detection executed work");
   const uint32_t kinds=s[compactKinds],passes=(kinds&1u)+((kinds>>1u)&1u)+((kinds>>2u)&1u);
   if((config_.detection?(!(kinds&1u)||(kinds&~7u)):(kinds!=0u))||
@@ -951,13 +998,23 @@ public:
  void copyOutputs(PostprocessOutputs out){
   validateOutputs(out);
   const auto s=checkStatus();
-  copy(uint64_t(layout_.powers)*4,out.display,uint64_t(layout_.cells)*8);
-  if(s[detectionCount])copy(uint64_t(layout_.records)*4,out.detections,uint64_t(s[detectionCount])*32);
-  if(out.levels)copy(uint64_t(layout_.levels)*4,out.levels,uint64_t(layout_.cells)*8);
-  if(out.unflooredSnr)copy(uint64_t(layout_.snr)*4,out.unflooredSnr,uint64_t(layout_.cells)*8);
-  if(out.decisionFlags){copy(uint64_t(layout_.flags)*4,out.decisionFlags,uint64_t(layout_.cells)*4);
+  // Map-only temporal execution previously submitted and fenced once per
+  // host output. Those independent waits dominate short GPU kernels and make
+  // otherwise qualified multi-lane AUTO routes miss live cadence. Copy the
+  // already-complete regions in one command whenever they fit the existing
+  // bounded staging allocation; extreme all-cell detection output retains the
+  // exact chunked fallback below.
+  std::vector<ReadbackCopy> copies{
+   {uint64_t(layout_.powers)*4,0,uint64_t(layout_.cells)*8,out.display},
+   {uint64_t(layout_.records)*4,0,uint64_t(s[detectionCount])*32,out.detections}};
+  if(out.levels)copies.push_back({uint64_t(layout_.levels)*4,0,uint64_t(layout_.cells)*8,out.levels});
+  if(out.unflooredSnr)copies.push_back({uint64_t(layout_.snr)*4,0,uint64_t(layout_.cells)*8,out.unflooredSnr});
+  if(out.decisionFlags)copies.push_back({uint64_t(layout_.flags)*4,0,uint64_t(layout_.cells)*4,out.decisionFlags});
+  if(out.detectionCells)copies.push_back({uint64_t(layout_.indices)*4,0,uint64_t(s[detectionCount])*4,out.detectionCells});
+  if(!copyTogether(copies))for(const auto& request:copies)if(request.bytes)
+   copy(request.source,request.target,request.bytes);
+  if(out.decisionFlags){
    if(config_.integrationCpis<=1)for(size_t i=0;i<out.decisionFlagCount;++i)out.decisionFlags[i]&=7u;}
-  if(out.detectionCells&&s[detectionCount])copy(uint64_t(layout_.indices)*4,out.detectionCells,uint64_t(s[detectionCount])*4);
   const auto* words=static_cast<const uint32_t*>(metadata_->mapped);
   const uint32_t cfarDiagnostic=config_.integrationCpis>2?words[61]:s[cfarAccepted],
    centroidDiagnostic=config_.integrationCpis>2?words[62]:s[centroidKept];
@@ -976,7 +1033,11 @@ public:
   out.metrics->evaluatedCells=words[63];
   if((!out.metrics->detectorObserved&&words[63])||
      (out.metrics->detectorObserved&&(words[63]>s[cfarCells]||s[cfarAccepted]>words[63])))
-   throw std::runtime_error("GPU observed CFAR population differs from executed tests");
+   throw std::runtime_error("GPU observed CFAR population differs from executed tests evaluatedCells="+
+    std::to_string(words[63])+" cfarCells="+std::to_string(s[cfarCells])+
+    " cfarAccepted="+std::to_string(s[cfarAccepted])+" detectorPasses="+
+    std::to_string(config_.integrationCpis>2?track_before_detect::detectorPassCount(config_.integrationCpis):1u)+
+    " observed="+std::to_string(out.metrics->detectorObserved));
  }
 private:
  // Optional qualifier materialization: original flags/SNRs survive interpolation.
@@ -992,12 +1053,7 @@ private:
   barrier(command.command);
   hostRead(command.command);
   check(vkEndCommandBuffer(command.command),"postprocess diagnostic recording");
-  VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-  submit.commandBufferCount=1;
-  submit.pCommandBuffers=&command.command;
-  check(gpu_host::call(context_.hostTiming,"vkQueueSubmit",0,[&]{return vkQueueSubmit(context_.queue,1,&submit,context_.fence);}),"postprocess diagnostic submit");
-  check(gpu_host::call(context_.hostTiming,"vkWaitForFences",0,[&]{return vkWaitForFences(context_.device,1,&context_.fence,VK_TRUE,UINT64_MAX);}),"postprocess diagnostic wait");
-  check(gpu_host::call(context_.hostTiming,"vkResetFences",0,[&]{return vkResetFences(context_.device,1,&context_.fence);}),"postprocess diagnostic fence");
+  gpu_reference::submitAndWait(context_,command.command,"postprocess diagnostic");
   const auto s=checkStatus();
   if(s[diagnosticCount]!=expected||s[kind==1?cfarDiagnosticRecords:centroidDiagnosticRecords]!=expected)throw std::runtime_error("GPU postprocess diagnostic count mismatch");
   if(expected)copy(uint64_t(layout_.records)*4,target,uint64_t(expected)*32);
@@ -1025,5 +1081,53 @@ public:
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);
   context_.diagnostics.stream()<<" cpu_map_calls=0 cpu_cfar_calls=0 cpu_centroid_calls=0 cpu_interpolation_calls=0 cpu_conversion_calls=0\n";
  }
+};
+// Map-only execution adapter for the same qualified kernels. No FFT/reference/
+// clutter capacity is admitted or allocated at this post-fusion boundary.
+class MapStage {
+ Context& context_;
+ Buffer upload_,fused_,scratch_,staging_;
+ Stage stage_;
+ gpu_reference::CommandOwner frame_,reset_;
+ static PostprocessConfig deviceConfig(PostprocessConfig config){config.deviceHistory=true;return config;}
+ void submit(VkCommandBuffer command){
+  VkSubmitInfo info{VK_STRUCTURE_TYPE_SUBMIT_INFO};info.commandBufferCount=1;info.pCommandBuffers=&command;
+  check(vkQueueSubmit(context_.queue,1,&info,context_.fence),"temporal map submit");
+  check(vkWaitForFences(context_.device,1,&context_.fence,VK_TRUE,UINT64_MAX),"temporal map fence");
+  check(vkResetFences(context_.device,1,&context_.fence),"temporal map fence reset");
+ }
+public:
+ MapStage(Context& context,const PostprocessConfig& config,uint32_t fs)
+  :context_(context),
+   upload_(context,uint64_t(config.delayAxis.size())*config.dopplerAxis.size()*16,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+   fused_(context,upload_.bytes,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+   scratch_(context,layout(uint32_t(config.dopplerAxis.size()),uint32_t(config.delayAxis.size()),
+    config.integrationCpis).bytes,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+   staging_(context,upload_.bytes,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT),
+   stage_(context,deviceConfig(config),uint32_t(config.dopplerAxis.size()),uint32_t(config.delayAxis.size()),
+    fs,fused_,scratch_,staging_),frame_(context),reset_(context){
+  if(config.beamCount||config.tracker)throw std::invalid_argument("Temporal map seam requires noncoherent host tracking");
+  stage_.observeDetector(true);
+  frame_.allocate();reset_.allocate();
+  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  check(vkBeginCommandBuffer(frame_.command,&begin),"temporal map recording");
+  VkBufferCopy copy{0,0,upload_.bytes};vkCmdCopyBuffer(frame_.command,upload_.handle,fused_.handle,1,&copy);
+  barrier(frame_.command);stage_.append(frame_.command);
+  check(vkEndCommandBuffer(frame_.command),"temporal map recording end");
+  check(vkBeginCommandBuffer(reset_.command,&begin),"temporal map reset recording");
+  stage_.appendInputReset(reset_.command);
+  check(vkEndCommandBuffer(reset_.command),"temporal map reset recording end");
+  reset();
+ }
+ void reset(){submit(reset_.command);stage_.completeInputReset();}
+ void upload(const std::complex<double>* values){
+  if(!values)throw std::invalid_argument("Temporal map input absent");
+  std::memcpy(upload_.mapped,values,size_t(upload_.bytes));upload_.flush(0,upload_.bytes);
+ }
+ void execute(){submit(frame_.command);}
+ void readback(PostprocessOutputs output){stage_.copyOutputs(output);}
+ double milliseconds(uint32_t stage){return stage_.milliseconds(stage);}
 };
 } // namespace gpu_postprocess

@@ -155,11 +155,16 @@ jobs:
           cp lib/vcpkg.json build/ci-manifest/vcpkg.json
       - name: Configure and test without GPU hardware
         run: |
+          npm ci --prefix api --ignore-scripts --no-audit --no-fund
           cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
             -DBLAH2_KRAKEN_ONLY=OFF -DBLAH2_GPU=OFF -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
             -DBLAH2_ENABLE_RSPDUO=OFF -DBLAH2_ENABLE_USRP=ON -DBLAH2_ENABLE_HACKRF=ON \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-deps/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
+          python3 script/prebuild_acceptance.py --build-dir build/ci \
+            --native-target blah2 --native-target testDetectionMath --native-target testTracker \
+            --native-test testDetectionMath --native-test testTracker --receipt build/ci/prebuild-acceptance.json
           cmake --build build/ci --parallel 2
           ctest --test-dir build/ci --output-on-failure --no-tests=error
       - name: Run offline full-processor replay harness
@@ -178,7 +183,6 @@ jobs:
         env:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
         run: |
-          npm ci --prefix api --ignore-scripts --no-audit --no-fund
           VECTORWARP_LAUNCHER_TEST_API="$PWD/api" VECTORWARP_LAUNCHER_TEST_NODE="$(command -v node)" python3 test/packaging/test_launcher.py -v
           npm test --prefix api
           npm run test:dom --prefix api
@@ -202,35 +206,14 @@ jobs:
           python3 test/packaging/test_smoke_receiver_status.py -v
           python3 test/packaging/test_sdrplay_distribution.py -v
           python3 test/packaging/test_rpm_local_kit.py -v
-      - name: Syntax-check every workflow shell block and release script
-        run: |
-          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh script/test-installed-package.sh
-          python3 -m py_compile script/build-package-repository.py
-          python3 - <<'PY'
-          import pathlib, subprocess, tempfile, yaml
-          for workflow in pathlib.Path('.github/workflows').glob('*.yml'):
-              document = yaml.safe_load(workflow.read_text())
-              for job in document['jobs'].values():
-                  for step in job.get('steps', []):
-                      if 'run' not in step: continue
-                      with tempfile.NamedTemporaryFile(mode='w', suffix='.sh') as script:
-                          script.write(step['run']); script.flush()
-                          subprocess.run(['bash', '-n', script.name], check=True)
-          release = pathlib.Path('.github/workflows/release-packages.yml').read_text()
-          assert 'release-assets/package-manifest.json' in release
-          assert 'release-assets/repository-manifest.json' in release
-          assert 'cp repository/repository-manifest.json release-assets/package-manifest.json' in release
-          assert 'cp repository/repository-manifest.json release-assets/repository-manifest.json' in release
-          assert 'release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json' in release
-          assert 'script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json' in release
-          for workflow in ('ci.yml', 'release-packages.yml'):
-              text = pathlib.Path('.github/workflows', workflow).read_text()
-              assert 'NODE_PATH: $' + '{{ github.workspace }}/api/node_modules' in text
-              assert 'npm run test:dom --prefix api' in text and 'node test/ui/deployment.test.js' in text
-          helper = pathlib.Path('script/upstream-diff.py').read_text()
-          assert 'git diff --stat' in helper and 'git diff --name-status' in helper
-          assert 'https://github.com/{upstream}.git' in helper and 'moving branch' in helper
-          PY
+      - name: Preserve CPU package-gate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cpu-package-gate-${{ github.sha }}
+          path: build/ci/prebuild-acceptance.json
+          if-no-files-found: warn
+          retention-days: 14
   package:
     name: ${{ matrix.distro }} ${{ matrix.arch }} package
     # Every event exercises the same local-kit all-receiver build and upgrade.

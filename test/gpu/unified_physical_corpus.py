@@ -138,8 +138,59 @@ class Checks:
                 for name, observations in sorted(self.observations.items())}
 
 
+class MapEvidenceStream:
+    """Spool exact map arrays while retaining bounded publication metadata."""
+    def __init__(self, root, limit=64 << 20, total=1 << 30):
+        self.root, self.limit, self.total = Path(root).absolute(), limit, total
+        self.root.mkdir()
+        self.pending, self.hashes, self.bytes = {}, set(), 0
+        self.lock = threading.Lock()
+
+    def feed(self, name, block):
+        pending = self.pending.setdefault(name, bytearray())
+        pending.extend(block)
+        output = bytearray()
+        if b"}" in block:
+            suffix, position = b"", 0
+            try:
+                text = pending.decode()
+            except UnicodeDecodeError as error:
+                if error.reason != "unexpected end of data": raise
+                text, suffix = pending[:error.start].decode(), pending[error.start:]
+            decoder = json.JSONDecoder()
+            while position < len(text):
+                while position < len(text) and text[position].isspace(): position += 1
+                if position == len(text): break
+                try:
+                    value, end = decoder.raw_decode(text, position)
+                except json.JSONDecodeError:
+                    break
+                assert len(text[position:end].encode()) <= self.limit, "map publication exceeds 64 MiB"
+                radar_map = value if name == "map" else value["map"]
+                if "data" in radar_map:
+                    body = fixtures.canonical(radar_map.pop("data")) + b"\n"
+                    assert len(body) <= self.limit, "map evidence exceeds 64 MiB"
+                    digest = hashlib.sha256(body).hexdigest()
+                    path = self.root / (digest + ".json")
+                    with self.lock:
+                        if digest not in self.hashes:
+                            assert self.bytes + len(body) <= self.total, "map evidence exceeds 1 GiB"
+                            with path.open("xb") as stream: stream.write(body)
+                            self.hashes.add(digest);self.bytes += len(body)
+                    radar_map["dataArtifact"] = {"path": str(path), "sha256": digest}
+                output.extend(fixtures.canonical(value) + b"\n")
+                position = end
+            pending[:] = text[position:].encode() + suffix
+        assert len(pending) <= self.limit, "incomplete map publication exceeds 64 MiB"
+        return output
+
+    def finish(self):
+        assert all(not value.strip() for value in self.pending.values()), "incomplete map publication at EOF"
+
+
 class CorpusSinks(replay.SinkGroup):
-    def __init__(self):
+    def __init__(self, map_evidence=None):
+        self.map_evidence, self.errors = map_evidence, []
         self.connected, self.eof = set(), set()
         super().__init__()
         name = "bearing"
@@ -171,6 +222,13 @@ class CorpusSinks(replay.SinkGroup):
                         break
                     self.bytes[name] += len(block)
                     if name in self.payloads:
+                        if name in self.truncated: continue
+                        if self.map_evidence and name in ("map", "illuminator"):
+                            try:
+                                block = self.map_evidence.feed(name, block)
+                            except (AssertionError, OSError, ValueError, KeyError) as error:
+                                self.errors.append(str(error));self.truncated.add(name)
+                                continue
                         remaining = replay.MAX_RETAINED_OUTPUT - len(self.payloads[name])
                         if len(block) > remaining:
                             self.truncated.add(name)
@@ -184,6 +242,8 @@ class CorpusSinks(replay.SinkGroup):
         # on every connected stream before inspecting any final product count.
         assert replay.wait_for(lambda: time.monotonic() - started >= .25 and
                                self.connected <= self.eof, started + 3), "output streams did not drain to EOF"
+        assert not self.errors, self.errors
+        if self.map_evidence: self.map_evidence.finish()
 
 
 def parse_events(output):
@@ -199,14 +259,14 @@ def read_observer(root):
     return values
 
 
-def run_case(binary, device, case, recording, scene, *, timeout=CASE_TIMEOUT, configuration=None):
+def run_case(binary, device, case, recording, scene, *, timeout=CASE_TIMEOUT, configuration=None, map_evidence=None):
     if DEADLINE is not None:
         timeout = min(timeout, DEADLINE - time.monotonic())
         assert timeout > 0, "three-hour physical corpus deadline exceeded"
     with tempfile.TemporaryDirectory(prefix="vectorwarp-unified-case-") as temporary:
         root = Path(temporary)
         (root / "observer").mkdir(mode=0o700)
-        status, sinks = replay.StatusServer(), CorpusSinks()
+        status, sinks = replay.StatusServer(), CorpusSinks(map_evidence)
         process = artifact_channel = None
         generation = str(uuid.uuid4())
         log = (root / "processor.log").open("w+")

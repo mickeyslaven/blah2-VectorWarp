@@ -199,6 +199,8 @@ async function connect(endpoint) {
           report.issues.push({route,state,width:result.width,reason:'Plot status covers recording controls',recording:result.recording});}
       if(['statistics-kiosk','statistics-single-kiosk'].includes(process.env.VECTORWARP_LAYOUT_FIXTURE)&&state==='default'){
         const single=process.env.VECTORWARP_LAYOUT_FIXTURE==='statistics-single-kiosk';
+        const incomplete=process.env.VECTORWARP_COVERAGE_INCOMPLETE==='1';
+        const missingNode=process.env.VECTORWARP_COVERAGE_MISSING_NODE==='1';
         const kiosk=await evaluate(`(()=>{const view=document.querySelector('.statistics-kiosk-visuals');
           const shown=!!view&&getComputedStyle(view).display!=='none';
           const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom};};
@@ -207,10 +209,12 @@ async function connect(endpoint) {
             legacyPresenceCards:document.querySelectorAll('.cpi-presence-hero .metric-card').length,
             scrollHeight:Math.max(document.documentElement.scrollHeight,document.body.scrollHeight),
             headlineRows:[...document.querySelectorAll('.statistics-channel-overview>.statistics-distance-hero .metric-card')].map(e=>Math.round(e.getBoundingClientRect().top)),
+            escapedHeadlineText:shown?[...document.querySelectorAll('.statistics-channel-overview>.statistics-distance-hero .metric-card>*')].filter(e=>{const r=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect();return r.top<p.top||r.bottom>p.bottom;}).map(e=>e.textContent):[],
             gaugeRows:[...document.querySelectorAll('.cpi-kiosk-gauge')].map(e=>Math.round(e.getBoundingClientRect().top)),
             internalScroll:shown?[...view.querySelectorAll('.cpi-kiosk-channels,.cpi-kiosk-gauge,.cpi-kiosk-comparison')].filter(e=>e.scrollHeight>e.clientHeight+2).map(e=>({className:e.className,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight})):[],
             horizontalScroll:shown?[...view.querySelectorAll('[class*="cpi-kiosk-"]')].filter(e=>e.scrollWidth>e.clientWidth).map(e=>({className:e.className,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth})):[],
-            detectionLabels:[...(view?.querySelectorAll('.cpi-kiosk-bar.detected b')||[])].map(e=>e.textContent),
+            measuredLabels:[...(view?.querySelectorAll('.cpi-kiosk-bar.tracked b')||[])].map(e=>e.textContent),
+            gapLabels:[...(view?.querySelectorAll('.cpi-kiosk-continuity dd')||[])].map(e=>e.textContent),
             gauges:[...document.querySelectorAll('.cpi-kiosk-ring')].map(e=>e.getAttribute('aria-label')),
             channels:document.querySelectorAll('.cpi-kiosk-channel').length,
             comparison:document.querySelector('.cpi-kiosk-comparison')?rect(document.querySelector('.cpi-kiosk-comparison')):null,
@@ -221,17 +225,19 @@ async function connect(endpoint) {
         assert.equal(kiosk.shown,new URL(route,'http://fixture').searchParams.get('distance_view')==='1');
         if(!single||kiosk.shown){
           assert.deepEqual(kiosk.headlines,['239','65.3%',single?'54.4%':'83.3%'],'Existing pass headline semantics');
-          assert.equal(kiosk.channels,single?1:4,'Every selected channel is charted');
-          assert.match(kiosk.gauges[0],/Detected: 65.3%; Missed: 34.7%/);
-          assert.match(kiosk.gauges[1],single?/Tracked: 54.4%; Not tracked: 45.6% of eligible aircraft passes/:/Tracked: 83.3%; Not tracked: 16.7% of deduplicated detected aircraft passes/);
-          assert.deepEqual(kiosk.detectionLabels,single?['18.7%']:['9.9%','18.7%','16.1%','1.8%'],'Realistic live channel label widths');
+          assert.equal(kiosk.channels,single?1:missingNode?3:4,'Every available channel is charted');
+          assert.match(kiosk.gauges[0],incomplete||missingNode?/Measured track coverage: — of eligible aircraft time/:single?/Measured track coverage: 60.0% of eligible aircraft time/:/Measured track coverage: 80.0% of eligible aircraft time/);
+          assert.equal(kiosk.gauges.length,1,'Primary metric is measured aircraft-time coverage');
+          assert.deepEqual(kiosk.measuredLabels,incomplete?Array(single?1:4).fill('—'):single?['60.0%']:missingNode?['40.0%','60.0%','70.0%']:['40.0%','60.0%','70.0%','20.0%']);
+          assert.deepEqual(kiosk.gapLabels,single&&!incomplete?['10.0 s','10.0 s','10.0 s']:['—','—','—']);
           if(single)assert.equal(kiosk.legacyPresenceCards,0,'Single kiosk replaces legacy stretched text cards');
         }else{
-          assert.deepEqual(kiosk.normalHeadlines,['239','65.3%','54.4%','0'],'Normal single-channel headline values remain unchanged');
+          assert.deepEqual(kiosk.normalHeadlines,['300','65.3%','54.4%','0'],'Normal single-channel presence headline and comparable pass yields remain unchanged');
           assert.equal(kiosk.legacyPresenceCards,4,'Normal single-channel CPI detail cards remain available');
         }
         if(kiosk.shown){
           assert.deepEqual(kiosk.clipped,[],`No kiosk label clipping at ${result.width}`);
+          assert.deepEqual(kiosk.escapedHeadlineText,[],`Headline text stays inside each card at ${result.width}`);
           assert.equal(kiosk.escapedRings,0,`Gauges stay within cards at ${result.width}`);
           assert.deepEqual(kiosk.horizontalScroll,[],`Every kiosk container fits horizontally at ${result.width}`);
           if(result.width===1080||result.width===720){
@@ -239,7 +245,7 @@ async function connect(endpoint) {
             assert.ok(kiosk.comparison.bottom>result.height-90, 'Portrait uses the lower canvas');
             assert.ok(kiosk.scrollHeight<=result.height, `Portrait has no document scrolling at ${result.width}`);
             assert.equal(new Set(kiosk.headlineRows).size,1,'Portrait keeps three headline KPIs together');
-            assert.equal(new Set(kiosk.gaugeRows).size,1,'Portrait keeps two gauges side by side');
+            assert.equal(new Set(kiosk.gaugeRows).size,1,'Portrait keeps primary coverage and continuity side by side');
             assert.deepEqual(kiosk.internalScroll,[],'Portrait shows every channel without internal scrolling');
           }
         }
@@ -251,6 +257,10 @@ async function connect(endpoint) {
         await client.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:Number(process.env.VECTORWARP_LAYOUT_DPR)||1,mobile:false});
         await evaluate('new Promise(resolve=>setTimeout(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)),150))');
         await record(route);
+        if(process.env.VECTORWARP_LAYOUT_SCREENSHOT && width===720 && new URL(route,'http://fixture').searchParams.get('distance_view')==='1') {
+          const screenshot=await client.send('Page.captureScreenshot',{format:'png'});
+          fs.writeFileSync(process.env.VECTORWARP_LAYOUT_SCREENSHOT.replace(/\.png$/, '-720x1280.png'),Buffer.from(screenshot.data,'base64'));
+        }
         if(route==='/display/configuration/'){
           const tabs=await evaluate(`[...document.querySelectorAll('.config-tabs button')].map(button=>button.dataset.tab)`);
           for(const tab of tabs){
@@ -266,6 +276,10 @@ async function connect(endpoint) {
           await evaluate(`document.querySelectorAll('details.statistics-details,details.statistics-table-details,details.recording-card').forEach(item=>item.open=false)`);}
       }
       console.log(`Checked ${route} at six viewports`);
+      if(process.env.VECTORWARP_LAYOUT_SCREENSHOT && new URL(route,'http://fixture').searchParams.get('distance_view')==='1') {
+        const screenshot=await client.send('Page.captureScreenshot',{format:'png'});
+        fs.writeFileSync(process.env.VECTORWARP_LAYOUT_SCREENSHOT,Buffer.from(screenshot.data,'base64'));
+      }
     }
     // Compatibility URLs must reach the same tested canonical surfaces.
     for(const alias of process.env.VECTORWARP_LAYOUT_ROUTES?[]:aliases){

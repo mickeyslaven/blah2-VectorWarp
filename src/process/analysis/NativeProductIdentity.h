@@ -18,9 +18,11 @@ struct NativeProductIdentity {
   uint64_t captureEpoch = 0, captureFirst = 0, captureEnd = 0;
   std::vector<uint32_t> channelIds, referenceChannelIds;
   EventTimeProvenance eventTime;
-  std::string productBackend, productDevice;
+  std::string productBackend, productDevice, resolvedProductPlan;
   bool temporalExecuted = false, detectorExecuted = false, trackerExecuted = false;
   bool bearingExecuted = false;
+  bool trackerOnHost = false;
+  bool fusionOnHost = false;
 };
 
 // Add identity without parsing/reformatting the scientific payload. Map and
@@ -35,6 +37,9 @@ inline std::string annotate_native_product(std::string json,
   writer.Key("illuminator_id"); writer.String(identity.illuminatorId.c_str());
   writer.Key("frequency_hz"); writer.Uint64(identity.frequencyHz);
   writer.Key("sample_rate_hz"); writer.Uint(identity.sampleRateHz);
+  if (!identity.resolvedProductPlan.empty()) {
+    writer.Key("resolved_product_plan"); writer.String(identity.resolvedProductPlan.c_str());
+  }
   writer.Key("first_input_sample"); writer.Uint64(identity.firstInputSample);
   writer.Key("end_input_sample"); writer.Uint64(identity.endInputSample);
   // Preserve the legacy inclusive last output-sample position. The explicit
@@ -51,23 +56,24 @@ inline std::string annotate_native_product(std::string json,
     lineage.GetAllocator()).Accept(writer);
   if (!identity.productBackend.empty()) {
     writer.Key("product_stage_execution"); writer.StartObject();
-    const auto stage = [&](const char* name, bool executed) {
+    const auto stage = [&](const char* name, bool executed, bool onHost = false) {
+      const std::string backend = onHost ? "cpu" : identity.productBackend;
       writer.Key(name); writer.StartObject();
-      writer.Key("backend"); writer.String(identity.productBackend.c_str());
-      writer.Key("device"); writer.String(identity.productDevice.c_str());
+      writer.Key("backend"); writer.String(backend.c_str());
+      writer.Key("device"); writer.String(onHost ? "" : identity.productDevice.c_str());
       writer.Key("execution");
-      stage_execution_json(true, executed && identity.productBackend != "cpu",
-        executed && identity.productBackend == "cpu",
+      stage_execution_json(true, executed && backend != "cpu",
+        executed && backend == "cpu",
         identity.captureSamplePositionAvailable && validEnd, identity.captureEpoch,
         identity.firstInputSample, validEnd ?
           identity.endInputSample + identity.inputSamplesPerOutput : 0,
         lineage.GetAllocator()).Accept(writer);
       writer.EndObject();
     };
-    stage("fusion", true);
+    stage("fusion", true, identity.fusionOnHost);
     stage("temporal", identity.temporalExecuted);
     stage("detector", identity.detectorExecuted);
-    stage("tracker", identity.trackerExecuted);
+    stage("tracker", identity.trackerExecuted, identity.trackerOnHost);
     stage("bearing", identity.bearingExecuted);
     writer.EndObject();
   }

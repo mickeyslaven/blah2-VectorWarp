@@ -63,6 +63,8 @@ struct ReplayOptions {
 // Portable, self-describing float32 complex samples, preserving all input
 // channels. A successful close marks the file complete; an interrupted recording
 // remains distinguishable from a correctly finished recording.
+// Producer/control methods require external serialization; only the internal
+// disk worker runs concurrently. Source owns that serialization for live IQ.
 class RecordingWriter {
   struct Impl;
   std::unique_ptr<Impl> impl_;
@@ -76,6 +78,11 @@ public:
   void append_slice(const IqBlock& samples, std::size_t offset,
     std::size_t count);
   void close();
+  // Stop accepting data without waiting for an in-flight disk operation.
+  // Ownership must be retained until control-thread teardown; close refuses
+  // every aborted file. Control may retire an idle aborted writer for rollover.
+  void abort();
+  bool abort_ready() const;
   uint64_t samples() const;
 };
 

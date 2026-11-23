@@ -10,8 +10,8 @@
 
 namespace blah2::integration {
 
-// Optional cooperative budget for diagnostic workers only. Ordinary replay
-// callers omit it and retain the existing numerical contract.
+// Optional cooperative budget and borrowed executor. Production uses an
+// unlimited deadline with its already bounded DSP pool; diagnostics may cancel.
 struct EvidenceWorkBudget {
   std::chrono::steady_clock::time_point deadline;
   const std::atomic<bool>* stop = nullptr;
@@ -37,10 +37,13 @@ inline constexpr std::size_t temporalTileScratchBytes = 1u << 20;
 template<class Compute, class Reduce>
 void orderedRowTiles(uint32_t rows, uint32_t columns, uint32_t fields,
     const EvidenceWorkBudget& budget, Compute compute, Reduce reduce) {
-  const std::size_t slots = std::min<std::size_t>(8, budget.executor->size());
   const std::size_t rowWords = std::size_t(columns) * fields;
-  if (!rowWords || rowWords * slots > temporalTileScratchBytes / sizeof(double))
+  if (!rows || !rowWords)
     throw std::invalid_argument("Temporal row tile exceeds bounded scratch");
+  const std::size_t rowCapacity = temporalTileScratchBytes / sizeof(double) / rowWords;
+  if (!rowCapacity) { compute(0, rows, nullptr); return; }
+  const std::size_t slots = std::min({std::size_t(8), budget.executor->size(),
+    std::size_t(rows), rowCapacity});
   const std::size_t tileRows = std::min<std::size_t>((rows + slots - 1) / slots,
     temporalTileScratchBytes / sizeof(double) / rowWords / slots);
   const std::size_t tileWords = tileRows * rowWords;

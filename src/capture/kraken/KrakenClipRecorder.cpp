@@ -1,6 +1,7 @@
 #include "KrakenClipRecorder.h"
 #include "capture/Sha256.h"
 #include "capture/RecordingAcquisitionJson.h"
+#include "capture/RecordingFileCache.h"
 #include "data/meta/EventTime.h"
 
 #include <algorithm>
@@ -67,6 +68,7 @@ public:
     descriptor = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
       0640);
     if (descriptor < 0) throw std::runtime_error(system_error("Cannot create clip"));
+    RecordingFileCacheIo::prepare(descriptor);
   }
   ~OutputFile() { if (descriptor >= 0) ::close(descriptor); }
   void write(const void* source, std::size_t count)
@@ -80,16 +82,20 @@ public:
       bytes += written;
       count -= static_cast<std::size_t>(written);
       if (digest) digest->update(bytes - written, static_cast<std::size_t>(written));
+      writtenBytes += static_cast<uint64_t>(written);
+      cache.written(descriptor, writtenBytes);
     }
   }
   void flush()
   {
-    if (::fsync(descriptor) != 0)
-      throw std::runtime_error(system_error("Cannot flush clip"));
+    RecordingFileCacheIo::flush(descriptor);
+    RecordingFileCache<>::durable(descriptor, writtenBytes);
   }
 private:
   int descriptor = -1;
   Sha256* digest = nullptr;
+  RecordingFileCache<> cache;
+  uint64_t writtenBytes = 0;
 };
 
 void lower_writer_priority()

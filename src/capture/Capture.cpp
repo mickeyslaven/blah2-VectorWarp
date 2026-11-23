@@ -240,6 +240,7 @@ void Capture::process(const std::vector<IqData *>& buffers,
             applyRecordingRequest(legacy->body == "true", 0, false);
         }
       }
+      if (device && !inputStopped.load()) device->service_recording();
       cli.Post("/api/processor/status", status_json(), "application/json");
       for (unsigned i=0; i<25 && !stopping.load(); ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));

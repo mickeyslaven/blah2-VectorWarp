@@ -47,7 +47,7 @@ class PrebuildAcceptanceTests(unittest.TestCase):
                                      ("git", "diff", "--check")])
         self.assertEqual([row["name"] for row in receipt["commands"]],
                          ["diff_check_cached", "diff_check", "prebuild_contract", "repository_budget",
-                          "canonical_architecture", "ci_contract", "api_contract", "ui_contract"])
+                          "canonical_architecture", "ci_contract", "api_contract", "effective_radar_plan", "ui_contract"])
         self.assertEqual(receipt["outcome"], "passed")
 
     def test_empty_target_is_not_a_declaration(self):

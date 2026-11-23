@@ -113,8 +113,10 @@ const calibrationRenderer = insights.slice(insights.indexOf('async function rend
   insights.indexOf('const renderers ='));
 assert.doesNotMatch(locationsRenderer, /api\/bearing\/diagnostic/,
   'The primary Map must not fetch engineering-only bearing diagnostics');
-assert.match(calibrationRenderer, /api\/bearing\/diagnostic/,
-  'Array calibration owns known-angle and wiring diagnostics');
+assert.match(calibrationRenderer, /api\/array-calibration\/status/,
+  'Calibration reports the canonical recorder, reference and static model status');
+assert.doesNotMatch(calibrationRenderer, /api\/bearing\/diagnostic/,
+  'Known-angle and wiring diagnostics remain offline, not a live UI worker');
 assert.match(insights, /class="overview-health"/,
   'Displays includes the compact system health checklist');
 assert.match(controller, /id="view-root"/,

@@ -16,9 +16,12 @@
 #include <vector>
 #include <mutex>
 
+namespace blah2 { struct KrakenClipRecorderTestAccess; }
+
 class Kraken : public Source
 {
 private:
+  friend struct blah2::KrakenClipRecorderTestAccess;
   static constexpr std::size_t MAX_CHANNELS = 8;
   static constexpr uint32_t SUITE_SAMPLE_RATE = 2400000;
   std::size_t channelCount;

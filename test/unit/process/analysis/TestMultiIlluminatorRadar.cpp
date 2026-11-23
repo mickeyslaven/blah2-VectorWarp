@@ -12,6 +12,7 @@
 #include "process/analysis/NativeProductIdentity.h"
 #include "process/ambiguity/ResidentLaneBudget.h"
 #include "process/ambiguity/GpuLaneLease.h"
+#include "process/spectrum/SpectrumAnalyser.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include "process/ambiguity/GpuWorkerLifetime.h"
@@ -21,6 +22,8 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
+#include <unistd.h>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -45,6 +48,17 @@ blah2::multi_illuminator::RadarConfig smallLaneConfig() {
   config.centroidRadius = 2; config.laneWorkers = 1;
   config.reference.analysisSamples = 256;
   config.trackerM = 1; config.trackerN = 1; config.trackerDelete = 2;
+  return config;
+}
+
+blah2::temporal_gpu::Config temporalBudgetConfig(uint32_t rows,uint32_t columns,uint32_t depth) {
+  blah2::temporal_gpu::Config config;
+  config.sampleRate=3072000;config.device="budget-fixture";
+  config.delayAxis.resize(columns);config.dopplerAxis.resize(rows);
+  for(uint32_t i=0;i<columns;++i)config.delayAxis[i]=int32_t(i);
+  for(uint32_t i=0;i<rows;++i)config.dopplerAxis[i]=double(i);
+  config.detector.enabled=true;config.detector.pfa=.001;config.detector.train=16;
+  config.detector.centroidDopplerResolution=1;config.detector.integrationCpis=depth;
   return config;
 }
 
@@ -142,6 +156,28 @@ TEST_CASE("immutable radar plans preserve physical intent across backends and te
     intent.pfa = .1;
     REQUIRE(plan.products().pfa == 1e-5);
   }
+}
+
+TEST_CASE("canonical resident spectrum bandwidth and shape share one resolver")
+{
+  using namespace blah2::pipeline;
+  constexpr uint32_t samples = 2000, rate = 20000;
+  const auto narrow = resolveReferenceSpectrumBandwidth(2000.0, rate);
+  REQUIRE(narrow == 2000.0);
+  REQUIRE(resolveReferenceSpectrumBins(samples, rate, narrow) == 10);
+  const auto full = resolveReferenceSpectrumBandwidth(std::nullopt, rate);
+  REQUIRE(full == rate);
+  REQUIRE(resolveReferenceSpectrumBins(samples, rate, full) == 1);
+}
+
+TEST_CASE("capture and canonical lanes share exact rounded CPI geometry")
+{
+  using blah2::pipeline::resolveCpiSamples;
+  REQUIRE(resolveCpiSamples(2400000, 0.41) == 984000);
+  REQUIRE(resolveCpiSamples(20000, 0.57) == 11400);
+  REQUIRE(resolveCpiSamples(20000, 0.5) == 10000);
+  REQUIRE_THROWS_AS(resolveCpiSamples(0, 0.5), std::invalid_argument);
+  REQUIRE_THROWS_AS(resolveCpiSamples(20000, 0.0), std::invalid_argument);
 }
 
 TEST_CASE("resolved radar identity changes for every owned policy field")
@@ -390,6 +426,33 @@ TEST_CASE("host-conditioned AUTO lanes retain the portable GPU route")
   REQUIRE_FALSE(shouldAttemptResidentFrontend("gpu-resident", true, false));
 }
 
+TEST_CASE("AUTO selects required resident algorithms without rewriting requested mode")
+{
+  using namespace blah2::pipeline;
+  AdvancedFeatureConfig features;
+  REQUIRE_FALSE(requiresResidentProducts(features));
+  REQUIRE_FALSE(selectRequiredResidentRoute("auto",false));
+  REQUIRE(selectRequiredResidentRoute("gpu-resident",false));
+  features.trackerGpuCapacityConfigured=true;
+  features.stationaryClutter=true;
+  REQUIRE_FALSE(requiresResidentProducts(features));
+  for(unsigned feature=0;feature<3;++feature) {
+    auto required=features;
+    if(feature==0)required.surveillanceFusionMode="noise_whitened_beam_bank";
+    if(feature==1)required.bearing=true;
+    if(feature==2)required.trackerBeamToleranceConfigured=true;
+    REQUIRE(requiresResidentProducts(required));
+    const std::string requested="auto";
+    REQUIRE(selectRequiredResidentRoute(requested,true));
+    REQUIRE(requested=="auto");
+    REQUIRE_THROWS_AS(selectRequiredResidentRoute("cpu",true),std::invalid_argument);
+    REQUIRE_THROWS_AS(selectRequiredResidentRoute("gpu",true),std::invalid_argument);
+    REQUIRE_FALSE(shouldAttemptResidentFrontend(requested,false,true));
+    REQUIRE_FALSE(shouldAttemptResidentFrontend(requested,true,true,false));
+    REQUIRE_FALSE(shouldAttemptPortableFrontend(requested,false,true));
+  }
+}
+
 TEST_CASE("AUTO retains portable eligibility after optional resident absence or failure")
 {
   using blah2::pipeline::shouldAttemptResidentFrontend;
@@ -407,6 +470,217 @@ TEST_CASE("AUTO retains portable eligibility after optional resident absence or 
   REQUIRE_FALSE(shouldAttemptPortableFrontend("gpu-resident", false, false));
   REQUIRE_FALSE(shouldAttemptPortableFrontend("cpu", false, false));
   REQUIRE(shouldAttemptPortableFrontend("gpu", false, false));
+}
+
+TEST_CASE("AUTO noncoherent temporal detection preserves the canonical host tracker")
+{
+  using namespace blah2::pipeline;
+  for (uint32_t depth : {2u, 4u, 8u}) {
+    ProductConfig intent;intent.integrationCpis=depth;
+    intent.integrationMotion=depth==2?1:track_before_detect::encodeMotionBins(2,4,true);
+    intent.delayDriftPerHz=depth>2?track_before_detect::delayDriftPerHz(1200000,509000000):0;
+    intent.ridgeBirth={true,3,2,.25};intent.trackerN=32;intent.trackerDelete=16;
+    const RadarPlan plan(intent);
+    REQUIRE(shouldAttemptResidentFrontend("auto",true,true));
+    blah2::resident::Config frontend;
+    frontend.detector=plan.residentDetector();
+    REQUIRE(frontend.fusion.mode==blah2::resident::FusionMode::noncoherent);
+    REQUIRE(frontend.detector.enabled);
+    REQUIRE(frontend.detector.integrationCpis==depth);
+    REQUIRE(frontend.detector.integrationMotionBins==intent.integrationMotion);
+    REQUIRE(frontend.detector.pfa==intent.pfa);
+    REQUIRE_FALSE(frontend.tracker.enabled);
+    ProductStages products(plan);
+    REQUIRE(products.config().stages.tracking);
+    REQUIRE(products.config().ridgeBirth.enabled);
+    REQUIRE_FALSE(shouldAttemptResidentFrontend("auto",false,true));
+    REQUIRE(shouldAttemptPortableFrontend("auto",false,false));
+  }
+}
+
+TEST_CASE("AUTO avoids the portable clutter round trip and admits temporal acceleration")
+{
+  using namespace blah2::pipeline;
+  auto config=smallLaneConfig();config.accelerationMode="auto";
+  config.delayReferenceRateHz=2000000;config.delayMin=-10;config.delayMax=400;
+  config.clutterFollowsAmbiguity=true;
+  const auto lane=scaleRadarConfigForLane(config,6144000);
+  REQUIRE(lane.clutterDelayMax-lane.clutterDelayMin>1024);
+  REQUIRE_FALSE(shouldAttemptResidentFrontend("auto",true,false));
+  REQUIRE(shouldAttemptPortableFrontend("auto",false,false));
+  REQUIRE_FALSE(shouldOfferPortableGpuClutter("auto",true));
+  REQUIRE_FALSE(shouldOfferPortableGpuClutter("cpu",true));
+  REQUIRE_FALSE(shouldOfferPortableGpuClutter("gpu",false));
+  REQUIRE(shouldOfferPortableGpuClutter("gpu",true));
+  for(uint32_t depth:{2u,4u,8u}) {
+    REQUIRE(shouldAttemptTemporalProducts("auto",true,false,true,depth));
+    REQUIRE_FALSE(shouldAttemptTemporalProducts("auto",true,false,true,depth,true));
+    REQUIRE_FALSE(shouldAttemptTemporalProducts("auto",false,false,true,depth));
+    REQUIRE_FALSE(shouldAttemptTemporalProducts("cpu",true,false,true,depth));
+    REQUIRE_FALSE(shouldAttemptTemporalProducts("auto",true,true,true,depth));
+    REQUIRE_FALSE(shouldAttemptTemporalProducts("auto",true,false,false,depth));
+  }
+  blah2::resident::LaneBudget budget(3);
+  REQUIRE(budget.additionalWorkerAvailable(2));
+  REQUIRE_FALSE(blah2::resident::LaneBudget(3,3).additionalWorkerAvailable(0));
+  const auto reservation=blah2::temporal_gpu::memoryReservation(temporalBudgetConfig(601,1261,8),4096);
+  const uint64_t temporal=reservation.bytes(),mapping=reservation.mappingBytes;
+  const uint64_t portableMapping=32u<<20;
+  const auto portableLimit=budget.allocationLimit(2,portableMapping,temporal);
+  const auto temporalLimit=budget.allocationLimit(2,mapping,budget.bytesPerSession-temporal);
+  REQUIRE(3*(portableMapping+portableLimit+mapping+temporalLimit)<=budget.totalBytes);
+  REQUIRE_THROWS(budget.allocationLimit(2,mapping,budget.bytesPerSession));
+}
+
+TEST_CASE("temporal memory reservation follows geometry without increasing aggregate capacity")
+{
+  using namespace blah2;
+  const resident::LaneBudget budget(3);
+  REQUIRE(budget.totalBytes==(3ULL<<30));
+  REQUIRE(budget.bytesPerSession==(1ULL<<30));
+  const std::array<uint64_t,3> expectedWorking{121417996,266958388,297273100};
+  uint64_t previous=0;size_t index=0;
+  for(uint32_t depth:{2u,4u,8u}) {
+    auto config=temporalBudgetConfig(601,1261,depth);
+    const auto reservation=temporal_gpu::memoryReservation(config,4096);
+    REQUIRE(reservation.workingBytes==expectedWorking[index++]);
+    REQUIRE(reservation.workingBytes>previous);previous=reservation.workingBytes;
+    REQUIRE(reservation.headroomBytes==(16ULL<<20));
+    REQUIRE(reservation.bytes()<budget.bytesPerSession/2);
+    const auto rawMapping=temporal_gpu::layout(601,1261).bytes;
+    for(uint64_t page:{4096u,16384u,65536u}) {
+      const auto paged=temporal_gpu::memoryReservation(config,page);
+      REQUIRE(paged.mappingBytes>=rawMapping);
+      REQUIRE(paged.mappingBytes-rawMapping<page);
+      REQUIRE(paged.mappingBytes%page==0);
+      REQUIRE(paged.workingBytes==reservation.workingBytes);
+    }
+    config.device="different-device";config.sampleRate=6144000;
+    REQUIRE(temporal_gpu::memoryReservation(config,4096).bytes()==reservation.bytes());
+    config.delayDriftPerHz=-.001;
+    const auto fractional=temporal_gpu::memoryReservation(config,4096);
+    REQUIRE(fractional.workingBytes-reservation.workingBytes==(depth>2?4ULL*601*33*depth:0));
+  }
+  const auto config=temporalBudgetConfig(601,1261,8);
+  const auto reservation=temporal_gpu::memoryReservation(config,4096);
+  const uint64_t portableMapping=gpuProcessMappingBytes({6400,601,1261,1,0,3072000,1261,0});
+  const auto portableLimit=budget.allocationLimit(0,portableMapping,reservation.bytes());
+  const auto oldLimit=budget.allocationLimit(0,portableMapping,budget.bytesPerSession/2);
+  REQUIRE(portableLimit-oldLimit>(128ULL<<20));
+  // Six native-twiddle plans must fit, not just the first failing LUT plan.
+  // Measured final native allocation: used 542399280 + requested 24883200.
+  auto fullMetadata=config;fullMetadata.detector.train=127;fullMetadata.delayDriftPerHz=-.001;
+  const auto fullReservation=temporal_gpu::memoryReservation(fullMetadata,4096);
+  const auto nativeLimit=budget.allocationLimit(0,portableMapping,fullReservation.bytes());
+  REQUIRE(nativeLimit>=542399280ULL+24883200ULL+(1ULL<<20));
+  // No repeated percentage allowance as map size grows: every buffer's full
+  // payload is already counted and the number of allocations stays constant.
+  REQUIRE(temporal_gpu::memoryReservation(temporalBudgetConfig(1024,1024,8),4096).headroomBytes==
+    reservation.headroomBytes);
+  const auto temporalLimit=budget.allocationLimit(0,reservation.mappingBytes,
+    budget.bytesPerSession-reservation.bytes());
+  REQUIRE(temporalLimit==reservation.workingBytes+reservation.headroomBytes);
+  REQUIRE(3*(portableMapping+portableLimit+reservation.mappingBytes+temporalLimit)==budget.totalBytes);
+  const resident::LaneBudget small(3,8,192ULL<<20);
+  REQUIRE_THROWS(small.allocationLimit(0,portableMapping,reservation.bytes()));
+  REQUIRE_THROWS(temporal_gpu::memoryReservation(config,0));
+  REQUIRE_THROWS(temporal_gpu::memoryReservation(config,3));
+  auto invalid=config;invalid.detector.integrationCpis=16;
+  REQUIRE_THROWS(temporal_gpu::memoryReservation(invalid,4096));
+  invalid=config;invalid.delayAxis.clear();
+  REQUIRE_THROWS(temporal_gpu::memoryReservation(invalid,4096));
+  REQUIRE(temporal_gpu::memoryReservation(temporalBudgetConfig(1,1,8),4096).bytes()<reservation.bytes());
+  REQUIRE(temporal_gpu::memoryReservation(temporalBudgetConfig(1024,1024,8),4096).bytes()>reservation.bytes());
+}
+
+TEST_CASE("Map temporal product lifecycle retains host tracker and exact CPU fallback")
+{
+  using namespace blah2;
+  using namespace blah2::pipeline;
+  // A numerical CPU double reuses the canonical detector. It tests scheduling,
+  // lineage and failure ownership only; software Vulkan tests qualify kernels.
+  class Session final:public temporal_gpu::Session {
+    temporal_gpu::Config config_;
+    detection::DetectorIntegration integration_;
+    CfarDetector1D detector_;
+    Centroid centroid_;
+    Interpolate interpolate_{true,true};
+    uint64_t frame_=0;
+    std::shared_ptr<bool> fail_;
+    std::vector<std::complex<double>> input_;
+    std::vector<double> display_;
+    std::vector<temporal_gpu::Record> records_;
+    std::vector<uint32_t> flags_,cells_;
+    temporal_gpu::Output output_;
+  public:
+    Session(const temporal_gpu::Config& c,std::shared_ptr<bool> fail)
+      :config_(c),integration_(c.detector.integrationCpis,c.detector.integrationMotionBins,c.delayDriftPerHz),
+       detector_(c.detector.pfa,c.detector.guard,c.detector.train,c.detector.minDelay,c.detector.minDoppler,c.detector.integrationCpis),
+       centroid_(c.detector.centroidDelay,c.detector.centroidDoppler,c.detector.centroidDopplerResolution),fail_(std::move(fail)),
+       input_(c.delayAxis.size()*c.dopplerAxis.size()),display_(input_.size()),records_(input_.size()),flags_(input_.size()),cells_(input_.size()){
+      output_.display=display_.data();output_.records=records_.data();output_.flags=flags_.data();output_.cells=cells_.data();
+    }
+    std::complex<double>* input()override{return input_.data();}
+    void reset()override{integration_.reset();frame_=0;}
+    const temporal_gpu::Output& process(uint64_t)override{
+      if(*fail_)throw std::runtime_error("injected map worker failure");
+      auto map=std::make_unique<Map<std::complex<double>>>(config_.dopplerAxis.size(),config_.delayAxis.size());
+      map->doppler.assign(config_.dopplerAxis.begin(),config_.dopplerAxis.end());map->delay.assign(config_.delayAxis.begin(),config_.delayAxis.end());
+      size_t at=0;for(auto& row:map->data)for(auto& value:row)value=input_[at++];map->set_metrics();
+      const auto integrated=integration_.process(map,1,frame_*1000,(frame_+1)*1000,true);++frame_;
+      const auto found=detection::detectProducts(*map,detector_,centroid_,interpolate_,integrated);
+      auto& mutableFound=*found;const auto delay=mutableFound.get_delay(),doppler=mutableFound.get_doppler(),snr=mutableFound.get_snr();
+      output_.metrics.available=integrated.availableCpis;output_.metrics.count=found->get_nDetections();
+      output_.metrics.noise=map->noisePower;output_.metrics.maximum=map->maxPower;
+      at=0;for(const auto& row:map->data)for(const auto value:row)display_[at++]=value.real();
+      for(size_t i=0;i<delay.size();++i){records_[i]={delay[i],doppler[i],snr[i],0};cells_[i]=i;
+        const auto& e=found->get_evidence()[i];flags_[i]=4u|((1u<<(e.bank-1))<<3u)|
+          (uint32_t(e.delayMotion+2)<<17u)|(uint32_t(e.dopplerMotion+16)<<20u);}
+      return output_;
+    }
+  };
+  for(uint32_t depth:{2u,4u,8u}) for(const std::string mode:{"cpu","gpu","auto"})
+      for(bool clutter:{false,true}) for(bool failAdmission:{false,true}) {
+    const bool attempt=shouldAttemptTemporalProducts(mode,true,false,true,depth,
+      shouldOfferPortableGpuClutter(mode,clutter));
+    if(failAdmission&&!attempt)continue;
+    CAPTURE(depth,mode,clutter,failAdmission);
+    ProductConfig intent;intent.integrationCpis=depth;intent.integrationMotion=depth==2?0:track_before_detect::encodeMotionBins(1,2,true);
+    intent.stages.clutter=clutter;
+    intent.delayDriftPerHz=depth==2?0:track_before_detect::delayDriftPerHz(3072000,551000000);
+    intent.minimumDoppler=0;intent.minimumDelay=0;intent.centroidDelay=1;intent.centroidDoppler=1;
+    intent.trackerN=32;intent.trackerDelete=16;intent.ridgeBirth={true,3,2,.25};
+    ProductStages accelerated{RadarPlan(intent)},cpu{RadarPlan(intent)};
+    temporal_gpu::Config config;config.sampleRate=6144000;config.device="cpu-control-double";
+    for(int i=0;i<65;++i)config.delayAxis.push_back(i);
+    for(int i=-8;i<=8;++i)config.dopplerAxis.push_back(i*2);
+    auto fail=std::make_shared<bool>(failAdmission);
+    const auto prepare=[&]{accelerated.prepareTemporal(config,{},[&](const auto& c,const auto&){return std::make_unique<Session>(c,fail);});};
+    if(attempt){if(failAdmission)REQUIRE_THROWS(prepare());else REQUIRE_NOTHROW(prepare());}
+    *fail=false;
+    REQUIRE(accelerated.temporalAccelerated()==(attempt&&!failAdmission));
+    // Production performs the same final startup reset in every backend. No
+    // extra CPU reset may conceal private GPU qualification consuming an epoch.
+    cpu.reset("startup_qualification_complete");accelerated.reset("startup_qualification_complete");
+    for(uint32_t frame=0;frame<depth+4;++frame){
+      const bool gap=frame==depth;
+      const bool failure=attempt&&!failAdmission&&frame==depth+2;
+      if(failure){*fail=true;cpu.reset();}
+      auto left=std::make_unique<Map<std::complex<double>>>(17,65);left->delay.assign(config.delayAxis.begin(),config.delayAxis.end());left->doppler.assign(config.dopplerAxis.begin(),config.dopplerAxis.end());
+      for(uint32_t r=0;r<17;++r)for(uint32_t c=0;c<65;++c)left->data[r][c]={r==11&&c==24+frame%5?1000.0:1.0+((frame+r+c)%11)/16.0,0};
+      left->set_metrics();auto right=std::make_unique<Map<std::complex<double>>>(*left);
+      const uint64_t first=uint64_t(frame+(frame>=depth?1:0))*1000;
+      const Position position{1,first,first+1000,uint64_t(frame+1)*500,true};
+      const auto expected=cpu.process(left,position),actual=accelerated.process(right,position);
+      REQUIRE(expected.detections->to_json(0)==actual.detections->to_json(0));
+      REQUIRE(expected.tracks->to_json(0)==actual.tracks->to_json(0));
+      REQUIRE(expected.integration->window.sequences==actual.integration->window.sequences);
+      REQUIRE(expected.integration->window.epoch==actual.integration->window.epoch);
+      REQUIRE(expected.integration->historyReset==actual.integration->historyReset);
+      if(gap)REQUIRE(actual.integration->availableCpis==1);
+      if(failure)REQUIRE_FALSE(accelerated.temporalAccelerated());
+    }
+  }
 }
 
 TEST_CASE("FM reference quality filter omits only low-bandwidth blocks")
@@ -694,6 +968,22 @@ blah2::channelizer::IlluminatorOutput dedicated_signal(std::size_t samples)
   return result;
 }
 
+TEST_CASE("canonical bank consumes a decimal CPI with the shared rounded geometry")
+{
+  using namespace blah2;
+  constexpr uint32_t rate=20000,samples=11400;
+  auto config=smallLaneConfig();config.cpiSeconds=0.57;
+  config.accelerationMode="cpu";
+  pipeline::RadarBank radar(2*rate,2,{{"only",100000000,rate,rate,16}},config);
+  auto input=dedicated_signal(samples);input.samples.firstInputSample=0;
+  REQUIRE(radar.processPipelined({std::move(input)},
+    pipeline::LiveTemporalIdentity{1,9,true,{11,12},1}).empty());
+  auto frames=radar.drain();REQUIRE(frames.size()==1);
+  REQUIRE(frames.front().firstInputSample==0);
+  REQUIRE(frames.front().endInputSample==2*(samples-1));
+  REQUIRE(frames.front().publicationSequence==1);
+}
+
 std::pair<double, double> strongest(const Map<std::complex<double>>& map)
 {
   double power = -1, delay = 0, doppler = 0;
@@ -921,6 +1211,51 @@ TEST_CASE("canonical temporal products refuse an unintegrated alternate route")
   }
 }
 
+TEST_CASE("single CPI detector identity shares exact continuity and reset clock")
+{
+  blah2::detection::DetectorEvidenceClock clock;
+  bool changed=false;
+  REQUIRE(clock.observe(11,100,200,true,changed));
+  REQUIRE_FALSE(changed);
+  const auto first=clock.current();
+  REQUIRE(Detection::valid_evidence(first));
+  REQUIRE(first.depth==1);
+  REQUIRE(first.newestSequence==1);
+  REQUIRE(clock.observe(11,200,300,true,changed));
+  REQUIRE(clock.current().newestSequence==2);
+  REQUIRE(clock.current().epoch==first.epoch);
+  REQUIRE(clock.observe(11,200,300,true,changed,true));
+  REQUIRE_FALSE(changed);
+  REQUIRE(clock.current().newestSequence==2);
+  REQUIRE(clock.observe(11,400,500,true,changed));
+  REQUIRE(changed);
+  REQUIRE(clock.current().newestSequence==1);
+  REQUIRE(clock.current().epoch==first.epoch+1);
+  REQUIRE_FALSE(clock.observe(11,500,600,false,changed));
+  REQUIRE_FALSE(Detection::valid_evidence(clock.current()));
+  REQUIRE(clock.observe(12,0,100,true,changed));
+  REQUIRE(clock.current().newestSequence==1);
+  REQUIRE(clock.current().epoch==first.epoch+2);
+  blah2::pipeline::ProductConfig config;config.stages={false,true,false};
+  config.guard=1;config.train=2;config.minimumDoppler=0;
+  blah2::pipeline::ProductStages products{blah2::pipeline::RadarPlan(config)};
+  auto map=std::make_unique<Map<std::complex<double>>>(1,16);
+  map->doppler.push_back(0);
+  for(int column=0;column<16;++column){map->delay.push_back(column);map->data[0][column]={1,0};}
+  map->set_metrics();
+  auto known=products.process(map,{1,0,100,100,true});
+  REQUIRE(known.detections->get_nDetections()==0);
+  rapidjson::Document identity;identity.Parse(known.detections->to_json(100).c_str());
+  REQUIRE(identity.HasMember("evidence_identity"));
+  REQUIRE(std::string(identity["evidence_identity"]["newest_sequence_exact"].GetString())=="1");
+  auto duplicate=products.process(map,{1,0,100,100,true});
+  REQUIRE(duplicate.detections->to_json(100)==known.detections->to_json(100));
+  auto unavailable=products.process(map,{1,100,200,200,false});
+  identity.Parse(unavailable.detections->to_json(200).c_str());
+  REQUIRE_FALSE(identity.HasMember("evidence_identity"));
+  REQUIRE(unavailable.detections->get_evidence().empty());
+}
+
 TEST_CASE("direct and channelized ingress share canonical products and disabled stages")
 {
   REQUIRE(fftw_init_threads());
@@ -1034,6 +1369,12 @@ TEST_CASE("direct and channelized ingress share canonical products and disabled 
       REQUIRE(actual.size() == 1);
       REQUIRE(live.size() == 1);
       const auto& lane = actual.front();
+      REQUIRE(lane.trackerDiagnostics.noOp==products.tracker.frame_diagnostics().noOp);
+      for(const auto& field:trackerDiagnosticFields) {
+        CAPTURE(field.name);
+        REQUIRE(lane.trackerDiagnostics.*field.member==products.tracker.frame_diagnostics().*field.member);
+        REQUIRE(lane.trackerDiagnostics.*field.member==live.front().trackerDiagnostics.*field.member);
+      }
       REQUIRE(lane.map->data == live.front().map->data);
       REQUIRE(lane.firstInputSample == live.front().firstInputSample);
       REQUIRE(lane.endInputSample == live.front().endInputSample);
@@ -1050,6 +1391,8 @@ TEST_CASE("direct and channelized ingress share canonical products and disabled 
       REQUIRE(lane.inputProcessing.widenedSamples == (doubleInput ? 0 : 2 * samples));
       REQUIRE(lane.inputProcessing.copiedSamples == (doubleInput ? 2 * samples : 0));
       REQUIRE(lane.map->data == directMap->data);
+      REQUIRE(lane.resolvedProductPlan == products.planIdentity());
+      REQUIRE(lane.resolvedProductPlan == live.front().resolvedProductPlan);
       REQUIRE(lane.map->delay == directMap->delay);
       REQUIRE(lane.map->doppler == directMap->doppler);
       REQUIRE(lane.detectionEnabled == selected.detection);
@@ -1096,7 +1439,14 @@ TEST_CASE("direct and channelized ingress share canonical products and disabled 
         }
       }
       if (selected.detection)
+      {
         REQUIRE(lane.detections->to_json(1) == direct.detections->to_json(1));
+        rapidjson::Document identity;identity.Parse(lane.detections->to_json(1).c_str());
+        REQUIRE(identity.HasMember("evidence_identity"));
+        REQUIRE(std::string(identity["evidence_identity"]["newest_sequence_exact"].GetString())==std::to_string(phase+1));
+        for(const auto& evidence:lane.detections->get_evidence())REQUIRE(Detection::valid_evidence(evidence));
+        if(depth==1)for(const auto& evidence:lane.detections->get_evidence())REQUIRE(evidence.depth==1);
+      }
       else REQUIRE(lane.detections->get_nDetections() == 0);
       if (selected.tracking)
         REQUIRE(lane.tracks->to_json(1) == direct.tracks->to_json(1));
@@ -1330,6 +1680,14 @@ TEST_CASE("resident lane reservations cap all sessions before worker allocation"
   REQUIRE_THROWS_AS(budget.allocationLimit(2, 1), std::runtime_error);
   REQUIRE_THROWS_AS(budget.allocationLimit(0, 64ULL << 20), std::runtime_error);
   REQUIRE_THROWS_AS(blah2::resident::LaneBudget(0), std::invalid_argument);
+}
+
+TEST_CASE("single resident lane respects the universal Vulkan worker ceiling")
+{
+  const blah2::resident::LaneBudget budget(1);
+  REQUIRE(budget.bytesPerSession == (3ULL << 30));
+  REQUIRE(budget.allocationLimit(0, 16ULL << 20) ==
+    (3ULL << 30) - (16ULL << 20));
 }
 
 TEST_CASE("portable lane lease holds only device calls and preserves optional interfaces")
@@ -1832,9 +2190,10 @@ public:
     : state_(std::move(state)), reference_(geometry.clutterSamples),
       surveillance_(size_t(geometry.clutterSamples) * geometry.channels),
       estimate_(surveillance_.size()),
-      clutter_(0, int32_t(geometry.clutterBins), geometry.clutterSamples),
+      clutter_(0, int32_t(std::max(1u, geometry.clutterBins)),
+        geometry.clutterSamples ? geometry.clutterSamples : 2000),
       ambiguity_(geometry.delayMin, geometry.delayMin + geometry.delays - 1,
-        -100, 100, 20000, geometry.clutterSamples, true) {
+        -100, 100, 20000, geometry.clutterSamples ? geometry.clutterSamples : 2000, true) {
     state_->geometry = geometry;
     if (geometry.range != ambiguity_.get_nfft() ||
         geometry.doppler != ambiguity_.get_n_doppler_bins())
@@ -1873,14 +2232,15 @@ public:
     ++state_->ambiguityCalls;
     const auto& g = state_->geometry;
     const uint32_t correlation = ambiguity_.get_n_corr();
-    std::deque<std::complex<double>> unpacked(g.clutterSamples);
+    const uint32_t samples = g.clutterSamples ? g.clutterSamples : 2000;
+    std::deque<std::complex<double>> unpacked(samples);
     for (uint32_t row = 0; row < g.doppler; ++row)
       std::copy_n(reference.begin() + size_t(row) * g.range, correlation,
         unpacked.begin() + size_t(row) * correlation);
     output.resize(size_t(g.channels) * g.delays * g.doppler);
     for (uint32_t channel = 0; channel < g.channels; ++channel) {
-      IqData input(g.clutterSamples);
-      auto& y = input.resize_for_write(g.clutterSamples);
+      IqData input(samples);
+      auto& y = input.resize_for_write(samples);
       for (uint32_t row = 0; row < g.doppler; ++row)
         std::copy_n(surveillance.begin() +
             (size_t(channel) * g.doppler + row) * g.range, correlation,
@@ -2073,7 +2433,8 @@ TEST_CASE("FP64 bank ingestion preserves products through partial CPIs rejection
     whole.reset(); split.reset(); compare(0);
     REQUIRE_THROWS_AS(whole.process({input(0, 2000, UINT64_MAX - 10)}), std::overflow_error);
   }
-  // A mock FP32-only transport proves refusal occurs before any GPU dispatch.
+  // FP64 stays host-owned; the existing qualified stage boundary may pack CAF
+  // work for portable GPU without rejecting the whole input representation.
   for (const std::string mode : {"gpu", "auto"}) {
     auto config = laneGpuConfig(); config.accelerationMode = mode;
     auto state = std::make_shared<LaneGpuState>();
@@ -2081,8 +2442,126 @@ TEST_CASE("FP64 bank ingestion preserves products through partial CPIs rejection
       [state](const GpuGeometry& geometry, const std::string&) {
         return std::make_unique<LaneGpuDouble>(geometry, state);
       });
-    REQUIRE_THROWS_AS(radar.process({input(0, 2000, 0)}), std::invalid_argument);
-    REQUIRE(state->clutterCalls == 0); REQUIRE(state->ambiguityCalls == 0);
+    auto cpuConfig = config; cpuConfig.accelerationMode = "cpu";
+    pipeline::RadarBank cpu(40000, 2, definitions, cpuConfig);
+    radar.prepareStartup(); cpu.prepareStartup();
+    auto expected = cpu.process({input(0, 2000, 0)});
+    auto actual = radar.process({input(0, 2000, 0)});
+    REQUIRE(actual.size() == 1); REQUIRE(expected.size() == 1);
+    compareLaneMaps(actual.front(), expected.front());
+    REQUIRE(actual.front().inputProcessing.widenedSamples == 0);
+    REQUIRE(state->ambiguityCalls > 0);
+    REQUIRE(state->clutterCalls ==
+      (mode == "auto" ? 0 : Acceleration::TotalQualificationFrames + 1));
+  }
+}
+
+TEST_CASE("primary FP64 live and replay adapters preserve direct products spectrum and cutout pilot")
+{
+  using namespace blah2;
+  constexpr uint32_t samples = 2000, rate = 20000;
+  constexpr uint64_t frequency = 100000000;
+  for (const std::string mode : {"cpu", "gpu", "auto"}) for (const bool replay : {false, true}) {
+    CAPTURE(mode, replay);
+    auto config = smallLaneConfig(); config.accelerationMode = mode;
+    config.offlineReplay = replay; config.borrowedClutter = false;
+    config.trackerMinimumSnrDb = -100;
+    config.referenceSpectrumBandwidthHz = 2000;
+    auto bankState = std::make_shared<LaneGpuState>();
+    auto directState = std::make_shared<LaneGpuState>();
+    const auto factory = [](std::shared_ptr<LaneGpuState> state) {
+      return [state](const GpuGeometry& geometry, const std::string&) {
+        return std::make_unique<LaneGpuDouble>(geometry, state);
+      };
+    };
+    pipeline::RadarBank bank(rate, 2, {{"primary", frequency, rate, rate, 16}},
+      config, factory(bankState));
+    IqData reference(samples), surveillance(samples);
+    std::vector<IqData*> channels{&surveillance};
+    auto ambiguity = pipeline::makeAmbiguity(config.delayMin, config.delayMax,
+      config.dopplerMin, config.dopplerMax, rate, samples, true);
+    std::vector<Ambiguity*> processors{ambiguity.get()};
+    pipeline::RawIqStages frontend({config.clutterDelayMin, config.clutterDelayMax,
+      samples, 1, 1, false, config.reference});
+    const bool gpuClutter = pipeline::shouldOfferPortableGpuClutter(mode, true);
+    Acceleration directAcceleration(mode,
+      {ambiguity->get_nfft(), ambiguity->get_n_doppler_bins(), ambiguity->get_n_delay_bins(),
+        1, config.delayMin, gpuClutter ? samples : 0u,
+        gpuClutter ? uint32_t(config.clutterDelayMax - config.clutterDelayMin) : 0u,
+        config.clutterDelayMin}, ambiguity->get_n_corr(), rate,
+      ambiguity->get_doppler_middle(), "auto", factory(directState));
+    pipeline::ProductStages products(pipeline::resolveRadarPlan(config,
+      *ambiguity, rate, frequency, samples));
+    SpectrumAnalyser spectrum(samples, 2000, frequency, rate);
+    Noncoherent fusion;
+    bank.prepareStartup();
+    directAcceleration.prepareStartup([&](unsigned frame) {
+      startup::fillIq({&reference, &surveillance}, samples, frame);
+      REQUIRE(pipeline::processFrontend(frontend, &directAcceleration, reference,
+        channels, processors, true, false));
+    });
+    std::vector<std::optional<std::complex<double>>> pilots;
+    bank.setNativeCafObserver([&](const pipeline::NativeCafView& view) {
+      REQUIRE(view.illuminatorId == "primary");
+      REQUIRE(view.pilotAnchorChannel == std::optional<uint32_t>(1));
+      pilots.push_back(view.directPathPilot);
+    });
+    std::vector<std::string> expectedMaps, expectedDetections, expectedTracks, expectedSpectrum;
+    std::vector<pipeline::RadarFrame> actual;
+    for (uint64_t cpi = 0; cpi < 4; ++cpi) {
+      auto input = dedicated_signal(samples);
+      using Storage = std::vector<std::vector<std::complex<double>>>;
+      auto owner = std::make_shared<Storage>(2);
+      for (size_t channel = 0; channel < 2; ++channel)
+        for (auto value : input.samples.channels[channel])
+          (*owner)[channel].emplace_back(std::nextafter(double(value.real()), INFINITY),
+            std::nextafter(double(value.imag()), -INFINITY));
+      auto& ref = reference.resize_contiguous_for_write(samples);
+      auto& surv = surveillance.resize_contiguous_for_write(samples);
+      std::copy((*owner)[0].begin(), (*owner)[0].end(), ref.begin());
+      std::copy((*owner)[1].begin(), (*owner)[1].end(), surv.begin());
+      const auto pilot = ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+        reference.sample_view(), surveillance.sample_view());
+      const uint64_t publicationTime = 1000000 + 100 * cpi, progressTime = 100 + 100 * cpi;
+      spectrum.process(&reference); expectedSpectrum.push_back(reference.to_json(publicationTime));
+      REQUIRE(pipeline::processFrontend(frontend, &directAcceleration, reference,
+        channels, processors, true, false));
+      std::unique_ptr<Map<std::complex<double>>> map;
+      pipeline::fuseMaps({ambiguity->result()}, fusion, nullptr, map);
+      const uint64_t first = 400000 + cpi * samples;
+      auto processed = products.process(map, {17, first, first + samples, progressTime, true});
+      expectedMaps.push_back(map->to_json_km(publicationTime, rate));
+      expectedDetections.push_back(processed.detections->to_json_km(publicationTime, rate));
+      expectedTracks.push_back(processed.tracks->to_json(publicationTime));
+      iq::BorrowedSamples::DoubleChannels views;
+      for (const auto& channel : *owner) views.emplace_back(channel.data(), channel.size());
+      input.id = "primary"; input.samples.channels.clear();
+      input.samples.firstInputSample = first;
+      input.samples.inputSamplesPerOutput = 1;
+      input.samples.borrowed = iq::BorrowedSamples{owner, std::move(views)};
+      auto output = bank.processPipelined({std::move(input)},
+        pipeline::LiveTemporalIdentity{publicationTime, 17, true, {}, cpi + 1, progressTime});
+      REQUIRE(pilots.back() == pilot);
+      for (auto& frame : output) actual.push_back(std::move(frame));
+    }
+    auto drained = bank.drain();
+    for (auto& frame : drained) actual.push_back(std::move(frame));
+    REQUIRE(actual.size() == 4);
+    for (size_t index = 0; index < actual.size(); ++index) {
+      const auto timestamp = 1000000 + 100 * index;
+      REQUIRE(actual[index].referenceSpectrum == expectedSpectrum[index]);
+      REQUIRE(actual[index].map->to_json_km(timestamp, rate) == expectedMaps[index]);
+      REQUIRE(actual[index].detections->to_json_km(timestamp, rate) == expectedDetections[index]);
+      REQUIRE(actual[index].tracks->to_json(timestamp) == expectedTracks[index]);
+      REQUIRE(actual[index].detections->get_nDetections() > 0);
+      REQUIRE(actual[index].tracks->get_n() > 0);
+      bool measurementAssociated = false;
+      for (size_t track = 0; track < actual[index].tracks->get_n(); ++track)
+        measurementAssociated |= actual[index].tracks->get_nAssociated(track) > 0;
+      REQUIRE(measurementAssociated);
+      REQUIRE(actual[index].publicationSequence == index + 1);
+    }
+    if (mode != "cpu") REQUIRE(bankState->ambiguityCalls > 0);
   }
 }
 
@@ -2108,6 +2587,375 @@ TEST_CASE("canonical pending publication pins shared data through EOF drain and 
     pending.store(std::move(drained.first),std::move(drained.second));
   }
   REQUIRE_FALSE(lifetime.expired());pending.reset();REQUIRE(lifetime.expired());
+}
+
+TEST_CASE("canonical resident publication owns diagnostics after device storage is released")
+{
+  using namespace blah2;
+  auto config = std::make_shared<const resident::Config>();
+  std::vector<uint32_t> trace{1, 17, 23, 29};
+  std::array<uint8_t, 256> proof{};
+  for (size_t index = 0; index < 32; ++index) proof[160 + index] = uint8_t(index + 1);
+  resident::OutputViews prepared;
+  prepared.causalTrace = {trace.data(), trace.size()};
+  prepared.preparedEvidence = {proof.data(), proof.size()};
+  pipeline::RadarFrame frame;
+  frame.residentDiagnostics.emplace(config, 11, 12, prepared);
+  frame.residentDiagnostics->snapshot = {3, 5, 7};
+  const auto expected = frame.residentDiagnostics->causalTrace;
+  // A settled device can immediately overwrite every prepared allocation for
+  // the next CPI; a delayed publication must still own the earlier bytes.
+  std::fill(trace.begin(), trace.end(), 99); proof.fill(0);
+  auto moved = std::move(frame);
+  REQUIRE(moved.residentDiagnostics->causalTrace == expected);
+  REQUIRE(moved.residentDiagnostics->logical == 11);
+  REQUIRE(moved.residentDiagnostics->consumed == 12);
+  REQUIRE(moved.residentDiagnostics->config == config);
+  REQUIRE(moved.residentDiagnostics->snapshot == std::vector<uint8_t>{3, 5, 7});
+  for (size_t index = 0; index < 32; ++index)
+    REQUIRE(moved.residentDiagnostics->moduleHash[index] == index + 1);
+}
+
+TEST_CASE("canonical cross-CPI products preserve serial maps evidence and tracker order")
+{
+  using namespace blah2;
+  const std::vector<iq::SignalDefinition> definitions{{"only",100000000,10000,20000,16}};
+  for (const bool borrowed : {false,true}) for (const uint32_t depth : {1u,2u,8u}) {
+    CAPTURE(borrowed,depth);
+    auto config=smallLaneConfig();config.borrowedClutter=borrowed;
+    config.trackerMinimumSnrDb=-100;config.trackerDelete=std::max(2u,depth-1);
+    config.advanced.detectorIntegrationCpis=depth;
+    config.advanced.trackBeforeDetect=depth>2;
+    pipeline::RadarBank serial(40000,2,definitions,config),overlap(40000,2,definitions,config);
+    std::vector<std::vector<uint64_t>> preceding;
+    overlap.setNativeCafObserver([&](const pipeline::NativeCafView&) {
+      preceding.push_back(overlap.pendingPublicationSequences());
+    });
+    std::vector<pipeline::RadarFrame> expected,actual;
+    for (uint64_t cpi=0;cpi<depth+2;++cpi) {
+      auto input=dedicated_signal(2000);input.samples.firstInputSample=cpi*4000;
+      const pipeline::LiveTemporalIdentity identity{100+cpi,31,true,{12,13},cpi+1};
+      auto baseline=serial.process({input},identity);
+      REQUIRE(baseline.size()==1);expected.push_back(std::move(baseline.front()));
+      auto owner=borrowSignal(input);std::weak_ptr<const void> lifetime=owner;owner.reset();
+      auto output=overlap.processPipelined({std::move(input)},identity);
+      REQUIRE(lifetime.expired()); // No borrowed frontend samples escape staging.
+      REQUIRE(output.size()==(cpi?1:0));
+      REQUIRE(overlap.pendingPublicationSequences()==std::vector<uint64_t>{cpi+1});
+      for (auto& frame:output) actual.push_back(std::move(frame));
+    }
+    auto final=overlap.drain();REQUIRE(final.size()==1);
+    actual.push_back(std::move(final.front()));
+    REQUIRE(overlap.drain().empty());REQUIRE(overlap.pendingPublicationSequences().empty());
+    REQUIRE(actual.size()==expected.size());REQUIRE(preceding.front().empty());
+    for (size_t cpi=0;cpi<actual.size();++cpi) {
+      if(cpi) REQUIRE(preceding[cpi]==std::vector<uint64_t>{cpi});
+      const auto& a=actual[cpi];const auto& b=expected[cpi];
+      REQUIRE(a.publicationSequence==cpi+1);
+      REQUIRE(a.firstInputSample==b.firstInputSample);REQUIRE(a.endInputSample==b.endInputSample);
+      REQUIRE(a.map->data==b.map->data);REQUIRE(a.resolvedProductPlan==b.resolvedProductPlan);
+      REQUIRE(a.detections->to_json(1)==b.detections->to_json(1));
+      REQUIRE(a.tracks->to_json(1)==b.tracks->to_json(1));
+      REQUIRE(a.acceleration.active==b.acceleration.active);
+      REQUIRE(a.clutterCpuExecuted==b.clutterCpuExecuted);
+      REQUIRE(a.inputProcessing.path==b.inputProcessing.path);
+      REQUIRE(a.inputProcessing.widenedSamples==b.inputProcessing.widenedSamples);
+      if(depth>1) {
+        REQUIRE(a.detectorIntegration->captureEpoch==31);
+        REQUIRE(a.detectorIntegration->window.supportSequences()==
+          b.detectorIntegration->window.supportSequences());
+      }
+    }
+  }
+}
+
+TEST_CASE("canonical cross-CPI reset rejection and invalid input join pending products")
+{
+  using namespace blah2;
+  const std::vector<iq::SignalDefinition> definitions{{"only",100000000,10000,20000,16}};
+  auto config=smallLaneConfig();config.advanced.detectorIntegrationCpis=2;
+  pipeline::RadarBank radar(40000,2,definitions,config);
+  const auto input=[](uint64_t first) {auto value=dedicated_signal(2000);
+    value.samples.firstInputSample=first;return value;};
+  REQUIRE(radar.processPipelined({input(0)},{pipeline::LiveTemporalIdentity{1,7,true,{},1}}).empty());
+  auto rejected=input(4000);
+  std::fill(rejected.samples.channels[0].begin(),rejected.samples.channels[0].end(),std::complex<float>{});
+  auto prior=radar.processPipelined({rejected},{pipeline::LiveTemporalIdentity{2,7,true,{},2}});
+  REQUIRE(prior.size()==1);REQUIRE(prior.front().publicationSequence==1);
+  REQUIRE(radar.pendingPublicationSequences().empty());
+  REQUIRE_FALSE(radar.laneHealth().front().lastAccepted);
+  REQUIRE(radar.laneHealth().front().rejectedCpis==1);
+  REQUIRE(radar.processPipelined({input(8000)},{pipeline::LiveTemporalIdentity{3,7,true,{},3}}).empty());
+  auto epoch=radar.processPipelined({input(12000)},{pipeline::LiveTemporalIdentity{4,8,true,{},4}});
+  REQUIRE(epoch.size()==1);REQUIRE(epoch.front().publicationSequence==3);
+  REQUIRE(epoch.front().detectorIntegration->captureEpoch==7);
+  auto final=radar.drain();REQUIRE(final.size()==1);
+  REQUIRE(final.front().detectorIntegration->captureEpoch==8);
+  REQUIRE(final.front().detectorIntegration->availableCpis==1);
+  REQUIRE(radar.processPipelined({input(16000)}).empty());
+  radar.reset();REQUIRE(radar.drain().empty());
+  REQUIRE(radar.processPipelined({input(0)}).empty());
+  REQUIRE_THROWS_AS(radar.processPipelined({}),std::invalid_argument);
+  REQUIRE(radar.pendingPublicationSequences().empty());REQUIRE(radar.drain().empty());
+}
+
+TEST_CASE("canonical cross-CPI qualification retains each input identity through completion")
+{
+  using namespace blah2;
+  char directory[]="/tmp/vectorwarp-overlap-observer-XXXXXX";REQUIRE(mkdtemp(directory));
+  {
+    auto config=smallLaneConfig();config.offlineReplay=true;
+    config.advanced.detectorIntegrationCpis=2;
+    pipeline::RadarBank radar(40000,2,{{"only",100000000,10000,20000,16}},config);
+    qualification_observer::Config observation;observation.directory=directory;observation.clutter=true;
+    radar.setQualificationObserver(std::make_shared<qualification_observer::Observer>(observation,true,true));
+    for(uint64_t cpi=0;cpi<3;++cpi) {
+      auto input=dedicated_signal(2000);input.samples.firstInputSample=cpi*4000;
+      (void)radar.processPipelined({input},pipeline::LiveTemporalIdentity{cpi,17,true,{11,12},cpi+1});
+    }
+    REQUIRE(radar.drain().size()==1);
+  }
+  std::ifstream artifact(std::string(directory)+"/coherent-observer.jsonl");
+  std::map<std::pair<uint64_t,std::string>,unsigned> counts;
+  std::string line;
+  while(std::getline(artifact,line)) {
+    rapidjson::Document value;value.Parse(line.c_str());REQUIRE_FALSE(value.HasParseError());
+    const auto sequence=value["sequence"].GetUint64();
+    REQUIRE(sequence>=1);REQUIRE(sequence<=3);
+    REQUIRE(value["captureEpoch"].GetUint64()==17);
+    REQUIRE(value["captureFirst"].GetUint64()==(sequence-1)*4000);
+    REQUIRE(value["captureEnd"].GetUint64()==sequence*4000);
+    REQUIRE(value["actual_gain_db"][0].GetDouble()==11);
+    ++counts[{sequence,value["stage"].GetString()}];
+  }
+  for(uint64_t sequence=1;sequence<=3;++sequence)
+    for(const char* stage:{"input","clutter","products","detector","temporal_scores"})
+      REQUIRE(counts[std::make_pair(sequence,std::string(stage))]==1);
+  artifact.close();std::filesystem::remove_all(directory);
+}
+
+TEST_CASE("exact recording capture intervals survive nonaligned decimation and CPI overlap")
+{
+  using namespace blah2;
+  constexpr uint32_t rate=20000,samples=2000;
+  constexpr uint64_t frequency=100000000;
+  for(uint32_t decimation:{1u,2u,4u}) for(uint32_t phase=0;phase<decimation;++phase) {
+    CAPTURE(decimation,phase);
+    char directory[]="/tmp/vectorwarp-capture-grid-observer-XXXXXX";REQUIRE(mkdtemp(directory));
+    const uint64_t origin=4000+phase,width=uint64_t(samples)*decimation;
+    const uint64_t gridOrigin=origin+(decimation-origin%decimation)%decimation;
+    {
+      auto config=smallLaneConfig();config.offlineReplay=true;config.accelerationMode="cpu";
+      config.borrowedClutter=false;config.advanced.detectorIntegrationCpis=2;
+      std::vector<iq::SignalDefinition> definitions{{"only",frequency,10000,rate,16}};
+      pipeline::RadarBank radar(rate*decimation,2,definitions,config);
+      channelizer::IlluminatorChannelizerBank ingress(frequency,rate*decimation,2,definitions);
+      qualification_observer::Config observation;observation.directory=directory;observation.clutter=true;
+      radar.setQualificationObserver(std::make_shared<qualification_observer::Observer>(observation,true,true));
+      for(uint64_t cpi=0;cpi<3;++cpi) {
+        const uint64_t first=origin+cpi*width;
+        auto wideband=signal("only",frequency,rate*decimation,1,2,width,16,30,71+uint32_t(cpi));
+        auto input=ingress.process(wideband.samples.channels,first);
+        REQUIRE(input.front().samples.firstInputSample==gridOrigin+cpi*width);
+        auto completed=radar.processPipelined(std::move(input),pipeline::LiveTemporalIdentity{
+          cpi,0,true,{11,12},cpi+1,std::nullopt,std::array<uint64_t,2>{first,first+width}});
+        for(const auto& frame:completed) {
+          REQUIRE(frame.firstInputSample==gridOrigin+(frame.publicationSequence-1)*width);
+          REQUIRE(frame.detectorIntegration->endInputSample==gridOrigin+frame.publicationSequence*width);
+        }
+      }
+      REQUIRE(radar.drain().size()==1);
+    }
+    std::ifstream artifact(std::string(directory)+"/coherent-observer.jsonl");
+    std::map<std::pair<uint64_t,std::string>,unsigned> counts;std::string line;
+    while(std::getline(artifact,line)) {
+      rapidjson::Document value;value.Parse(line.c_str());REQUIRE_FALSE(value.HasParseError());
+      const auto sequence=value["sequence"].GetUint64();REQUIRE(sequence>=1);REQUIRE(sequence<=3);
+      REQUIRE(value["captureEpoch"].GetUint64()==0);
+      REQUIRE(value["captureFirst"].GetUint64()==origin+(sequence-1)*width);
+      REQUIRE(value["captureEnd"].GetUint64()==origin+sequence*width);
+      REQUIRE(std::string(value["input_lineage"]["firstInputSampleExact"].GetString())==
+        std::to_string(gridOrigin+(sequence-1)*width));
+      REQUIRE(std::string(value["input_lineage"]["endInputSampleExact"].GetString())==
+        std::to_string(gridOrigin+sequence*width));
+      ++counts[{sequence,value["stage"].GetString()}];
+    }
+    for(uint64_t sequence=1;sequence<=3;++sequence)
+      for(const char* stage:{"input","clutter","products","detector","temporal_scores"})
+        REQUIRE(counts[std::make_pair(sequence,std::string(stage))]==1);
+    artifact.close();std::filesystem::remove_all(directory);
+  }
+}
+
+TEST_CASE("canonical qualification retires consecutive rejected CPIs before valid overlap")
+{
+  using namespace blah2;
+  char directory[]="/tmp/vectorwarp-rejected-observer-XXXXXX";REQUIRE(mkdtemp(directory));
+  {
+    auto config=smallLaneConfig();config.offlineReplay=true;
+    pipeline::RadarBank radar(40000,2,{{"only",100000000,10000,20000,16}},config);
+    qualification_observer::Config observation;observation.directory=directory;
+    observation.clutter=true;
+    radar.setQualificationObserver(std::make_shared<qualification_observer::Observer>(observation,true,true));
+    const auto input=[](uint64_t first,bool reject) {auto value=dedicated_signal(2000);
+      value.samples.firstInputSample=first;
+      if(reject)std::fill(value.samples.channels[0].begin(),value.samples.channels[0].end(),
+        std::complex<float>{});
+      return value;};
+    const auto process=[&](uint64_t sequence,bool reject){
+      return radar.processPipelined({input((sequence-1)*4000,reject)},
+        pipeline::LiveTemporalIdentity{sequence,17,true,{11,12},sequence});};
+    REQUIRE(process(1,true).empty());
+    REQUIRE(process(2,true).empty());
+    REQUIRE(process(3,false).empty());
+    auto beforeReject=process(4,true);REQUIRE(beforeReject.size()==1);
+    REQUIRE(beforeReject.front().publicationSequence==3);
+    REQUIRE(process(5,false).empty());
+    auto next=process(6,false);REQUIRE(next.size()==1);
+    REQUIRE(next.front().publicationSequence==5);
+    REQUIRE(radar.drain().size()==1);
+  }
+  std::ifstream artifact(std::string(directory)+"/coherent-observer.jsonl");
+  std::map<std::pair<uint64_t,std::string>,unsigned> counts;
+  std::string line;
+  while(std::getline(artifact,line)){
+    rapidjson::Document value;value.Parse(line.c_str());REQUIRE_FALSE(value.HasParseError());
+    ++counts[{value["sequence"].GetUint64(),value["stage"].GetString()}];
+  }
+  for(uint64_t sequence:{1u,2u,4u}){
+    REQUIRE(counts[{sequence,"input"}]==1);REQUIRE(counts[{sequence,"rejected"}]==1);
+    REQUIRE(counts[{sequence,"detector"}]==0);REQUIRE(counts[{sequence,"temporal_scores"}]==0);
+  }
+  for(uint64_t sequence:{3u,5u,6u}){
+    REQUIRE(counts[{sequence,"input"}]==1);REQUIRE(counts[{sequence,"rejected"}]==0);
+    REQUIRE(counts[{sequence,"detector"}]==1);REQUIRE(counts[{sequence,"temporal_scores"}]==1);
+  }
+  artifact.close();std::filesystem::remove_all(directory);
+}
+
+TEST_CASE("CPI publication FIFO binds delayed lanes and bounds reset ownership")
+{
+  using namespace blah2::multi_illuminator;
+  PublicationFifo fifo(3);
+  PublicationContext first;first.timestampMs=11;first.captureEpoch=7;
+  first.captureFirst=4000;first.captureEnd=8000;first.publishFullMap=true;first.inputGainDb={1,2};
+  auto second=first;second.timestampMs=22;second.captureEpoch=8;second.captureFirst=0;
+  second.captureEnd=4000;second.publishFullMap=false;second.inputGainDb={3,4};
+  const auto a=fifo.append(first),b=fifo.append(second);
+  REQUIRE(fifo.at(a).timestampMs==11);REQUIRE(fifo.at(a).captureEpoch==7);
+  REQUIRE(fifo.at(a).publishFullMap);REQUIRE(fifo.at(b).inputGainDb==second.inputGainDb);
+  fifo.retain({a,b});REQUIRE(fifo.size()==2);
+  fifo.retain({b});REQUIRE(fifo.size()==1);REQUIRE_THROWS_AS(fifo.at(a),std::logic_error);
+  const auto c=fifo.append(first),d=fifo.append(second);
+  REQUIRE_THROWS_AS(fifo.append(first),std::logic_error);
+  fifo.retain({c,d});REQUIRE(fifo.size()==2);
+  fifo.reset();REQUIRE(fifo.size()==0);REQUIRE_THROWS_AS(fifo.at(c),std::logic_error);
+  REQUIRE(fifo.append(first)>d); // Reset never aliases an earlier result token.
+}
+
+TEST_CASE("completed publication precedes a failing advance drain")
+{
+  using blah2::multi_illuminator::publish_then_advance;
+  std::vector<uint64_t> emitted;
+  const uint64_t completed = 41, drainedByFallback = 42;
+  publish_then_advance(
+    [&] { emitted.push_back(completed); },
+    [&] { emitted.push_back(drainedByFallback); });
+  REQUIRE(emitted == std::vector<uint64_t>{completed, drainedByFallback});
+
+  emitted.clear();
+  publish_then_advance([&] { emitted.push_back(completed); }, [] {});
+  REQUIRE(emitted == std::vector<uint64_t>{completed});
+}
+
+TEST_CASE("publication timing snapshots bind adversarial two-token batches through drain reset")
+{
+  using namespace blah2::multi_illuminator;
+  PublicationFifo fifo(2);
+  PublicationContext prior;
+  prior.timestampMs=1100; prior.samplePositionAvailable=true;
+  prior.captureEpoch=7; prior.captureFirst=4000; prior.captureEnd=8000;
+  prior.captureBacklogSamples={51,52}; prior.captureDroppedSamples={7,8};
+  prior.capturePrepareMs=3; prior.channelizerMs=11; prior.inputDiscontinuity=true;
+  prior.acceleration.active="cpu"; prior.acceleration.state="fallback";
+  prior.widebandCpuExecuted=true;
+  prior.eventTime=blah2::rspduo_cpi_sample_epoch(7,4000,8000,40000);
+  auto current=prior;
+  current.timestampMs=2200; current.captureEpoch=8;
+  current.captureFirst=0; current.captureEnd=4000;
+  current.captureBacklogSamples={5,6}; current.captureDroppedSamples={0,0};
+  current.capturePrepareMs=4; current.channelizerMs=22; current.inputDiscontinuity=false;
+  current.acceleration.active="vulkan-wideband"; current.acceleration.state="active";
+  current.widebandGpuExecuted=true; current.widebandCpuExecuted=false;
+  current.eventTime=blah2::rspduo_cpi_sample_epoch(8,0,4000,40000);
+  const auto a=fifo.append(prior), b=fifo.append(current);
+
+  std::vector<RadarFrame> frames(3);
+  // Lane completion order need not be token order; duplicate tokens must not
+  // duplicate timing, and the first frame must not label the whole batch.
+  for (std::size_t index=0;index<frames.size();++index) {
+    auto& frame=frames[index]; const bool old=index==1;
+    frame.publicationSequence=old?a:b;
+    frame.illuminatorId=std::to_string(index);
+    frame.acceleration.active=old?"cpu":"vulkan";
+    frame.acceleration.state=old?"fallback":"ready";
+    frame.clutterAcceleration=frame.acceleration;
+    frame.ambiguityGpuExecuted=frame.clutterGpuExecuted=!old;
+    frame.ambiguityCpuExecuted=frame.clutterCpuExecuted=old;
+  }
+  REQUIRE(fifo.snapshotsFor(std::vector<RadarFrame>{}).empty());
+  std::vector<RadarFrame> onlyPrior(1); onlyPrior[0].publicationSequence=a;
+  const auto delayed=fifo.snapshotsFor(onlyPrior);
+  REQUIRE(delayed.size()==1); REQUIRE(delayed[0].second.timestampMs==prior.timestampMs);
+  onlyPrior[0].publicationSequence=b+1;
+  REQUIRE_THROWS_AS(fifo.snapshotsFor(onlyPrior),std::logic_error);
+  const auto publications=fifo.snapshotsFor(frames);
+  REQUIRE(publications.size()==2);
+  REQUIRE(publications[0].first==a); REQUIRE(publications[1].first==b);
+  fifo.reset(); // finishCurrent/fallback can retire the source before emission.
+
+  Timing timing(1000);
+  std::vector<uint64_t> emitted;
+  for (const auto& [sequence,context] : publications) {
+    const auto& expected=sequence==a?prior:current;
+    const auto aggregate=aggregate_status(frames,sequence);
+    REQUIRE(aggregate.ambiguity.members.size()==(sequence==a?1u:2u));
+    REQUIRE(aggregate.clutter.members.size()==(sequence==a?1u:2u));
+    REQUIRE(aggregate.ambiguityGpuExecuted==(sequence==b));
+    REQUIRE(aggregate.ambiguityCpuExecuted==(sequence==a));
+    timing.update(context.timestampMs,{context.capturePrepareMs,context.channelizerMs},
+      {"multi_capture_prepare","multi_channelizer_wall"});
+    timing.set_capture_queues(context.captureBacklogSamples,context.captureDroppedSamples);
+    timing.set_capture_sample_position(context.samplePositionAvailable,context.captureEpoch,
+      context.captureFirst,context.captureEnd);
+    timing.set_input_discontinuity(context.inputDiscontinuity);
+    timing.set_wideband_acceleration(context.acceleration,context.widebandGpuExecuted,
+      context.widebandCpuExecuted);
+    timing.set_acceleration(aggregate.ambiguity,aggregate.ambiguityGpuExecuted,
+      aggregate.ambiguityCpuExecuted);
+    timing.set_clutter_acceleration(aggregate.clutter,aggregate.clutterGpuExecuted,
+      aggregate.clutterCpuExecuted);
+    rapidjson::Document document;
+    document.Parse(blah2::annotate_event_time(timing.to_json(),context.eventTime).c_str());
+    REQUIRE_FALSE(document.HasParseError());
+    REQUIRE(document["timestamp"].GetUint64()==expected.timestampMs);
+    REQUIRE(document["captureEpoch"].GetUint64()==expected.captureEpoch);
+    REQUIRE(document["captureFirstEpochSample"].GetUint64()==expected.captureFirst);
+    REQUIRE(document["captureEndEpochSample"].GetUint64()==expected.captureEnd);
+    REQUIRE(document["captureBacklogSamples"][0].GetUint64()==expected.captureBacklogSamples[0]);
+    REQUIRE(document["captureDroppedSamples"][1].GetUint64()==expected.captureDroppedSamples[1]);
+    REQUIRE(document["inputDiscontinuity"].GetBool()==expected.inputDiscontinuity);
+    REQUIRE(document["multi_capture_prepare"].GetDouble()==expected.capturePrepareMs);
+    REQUIRE(document["multi_channelizer_wall"].GetDouble()==expected.channelizerMs);
+    REQUIRE(std::string(document["eventTime"]["epoch"].GetString())==std::to_string(expected.captureEpoch));
+    REQUIRE(std::string(document["eventTime"]["firstSample"].GetString())==std::to_string(expected.captureFirst));
+    REQUIRE(std::string(document["eventTime"]["endSample"].GetString())==std::to_string(expected.captureEnd));
+    REQUIRE(document["widebandAcceleration"]["gpuExecuted"].GetBool()==expected.widebandGpuExecuted);
+    REQUIRE(document["acceleration"]["members"].Size()==(sequence==a?1u:2u));
+    emitted.push_back(document["timestamp"].GetUint64());
+  }
+  REQUIRE(emitted==std::vector<uint64_t>{1100,2200});
+  REQUIRE(aggregate_status(frames,b+1).ambiguity.members.empty());
 }
 
 TEST_CASE("portable cohorts cap workers before construction and retain capacity after a failed slot")
@@ -2165,7 +3013,7 @@ TEST_CASE("portable replacement cannot double a retired resident GPU reservation
   REQUIRE(attempts == 1);
 }
 
-TEST_CASE("every accelerated lane offers full signed clutter geometry and qualifies before input")
+TEST_CASE("explicit GPU qualifies clutter while AUTO avoids its round trip")
 {
   using namespace blah2;
   for (const std::string mode : {"gpu", "auto"}) for (const int first : {-2, 2}) {
@@ -2186,11 +3034,16 @@ TEST_CASE("every accelerated lane offers full signed clutter geometry and qualif
     accelerated.prepareStartup(); accelerated.prepareStartup();
     REQUIRE(states.size() == definitions.size());
     for (const auto& state : states) {
-      REQUIRE(state->geometry.clutterSamples == 2000);
-      REQUIRE(state->geometry.clutterBins == 6);
-      REQUIRE(state->geometry.clutterDelayMin == first);
-      REQUIRE(state->clutterCalls >= Acceleration::ClutterQualificationFrames);
-      if (mode == "gpu") REQUIRE(state->clutterCalls == Acceleration::TotalQualificationFrames);
+      if (mode == "gpu") {
+        REQUIRE(state->geometry.clutterSamples == 2000);
+        REQUIRE(state->geometry.clutterBins == 6);
+        REQUIRE(state->geometry.clutterDelayMin == first);
+        REQUIRE(state->clutterCalls == Acceleration::TotalQualificationFrames);
+      } else {
+        REQUIRE(state->geometry.clutterSamples == 0);
+        REQUIRE(state->geometry.clutterBins == 0);
+        REQUIRE(state->clutterCalls == 0);
+      }
     }
     std::vector<channelizer::IlluminatorOutput> input;
     for (const auto& definition : definitions)
@@ -2201,16 +3054,23 @@ TEST_CASE("every accelerated lane offers full signed clutter geometry and qualif
       compareLaneMaps(frames[lane], baseline[lane]);
       REQUIRE(frames[lane].inputProcessing.dequeMaterializations == 0);
       REQUIRE(frames[lane].inputProcessing.materializedSamples == 0);
-      REQUIRE(frames[lane].inputProcessing.contiguousSamples == 4000);
+      REQUIRE(frames[lane].inputProcessing.contiguousSamples ==
+        (mode == "gpu" ? 4000 : 0));
       REQUIRE(frames[lane].clutterAcceleration.requested == mode);
       if (mode == "gpu") {
         REQUIRE(frames[lane].clutterAcceleration.active == "vulkan");
         REQUIRE(frames[lane].clutterAcceleration.state == "ready");
+        REQUIRE(frames[lane].clutterAcceleration.reason.find("AUTO selected") ==
+          std::string::npos);
         REQUIRE(frames[lane].clutterGpuExecuted);
         REQUIRE_FALSE(frames[lane].clutterCpuExecuted);
-      } else if (frames[lane].clutterAcceleration.state == "fallback") {
-        REQUIRE_FALSE(frames[lane].clutterAcceleration.reason.empty());
+      } else {
+        REQUIRE(frames[lane].clutterAcceleration.active == "cpu");
+        REQUIRE(frames[lane].clutterAcceleration.state == "selected");
+        REQUIRE(frames[lane].clutterAcceleration.reason ==
+          "AUTO selected CPU clutter to avoid the portable GPU filtered-IQ round trip");
         REQUIRE(frames[lane].clutterCpuExecuted);
+        REQUIRE_FALSE(frames[lane].clutterGpuExecuted);
       }
     }
   }
@@ -2227,6 +3087,7 @@ TEST_CASE("lane clutter rejection retains exact CPU fallback and independently q
       auto config = laneGpuConfig();
       auto state = std::make_shared<LaneGpuState>();
       if (!runtime) state->fault = fault;
+      CAPTURE(fault, runtime);
       const auto factory = [state](const GpuGeometry& geometry, const std::string&) {
         return std::make_unique<LaneGpuDouble>(geometry, state);
       };
@@ -2236,6 +3097,7 @@ TEST_CASE("lane clutter rejection retains exact CPU fallback and independently q
       accelerated.prepareStartup();
       if (runtime) state->fault = fault;
       for (uint64_t frame = 0; frame < 3; ++frame) {
+        CAPTURE(frame);
         auto input = dedicated_signal(2000);
         input.samples.firstInputSample = frame * 4000;
         const auto baseline = cpu.process({input});
@@ -2249,8 +3111,10 @@ TEST_CASE("lane clutter rejection retains exact CPU fallback and independently q
         REQUIRE_FALSE(actual.front().clutterAcceleration.reason.empty());
         REQUIRE(actual.front().clutterCpuExecuted);
         REQUIRE(actual.front().clutterGpuExecuted ==
-          (runtime && !frame && fault == "reject"));
-        if (frame || !runtime) REQUIRE(state->clutterCalls == before);
+          (!frame && (fault == "reject" || (!runtime && fault == "wrong"))));
+        REQUIRE(state->clutterCalls == before +
+          uint32_t(!frame && fault != "unavailable" &&
+            (runtime || fault == "reject" || fault == "wrong")));
         if (fault != "throw") {
           REQUIRE(actual.front().acceleration.active == "vulkan");
           REQUIRE(actual.front().ambiguityGpuExecuted);

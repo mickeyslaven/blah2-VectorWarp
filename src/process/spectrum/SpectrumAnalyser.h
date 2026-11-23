@@ -10,6 +10,7 @@
 #define SPECTRUMANALYSER_H
 
 #include "data/IqData.h"
+#include "data/CanonicalSignal.h"
 #include <stdint.h>
 #include <fftw3.h>
 #include <vector>
@@ -75,6 +76,7 @@ public:
   // sample at its existing FP64 arithmetic use, without materializing an
   // entire FP64 CPI. Only output's spectrum/frequency fields are updated.
   void process(const std::vector<std::complex<float>>& samples, IqData* output);
+  void process(blah2::iq::SampleView samples, IqData* output);
 };
 
 #endif

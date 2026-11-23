@@ -10,12 +10,24 @@
 #include <stdexcept>
 
 int workerMain(int argc, char** argv) {
+  if(argc==2&&std::string(argv[1])=="--temporal-v1"){
+#ifdef VECTORWARP_RESIDENT_GPU
+    std::unique_ptr<blah2::gpu_artifact_binding::Module> module;
+    return blah2::temporal_gpu::runWorker([&](const blah2::temporal_gpu::Config& config){
+      module=std::make_unique<blah2::gpu_artifact_binding::Module>("blah2-gpu-resident-vulkan.so","resident","--temporal-v1");
+      const auto create=module->factory<blah2::temporal_gpu::Create>("blah2_gpu_create_temporal",blah2::temporal_gpu::moduleAbi,config.device);
+      return std::unique_ptr<blah2::temporal_gpu::Backend>(create(blah2::temporal_gpu::moduleAbi,&config));
+    });
+#else
+    std::cerr<<"Temporal GPU capability was not built; canonical CPU products remain available\n";return 2;
+#endif
+  }
   if(argc==2&&std::string(argv[1])=="--wideband-v1"){
 #ifdef VECTORWARP_WIDEBAND_GPU
     blah2::applyMacGpuCompatibilityPolicy();
     std::unique_ptr<blah2::gpu_artifact_binding::Module> module;
     return blah2::wideband_gpu::runWorker([&](const blah2::wideband_gpu::Config& config,const std::string& device){
-      module=std::make_unique<blah2::gpu_artifact_binding::Module>("blah2-gpu-wideband-vulkan.so","wideband");
+      module=std::make_unique<blah2::gpu_artifact_binding::Module>("blah2-gpu-wideband-vulkan.so","wideband","--wideband-v1");
       const auto create=module->factory<blah2::wideband_gpu::Create>("blah2_gpu_create_wideband",blah2::wideband_gpu::moduleAbi,device);
       return std::unique_ptr<blah2::wideband_gpu::Backend>(create(blah2::wideband_gpu::moduleAbi,&config,device.c_str()));
     });
@@ -30,7 +42,7 @@ int workerMain(int argc, char** argv) {
     std::unique_ptr<blah2::gpu_artifact_binding::Module> module;
     const int result=blah2::resident::runWorker([&](const blah2::resident::Config& config,const blah2::resident::Mapping& mapping){
       if(module)throw std::runtime_error("Resident module already loaded");
-      module=std::make_unique<blah2::gpu_artifact_binding::Module>("blah2-gpu-resident-vulkan.so","resident");
+      module=std::make_unique<blah2::gpu_artifact_binding::Module>("blah2-gpu-resident-vulkan.so","resident","--resident-v5");
       const auto create=module->factory<blah2::resident::Create>("blah2_gpu_create_resident",blah2::resident::moduleAbi,config.device);
       return std::unique_ptr<blah2::resident::Backend>(create(blah2::resident::moduleAbi,&config,&mapping));
     });
@@ -55,7 +67,7 @@ int workerMain(int argc, char** argv) {
     std::string response;
     int code = 0;
     try {
-      blah2::gpu_artifact_binding::Module diagnostic("blah2-gpu-vulkan.so","portable");
+      blah2::gpu_artifact_binding::Module diagnostic("blah2-gpu-vulkan.so","portable","--driver-status");
       const auto status=diagnostic.factory<blah2::GpuDriverStatus>("blah2_gpu_driver_status",blah2::GPU_ABI,"auto");
       response = status(1);
       if (response.size() > 32768) throw std::runtime_error("GPU driver diagnostic exceeded its output limit");
@@ -67,7 +79,7 @@ int workerMain(int argc, char** argv) {
     std::cout << response << '\n';
     return code;
   }
-  if (argc != 1) { std::cerr << "Usage: blah2-gpu-worker [--driver-status | --resident-v5 | --wideband-v1]\n";
+  if (argc != 1) { std::cerr << "Usage: blah2-gpu-worker [--driver-status | --resident-v5 | --temporal-v1 | --wideband-v1]\n";
   return 2; }
   std::unique_ptr<blah2::gpu_artifact_binding::Module> module;
   const int result = blah2::runGpuWorker([&](const blah2::GpuGeometry& geometry,

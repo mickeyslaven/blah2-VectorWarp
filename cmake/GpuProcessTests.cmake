@@ -34,7 +34,9 @@ if(TARGET blah2GpuVulkan)
   blah2_isolate_vkfft_vendor_warnings(testClutterReplaySoftware)
   if(BLAH2_TEST_SOFTWARE_VULKAN)
     add_test(NAME clutterReplaySoftwareVulkanParity COMMAND testClutterReplaySoftware --software)
-    set_tests_properties(clutterReplaySoftwareVulkanParity PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS "software-vulkan;clutter-replay")
+    add_test(NAME clutterReplaySoftwareVulkanNativeParity COMMAND testClutterReplaySoftware --software --native)
+    set_tests_properties(clutterReplaySoftwareVulkanParity clutterReplaySoftwareVulkanNativeParity
+      PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS "software-vulkan;clutter-replay")
   endif()
 endif()
 add_executable(testGpuReceiveDeadline ${PROJECT_ROOT}/test/gpu/TestGpuReceiveDeadline.cpp)
@@ -216,6 +218,7 @@ add_executable(testGpuResidentWire ${PROJECT_ROOT}/test/gpu/TestGpuResidentWire.
 target_compile_features(testGpuResidentWire PRIVATE cxx_std_17)
 target_include_directories(testGpuResidentWire PRIVATE
   ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+target_link_libraries(testGpuResidentWire PRIVATE blah2RapidJson)
 add_test(NAME residentWireCpuBoundary COMMAND testGpuResidentWire)
 set_tests_properties(residentWireCpuBoundary PROPERTIES TIMEOUT 10)
 
@@ -229,7 +232,7 @@ add_executable(testGpuResidentProcess ${PROJECT_ROOT}/test/gpu/TestGpuResidentPr
 target_compile_features(testGpuResidentProcess PRIVATE cxx_std_17)
 target_include_directories(testGpuResidentProcess PRIVATE
   ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
-target_link_libraries(testGpuResidentProcess PRIVATE Threads::Threads)
+target_link_libraries(testGpuResidentProcess PRIVATE Threads::Threads blah2RapidJson)
 add_test(NAME residentProcessCpuBoundary COMMAND testGpuResidentProcess)
 set_tests_properties(residentProcessCpuBoundary PROPERTIES TIMEOUT 10)
 
@@ -281,9 +284,17 @@ target_compile_features(testGpuResultJson PRIVATE cxx_std_17)
 target_include_directories(testGpuResultJson PRIVATE
   ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
 target_include_directories(testGpuResultJson SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
-target_link_libraries(testGpuResultJson PRIVATE blah2RadarData blah2IqData
+target_link_libraries(testGpuResultJson PRIVATE blah2RadarData blah2IqData blah2FixedExecutor blah2Detection blah2Tracking
   ${ARMADILLO_LIBRARIES} Threads::Threads)
 add_test(NAME gpuResultJsonCpuCompatibility COMMAND testGpuResultJson)
+
+add_executable(testStartupIqCalibration ${PROJECT_ROOT}/test/gpu/TestStartupIqCalibration.cpp)
+target_compile_features(testStartupIqCalibration PRIVATE cxx_std_17)
+target_include_directories(testStartupIqCalibration PRIVATE ${PROJECT_ROOT}/src)
+target_link_libraries(testStartupIqCalibration PRIVATE blah2RadarDsp blah2Fusion blah2Detection blah2Tracking)
+add_test(NAME startupIqCalibrationCpuContract COMMAND testStartupIqCalibration)
+set_tests_properties(startupIqCalibrationCpuContract PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE
+  ENVIRONMENT "OPENBLAS_NUM_THREADS=1;OMP_NUM_THREADS=1;VECTORWARP_CLUTTER_WORKERS=1")
 
 add_executable(testBestEffortSocket ${PROJECT_ROOT}/test/gpu/TestBestEffortSocket.cpp)
 target_compile_features(testBestEffortSocket PRIVATE cxx_std_17)

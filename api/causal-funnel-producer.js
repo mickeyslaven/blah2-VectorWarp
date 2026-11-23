@@ -1,13 +1,5 @@
 'use strict';
-const {encodeUint64} = require('./causal-funnel-contract');
-
-const diagnosticKeys = ['no_op', 'detections', 'tracks_before', 'tracks_after',
-  'candidate_track_pairs', 'pair_already_claimed', 'pair_delay_rejected',
-  'pair_doppler_rejected', 'pair_innovation_rejected', 'pair_in_gate',
-  'associations', 'misses', 'promotions', 'tentative_expired',
-  'inactivity_deleted', 'birth_candidates', 'birth_snr_rejected',
-  'birth_ridge_rejected', 'initiated',
-];
+const {encodeUint64, trackerDiagnosticKeys} = require('./causal-funnel-contract');
 
 function createMultiIlluminatorCausalFrame(value, maximum = 32) {
   if (!value || typeof value.id !== 'string' ||
@@ -25,6 +17,10 @@ function createMultiIlluminatorCausalFrame(value, maximum = 32) {
   if (arrays.some(item => !Array.isArray(item)) ||
       arrays.some(item => item.length !== arrays[0].length))
     throw new Error('Invalid multi-illuminator causal detections');
+  const evidence = detection.evidence;
+  if (evidence !== undefined && (!Array.isArray(evidence) ||
+      evidence.length !== arrays[0].length))
+    throw new Error('Invalid multi-illuminator causal detection evidence');
   const total = arrays[0].length, retained = Math.min(total, maximum);
   const sequence = value.end_input_sample;
   const candidates = Array.from({length: retained}, (_, index) => {
@@ -33,14 +29,21 @@ function createMultiIlluminatorCausalFrame(value, maximum = 32) {
     const snr = Number(detection.snr[index]);
     if (![delay, doppler, snr].every(Number.isFinite))
       throw new Error('Invalid multi-illuminator causal detection value');
+    // Native null evidence means unavailable lineage; legacy products omit
+    // the array. Preserve each measured candidate's actual CPI depth.
+    const support = evidence === undefined ? 1 :
+      evidence[index] === null ? 0 : evidence[index]?.cpis;
+    if (![0, 1, 2, 4, 8].includes(support) ||
+        (support === 0 && evidence[index] !== null))
+      throw new Error('Invalid multi-illuminator causal detection evidence');
     return {id: `d${sequence}-${index}`, kind: 'candidate', reason: 'retained',
       state: 0, previous_state: 0, delay_km: delay, doppler_hz: doppler,
       snr_db: snr, bearing_candidates_deg: [], measured: true,
-      confirmation_credit: null, support_depth: 1};
+      confirmation_credit: null, support_depth: support};
   });
   const sourceDiagnostics = value.trackerDiagnostics || {};
   const trackerDiagnostics = {};
-  for (const key of diagnosticKeys) if (sourceDiagnostics[key] !== undefined) {
+  for (const key of trackerDiagnosticKeys) if (sourceDiagnostics[key] !== undefined) {
     const field = sourceDiagnostics[key];
     if (key === 'no_op') {
       if (typeof field !== 'boolean') throw new Error('Invalid causal tracker diagnostic');

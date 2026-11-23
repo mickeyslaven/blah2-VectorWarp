@@ -124,6 +124,65 @@ class WorkflowContracts(unittest.TestCase):
         self.assertEqual(sum("script/artifact-plan.py native-package" in step.get("run", "")
                              for step in package["steps"]), 3)
 
+    def test_release_entrypoints_and_review_assets_have_one_contract_owner(self):
+        for name in ("build-native", "install-native", "package-native", "install-release",
+                     "smoke-native-package", "test-installed-package"):
+            subprocess.run(["bash", "-n", str(ROOT / f"script/{name}.sh")], check=True)
+        compile((ROOT / "script/build-package-repository.py").read_text(),
+                "script/build-package-repository.py", "exec")
+        release = (WORKFLOWS / "release-packages.yml").read_text()
+        for value in ("release-assets/package-manifest.json", "release-assets/repository-manifest.json",
+                      "cp repository/repository-manifest.json release-assets/package-manifest.json",
+                      "cp repository/repository-manifest.json release-assets/repository-manifest.json",
+                      "release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json",
+                      "script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json"):
+            self.assertIn(value, release)
+        for name in ("ci.yml", "release-packages.yml"):
+            source = (WORKFLOWS / name).read_text()
+            for value in ("NODE_PATH: ${{ github.workspace }}/api/node_modules",
+                          "npm run test:dom --prefix api", "node test/ui/deployment.test.js",
+                          "python3 test/packaging/test_ci_workflows.py -v"):
+                self.assertIn(value, source)
+            self.assertNotIn("yaml.safe_load", source, "Workflow syntax is checked by this shared owner")
+        helper = (ROOT / "script/upstream-diff.py").read_text()
+        for value in ("git diff --stat", "git diff --name-status", "https://github.com/{upstream}.git",
+                      "moving branch"):
+            self.assertIn(value, helper)
+
+    def test_cpu_package_gate_precedes_all_target_build_with_strict_warnings(self):
+        job = workflow("release-packages.yml")["jobs"]["verify"]
+        source = "\n".join(step.get("run", "") for step in job["steps"])
+        gate = source.index("script/prebuild_acceptance.py")
+        self.assertLess(source.index("npm ci --prefix api"), gate)
+        self.assertLess(source.index("-DCMAKE_COMPILE_WARNING_AS_ERROR=ON"), gate)
+        self.assertLess(gate, source.index("cmake --build build/ci"))
+        self.assertIn("--native-test testDetectionMath --native-test testTracker", source)
+        self.assertIn("-DBLAH2_GPU=OFF", source, "The independent CPU-only build is not redundant")
+        self.assertNotIn("--skip-target-build", source)
+        evidence = next(s for s in job["steps"] if s.get("with", {}).get("path") ==
+                        "build/ci/prebuild-acceptance.json")
+        self.assertEqual(evidence["if"], "always()")
+
+    def test_full_browser_route_matrix_is_required_on_linux_and_both_macs(self):
+        for name, job_name in (("ci.yml", "test"), ("macos.yml", "local-runtime")):
+            job = workflow(name)["jobs"][job_name]
+            step = next(s for s in job["steps"] if "node " in s.get("run", "") and
+                        "all-routes-layout.cjs" in s["run"])
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("VECTORWARP_LAYOUT_ROUTES", step["run"], "Do not select a partial route subset")
+            self.assertIn("chromium.executablePath()", step["run"])
+            self.assertIn("playwright install", step["run"])
+            self.assertNotIn("--only-shell", step["run"], "CDP runner launches the full Chromium binary")
+            if name == "ci.yml":
+                self.assertEqual(step["if"], "matrix.runner == 'ubuntu-24.04'")
+                self.assertIn("patch", " ".join(s.get("run", "") for s in job["steps"]
+                                                if "apt-get install" in s.get("run", "")))
+            else:
+                self.assertNotIn("if", step)
+                self.assertEqual(job["strategy"]["matrix"]["runner"], ["macos-15", "macos-15-intel"])
+            evidence = next(s for s in job["steps"] if s.get("with", {}).get("path", "").endswith("browser-layout.json"))
+            self.assertIn("always()", evidence["if"])
+
     def test_publication_requires_explicit_dispatch_opt_in(self):
         for name, job_name, ref in (
             ("homebrew.yml", "publish", "refs/heads/main"),
@@ -164,6 +223,8 @@ class WorkflowContracts(unittest.TestCase):
     def test_signing_downloads_only_packages_and_rechecks_remote_tag(self):
         jobs = workflow("release-packages.yml")["jobs"]
         signing = jobs["sign-and-draft-release"]
+        self.assertIn(repr(signing['name']), (ROOT / 'script/macos-release-agent.py').read_text(),
+                      'The local Mac completer must authenticate the actual successful signing job')
         download = next(step for step in signing["steps"]
                         if step.get("uses", "").startswith("actions/download-artifact@"))
         matched = [step["with"]["path"] for step in jobs["package"]["steps"]

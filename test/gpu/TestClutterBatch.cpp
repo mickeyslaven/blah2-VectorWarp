@@ -4,12 +4,59 @@
 #include <deque>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
 using Sample = std::complex<float>;
 void require(bool condition, const char* message) {
   if (!condition) throw std::runtime_error(message);
+}
+
+void verifyConstructionPolicy() {
+  using Attempt = std::pair<uint32_t, bool>;
+  std::vector<Attempt> attempts;
+  auto selected = blah2::selectClutterBatch(3, nullptr, [&](uint32_t batch, bool lut) {
+    attempts.emplace_back(batch, lut);
+    return batch == 2 && lut;
+  });
+  require(selected == 2 && attempts == std::vector<Attempt>{{3,true},{2,true}},
+    "Default clutter construction must retain LUT-only admission");
+  attempts.clear();
+  selected = blah2::selectClutterBatch(3, nullptr, [&](uint32_t batch, bool lut) {
+    attempts.emplace_back(batch, lut);return true;
+  });
+  require(selected == 3 && attempts == std::vector<Attempt>{{3,true}},
+    "Successful LUT construction unnecessarily tried another candidate");
+  for (const char* mode : {"lut", "native"}) {
+    attempts.clear();const bool expected = std::strcmp(mode,"lut") == 0;
+    selected = blah2::selectClutterBatch(3, mode, [&](uint32_t batch, bool lut) {
+      attempts.emplace_back(batch, lut);return batch == 1;
+    });
+    require(selected == 1 && attempts == std::vector<Attempt>{{3,expected},{2,expected},{1,expected}},
+      "Explicit twiddle override switched modes or skipped a batch");
+  }
+  attempts.clear();
+  selected = blah2::selectClutterBatch(8, nullptr, [&](uint32_t batch, bool lut) {
+    attempts.emplace_back(batch, lut);return false;
+  });
+  require(!selected && attempts.size() == 8 && attempts.front() == Attempt{8,true} &&
+    attempts.back() == Attempt{1,true}, "Capacity exhaustion lost bounded CPU fallback");
+  selected = blah2::selectClutterBatch(3, nullptr, [](uint32_t, bool lut) {return !lut;});
+  require(!selected, "Default policy admitted native clutter without whole-bank performance evidence");
+  for (const char* mode : {"", "auto", "invalid"}) {
+    bool rejected = false;
+    try { blah2::selectClutterBatch(1, mode, [&](uint32_t,bool) -> bool {
+      throw std::runtime_error("Invalid override started construction");
+    }); } catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected, "Invalid explicit twiddle setting was silently replaced");
+  }
+  for (uint32_t channels : {0u,9u}) {
+    bool rejected = false;
+    try { blah2::selectClutterBatch(channels, nullptr, [](uint32_t,bool) {return true;}); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected, "Invalid construction channel count accepted");
+  }
 }
 
 void verifyChannels(uint32_t channels, uint32_t batchChannels) {
@@ -126,6 +173,7 @@ void verifyDirectBatchPadding() {
 }
 
 int main() try {
+  verifyConstructionPolicy();
   for (uint32_t channels = 1; channels <= 8; ++channels)
     for (uint32_t batch = 1; batch <= channels; ++batch) verifyChannels(channels, batch);
   verifyFailureAndShapes();

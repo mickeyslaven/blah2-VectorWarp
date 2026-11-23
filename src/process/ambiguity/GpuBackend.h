@@ -89,6 +89,14 @@ public:
     const std::complex<float>* surveillance, size_t surveillanceCount,
     std::complex<float>* output, size_t outputCount) = 0;
 };
+// Optional construction-time capability. The buffer interface can exist even
+// when its working set did not fit; do not confuse that with a numeric reject.
+// Keep existing interface vtables and module/wire ABIs unchanged.
+class GpuClutterAvailabilityBackend {
+public:
+  virtual ~GpuClutterAvailabilityBackend() = default;
+  virtual bool clutterAvailable() const = 0;
+};
 // Module ABI is versioned, built with the executable, and loaded only by explicit
 // path beside the executable (never an untrusted current-working-directory path).
 constexpr unsigned GPU_ABI = 4;

@@ -19,7 +19,7 @@ std::optional<detection::IntegrationMetrics> temporalPublication(
  const auto motion=track_before_detect::decodeMotionBins(result.motionBins);
  result.delayMotionBins=motion.delay;result.dopplerMotionBins=motion.doppler;
  result.delayDriftPerHz=motion.fractionalDelay?track_before_detect::delayDriftPerHz(
-  config.geometry.clutterSamples,config.fusion.frequencyHz):0;
+  config.geometry.clutterSamples,config.temporalCarrierHz()):0;
  result.availableCpis=publication.availableCpis;result.ready=publication.detectorReady;
  result.historyReset=publication.availableCpis==1;result.captureEpoch=captureEpoch;
  const uint64_t span=end-first,older=publication.availableCpis-1;

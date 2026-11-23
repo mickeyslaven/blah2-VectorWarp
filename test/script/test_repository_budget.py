@@ -139,6 +139,16 @@ class RepositoryBudgetControls(unittest.TestCase):
                          "9eeac02c36a946716f9e4f3a501f347375ea58d962cdeb4859b521b8a6993ab0")
         self.assertEqual(len(adjustments[124]["changes"]), 10)
         self.assertTrue(all(after > before for before, after in adjustments[124]["changes"].values()))
+        # Preserve the earlier candidate ratchets, then seal each canonical
+        # owner review and the removed direct-runtime/alias contract edges.
+        self.assertGreaterEqual(len(adjustments), 166)
+        self.assertEqual(BUDGET.digest(adjustments[:131]),
+                         "10c6764d1c63fe656f47afd510aa200aee1538db121260710edda17cf32d1295")
+        self.assertEqual(BUDGET.digest(adjustments[:166]),
+                         "ef3042ddac061739fb401a1dc57aed23b8f4243f17c68c0a41798b3369c2b05b")
+        self.assertEqual(sum(len(row["changes"]) for row in adjustments[131:166]), 224)
+        self.assertEqual(sum(after < before for row in adjustments[131:166]
+                             for before, after in row["changes"].values()), 22)
 
     def test_checkout_line_endings_do_not_change_metrics(self):
         before = BUDGET.measure(self.root, self.paths(), {})

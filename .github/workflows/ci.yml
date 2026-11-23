@@ -52,7 +52,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential cmake curl git ninja-build pkg-config python3-yaml tar unzip xz-utils zip \
+            build-essential cmake curl git ninja-build patch pkg-config python3-yaml tar unzip xz-utils zip \
             apt-utils createrepo-c gnupg glslang-dev glslang-tools libarmadillo-dev libfftw3-dev \
             libhackrf-dev libuhd-dev libboost-dev libusb-1.0-0-dev libvulkan-dev mesa-vulkan-drivers \
             libasio-dev rapidjson-dev rpm
@@ -114,6 +114,7 @@ jobs:
           python3 test/gpu/test_product_parity_contract.py -v
           VECTORWARP_TEST_RECORDING_INSPECTOR="$PWD/build/ci/bin/inspectRecordingProvenance" python3 test/gpu/test_unified_corpus_contract.py -v
           python3 test/gpu/test_pre_soak_receipt_gate.py -v
+          python3 test/script/test_soak_identity.py -v
           python3 test/packaging/test_ci_workflows.py -v
           python3 test/packaging/test_release_ci.py -v
       - name: Run offline replay and qualification contract regressions
@@ -183,35 +184,24 @@ jobs:
           python3 test/packaging/test_receiver_build.py -v
           sudo python3 test/packaging/test_package_upgrade.py -v
           node test/packaging/upgrade_state.test.js
-      - name: Syntax-check every workflow shell block and release script
+      - name: Check all browser routes and responsive states
+        if: matrix.runner == 'ubuntu-24.04'
+        env:
+          NODE_PATH: ${{ github.workspace }}/api/node_modules
+          VECTORWARP_LAYOUT_REPORT: build/ci/browser-layout.json
         run: |
-          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh script/test-installed-package.sh
-          python3 -m py_compile script/build-package-repository.py
-          python3 - <<'PY'
-          import pathlib, subprocess, tempfile, yaml
-          for workflow in pathlib.Path('.github/workflows').glob('*.yml'):
-              document = yaml.safe_load(workflow.read_text())
-              for job in document['jobs'].values():
-                  for step in job.get('steps', []):
-                      if 'run' not in step: continue
-                      with tempfile.NamedTemporaryFile(mode='w', suffix='.sh') as script:
-                          script.write(step['run']); script.flush()
-                          subprocess.run(['bash', '-n', script.name], check=True)
-          release = pathlib.Path('.github/workflows/release-packages.yml').read_text()
-          assert 'release-assets/package-manifest.json' in release
-          assert 'release-assets/repository-manifest.json' in release
-          assert 'cp repository/repository-manifest.json release-assets/package-manifest.json' in release
-          assert 'cp repository/repository-manifest.json release-assets/repository-manifest.json' in release
-          assert 'release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json' in release
-          assert 'script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json' in release
-          for workflow in ('ci.yml', 'release-packages.yml'):
-              text = pathlib.Path('.github/workflows', workflow).read_text()
-              assert 'NODE_PATH: $' + '{{ github.workspace }}/api/node_modules' in text
-              assert 'npm run test:dom --prefix api' in text and 'node test/ui/deployment.test.js' in text
-          helper = pathlib.Path('script/upstream-diff.py').read_text()
-          assert 'git diff --stat' in helper and 'git diff --name-status' in helper
-          assert 'https://github.com/{upstream}.git' in helper and 'moving branch' in helper
-          PY
+          npm ci --prefix test/browser --ignore-scripts --no-audit --no-fund
+          test/browser/node_modules/.bin/playwright install --with-deps chromium
+          VECTORWARP_CHROME_EXECUTABLE="$(node -p "require('./test/browser/node_modules/playwright').chromium.executablePath()")" \
+            node test/browser/all-routes-layout.cjs
+      - name: Preserve browser-route evidence
+        if: always() && matrix.runner == 'ubuntu-24.04'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: browser-layout-${{ matrix.runner }}-${{ github.sha }}
+          path: build/ci/browser-layout.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Generate immutable upstream review artifact
         run: |
           mkdir release-review

@@ -335,6 +335,13 @@ inline Shape validate(const ReferenceSpectrumConfig& c,uint32_t n,uint32_t chann
   throw std::invalid_argument("GPU reference/spectrum borrowed workspace capacity unsupported");
  return s;
 }
+inline void submitAndWait(Context& context,VkCommandBuffer command,const char* phase){
+ VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+ submit.commandBufferCount=1;submit.pCommandBuffers=&command;
+ check(gpu_host::call(context.hostTiming,"vkQueueSubmit",0,[&]{return vkQueueSubmit(context.queue,1,&submit,context.fence);}),phase);
+ check(gpu_host::call(context.hostTiming,"vkWaitForFences",0,[&]{return vkWaitForFences(context.device,1,&context.fence,VK_TRUE,UINT64_MAX);}),phase);
+ check(gpu_host::call(context.hostTiming,"vkResetFences",0,[&]{return vkResetFences(context.device,1,&context.fence);}),phase);
+}
 struct CommandOwner {
  Context& context;
  VkCommandBuffer command=VK_NULL_HANDLE;
@@ -364,12 +371,6 @@ class Stage {
  std::vector<double> frequencies_;
  bool covarianceValid_=false;
  std::array<std::complex<double>,64> covarianceCache_{};
- void submit(VkCommandBuffer command){VkSubmitInfo s{VK_STRUCTURE_TYPE_SUBMIT_INFO};
- s.commandBufferCount=1;
- s.pCommandBuffers=&command;
-  check(gpu_host::call(context_.hostTiming,"vkQueueSubmit",0,[&]{return vkQueueSubmit(context_.queue,1,&s,context_.fence);}),"reference auxiliary submit");
-  check(gpu_host::call(context_.hostTiming,"vkWaitForFences",0,[&]{return vkWaitForFences(context_.device,1,&context_.fence,VK_TRUE,UINT64_MAX);}),"reference auxiliary execution");
-  check(gpu_host::call(context_.hostTiming,"vkResetFences",0,[&]{return vkResetFences(context_.device,1,&context_.fence);}),"reference auxiliary fence");}
  static void putD(uint32_t* words,uint32_t at,double value){std::memcpy(words+at,&value,8);}
  static double getD(const uint32_t* words,uint32_t at){double value;
  std::memcpy(&value,words+at,8);
@@ -514,7 +515,7 @@ public:
     std::memcpy(static_cast<void*>(&covarianceCache_[i]),m+covariance+4*i,16);
    covarianceValid_=true;
   }
- submit(commitCommand_.command);
+ submitAndWait(context_,commitCommand_.command,"reference auxiliary execution");
  checkStatus(true);
  return decode(committed);}
  ReferenceCheckpoint exportCheckpoint(){return decode(committed);}

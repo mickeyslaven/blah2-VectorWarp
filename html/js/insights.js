@@ -113,11 +113,30 @@
   }
 
   function networkAssociationAggregate(rows, fleet) {
+    if (!rows.length) {
+      if (rows.unavailableNodes?.length) return {unavailable_reason:
+        'No radar nodes are publishing fresh observations.', availability_failure: true};
+      throw new Error('No radar node statistics could be refreshed');
+    }
+    const policies = rows.flatMap(({value}) => array(value?.channels)
+      .map(source => source.association_statistics?.evaluation_policy_hash));
+    if (policies.some(hash => typeof hash !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(hash)) || new Set(policies).size !== 1)
+      return {unavailable_reason: 'Connected channels use different or unidentified scoring policies. View channels separately until their scoring policies match.'};
+    const exposureFractions = counts => {
+      const denominator = counts.associationEligible;
+      return {...counts, association_eligible_cpis: denominator,
+        association_eligible_seconds: counts.associationSeconds,
+        detection_fraction: denominator ? counts.detected / denominator : null,
+        missed_detection_fraction: denominator ? (denominator - counts.detected) / denominator : null,
+        operational_track_fraction: denominator ? counts.tracked / denominator : null,
+        operationally_untracked_fraction: denominator ? (denominator - counts.tracked) / denominator : null};
+    };
     const channels = [];
     for (const {node, value} of rows) for (const source of array(value?.channels)) {
       const id = source.identity?.illuminator || source.selected_channel || 'primary';
       const catalog = array(fleet?.channels).find(channel => channel.nodeId === node.id &&
-        (channel.item?.id === id || id === 'primary'));
+        channel.item?.id === id);
       const channelName = (catalog?.item?.id || id) === 'primary' ? 'Primary' :
         (catalog?.item?.id || id);
       const display = `${channelName} (${node.label})`;
@@ -133,24 +152,16 @@
         return totals;
       }, {eligible: 0, associationEligible: 0, detected: 0, tracked: 0,
         seconds: 0, associationSeconds: 0});
-      const cpiExposure = {...exposureCounts,
-        association_eligible_cpis: exposureCounts.associationEligible,
-        association_eligible_seconds: exposureCounts.associationSeconds,
-        detection_fraction: exposureCounts.associationEligible ?
-          exposureCounts.detected / exposureCounts.associationEligible : null,
-        missed_detection_fraction: exposureCounts.associationEligible ?
-          (exposureCounts.associationEligible - exposureCounts.detected) /
-            exposureCounts.associationEligible : null,
-        operational_track_fraction: exposureCounts.associationEligible ?
-          exposureCounts.tracked / exposureCounts.associationEligible : null,
-        operationally_untracked_fraction: exposureCounts.associationEligible ?
-          (exposureCounts.associationEligible - exposureCounts.tracked) /
-            exposureCounts.associationEligible : null};
-      channels.push({...source, cpi_exposure: cpiExposure,
+      channels.push({...source, cpi_exposure: exposureFractions(exposureCounts),
+        measured_track_coverage: window.VectorWarpMeasuredCoverage?.aggregate([source.measured_track_basis]),
         node_id: node.id, node_label: node.label,
         channel_key: `${node.id}:${channelName}`, display_channel: display,
         identity: {...(source.identity || {}), illuminator: display}});
     }
+    const coverageSources = channels.map(channel => channel.measured_track_basis);
+    if (array(fleet?.nodes).some(node => !channels.some(channel => channel.node_id === node.id)) ||
+        array(fleet?.channels).some(expected => !channels.some(channel => channel.channel_key ===
+          `${expected.nodeId}:${expected.item?.id === 'primary' ? 'Primary' : expected.item?.id}`))) coverageSources.push(null);
     const sum = getter => channels.reduce((total, channel) =>
       total + (Number(getter(channel)) || 0), 0);
     const eligible = sum(channel => channel.association_statistics?.eligible_adsb_passes);
@@ -158,22 +169,12 @@
     const tracked = sum(channel => channel.association_statistics?.tracking?.associated_passes);
     const audited = sum(channel => channel.association_statistics?.timing?.audited_aircraft_cpis);
     const exact = sum(channel => channel.association_statistics?.timing?.exact_timed_aircraft_cpis);
-    const exposure = {eligible: sum(channel => channel.cpi_exposure?.eligible),
+    const exposure = exposureFractions({eligible: sum(channel => channel.cpi_exposure?.eligible),
       associationEligible: sum(channel => channel.cpi_exposure?.associationEligible),
       detected: sum(channel => channel.cpi_exposure?.detected),
       tracked: sum(channel => channel.cpi_exposure?.tracked),
       seconds: sum(channel => channel.cpi_exposure?.seconds),
-      associationSeconds: sum(channel => channel.cpi_exposure?.associationSeconds)};
-    exposure.association_eligible_cpis = exposure.associationEligible;
-    exposure.association_eligible_seconds = exposure.associationSeconds;
-    exposure.detection_fraction = exposure.associationEligible ?
-      exposure.detected / exposure.associationEligible : null;
-    exposure.missed_detection_fraction = exposure.associationEligible ?
-      (exposure.associationEligible - exposure.detected) / exposure.associationEligible : null;
-    exposure.operational_track_fraction = exposure.associationEligible ?
-      exposure.tracked / exposure.associationEligible : null;
-    exposure.operationally_untracked_fraction = exposure.associationEligible ?
-      (exposure.associationEligible - exposure.tracked) / exposure.associationEligible : null;
+      associationSeconds: sum(channel => channel.cpi_exposure?.associationSeconds)});
     const groups = [];
     const mergeBands = (target, source) => {
       for (const [name, band] of Object.entries(source || {})) {
@@ -184,12 +185,20 @@
         merged.tracked ||= band.tracked === true;
       }
     };
-    for (const channel of channels) for (const pass of array(channel.passes)) {
-      if (!pass?.hex || !Number.isFinite(Number(pass.started_at))) continue;
+    // Process a single chronological stream per aircraft. A later channel's
+    // interval can bridge two earlier channel intervals; first-match merging
+    // otherwise leaves duplicate groups and makes the denominator order-dependent.
+    const passRows = channels.flatMap(channel => array(channel.passes)
+      .filter(pass => pass?.hex && Number.isFinite(Number(pass.started_at)))
+      .map(pass => ({channel, pass}))).sort((left, right) =>
+      String(left.pass.hex).toLowerCase().localeCompare(String(right.pass.hex).toLowerCase()) ||
+        Number(left.pass.started_at) - Number(right.pass.started_at));
+    for (const {channel, pass} of passRows) {
       const start = Number(pass.started_at);
       const end = Number(pass.finalized_at) || start;
-      let group = groups.find(item => item.hex === String(pass.hex).toLowerCase() &&
-        start <= item.end && end >= item.start);
+      let group = groups.at(-1);
+      if (group?.hex !== String(pass.hex).toLowerCase() || start > group.end || end < group.start)
+        group = null;
       if (!group) {
         group = {hex: String(pass.hex).toLowerCase(), start, end, detected: false,
           tracked: false, channels: {}, azimuth_bands: {},
@@ -205,7 +214,6 @@
       mergeBands(group.azimuth_bands, pass.azimuth_bands);
       mergeBands(group.azimuth_elevation_bands, pass.azimuth_elevation_bands);
     }
-    const channelKeys = channels.map(channel => channel.channel_key);
     const labelByKey = Object.fromEntries(channels.map(channel =>
       [channel.channel_key, channel.display_channel]));
     const contribution = metric => {
@@ -264,14 +272,10 @@
         populationBands[name] = (populationBands[name] || 0) + (Number(count) || 0);
     const population = {schema: 'vectorwarp-track-population-network-v1',
       scope: 'sum-of-node-channel-track-cohorts',
-      retained_tracks: populations.reduce((total, item) => total +
-        (Number(item.retained_tracks) || 0), 0),
-      adsb_associated_tracks: populations.reduce((total, item) => total +
-        (Number(item.adsb_associated_tracks) || 0), 0),
-      unassociated_tracks: populations.reduce((total, item) => total +
-        (Number(item.unassociated_tracks) || 0), 0),
-      empirical_reference_tracks: populations.reduce((total, item) => total +
-        (Number(item.empirical_reference_tracks) || 0), 0),
+      retained_tracks: sum(channel => channel.track_population?.retained_tracks),
+      adsb_associated_tracks: sum(channel => channel.track_population?.adsb_associated_tracks),
+      unassociated_tracks: sum(channel => channel.track_population?.unassociated_tracks),
+      empirical_reference_tracks: sum(channel => channel.track_population?.empirical_reference_tracks),
       similarity_bands: populationBands,
       aircraft_like_candidates: channels.flatMap(channel =>
         array(channel.track_population?.aircraft_like_candidates).map(candidate =>
@@ -302,6 +306,9 @@
         definition: 'receiver_true_azimuth_x_geometric_elevation',
         bands: summarizeBands('azimuth_elevation_bands')}}};
     return {schema: 'vectorwarp-network-scorecard-v1', aggregate: true,
+      stale_nodes: rows.filter(row => row.stale).map(row => row.node.label || row.node.id),
+      missing_nodes: array(fleet?.nodes).filter(node => node.role !== 'coordinator' &&
+        !rows.some(row => row.node.id === node.id)).map(node => node.label || node.id),
       network_node_count: new Set(channels.map(channel => channel.node_id)).size,
       updated_at: Math.max(0, ...channels.map(channel => Number(channel.updated_at) || 0)),
       timing_policy: 'provisional', illuminators: channels,
@@ -315,6 +322,7 @@
         timing: {exact_timed_aircraft_cpis: exact, audited_aircraft_cpis: audited,
           exact_fraction: audited ? exact / audited : null},
         cpi_exposure: exposure,
+        measured_track_coverage: window.VectorWarpMeasuredCoverage?.aggregate(coverageSources),
         track_population: population, unique_aircraft_passes: unique}};
   }
 
@@ -1660,7 +1668,11 @@
     const parameters = new URL(window.location.href).searchParams;
     const localMultiChannel = context.enabled && context.illuminators.length > 1;
     const fleet = typeof getFederatedChannels === 'function' ?
-      await getFederatedChannels({fresh: true}).catch(() => null) : null;
+      await getFederatedChannels({fresh: true}).catch(error => {
+        if (parameters.get('scope') === 'all' ||
+            !parameters.has('scope') && !parameters.has('illuminator')) throw error;
+        return null;
+      }) : null;
     const networkCombinedAvailable = (fleet?.channels?.length ||
       context.illuminators.length) > 1 || (fleet?.nodes?.length || 1) > 1;
     const combinedScope = networkCombinedAvailable &&
@@ -1669,8 +1681,15 @@
     let statistics, aggregate, timingLabel, authoritativeFrames = 0;
     if (combinedScope) {
       const rows = await federatedNodeJson(
-        '/api/live-scorecard/association-basis?timing=provisional', fleet);
+        '/api/live-scorecard/association-basis?timing=provisional' +
+          (document.body.classList?.contains('distance-view') ? '&display=kiosk' : ''), fleet);
       aggregate = networkAssociationAggregate(rows, fleet);
+      if (aggregate.unavailable_reason) {
+        renderHtml(root, empty('Combined statistics unavailable', aggregate.unavailable_reason));
+        setState(aggregate.availability_failure ? 'Radar observations unavailable' :
+          'Scoring policies do not match', 'warning');
+        return;
+      }
       statistics = aggregate;
       timingLabel = 'Operational receiver-event alignment';
     } else {
@@ -1997,41 +2016,48 @@
         <article class="metric-card good statistics-hero-tracked"><strong>${percent(exposure.operational_track_fraction, 1)}</strong><span>Operationally tracked CPIs</span><small>${percent(exposure.operationally_untracked_fraction, 1)} untracked</small></article>
       </div></div>`;
     };
-    const kioskCpiVisuals = (exposure = {}, channels = [], uniquePasses = {}, singleChannel = false) => {
-      // Rings retain the selected scope's pass denominators: the single-channel
-      // scorecard tracks / eligible, while the deduplicated network tracks /
-      // detected. CPI fractions below are separate per-channel diagnostics.
+    const measuredCoverageFraction = value => value?.complete === true ? value.fraction : value?.scored_fraction;
+    const measuredCoverageDenominator = value => value?.complete === true ?
+      value.eligible_seconds : value?.scored_seconds;
+    const measuredCoverageSummary = (value = {}) => `<section class="info-card measured-coverage-summary"><h2>Measured track coverage</h2><dl>
+      <div><dt>${value.complete ? 'Eligible' : 'Scored'} aircraft time covered</dt><dd>${percent(measuredCoverageFraction(value), 1)}</dd></div>
+      <div><dt>Measured / ${value.complete ? 'eligible' : 'scored'} aircraft time</dt><dd>${presenceTime(value.measured_seconds)} / ${presenceTime(measuredCoverageDenominator(value))}</dd></div>
+      <div><dt>Unscored aircraft time</dt><dd>${presenceTime(value.unscored_seconds)}</dd></div>
+      <div><dt>Internal gaps · p50 / p95 / max</dt><dd>${[value.gap_p50_seconds, value.gap_p95_seconds, value.gap_max_seconds].map(presenceTime).join(' / ')}</dd></div>
+      <div><dt>Evidence</dt><dd>${value.complete ? 'Retained aircraft-time union' : 'Incomplete or unavailable'}</dd></div>
+    </dl></section>`;
+    const kioskCpiVisuals = (coverage = {}, channels = [], singleChannel = false) => {
       const fraction = value => Math.max(0, Math.min(1, finite(value) ?? 0));
-      const complement = value => finite(value) === null ? null : 1 - fraction(value);
-      const eligiblePasses = finite(uniquePasses.eligible_adsb_passes) ?? 0;
-      const detectedPasses = finite(uniquePasses.detection?.associated_passes) ?? 0;
-      const trackedPasses = finite(uniquePasses.tracking?.associated_passes) ?? 0;
-      const trackingDenominator = singleChannel ? eligiblePasses :
-        finite(uniquePasses.tracking?.detected_passes) ?? detectedPasses;
-      const missedPasses = Math.max(0, eligiblePasses - detectedPasses);
-      const untrackedPasses = Math.max(0, trackingDenominator - trackedPasses);
       const nodeCount = new Set(channels.map(channel => channel.node_label || channel.node_id)
         .filter(Boolean)).size;
-      const gauge = (kind, title, value, remainderValue, label, remainder, count, remainderCount, denominator) =>
-        `<article class="cpi-kiosk-gauge ${kind}"><h3>${title}</h3><div class="cpi-kiosk-ring" role="img" aria-label="${label}: ${percent(value, 1)}; ${remainder}: ${percent(remainderValue, 1)} of ${denominator}">
-          <svg viewBox="0 0 240 240" aria-hidden="true"><circle class="cpi-ring-track" cx="120" cy="120" r="98"/><circle class="cpi-ring-value" cx="120" cy="120" r="98" pathLength="100" stroke-dasharray="${fraction(value) * 100} 100" transform="rotate(-90 120 120)"/></svg>
-          <div><strong>${percent(value, 1)}</strong><span>${label}</span></div></div>
-          <footer><div><i class="cpi-series-key"></i><strong>${integer(count)}</strong><span>${label} passes</span></div><div><i class="cpi-series-key remainder"></i><strong>${integer(remainderCount)}</strong><span>${remainder} passes</span></div></footer></article>`;
-      const ceiling = Math.min(100, Math.max(10, Math.ceil(Math.max(0, ...channels.flatMap(channel =>
-        [fraction(channel.cpi_exposure?.detection_fraction), fraction(channel.cpi_exposure?.operational_track_fraction)])) * 10) * 10));
+      const freshness = aggregate?.stale_nodes?.length ? 'Cached · refresh delayed' :
+        aggregate?.missing_nodes?.length ? 'Partial · node unavailable' : '';
       const bars = channels.map(channel => {
-        const item = channel.cpi_exposure || {};
+        const item = channel.measured_track_coverage || {};
         const label = channel.identity?.illuminator || channel.selected_channel || 'Channel';
         const node = channel.node_label || '';
         const name = node && label.endsWith(` (${node})`) ? label.slice(0, -node.length - 3) : label;
-        const bar = (kind, value, name) => `<div class="cpi-kiosk-bar ${kind}"><span class="cpi-kiosk-bar-track" role="img" aria-label="${escapeHtml(label)}: ${percent(value, 1)} ${name} CPIs; axis 0 to ${ceiling}%"><i style="width:${fraction(value) * 100 / ceiling * 100}%"></i></span><b>${percent(value, 1)}</b></div>`;
-        return `<article class="cpi-kiosk-channel"><header><div><strong>${escapeHtml(name)}</strong>${node ? `<span>${escapeHtml(node)}</span>` : ''}</div><span>${presenceTime(item.eligible_seconds ?? item.seconds)} <small>eligible</small></span></header>
-          ${bar('detected', item.detection_fraction, 'detected')}${bar('tracked', item.operational_track_fraction, 'operationally tracked')}</article>`;
+        const itemFraction = measuredCoverageFraction(item);
+        const denominator = item.complete ? item.eligible_seconds : item.scored_seconds;
+        return `<article class="cpi-kiosk-channel"><header><div><strong>${escapeHtml(name)}</strong>${node ? `<span>${escapeHtml(node)}</span>` : ''}</div><span>${presenceTime(denominator)} <small>${item.complete ? 'eligible' : 'scored'}</small></span></header>
+          <div class="cpi-kiosk-bar tracked"><span class="cpi-kiosk-bar-track" role="img" aria-label="${escapeHtml(label)}: ${percent(itemFraction, 1)} measured track coverage${item.complete ? '' : ' of scored time'}"><i style="width:${fraction(itemFraction) * 100}%"></i></span><b>${percent(itemFraction, 1)}</b></div></article>`;
       }).join('');
-      return `<div class="statistics-kiosk-visuals${singleChannel ? ' statistics-single-kiosk-visuals' : ''}"><section class="cpi-kiosk-coverage" aria-labelledby="cpi-kiosk-title"><header><h2 id="cpi-kiosk-title">${singleChannel ? 'Selected channel' : 'All channels &amp; nodes'}</h2><div class="cpi-kiosk-exposure"><div><strong>${nodeCount}</strong><span>Radar nodes</span></div><div><strong>${channels.length}</strong><span>Channels</span></div></div></header>
-        <div class="cpi-kiosk-gauges">${gauge('detected', singleChannel ? 'Detected eligible passes' : 'Detected on any channel or node', uniquePasses.detection?.yield, complement(uniquePasses.detection?.yield), 'Detected', 'Missed', detectedPasses, missedPasses, singleChannel ? 'eligible aircraft passes' : 'deduplicated eligible aircraft passes')}${gauge('tracked', singleChannel ? 'Tracked eligible passes' : 'Tracked after detection', uniquePasses.tracking?.yield, complement(uniquePasses.tracking?.yield), 'Tracked', 'Not tracked', trackedPasses, untrackedPasses, singleChannel ? 'eligible aircraft passes' : 'deduplicated detected aircraft passes')}</div></section>
-        <section class="cpi-kiosk-comparison" aria-labelledby="cpi-kiosk-channel-title"><header><h2 id="cpi-kiosk-channel-title">Per-channel CPI coverage</h2><div class="cpi-kiosk-legend"><span class="detected"><i></i>Detected</span><span class="tracked"><i></i>Operationally tracked</span></div></header>
-          <div class="cpi-kiosk-axis" aria-label="Percent of eligible CPIs">${[0,.25,.5,.75,1].map(part => `<span>${number(part * ceiling, part * ceiling % 1 ? 1 : 0)}%</span>`).join('')}</div>
+      const coverageFraction = measuredCoverageFraction(coverage);
+      const denominator = measuredCoverageDenominator(coverage);
+      const gapDetails = coverage.continuity_complete ?
+        [['p50', coverage.gap_p50_seconds], ['p95', coverage.gap_p95_seconds],
+          ['Maximum', coverage.gap_max_seconds]].map(([label, value]) =>
+          `<div><dt>${label}</dt><dd>${presenceTime(value)}</dd></div>`).join('') :
+        `<div><dt>Observed</dt><dd>${integer(coverage.observed_internal_gap_count)} gaps</dd></div><div><dt>Scored exposure</dt><dd>${percent((finite(coverage.scored_seconds) ?? 0) / Math.max(finite(coverage.eligible_seconds) ?? 0, 1), 1)}</dd></div><div><dt>Unscored</dt><dd>${presenceTime(coverage.unscored_seconds)}</dd></div>`;
+      return `<div class="statistics-kiosk-visuals${singleChannel ? ' statistics-single-kiosk-visuals' : ''}"><section class="cpi-kiosk-coverage" aria-labelledby="cpi-kiosk-title"><header><h2 id="cpi-kiosk-title">${freshness || (singleChannel ? 'Selected channel' : 'All channels &amp; nodes')}</h2><div class="cpi-kiosk-exposure"><div><strong>${nodeCount}</strong><span>Radar nodes</span></div><div><strong>${channels.length}</strong><span>Channels</span></div></div></header>
+        <div class="cpi-kiosk-gauges"><article class="cpi-kiosk-gauge tracked"><h3>Measured track coverage</h3>
+          <div class="cpi-kiosk-ring" role="img" aria-label="Measured track coverage: ${percent(coverageFraction, 1)} of ${coverage.complete ? 'eligible' : 'scored'} aircraft time">
+            <svg viewBox="0 0 240 240" aria-hidden="true"><circle class="cpi-ring-track" cx="120" cy="120" r="98"/><circle class="cpi-ring-value" cx="120" cy="120" r="98" pathLength="100" stroke-dasharray="${fraction(coverageFraction) * 100} 100" transform="rotate(-90 120 120)"/></svg>
+            <div><strong>${percent(coverageFraction, 1)}</strong><span>${coverage.complete ? coverage.eligible_seconds > 0 ? 'Measured' : 'No exposure' : 'Partial'}</span></div></div>
+          <footer><div><strong>${presenceTime(coverage.measured_seconds)}</strong><span>Measured</span></div><div><strong>${presenceTime(denominator)}</strong><span>${coverage.complete ? 'Eligible' : 'Scored'} aircraft time</span></div></footer></article>
+          <article class="cpi-kiosk-gauge cpi-kiosk-continuity"><h3>Track gaps</h3><dl>${gapDetails}</dl><footer><span>${coverage.continuity_complete ? `${integer(coverage.gap_count)} internal ${coverage.gap_count === 1 ? 'gap' : 'gaps'}` : 'Partial evidence'}</span><span>${coverage.unscored_seconds > 0 ? `${presenceTime(coverage.unscored_seconds)} unscored` : coverage.complete ? 'Retained evidence' : 'Incomplete evidence'}</span></footer></article></div></section>
+        <section class="cpi-kiosk-comparison" aria-labelledby="cpi-kiosk-channel-title"><header><h2 id="cpi-kiosk-channel-title">Measured coverage by channel</h2></header>
+          <div class="cpi-kiosk-axis" aria-label="Percent of eligible aircraft time">${[0,25,50,75,100].map(value => `<span>${value}%</span>`).join('')}</div>
           <div class="cpi-kiosk-channels" style="--channel-count:${Math.max(1, channels.length)}">${bars || '<p class="cpi-kiosk-empty">Waiting for channel evidence</p>'}</div></section></div>`;
     };
     const associationYieldRows = multiChannel ? [
@@ -2075,7 +2101,7 @@
           <article class="metric-card statistics-hero-eligible"><strong>${integer(unique.eligible_adsb_passes)}</strong><span>Unique eligible aircraft passes</span></article>
           <article class="metric-card good statistics-hero-detected" style="--glance-yield:${uniqueDetectionPercent}%"><strong>${percent(unique.detection?.yield, 1)}</strong><span>Detected on any channel</span><small>${integer(unique.detection?.associated_passes)} / ${integer(unique.detection?.eligible_adsb_passes)} passes</small></article>
           <article class="metric-card good statistics-hero-tracked" style="--glance-yield:${uniqueTrackingPercent}%"><strong>${percent(unique.tracking?.yield, 1)}</strong><span>Tracked after detection</span><small>${integer(unique.tracking?.associated_passes)} / ${integer(unique.tracking?.detected_passes)} detected passes</small></article>
-        </div><details class="statistics-details"><summary>Per-channel pass yields</summary>${yieldChart(combinedRows, 'Deduplicated union and additive per-channel detection and tracking yield')}</details>${cpiPresenceHero(aggregateAssociation.cpi_exposure, 'All nodes and channels · additive channel-opportunity time')}${channelCpiCards}${kioskCpiVisuals(aggregateAssociation.cpi_exposure, array(aggregate?.illuminators), unique)}</section>
+        </div><details class="statistics-details"><summary>Per-channel pass yields</summary>${yieldChart(combinedRows, 'Deduplicated union and additive per-channel detection and tracking yield')}</details>${measuredCoverageSummary(aggregateAssociation.measured_track_coverage)}${cpiPresenceHero(aggregateAssociation.cpi_exposure, 'All nodes and channels · additive channel-opportunity time')}${channelCpiCards}${kioskCpiVisuals(aggregateAssociation.measured_track_coverage, array(aggregate?.illuminators))}</section>
         <section class="statistics-section"><div class="statistics-grid">
           <section class="info-card statistics-combined-catch-duplicate" hidden><h2>Combined catch rate</h2>${associationFlow('Unique aircraft passes', unique.eligible_adsb_passes, unique.detection, unique.tracking)}</section>
           <section class="info-card" hidden><h2>Channel opportunity totals</h2>${associationFlow('Eligible channel-passes', aggregateAssociation.eligible_adsb_passes, aggregateAssociation.detection, aggregateAssociation.tracking)}<dl>
@@ -2091,22 +2117,22 @@
       bindDirectionCells();
       setState(updatedAt ? `All channels · ${timeLabel(updatedAt)} · ${timingLabel.replace(/receiver-event\s*/i, '')}` :
         'All channels combined · Waiting for eligible ADS-B evidence', updatedAt ? 'good' : 'warning');
+      if (aggregate.stale_nodes?.length || aggregate.missing_nodes?.length)
+        setState(aggregate.stale_nodes?.length ? 'Refresh delayed · showing cached node statistics' :
+          'Partial statistics · radar node unavailable', 'warning');
       return;
     }
     if (document.body.classList?.contains('distance-view')) {
       const associationEligible = lifetime.association_eligible_passes ??
         lifetime.eligible_passes;
-      const selectedPasses = {eligible_adsb_passes:associationEligible,
-        detection:{associated_passes:lifetime.detected_passes, yield:lifetime.detection_yield},
-        tracking:{associated_passes:lifetime.tracked_passes, yield:lifetime.tracking_yield}};
       const selectedChannel = {identity:{illuminator:context.enabled ? context.id : 'Primary channel'},
         node_label:fleet?.nodes?.find(node => node.local)?.label || 'Local',
-        cpi_exposure:lifetime.cpi_exposure || {}};
+        measured_track_coverage: lifetime.measured_track_coverage || {}};
       renderHtml(root, `<div class="statistics-page"><section class="statistics-section statistics-channel-overview"><header><h2>Selected channel aircraft-pass results · ${escapeHtml(timingLabel)}</h2></header><div class="insight-stats insight-stats-four statistics-distance-hero">
         <article class="metric-card statistics-hero-eligible"><strong>${integer(associationEligible)}</strong><span>Comparable aircraft passes</span></article>
         <article class="metric-card good statistics-hero-detected"><strong>${percent(lifetime.detection_yield, 1)}</strong><span>Detected comparable passes</span><small>${integer(lifetime.detected_passes)} / ${integer(associationEligible)} passes</small></article>
         <article class="metric-card good statistics-hero-tracked"><strong>${percent(lifetime.tracking_yield, 1)}</strong><span>Tracked comparable passes</span><small>${integer(lifetime.tracked_passes)} / ${integer(associationEligible)} passes</small></article>
-      </div>${kioskCpiVisuals(lifetime.cpi_exposure, [selectedChannel], selectedPasses, true)}</section></div>`);
+      </div>${kioskCpiVisuals(lifetime.measured_track_coverage, [selectedChannel], true)}</section></div>`);
       const laneState = context.enabled ? `${context.id} · ` : '';
       setState(statistics.error ? `${laneState}Collection warning · ${statistics.error}` :
         statistics.updated_at ? `${laneState}Updated ${timeLabel(statistics.updated_at)} · ${timingLabel}` : `${laneState}Waiting for eligible ADS-B evidence`,
@@ -2145,7 +2171,7 @@
       ${card(percent(lifetime.detection_yield, 1), 'All-time detection yield')}
       ${card(percent(lifetime.tracking_yield, 1), 'All-time tracking yield')}
       ${card(integer(activeEligible.length), 'Eligible aircraft now')}
-    </div>${cpiPresenceHero(lifetime.cpi_exposure, context.enabled ? context.id : 'Selected channel')}
+    </div>${measuredCoverageSummary(lifetime.measured_track_coverage)}${cpiPresenceHero(lifetime.cpi_exposure, context.enabled ? context.id : 'Selected channel')}
     <section class="statistics-section"><div class="statistics-grid">
       <details class="statistics-details statistics-wide"><summary>Detailed pass and CPI windows</summary><div class="window-evidence-pair">${periods.map(([label, item = {}]) => associationFlow(label, item.eligible_passes, {associated_passes: item.detected_passes, yield: item.detection_yield}, {associated_passes: item.tracked_passes, yield: item.tracking_yield})).join('')}</div>${table(['Window', 'Eligible time', 'Detected CPIs', 'Missed CPIs', 'Operationally tracked CPIs', 'Operationally untracked CPIs', 'Coverage'], cpiExposureRows)}${table(['Window', 'Eligible passes', 'Detection yield', 'Tracking yield'], scoreRows)}</details>
       ${trackPopulationVisual(statistics.track_population, 'Radar-track population')}
@@ -2243,11 +2269,13 @@
       if (!hasSnapshot) {
         setState('Data unavailable', 'bad');
         root.innerHTML = empty('This view cannot reach its live data', error.message || 'Check the radar API connection.');
-      } else if (consecutiveRefreshFailures >= 3) {
+      } else if (view === 'statistics' || consecutiveRefreshFailures >= 3) {
         // Preserve the last valid snapshot.  One or two missed polls are
         // intentionally silent so routine mobile jitter does not flash an
         // alarming state between healthy frames.
         setState('Refresh delayed · showing last update', 'warning');
+        const kioskTitle = root.querySelector?.('#cpi-kiosk-title');
+        if (kioskTitle) kioskTitle.textContent = 'Cached · refresh delayed';
       }
     } finally {
       root.dataset.loading = 'false';

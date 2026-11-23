@@ -149,7 +149,11 @@ async function send(port, chunks) {
     await assert.rejects(connect(config.network.ports.causal_funnel),
       /ECONNREFUSED/, 'API-only collection must not expose the native TCP ingest port');
     for (const query of ['', '?timing=provisional']) {
-      const statistics = JSON.parse((await request(apiPort, `/api/statistics${query}`)).body);
+      const response = await request(apiPort, `/api/statistics${query}`);
+      const statistics = JSON.parse(response.body);
+      assert.ok(Buffer.byteLength(response.body) < 256 * 1024);
+      assert.ok(statistics.illuminators.every(lane => lane.eligibility_events === undefined &&
+        lane.measured_track_basis === undefined));
       assert.equal(statistics.timing_policy, 'provisional',
         'Ordinary SDR statistics must use the same operational lane as association history');
       assert.equal(statistics.overall_association_statistics.eligible_adsb_passes, 1);
@@ -166,11 +170,24 @@ async function send(port, chunks) {
     const associationHistory = JSON.parse((await request(apiPort, '/api/association/passes')).body);
     assert.equal(associationHistory.timing_policy, 'provisional');
     assert.equal(associationHistory.passes.length, 1);
+    const compactAssociationHistory = JSON.parse((await request(apiPort,
+      '/api/association/passes?compact=true')).body);
+    assert.equal(compactAssociationHistory.passes.length, 1);
+    assert.deepEqual(Object.keys(compactAssociationHistory.passes[0]).sort(),
+      ['association_eligible_cpis', 'channel', 'decision_grade', 'detected', 'detected_cpis',
+        'eligible', 'eligible_cpis', 'evaluation_contract_hash', 'evaluation_policy_hash',
+        'finalized_at', 'flight', 'hex', 'outcome', 'pass_id', 'sensitivity_epoch_id',
+        'sensitivity_epoch_mixed', 'site_epoch', 'started_at', 'timing_policy',
+        'tracked', 'tracked_cpis']);
     const compressedPasses = await request(apiPort,
       '/api/association/passes?max_rows=32&max_cols=32', {'Accept-Encoding': 'gzip'});
     assert.equal(compressedPasses.headers['content-encoding'], 'gzip');
-    assert.deepEqual(JSON.parse(compressedPasses.body), associationHistory,
+    const {statistics_window: compressedWindow, ...compressedHistory} = JSON.parse(compressedPasses.body);
+    const {statistics_window: historyWindow, ...plainHistory} = associationHistory;
+    assert.deepEqual(compressedHistory, plainHistory,
       'Generic JSON compression must not apply map presentation controls');
+    assert.equal(compressedWindow.duration_ms, historyWindow.duration_ms);
+    assert.equal(compressedWindow.complete, historyWindow.complete);
     assert.equal((await request(apiPort, '/api/statistics?illuminator=missing')).status, 404);
 
     const nativeTrack = {timestamp: 1, data: [{id: 'primary-units', state: 'ACTIVE',
@@ -264,7 +281,7 @@ async function send(port, chunks) {
     const illuminatorFrame = {schema: 'vectorwarp-multi-illuminator-frame-v1',
       id: 'fm-90.5', frequency_hz: 90500000, sample_rate_hz: 300000,
       first_input_sample: 0, end_input_sample: 1199999, timestamp: 10,
-      trackerDiagnostics: {schema: 'vectorwarp-cpu-tracker-frame-diagnostics-v1',
+      trackerDiagnostics: {schema: 'vectorwarp-tracker-frame-diagnostics-v2',
         truth_blind: true, scope: 'single-illuminator-single-frame',
         pair_semantics: 'exclusive-ordered-candidate-track-pair-rejections',
         no_op: false, detections: 7, tracks_before: 2, tracks_after: 3,
@@ -497,6 +514,83 @@ async function send(port, chunks) {
     }
     assert.equal((await request(apiPort, '/api/map')).status, 200,
       'Unaligned presentation remains available while settings need repair');
+    await new Promise(resolve => { child.once('close', resolve); child.kill('SIGTERM'); });
+    config.process.multi_illuminator.enabled = false;
+    fs.writeFileSync(configPath, yaml.dump(config));
+    child = spawn(process.execPath, [path.join(__dirname, 'server.js'), configPath], {
+      env: apiEnvironment, stdio: ['ignore', 'ignore', 'pipe']});
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    const primaryCatalog = JSON.parse((await waitFor(apiPort, '/api/illuminators/live',
+      response => response.status === 200)).body);
+    assert.equal(primaryCatalog.enabled, true);
+    assert.equal(primaryCatalog.primary, 'primary');
+    assert.equal(primaryCatalog.illuminators.length, 1);
+    assert.equal(primaryCatalog.illuminators[0].api_illuminator, false);
+    assert.equal(primaryCatalog.illuminators[0].frequency_hz, config.capture.fc);
+    assert.equal(primaryCatalog.illuminators[0].available, false);
+    const primaryFrame = {timestamp: Date.now(), n: 0, nTentative: 0, nAssociated: 0,
+      nActive: 0, nConfirmed: 0, nCoasting: 0, data: []};
+    await send(config.network.ports.track, [Buffer.from(JSON.stringify(primaryFrame))]);
+    const livePrimary = JSON.parse((await waitFor(apiPort, '/api/illuminators/live', response => {
+      try { return JSON.parse(response.body).illuminators[0].available === true; }
+      catch (_) { return false; }
+    })).body);
+    assert.equal(livePrimary.illuminators[0].timestamp, primaryFrame.timestamp);
+    assert.equal(livePrimary.illuminators[0].output_sample_rate_hz, config.capture.fs);
+    await new Promise(resolve => { child.once('close', resolve); child.kill('SIGTERM'); });
+    // A coordinator may retain its former radar configuration, but cannot
+    // resume local evidence ownership or read its obsolete state files.
+    const coordinatorEvidence = path.join(directory, 'coordinator-calibration');
+    const coordinatorRegistry = path.join(directory, 'coordinator-nodes.json');
+    fs.writeFileSync(coordinatorRegistry, JSON.stringify({nodes: []}), {mode: 0o600});
+    fs.mkdirSync(coordinatorEvidence);
+    const staleStatistics = path.join(coordinatorEvidence, 'statistics.json');
+    const staleBytes = '{"obsolete_local_radar_state":true}\n';
+    fs.writeFileSync(staleStatistics, staleBytes);
+    const evidenceGuard = path.join(directory, 'coordinator-evidence-guard.cjs');
+    fs.writeFileSync(evidenceGuard, `
+      const fs = require('fs');
+      const root = ${JSON.stringify(coordinatorEvidence)};
+      for (const method of ['statSync', 'readFileSync', 'writeFileSync', 'mkdirSync', 'renameSync']) {
+        const original = fs[method];
+        fs[method] = function (file, ...args) {
+          if (String(file).startsWith(root)) {
+            process.stderr.write('COORDINATOR_LOCAL_EVIDENCE_ACCESS\\n');
+            throw Object.assign(new Error('Coordinator cannot access radar evidence'), {code: 'EACCES'});
+          }
+          return original.call(this, file, ...args);
+        };
+      }
+    `);
+    child = spawn(process.execPath, ['--require', evidenceGuard,
+      path.join(__dirname, 'server.js'), configPath], {
+      env: {...apiEnvironment, VECTORWARP_NODE_ROLE: 'coordinator',
+        VECTORWARP_NODE_REGISTRY: coordinatorRegistry,
+        BLAH2_STATISTICS_PATH: staleStatistics,
+        BLAH2_PROVISIONAL_STATISTICS_PATH: path.join(coordinatorEvidence, 'provisional.json'),
+        BLAH2_OPRS_EVENTS_PATH: path.join(coordinatorEvidence, 'oprs.ndjson')},
+      stdio: ['ignore', 'ignore', 'pipe']});
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    await waitFor(apiPort, '/api/statistics', response => response.status === 200);
+    const network = JSON.parse((await request(apiPort, '/api/statistics')).body);
+    assert.equal(network.schema, 'vectorwarp-network-statistics-v1');
+    assert.equal(network.health.nodes_total, 0);
+    assert.equal(network.health.status, 'no-radar-nodes');
+    assert.deepEqual(JSON.parse((await request(apiPort,
+      '/api/federation/statistics-summary')).body), network,
+    'Coordinator statistics must use the canonical federation cache');
+    for (const route of ['/api/association/passes', '/api/live-scorecard',
+      '/api/live-scorecard/provisional', '/api/live-scorecard/association-basis',
+      '/api/live-aircraft-associations', '/api/suspicious-track-ledger', '/api/radar/coverage'])
+      assert.equal((await request(apiPort, route)).status, 409,
+        `${route} cannot expose obsolete coordinator-local radar evidence`);
+    for (const name of ['map', 'detection', 'track', 'timing', 'illuminator'])
+      await assert.rejects(connect(config.network.ports[name]), /ECONNREFUSED/,
+        'A coordinator cannot ingest local radar evidence');
+    await new Promise(resolve => { child.once('close', resolve); child.kill('SIGTERM'); });
+    assert.doesNotMatch(stderr, /COORDINATOR_LOCAL_EVIDENCE_ACCESS/);
+    assert.equal(fs.readFileSync(staleStatistics, 'utf8'), staleBytes);
+    assert.deepEqual(fs.readdirSync(coordinatorEvidence), ['statistics.json']);
     console.log('JSON stream server fragmentation, isolation, error containment and recovery tests passed.');
   } finally {
     if (child && child.exitCode === null) {

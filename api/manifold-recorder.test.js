@@ -33,6 +33,13 @@ const {validateSample} = require('./manifold-fitter');
     actual_gain_db: [14.2, 14.1],
     reference_weights: [[1, 0], [0, 1]], data: [{cell: 5, delay_km: 10.5,
       doppler_hz: 18, snr_db: 9, response: [[1, 2], [3, 4]]}]});
+  const originalParse = JSON.parse;
+  recorder.running = true;
+  JSON.parse = () => { throw new Error('Validated manifold must not be reparsed'); };
+  try {
+    recorder.accept(JSON.stringify(frame), frame);
+    assert.equal(recorder.latest, frame);
+  } finally { JSON.parse = originalParse; recorder.running = false; recorder.latest = null; }
   await recorder.record(frame);
   const roundedLegacyFrame = {...frame}; delete roundedLegacyFrame.precision_contract;
   assert.throws(() => validateEvidence(roundedLegacyFrame), /Invalid manifold evidence frame/);

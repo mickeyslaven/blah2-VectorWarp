@@ -4,7 +4,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
-function fixture(search = '', stored = 'wesa', enabled = true) {
+function fixture(search = '', stored = 'wesa', enabled = true, catalog = null) {
   const storage = new Map([['vectorwarp-selected-illuminator-v1:local', stored]]);
   const recording = {status: {innerHTML: ''}, copy: {textContent: ''},
     button: {disabled: false, textContent: ''}, pause: {hidden: false, textContent: ''}};
@@ -29,7 +29,7 @@ function fixture(search = '', stored = 'wesa', enabled = true) {
         return {ok: true, status: 200, text: async () => JSON.stringify({capture: {
           fc: 101100000, fs: 2400000}})};
       assert.equal(pathname, '/api/illuminators/live');
-      return {ok: true, status: 200, text: async () => JSON.stringify({enabled,
+      return {ok: true, status: 200, text: async () => JSON.stringify(catalog || {enabled,
         primary: 'wqed', illuminators: [
           {id: 'wqed', frequency_hz: 89300000, output_sample_rate_hz: 300000},
           {id: 'wesa', frequency_hz: 90500000, output_sample_rate_hz: 320000},
@@ -80,6 +80,13 @@ function fixture(search = '', stored = 'wesa', enabled = true) {
     'retained lane definitions are ignored while multi-illuminator processing is disabled');
   assert.equal(disabled.context.selectedIlluminatorUrl('/api/radar/frame', primary),
     '/api/radar/frame');
+  const nativePrimary = fixture('', '', true, {enabled: true, primary: 'primary',
+    illuminators: [{id: 'primary', api_illuminator: false, available: false,
+      frequency_hz: 509000000, output_sample_rate_hz: 2400000}]});
+  const reported = await nativePrimary.context.getIlluminatorContext();
+  assert.equal(reported.item.frequency_hz, 509000000);
+  assert.equal(reported.item.available, false, 'Catalog freshness must not be replaced with an invented true value');
+  assert.equal(nativePrimary.context.selectedIlluminatorUrl('/api/tracker', reported), '/api/tracker');
 
   const settingsSource=fs.readFileSync(path.join(__dirname,'../../html/js/config_ui.js'),'utf8');
   assert.doesNotMatch(settingsSource,/function multiIlluminatorUnsupportedPath|function markMultiIlluminatorUnsupported/,

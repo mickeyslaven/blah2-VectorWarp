@@ -3,7 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const {configuredApiPort, defaultRegistryPath, nodeCapabilities} = require('./node-federation');
+const {configuredApiPort, defaultRegistryPath, nodeCapabilities, nodeRole} = require('./node-federation');
+
+test('coordinator role requires an explicit portable declaration', () => {
+  assert.equal(nodeRole({}), 'radar');
+  assert.equal(nodeRole({VECTORWARP_NODE_ROLE: 'coordinator'}), 'coordinator');
+  assert.throws(() => nodeRole({VECTORWARP_NODE_ROLE: 'typo'}), /Invalid/);
+});
 
 test('node capabilities distinguish offline ATSC diagnostics from live raw selection', () => {
   const processing = nodeCapabilities().processing;

@@ -127,7 +127,7 @@ function getIlluminatorContext() {
   if (illuminatorContextPromise) return illuminatorContextPromise;
   illuminatorContextPromise = fetchRadarJson(liveApiUrl('/api/illuminators/live')).then(async status => {
     let illuminators = status?.enabled === true && Array.isArray(status?.illuminators) ? status.illuminators.map(item =>
-      ({...item, api_illuminator: true})) : [];
+      ({...item, api_illuminator: item.api_illuminator !== false})) : [];
     if (!illuminators.length) {
       const config = await fetchRadarJson(liveApiUrl('/api/runtime/config'));
       const frequency = Number(config?.capture?.fc);
@@ -184,11 +184,12 @@ async function getFederatedChannels({fresh = false} = {}) {
       if (!result.ok) throw new Error(`${node.label} unavailable`);
       return result.json();
     };
-    const rows = await Promise.all(registry.nodes.map(async node => {
+    const radarNodes = registry.nodes.filter(node => node.role !== 'coordinator');
+    const rows = await Promise.all(radarNodes.map(async node => {
       try {
         const status = await read(node, '/api/illuminators/live');
         let items = status?.enabled === true && Array.isArray(status?.illuminators) ? status.illuminators.map(item =>
-          ({...item, api_illuminator: true})) : [];
+          ({...item, api_illuminator: item.api_illuminator !== false})) : [];
         if (!items.length) {
           const config = await read(node, '/api/runtime/config');
           items = [{id: 'primary', standard: 'Single channel', api_illuminator: false,
@@ -199,7 +200,7 @@ async function getFederatedChannels({fresh = false} = {}) {
           local: node.local === true, item}));
       } catch (_) { return []; }
     }));
-    return {nodes: registry.nodes, channels: rows.flat()};
+    return {nodes: radarNodes, channels: rows.flat()};
   })().catch(error => { federatedChannelsPromise = null; throw error; });
   return federatedChannelsPromise;
 }
@@ -551,6 +552,15 @@ function renderRecordingState() {
   button.disabled = recordingRequestPending || !recordingState.available;
   if (pause) pause.disabled = recordingRequestPending ||
     (!recordingState.recording && !recordingState.paused);
+  if (recordingState.pendingStop) {
+    status.innerHTML = '<span class="recording-dot"></span>' +
+      (recordingState.processorFresh ? 'Finalizing recording' : 'Recording status unavailable');
+    copy.textContent = recordingState.processorFresh ? 'Waiting for the file to finish closing.' :
+      'Recorder status is stale. Waiting for stop confirmation.';
+    button.disabled = true; button.textContent = 'Waiting for stop';
+    if (pause) pause.hidden = true;
+    return;
+  }
   if (!recordingState.available) {
     status.innerHTML = '<span class="recording-dot"></span>Recording unavailable';
     copy.textContent = recordingState.reason || 'The recording control cannot reach the VectorWarp API.';
@@ -592,6 +602,7 @@ async function readRecordingState() {
       recordingState = {recording: state.recording === true, requested: state.requested === true,
         paused: state.paused === true,
         acknowledged: state.acknowledged === true,
+        pendingStop: state.pendingStop === true, processorFresh: state.processorFresh === true,
         startedAt: Number.isFinite(state.startedAt) ? state.startedAt : null,
         available: state.supported !== false && state.available !== false, reason: state.recordingError || state.reason,
         file: state.recordingFile || ''};
@@ -604,29 +615,20 @@ async function readRecordingState() {
     }
   } catch (_) {
     recordingState.available = false;
+    recordingState.processorFresh = false;
   }
   renderRecordingState();
 }
 
 async function toggleRecording() {
-  if (recordingRequestPending || !recordingState.available) return;
+  if (recordingRequestPending || recordingState.pendingStop || !recordingState.available) return;
   recordingRequestPending = true;
   renderRecordingState();
   try {
     const response = await fetchStatusResource(liveApiUrl('/capture/toggle'),
       {method: 'POST', headers: {'X-VectorWarp-Intent': 'recording-toggle-v1'}, cache: 'no-store'});
     if (!response.ok) throw new Error('Recording control unavailable');
-    let state = null;
-    try { state = await response.json(); } catch (_) { /* Older API. */ }
-    if (typeof state?.requested === 'boolean') {
-      recordingState = {recording: state.recording === true, requested: state.requested,
-        paused: state.paused === true,
-        acknowledged: state.acknowledged === true,
-        startedAt: state.recording && Number.isFinite(state.startedAt) ? state.startedAt : null,
-        available: true};
-    } else {
-      await readRecordingState();
-    }
+    await readRecordingState();
   } catch (_) {
     recordingState.available = false;
   } finally {
@@ -636,17 +638,15 @@ async function toggleRecording() {
 }
 
 async function pauseRecording() {
-  if (recordingRequestPending || (!recordingState.recording && !recordingState.paused)) return;
+  if (recordingRequestPending || recordingState.pendingStop ||
+      (!recordingState.recording && !recordingState.paused)) return;
   recordingRequestPending = true; renderRecordingState();
   try {
     const response = await fetchStatusResource(liveApiUrl('/capture/pause'), {method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-VectorWarp-Intent': 'recording-pause-v1'},
       body: JSON.stringify({paused: !recordingState.paused}), cache: 'no-store'});
     if (!response.ok) throw new Error('Recording pause unavailable');
-    const state = await response.json();
-    recordingState = {...recordingState, requested: state.requested === true,
-      paused: state.paused === true, recording: false,
-      startedAt: Number.isFinite(state.startedAt) ? state.startedAt : null};
+    await readRecordingState();
   } catch (_) { await readRecordingState(); }
   finally { recordingRequestPending = false; renderRecordingState(); }
 }
@@ -957,9 +957,10 @@ function clientJsonCachePolicy(url) {
   // five-minute stale fallback merely because the portal proxied them.
   const path = parsed.pathname.replace(
     /^\/api\/federation\/nodes\/[a-z0-9][a-z0-9_-]{0,63}(?=\/(?:api|stash|capture)(?:\/|$))/, '');
-  // Fusion positions are live navigation state.  A failed request must clear
-  // the scope immediately instead of replaying a stale position as motion.
-  if (path === '/api/tracker/fused')
+  // Fusion positions and association flags are live state. A failed request
+  // must not replay stale positions as motion or old flags as current evidence.
+  if (['/api/tracker/fused', '/api/live-aircraft-associations',
+    '/api/federation/live-aircraft-associations'].includes(path))
     return {freshMs: 0, staleMs: 0, storage: null};
   if (/^\/(?:stash|capture)(?:\/|$)/.test(path) ||
       /^\/api\/(?:iqdata|spectrum)(?:\/|$)/.test(path))
@@ -1407,7 +1408,12 @@ const radarDisplayLanes = Object.freeze({
   network: {scope: 'global', intervalMs: 1000,
     history: {fused: new Map(), adsb: new Map(), trails: new Map()}, resources: {
     result: ['/api/tracker/fused', {available: false}], config: () => getRadarRuntimeConfig(),
-    cooperative: ['/api/federation/cooperative', null], adsbData: ['/api/adsb', null],
+    cooperative: ['/api/federation/cooperative', null],
+    // Fusion is a live geographic display, not a scoring consumer. Request the
+    // coherent last-validated presentation set; the bare endpoint intentionally
+    // uses the stricter evaluation clock and can contain only a small fragment
+    // of aircraft on each refresh.
+    adsbData: ['/api/adsb?presentation=latest', null],
     associationData: ['/api/federation/live-aircraft-associations', null]
   }}
 });
@@ -1622,20 +1628,51 @@ function ensureRadarDisplayMap(name, graph, viewport, style, ready) {
   }
 }
 
+// Statistics refresh every 30 s. Bridge at most two missed polls without
+// confusing a cached historical summary with fresh processor evidence.
+const federatedStatisticsSnapshots = new Map();
+const FEDERATED_STATISTICS_STALE_MS = 90000;
 async function readFederatedRadar(path, fleet) {
-  const nodes = fleet?.nodes?.length ? fleet.nodes : [{id: 'local', label: 'Local', local: true}];
+  const nodes = (Array.isArray(fleet?.nodes) ? fleet.nodes :
+    [{id: 'local', label: 'Local', local: true}]).filter(node => node.role !== 'coordinator');
+  const now = Date.now();
+  for (const [key, cached] of federatedStatisticsSnapshots)
+    if (now - cached.at > FEDERATED_STATISTICS_STALE_MS) federatedStatisticsSnapshots.delete(key);
   const settled = await Promise.allSettled(nodes.map(async node => {
     const prefix = node.local ? '' : `/api/federation/nodes/${encodeURIComponent(node.id)}`;
-    const [status, value] = await Promise.all([
-      readRadarDisplay('network', `${prefix}/api/system/status?summary=1`),
-      readRadarDisplay('network', `${prefix}${path}`)
-    ]);
+    const key = clientJsonKey(`${prefix}${path}`);
+    const read = resource => fetchCachedJsonResource(radarDisplayUrl('network', resource), {},
+      {freshMs: 0, staleMs: 0, awaitFresh: true, storage: null});
+    const [statusResult, valueResult] = await Promise.allSettled([
+      read(`${prefix}/api/system/status?summary=1`), read(`${prefix}${path}`)]);
     // A reachable API can retain old scorecards after observation stops.
-    if (status?.radar !== 'receiving' || status?.processorFresh !== true)
-      throw new Error(`${node.label || node.id} is not receiving fresh radar frames`);
-    return {node, value};
+    // A node can legitimately report degraded tracking/RF performance while
+    // its processor is still publishing fresh radar products.  Degraded is a
+    // quality warning, not a transport outage, and must not erase every lane
+    // from federated displays.
+    if (statusResult.status === 'fulfilled' && (statusResult.value?.processorFresh !== true ||
+        statusResult.value?.processor?.state !== 'live')) {
+      federatedStatisticsSnapshots.delete(key);
+      const error = new Error(`${node.label || node.id} is not receiving fresh radar frames`);
+      error.radarUnavailable = true;
+      throw error;
+    }
+    if (statusResult.status === 'rejected' || valueResult.status === 'rejected') {
+      const cached = federatedStatisticsSnapshots.get(key);
+      if (cached) return {...cached.row, stale: true, stale_at: cached.at};
+      throw (statusResult.reason || valueResult.reason);
+    }
+    const row = {node, value: valueResult.value};
+    federatedStatisticsSnapshots.set(key, {at: Date.now(), row});
+    // A page can switch scopes; retain a bounded number of node/path snapshots.
+    while (federatedStatisticsSnapshots.size > 32)
+      federatedStatisticsSnapshots.delete(federatedStatisticsSnapshots.keys().next().value);
+    return row;
   }));
-  return settled.filter(result => result.status === 'fulfilled').map(result => result.value);
+  const rows = settled.filter(result => result.status === 'fulfilled').map(result => result.value);
+  rows.unavailableNodes = nodes.filter((node, index) =>
+    settled[index].reason?.radarUnavailable === true).map(node => node.id);
+  return rows;
 }
 
 async function startRadarDisplay(name, render, {url, configure, unavailable, paused = false} = {}) {

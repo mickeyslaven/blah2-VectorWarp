@@ -4,6 +4,8 @@
 This starts only a supplied processor binary, completed synthetic BLAH2IQ v1
 files, and loopback HTTP/TCP peers.  It never discovers, opens, or configures an
 SDR.  Run it explicitly; it is deliberately not wired into CMake yet.
+All cases request CPU processing. Receiver-tag parity here does not qualify
+live ingress or resident GPU execution of the selected operational workload.
 """
 import argparse
 import importlib.util
@@ -358,6 +360,35 @@ def assert_temporal_loop_reset(trace):
         raise AssertionError("replay loop did not rebuild exact fresh temporal support")
 
 
+def temporal_loop_prefix(trace, frames_per_loop):
+    """Compare two complete recorded epochs, regardless of shutdown scheduling."""
+    if len(trace) < 2 * frames_per_loop:
+        raise AssertionError("replay did not publish two complete temporal loops")
+    prefix = trace[:2 * frames_per_loop]
+    assert_temporal_loop_reset(prefix)
+    epochs = [prefix[index]["integration"].get("history_epoch")
+              for index in (0, frames_per_loop)]
+    for index, frame in enumerate(prefix):
+        integration = frame["integration"]
+        sequence = index % frames_per_loop + 1
+        if type(integration.get("sequence")) is not int or \
+                integration["sequence"] != sequence or \
+                integration.get("history_epoch") != epochs[index // frames_per_loop]:
+            raise AssertionError("replay loop dropped or duplicated a temporal CPI")
+        # This fixture uses two-CPI integration. Check every window within its
+        # own loop; matching receiver hashes cannot expose shared stale support.
+        available = min(sequence, 2)
+        support = integration.get("support_sequences")
+        if type(integration.get("available_cpis")) is not int or \
+                integration["available_cpis"] != available or \
+                integration.get("ready") is not (sequence > 1) or \
+                not isinstance(support, list) or \
+                any(type(value) is not int for value in support) or \
+                support != list(range(sequence, sequence - available, -1)):
+            raise AssertionError("replay loop retained stale or invalid temporal support")
+    return prefix
+
+
 def assert_temporal_processor_outputs(sinks, minimum_cpis):
     if not all(sinks.bytes[name] for name in ("illuminator", "timestamp", "timing")):
         raise AssertionError("temporal processor did not produce lane, timestamp and timing output")
@@ -375,6 +406,8 @@ def assert_processor_outputs(sinks, receiver, minimum_cpis=1):
     map_json = first_json(sinks.payloads["map"], "map")
     if not isinstance(map_json, dict) or not isinstance(map_json.get("data"), list):
         raise AssertionError("map output has no data array")
+    if map_json.get("presentation_only") or map_json.get("data_omitted"):
+        raise AssertionError("offline replay must publish complete canonical maps")
     assert_finite(map_json)
     assert_finite_numbers(map_json["data"])
     timing_json = first_json(sinks.payloads["timing"], "timing")
@@ -467,6 +500,18 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
             config_path.write_text(json.dumps(payload))
             process = subprocess.Popen([str(binary), "-c", str(config_path)], cwd=root,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            if kind in ("missing", "mismatch"):
+                # Recording identity is checked before HTTP status/networking.
+                # A fail-fast rejection must not be mistaken for a hung replay.
+                output, _ = process.communicate(timeout=14)
+                expected = ("Cannot open replay file:" if kind == "missing" else
+                            "Recording channel count differs from Settings")
+                if process.returncode != 1 or expected not in output:
+                    raise AssertionError(f"replay identity was not refused: {output[-4000:]}")
+                if "Setting up device" in output or status.snapshot() or any(sinks.bytes.values()):
+                    raise AssertionError("invalid replay admitted hardware or published products")
+                return {"case": f"{receiver}-{channels}-{kind}", "ok": True,
+                        "startup_rejection": expected, "output_bytes": 0}
             # Large-rate software fixtures get a bounded allowance on slow CI
             # hosts. This is a correctness test, never a real-time speed claim.
             deadline = time.monotonic() + (60 if sample_rate == 6000000 else 14)
@@ -651,7 +696,7 @@ def main():
                                target_fixture=True, temporal_lane=True, clutter=True)
                       for receiver in (*RSP_TYPES, "Kraken")]
     for item in temporal_loops:
-        assert_temporal_loop_reset(item["temporal_trace"])
+        item["temporal_trace"] = temporal_loop_prefix(item["temporal_trace"], 6)
     loop_fingerprints = {hashlib.sha256(json.dumps(
         item["temporal_trace"], sort_keys=True, separators=(",", ":"),
         allow_nan=False).encode()).hexdigest() for item in temporal_loops}

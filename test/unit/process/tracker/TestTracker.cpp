@@ -19,6 +19,7 @@
 #include <vector>
 #include <random>
 #include <iostream>
+#include <set>
 
 TEST_CASE("CPU tracker diagnostics JSON reports exclusive radar-only frame counters", "[tracker][json]")
 {
@@ -34,7 +35,7 @@ TEST_CASE("CPU tracker diagnostics JSON reports exclusive radar-only frame count
   rapidjson::Document json;
   json.Parse(buffer.GetString());
   REQUIRE_FALSE(json.HasParseError());
-  CHECK(std::string(json["schema"].GetString()) == "vectorwarp-cpu-tracker-frame-diagnostics-v1");
+  CHECK(std::string(json["schema"].GetString()) == "vectorwarp-tracker-frame-diagnostics-v2");
   CHECK(json["truth_blind"].GetBool());
   CHECK(json["detections"].GetUint64() == 4);
   CHECK(json["pair_innovation_rejected"].GetUint64() == 0);
@@ -43,7 +44,7 @@ TEST_CASE("CPU tracker diagnostics JSON reports exclusive radar-only frame count
   CHECK(json["pair_in_gate"].GetUint64() == 2);
   CHECK(json["associations"].GetUint64() == 1);
   CHECK(json["birth_snr_rejected"].GetUint64() == 3);
-  CHECK_FALSE(json.HasMember("birth_exclusive_rejected"));
+  CHECK(json["birth_exclusive_rejected"].GetUint64()==0);
   CHECK(json["promotions"].GetUint64() == 0); // unresolved same-delay Doppler pair
   CHECK(json["candidate_track_pairs"].GetUint64() ==
     json["pair_already_claimed"].GetUint64() + json["pair_delay_rejected"].GetUint64() +
@@ -53,6 +54,23 @@ TEST_CASE("CPU tracker diagnostics JSON reports exclusive radar-only frame count
   CHECK(tracker.frame_diagnostics().noOp);
   CHECK(tracker.frame_diagnostics().associations == 0);
   CHECK(tracker.frame_diagnostics().promotions == 0);
+}
+
+TEST_CASE("Canonical tracker publication preserves every counter and scientific bytes", "[tracker][json]")
+{
+  TrackerFrameDiagnostics counters;counters.noOp=true;
+  uint64_t value=UINT64_C(0x100000000);
+  for(const auto& field:trackerDiagnosticFields)counters.*field.member=++value;
+  const std::string product="{\"timestamp\":123,\"n\":0,\"data\":[],\"exact\":0.12345678901234567}";
+  const auto publication=annotateTrackerFrameDiagnostics(product,counters);
+  CHECK(publication.compare(0,product.size()-1,product,0,product.size()-1)==0);
+  rapidjson::Document json;json.Parse(publication.c_str());
+  REQUIRE_FALSE(json.HasParseError());
+  const auto& diagnostics=json["trackerDiagnostics"];
+  CHECK(diagnostics["no_op"].GetBool());
+  for(const auto& field:trackerDiagnosticFields)
+    CHECK(diagnostics[field.name].GetUint64()==counters.*field.member);
+  CHECK(diagnostics.MemberCount()==trackerDiagnosticCount+5);
 }
 
 TEST_CASE("T01 canonical comb births retain strength and ordered ties", "[tracker][admission]")
@@ -248,6 +266,36 @@ TEST_CASE("Adaptive gate retains a target through its first acceleration update"
   auto associated = adaptive.process(&accelerated, 1500);
   REQUIRE(associated->get_n() == 1);
   CHECK(associated->get_state(0) == "ASSOCIATED");
+}
+
+TEST_CASE("Adaptive gate reacquires a confirmed maneuvering track after one miss",
+  "[tracker][adaptive][continuity]")
+{
+  constexpr double cpi = .5;
+  constexpr double rangeRes = 299792458.0 / 6144000.0;
+  constexpr double lambda = 299792458.0 / 527000000.0;
+  Tracker adaptive(2, 4, 3, cpi, 10, rangeRes, lambda, 5, true);
+  Detection first(10, 100, 8);
+  REQUIRE(adaptive.process(&first, 1000)->get_n() == 1);
+  Detection second(10 - lambda * 100 * cpi / rangeRes, 100, 8);
+  auto confirmed = adaptive.process(&second, 1500);
+  REQUIRE(confirmed->get_n() == 1);
+  REQUIRE(confirmed->get_state(0) == "ACTIVE");
+
+  Detection absent({}, {}, {});
+  auto coast = adaptive.process(&absent, 2000);
+  REQUIRE(coast->get_n() == 1);
+  REQUIRE(coast->get_state(0) == "COASTING");
+
+  // Eight hertz is outside the ordinary normalized half-second Doppler gate,
+  // but inside the configured +/-10 Hz/s acceleration envelope over the full
+  // second since the last measurement.
+  Detection maneuvering(10 - lambda * (100 + .5 * 8) / rangeRes, 108, 8);
+  auto reacquired = adaptive.process(&maneuvering, 2500);
+  REQUIRE(reacquired->get_n() == 1);
+  CHECK(reacquired->get_state(0) == "ACTIVE");
+  CHECK(reacquired->get_nInactive(0) == 0);
+  CHECK(adaptive.frame_diagnostics().associations == 1);
 }
 
 /// @brief Test process for an ACTIVE track.
@@ -447,6 +495,112 @@ Detection temporalDetection(uint64_t epoch, uint64_t newest, uint8_t depth)
 }
 }
 
+TEST_CASE("Deep temporal products require accumulated support for weak births", "[tracker][temporal][birth]")
+{
+  CHECK_FALSE(tracker_weak_birth::weakBirthSupportEligible(6.99, 8, 2));
+  CHECK(tracker_weak_birth::weakBirthSupportEligible(6.99, 8, 4));
+  CHECK(tracker_weak_birth::weakBirthSupportEligible(7.0, 8, 1));
+  CHECK(tracker_weak_birth::weakBirthSupportEligible(5.0, 2, 1));
+
+  const auto detected=[](double snr,uint8_t depth,uint64_t sequence) {
+    Detection result(10,0,snr);
+    result.set_evidence({sourceEvidence(1,sequence,depth)});
+    return result;
+  };
+  Tracker tracker(1,9,8,1,0,100,2,5);
+  tracker.configureMaximumEvidenceDepth(8);
+
+  auto shallow=detected(6,2,2);
+  auto tracks=tracker.process(&shallow,1000);
+  CHECK(tracks->get_n()==0);
+  CHECK(tracker.frame_diagnostics().birthSnrRejected==1);
+
+  tracker.reset();
+  auto accumulated=detected(6,4,4);
+  tracks=tracker.process(&accumulated,2000);
+  REQUIRE(tracks->get_n()==1);
+  CHECK(tracks->get_nAssociated(0)==1);
+
+  tracker.reset();
+  auto shallowAfterReset=detected(6,2,2);
+  tracks=tracker.process(&shallowAfterReset,2500);
+  CHECK(tracks->get_n()==0);
+  CHECK(tracker.frame_diagnostics().birthSnrRejected==1);
+
+  tracker.reset();
+  auto strong=detected(7,1,1);
+  tracks=tracker.process(&strong,3000);
+  REQUIRE(tracks->get_n()==1);
+
+  // Weak single-CPI measurements remain useful after a track has a valid
+  // accumulated-evidence birth; the gate applies only to initiation.
+  auto update=detected(6,1,2);
+  tracks=tracker.process(&update,4000);
+  REQUIRE(tracks->get_n()==1);
+  CHECK(tracks->get_nAssociated(0)==2);
+}
+
+TEST_CASE("Current measurement publishes exact deduplicable CPI support", "[tracker][lineage][json]")
+{
+  constexpr uint64_t epoch=UINT64_C(9007199254740993), first=UINT64_C(9007199254741001);
+  for(const uint8_t depth:{uint8_t(1),uint8_t(2),uint8_t(4),uint8_t(8)}) {
+    Tracker tracker(1,depth+1,depth,1,0,100,2);
+    std::set<std::string> support;
+    std::unique_ptr<Track> tracks;
+    for(uint64_t frame=0;frame<3;++frame) {
+      Detection measured({10,100},{0,0},{10,10});
+      measured.set_evidence(std::vector<Detection::Evidence>(2,sourceEvidence(epoch,first+frame,depth)));
+      tracks=tracker.process(&measured,1000*(frame+1));
+      rapidjson::Document product;product.Parse(tracks->to_json(1000*(frame+1)).c_str());
+      REQUIRE(product["data"].Size()==2);
+      for(const auto& track:product["data"].GetArray()) {
+        REQUIRE(track["measured"].GetBool());
+        const auto& evidence=track["measurement_evidence"];
+        REQUIRE(evidence.IsObject());
+        CHECK(std::string(evidence["epoch_exact"].GetString())==std::to_string(epoch));
+        CHECK(std::string(evidence["newest_sequence_exact"].GetString())==std::to_string(first+frame));
+        CHECK(evidence["cpis"].GetUint()==depth);
+        REQUIRE(evidence["support_sequences_exact"].Size()==depth);
+        for(uint8_t age=0;age<depth;++age) {
+          const auto sequence=std::string(evidence["support_sequences_exact"][age].GetString());
+          CHECK(sequence==std::to_string(first+frame-age));
+          support.insert(std::to_string(epoch)+":"+sequence);
+        }
+      }
+      const auto before=tracks->to_json(1000*(frame+1));
+      tracks=tracker.process(&measured,1000*(frame+1));
+      CHECK(tracker.frame_diagnostics().noOp);
+      CHECK(tracks->to_json(1000*(frame+1))==before);
+    }
+    CHECK(support.size()==depth+2u); // Two tracks and overlapping windows earn each CPI once.
+    Detection empty(std::vector<double>{},std::vector<double>{},std::vector<double>{});
+    tracks=tracker.process(&empty,4000);
+    rapidjson::Document coast;coast.Parse(tracks->to_json(4000).c_str());
+    for(const auto& track:coast["data"].GetArray()) {
+      CHECK_FALSE(track["measured"].GetBool());
+      CHECK_FALSE(track.HasMember("measurement_evidence"));
+    }
+    tracker.reset();
+    auto reset=temporalDetection(epoch+1,depth,depth);
+    tracks=tracker.process(&reset,5000);
+    REQUIRE(tracks->get_current(0).get_evidence().size()==1);
+    CHECK(tracks->get_current(0).get_evidence()[0].epoch==epoch+1);
+  }
+}
+
+TEST_CASE("Missing and malformed measurement lineage is explicitly unavailable", "[tracker][lineage][json]")
+{
+  Track tracks;tracks.add(Detection(10,0,10));tracks.promote(0,1,1);
+  const auto published=[&]{rapidjson::Document d;d.Parse(tracks.to_json(1000).c_str());return d;};
+  CHECK(published()["data"][0]["measurement_evidence"].IsNull());
+  auto malformed=temporalDetection(1,8,4);auto evidence=malformed.get_evidence();
+  evidence[0].depth=9;malformed.set_evidence(evidence);tracks.set_current(0,malformed);
+  CHECK(published()["data"][0]["measurement_evidence"].IsNull());
+  tracks.set_predicted_current(0,temporalDetection(1,8,4));
+  CHECK_FALSE(published()["data"][0].HasMember("measurement_evidence"));
+  CHECK(tracks.get_current(0).get_evidence().empty());
+}
+
 TEST_CASE("Temporal detector windows receive one disjoint confirmation vote", "[tracker][lineage]")
 {
   for(const uint8_t depth:{uint8_t(2),uint8_t(4),uint8_t(8)}) {
@@ -460,15 +614,15 @@ TEST_CASE("Temporal detector windows receive one disjoint confirmation vote", "[
       tracks=tracker.process(&overlap,sequence*1000);
       REQUIRE(tracks->get_n()==1);
       CHECK(tracks->get_state(0)!="ACTIVE");
-      CHECK(tracks->get_nAssociated(0)==1);
-      CHECK(tracker.frame_diagnostics().pairLineageRejected==1);
+      CHECK(tracks->get_nAssociated(0)==sequence-depth+1);
+      CHECK(tracker.frame_diagnostics().pairLineageRejected==0);
       CHECK(tracker.frame_diagnostics().independentCredits==0);
     }
     auto independent=temporalDetection(0,2*depth,depth);
     tracks=tracker.process(&independent,2*depth*1000);
     REQUIRE(tracks->get_n()==1);
     CHECK(tracks->get_state(0)=="ACTIVE");
-    CHECK(tracks->get_nAssociated(0)==2);
+    CHECK(tracks->get_nAssociated(0)==depth+1u);
     CHECK(tracker.frame_diagnostics().creditedCpis==depth);
     tracker.process(&independent,(2*depth+1)*1000);
     CHECK(tracker.frame_diagnostics().noOp);
@@ -484,6 +638,60 @@ TEST_CASE("Temporal detector windows receive one disjoint confirmation vote", "[
     tracks=tracker.process(&seed,(2*depth+4)*1000);
     CHECK(tracks->get_nAssociated(0)==1);
   }
+}
+
+TEST_CASE("Overlapping temporal detections retain one operational track", "[tracker][lineage][continuity]")
+{
+  // The live failure is an 85-CPI detection run broken into measured islands.
+  // Confirmation still needs four disjoint windows; later overlapping windows
+  // are measurements, not additional independent confirmation votes.
+  for(const uint8_t depth:{uint8_t(1),uint8_t(2),uint8_t(4),uint8_t(8)}) {
+    Tracker tracker(4,25,7,.5,10,125,.589,5,true);
+    unsigned active=0,run=0,longest=0,credits=0,reacquisitions=0;
+    std::string id;std::unique_ptr<Track> tracks;
+    for(uint64_t frame=0;frame<85;++frame) {
+      Detection detected(200-.589*40*.5*frame/125,40,10);
+      detected.set_evidence({sourceEvidence(1,depth+frame,depth)});
+      tracks=tracker.process(&detected,1000+500*frame);
+      REQUIRE(tracks->get_n()==1);
+      if(frame==0)id=tracks->get_id(0);
+      REQUIRE(tracks->get_id(0)==id);
+      credits+=tracker.frame_diagnostics().independentCredits;
+      const bool measured=tracks->get_state(0)=="ACTIVE"&&
+        tracks->get_current_source(0)==Track::Source::detector;
+      if(measured){if(!run&&active)++reacquisitions;++active;++run;longest=std::max(longest,run);}
+      else run=0;
+      if(frame<3u*depth)CHECK_FALSE(measured);
+    }
+    std::cout<<"temporal_continuity depth="<<unsigned(depth)<<" detections=85 active="<<active
+      <<" longest="<<longest<<" reacquisitions="<<reacquisitions<<" credits="<<credits<<'\n';
+    CHECK(credits==1u+84u/depth);
+    CHECK(tracks->get_nAssociated(0)==85);
+    CHECK(active==85-3u*depth);
+    CHECK(longest==active);
+    CHECK(reacquisitions==0);
+  }
+}
+
+TEST_CASE("Independent credit cannot let a younger track steal an overlapping measurement", "[tracker][lineage][continuity]")
+{
+  // N62F's established track coasted while a younger tentative track claimed
+  // the same in-gate depth-two candidate using its different credit history.
+  Tracker tracker(2,5,3,.5,8,125,.589,5,true);
+  std::unique_ptr<Track> tracks;
+  for(uint64_t frame=0;frame<4;++frame) {
+    const double delay=200-.589*40*.5*frame/125;
+    Detection detected=frame==1?Detection({delay,delay},{40,48},{10,10}):Detection(delay,40,10);
+    detected.set_evidence(std::vector<Detection::Evidence>(frame==1?2:1,sourceEvidence(1,frame+2,2)));
+    tracks=tracker.process(&detected,1000+500*frame);
+  }
+  REQUIRE(tracks->get_n()==2);
+  CHECK(tracks->get_id(0)=="0000");
+  CHECK(tracks->get_state(0)=="ACTIVE");
+  CHECK(tracks->get_current_source(0)==Track::Source::detector);
+  CHECK(tracks->get_nAssociated(0)==4);
+  CHECK(tracks->get_nAssociated(1)==1);
+  CHECK(tracker.frame_diagnostics().independentCredits==0);
 }
 
 TEST_CASE("Private qualification budgets real confirmed tracks and resets", "[tracker][lineage][startup]")
@@ -536,17 +744,17 @@ TEST_CASE("Mixed depth evidence shares one disjoint ledger", "[tracker][lineage]
   auto seed=temporalDetection(0,2,2);tracker.process(&seed,2000);
   auto overlap4=temporalDetection(0,4,4);
   auto tracks=tracker.process(&overlap4,4000);
-  CHECK(tracker.frame_diagnostics().pairLineageRejected==1);
-  CHECK(tracks->get_nAssociated(0)==1);
+  CHECK(tracker.frame_diagnostics().independentCredits==0);
+  CHECK(tracks->get_nAssociated(0)==2);
   auto fresh4=temporalDetection(0,6,4);tracks=tracker.process(&fresh4,6000);
-  CHECK(tracks->get_nAssociated(0)==2);
+  CHECK(tracks->get_nAssociated(0)==3);
   auto overlap8=temporalDetection(0,10,8);tracks=tracker.process(&overlap8,10000);
-  CHECK(tracker.frame_diagnostics().pairLineageRejected==1);
-  CHECK(tracks->get_nAssociated(0)==2);
+  CHECK(tracker.frame_diagnostics().independentCredits==0);
+  CHECK(tracks->get_nAssociated(0)==4);
   auto fresh8=temporalDetection(0,14,8);tracks=tracker.process(&fresh8,14000);
   REQUIRE(tracks->get_n()==1);
   CHECK(tracks->get_state(0)=="ACTIVE");
-  CHECK(tracks->get_nAssociated(0)==3);
+  CHECK(tracks->get_nAssociated(0)==5);
   CHECK(tracker.frame_diagnostics().creditedCpis==8);
 }
 
@@ -584,6 +792,17 @@ TEST_CASE("Missing or malformed lineage cannot bypass an initialized ledger", "[
   REQUIRE(tracks->get_n()==1);
   CHECK(tracks->get_state(0)=="ACTIVE");
   CHECK(tracks->get_nAssociated(0)==2);
+  Detection mixed({30,10},{10,0},{10,10});
+  mixed.set_evidence({sourceEvidence(0,5,2),sourceEvidence(0,4,2)});
+  tracks=tracker.process(&mixed,6000);
+  REQUIRE(tracks->get_n()==2);
+  CHECK(tracks->get_state(0)=="COASTING");
+  CHECK(tracks->get_nAssociated(0)==2);
+  CHECK(tracker.frame_diagnostics().pairLineageRejected==1);
+  CHECK(tracker.frame_diagnostics().birthLineageRejected==1);
+  rapidjson::Document mixedProduct;mixedProduct.Parse(tracks->to_json(6000).c_str());
+  REQUIRE(mixedProduct["data"].Size()==1);
+  CHECK_FALSE(mixedProduct["data"][0].HasMember("measurement_evidence"));
 }
 
 TEST_CASE("Disabled recovery preserves ordinary seed and M of N promotion", "[tracker][lineage]")

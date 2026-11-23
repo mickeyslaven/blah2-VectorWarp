@@ -37,6 +37,11 @@ CONSTRUCTION = re.compile(
     rf"(?:new\s+{STAGE}\b|make_(?:unique|shared)<\s*{STAGE}\b|"
     rf"\b{STAGE}\s+[A-Za-z_]\w*\s*[({{])")
 PRODUCT_CALL = re.compile(r"\b(?:detection::)?(?:detectProducts|trackProducts)\s*\(")
+RUNTIME_OWNER = r"(?:[A-Za-z_]\w*::)*(?:RawIqStages|ProductStages|Acceleration|Coordinator)"
+RUNTIME_CONSTRUCTION = re.compile(
+    rf"(?:new\s+{RUNTIME_OWNER}\b|make_(?:unique|shared)<\s*{RUNTIME_OWNER}\b|"
+    rf"\b{RUNTIME_OWNER}\s+[A-Za-z_]\w*\s*[({{])")
+FRONTEND_CALL = re.compile(r"\bpipeline::(?:processFrontend|fuseMaps)\s*\(")
 IDENTITY = re.compile(
     r"\b(?:Kraken|RspDuo|HackRF|Usrp|RTLSDR|Airspy|SoapySDR|"
     r"receiverType|deviceType|captureAdapter|pi4Host|__APPLE__|__linux__|_WIN32)\b",
@@ -161,6 +166,9 @@ def violations(path, source):
             problems.append("numerical stage construction/orchestration outside canonical ownership")
         if re.search(r"\bProductConfig\b|\.\s*(?:detector|tracker)\.\w+\s*=(?!=)", code):
             problems.append("resolved product policy outside canonical plan ownership")
+    if path == "src/blah2.cpp" or path.startswith("src/capture/"):
+        if RUNTIME_CONSTRUCTION.search(code) or FRONTEND_CALL.search(code):
+            problems.append("ingress/publication constructs a second radar stage owner")
     if path.startswith("src/process/pipeline/"):
         if IDENTITY.search(code):
             problems.append("receiver/OS identity affects canonical processing")
@@ -194,6 +202,29 @@ def retention_problem(path):
 
 
 class CanonicalProcessingArchitecture(unittest.TestCase):
+    def test_recording_resume_io_belongs_to_capture_control(self):
+        source = (ROOT / "src/capture/Source.cpp").read_text()
+        for method, end in (("record_block_locked", "record_channel"),
+                            ("record_channel", "kill")):
+            callback = source.split(f"void Source::{method}(", 1)[1].split(
+                f"void Source::{end}(", 1)[0]
+            for forbidden in ("open_file_locked(", "service_recording(",
+                              "publish_recording_provenance(", "RecordingWriter>("):
+                self.assertNotIn(forbidden, callback)
+            self.assertIn("activate_recording_locked()", callback)
+        service = source.split("void Source::service_recording()", 1)[1].split(
+            "bool Source::activate_recording_locked()", 1)[0]
+        locked = True
+        for line in service.splitlines():
+            if "lock.unlock()" in line: locked = False
+            if "lock.lock()" in line: locked = True
+            if any(call in line for call in ("publish_recording_provenance(",
+                    "previousWriter.reset()", "make_unique<blah2::RecordingWriter>")):
+                self.assertFalse(locked, line)
+        capture = (ROOT / "src/capture/Capture.cpp").read_text()
+        control = capture.split("std::thread control(", 1)[1].split("cli.Post(", 1)[0]
+        self.assertIn("device->service_recording()", control)
+
     def test_runtime_javascript_has_no_offline_or_second_track_owner(self):
         sources = {path: (ROOT / path).read_text() for path in files()
                    if path.endswith('.js') and not path.endswith('.test.js')}
@@ -278,13 +309,19 @@ class CanonicalProcessingArchitecture(unittest.TestCase):
         main = (ROOT / "src/blah2.cpp").read_text()
         bank = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
         pipeline = (ROOT / "src/process/pipeline/RadarPipeline.h").read_text()
-        for label, source in (("direct", main), ("signal bank", bank)):
+        for label, source in (("signal bank", bank),):
             for call in ("pipeline::processFrontend(", "pipeline::fuseMaps(",
                          "pipeline::ProductStages", "pipeline::makeAmbiguity("):
                 self.assertTrue(call in source, f"{label}: missing {call}")
         for forbidden in ("detection::detectProducts(", "detection::trackProducts(",
-                          "acceleration.processClutter(", "mapFusion.process("):
+                          "acceleration.processClutter(", "mapFusion.process(",
+                          "pipeline::processFrontend(", "pipeline::fuseMaps(",
+                          "pipeline::ProductStages", "pipeline::RawIqStages",
+                          "resident::Coordinator", "cpuProducts", "cpuStages"):
             self.assertFalse(forbidden in main, f"publication owns {forbidden}")
+        self.assertRegex(main, r"make_unique<\s*blah2::pipeline::RadarBank>")
+        self.assertEqual(main.count("multiRadar->processPipelined("), 1)
+        self.assertNotIn("multiRadar->process(", main)
         self.assertLess(pipeline.index("stages.clutter("), pipeline.index("stages.ambiguity("))
         self.assertLess(pipeline.index("integration->process("),
                         pipeline.index("detection::detectProducts("))
@@ -292,6 +329,48 @@ class CanonicalProcessingArchitecture(unittest.TestCase):
                         pipeline.index("detection::trackProducts("))
         self.assertTrue("config_.stages.detection" in pipeline)
         self.assertTrue("config_.stages.tracking" in pipeline)
+
+    def test_direct_and_channelized_ingress_converge_before_processing(self):
+        main = code_only((ROOT / "src/blah2.cpp").read_text())
+        self.assertEqual(len(re.findall(r"make_unique<\s*blah2::pipeline::RadarBank>", main)), 1)
+        direct_definition = main.index('primary.id = "primary";')
+        self.assertLess(direct_definition, main.index("PublicationFifo multiProductPublications"))
+        self.assertIn("primary.outputRateHz = fs;", main)
+        direct = main.split("blah2::iq::CoherentSamples samples;", 1)[1].split(
+            "} else if(!state&&multiGpuChannelizer", 1)[0]
+        self.assertIn("samples.inputSamplesPerOutput = 1;", direct)
+        for channels, owner in (("captureData", "captureOwner"),
+                                ("multiGpuStagingInput", "multiGpuStagingOwner")):
+            self.assertRegex(direct, rf"for\s*\(\s*const auto& channel\s*:\s*{channels}\s*\)")
+            self.assertRegex(direct,
+                rf"BorrowedSamples\s*\{{\s*{owner}\s*,\s*std::move\(views\)\s*\}}")
+        self.assertIn('current.push_back({"primary", fc, std::move(samples)})', direct)
+        self.assertIn("queueCurrent(std::move(current), currentPublication(0))", direct)
+        self.assertNotIn("processPipelined", direct)
+        self.assertNotIn("ProductStages", direct)
+        self.assertRegex(main, r"if \(multiIlluminatorEnabled\)\s*multiChannelizer =")
+        self.assertIn("processMultiFrames(std::move(channelized), *publication)", main)
+
+    def test_one_stage_complete_owner_orders_bounded_overlap(self):
+        bank = code_only((ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text())
+        serial = bank.split("std::vector<RadarFrame> RadarBank::process(", 1)[1].split(
+            "std::vector<RadarFrame> RadarBank::processPipelined(", 1)[0]
+        pipelined = bank.split("std::vector<RadarFrame> RadarBank::processPipelined(", 1)[1].split(
+            "std::vector<RadarFrame> RadarBank::processImpl(", 1)[0]
+        self.assertIn("processImpl(std::move(input), std::move(liveIdentity), false)", serial)
+        self.assertIn("processImpl(std::move(input), std::move(liveIdentity), true)", pipelined)
+        self.assertEqual(bank.count("std::future<void> pendingProduct;"), 1)
+        self.assertNotIn("std::async", bank)
+        queue = bank.split("  void queue_processed_cpi(", 1)[1].split("  void reject(", 1)[0]
+        self.assertLess(queue.index("stage_processed_cpi(first)"), queue.index("collectPending();"))
+        self.assertLess(queue.index("collectPending();"), queue.index("productExecutor->submit("))
+        self.assertIn("complete_processed_cpi(std::move(*staged))", queue)
+        complete = bank.split("  RadarFrame complete_processed_cpi(", 1)[1].split(
+            "  void queue_processed_cpi(", 1)[0]
+        self.assertEqual(complete.count("products->process("), 1)
+        for mutable_frontend in ("residentFrontend->", "acceleration->", "atscPilot->",
+                                 "qualificationFrame(", "ownedChannels", "liveTemporalIdentity"):
+            self.assertNotIn(mutable_frontend, complete)
 
     def test_source_compatibility_shims_cannot_grow_another_implementation(self):
         self.assertFalse((ROOT / "src/process/analysis/ProductionRawIq.h").exists())
@@ -327,7 +406,7 @@ class CanonicalProcessingArchitecture(unittest.TestCase):
         ingest = source.split("std::vector<RadarFrame> consume(", 1)[1].split(
             "qualification_observer::Frame qualificationFrame", 1)[0]
         self.assertIn("directFloatBorrowed && !input.isDouble()", ingest)
-        self.assertIn('input.isDouble() && config.accelerationMode != "cpu"', ingest)
+        self.assertNotIn("Canonical FP64 input requires CPU acceleration", ingest)
         self.assertIn("input.copyChannelTo(", ingest)
         for text in (storage, ingest):
             self.assertNotRegex(text, r"(?:static_cast|reinterpret_cast)<[^>]*float")
@@ -457,6 +536,16 @@ class CanonicalProcessingArchitecture(unittest.TestCase):
         self.assertTrue(violations("src/capture/NewRoute.cpp", "Tracker tracker(1, 2);"))
         self.assertTrue(violations("src/blah2.cpp", "detection::detectProducts(map);"))
         self.assertTrue(violations("src/blah2.cpp", "pipeline::ProductConfig alternate;"))
+        for duplicate in ("pipeline::ProductStages alternate(plan);",
+                          "auto alternate = std::make_unique<blah2::pipeline::RawIqStages>(config);",
+                          "auto alternate = std::make_unique<blah2::resident::Coordinator>(config);",
+                          "blah2::Acceleration alternate(mode, geometry);",
+                          "pipeline::processFrontend(stages, input);",
+                          "pipeline::fuseMaps(maps, fusion, output);"):
+            self.assertTrue(violations("src/blah2.cpp", duplicate), duplicate)
+            self.assertTrue(violations("src/capture/Adapter.cpp", duplicate), duplicate)
+        self.assertEqual(violations("src/blah2.cpp",
+            "auto radar = std::make_unique<blah2::pipeline::RadarBank>(config);"), [])
         self.assertTrue(violations("src/capture/Adapter.cpp", "config.detector.pfa = .1;"))
         self.assertEqual(violations("src/process/analysis/Inspector.cpp",
                                    "if (config.detector.integrationCpis == 1) inspect();"), [])

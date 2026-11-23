@@ -3,8 +3,26 @@
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 namespace blah2::resident {
+// Diagnostic copies only: never retain a public/steady frame. Drop the oldest
+// before allocating its replacement so even transient ownership is <=8 maps.
+template<class T> class QualificationHistory {
+ std::vector<std::vector<T>> maps_;
+public:
+ void clear()noexcept{std::vector<std::vector<T>>{}.swap(maps_);}
+ const auto& maps()const noexcept{return maps_;} // Newest first.
+ void retain(bool privateStartup,bool pending,uint32_t maximum,const T* data,size_t cells){
+  if(!privateStartup||!pending){clear();return;}
+  if((maximum!=2&&maximum!=4&&maximum!=8)||!data||!cells||cells>(1u<<20))
+   throw std::invalid_argument("Qualification diagnostic history exceeds bounds");
+  if(!maps_.empty()&&maps_.front().size()!=cells)
+   throw std::invalid_argument("Qualification diagnostic history geometry changed");
+  while(maps_.size()>=maximum)maps_.pop_back();
+  maps_.insert(maps_.begin(),std::vector<T>(data,data+cells));
+ }
+};
 // Qualification belongs to the immutable worker/device/geometry cohort, not
 // to a contiguous run of capture samples. A gap clears only per-frame checks.
 class Qualification {
@@ -37,6 +55,7 @@ public:
  }
  bool pending()const{return completed_<required_;}
  uint32_t completed()const{return completed_;}
+ uint32_t maximumFrames()const{return required_+depth_-1;}
  void control(bool positive,bool mature,uint32_t detections,uint64_t tracks,
   uint64_t confirmedTracks,bool requireTrack,bool confirmationDue){
   if(!pending())throw std::logic_error("Private qualification control after admission");

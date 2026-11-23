@@ -217,6 +217,10 @@ void testIndependentPortableLanesCanOverlap() {
 
 void testPackedFrames() {
   constexpr unsigned samples = 4800, fs = 48000;
+  // Exercise the production packing/import route through a shared bounded
+  // pool. FrameBackend independently verifies every packed sample and padding
+  // cell before returning the exact CPU-generated map.
+  blah2::utility::FixedExecutor executor(8);
   for (unsigned channels : {1, 4, 8}) for (int middle : {0, 110, -110}) {
     std::vector<std::unique_ptr<Ambiguity>> processors;
     std::vector<std::unique_ptr<IqData>> storage;
@@ -234,7 +238,8 @@ void testPackedFrames() {
     const unsigned range = cpu[0]->get_nfft(), doppler = cpu[0]->get_n_doppler_bins();
     const unsigned correlation = cpu[0]->get_n_corr(), delays = cpu[0]->get_n_delay_bins();
     blah2::Acceleration acceleration("gpu", {range, doppler, delays, channels, -5},
-      correlation, fs, middle, "auto", factory);
+      correlation, fs, middle, "auto", factory,
+      blah2::Acceleration::TimeSource{}, &executor);
     unsigned cpuCalls = 0;
     for (unsigned frame = 0; frame < 5; ++frame) {
       std::deque<Complex> reference;

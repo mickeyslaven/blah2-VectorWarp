@@ -148,13 +148,17 @@ class StartupPreparation(unittest.TestCase):
         self.assertIn("allocated_ == limit_ && pending_", acquire)
         self.assertIn("reserveChanged_.wait(lock", acquire)
 
-    def test_all_lanes_and_legacy_acceleration_prepare_before_threads(self):
+    def test_all_ingress_uses_one_bank_startup_before_threads(self):
         source = (ROOT / "src/blah2.cpp").read_text()
         declaration = source.index("std::thread t1;")
         self.assertLess(source.index("multiRadar->prepareStartup();"), declaration)
-        self.assertLess(source.index("acceleration.prepareStartup("), declaration)
-        self.assertLess(source.index("resident->prepareStartup("), declaration)
-        self.assertLess(source.index("referenceConfig, isClutter && !multiIlluminatorEnabled"), declaration)
+        self.assertEqual(source.count("multiRadar->prepareStartup();"), 1)
+        self.assertNotIn("acceleration.prepareStartup(", source)
+        self.assertNotIn("resident->prepareStartup(", source)
+        self.assertNotIn("cpuStages", source)
+        bank = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
+        self.assertIn("residentFrontend->prepareStartup(", bank)
+        self.assertIn("acceleration->prepareStartup(prepareFrame);", bank)
         self.assertEqual(source.count("capture->process("), 1)
         consumer = source.index("std::thread t2(")
         producer = source.index("t1 = std::thread(")
@@ -165,10 +169,11 @@ class StartupPreparation(unittest.TestCase):
 
     def test_synthetic_dsp_stops_before_products(self):
         source = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
-        warm = source.split("  void prepareStartup()", 1)[1].split("  std::optional<RadarFrame> process_float_cpi", 1)[0]
+        warm = source.split("  void prepareStartup()", 1)[1].split("  void process_float_cpi", 1)[0]
         self.assertIn("startup::fillIq", warm)
         self.assertIn("if (!process_loaded_dsp())", warm)
-        self.assertNotIn("finish_processed_cpi", warm)
+        self.assertNotIn("queue_processed_cpi", warm)
+        self.assertNotIn("stage_processed_cpi", warm)
         self.assertIn("stages->resetReference();", warm)
         self.assertIn("channel->clear();", warm)
 
@@ -213,21 +218,28 @@ class StartupPreparation(unittest.TestCase):
 
     def test_resident_startup_oracle_supports_dedicated_reference_roles(self):
         native = (ROOT / "src/blah2.cpp").read_text()
-        self.assertNotIn('else if (resident && !state)', native)
-        startup = native.split('else if (resident)', 1)[1].split(
-            'else if (!resident)', 1)[0]
-        self.assertIn('if (arrayReference)', startup)
-        self.assertIn('captureData[referenceChannel]->drain_front(nSamples)', startup)
-        self.assertIn('ArrayReferenceSynthesizer::Metrics dedicatedReferenceMetrics;', startup)
+        self.assertNotIn('resident->prepareStartup(', native)
+        bank = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
+        startup = bank.split('  void prepareStartup()', 1)[1].split('  void process_float_cpi', 1)[0]
+        self.assertIn('ArrayReferenceSynthesizer::Metrics dedicated;', startup)
+        self.assertIn('residentFrontend->checkReference(config.arrayReference ? reference :', startup)
+        self.assertIn('*ownedChannels[config.referenceChannel]', startup)
+        self.assertIn('stages->reference().get_metrics() : dedicated', startup)
 
     def test_rejected_cpi_cannot_reach_observer_or_publication(self):
         source = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
-        loaded = source.split('  std::optional<RadarFrame> process_loaded_cpi', 1)[1].split('  void prepareStartup', 1)[0]
-        self.assertRegex(loaded, r'if \(!process_loaded_dsp\(\)\)\s*\{\s*reject\([^;]+;\s*resetAdaptiveState\(\);\s*return std::nullopt;')
+        shared = source.split('  void process_cpi', 1)[1].split('  void process_loaded_cpi', 1)[0]
+        self.assertRegex(shared, r'if \(!process_loaded_dsp\(\)\)\s*\{\s*reject\([^;]+;\s*resetAdaptiveState\(\);\s*return;')
         # A successful resident frontend returns before the host clutter path.
-        # The host rejection must precede the host publication below it.
-        self.assertIn('if (residentExecuted) return finish_processed_cpi(first);', loaded)
-        self.assertLess(loaded.index('return std::nullopt'), loaded.rindex('finish_processed_cpi'))
+        # Both owned and borrowed ingress use this same rejection/publication
+        # owner; fallback materialization occurs before host DSP only.
+        self.assertIn('if (residentExecuted) return queue_processed_cpi(first);', shared)
+        self.assertLess(shared.index('prepareHost();'), shared.index('if (!process_loaded_dsp())'))
+        self.assertLess(shared.index('return;'), shared.rindex('queue_processed_cpi'))
+        wrappers = source.split('  void process_loaded_cpi', 1)[1].split('  void prepareStartup', 1)[0]
+        self.assertIn('process_cpi(first,', wrappers)
+        self.assertIn('inputProcessing.path=input.isDouble()?"resident_borrowed_double":', wrappers)
+        self.assertIn('"resident_borrowed_float";', wrappers)
         reset = source.split('  void resetAdaptiveState(', 1)[1].split('  void resetTracker()', 1)[0]
         self.assertIn('stages->resetReference();', reset)
         self.assertIn('products->reset(reason);', reset)
@@ -286,7 +298,8 @@ class StartupPreparation(unittest.TestCase):
 
     def test_preparation_does_not_set_ready_or_skip_the_numerical_oracle(self):
         source = (ROOT / "src/process/ambiguity/Acceleration.cpp").read_text()
-        warm = source.split("void Acceleration::prepareStartup(", 1)[1].split("double Acceleration::now_ms", 1)[0]
+        warm = source.split("void Acceleration::prepareStartup(", 1)[1].split(
+            "void Acceleration::retryClutterQualificationAfterStartup", 1)[0]
         self.assertIn("startupPending()", warm)
         self.assertIn("TotalQualificationFrames", warm)
         self.assertIn("processFrame(frame);", warm)
@@ -295,18 +308,25 @@ class StartupPreparation(unittest.TestCase):
     def test_capture_discontinuity_keeps_resident_worker_and_drop_accounting(self):
         source = (ROOT / "src/blah2.cpp").read_text()
         reset = source.split("if (extractedInputGeneration != inputGeneration || qualificationGap)", 1)[1]
-        reset = reset.split("if (multiChannelizer)", 1)[0]
-        self.assertIn('cpuProducts.reset("capture_discontinuity");', reset)
-        self.assertIn("resident->resetInput();", reset)
-        self.assertNotIn("resident.reset()", reset)
+        reset = reset.split("multiPipelineState.input_epoch_reset();", 1)[0]
+        self.assertLess(reset.index("drainMultiPublications();"), reset.index("resetMultiRadar();"))
         self.assertNotIn("make_unique", reset)
         self.assertNotRegex(reset, r"(?:residentLogical|residentConsumed|residentConfig\.epoch|captureDroppedSamples)\s*(?:=|\+\+)")
-        self.assertIn("capture_drop_counters_retained=1", reset)
+        bank = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
+        adaptive = bank.split("  void resetAdaptiveState(", 1)[1].split("  void collectStorageMetrics", 1)[0]
+        self.assertLess(adaptive.index("collectPending();"), adaptive.index("residentFrontend->resetInput();"))
+        self.assertIn("products->reset(reason);", adaptive)
+        self.assertNotIn("residentFrontend.reset()", adaptive)
+        self.assertNotIn("make_unique", adaptive)
 
     def test_resident_qualification_keeps_strict_numerical_checks(self):
         source = (ROOT / "src/process/ambiguity/GpuResidentCoordinator.h").read_text()
         self.assertIn("qualification_(Qualification::startupCount(Acceleration::TotalQualificationFrames,", source)
-        self.assertIn("std::abs(value-expected)<1e-12", source)
+        self.assertIn("referenceOracleClose(value,expected)", source)
+        proof = (ROOT / "src/process/ambiguity/GpuResidentProof.h").read_text()
+        self.assertIn("std::abs(actual-expected)<=1e-12*std::max(1.0,std::abs(expected))", proof)
+        self.assertIn("std::isfinite(actual.real())", proof)
+        self.assertIn("std::isfinite(expected.real())", proof)
         for stage in ("reference", "filtered", "maps", "products"):
             self.assertIn(f"qualification_.checked(Qualification::{stage});", source)
         self.assertIn("qualification_.requireComplete();", source)
@@ -316,40 +336,62 @@ class StartupPreparation(unittest.TestCase):
         self.assertNotIn("published()", reset)
         self.assertNotIn("status_", reset)
 
+    def test_private_echo_calibration_never_observes_positive_or_public_maps(self):
+        source = (ROOT / "src/process/ambiguity/GpuResidentCoordinator.h").read_text()
+        self.assertIn("if(privateStartup_&&!privatePositive_&&startupTarget_&&privateMature_)", source)
+        self.assertIn("startupCalibration_.observeNegative", source)
+        self.assertIn("startupCalibration_.amplitude(d.integrationCpis,startupGate_)", source)
+        for start, end in ((" void resetInput()", " const OutputViews&"),
+                           (" void stop()", " if(session_)session_->stop();")):
+            body = source.split(start, 1)[1].split(end, 1)[0]
+            self.assertIn("startupCalibration_.clear();startupTarget_.reset();startupGate_=0", body)
+        calibration = (ROOT / "src/process/analysis/StartupIq.h").read_text()
+        self.assertIn("updates_>=8", calibration)
+        self.assertIn("std::abs(at-center)<=guard", calibration)
+        self.assertIn("depth_!=depth", calibration)
+        self.assertIn("value>4096", calibration)
+
     def test_live_resident_preparation_runs_every_oracle_without_publication(self):
         source = (ROOT / "src/blah2.cpp").read_text()
-        warm = source.split("else if (resident)\n  {", 1)[1].split("else if (!resident)", 1)[0]
-        self.assertIn("resident->fillStartupIq(startupInput, nSamples, frame);", warm)
-        self.assertIn("resident->begin(captureData, {uint64_t(frame)+1, uint64_t(frame)+1, timestamp});", warm)
+        canonical = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
+        warm = canonical.split("  void prepareStartup()", 1)[1].split("  void process_float_cpi", 1)[0]
+        self.assertIn("residentFrontend->fillStartupIq(input, samples, frame);", warm)
+        self.assertIn("residentFrontend->begin(ownedChannels, {uint64_t(frame)+1,", warm)
+        self.assertIn("uint64_t(frame)+1, 1000 + uint64_t(frame) * samples * 1000 /", warm)
         self.assertNotIn("++residentLogical", warm)
         self.assertNotIn("++residentConsumed", warm)
-        for call in ("referenceSynthesizer.process_into", "pipeline::processFrontend",
-                     "startupProducts.process", "resident->checkReference",
-                     "resident->checkFiltered", "resident->checkMaps",
-                     "resident->checkProducts", "resident->commit()"):
+        for call in ("process_loaded_dsp(true)", "residentFrontend->fuseOracle",
+                     "residentFrontend->checkReference", "residentFrontend->checkFiltered",
+                     "residentFrontend->checkMaps", "residentFrontend->checkProducts",
+                     "residentFrontend->checkFrontendProducts()", "residentFrontend->commit()"):
             self.assertIn(call, warm)
-        self.assertIn("auto startupFusion = coherentMapFusion ?", warm)
-        self.assertIn("std::make_unique<CoherentBeamBank>(*coherentMapFusion)", warm)
+        self.assertIn("coherentFusion.get(), oracleMap, stages->reference().get_metrics()", warm)
         self.assertIn("pipeline::ProductStages startupProducts", warm)
-        self.assertIn("cpuStages.resetReference();", warm)
-        self.assertIn("referenceData->clear();", warm)
-        self.assertIn("for (auto* channel : startupInput) channel->clear();", warm)
-        self.assertIn("for (auto* channel : surveillancePointers) channel->clear();", warm)
-        self.assertIn("if (resident->qualifying())", warm)
+        self.assertNotIn("startupProducts.process", warm)
+        self.assertIn("stages->resetReference();", warm)
+        self.assertIn("reference.clear();", warm)
+        self.assertIn("for (auto& channel : ownedChannels) channel->clear();", warm)
         for forbidden in ("capture->", "socket_", "complexCutout.", "liveTemporalShadow",
-                          "timing->", "tracker->process", "coherentMapFusion->calibrate",
-                          "resident->published", "saveMap", "manifoldRecorder.append"):
+                          "timing->", "tracker->process", "coherentFusion->calibrate",
+                          "residentFrontend->published", "saveMap", "manifoldRecorder.append",
+                          "queue_processed_cpi", "stage_processed_cpi"):
             self.assertNotIn(forbidden, warm)
         self.assertNotRegex(warm, r"(?:residentLogical|residentConsumed|residentConfig\.epoch)\s*=")
-        self.assertLess(source.index("resident->prepareStartup("),
+        self.assertLess(source.index("multiRadar->prepareStartup("),
                         source.index('[Startup] DSP ready for capture'))
 
     def test_resident_preparation_fails_closed_and_resets_before_ready(self):
         source = (ROOT / "src/process/ambiguity/GpuResidentCoordinator.h").read_text()
         warm = source.split(" void prepareStartup(", 1)[1].split(" const OutputViews&", 1)[0]
-        self.assertIn("qualification_.prepareStartup(prepare,", warm)
+        self.assertIn("qualification_.prepareStartup([&](unsigned frame)", warm)
+        self.assertIn("prepare(frame);", warm)
+        self.assertIn("qualification_.maximumFrames()", warm)
+        self.assertIn('" elapsed_ms="', warm)
+        self.assertIn('" publish=0"<<std::endl', warm)
         self.assertIn("session_->published();", warm)  # transport settlement, no sink
-        self.assertIn("qualification_.requireControls();resetInput();resetCpu();", warm)
+        self.assertIn("qualification_.requireControls();", warm)
+        self.assertIn("independentMapChecks_>=2*config().detector.integrationCpis", warm)
+        self.assertLess(warm.index("qualification_.requireControls();"), warm.index("resetInput();resetCpu();"))
         self.assertIn("session_.reset();", warm)
         self.assertIn("session_=createProcess(productionConfig,options_);", warm)
         self.assertIn("session_->qualificationIdentity()==identity", warm)
@@ -374,21 +416,48 @@ class StartupPreparation(unittest.TestCase):
             self.assertNotIn(forbidden, coordinator)
         self.assertNotIn("startupProductConfig.integrationCpis = 1", direct)
         self.assertNotIn("productConfig.integrationCpis = 1", direct)
-        self.assertIn("startup.integration ? &*startup.integration : nullptr", direct)
-        self.assertIn("oracle.integration ? &*oracle.integration : nullptr", lanes)
+        self.assertNotIn("startupProducts.process", direct)
+        self.assertNotIn("startupProducts.process", lanes)
+        host = lanes.split("  RadarFrame complete_processed_cpi(", 1)[1].split(
+            "  void queue_processed_cpi(", 1)[0]
+        self.assertIn("products->process", host)
+        self.assertIn("products->track", host)
+        self.assertNotIn("cpuProducts", direct)
+        self.assertNotIn("pipeline::ProductStages", direct)
         self.assertIn("pipeline::ProductStages startupProducts{RadarPlan(products->config())}", lanes)
         self.assertNotIn("oracleConfig.", lanes)
         self.assertIn('products->reset("startup_qualification_complete")', lanes)
         self.assertIn("cpuIntegration->availableCpis==resident.availableCpis", coordinator)
+        composed = coordinator.split("MapOwner& independentMap,", 1)[1].split(
+            "void checkProducts(const Publication& resident,const std::string& cpuMap,", 1)[0]
+        self.assertIn("independentMapChecks_<2*p.integrationCpis", composed)
+        self.assertIn("make_unique<detection::DetectorIntegration>", composed)
+        self.assertIn("integration.availableCpis==resident.availableCpis", composed)
+        self.assertLess(composed.index("independentMapOracle_->process"),
+                        composed.index("compareOracleJson(independentMap->to_json_km"))
+        self.assertLess(composed.index("compareOracleJson(independentMap->to_json_km"),
+                        composed.index("productOracle_->process"))
+        self.assertIn("independentMapChecks_==2*p.integrationCpis)independentMapOracle_.reset()", composed)
+        self.assertGreaterEqual(coordinator.count("independentMapOracle_.reset()"), 5)
+        self.assertGreaterEqual(coordinator.count("independentMapChecks_=0"), 5)
+        self.assertIn("pipeline::RadarPlan(prototype.config())", composed)
+        self.assertIn("productOracle_->process(map,position,true", composed)
+        self.assertIn("&productOracle_->tracker,productOracle_->integration.get()", composed)
+        self.assertNotIn("prepared_.detections", composed)
+        self.assertNotIn("prepared_.flags", composed)
+        self.assertGreaterEqual(coordinator.count("productOracle_.reset()"), 4)
         self.assertIn("qualification_.checkedProducts(temporal?resident.availableCpis:1)", coordinator)
         self.assertIn("fusion::BearingRefinement", coordinator)
         self.assertIn("metrics.covariance.data()", coordinator)
         self.assertIn("privatePositive_=frame>=d.integrationCpis", coordinator)
         self.assertIn("qualification_.control(privatePositive_,privateMature_", coordinator)
+        self.assertIn("catch(const std::logic_error& failure)", coordinator)
+        self.assertIn("throw std::logic_error(std::string(failure.what())+detail)", coordinator)
+        self.assertIn("control_audit=unavailable", coordinator)
         self.assertIn('for(const auto& item:product["data"].GetArray())', coordinator)
         self.assertIn('if(state=="ACTIVE"||state=="COASTING")++confirmedTracks;', coordinator)
         self.assertIn("Qualification::confirmationFrame(d.integrationCpis,c.tracker.m)", coordinator)
-        lane_startup = lanes.split("  void prepareStartup()", 1)[1].split("  std::optional<RadarFrame> process_float_cpi", 1)[0]
+        lane_startup = lanes.split("  void prepareStartup()", 1)[1].split("  void process_float_cpi", 1)[0]
         self.assertNotIn("++residentLogical", lane_startup)
         self.assertNotIn("++residentConsumed", lane_startup)
         self.assertIn("AUTO timing unavailable", lane_startup)

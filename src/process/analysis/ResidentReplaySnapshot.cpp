@@ -26,7 +26,7 @@ uint32_t fractionalOffsetWords(const Config& c){
  if(c.detector.integrationCpis<=2)return 0;
  const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
  const double scale=motion.fractionalDelay?track_before_detect::delayDriftPerHz(
-  c.geometry.clutterSamples,c.fusion.frequencyHz):0;
+  c.geometry.clutterSamples,c.temporalCarrierHz()):0;
  return track_before_detect::fractionalDelayTableWords(c.geometry.doppler,
   c.detector.integrationCpis,motion.doppler,scale);}
 uint64_t metadataBytes(const Config& c){
@@ -115,7 +115,7 @@ void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
   m.u32(77*4)==c.detector.integrationBeamTolerance&&m.u32(11*4)<=cells,
  "Replay snapshot temporal/detector metadata differs");
  const double delayScale=motion.fractionalDelay?track_before_detect::delayDriftPerHz(
-  c.geometry.clutterSamples,c.fusion.frequencyHz):0;
+  c.geometry.clutterSamples,c.temporalCarrierHz()):0;
  require(m.f64(94*4)==delayScale,"Replay snapshot fractional delay geometry differs");
  require(m.u32(35*4)==(fractionalOffsetWords(c)?metadataPrefixWords(c):0),
   "Replay snapshot fractional delay table layout differs");

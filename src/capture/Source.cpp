@@ -49,6 +49,23 @@ std::string time_source(const std::string& type) {
   if(type=="HackRF") return "hackrf_shared_trigger_relative_sample_epoch";
   return "unavailable";
 }
+void publish_recording_provenance(const std::string& file, const std::string& provenance) {
+  const std::filesystem::path target(file + ".provenance.json");
+  const std::filesystem::path temporary(target.string() + ".tmp");
+  {
+    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+    if (!output) throw std::runtime_error("Cannot create recording provenance sidecar");
+    output.write(provenance.data(), static_cast<std::streamsize>(provenance.size()));
+    output.put('\n'); output.close();
+    if (!output) throw std::runtime_error("Cannot write recording provenance sidecar");
+  }
+  std::error_code error;
+  std::filesystem::rename(temporary, target, error);
+  if (error) {
+    std::filesystem::remove(temporary);
+    throw std::runtime_error("Cannot publish recording provenance sidecar: " + error.message());
+  }
+}
 }
 
 Source::Source()
@@ -151,6 +168,7 @@ void Source::process(const std::vector<IqData *>& buffers)
 
 std::string Source::open_file()
 {
+  std::lock_guard<std::mutex> control(recordingControlMutex);
   std::lock_guard<std::mutex> lock(recordingMutex);
   return open_file_locked();
 }
@@ -158,7 +176,25 @@ std::string Source::open_file()
 std::string Source::open_file_locked(const SampleTimePosition* startPosition)
 {
   if (recordingActive) return recordingFile;
+  if (recordingWriter) {
+    write_recording_provenance_locked(false);
+    recordingWriter.reset();
+  }
   recordingResumePending = false;
+  recordingResumePrepared = false;
+  prepare_recording_locked();
+  try {
+    recordingWriter = std::make_unique<blah2::RecordingWriter>(recordingFile,
+      blah2::RecordingMetadata{recordingChannels, fs, fc, 0, "blah2"});
+    recordingStartPosition = startPosition ? *startPosition : sample_time_position();
+    recordingActive = true;
+    write_recording_provenance_locked(false);
+  } catch (const std::exception& error) { recording_failed(error.what()); throw; }
+  std::cout << "Recording IQ: " << recordingFile << std::endl;
+  return recordingFile;
+}
+
+void Source::prepare_recording_locked() {
   // get string of timestamp in YYYYmmdd-HHMMSS
   auto currentTime = std::chrono::system_clock::to_time_t(
     std::chrono::system_clock::now());
@@ -175,29 +211,79 @@ std::string Source::open_file_locked(const SampleTimePosition* startPosition)
     std::chrono::system_clock::now().time_since_epoch()).count();
   recordingFile = (std::filesystem::path(path) /
     (timestamp + "-" + std::to_string(unique) + "." + typeLower + ".blah2iq")).string();
+  pendingChannels.assign(recordingChannels, {});
+  pendingStarts.assign(recordingChannels, 0);
+  channelStarted.assign(recordingChannels, false);
+  recordedSamples = 0; recordingError.clear(); recordingDiscontinuities.clear();
+  recordingFailureProvenance.clear();
+  manualRecordingMetadata.reset(); manualRecordingFrames.clear();
+  manualRecordingPositionAvailable = false; manualRecordingBounded = true;
+  recordingStartPosition = {};
+}
+
+void Source::service_recording() {
+  std::lock_guard<std::mutex> control(recordingControlMutex);
+  std::unique_lock<std::mutex> lock(recordingMutex);
+  if (!recordingResumePending || recordingResumePrepared ||
+      (recordingWriter && !recordingWriter->abort_ready())) return;
   try {
-    recordingWriter = std::make_unique<blah2::RecordingWriter>(recordingFile,
+    const auto previousFile = recordingFile;
+    const auto previousProvenance = recordingFailureProvenance.empty() ?
+      recording_provenance_locked(false) : recordingFailureProvenance;
+    auto previousWriter = std::move(recordingWriter);
+    lock.unlock();
+    // No acquisition lock spans filesystem I/O or destruction/join. Pending
+    // callbacks remain inactive; no source samples are invented for this gap.
+    publish_recording_provenance(previousFile, previousProvenance);
+    previousWriter.reset();
+    lock.lock();
+    if (!recordingResumePending) return;
+    prepare_recording_locked();
+    const auto nextFile = recordingFile;
+    const auto initialProvenance = recording_provenance_locked(false);
+    lock.unlock();
+    auto nextWriter = std::make_unique<blah2::RecordingWriter>(nextFile,
       blah2::RecordingMetadata{recordingChannels, fs, fc, 0, "blah2"});
-    pendingChannels.assign(recordingChannels, {});
-    pendingStarts.assign(recordingChannels, 0);
-    channelStarted.assign(recordingChannels, false);
-    recordedSamples = 0; recordingError.clear(); recordingDiscontinuities.clear();
-    manualRecordingMetadata.reset(); manualRecordingFrames.clear();
-    manualRecordingPositionAvailable = false; manualRecordingBounded = true;
-    recordingStartPosition = startPosition ? *startPosition : sample_time_position();
+    publish_recording_provenance(nextFile, initialProvenance);
+    lock.lock();
+    if (!recordingResumePending) {
+      lock.unlock(); // A terminal discontinuity cancelled this unopened epoch.
+      return;
+    }
+    recordingWriter = std::move(nextWriter);
+    recordingResumePrepared = true;
+  } catch (const std::exception& error) {
+    if (!lock.owns_lock()) lock.lock();
+    recording_failed(error.what());
+  }
+}
+
+bool Source::activate_recording_locked() {
+  if (recordingResumePending) {
+    if (!recordingResumePrepared) return false;
+    recordingResumePrepared = false;
+    recordingResumePending = false;
     recordingActive = true;
-    write_recording_provenance_locked(false);
-  } catch (const std::exception& error) { recording_failed(error.what()); throw; }
-  std::cout << "Recording IQ: " << recordingFile << std::endl;
-  return recordingFile;
+  }
+  return recordingActive && bool(recordingWriter);
 }
 
 void Source::close_file()
 {
+  std::lock_guard<std::mutex> control(recordingControlMutex);
   std::unique_lock<std::mutex> lock(recordingMutex);
   recordingResumePending = false;
   recordingActive = false;
   if (!recordingWriter) return;
+  if (!recordingError.empty() || recordingResumePrepared) {
+    // Failure callbacks only abort. Explicit control-thread teardown may wait
+    // for the disk and persist the diagnostic, but must never finalize IQ.
+    recordingResumePrepared = false;
+    recordingWriter->abort();
+    write_recording_provenance_locked(false);
+    recordingWriter.reset();
+    return;
+  }
   const auto finalizedFile = recordingFile;
   try {
     if (!recordingWriter->samples())
@@ -240,15 +326,28 @@ void Source::recording_failed(const std::string& error) {
   recordingError = error;
   if (recordingDiscontinuities.empty() || recordingDiscontinuities.back()!=error)
     recordingDiscontinuities.push_back(error);
-  try { write_recording_provenance_locked(false); } catch (...) {}
   if (recordingWriter) recordedSamples = recordingWriter->samples();
-  recordingActive = false; recordingResumePending = false; recordingWriter.reset();
+  recordingActive = false; recordingResumePending = false;
+  recordingResumePrepared = false;
+  // Never perform disk I/O or join a disk-blocked thread on the receiver's
+  // callback. The initial sidecar and unfinished IQ header already fail closed.
+  if (recordingWriter) recordingWriter->abort();
   pendingChannels.clear();
+  // Capture failure-time identity now, but let the control context publish it.
+  // Later receiver recovery must not rewrite the failed epoch's diagnostics.
+  recordingFailureProvenance.clear();
+  try { recordingFailureProvenance = recording_provenance_locked(false); }
+  catch (...) {} // Invalid provenance must never escape an ingress failure.
   std::cerr << "Recording stopped: " << error << '\n';
 }
 
 void Source::write_recording_provenance_locked(bool complete) {
   if (recordingFile.empty()) return;
+  publish_recording_provenance(recordingFile, !complete && !recordingFailureProvenance.empty() ?
+    recordingFailureProvenance : recording_provenance_locked(complete));
+}
+
+std::string Source::recording_provenance_locked(bool complete) const {
   const auto backendDetails = recording_provenance_json();
   rapidjson::Document details;
   details.Parse(backendDetails.c_str());
@@ -343,23 +442,7 @@ void Source::write_recording_provenance_locked(bool complete) {
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
   document.Accept(writer);
-  const std::string provenance(buffer.GetString(),buffer.GetSize());
-  const std::filesystem::path target(recordingFile + ".provenance.json");
-  const std::filesystem::path temporary(target.string() + ".tmp");
-  {
-    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-    if (!output) throw std::runtime_error("Cannot create recording provenance sidecar");
-    output.write(provenance.data(), static_cast<std::streamsize>(provenance.size()));
-    output.put('\n');
-    output.close();
-    if (!output) throw std::runtime_error("Cannot write recording provenance sidecar");
-  }
-  std::error_code error;
-  std::filesystem::rename(temporary, target, error);
-  if (error) {
-    std::filesystem::remove(temporary);
-    throw std::runtime_error("Cannot publish recording provenance sidecar: " + error.message());
-  }
+  return {buffer.GetString(),buffer.GetSize()};
 }
 
 Source::RecordingStatus Source::recording_status() const {
@@ -373,7 +456,7 @@ void Source::recording_discontinuity(const std::string& error) {
   processingEpoch.fetch_add(1, std::memory_order_acq_rel);
   if (portableClipRecorder) portableClipRecorder->discontinuity(error);
   std::lock_guard<std::mutex> lock(recordingMutex);
-  if (recordingWriter) recording_failed(error);
+  if (recordingWriter || recordingResumePending) recording_failed(error);
 }
 
 void Source::recording_epoch_discontinuity(const std::string& error,
@@ -430,13 +513,9 @@ void Source::record_block(const blah2::IqBlock& samples,
 void Source::record_block_locked(const blah2::IqBlock& samples,
     const SampleTimePosition* startPosition) {
   try {
-    if (recordingResumePending && !recordingWriter)
-      open_file_locked(startPosition);
-    if (!recordingActive || !recordingWriter) return;
-    if (startPosition && !recordingWriter->samples()) {
-      recordingStartPosition = *startPosition;
-      write_recording_provenance_locked(false);
-    }
+    if (!activate_recording_locked()) return;
+    if (!recordingWriter->samples())
+      recordingStartPosition = startPosition ? *startPosition : sample_time_position();
     const auto prior = recordingWriter->samples();
     const auto metadata = recording_block_metadata(startPosition ? startPosition->epoch : processing_epoch());
     if (!prior) {
@@ -444,15 +523,16 @@ void Source::record_block_locked(const blah2::IqBlock& samples,
       manualRecordingPositionAvailable = startPosition && startPosition->available;
     } else if (manualRecordingMetadata != metadata) manualRecordingBounded = false;
     recordingWriter->append(samples);
-    if (manualRecordingBounded && manualRecordingFrames.size() < blah2::acquisition::maximumFrames) {
+    if (manualRecordingBounded) {
       const auto first = startPosition && startPosition->available ? startPosition->nextSample :
         (recordingStartPosition.available ? recordingStartPosition.nextSample + prior : prior);
       const auto count = static_cast<uint64_t>(samples.front().size());
       if (prior && (!startPosition || !startPosition->available)) manualRecordingPositionAvailable = false;
-      if (!manualRecordingFrames.empty() && first != manualRecordingFrames.back().sourceFirst + manualRecordingFrames.back().count)
-        manualRecordingBounded = false;
-      else manualRecordingFrames.push_back({manualRecordingFrames.size() + 1, first, count, 0, count});
-    } else manualRecordingBounded = false;
+      const auto sequence = manualRecordingFrames.empty() ? 1 :
+        manualRecordingFrames.back().ingressSequence + manualRecordingFrames.back().repeat;
+      manualRecordingBounded = blah2::acquisition::appendFrame(manualRecordingFrames,
+        {sequence, first, count, 0, count});
+    }
   }
   catch (const std::exception& error) { recording_failed(error.what()); }
 }
@@ -462,8 +542,7 @@ void Source::record_channel(unsigned channel, uint64_t firstSample,
   if (!recording_wants_samples()) return;
   std::lock_guard<std::mutex> lock(recordingMutex);
   try {
-    if (recordingResumePending && !recordingWriter) open_file_locked();
-    if (!recordingActive || !recordingWriter) return;
+    if (!activate_recording_locked()) return;
     if (channel >= recordingChannels || samples.empty()) throw std::runtime_error("Invalid recording input channel");
     auto& pending = pendingChannels[channel];
     if (channelStarted[channel] && firstSample != pendingStarts[channel] + pending.size())

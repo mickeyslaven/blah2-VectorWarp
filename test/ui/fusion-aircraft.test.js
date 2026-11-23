@@ -61,6 +61,9 @@ assert.equal(model.aircraft([], {available:true,tracks:[],position_candidates:[{
 assert.equal(model.aircraft([adsb('matched')], {...result,validation:{held_out_truth:false,matches:result.validation.matches}}, receiver).length,2,
   'no implicit client-side identity matching');
 assert.equal(model.aircraft([], {...result,tracks:[radar,radar]}, receiver).length,1,'duplicate radar IDs do not duplicate glyphs');
+const caseNormalized = model.aircraft([adsb('MATCHED')], result, receiver);
+assert.equal(caseNormalized.length,1,'feed and radar identity case cannot create overlapping duplicate glyphs');
+assert.equal(caseNormalized[0].source,'radar');
 const source = fs.readFileSync(path.join(__dirname,'../../html/js/fusion_scope.js'),'utf8');
 assert.doesNotMatch(source,/Radar-fused|MULTI-SITE<br>FUSED|symbol:'star'|symbol:'diamond'|glow|fusion-evidence-note/);
 assert.match(source,/mode:'text'/,'aircraft labels do not draw another marker');

@@ -180,6 +180,9 @@ exit 0
         self.assertIn("including the web interface", result.stdout)
         self.assertIn("web API", install)
         self.assertIn("including on the first run", install)
+        self.assertIn("restore only previously running VectorWarp services", install)
+        self.assertIn("an intentionally stopped web API or radar stays stopped", install)
+        self.assertIn("`vectorwarp open` to start only the web interface", install)
         self.assertIn("**Save for later**", install)
         self.assertIn("without starting radar", install)
 

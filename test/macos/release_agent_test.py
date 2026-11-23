@@ -160,14 +160,44 @@ class AgentPolicyTest(unittest.TestCase):
         self.assertEqual(agent.choose_release(releases)["tagName"], "v0.2.0")
         self.assertIsNone(agent.choose_release(releases[:1]))
 
-    def test_only_successful_push_at_exact_commit_supplies_runtime(self):
-        sha = "a" * 40
-        runs = [{"headSha": sha, "event": "pull_request", "conclusion": "success", "databaseId": 9},
-                {"headSha": "b" * 40, "event": "push", "conclusion": "success", "databaseId": 8},
-                {"headSha": sha, "event": "push", "conclusion": "failure", "databaseId": 7},
-                {"headSha": sha, "event": "push", "conclusion": "success", "databaseId": 6}]
-        self.assertEqual(agent.choose_run(runs, sha)["databaseId"], 6)
-        self.assertIsNone(agent.choose_run(runs, "c" * 40))
+    def test_runtime_requires_current_hosted_checks_and_exact_successful_signing_job(self):
+        sha, tag = "a" * 40, "v1.2.3"
+        gate = load("release_ci", "verify-release-ci.py")
+        job = dict(name="Sign RPMs and create reviewable draft release", status="completed",
+                   conclusion="success", head_sha=sha, run_id=77)
+        hosted = {"workflows": [{"workflow": "macos-standalone.yml", "runId": 6}]}
+        signed = {"workflows": [{"runId": 77, "runAttempt": 2}]}
+        reports = [({"total_count": 1, "jobs": [job]}, True)]
+        reports += [({"total_count": 1, "jobs": [{**job, **change}]}, False) for change in
+                    ({"status": "in_progress"}, {"conclusion": "skipped"}, {"conclusion": "failure"},
+                     {"head_sha": "b" * 40}, {"run_id": 78}, {"name": "package"})]
+        reports += [({"total_count": 101, "jobs": [job]}, False),
+                    ({"total_count": 0, "jobs": []}, False),
+                    ({"total_count": 2, "jobs": [job, job]}, False)]
+        for report, accepted in reports:
+            collect = mock.Mock(side_effect=[hosted, hosted, signed])
+            with self.subTest(report=report), mock.patch.object(agent.runpy, "run_path",
+                    return_value={"collect": collect, "require": gate.require}), \
+                    mock.patch.object(agent, "json_command", return_value=report) as query:
+                if accepted:
+                    self.assertEqual(agent.reviewed_runs(tag, sha), {"linux_run": 77, "mac_run": 6})
+                else:
+                    with self.assertRaises(ValueError): agent.reviewed_runs(tag, sha)
+            self.assertEqual(collect.call_args_list, [mock.call(sha), mock.call(sha,
+                workflows=("macos-standalone.yml",), branch=tag), mock.call(sha,
+                workflows=("release-packages.yml",), branch=tag)])
+            self.assertIn("/77/attempts/2/jobs?per_page=100", query.call_args.args[2])
+
+    def test_publication_rechecks_runs_before_any_remote_write(self):
+        candidate = dict(tag="v1.2.3", commit="a" * 40, linux_run=77, mac_run=6)
+        for changed in ({"linux_run": 78, "mac_run": 6}, {"linux_run": 77, "mac_run": 7}):
+            with mock.patch.object(agent, "reviewed_runs", return_value=changed), \
+                    mock.patch.object(agent, "command") as command, \
+                    mock.patch.object(agent, "release_detail") as detail:
+                with self.assertRaisesRegex(ValueError, "changed before publication"):
+                    agent.upload_and_publish(candidate, [])
+            command.assert_not_called()
+            detail.assert_not_called()
 
     def linux_assets(self, number, *, bookworm=False):
         names = [f"vectorwarp_{number}-1_{distro}_{arch}.deb"
@@ -177,6 +207,8 @@ class AgentPolicyTest(unittest.TestCase):
             names.append(f"vectorwarp_{number}-1_debian12_arm64.deb")
         names += [f"vectorwarp-{number}-1.fc44.{arch}.rpm" for arch in ("x86_64", "aarch64")]
         names += ["SHA256SUMS", "SHA256SUMS.asc", "package-manifest.json"]
+        if agent.version("v" + number) > agent.MIN_VERSION:
+            names += ["release-ci-provenance.json", "release-soak-provenance.json"]
         return {"assets": [{"name": name} for name in names]}
 
     def test_linux_matrix_requires_bookworm_arm64_for_new_stable_versions(self):
@@ -201,6 +233,18 @@ class AgentPolicyTest(unittest.TestCase):
             self.assertEqual(agent.read_state(path, "a" * 40)["stage"], "published")
             with self.assertRaisesRegex(ValueError, "another commit"):
                 agent.read_state(path, "b" * 40)
+
+    def test_published_state_only_waits_for_pages_never_repeats_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = {"cache": Path(directory)}
+            candidate = dict(tag="v1.2.3", commit="a" * 40)
+            path = agent.state_file(settings["cache"], candidate["tag"])
+            agent.save_state(path, dict(commit=candidate["commit"], stage="published"))
+            with mock.patch.object(agent, "verify_public", side_effect=[False, True]), \
+                    mock.patch.object(agent, "ensure_checkout") as checkout:
+                self.assertEqual(agent.process(settings, candidate), "waiting for public Pages deployment")
+                self.assertEqual(agent.process(settings, candidate), "complete")
+            checkout.assert_not_called()
 
     def test_publication_accepts_generic_heading_but_requires_current_manifest(self):
         pkg = "vectorwarp-0.1.11-macos-universal.pkg"

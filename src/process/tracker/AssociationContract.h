@@ -22,6 +22,9 @@
  Q double associationElapsed(double gap,double missed) { return gap+missed; } \
  Q double associationMissed(double gap,double missed,bool measured) { \
    return measured?0.0:associationElapsed(gap,missed); } \
+ Q bool adaptiveAssociationGate(bool adaptive,bool accelerationEstimated, \
+   bool coasting,double missed) { \
+   return adaptive&&(!accelerationEstimated||(coasting&&missed>0.0)); } \
  struct AssociationDecision { bool valid; bool accepted; uint rejection; double distance; }; \
  Q uint spatialCandidate(uint spatial,uint candidate,uint beams,uint fineFactor) { \
    if ((spatial&0x80000000u)==0u) {return candidate==0u ? spatial&511u : 0u;} \
@@ -102,6 +105,25 @@ inline constexpr const char* shaderSource=BLAH2_QUARANTINE_STRINGIFY(BLAH2_QUARA
 }
 #undef BLAH2_QUARANTINE_FUNCTIONS
 
+// Deep temporal processing may lower the numerical birth threshold, but a
+// weak candidate must actually carry the accumulated evidence that justified
+// doing so. Strong detections and non-temporal pipelines retain their ordinary
+// admission behavior; existing-track association never calls this predicate.
+#define BLAH2_WEAK_BIRTH_FUNCTIONS(Q) \
+ Q bool weakBirthSupportEligible(double snr,uint maximumDepth,uint supportDepth) { \
+   return maximumDepth<4u||snr>=7.0||supportDepth>=4u; }
+namespace tracker_weak_birth {
+using uint=uint32_t;
+BLAH2_WEAK_BIRTH_FUNCTIONS(inline)
+#define BLAH2_WEAK_BIRTH_STRINGIFY_IMPL(...) #__VA_ARGS__
+#define BLAH2_WEAK_BIRTH_STRINGIFY(...) BLAH2_WEAK_BIRTH_STRINGIFY_IMPL(__VA_ARGS__)
+inline constexpr const char* shaderSource=
+  BLAH2_WEAK_BIRTH_STRINGIFY(BLAH2_WEAK_BIRTH_FUNCTIONS());
+#undef BLAH2_WEAK_BIRTH_STRINGIFY
+#undef BLAH2_WEAK_BIRTH_STRINGIFY_IMPL
+}
+#undef BLAH2_WEAK_BIRTH_FUNCTIONS
+
 // Canonical admission policy. Adapters expose the ordered detector population
 // and surviving *predictions*; decisions and ties are compiled identically for
 // C++ and GLSL. Claimed measurements cannot suppress new births. Every valid
@@ -147,7 +169,7 @@ inline constexpr const char* shaderSource=BLAH2_QUARANTINE_STRINGIFY(BLAH2_QUARA
 namespace tracker_policy {
 using uint=uint32_t;using std::abs;using std::min;using std::ceil;using std::clamp;
 inline constexpr uint32_t residentStationaryCapacity=65536;
-inline constexpr const char* identity="comb-v1-edges-inclusive-stationary-u64-ordered-capacity-transaction-v2";
+inline constexpr const char* identity="comb-v1-weak-depth4-stationary-u64-ordered-capacity-transaction-v3";
 struct Candidate {double delay=0,row=0,snr=0;bool unmatched=true;};
 struct View {
  const std::vector<Candidate>& candidates;

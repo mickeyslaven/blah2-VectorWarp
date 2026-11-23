@@ -88,17 +88,18 @@ int main(){check<Mock<>>(false,false);check<Mock<Frames>>(true,false);
                 source = (ROOT / relative).read_text()
                 self.assertRegex(source, re.compile(
                     r"const auto policy = gpu_memory::allocationPolicy\("
-                    r"candidate\.info\.memoryBytes,\s*"
+                    r"properties,\s*"
                     r'std::getenv\("BLAH2_GPU_ALLOCATION_LIMIT_BYTES"\)\);'))
                 self.assertRegex(source, re.compile(
-                    r"deviceAllocations\.try_emplace\(device, policy\.bytes,\s*"
-                    r"memoryProperties\(candidate\.physical\), policy\.separateHostHeaps\);"))
+                    r"deviceAllocations\.try_emplace\(device, policy,\s*properties\);"))
+                self.assertIn("memoryProperties(candidate.physical, instance->handle, extensions)", source)
 
     def test_override_cannot_add_a_second_host_allowance(self):
         source = (ROOT / "src/process/ambiguity/GpuMemory.h").read_text()
-        self.assertIn("AllocationPolicy policy{heapBudget(heapBytes), bounded == nullptr}", source)
-        self.assertIn("policy.bytes = std::min(policy.bytes, requested)", source)
-        self.assertIn("requested > (maximumDeviceBytes - value) / 10", source)
+        self.assertIn("AllocationPolicy policy{deviceBytes, deviceBytes, true, false}", source)
+        self.assertIn("policy.bytes = requested", source)
+        self.assertIn("requested > (maximumAggregateBytes - value) / 10", source)
+        self.assertIn("policy.aggregateIncludesHostHeaps = true", source)
         self.assertIn("++count > 20", source)
         self.assertIn("if (!count || !requested)", source)
 
@@ -115,7 +116,9 @@ int main(){check<Mock<>>(false,false);check<Mock<Frames>>(true,false);
         self.assertIn("use auto or gpu", source)
         self.assertRegex(source, re.compile(
             r"options\.allocationLimitBytes = budget->allocationLimit\(laneIndex,\s*"
-            r"gpuProcessMappingBytes\(geometry\)\)"))
+            r"gpuProcessMappingBytes\(geometry\), temporalReservation\)"))
+        self.assertIn("temporal_gpu::memoryReservation(candidate,", source)
+        self.assertNotIn("temporalReservationBytes = residentBudget->bytesPerSession / 2", source)
         self.assertIn("createGpuProcess(geometry, device, options)", source)
         self.assertIn("return leaseGpuLane(std::move(worker), budget)", source)
         lease = (ROOT / "src/process/ambiguity/GpuLaneLease.h").read_text()
@@ -138,9 +141,18 @@ int main(){check<Mock<>>(false,false);check<Mock<Frames>>(true,false);
         source = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
         self.assertIn("residentDevice = selectResidentGpuDevice", source)
         self.assertNotIn("config_.accelerationDevice = selectResidentGpuDevice", source)
-        self.assertIn('config_.accelerationMode == "auto" && !backendFactory && residentBuilt', source)
+        self.assertIn('(config_.accelerationMode == "auto" || config_.accelerationMode == "gpu") && !backendFactory && residentBuilt', source)
         cmake = (ROOT / "cmake/GpuAcceleration.cmake").read_text()
         self.assertIn("target_compile_definitions(blah2MultiIlluminatorRadar PRIVATE VECTORWARP_RESIDENT_GPU=1)", cmake)
+
+    def test_portable_twiddle_fallback_is_explicit_and_checkpointed(self):
+        source = (ROOT / "src/process/ambiguity/VulkanBackend.cpp").read_text()
+        self.assertIn("clutterBatchChannels_ = selectClutterBatch(g.channels,", source)
+        self.assertIn("ClutterPipeline::requiredBytes(batch, lut)", source)
+        self.assertIn('direct_, memoryPath == "direct", lut)', source)
+        self.assertIn("std::to_string(clutterTwiddleLut_)", source)
+        self.assertNotIn('setenv("BLAH2_GPU_CLUTTER_TWIDDLES"', source)
+        self.assertNotIn('unsetenv("BLAH2_GPU_CLUTTER_TWIDDLES"', source)
 
 
 if __name__ == "__main__":

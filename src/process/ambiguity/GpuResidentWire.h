@@ -53,6 +53,17 @@ struct Writer {
 };
 inline uint32_t narrow(uint64_t v){require(v<=UINT32_MAX,"Resident count cannot narrow");
 return uint32_t(v);}
+inline constexpr size_t trackerDiagnosticsBytes=8+8*trackerDiagnosticCount;
+inline void writeTrackerDiagnostics(const Writer& writer,size_t at,const TrackerFrameDiagnostics& d){
+ writer.u32(at,1);writer.u32(at+4,d.noOp);
+ for(size_t i=0;i<trackerDiagnosticCount;++i)writer.u64(at+8+8*i,d.*trackerDiagnosticFields[i].member);
+}
+inline TrackerFrameDiagnostics readTrackerDiagnostics(const Reader& reader,size_t at){
+ require(reader.u32(at)==1&&reader.u32(at+4)<=1,"Resident tracker diagnostics schema/flags invalid");
+ TrackerFrameDiagnostics d;d.noOp=reader.u32(at+4)!=0;
+ for(size_t i=0;i<trackerDiagnosticCount;++i)d.*trackerDiagnosticFields[i].member=reader.u64(at+8+8*i);
+ return d;
+}
 inline bool same(Token a,Token b){return a.epoch==b.epoch&&a.transaction==b.transaction&&a.generation==b.generation&&a.consumedSequence==b.consumedSequence;}
 Hash configHash(const Config&);
 uint64_t mandatoryPresence(const Config&);

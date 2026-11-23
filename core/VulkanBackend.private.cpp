@@ -6,6 +6,7 @@
 #include "GpuMemory.h"
 #include "process/tracker/ConfirmationContract.h"
 #include "process/tracker/AssociationContract.h"
+#include "process/tracker/Tracker.h"
 #include "process/detection/IntegratedCfar.h"
 #include "process/ambiguity/ReplayGpuQualification.h"
 #include "process/ambiguity/GpuClutterRefinement.h"
@@ -71,9 +72,9 @@ struct DeviceAllocations {
   uint64_t bytes; };
   blah2::gpu_memory::AllocationBudget budget;
   std::unordered_map<VkDeviceMemory, Entry> allocations;
-  DeviceAllocations(uint64_t limit, blah2::gpu_memory::Properties properties,
-      bool separateHostHeaps = false)
-    : budget(limit, std::move(properties), separateHostHeaps) {}
+  DeviceAllocations(blah2::gpu_memory::AllocationPolicy policy,
+      blah2::gpu_memory::Properties properties)
+    : budget(policy, std::move(properties)) {}
 };
 std::mutex allocationsMutex;
 std::unordered_map<VkDevice, DeviceAllocations> deviceAllocations;
@@ -133,7 +134,8 @@ static void budgetFreeMemory(VkDevice device, VkDeviceMemory memory,
 
 namespace blah2 {
 namespace {
-gpu_memory::Properties memoryProperties(VkPhysicalDevice physical);
+gpu_memory::Properties memoryProperties(VkPhysicalDevice physical, VkInstance instance = VK_NULL_HANDLE,
+  const std::vector<VkExtensionProperties>& extensions = {});
 class ClutterRejected final : public std::runtime_error {
 public:
   using std::runtime_error::runtime_error;
@@ -341,11 +343,12 @@ struct Context {
         <<" queue="<<candidate.queue<<" timestamp_valid_bits="<<timestampValidBits
         <<" timestamp_period_ns="<<candidate.properties.limits.timestampPeriod<<'\n';
       {
-        const auto policy = gpu_memory::allocationPolicy(candidate.info.memoryBytes,
+        const auto properties = memoryProperties(candidate.physical, instance->handle, extensions);
+        const auto policy = gpu_memory::allocationPolicy(properties,
           std::getenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES"));
         std::lock_guard<std::mutex> lock(allocationsMutex);
-        deviceAllocations.try_emplace(device, policy.bytes,
-          memoryProperties(candidate.physical), policy.separateHostHeaps);
+        deviceAllocations.try_emplace(device, policy,
+          properties);
       }
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);

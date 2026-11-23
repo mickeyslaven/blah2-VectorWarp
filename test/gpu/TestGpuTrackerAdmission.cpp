@@ -54,6 +54,12 @@ int main()try{
   tracker_policy::frameClockNoOp(true,11,10,2,2)&&
   !tracker_policy::frameClockNoOp(true,11,10,3,2),
   "accepted-frame clock must handle first zero timestamp, empty duplicates and stale sequences");
+ require(tracker_association::adaptiveAssociationGate(true,false,false,0)&&
+  !tracker_association::adaptiveAssociationGate(true,true,false,0)&&
+  tracker_association::adaptiveAssociationGate(true,true,true,.5)&&
+  !tracker_association::adaptiveAssociationGate(true,true,true,0)&&
+  !tracker_association::adaptiveAssociationGate(false,false,true,.5),
+  "adaptive association must reopen only for unestimated or confirmed coasting tracks");
  for(uint32_t depth:{1u,2u,4u,8u}){
   const auto minimum=tracker_confirmation::confirmationMinimumWindow(4,depth);
   require(!tracker_confirmation::confirmationFeasible(4,minimum-1,depth),"impossible confirmation accepted");

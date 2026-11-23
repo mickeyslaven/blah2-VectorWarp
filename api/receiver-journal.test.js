@@ -6,7 +6,8 @@ const path = require('path');
 const net = require('net');
 const {spawnSync} = require('child_process');
 const {createReceiverJournal} = require('./receiver-journal');
-const {checkReceiverStart, RECEIVER_START_BLOCKED_EXIT_STATUS} = require('./receiver-start-check');
+const {checkReceiverStart, checkReceiverStartWithLocalReadiness,
+  RECEIVER_START_BLOCKED_EXIT_STATUS} = require('./receiver-start-check');
 const {createKrakenControlClient} = require('./receiver-sync');
 
 async function main() {
@@ -82,6 +83,31 @@ async function main() {
     assert.strictEqual(commands, 0, 'Startup readback must never retune a receiver');
     document.config.capture.replay.state = true;
     assert.strictEqual((await checkReceiverStart(filename, options)).state, 'replay');
+    const priorService = process.env.VECTORWARP_LINUX_SERVICE;
+    process.env.VECTORWARP_LINUX_SERVICE = '1';
+    let readinessAttempts = 0;
+    let readinessWaits = 0;
+    assert.deepStrictEqual(await checkReceiverStartWithLocalReadiness(filename, {
+      attempts: 3,
+      wait: async milliseconds => { assert.strictEqual(milliseconds, 1000); readinessWaits += 1; },
+      check: async () => {
+        readinessAttempts += 1;
+        if (readinessAttempts < 3) {
+          const error = new Error('calibrating');
+          error.code = 'KRAKEN_CALIBRATION_UNVERIFIED';
+          throw error;
+        }
+        return {state: 'upstream-verified'};
+      }
+    }), {state: 'upstream-verified'});
+    assert.strictEqual(readinessAttempts, 3);
+    assert.strictEqual(readinessWaits, 2);
+    await assert.rejects(checkReceiverStartWithLocalReadiness(filename, {
+      attempts: 3, wait: async () => { throw new Error('must not wait'); },
+      check: async () => { const error = new Error('mismatch'); error.code = 'KRAKEN_STARTUP_MISMATCH'; throw error; }
+    }), /mismatch/);
+    if (priorService === undefined) delete process.env.VECTORWARP_LINUX_SERVICE;
+    else process.env.VECTORWARP_LINUX_SERVICE = priorService;
     const blocked = spawnSync(process.execPath,
       [path.join(__dirname, 'receiver-start-check.js'), path.join(directory, 'missing.yml')],
       {encoding: 'utf8'});

@@ -51,7 +51,10 @@ int main(int argc, char** argv) try {
   output.AddMember("exact_utc", provenance.exactTime, a);
   output.AddMember("geographic_sites_available", provenance.geographicSitesAvailable, a);
   text("geographic_sites_reason", provenance.geographicSitesReason);
-  output.AddMember("frame_count", static_cast<uint64_t>(provenance.frames.size()), a);
+  uint64_t frames = 0;
+  for (const auto& frame : provenance.frames) frames += frame.repeat;
+  output.AddMember("frame_count", frames, a);
+  output.AddMember("frame_run_count", static_cast<uint64_t>(provenance.frames.size()), a);
   rapidjson::StringBuffer bytes; rapidjson::Writer<rapidjson::StringBuffer> writer(bytes);
   if (!output.Accept(writer)) throw std::runtime_error("Cannot serialize recording inspection");
   std::cout << bytes.GetString() << '\n'; return 0;

@@ -27,6 +27,8 @@ DEFAULT_CLEAN_WINDOW_SECONDS = 24 * 60 * 60
 DEFAULT_MAX_SAMPLE_GAP_SECONDS = 180
 IDENTITY_PROBE = Path(__file__).with_name("vectorwarp_soak_identity.py")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+REGRESSION_CHECKS = ("detections", "measurement-backed-track-continuity",
+                     "false-track-controls", "cpi-deadlines", "capture-health")
 
 
 def unique_object(pairs):
@@ -160,7 +162,7 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
     processor. The reviewed policy and evaluator evidence are cryptographically
     tied to every declared package/config/qualification and the observed cohort.
     """
-    valid = (receipt.get("schema") == 1 and
+    valid = (isinstance(receipt, dict) and receipt.get("schema") == 2 and
              receipt.get("bindingSha256") == binding_receipt["sha256"] and
              receipt.get("policySha256") == binding_receipt["expected"]["regressionPolicySha256"] and
              isinstance(receipt.get("nodes"), dict) and
@@ -170,7 +172,15 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
                  if isinstance(receipt["nodes"][name], dict)) and
              all(isinstance(node, dict) and all(counter(node.get(key))
                  for key in ("retiredCpis", "retiredSamples")) for node in receipt["nodes"].values()) and
-             SHA256.fullmatch(receipt.get("evidenceSha256", "")) and
+             all(isinstance(node.get("checks"), dict) and
+                 set(node["checks"]) == set(REGRESSION_CHECKS) and
+                 all(isinstance(check, dict) and type(check.get("accepted")) is bool and
+                     isinstance(check.get("evidenceSha256"), str) and
+                     SHA256.fullmatch(check["evidenceSha256"])
+                     for check in node["checks"].values())
+                 for node in receipt["nodes"].values()) and
+             isinstance(receipt.get("evidenceSha256"), str) and
+             SHA256.fullmatch(receipt["evidenceSha256"]) and
              finite_number(receipt.get("evaluationStartEpoch")) and
              finite_number(receipt.get("evaluatedThroughEpoch")) and
              receipt["evaluationStartEpoch"] <= cohort_epoch and
@@ -181,7 +191,10 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
         return ["soak:regression-evidence-invalid"]
     if any(node[key] for node in receipt["nodes"].values() for key in ("retiredCpis", "retiredSamples")):
         return ["soak:regression-retired-work"]
-    return ["soak:regression-detected"] if receipt["regressionDetected"] else []
+    rejected = receipt["regressionDetected"] or any(
+        not check["accepted"] for node in receipt["nodes"].values()
+        for check in node["checks"].values())
+    return ["soak:regression-detected"] if rejected else []
 
 
 def fetch(url: str) -> dict:
@@ -244,10 +257,52 @@ def counter(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2**64 - 1
 
 
+def exact_counter(value: object) -> str:
+    # API JSON numbers have crossed JavaScript; only decimal strings retain
+    # uint64 precision above its safe integer range.
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", value):
+        number = int(value)
+    elif counter(value) and value <= 2**53 - 1:
+        number = value
+    else:
+        raise ValueError("counter is missing or inexact")
+    if not counter(number):
+        raise ValueError("counter exceeds uint64")
+    return str(number)
+
+
+def receiver_continuity(status: dict) -> dict:
+    """Retain ingress receipts by capability, independent of receiver identity."""
+    health = status.get("processor", {}).get("receiverHealth") or {}
+    if not isinstance(health, dict):
+        raise ValueError("invalid receiver receipt")
+    epochs, counters = {}, {}
+    for section in ("deviceTime", "sampleTime", "gain", "pairing"):
+        if section in health:
+            epochs[section] = exact_counter(health[section].get("epoch"))
+    for section, fields in {
+        "recovery": ("discontinuities", "requalifications", "discardedBlocks",
+                     "discardedSamplesPerChannel"),
+        "pairing": ("discontinuities", "requalifications", "discardedSamples"),
+    }.items():
+        if section not in health:
+            continue
+        for field in fields:
+            values = health[section].get(field)
+            values = values if isinstance(values, list) else [values]
+            if not values:
+                raise ValueError("empty receiver counter")
+            counters[f"{section}.{field}"] = [exact_counter(value) for value in values]
+    return {"epochs": epochs, "counters": counters}
+
+
 def numeric_list(value: object) -> list[int] | None:
-    if not isinstance(value, list) or not value or not all(counter(item) for item in value):
+    if not isinstance(value, list) or not value:
         return None
-    return list(value)
+    try:
+        return [int(exact_counter(item)) for item in value]
+    except ValueError:
+        return None
 
 
 def counter_delta(current: list[int], previous: list[int]) -> list[int]:
@@ -284,7 +339,7 @@ def compact_timing(timing: dict) -> dict:
     retained = {
         "timestamp", "nCpi", "uptime_s", "cpi", "capture_backlog_ms",
         "frame_age_ms", "frame_excess_age_ms", "inputDiscontinuity",
-        "captureTerminal", "captureEpoch", "captureDroppedSamples",
+        "captureTerminal", "captureEpoch", "eventTime", "captureDroppedSamples",
         "captureBoundaryDiscardedSamples", "captureStopDiscardedSamples",
         "gpu_resident_ready", "output_radar_data", "multi_capture_prepare",
         "multi_channelizer_wall", "multi_illuminator_radar", "multi_serialize",
@@ -326,6 +381,8 @@ def evaluate(name: str, status: dict, timing: dict, process: dict,
         failures.append(f"{name}:stale-timing")
     if status.get("errors"):
         failures.append(f"{name}:api-errors")
+    if status.get("radar") != "receiving":
+        failures.append(f"{name}:radar-not-receiving")
     if status.get("acceleration", {}).get("active") != acceleration:
         failures.append(f"{name}:acceleration")
     if clutter is not None and status.get("clutterAcceleration", {}).get("active") != clutter:
@@ -341,10 +398,16 @@ def evaluate(name: str, status: dict, timing: dict, process: dict,
         failures.append(f"{name}:capture-backlog")
     if timing.get("inputDiscontinuity") is True or timing.get("captureTerminal") is True:
         failures.append(f"{name}:capture-discontinuity")
-    capture_epoch = timing.get("captureEpoch")
-    if ("captureEpoch" in timing and not counter(capture_epoch)) or (
-            previous and previous.get("captureEpoch") != capture_epoch):
-        failures.append(f"{name}:capture-epoch-reset")
+    capture_epoch, continuity = None, None
+    try:
+        capture_epoch = exact_counter(timing.get("eventTime", {}).get(
+            "epoch", timing.get("captureEpoch")))
+    except (ValueError, TypeError, AttributeError):
+        failures.append(f"{name}:capture-epoch-unverifiable")
+    try:
+        continuity = receiver_continuity(status)
+    except (ValueError, TypeError, AttributeError):
+        failures.append(f"{name}:capture-receiver-unverifiable")
 
     counters = {
         "drops": numeric_list(timing.get("captureDroppedSamples")),
@@ -366,12 +429,38 @@ def evaluate(name: str, status: dict, timing: dict, process: dict,
         if restarted:
             failures.append(f"{name}:process-restarted")
         else:
+            try:
+                if exact_counter(previous.get("captureEpoch")) != capture_epoch:
+                    failures.append(f"{name}:capture-epoch-reset")
+            except ValueError:
+                failures.append(f"{name}:capture-epoch-unverifiable")
+            prior_continuity = previous.get("receiverContinuity")
+            if continuity is None or not isinstance(prior_continuity, dict) or any(
+                    not isinstance(prior_continuity.get(key), dict) for key in ("epochs", "counters")):
+                failures.append(f"{name}:capture-receiver-unverifiable")
+            elif (continuity["epochs"].keys() != prior_continuity.get("epochs", {}).keys() or
+                  continuity["counters"].keys() != prior_continuity.get("counters", {}).keys()):
+                failures.append(f"{name}:capture-receiver-unverifiable")
+            else:
+                if continuity["epochs"] != prior_continuity["epochs"]:
+                    failures.append(f"{name}:capture-epoch-reset")
+                for key, values in continuity["counters"].items():
+                    try:
+                        delta = counter_delta([int(value) for value in values],
+                            [int(exact_counter(value)) for value in prior_continuity["counters"][key]])
+                    except (ValueError, TypeError):
+                        failures.append(f"{name}:capture-receiver-counter-reset")
+                        continue
+                    if any(delta):
+                        failures.append(f"{name}:capture-receiver-loss")
             old_cpi = previous.get("nCpi")
             elapsed = time.time() - float(previous.get("epoch", time.time()))
             if counter(old_cpi) and counter(new_cpi):
                 advancement = new_cpi - old_cpi
                 if advancement <= 0:
                     failures.append(f"{name}:cpi-not-advancing")
+                    if advancement < 0:
+                        failures.append(f"{name}:capture-cpi-counter-reset")
                 elif elapsed > 0:
                     cadence_ms = 1000 * elapsed / advancement
                     if cadence_ms > maximum_cadence_ms:
@@ -392,17 +481,22 @@ def evaluate(name: str, status: dict, timing: dict, process: dict,
                     continue
                 if any(delta):
                     failures.append(f"{name}:capture-{kind}")
-    if (not previous or restarted) and any(any(values or []) for values in counters.values()):
+    receiver_loss = continuity and any(int(value) for values in
+        continuity["counters"].values() for value in values)
+    if (not previous or restarted) and (receiver_loss or
+            any(any(values or []) for values in counters.values())):
         failures.append(f"{name}:preexisting-capture-loss")
 
     observation = {
         "epoch": time.time(), "identity": identity, "nCpi": timing.get("nCpi"),
         "captureEpoch": capture_epoch,
-        "counters": counters, "advancement": advancement,
+        "receiverContinuity": continuity,
+        "counters": {kind: [str(value) for value in values] if values is not None else None
+                     for kind, values in counters.items()}, "advancement": advancement,
         "cadenceMs": round(cadence_ms, 3) if cadence_ms is not None else None,
         "restarted": restarted,
     }
-    return failures, observation
+    return list(dict.fromkeys(failures)), observation
 
 
 def advance_acceptance(started: dict, sample: dict,

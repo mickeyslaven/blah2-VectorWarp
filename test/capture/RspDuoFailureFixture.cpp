@@ -179,7 +179,9 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
       // Retire a pending A half-pair, then a complete queued/FIFO pair. Only
       // samples captured after the last vendor gain event may survive.
       callA(100); gain(sdrplay_api_Tuner_A, 37, 12, 23.5); callB(100);
+      static_cast<RspDuo*>(context)->service_recording(); // Control tick, outside vendor callback.
       callA(102); callB(102); gain(sdrplay_api_Tuner_B, 41, 15, 19.25);
+      static_cast<RspDuo*>(context)->service_recording();
       callA2(104); callB2(104); run_fg = false; break;
     case CallbackScenario::FifoOverflow:
       // Capacity is three in the fixture below. The first coherent pair leaves
@@ -595,8 +597,8 @@ int main() {
     queueStats.discardedSamples == 2);
 
   // Both vendor gain callbacks retire only the recording epoch they overlap.
-  // A fresh file starts lazily on the next matched A/B block, so consecutive
-  // events cannot create empty successor artifacts and capture never stops.
+  // Control prepares each successor; its first matched A/B block binds the
+  // new epoch. Unrecorded consecutive events reuse that prepared successor.
   unsigned completeRecordings = 0, incompleteRecordings = 0;
   for (const auto& entry : std::filesystem::directory_iterator(recordingDirectory)) {
     if (entry.path().extension() != ".blah2iq") continue;

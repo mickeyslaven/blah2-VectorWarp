@@ -51,7 +51,8 @@ public:
   enum class Workspace { Pi, SharedReference };
   WienerHopf(int32_t delayMin, int32_t delayMax, uint32_t nSamples,
              Workspace workspace = Workspace::Pi,
-             double relativeDiagonalLoading = 0);
+             double relativeDiagonalLoading = 0,
+             uint32_t workerSlots = 0);
   ~WienerHopf();
   WienerHopf(const WienerHopf&) = delete;
   WienerHopf& operator=(const WienerHopf&) = delete;

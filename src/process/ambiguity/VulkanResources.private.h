@@ -2,7 +2,8 @@
 // Shared module-local Vulkan resources, FFT plans and common shaders, included
 // after each backend's Context and check/allocation hooks. Callers select FFT
 // precision; admission, allocation evidence and factory policy stay local.
-gpu_memory::Properties memoryProperties(VkPhysicalDevice physical) {
+gpu_memory::Properties memoryProperties(VkPhysicalDevice physical, VkInstance instance,
+    const std::vector<VkExtensionProperties>& extensions) {
   VkPhysicalDeviceMemoryProperties source{};
   vkGetPhysicalDeviceMemoryProperties(physical, &source);
   gpu_memory::Properties result;
@@ -12,6 +13,24 @@ gpu_memory::Properties memoryProperties(VkPhysicalDevice physical) {
   for (uint32_t i = 0; i < source.memoryTypeCount; ++i)
     result.types.push_back({source.memoryTypes[i].propertyFlags,
       source.memoryTypes[i].heapIndex});
+#ifdef VK_EXT_memory_budget
+  if (!instance || !std::any_of(extensions.begin(), extensions.end(), [](const auto& extension) {
+      return std::strcmp(extension.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0;
+    })) return result;
+  auto query = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(
+    vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceMemoryProperties2"));
+  if (!query) query = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(
+    vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceMemoryProperties2KHR"));
+  if (!query) return result;
+  VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+  VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+  properties.pNext = &budget;
+  query(physical, &properties);
+  for (uint32_t i = 0; i < result.heaps.size(); ++i) {
+    const uint64_t limit = std::min(result.heaps[i].bytes, uint64_t(budget.heapBudget[i]));
+    result.heaps[i].available = budget.heapUsage[i] < limit ? limit - budget.heapUsage[i] : 0;
+  }
+#endif
   return result;
 }
 struct Buffer {
@@ -181,11 +200,15 @@ struct Kernel {
     if (setLayout) vkDestroyDescriptorSetLayout(context.device, setLayout, nullptr);
   }
   ~Kernel() { release(); }
-  void append(VkCommandBuffer command, Push push) {
+  // Most resident shaders use 128 lanes.  A narrowly specialized shader may
+  // use a smaller, explicitly supplied workgroup without making the generic
+  // dispatch geometry lie about its invocation count.
+  void append(VkCommandBuffer command, Push push, uint32_t workgroupSize=128u) {
+    if(!workgroupSize)throw std::invalid_argument("GPU workgroup size is zero");
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(command, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
-    const uint32_t groups = (push.count + 127) / 128;
+    const uint32_t groups = (push.count + workgroupSize - 1u) / workgroupSize;
     const uint32_t x = std::min(groups, 65535u);
     vkCmdDispatch(command, x, (groups + x - 1) / x, 1);
   }
@@ -284,8 +307,9 @@ struct NativePlan {
     config.FFTdim = 1; config.size[0] = length; config.numberBatches = batches;
     config.doublePrecision = fp64 ? 1 : 0;
     // VkFFT's FP32 defaults calculate twiddles on NVIDIA/AMD but use a LUT on
-    // Intel. Clutter's repeated cancellation needs the same bounded LUT path on
-    // every backend; ambiguity retains the library's native tuning.
+    // Intel. Clutter prefers the bounded LUT candidate; a capacity-selected
+    // native candidate must pass the same cancellation/FP64 qualification.
+    // Ambiguity retains the library's native tuning.
     if (twiddleLut) config.useLUT = 1;
     config.device = &context.device; config.queue = &context.queue;
     config.fence = &context.fence; config.commandPool = &context.pool;

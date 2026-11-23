@@ -12,20 +12,30 @@
 #include <array>
 #include <stdexcept>
 #include <utility>
+#include <rapidjson/document.h>
 
 class Detection
 {
 public:
-  // Radar-only, exact CPI support. Empty metadata denotes an ordinary
-  // single-CPI measurement, never an inferred temporal history.
+  // Radar-only, exact CPI support. Empty metadata means support unavailable;
+  // it must never be expanded into an inferred temporal history.
   struct Evidence {
     uint64_t epoch = 0, newestSequence = 0;
     uint8_t depth = 0, bank = 0;
     int8_t delayMotion = 0, dopplerMotion = 0;
     std::array<uint64_t, 8> sequences{};
   };
+  static bool valid_evidence(const Evidence& value);
+  static rapidjson::Value evidence_json(const Evidence& value,
+    rapidjson::Document::AllocatorType& allocator, bool compact = false);
+  static rapidjson::Value identity_json(uint64_t epoch, uint64_t sequence,
+    rapidjson::Document::AllocatorType& allocator);
+  void set_evidence_identity(uint64_t epoch, uint64_t sequence) {
+    evidenceEpoch = epoch; evidenceSequence = sequence;
+  }
 private:
   std::vector<Evidence> evidence;
+  uint64_t evidenceEpoch = 0, evidenceSequence = 0;
   // Radar-only spatial evidence: coarse code 1..B, zero unknown, or the
   // resident packed three-fine-peak word. Kept out of public detection JSON.
   std::vector<uint32_t> spatial;
@@ -87,6 +97,12 @@ public:
   /// @brief Generate display JSON directly with delay in kilometres.
   /// @param fs Sampling frequency (Hz), nonzero.
   std::string to_json_km(uint64_t timestamp, uint32_t fs);
+
+  /// Canonical replay-only calibration evidence.  Unlike presentation JSON,
+  /// this preserves IEEE double candidate coordinates and scores and carries
+  /// the detector-selected temporal family and exact support lineage.
+  /// It is deliberately a separate serializer so display payloads stay compact.
+  std::string to_calibration_evidence_json(uint64_t timestamp) const;
 
   /// @brief Update JSON to convert delay bins to km.
   /// @param json Input JSON string with delay field.

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Deterministic local Mac release worker; run from launchd, never GitHub Actions.
 
-Main merges build encrypted runtimes on disposable hosted Macs. An intentional
-version tag creates the Linux draft. This worker completes that draft locally
-only if the exact CI/source, signatures, notarization and asset gates pass.
+Complete explicitly promoted, soaked Linux drafts using reviewed Mac runtimes.
+Signing and publication require current exact-source CI and signing-job evidence.
 """
 import argparse
 import errno
@@ -60,10 +59,20 @@ def choose_release(releases):
     return max(candidates, key=lambda entry: version(entry["tagName"])) if candidates else None
 
 
-def choose_run(runs, commit):
-    matches = [entry for entry in runs if entry.get("headSha") == commit and
-               entry.get("event") == "push" and entry.get("conclusion") == "success"]
-    return max(matches, key=lambda entry: entry["databaseId"]) if matches else None
+def reviewed_runs(tag, commit):
+    gate = runpy.run_path(str(ROOT / "script/verify-release-ci.py"))
+    gate['collect'](commit)
+    mac = gate['collect'](commit, workflows=('macos-standalone.yml',), branch=tag)['workflows'][0]
+    signed = gate['collect'](commit, workflows=('release-packages.yml',), branch=tag)['workflows'][0]
+    jobs = json_command('gh', 'api', f"repos/{REPO}/actions/runs/{signed['runId']}/"
+                        f"attempts/{signed['runAttempt']}/jobs?per_page=100")
+    gate['require'](jobs.get('total_count') == len(jobs.get('jobs', [])) and sum(
+        job.get('name') == 'Sign RPMs and create reviewable draft release' and
+        job.get('status') == 'completed' and job.get('conclusion') == 'success' and
+        job.get('head_sha') == commit and job.get('run_id') == signed['runId']
+        for job in jobs.get('jobs', [])) == 1,
+        'explicit soaked signing job is missing, skipped or incomplete')
+    return {'linux_run': signed['runId'], 'mac_run': mac['runId']}
 
 
 def config(path):
@@ -214,12 +223,6 @@ def release_detail(tag):
                         "tagName,isDraft,isPrerelease,assets")
 
 
-def gh_runs(workflow, limit=50):
-    return json_command("gh", "run", "list", "--workflow", workflow,
-                        "--event", "push", "--limit", str(limit), "--json",
-                        "databaseId,headSha,headBranch,event,status,conclusion")
-
-
 def trusted_tag(checkout, tag):
     command("git", "-C", checkout, "fetch", "--no-tags", "origin", "main",
             "refs/tags/" + tag + ":refs/tags/" + tag)
@@ -236,6 +239,8 @@ def required_linux_assets(detail, tag):
     artifact_plan = runpy.run_path(str(ROOT / "script/artifact-plan.py"))
     expected = artifact_plan["release_filenames"](number)
     expected.update(("SHA256SUMS", "SHA256SUMS.asc", "package-manifest.json"))
+    if version(tag) > MIN_VERSION:
+        expected.update(("release-ci-provenance.json", "release-soak-provenance.json"))
     if not expected <= names:
         raise ValueError(f"{tag} lacks the complete Linux draft")
 
@@ -261,20 +266,14 @@ def check_candidate(settings):
             return None
     required_linux_assets(detail, tag)
     commit = trusted_tag(settings["checkout"], tag)
-    linux_run = choose_run(gh_runs("release-packages.yml"), commit)
-    if not linux_run:
-        return {"tag": tag, "commit": commit, "waiting": "Linux release run"}
-    mac_run = choose_run(gh_runs("macos-standalone.yml"), commit)
-    if not mac_run:
-        return {"tag": tag, "commit": commit, "waiting": "hosted Mac runtime run"}
-    run_id = mac_run["databaseId"]
+    runs = reviewed_runs(tag, commit)
+    run_id = runs['mac_run']
     names = artifact_names(run_id)
     expected = {f"standalone-encrypted-{arch}-{commit}" for arch in ARCHES}
     expected.update(f"standalone-runtime-diagnostics-{arch}" for arch in ARCHES)
     if not expected <= names:
         raise ValueError("successful hosted Mac run lacks encrypted runtimes or diagnostics")
-    return {"tag": tag, "commit": commit, "mac_run": run_id,
-            "linux_run": linux_run["databaseId"], "draft": detail["isDraft"]}
+    return {"tag": tag, "commit": commit, **runs, "draft": detail["isDraft"]}
 
 
 def ensure_checkout(settings, candidate, work):
@@ -329,9 +328,7 @@ def download_and_decrypt(settings, candidate, work):
 
 def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
     output = work / "release-inputs"
-    # Tooling follows reviewed main; runtime and first-party source stay bound
-    # to the immutable candidate tag. This also allows repairing publication
-    # tooling without rebuilding or retagging a release.
+    # Reviewed main supplies tooling; runtime/source remain pinned to the tag.
     helper_path = settings["checkout"] / "script/prepare-macos-release-inputs.py"
     spec = importlib.util.spec_from_file_location("release_input_preparation", helper_path)
     helper = importlib.util.module_from_spec(spec)
@@ -468,6 +465,8 @@ def release_files(settings, candidate, work, package, archive, submission, revie
 
 def upload_and_publish(candidate, assets):
     tag = candidate["tag"]
+    if reviewed_runs(tag, candidate['commit']) != {key: candidate[key] for key in ('linux_run', 'mac_run')}:
+        raise ValueError('reviewed release runs changed before publication')
     detail = release_detail(tag)
     required_linux_assets(detail, tag)
     remote = {entry["name"]: entry for entry in detail["assets"]}
@@ -506,26 +505,21 @@ def process(settings, candidate):
     state = read_state(path, commit)
     if state.get("stage") == "complete":
         return "complete"
-    if state.get("stage") == "published":
-        if verify_public(tag):
-            state["stage"] = "complete"
-            save_state(path, state)
-            return "complete"
-        return "waiting for public Pages deployment"
-    if "waiting" in candidate:
-        return "waiting for " + candidate["waiting"]
-    work = path.parent
-    source = ensure_checkout(settings, candidate, work)
-    runtimes, diagnostics = download_and_decrypt(settings, candidate, work)
-    inputs, archive, review = prepare_inputs(settings, candidate, work, source, runtimes, diagnostics)
-    pkg = sign_package(settings, candidate, work, source, runtimes, inputs)
-    submission = notarize(settings, pkg, state, path)
-    if not submission:
-        return "waiting for Apple notarization"
-    assets = release_files(settings, candidate, work, pkg, archive, submission, review)
-    upload_and_publish(candidate, assets)
-    state["stage"] = "published"
-    save_state(path, state)
+    if state.get("stage") != "published":
+        if "waiting" in candidate:
+            return "waiting for " + candidate["waiting"]
+        work = path.parent
+        source = ensure_checkout(settings, candidate, work)
+        runtimes, diagnostics = download_and_decrypt(settings, candidate, work)
+        inputs, archive, review = prepare_inputs(settings, candidate, work, source, runtimes, diagnostics)
+        pkg = sign_package(settings, candidate, work, source, runtimes, inputs)
+        submission = notarize(settings, pkg, state, path)
+        if not submission:
+            return "waiting for Apple notarization"
+        assets = release_files(settings, candidate, work, pkg, archive, submission, review)
+        upload_and_publish(candidate, assets)
+        state["stage"] = "published"
+        save_state(path, state)
     if verify_public(tag):
         state["stage"] = "complete"
         save_state(path, state)

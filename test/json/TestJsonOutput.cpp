@@ -13,6 +13,7 @@
 #include <limits>
 #include <random>
 #include <time.h>
+#include <unistd.h>
 #include <rapidjson/document.h>
 
 namespace {
@@ -185,16 +186,16 @@ void correctness() {
     map.Parse(reduced.c_str()); meta.Parse(metadata.c_str());
     require(!map.HasParseError() && !meta.HasParseError(),
       "Presentation map is not valid JSON");
-    require(map["presentationStride"].GetUint() == 2 &&
+    require(map["presentationStride"].GetUint() == 3 &&
       map["presentation_only"].GetBool() &&
       std::string(map["presentation_pooling"].GetString()) == "max" &&
       map["presentation_precision_db"].GetDouble() == .25 &&
       map["sourceRows"].GetUint() == 601 &&
       map["sourceCols"].GetUint() == 1261 &&
-      map["nRows"].GetUint() == 301 && map["nCols"].GetUint() == 631,
+      map["nRows"].GetUint() == 201 && map["nCols"].GetUint() == 421,
       "Presentation map geometry differs");
-    require(map["data"].Size() == 301 && map["data"][0].Size() == 631 &&
-      map["delay"].Size() == 631 && map["doppler"].Size() == 301,
+    require(map["data"].Size() == 201 && map["data"][0].Size() == 421 &&
+      map["delay"].Size() == 421 && map["doppler"].Size() == 201,
       "Presentation map axes and raster differ");
     require(map["data"][0][0].GetDouble() > 40.0,
       "Presentation max pooling lost an off-grid peak");

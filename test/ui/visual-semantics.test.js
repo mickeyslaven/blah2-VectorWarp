@@ -31,7 +31,8 @@ assert.equal(iconHash, 'f4bcd8c078c2caba555c765fe82aca25435893c4d7223249860ec737
 // JS responses remain fresh in browser caches for an hour. The live page must
 // invalidate both its new semantics dependency and the changed DD renderer.
 const livePage = fs.readFileSync(path.join(__dirname, '../../html/index.html'), 'utf8');
-assert.match(livePage, /common\.js\?v=ui-consistency-30/);
-assert.match(livePage, /plot_map\.js\?v=ui-consistency-30/);
+// asset-cache-contract owns the exact release token across every route.
+assert.match(livePage, /common\.js\?v=[\w.-]+/);
+assert.match(livePage, /plot_map\.js\?v=[\w.-]+/);
 
 console.log('Visual semantics preserve Map aircraft icons and separate position, support, selection, and altitude.');

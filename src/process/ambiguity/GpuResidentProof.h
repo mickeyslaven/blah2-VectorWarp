@@ -5,6 +5,12 @@
 #include <cmath>
 #include <ostream>
 namespace blah2::resident {
+inline bool referenceOracleClose(const std::complex<double>& actual,
+ const std::complex<double>& expected) {
+ return std::isfinite(actual.real()) && std::isfinite(actual.imag()) &&
+  std::isfinite(expected.real()) && std::isfinite(expected.imag()) &&
+  std::abs(actual-expected)<=1e-12*std::max(1.0,std::abs(expected));
+}
 // Bounded DATA-ONLY decoding of acknowledged sections. No stage recomputation,
 // status repair, DSP or Vulkan dependency. All arrays retain exact word order.
 struct ReferenceState {
@@ -31,7 +37,8 @@ struct PreparedProof {
  std::array<uint32_t,6> nativeShape{};
  std::array<uint32_t,16> nativeReferenceStatus{},residentStatus{};
  std::array<uint32_t,32> postprocessStatus{};
- std::array<uint32_t,64> trackerStatus{};
+ std::array<uint32_t,66> trackerStatus{};
+ TrackerFrameDiagnostics trackerDiagnostics{};
  std::array<double,3> gpuNativeReferenceMs{};
  std::array<double,14> gpuMs{};
  std::array<BatchProof,8>batches{};
@@ -48,7 +55,7 @@ uint64_t sum=0;
 for(uint32_t i=0;i<16;++i){size_t at=64+32*i;
 if(i>=a.heaps){r.zeros(at,32);
 continue;}const auto physical=r.u64(at),limit=r.u64(at+8),used=r.u64(at+16);
-wire::require(limit==std::min<uint64_t>(2ULL<<30,physical/4)&&used<=limit&&r.u32(at+24)<=1,"Resident heap proof bounds");
+wire::require(limit<=std::min<uint64_t>(2ULL<<30,physical-physical/4)&&used<=limit&&r.u32(at+24)<=1,"Resident heap proof bounds");
 r.zeros(at+28,4);
 sum=wire::add(sum,used);}wire::require(sum==a.used,"Resident heap proof sum differs");
 for(uint32_t i=0;i<32;++i){if(i>=a.types)r.zeros(576+8*i,8);
@@ -114,6 +121,12 @@ proof_detail::times(r,a+96,p.gpuNativeReferenceMs);
 proof_detail::words(r,evidence::prepared::residentFinalStatus,p.residentStatus);
 proof_detail::words(r,evidence::prepared::postprocessStatus,p.postprocessStatus);
 proof_detail::words(r,evidence::prepared::trackerPreparedStatus,p.trackerStatus);
+static_assert(evidence::prepared::trackerPreparedStatus+sizeof(p.trackerStatus)<=evidence::prepared::trackerDiagnostics);
+static_assert(wire::trackerDiagnosticsBytes<=evidence::prepared::trackerDiagnosticsCapacity);
+if(p.stages&256u)p.trackerDiagnostics=wire::readTrackerDiagnostics(r,evidence::prepared::trackerDiagnostics);
+r.zeros(evidence::prepared::trackerPreparedStatus+sizeof(p.trackerStatus),8);
+r.zeros(evidence::prepared::trackerDiagnostics+wire::trackerDiagnosticsBytes,
+ evidence::prepared::trackerDiagnosticsCapacity-wire::trackerDiagnosticsBytes);
 p.gpuTimeMask=r.u64(evidence::prepared::times);
 proof_detail::times(r,evidence::prepared::times+16,p.gpuMs);
  for(uint32_t i=0;i<8;++i){const size_t a=evidence::prepared::nativeBatches+256*i;

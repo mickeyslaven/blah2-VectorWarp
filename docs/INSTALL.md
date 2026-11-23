@@ -60,6 +60,11 @@ array, ADS-B, recording, and replay instructions.
 
 ## Update
 
+Linux package updates restore only previously running VectorWarp services;
+an intentionally stopped web API or radar stays stopped. If the page does not
+open after updating, run `vectorwarp open` to start only the web interface,
+then use `vectorwarp status` and `vectorwarp logs` if it remains unavailable.
+
 ### Ubuntu or Debian
 
 ```bash

@@ -2,25 +2,30 @@
 #include "GpuBackend.h"
 #include "GpuProcess.h"
 #include "process/tracker/CausalTraceLayout.h"
+#include "process/tracker/Tracker.h"
 #include "process/analysis/ResidentReplaySnapshot.h"
 #include <algorithm>
 #include <array>
 #include <complex>
+#include <cmath>
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=17;
+constexpr unsigned moduleAbi=18;
 inline void validateModuleAbi(unsigned abi){
- if(abi!=moduleAbi)throw std::invalid_argument("Resident module ABI17 required: older modules lack exact tracker elapsed intervals");
+ if(abi!=moduleAbi)throw std::invalid_argument("Resident module ABI18 required: older modules lack canonical tracker frame diagnostics");
 }
-constexpr uint32_t protocol=0x42475211,packetBytes=160,configBytes=32768;
+
+constexpr uint32_t protocol=0x42475212,packetBytes=160,configBytes=32768;
 static_assert(configBytes>=640+(360+127+1)*8*sizeof(std::complex<float>)+152,
  "Resident config cannot carry maximum fusion and bearing manifolds");
 constexpr uint64_t sharedLimit=512ULL<<20;
@@ -28,7 +33,7 @@ constexpr uint64_t sharedLimit=512ULL<<20;
 // mapping.  Keep the ordinary live ceiling unchanged; only an explicitly
 // configured replay export may use the larger bounded mapping.
 constexpr uint64_t replaySharedLimit=1ULL<<30;
-constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
+constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=62224,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
 template<class T> struct Span {T* data=nullptr;
 size_t size=0;};
@@ -110,7 +115,7 @@ struct TrackerConfig {
  bool stationaryClutter=false;
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
- // ABI17 padding: retired experimental flags must remain zero.
+ // Reserved configuration padding: retired experimental flags remain zero.
  std::array<uint8_t,3> reservedPolicy{};
  bool normalizedInnovationGate=false;
  uint32_t reservedLimit=0;
@@ -140,6 +145,10 @@ struct Config {
  TrackerConfig tracker;
  resident_replay::ExportConfig replay;
  std::string device;
+ // Noncoherent fusion has no steering frequency; motion still follows the
+ // actual canonical lane's carrier, not the capture center or another lane.
+ double temporalCarrierHz()const{return fusion.mode==FusionMode::noncoherent?
+  reference.centreHz:fusion.frequencyHz;}
  uint32_t stages()const{return 126u+(detector.enabled?128u:0u)+(tracker.enabled?256u:0u);}
 };
 struct Token {uint64_t epoch=0,transaction=0,generation=0,consumedSequence=0;};
@@ -183,7 +192,7 @@ struct OutputViews {
  Span<const double> delayKm,doppler;
  Span<const DetectionRecord> detections,cfar,centroid;
  Span<const uint32_t> flags,detectionCells,trackerCheckpoint;
- // ABI17 output padding. Never allocated, exported or populated.
+ // Reserved output padding. Never allocated, exported or populated.
  Span<const uint32_t> reservedOutput;
  Span<const uint32_t> causalTrace;
  double noise=0,maxPower=0;
@@ -193,6 +202,7 @@ struct OutputViews {
  uint32_t availableCpis=0;
  Token trackerToken{};
  bool trackerNoOp=false;
+ TrackerFrameDiagnostics trackerDiagnostics{};
  uint32_t trackerSlot=0;
  ConstBytes referenceCheckpoint,readyEvidence,preparedEvidence,deviceEvidence,controlEvidence;
 };
@@ -253,4 +263,133 @@ Config decodeConfig(ConstBytes config,ConstBytes delayAxis,ConstBytes dopplerAxi
 void initializeMapping(Mapping,const Config&,Nonce);
 void validateMapping(Mapping,const Config&,Nonce);
 OutputViews views(Mapping,const Config&,const Packet&);
+}
+// Adjacent, versioned map-only capability. The existing portable/resident ABIs
+// remain unchanged. Consumed by canonical ProductStages and the isolated worker;
+// no receiver, reference-conditioning, clutter, fusion or tracker state lives here.
+namespace blah2::temporal_gpu {
+constexpr unsigned moduleAbi=1;
+constexpr uint32_t protocol=0x42545001;
+struct Config {
+ resident::DetectorConfig detector;
+ uint32_t sampleRate=0;
+ double delayDriftPerHz=0;
+ std::vector<int32_t> delayAxis;
+ std::vector<double> dopplerAxis;
+ std::string device;
+};
+struct Record {double delay=0,doppler=0,snr=0,delayKm=0;};
+struct Metrics {
+ uint32_t available=0,count=0,cfar=0,evaluated=0;
+ double noise=0,maximum=0,uploadMs=0,executeMs=0,readbackMs=0;
+ std::array<double,6> gpuMs{};
+};
+struct Output {
+ Metrics metrics;
+ double* display=nullptr;
+ Record* records=nullptr;
+ uint32_t* flags=nullptr;
+ uint32_t* cells=nullptr;
+};
+class Backend {
+public:
+ virtual ~Backend()=default;
+ virtual void process(const std::complex<double>*,Output&)=0;
+ virtual void reset()=0;
+};
+using Create=Backend*(*)(unsigned,const Config*);
+using Factory=std::function<std::unique_ptr<Backend>(const Config&)>;
+class Session {
+public:
+ virtual ~Session()=default;
+ virtual std::complex<double>* input()=0;
+ virtual const Output& process(uint64_t sequence)=0;
+ virtual void reset()=0;
+};
+// One sealed, fixed-capacity mapping; outputs are borrowed until the next call.
+// Only compact candidate records are decoded by the parent, never JSON or DSP.
+struct Header {
+ uint32_t tag=protocol,rows=0,columns=0,sampleRate=0;
+ resident::DetectorConfig detector{};
+ double drift=0;
+ uint64_t bytes=0,nonce=0;
+ char device[96]{};
+};
+static_assert(std::is_trivially_copyable_v<Header>);
+struct Layout {
+ uint64_t delay=0,doppler=0,input=0,display=0,records=0,flags=0,cells=0,bytes=0;
+ uint32_t count=0;
+};
+inline Layout layout(uint32_t rows,uint32_t columns){
+ if(!rows||!columns||rows>65535||columns>65535||uint64_t(rows)*columns>(1u<<20))
+  throw std::invalid_argument("Temporal GPU map dimensions exceed canonical bound");
+ const auto aligned=[](uint64_t n){return (n+63u)&~uint64_t(63u);};
+ Layout l;l.count=rows*columns;l.delay=aligned(sizeof(Header));
+ l.doppler=aligned(l.delay+4*columns);l.input=aligned(l.doppler+8*rows);
+ l.display=l.input+16*l.count;l.records=l.display+8*l.count;
+ l.flags=l.records+sizeof(Record)*l.count;l.cells=l.flags+4*l.count;
+ l.bytes=aligned(l.cells+4*l.count);return l;
+}
+inline void validate(const Config& c){
+ (void)layout(uint32_t(c.dopplerAxis.size()),uint32_t(c.delayAxis.size()));
+ const auto& d=c.detector;
+ if(!c.sampleRate||c.device.empty()||c.device.size()>=sizeof(Header::device)||
+    !d.enabled||(d.integrationCpis!=2&&d.integrationCpis!=4&&d.integrationCpis!=8)||
+    d.integrationBeamTolerance!=UINT32_MAX||!std::isfinite(c.delayDriftPerHz)||
+    c.delayDriftPerHz>0||!std::isfinite(d.pfa)||d.pfa<=0||d.pfa>=1||
+    d.guard<0||d.guard>127||d.train<1||d.train>127||
+    !std::isfinite(d.minDoppler)||d.minDoppler<0||
+    !std::isfinite(d.centroidDopplerResolution)||d.centroidDopplerResolution<=0||
+    d.centroidDelay>65535||d.centroidDoppler>65535)
+  throw std::invalid_argument("Temporal GPU detector contract invalid");
+ for(size_t i=0;i<c.delayAxis.size();++i)
+  if(int64_t(c.delayAxis[i])!=int64_t(c.delayAxis[0])+int64_t(i))
+   throw std::invalid_argument("Temporal GPU delay grid is not contiguous");
+ for(size_t i=0;i<c.dopplerAxis.size();++i)
+  if(!std::isfinite(c.dopplerAxis[i])||(i&&c.dopplerAxis[i]<=c.dopplerAxis[i-1]))
+   throw std::invalid_argument("Temporal GPU Doppler grid is not ordered");
+}
+struct MemoryReservation {
+ uint64_t mappingBytes=0,workingBytes=0,headroomBytes=0;
+ uint64_t bytes()const{return mappingBytes+workingBytes+headroomBytes;}
+};
+// Pure admission estimate for the map-only seam, not a device-specific quota.
+// Include every MapStage/Stage buffer, including host-visible staging, before
+// sharing a lane with portable CAF/clutter. Actual Vulkan allocation sizes and
+// per-heap limits remain authoritative; unusual driver padding fails closed.
+inline MemoryReservation memoryReservation(const Config& c,uint64_t pageBytes){
+ validate(c);
+ if(!pageBytes||(pageBytes&(pageBytes-1))||pageBytes>(1ULL<<30))
+  throw std::invalid_argument("Temporal GPU reservation page size is invalid");
+ const uint64_t rows=c.dopplerAxis.size(),columns=c.delayAxis.size();
+ const auto wire=layout(uint32_t(rows),uint32_t(columns));
+ const uint64_t cells=wire.count,depth=c.detector.integrationCpis;
+ const bool tbd=depth>2;
+ const uint64_t banks=tbd?(depth==8?3u:2u):0u,passes=tbd?banks+1u:1u;
+ // Postprocess scratch: 24 words/cell, plus 36 for multi-bank candidates;
+ // four reduction words per 128 cells and at most two alignment words.
+ const uint64_t scratch=(tbd?240u:96u)*cells+16*((cells+127)/128)+8;
+ // Metadata includes axes, training windows, centroid bounds and all CFAR
+ // population tables. Reserve the maximum supported 33 Doppler paths for
+ // fractional offsets, avoiding a second copy of the motion-tag decoder.
+ const uint64_t offsets=tbd&&c.delayDriftPerHz!=0?rows*33*depth:0;
+ const uint64_t metadataWords=96+4*rows+(tbd?17u:11u)*columns+1+offsets+
+  (tbd?2*passes*(2*uint64_t(c.detector.train)+1)+2*passes:0);
+ MemoryReservation result;
+ result.mappingBytes=(wire.bytes+pageBytes-1)&~(pageBytes-1);
+ result.workingBytes=48*cells+scratch+8*cells*(tbd?depth:1u)+8*cells+
+  (tbd?8*cells*(banks+1):0)+4+4*metadataWords;
+ // MapStage owns eight buffers (nine with TBD), all counted above, and has no
+ // FFT plans or data-dependent scratch. Reserve 16 MiB for their allocation
+ // padding rather than a percentage of already-counted map/history storage.
+ // Actual Vulkan requirements still fail closed if this allowance is exceeded.
+ result.headroomBytes=16ULL<<20;
+ return result;
+}
+inline Output outputs(uint8_t* p,const Layout& l){
+ return {{},reinterpret_cast<double*>(p+l.display),reinterpret_cast<Record*>(p+l.records),
+  reinterpret_cast<uint32_t*>(p+l.flags),reinterpret_cast<uint32_t*>(p+l.cells)};
+}
+std::unique_ptr<Session> createProcess(const Config&,const GpuProcessOptions& = {});
+int runWorker(const Factory&);
 }

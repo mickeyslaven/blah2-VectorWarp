@@ -53,6 +53,27 @@ class ReleaseCiTest(unittest.TestCase):
                                   "ci.yml", SOURCE, "124")
         self.assertEqual(receipt["runId"], 123)
 
+    def test_gpu_receipt_selection_authenticates_latest_dispatch_not_old_success(self):
+        workflow = "gpu-qualification.yml"
+        good = run(workflow, event="workflow_dispatch")
+        self.assertEqual(gate.select_run([good], workflow, SOURCE)["runId"], 123)
+        for changed in ({"event": "push"}, {"head_sha": "b" * 40}, {"head_branch": "topic"},
+                        {"head_repository": {"full_name": "fork/repo"}},
+                        {"repository": {"full_name": "fork/repo"}}, {"path": ".github/workflows/ci.yml"}):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                gate.select_run([{**good, **changed}], workflow, SOURCE)
+        for changed in ({"status": "in_progress", "conclusion": None}, {"conclusion": "failure"},
+                        {"conclusion": "cancelled"}, {"conclusion": "skipped"}):
+            for newer in ({"id": 124, "run_number": 8}, {"run_attempt": 2}):
+                with self.subTest(changed=changed, newer=newer), self.assertRaises(ValueError):
+                    gate.select_run([good, {**good, **newer, **changed}], workflow, SOURCE)
+        report = {"total_count": 1, "workflow_runs": [good]}
+        with mock.patch.object(gate.subprocess, "run", return_value=
+                subprocess.CompletedProcess([], 0, json.dumps(report))) as query:
+            receipt = gate.collect(SOURCE, workflows=(workflow,))
+        self.assertEqual(receipt["workflows"][0]["workflow"], workflow)
+        self.assertNotIn("status=", query.call_args.args[0][2])
+
     def test_complete_matrix_is_queried_without_success_filter(self):
         def query(command, **kwargs):
             workflow = command[2].split("/workflows/")[1].split("/")[0]
@@ -64,6 +85,23 @@ class ReleaseCiTest(unittest.TestCase):
             receipt = gate.collect(SOURCE)
         self.assertEqual(request.call_count, 5)
         self.assertEqual({item["workflow"] for item in receipt["workflows"]}, set(gate.WORKFLOWS))
+
+    def test_tag_promotion_requires_dispatch_not_unsigned_push(self):
+        workflow, tag = "release-packages.yml", "v1.2.3"
+        good = run(workflow, head_branch=tag, event="workflow_dispatch")
+        self.assertEqual(gate.select_run([good], workflow, SOURCE, branch=tag)["runId"], 123)
+        for change in ({"event": "push"}, {"head_branch": "main"},
+                       {"conclusion": "failure"}, {"status": "in_progress"}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                gate.select_run([{**good, **change}], workflow, SOURCE, branch=tag)
+        with self.assertRaisesRegex(ValueError, "invalid workflow branch"):
+            gate.select_run([run()], "ci.yml", SOURCE, branch=tag)
+        with mock.patch.object(gate.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, json.dumps({"total_count": 1, "workflow_runs": [good]}))) as query:
+            gate.collect(SOURCE, workflows=(workflow,), branch=tag)
+        self.assertIn("branch=" + tag, query.call_args.args[0][2])
+        mac = run("macos-standalone.yml", head_branch=tag)
+        self.assertEqual(gate.select_run([mac], "macos-standalone.yml", SOURCE, branch=tag)["runId"], 123)
 
     def test_missing_or_truncated_history_fails_closed(self):
         for report in ({"total_count": 0, "workflow_runs": []},

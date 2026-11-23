@@ -505,6 +505,8 @@ TEST_CASE("GPU construction has a bounded multi-CPI startup allowance")
   REQUIRE(gpuCpiStartupDeadlineMs(2000,30000)==30000);
   REQUIRE(gpuCpiStartupDeadlineMs(500,7000)==7000);
   REQUIRE(gpuCpiStartupDeadlineMs(500,30000,8)==5000);
+  REQUIRE(blah2::gpuResidentStartupDeadlineMs(500,30000,true)==30000);
+  REQUIRE(blah2::gpuResidentStartupDeadlineMs(500,30000,false)==10000);
   REQUIRE_THROWS_AS(gpuCpiStartupDeadlineMs(0,30000),std::invalid_argument);
   REQUIRE_THROWS_AS(gpuCpiStartupDeadlineMs(500,0),std::invalid_argument);
   REQUIRE_THROWS_AS(gpuCpiStartupDeadlineMs(500,30000,0),std::invalid_argument);

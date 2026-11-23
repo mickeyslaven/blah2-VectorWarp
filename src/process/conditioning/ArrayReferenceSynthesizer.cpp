@@ -76,15 +76,22 @@ ArrayReferenceSynthesizer::direct_path_anchor_pilot(
   if (found == surveillanceChannels.end() ||
       surveillance.size() != surveillanceChannels.size()) return std::nullopt;
   const auto index = std::size_t(std::distance(surveillanceChannels.begin(), found));
-  const auto referenceSamples = reference.sample_view();
-  const auto anchorSamples = surveillance[index]->sample_view();
-  if (referenceSamples.empty() || anchorSamples.size() != referenceSamples.size())
+  return direct_path_anchor_pilot(reference.sample_view(), surveillance[index]->sample_view());
+}
+
+template<class Reference,class Anchor>
+static std::optional<std::complex<double>> anchor_pilot(
+  Reference referenceSamples,Anchor anchorSamples)
+{
+  if (referenceSamples.size() == 0 ||
+      anchorSamples.size() != referenceSamples.size())
     return std::nullopt;
   std::complex<double> correlation{};
   double referenceEnergy = 0, anchorEnergy = 0;
   for (std::size_t sample = 0; sample < referenceSamples.size(); ++sample)
   {
-    const auto r = referenceSamples[sample], a = anchorSamples[sample];
+    const std::complex<double> r = referenceSamples[sample];
+    const std::complex<double> a = anchorSamples[sample];
     if (!std::isfinite(r.real()) || !std::isfinite(r.imag()) ||
         !std::isfinite(a.real()) || !std::isfinite(a.imag())) return std::nullopt;
     correlation += a * std::conj(r);
@@ -98,6 +105,20 @@ ArrayReferenceSynthesizer::direct_path_anchor_pilot(
       !(std::norm(pilot) > 0) || std::norm(pilot) > 1 + 1e-9)
     return std::nullopt;
   return pilot;
+}
+
+std::optional<std::complex<double>>
+ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+  IqSampleView referenceSamples,IqSampleView anchorSamples)
+{
+  return anchor_pilot(referenceSamples,anchorSamples);
+}
+
+std::optional<std::complex<double>>
+ArrayReferenceSynthesizer::direct_path_anchor_pilot(
+  blah2::iq::SampleView referenceSamples,blah2::iq::SampleView anchorSamples)
+{
+  return anchor_pilot(referenceSamples,anchorSamples);
 }
 
 ArrayReferenceSynthesizer::ArrayReferenceSynthesizer()

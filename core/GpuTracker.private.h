@@ -20,7 +20,8 @@ struct TrackerFrame {uint64_t generation=0,consumedSequence=0,timestamp=0;};
 struct TrackerToken {uint64_t epoch=0,transaction=0,generation=0,consumedSequence=0;};
 struct TrackerResult {TrackerToken token{};
 uint32_t checkpointWords=0;
-bool noOp=false;};
+bool noOp=false;
+TrackerFrameDiagnostics diagnostics{};};
 struct TrackerOutputs {uint32_t* checkpoint=nullptr;
 size_t wordCapacity=0;
 TrackerResult* result=nullptr;};
@@ -33,7 +34,9 @@ enum RejectionReason : uint32_t {minimumSnr,dopplerComb,rangeComb,persistentOccu
  boundary,capacity,lineageOverlap,stationaryCapacity,rejectionWords};
 constexpr uint32_t minInitiationSnrWord=statusWords,rejectionBase=statusWords+2,
  acceptedFrameWord=rejectionBase+rejectionWords,stationaryOrdinalWord=acceptedFrameWord+1,
- metadataHeaderWords=stationaryOrdinalWord+2;
+ diagnosticsBase=stationaryOrdinalWord+2,
+ diagnosticsWords=2*trackerDiagnosticCount,
+ metadataHeaderWords=diagnosticsBase+diagnosticsWords;
 struct Admission {uint32_t bankWords=0,recordWords=0,historyCount=0,nAcc=0,hypotheses=0;
 uint64_t stageBytes=0,totalBytes=0;
 double resolution=0;};
@@ -104,10 +107,15 @@ uint recordWords(){return 20u+8u*historyCapacity();}
 uint timingOffset(){return 16u+8u*historyCapacity();}
 uint record(uint i){return 32u+recordWords()*i;}
 uint work(uint i){return TRACKER_METADATA_HEADER_WORDS+12u*i;}
+// Carry preserves exact 64-bit counters without requiring 64-bit atomics.
+void diagnosticAdd(uint at,uint value){uint previous=atomicAdd(m[at],value);
+ if(previous>0xffffffffu-value)atomicAdd(m[at+1u],1u);}
+void diagnosticSet(uint at,uint value){m[at]=value;m[at+1u]=0u;}
 // SHARED_CONFIRMATION_CONTRACT
 // SHARED_ASSOCIATION_CONTRACT
 // SHARED_QUARANTINE_CONTRACT
 // SHARED_STATIONARY_CONTRACT
+// SHARED_WEAK_BIRTH_CONTRACT
 // BEGIN PURE LINEAGE CONTRACT (also compiled as C++ by the focused test).
 bool lineageDepthValid(uint depth){return confirmationDepthValid(depth);}
 bool lineageCounterNext(uint priorLow,uint priorHigh,uint nextLow,uint nextHigh){
@@ -224,8 +232,9 @@ bool independentSupport(uint r,uint depth){uint packed=src(r+13u),head=packed&25
 }
 // 0 eligible, 1 already associated, 2..6 exclusive rejection reasons in the
 // original predicate order. This function is pure: count/scatter both call it.
-uint initiationDisposition(uint i){uint claimed=s[m[6]+i];if(claimed!=0u)return claimed==3u?8u:(claimed==2u?6u:1u);
- uint at=m[5]+8u*i;if(sd(at+4u)<md(TRACKER_MIN_INITIATION_SNR_WORD))return 2u;
+uint initiationDisposition(uint i){uint claimed=s[m[6]+i];if(claimed!=0u)return claimed==2u?6u:1u;
+ uint at=m[5]+8u*i;if(sd(at+4u)<md(TRACKER_MIN_INITIATION_SNR_WORD)||
+   !weakBirthSupportEligible(sd(at+4u),post[74],detectorSupportDepth(i)))return 2u;
  if(!dopplerRidgeHasBirthCapacity(i)||!combBirthEligible(i,false))return 3u;
  if(!combBirthEligible(i,true))return 4u;
  if(!clutterAware()||!stationaryEligible(i))return 0u;uint cell=policyCell(i);
@@ -279,6 +288,7 @@ void main(){if(indexOf()!=0u)return;m[52]=m[10];m[53]=m[11];
  uint count=src(4u),detections=post[11];
  if(post[0]!=0u||src(5u)!=0u||count>m[3]||detections>m[4]||src(8u)>=65535u){reject(301u);return;}
  m[18]=count;m[19]=detections;m[24]=32u+recordWords()*count;
+ diagnosticSet(DIAG_stationaryCells,clutterAware()?clutterPersistence[12u+m[1]*(1u+3u*m[4])]:0u);
  bool accepted=m[TRACKER_ACCEPTED_FRAME_WORD]!=0u;
  if(frameClockNoOp(accepted,m[16],m[17],src(6u),src(7u),m[12],m[13],src(14u),src(15u))){m[2]=1u;return;}
  if(accepted&&experimentalLineage()){
@@ -316,31 +326,36 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     !greater64(uvec2(m[40],0u),pairS(r+8u));
   if(expiredTentative){if(lane==0u){m[w+4u]=0xffffffffu;m[w+5u]=0xffffffffu;
     m[w+6u]=state;m[w+7u]=0u;m[w+10u]=0u;m[w+11u]=0u;m[28]++;m[29]++;m[55]++;
-    traceTrack(i,10u,state,0xffffffffu,false,0u);}
+    diagnosticAdd(DIAG_tentativeExpired,1u);traceTrack(i,10u,state,0xffffffffu,false,0u);}
    memoryBarrierBuffer();barrier();continue;}
-  // Record word 12 uses its low 16 bits for the public ID. Its high bit
-  // latches the first real association, so a later miss cannot reopen the
-  // broad acceleration-estimation gate.
-  bool adaptiveTentative=adaptiveGate()&&state<2u&&
-    (src(r+12u)&0x80000000u)==0u;
-  precise double delayMargin=normalizedInnovationGate()&&!adaptiveTentative?3.034854258770293LF:1.0LF;
-  precise double dopplerMargin=(normalizedInnovationGate()&&!adaptiveTentative?3.034854258770293LF:1.0LF)/cpi;
+  // Record word 12 uses its low 16 bits for the public ID and its high bit
+  // latches the first real association. A confirmed coasting track reopens
+  // only the bounded acceleration envelope while it has missed time; this
+  // recovers maneuvering targets without widening ordinary active-track gates.
+  bool adaptiveAssociation=adaptiveAssociationGate(adaptiveGate(),
+    (src(r+12u)&0x80000000u)!=0u,state==3u,sourceD(r+timingOffset()));
+  precise double delayMargin=normalizedInnovationGate()&&!adaptiveAssociation?3.034854258770293LF:1.0LF;
+  precise double dopplerMargin=(normalizedInnovationGate()&&!adaptiveAssociation?3.034854258770293LF:1.0LF)/cpi;
   precise double span=0.0LF,time=md(50u),gateTime=time,q=0.0LF;
-  if(adaptiveTentative){gateTime=associationElapsed(time,sourceD(r+timingOffset()));span=md(48u)*double(m[37]);
+  if(adaptiveAssociation){gateTime=associationElapsed(time,sourceD(r+timingOffset()));span=md(48u)*double(m[37]);
    q=md(46u)*0.5LF*gateTime*gateTime/md(44u);delayMargin+=q*span;dopplerMargin+=span*gateTime;}
   precise double lowDelay=dp-delayMargin,highDelay=dp+delayMargin,lowDoppler=vp-dopplerMargin,highDoppler=vp+dopplerMargin;
   bool validGate=finiteD(lowDelay)&&finiteD(highDelay)&&finiteD(lowDoppler)&&finiteD(highDoppler)&&
-   (!adaptiveTentative||(gateTime>0.0LF&&q>0.0LF&&finiteD(span)));if(m[19]>0u&&!validGate)reject(305u);
+   (!adaptiveAssociation||(gateTime>0.0LF&&q>0.0LF&&finiteD(span)));if(m[19]>0u&&!validGate)reject(305u);
   double best=packDouble2x32(uvec2(0u,0x7ff00000u));uint match=0xffffffffu;
   for(uint j=lane;j<m[19];j+=128u){uint at=m[5]+8u*j;double delay=sd(at),doppler=sd(at+2u);
-   AssociationDecision decision=associationDecision(delay,doppler,dp,vp,cpi,adaptiveTentative,
+   diagnosticAdd(DIAG_pairs,1u);
+   AssociationDecision decision=associationDecision(delay,doppler,dp,vp,cpi,adaptiveAssociation,
     gateTime,span,q,normalizedInnovationGate(),9.210340371976184LF);
    if(!decision.valid)reject(305u);
-   if(decision.accepted&&(s[m[6]+j]==0u||s[m[6]+j]==3u)&&bearingCompatible(previousSpatial,detectionSpatial(j))){
-    // Reused source CPIs cannot update kinematics, reset coast, or seed a
-    // duplicate. Another track may still claim independently fresh evidence.
-    if(experimentalLineage()&&!independentSupport(r,detectorSupportDepth(j))){
-     atomicCompSwap(s[m[6]+j],0u,3u);continue;}
+   if(s[m[6]+j]!=0u)diagnosticAdd(DIAG_pairClaimed,1u);
+   else if(!decision.accepted)diagnosticAdd(decision.rejection==2u?DIAG_pairDelayRejected:
+    decision.rejection==4u?DIAG_pairDopplerRejected:DIAG_pairInnovationRejected,1u);
+   else if(!bearingCompatible(previousSpatial,detectionSpatial(j)))diagnosticAdd(DIAG_pairSpatialRejected,1u);
+   else diagnosticAdd(DIAG_pairInGate,1u);
+   if(decision.accepted&&s[m[6]+j]==0u&&bearingCompatible(previousSpatial,detectionSpatial(j))){
+    // Frame identity has advanced. Overlap only withholds independent credit
+    // below; a motion-consistent measurement still updates this track.
     precise double distance=decision.distance;
     if(!finiteD(distance))reject(305u);else if(distance<best){best=distance;match=j;}
    }}
@@ -366,15 +381,15 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
      uint rejected=validGate?0u:1u;
      if(!(sd(at)>lowDelay&&sd(at)<highDelay))rejected|=2u;
      if(!(sd(at+2u)>lowDoppler&&sd(at+2u)<highDoppler))rejected|=4u;
-     if(normalizedInnovationGate()&&!adaptiveTentative&&
+     if(normalizedInnovationGate()&&!adaptiveAssociation&&
        dd*dd+(dv*cpi)*(dv*cpi)>9.210340371976184LF)rejected|=8u;
-     if(adaptiveTentative&&validGate&&span>0.0LF){double low=max(-span,max((dv-1.0LF/cpi)/gateTime,(-1.0LF-dd)/q));
+     if(adaptiveAssociation&&validGate&&span>0.0LF){double low=max(-span,max((dv-1.0LF/cpi)/gateTime,(-1.0LF-dd)/q));
       double high=min(span,min((dv+1.0LF/cpi)/gateTime,(1.0LF-dd)/q));
       if(!(finiteD(low)&&finiteD(high)&&low<high))rejected|=8u;}
      if(s[m[6]+near]!=0u)rejected|=16u;
      if(!bearingCompatible(previousSpatial,detectionSpatial(near)))rejected|=32u;
      m[t+24u]=rejected;}}
-   if(match!=0xffffffffu){precise double updated=adaptiveTentative&&sourceD(r+timingOffset())>0.0LF?
+   if(match!=0xffffffffu){precise double updated=adaptiveAssociation&&sourceD(r+timingOffset())>0.0LF?
      sourceD(r+6u)+(sd(m[5]+8u*match+2u)-md(w+2u))/gateTime:
      (sd(m[5]+8u*match+2u)-sourceD(r+2u))/md(50u);
     if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;
@@ -388,10 +403,14 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
    // (as the CPU does), but retire an unconfirmed hypothesis immediately.
    uint support=match!=0xffffffffu?detectorSupportDepth(match):0u;
    bool credit=support!=0u&&(!experimentalLineage()||independentSupport(r,support));
+   if(credit){diagnosticAdd(DIAG_independentCredits,1u);diagnosticAdd(DIAG_creditedCpis,support);}
    bool confirms=credit&&state!=0u&&
      priorConfirmationHits(r)+1u>=m[39]&&!rangeCombAmbiguous(match);
    if(alive&&(src(r+12u)&0x40000000u)==0u&&
       !greater64(uvec2(m[40],0u),plusOne(pairS(r+8u)))&&!confirms){alive=false;m[29]++;}
+   if(!alive)diagnosticAdd((src(r+12u)&0x40000000u)==0u&&
+    !greater64(uvec2(m[40],0u),plusOne(pairS(r+8u)))&&!confirms?
+    DIAG_tentativeExpired:DIAG_inactivityDeleted,1u);
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=credit?1u:0u;m[55]++;
    traceTrack(i,!alive?(((src(r+12u)&0x40000000u)==0u)?10u:11u):
      (match!=0xffffffffu?1u:9u),state,match,credit,support);
@@ -406,7 +425,7 @@ shared uint values[128];
 void main(){uint i=indexOf(),lane=gl_LocalInvocationID.x,tile=i/128u,tiles=(m[19]+127u)/128u;
  if(m[0]!=0u||m[2]!=2u||tile>=tiles)return;
  uint disposition=i<m[19]?initiationDisposition(i):1u;
- if(i<m[19])traceCandidate(i,disposition==0u?8u:(disposition==8u?14u:disposition));
+ if(i<m[19])traceCandidate(i,disposition==0u?8u:disposition);
  // Exactly this dispatch counts candidate rejection. Repeated predicate calls
  // during stable scatter cannot inflate any reason.
  if(disposition>=2u)atomicAdd(m[TRACKER_REJECTION_BASE+disposition-2u],1u);
@@ -454,11 +473,13 @@ void main(){if(indexOf()!=0u||m[0]!=0u||m[2]!=2u||!clutterAware())return;
   for(int y=-1;y<=1;++y){int r=int(row)+y;if(r<0||r>=int(rows))continue;
    for(int x=-4;x<=4;++x){int d=int(delay)+x;if(d<0||d>=int(delayBins))continue;
     uint at=clutterCell(uint(r)*delayBins+uint(d)),streak=clutterPersistence[at];
-    if(streak==0u){if(clutterPersistence[clutterState()]>=clutterPersistence[11])continue;++clutterPersistence[clutterState()];}
+    if(streak==0u){if(clutterPersistence[clutterState()]>=clutterPersistence[11]){
+     diagnosticAdd(DIAG_stationaryCapacityRejected,1u);continue;}++clutterPersistence[clutterState()];}
     clutterPersistence[at]=advancePersistentStreak(streak,clutterPersistence[at+1u],clutterPersistence[at+2u],m[TRACKER_STATIONARY_ORDINAL_WORD],m[TRACKER_STATIONARY_ORDINAL_WORD+1u]);
     clutterPersistence[at+1u]=m[TRACKER_STATIONARY_ORDINAL_WORD];clutterPersistence[at+2u]=m[TRACKER_STATIONARY_ORDINAL_WORD+1u];
    }}
  }
+ diagnosticSet(DIAG_stationaryCells,clutterPersistence[clutterState()]);
 }
 )glsl";
 const char* historyBody=R"glsl(
@@ -492,6 +513,7 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
   bool ambiguous=match!=0xffffffffu&&rangeCombAmbiguous(match);
   if(count>=m[39]&&!ambiguous){state=2u;put(at+6u,state|evidence);}}
  if(state==2u)put(target+12u,dst(target+12u)|0x40000000u);
+ if(state==2u&&src(source+14u)<2u)diagnosticAdd(DIAG_promotions,1u);
  if(traceEnabled()&&i<32u){uint t=traceRecord(32u+i);m[t+2u]=state;
   if(state==2u&&src(source+14u)<2u)m[t+1u]=12u;}
  put(target+14u,state);put(target+15u,0xffffffffu);atomicAdd(m[31],1u);
@@ -505,6 +527,8 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  if(!finiteD(acc)){reject(308u);return;}for(uint k=0u;k<6u;++k){uint value=s[m[5]+8u*detection+k];put(target+k,value);put(target+16u+k,value);}
  uvec2 bits=unpackDouble2x32(acc);put(target+6u,bits.x);put(target+7u,bits.y);put(target+8u,1u);put(target+12u,(src(8u)+i)%65535u);
  uint state=m[39]==1u&&!rangeCombAmbiguous(detection)?2u:0u;
+ if(state==2u)diagnosticAdd(DIAG_promotions,1u);
+ diagnosticAdd(DIAG_independentCredits,1u);diagnosticAdd(DIAG_creditedCpis,detectorSupportDepth(detection));
  if(traceEnabled()&&detection<32u&&hypothesis==0u){uint t=traceRecord(detection);
   m[t+2u]=state;m[t+5u]|=2u;m[t+26u]=(src(8u)+i)%65535u;m[t+27u]=hypotheses;}
  put(target+14u,state);put(target+22u,lineageWord(state,4u,detectorSupportDepth(detection),true,experimentalLineage()));
@@ -582,11 +606,13 @@ inline std::vector<std::pair<std::string,std::string>> shaderSources(){
   {"unmatched_count",unmatchedCountBody},{"unmatched_prefix",unmatchedPrefixBody},{"unmatched_scatter",unmatchedScatterBody},{"history",historyBody},
   {"initiate",initiateBody},{"finalize",finalizeBody},{"validate",validateBody},{"validate_totals",validateTotalsBody},{"commit",commitBody},{"persistence",persistenceBody},{"persistence_prune",persistencePruneBody}};
  std::vector<std::pair<std::string,std::string>> result;
- const std::string definition="#define TRACKER_METADATA_HEADER_WORDS "+std::to_string(metadataHeaderWords)+"u\n"+
+ std::string definition="#define TRACKER_METADATA_HEADER_WORDS "+std::to_string(metadataHeaderWords)+"u\n"+
   "#define TRACKER_MIN_INITIATION_SNR_WORD "+std::to_string(minInitiationSnrWord)+"u\n"+
   "#define TRACKER_ACCEPTED_FRAME_WORD "+std::to_string(acceptedFrameWord)+"u\n"+
   "#define TRACKER_STATIONARY_ORDINAL_WORD "+std::to_string(stationaryOrdinalWord)+"u\n"+
   "#define TRACKER_REJECTION_BASE "+std::to_string(rejectionBase)+"u\n";
+ for(size_t i=0;i<trackerDiagnosticCount;++i)definition+="#define DIAG_"+
+  std::string(trackerDiagnosticFields[i].memberName)+" "+std::to_string(diagnosticsBase+2*i)+"u\n";
  std::string header=std::string(common);
  const std::string contractMarker="// SHARED_CONFIRMATION_CONTRACT";
  header.replace(header.find(contractMarker),contractMarker.size(),tracker_confirmation::shaderSource);
@@ -594,6 +620,8 @@ inline std::vector<std::pair<std::string,std::string>> shaderSources(){
  header.replace(header.find(associationMarker),associationMarker.size(),tracker_association::shaderSource);
  const std::string quarantineMarker="// SHARED_QUARANTINE_CONTRACT";
  header.replace(header.find(quarantineMarker),quarantineMarker.size(),tracker_quarantine::shaderSource);
+ const std::string weakBirthMarker="// SHARED_WEAK_BIRTH_CONTRACT";
+ header.replace(header.find(weakBirthMarker),weakBirthMarker.size(),tracker_weak_birth::shaderSource);
  for(const auto& contract:std::vector<std::pair<std::string,const char*>>{
   {"// SHARED_ADMISSION_CONTRACT",tracker_policy::admissionShaderSource},
   {"// SHARED_STATIONARY_CONTRACT",tracker_policy::stationaryShaderSource}})
@@ -629,6 +657,7 @@ class Stage {
  TrackerToken pendingToken_{},lastToken_{};
  std::array<uint32_t,statusWords> ready_{};
  std::array<uint32_t,rejectionWords> rejections_{};
+ TrackerFrameDiagnostics preparedDiagnostics_{},committedDiagnostics_{};
  static void put64(uint32_t* target,uint32_t at,uint64_t value){target[at]=uint32_t(value);
  target[at+1]=uint32_t(value>>32);}
  static void putDouble(uint32_t* target,uint32_t at,double value){std::memcpy(target+at,&value,8);}
@@ -676,6 +705,7 @@ class Stage {
   privateWords[acceptedFrameWord]=acceptedFrames_!=0;
   put64(privateWords,stationaryOrdinalWord,acceptedFrames_+1);
   std::memset(static_cast<uint32_t*>(metadata_->mapped)+rejectionBase,0,sizeof(rejections_));
+  std::memset(privateWords+diagnosticsBase,0,diagnosticsWords*4);
   metadata_->flush(0,metadataHeaderWords*4);
   if(config_.causalDiagnostics){const auto offset=metadata_->bytes-2064u*4u;
    std::memset(static_cast<uint8_t*>(metadata_->mapped)+offset,0,2064u*4u);
@@ -741,12 +771,30 @@ class Stage {
   for(const Buffer* b:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_})if(b->mapped){const auto x=range(b->mapped,size_t(b->bytes));
   if(overlaps(a,x)||overlaps(z,x))throw std::invalid_argument("GPU tracker output aliases device storage");}
  }
- void copyBank(uint32_t bank,uint32_t words,TrackerOutputs out,const TrackerToken& token,bool noOp){
+ void copyBank(uint32_t bank,uint32_t words,TrackerOutputs out,const TrackerToken& token,bool noOp,
+  const TrackerFrameDiagnostics& diagnostics){
   validateOutputs(out);
   if(words<headerWords||words>admission_.bankWords)throw std::runtime_error("GPU tracker checkpoint size invalid");
   banks_[bank]->invalidate(0,uint64_t(words)*4);
   std::memcpy(out.checkpoint,banks_[bank]->mapped,size_t(words)*4);
-  *out.result={token,words,noOp};
+  *out.result={token,words,noOp,diagnostics};
+ }
+ void captureDiagnostics(){
+  preparedDiagnostics_={};const auto* values=static_cast<const uint32_t*>(metadata_->mapped)+diagnosticsBase;
+  for(size_t i=0;i<trackerDiagnosticCount;++i)preparedDiagnostics_.*trackerDiagnosticFields[i].member=
+   uint64_t(values[2*i])|(uint64_t(values[2*i+1])<<32);
+  auto& d=preparedDiagnostics_;d.noOp=noOp_;d.detections=ready_[19];
+  d.tracksBefore=ready_[18];d.tracksAfter=ready_[54];
+  if(noOp_)return;
+  d.associations=ready_[27];d.misses=ready_[28];d.initiated=ready_[30];
+  d.birthCandidates=d.detections-d.associations;d.stationaryQuarantined=ready_[64];
+  d.birthSnrRejected=rejections_[minimumSnr];d.birthDopplerCombRejected=rejections_[dopplerComb];
+  d.birthRangeCombRejected=rejections_[rangeComb];d.stationaryBirthRejected=rejections_[persistentOccupancy];
+  d.birthCapacityRejected=rejections_[capacity];d.birthLineageRejected=rejections_[lineageOverlap];
+  d.stationaryBirthCapacityRejected=rejections_[stationaryCapacity];
+  // Resident admission requires valid in-grid detections. A boundary rejection
+  // has no canonical counter and must not be silently reported as another cause.
+  if(rejections_[boundary])throw std::runtime_error("Resident tracker boundary classification has no canonical diagnostics");
  }
  void logPrepared(const std::array<uint32_t,statusWords>& s){context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_TRACKER_PREPARED transaction="<<pendingToken_.transaction<<" generation="<<pendingToken_.generation<<" consumed_sequence="<<pendingToken_.consumedSequence<<" epoch="<<config_.epoch
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
@@ -830,6 +878,7 @@ public:
    // Preserve serial_: an input discontinuity cannot revive a stale token.
    acceptedFrames_=0;lastCommitted_=noOp_=copied_=false;pendingToken_=lastToken_={};
    ready_={};controlEvidence_={};rejections_={};evidenceHostCommitMs_=0;
+   preparedDiagnostics_={};committedDiagnostics_={};
   }catch(...){poisoned_=true;throw;}
  }
  TrackerToken preparedToken()const{healthy();
@@ -852,6 +901,7 @@ public:
  if(serial_==UINT64_MAX)throw std::overflow_error("GPU tracker transaction exhausted");
  if(acceptedFrames_==UINT64_MAX)throw std::overflow_error("GPU tracker accepted-frame clock exhausted");
   copied_=false;
+  preparedDiagnostics_={};
   pendingToken_={config_.epoch,++serial_,frame.generation,frame.consumedSequence};
   try{setup(pendingToken_,frame.timestamp);
   commands([&](VkCommandBuffer command){
@@ -868,6 +918,7 @@ public:
    return false;}
    checkCoverage(ready_);
    noOp_=ready_[2]==1;
+   captureDiagnostics();
    pending_=true;
    logPrepared(ready_);
    return true;
@@ -879,7 +930,7 @@ public:
  if(!pending_)throw std::logic_error("GPU tracker has no prepared transaction");
  copied_=false;
  validateOutputs(out);
-  try{copyBank(noOp_?active_:1-active_,ready_[24],out,pendingToken_,noOp_);
+  try{copyBank(noOp_?active_:1-active_,ready_[24],out,pendingToken_,noOp_,preparedDiagnostics_);
   copied_=true;}catch(...){poisoned_=true;
   throw;}}
  void commit(TrackerToken token){healthy();
@@ -899,6 +950,7 @@ public:
    copied_=false;
    lastCommitted_=true;
    lastToken_=token;
+   committedDiagnostics_=preparedDiagnostics_;
    evidenceHostCommitMs_=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-began).count();
    context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_TRACKER_COMMIT transaction="<<token.transaction<<" generation="<<token.generation<<" epoch="<<token.epoch<<" noop="<<noOp_<<" device_commit=1 gpu_commit_ms="<<gpuMs<<" host_commit_ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-began).count()<<" cpu_tracker_calls=0\n";
   }catch(...){poisoned_=true;
@@ -907,13 +959,13 @@ public:
  void abort(TrackerToken token){healthy();
  if(!pending_||!sameToken(token,pendingToken_))throw std::logic_error("GPU tracker abort token mismatch");
  pending_=false;
- copied_=false;}
+ copied_=false;preparedDiagnostics_={};}
  void copyCommitted(TrackerOutputs out){healthy();
  validateOutputs(out);
  try{banks_[active_]->invalidate(0,headerWords*4);
  const auto* words=static_cast<const uint32_t*>(banks_[active_]->mapped);
   if(words[5]||words[4]>config_.capacity){throw std::runtime_error("GPU tracker committed count invalid");}
-   copyBank(active_,headerWords+admission_.recordWords*words[4],out,lastCommitted_?lastToken_:TrackerToken{},false);
+   copyBank(active_,headerWords+admission_.recordWords*words[4],out,lastCommitted_?lastToken_:TrackerToken{},committedDiagnostics_.noOp,committedDiagnostics_);
   }catch(...){poisoned_=true;
   throw;}}
  void restore(const TrackerConfig& envelope,const uint32_t* checkpoint,size_t words){healthy();
@@ -963,6 +1015,7 @@ public:
    ++serial_;
    lastCommitted_=false;
    copied_=false;
+   preparedDiagnostics_={};committedDiagnostics_={};
    context_.diagnostics.stream()<<"GPU_TRACKER_RESTORE tracks="<<s[54]<<" device_validated_records="<<s[54]<<" device_commit=1 gpu_validate_ms="<<timestamps_->milliseconds(5)<<" gpu_commit_ms="<<timestamps_->milliseconds(7)<<'\n';
   }catch(const std::invalid_argument&){throw;}catch(...){poisoned_=true;
   throw;}

@@ -145,7 +145,7 @@ public:
   /// experiment products retain the complete native matrix; this method only
   /// reduces the monitor transport raster and quantizes it to quarter dB.
   std::string to_json_presentation_km(uint64_t timestamp, uint32_t fs,
-    bool includeData, uint32_t maximumCells = 200000);
+    bool includeData, uint32_t maximumCells = 100000);
 
   /// @brief Update JSON to convert delay bins to km.
   /// @param json Input JSON string with delay field.

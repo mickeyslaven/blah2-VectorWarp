@@ -32,17 +32,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os, re, subprocess
+          import os, runpy, subprocess
           sha = os.environ['SOURCE_SHA']
-          assert re.fullmatch(r'[0-9a-f]{40}', sha)
-          runs = json.loads(subprocess.check_output(['gh', 'run', 'list',
-              '--workflow', 'gpu-qualification.yml', '--commit', sha, '--event', 'workflow_dispatch',
-              '--status', 'success', '--limit', '20', '--json', 'databaseId,headSha,event,conclusion']))
-          runs = [run for run in runs if run['headSha'] == sha and run['event'] == 'workflow_dispatch'
-                  and run['conclusion'] == 'success']
-          assert runs, 'No complete unified GPU receipts for exact source SHA; baseline-only dispatches cannot qualify'
+          gate = runpy.run_path('script/verify-release-ci.py')
+          run = gate['collect'](sha, workflows=('gpu-qualification.yml',))['workflows'][0]
           for feature in ('fp32', 'fp64'):
-              subprocess.run(['gh', 'run', 'download', str(runs[0]['databaseId']),
+              subprocess.run(['gh', 'run', 'download', str(run['runId']),
                   '--name', f'gpu-product-parity-{feature}-{sha}', '--dir', f'build/gpu-receipts/{feature}'], check=True)
           PY
           python3 test/gpu/verify_qualification_receipts.py --receipts build/gpu-receipts --source-sha "$SOURCE_SHA"

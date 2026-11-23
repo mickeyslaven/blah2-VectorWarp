@@ -161,6 +161,21 @@ assert.equal(restarted.exact('fm', {timestamp: 100}), null);
 restarted.acceptIlluminator(JSON.stringify(laneFrame(102, 20)), {firstFrame: true});
 assert.equal(resets, 1, 'A healthy reconnect retains the producer session');
 
+const bearingStore = new RadarSessionStore({config});
+bearingStore.acceptIlluminator(JSON.stringify(laneFrame(103, 30, {
+  bearing: {timestamp: 103, illuminator_id: 'fm', resolved_product_plan: '{}',
+    input_lineage: {available: true}, product_stage_execution: {bearing: true}}
+})), {firstFrame: true});
+assert.equal(bearingStore.planObservation().products.filter(product =>
+  product.lane_id === 'fm' && product.product === 'bearing').length, 1,
+  'Channelized bearing retains its exact lane execution receipt');
+const wrongBearingStore = new RadarSessionStore({config});
+wrongBearingStore.acceptIlluminator(JSON.stringify(laneFrame(104, 40, {
+  bearing: {timestamp: 104, illuminator_id: 'other', resolved_product_plan: '{}'}
+})), {firstFrame: true});
+assert.equal(wrongBearingStore.planObservation().products.some(product =>
+  product.product === 'bearing'), false, 'A lane-less or mismatched bearing receipt is not fanned out');
+
 const envelope = new RadarSessionStore({now: () => now});
 const checked = {valid: true, value: {receiver: 'RspDuo', state: 'live'}};
 envelope.acceptProcessorStatus(checked, {});
@@ -190,3 +205,54 @@ assert.equal(publication.histories.tracker.bytes, identities.reduce((bytes, fram
   bytes + Buffer.byteLength(frame) + Buffer.byteLength('{"timestamp":9}'), 0),
   'Distinct retained native/publication payloads both participate in the byte limit');
 console.log('Canonical session differential products, aliases, lazy maps, reset and freshness PASS.');
+
+// Framing validates once; the canonical owner shares that object with stashes,
+// timestamp retention and evidence adapters without changing original bytes.
+const jsonFrames = require('./json-frames');
+const originalParse = JSON.parse;
+let parses = 0;
+JSON.parse = (...args) => { parses++; return originalParse(...args); };
+try {
+  for (const name of ['map', 'detection', 'tracker', 'bearing', 'timing', 'iqdata']) {
+    const value = {timestamp: 123, delay: [1], doppler: [2], data: [[3.125]],
+      snr: [4], frequency: [100], spectrum: [5], cpi: 500,
+      id: '18446744073709551615'};
+    const raw = JSON.stringify(value).replace('3.125', '3.125000');
+    let seen;
+    const owner = new RadarSessionStore({onProduct: (_name, text, options) => {
+      assert.equal(text, raw); seen = options.parsed;
+      assert.equal(options.publishedParsed, seen);
+    }});
+    const before = parses;
+    jsonFrames((text, parsed) => owner.acceptProduct(name, text, {parsed}))(raw);
+    assert.equal(parses - before, 1, `${name} framing and consumers parse once`);
+    assert.deepEqual(seen, value);
+    assert.equal(owner.products[name], raw);
+    assert.equal(owner.histories[name].exact(123), raw);
+    if (name === 'map') assert.deepEqual(owner.stashes.map.get_data().data, [[3.125]]);
+  }
+  for (const id of ['fm', 'other']) {
+    const owner = new RadarSessionStore({config: {process: {multi_illuminator: {
+      enabled: true, illuminators: [descriptor, {...descriptor, id: 'other'}]}}}});
+    const native = laneFrame(456, 10, {id});
+    const raw = JSON.stringify(native).replace('[[3]]', '[[3.000000]]');
+    const before = parses;
+    jsonFrames((text, parsed) => {
+      const admitted = owner.acceptIlluminator(text, {}, parsed);
+      assert.equal(admitted.map, parsed.map, 'No second full matrix allocation');
+      assert.equal(Object.hasOwn(admitted.value.map, 'data'), false,
+        'The lane history retains compact metadata, not the parsed matrix');
+      owner.publishPrimary(admitted.value, admitted.duplicate, admitted.map);
+    })(raw);
+    assert.equal(parses - before, 1, 'Multi-illuminator and primary aliases parse once');
+    assert.ok(owner.latest(id).map_json.includes('[[3.000000]]'), 'Raw map precision/spelling retained');
+    if (id === 'fm') {
+      assert.deepEqual(owner.stashes.map.get_data().data, [[3]]);
+      assert.equal(owner.products.map, owner.latest(id).map_json);
+    } else assert.equal(owner.products.map, '', 'Nonprimary matrices are not retained in maxhold');
+  }
+  const invalid = new RadarSessionStore({config});
+  assert.throws(() => invalid.acceptIlluminator(JSON.stringify(laneFrame(1, 1, {map: 'invalid'}))),
+    /Invalid multi-illuminator frame/);
+} finally { JSON.parse = originalParse; }
+console.log('Parse-once native products, primary aliases, lazy lane retention and raw precision PASS.');

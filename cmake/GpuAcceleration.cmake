@@ -42,7 +42,7 @@ add_library(blah2GpuResidentProcess STATIC
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProcess.cpp)
 target_compile_features(blah2GpuResidentProcess PUBLIC cxx_std_17)
 target_include_directories(blah2GpuResidentProcess PRIVATE ${PROJECT_ROOT}/src)
-target_link_libraries(blah2GpuResidentProcess PUBLIC blah2GpuProcess Threads::Threads)
+target_link_libraries(blah2GpuResidentProcess PUBLIC blah2GpuProcess blah2RapidJson Threads::Threads)
 if(TARGET blah2)
   target_link_libraries(blah2 PRIVATE blah2GpuResidentProcess)
 endif()
@@ -82,7 +82,8 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     target_include_directories(blah2GpuVulkan SYSTEM PRIVATE ${GLSLANG_C_INCLUDE})
     target_link_libraries(blah2GpuVulkan PRIVATE Vulkan::Vulkan glslang::glslang
       glslang::SPIRV glslang::glslang-default-resource-limits
-      ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} ${ARMADILLO_LIBRARIES} Threads::Threads)
+      ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} ${ARMADILLO_LIBRARIES}
+      blah2RapidJson Threads::Threads)
     # The isolated module owns the short FP64 clutter baseline and macOS
     # prime-plan constants. Its loader-only worker does not use FFTW directly.
     # Vulkan's zero-initialized structs intentionally initialize sType first.
@@ -137,7 +138,8 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
         ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
       target_link_libraries(blah2GpuWidebandVulkan PRIVATE Vulkan::Vulkan
         glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
-        ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+        ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY}
+        blah2RapidJson Threads::Threads)
       target_compile_options(blah2GpuWidebandVulkan PRIVATE
         -Wno-missing-field-initializers)
       if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -199,7 +201,7 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
         ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
       target_link_libraries(blah2GpuResidentVulkan PRIVATE Vulkan::Vulkan
         glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
-        Threads::Threads ${CMAKE_DL_LIBS})
+        blah2RapidJson Threads::Threads ${CMAKE_DL_LIBS})
       target_compile_options(blah2GpuResidentVulkan PRIVATE -Wno-missing-field-initializers)
       blah2_isolate_vkfft_vendor_warnings(blah2GpuResidentVulkan)
       set_property(TARGET blah2GpuResidentVulkan APPEND_STRING PROPERTY LINK_FLAGS " -Wl,-z,defs")

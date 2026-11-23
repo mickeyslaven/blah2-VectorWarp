@@ -217,27 +217,27 @@ void main(){
  if(i>=p.count)return;
  uint row=i/p.delays, col=i%p.delays;
  uint shifted=(row+p.doppler/2u+1u)%p.doppler;
- // Doppler maps and steering weights are FP32. Cache each channel value once
- // per cell and keep the short beamformer dot products in their native
- // precision; the old loop reloaded and promoted every value for every beam.
- vec2 values[8];
+ // CAF/weight storage is FP32, but canonical coherent fusion accumulates,
+ // ranks and takes the square root in FP64. Narrowing those operations can
+ // turn distinct temporal paths into ties and change exact motion lineage.
+ dvec2 values[8];
  for(uint c=0u;c<p.channels;++c){
-  values[c]=maps[c*p.count+col*p.doppler+shifted];
+  values[c]=dvec2(maps[c*p.count+col*p.doppler+shifted]);
   if(any(isnan(values[c]))||any(isinf(values[c])))atomicCompSwap(s[0],0u,5u);
  }
- precise float best=-1.0;
+ precise double best=-1.0LF;
  uint bestBeam=0u;
  for(uint b=0u;b<uint(p.beams);++b){
-  vec2 sum=vec2(0.0);
+  precise dvec2 sum=dvec2(0.0LF);
   for(uint c=0u;c<p.channels;++c){
-   vec2 value=values[c],weight=weights[b*p.channels+c];
-   sum+=vec2(weight.x*value.x-weight.y*value.y,
+   dvec2 value=values[c],weight=dvec2(weights[b*p.channels+c]);
+   sum+=dvec2(weight.x*value.x-weight.y*value.y,
              weight.x*value.y+weight.y*value.x);
   }
-  precise float power=sum.x*sum.x+sum.y*sum.y;
+  precise double power=sum.x*sum.x+sum.y*sum.y;
   if(power>best){best=power;bestBeam=b;}
  }
- precise double result=double(sqrt(best));
+ precise double result=sqrt(best);
  if(isnan(result)||isinf(result))atomicCompSwap(s[0],0u,6u);
  // Keep the same real-amplitude interface as noncoherent fusion.
  // Preserve the winning spatial hypothesis for optional cross-CPI gating.
@@ -402,7 +402,7 @@ class ResidentFramePipeline {
  struct Workspace {
   const ResidentFrameConfig& config;
   std::unique_ptr<ClutterPipeline> clutter;
-  std::unique_ptr<Buffer> canonical,fused,status,fusionWeights,refinementWeights;
+  std::unique_ptr<Buffer> canonical,deviceCanonical,fused,status,fusionWeights,refinementWeights;
   std::unique_ptr<Buffer> replayRaw,replayReference,replayBank;
   // Stage descriptors/plans die before the canonical and borrowed native storage.
   std::unique_ptr<gpu_reference::Stage> referenceStage;
@@ -420,7 +420,8 @@ class ResidentFramePipeline {
   // One count owns allocation, initial angles, checkpoint recalibration and
   // postprocess validation. A non-4x scan must never be relabelled as 4x.
   const uint32_t refinementBeamCount;
-  Workspace(ResidentFramePipeline& owner,uint32_t channels):config(owner.config_),commands(owner.context_),capacity(channels),
+  Buffer& radarInput(){return deviceCanonical?*deviceCanonical:*canonical;}
+  Workspace(ResidentFramePipeline& owner,uint32_t channels,bool cacheInput):config(owner.config_),commands(owner.context_),capacity(channels),
    refinementBeamCount(config.postprocess.bearingScanBeams?config.postprocess.bearingScanBeams:config.fusion.beams*4u){
    auto& context=owner.context_;
    const auto& config=owner.config_;
@@ -433,6 +434,11 @@ class ResidentFramePipeline {
    // Late allocations coexist with initialized full ambiguity and clutter plans.
    // Their requirements (not requested bytes) remain charged to the same caps.
    canonical=std::make_unique<Buffer>(context,uint64_t(g.clutterSamples)*config.inputChannels*16,host,preferred);
+   // Discrete devices read the same FP64 capture in reference synthesis,
+   // surveillance casting and subtraction. Upload once; keep every operation
+   // and diagnostic value unchanged. Unified memory already needs no copy.
+   if(cacheInput&&!(canonical->properties&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+    deviceCanonical=std::make_unique<Buffer>(context,canonical->bytes,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
    fused=std::make_unique<Buffer>(context,uint64_t(g.doppler)*g.delays*16,host,preferred);
    status=std::make_unique<Buffer>(context,gpu_resident::words*4,host,preferred);
    if(config.replayMaxBytes){
@@ -442,20 +448,20 @@ class ResidentFramePipeline {
     replayReference=std::make_unique<Buffer>(context,uint64_t(g.clutterSamples)*16,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     replayBank=std::make_unique<Buffer>(context,uint64_t(g.doppler)*g.delays*std::max(1u,config.fusion.beams)*8,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
    }
-   referenceStage->bind(*canonical);
+   referenceStage->bind(radarInput());
    Buffer* referenceInput=&referenceStage->referenceBuffer();
    referenceCast=std::make_unique<Kernel>(context,gpu_resident::referenceSource,
      std::vector<Buffer*>{referenceInput,&clutter->residentReference(),status.get()});
    referencePack=std::make_unique<Kernel>(context,gpu_resident::referencePackSource,
      std::vector<Buffer*>{referenceInput,owner.reference_.get(),status.get()});
    surveillanceCast=std::make_unique<Kernel>(context,gpu_resident::surveillanceSource,
-     std::vector<Buffer*>{canonical.get(),&clutter->residentSurveillance(),status.get()});
+     std::vector<Buffer*>{&radarInput(),&clutter->residentSurveillance(),status.get()});
    subtract=std::make_unique<Kernel>(context,gpu_resident::subtractSource,
-     std::vector<Buffer*>{canonical.get(),&clutter->residentEstimate(),status.get()});
+     std::vector<Buffer*>{&radarInput(),&clutter->residentEstimate(),status.get()});
    surveillancePack=std::make_unique<Kernel>(context,gpu_resident::surveillancePackSource,
-     std::vector<Buffer*>{canonical.get(),owner.surveillance_.get(),status.get()});
+     std::vector<Buffer*>{&radarInput(),owner.surveillance_.get(),status.get()});
    subtractPack=std::make_unique<Kernel>(context,gpu_resident::subtractPackSource,
-     std::vector<Buffer*>{canonical.get(),&clutter->residentEstimate(),owner.surveillance_.get(),status.get()});
+     std::vector<Buffer*>{&radarInput(),&clutter->residentEstimate(),owner.surveillance_.get(),status.get()});
    if(config.fusion.mode!=0){
     const uint64_t weightCount=uint64_t(config.fusion.beams)*config.geometry.channels;
     fusionWeights=std::make_unique<Buffer>(context,weightCount*sizeof(std::complex<float>),host,preferred);
@@ -498,7 +504,7 @@ class ResidentFramePipeline {
     }
     postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
      config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,*scratch,*owner.output_,
-     config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
+     refinementWeights?owner.doppler_.get():nullptr,
      refinementWeights.get(),config.geometry.channels,refinementWeights?refinementBeamCount:0u);
    }
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
@@ -509,6 +515,8 @@ class ResidentFramePipeline {
    check(vkBeginCommandBuffer(command,&begin),"resident reference recording");
    gpu_resident::hostWrite(command);
    barrier(command);
+   if(deviceCanonical){VkBufferCopy upload{0,0,canonical->bytes};
+    vkCmdCopyBuffer(command,canonical->handle,deviceCanonical->handle,1,&upload);barrier(command);}
    referenceStage->append(command);
    timestamps->begin(command,0);
    const uint32_t n=g.clutterSamples;
@@ -519,7 +527,7 @@ class ResidentFramePipeline {
    referencePack->append(command,{g.range*g.doppler,g.range,config.correlation,0,0});
    barrier(command);
    if(replayRaw){VkBufferCopy rawCopy{0,0,replayRaw->bytes},referenceCopy{0,0,replayReference->bytes};
-    vkCmdCopyBuffer(command,canonical->handle,replayRaw->handle,1,&rawCopy);
+    vkCmdCopyBuffer(command,radarInput().handle,replayRaw->handle,1,&rawCopy);
     vkCmdCopyBuffer(command,referenceInput->handle,replayReference->handle,1,&referenceCopy);barrier(command);}
    timestamps->end(command,0);
    gpu_resident::hostRead(command);
@@ -548,6 +556,13 @@ class ResidentFramePipeline {
     for(uint32_t c=first;c<first+active;++c)
      surveillancePack->append(command,{g.range*g.doppler,g.range,config.correlation,n,int32_t(c|(config.surveillanceChannels[c]<<8))});
     barrier(command);
+    // Only the diagnostic residual route writes raw input. Copy its exact
+    // completed channel intervals back before the existing host observation.
+    if(deviceCanonical){for(uint32_t c=first;c<first+active;++c){
+     const uint64_t offset=uint64_t(config.surveillanceChannels[c])*n*16;
+     VkBufferCopy residual{offset,offset,uint64_t(n)*16};
+     vkCmdCopyBuffer(command,deviceCanonical->handle,canonical->handle,1,&residual);}
+     barrier(command);}
     timestamps->end(command,2);
     gpu_resident::hostRead(command);
     check(vkEndCommandBuffer(command),"resident subtraction recording");
@@ -702,14 +717,7 @@ class ResidentFramePipeline {
  size_t capturedCount_=0;
  std::chrono::steady_clock::time_point frameStart_{};
  gpu_host::Frame hostTiming_;
- void submit(VkCommandBuffer command,const char* phase){
-  VkSubmitInfo info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-  info.commandBufferCount=1;
-  info.pCommandBuffers=&command;
-  check(gpu_host::call(context_.hostTiming,"vkQueueSubmit",0,[&]{return vkQueueSubmit(context_.queue,1,&info,context_.fence);}),phase);
-  check(gpu_host::call(context_.hostTiming,"vkWaitForFences",0,[&]{return vkWaitForFences(context_.device,1,&context_.fence,VK_TRUE,UINT64_MAX);}),phase);
-  check(gpu_host::call(context_.hostTiming,"vkResetFences",0,[&]{return vkResetFences(context_.device,1,&context_.fence);}),"resident fence reset");
- }
+ void submit(VkCommandBuffer command,const char* phase){gpu_reference::submitAndWait(context_,command,phase);}
  std::array<uint32_t,gpu_resident::words> status(){
   std::array<uint32_t,gpu_resident::words> value{};
   work_->status->invalidate(0,work_->status->bytes);
@@ -824,7 +832,9 @@ public:
   const uint64_t r=uint64_t(g.range)*g.doppler,m=uint64_t(g.doppler)*g.delays;
   const uint64_t ambiguityBytes=(r*(1+g.channels)+2*m*g.channels)*8;
   const uint64_t lateBytes=uint64_t(g.clutterSamples)*config_.inputChannels*16+m*16+gpu_resident::words*4;
-  const auto budget=gpu_memory::heapBudget(context_.candidate.info.memoryBytes);
+  uint64_t budget=0;
+  {std::lock_guard<std::mutex> lock(allocationsMutex);
+   budget=deviceAllocations.at(context_.device).budget.deviceLimit();}
   const auto& limit=context_.candidate.properties.limits;
   if(config_.replayMaxBytes){
    const uint64_t passes=config_.postprocess.integrationCpis>2?
@@ -852,7 +862,9 @@ public:
   gather_=std::make_unique<Kernel>(context_,gatherSource,std::vector<Buffer*>{surveillance_.get(),doppler_.get()});
   std::string reason="preflight";
   const uint32_t ceiling=config_.clutterBatchLimit?config_.clutterBatchLimit:g.channels;
-  for(uint32_t c=ceiling;c>0;--c){
+  // Cache admission is optional: retry the unchanged mapped-input route when
+  // no complete cached workspace fits, without disabling any radar stage.
+  for(bool cacheInput:{true,false}){for(uint32_t c=ceiling;c>0;--c){
    auto batch=g;
    batch.channels=c;
    const uint64_t required=ClutterPipeline::requiredBytes(batch,true);
@@ -862,7 +874,7 @@ public:
    if(required==UINT64_MAX){reason="invalid clutter geometry";continue;}
    {std::lock_guard<std::mutex> lock(allocationsMutex);
     deviceAllocations.at(context_.device).budget.clearRejection();}
-   try {work_=std::make_unique<Workspace>(*this,c);
+   try {work_=std::make_unique<Workspace>(*this,c,cacheInput);
    // Admit the entire workload before accepting this batch, including fixed
    // tracker capacity. Only clutter batching changes on a retry, never tracks.
    if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
@@ -874,17 +886,19 @@ public:
     std::lock_guard<std::mutex> lock(allocationsMutex);
     const auto& b=deviceAllocations.at(context_.device).budget;const auto& rejected=b.lastRejection();
     std::cerr<<"GPU_RESIDENT_BATCH_REJECTED batch="<<c<<" estimated_clutter_bytes="<<required
-     <<" allocation_reason="<<rejected.reason<<" allocation_requested_bytes="<<rejected.requested
+     <<" cached_input="<<cacheInput<<" allocation_reason="<<rejected.reason<<" allocation_requested_bytes="<<rejected.requested
      <<" used_at_rejection="<<rejected.used<<" required_total_at_least_bytes="<<rejected.requiredAtLeast
      <<" heap="<<rejected.heap<<" heap_used_at_rejection="<<rejected.heapUsed<<" heap_limit="<<rejected.heapLimit
      <<" device_used_at_rejection="<<rejected.deviceUsed<<" device_limit="<<b.deviceLimit()
      <<" used_after_cleanup="<<b.used()<<" limit="<<b.limit()<<" reason="<<reason<<'\n';}
-  }
+  }if(work_)break;}
   if(!work_)throw std::runtime_error("GPU_RESIDENT_UNAVAILABLE "+reason);
   {std::lock_guard<std::mutex> lock(allocationsMutex);
   const auto& b=deviceAllocations.at(context_.device).budget;
    std::cerr<<"GPU_RESIDENT_READY channels="<<g.channels<<" samples="<<g.clutterSamples<<" capacity="<<work_->capacity
-    <<" canonical_bytes="<<work_->canonical->bytes<<" used="<<b.used()<<" peak="<<b.peak()<<" limit="<<b.limit()
+    <<" canonical_bytes="<<work_->canonical->bytes
+    <<" canonical_device_bytes="<<(work_->deviceCanonical?work_->deviceCanonical->bytes:0)
+    <<" used="<<b.used()<<" peak="<<b.peak()<<" limit="<<b.limit()
     <<" clutter_scratch_reused_bytes="<<work_->clutter->residentScratchReusedBytes()
     <<" device_used="<<b.deviceUsed()<<" device_peak="<<b.devicePeak()
     <<" device_limit="<<b.deviceLimit()

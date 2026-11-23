@@ -14,7 +14,17 @@ processor executable, config path, and any native library search path must
 resolve to one selected release. An already active peer must use that same
 cohort. Wrapper commands, foreign preload/search paths, and unreviewed
 environment files fail closed with exit 78. Nothing in this check starts,
-stops, or rewrites a service, configuration, or symlink.
+stops, or rewrites a service, configuration, or symlink. Explicit systemd
+`BindPaths`, `BindReadOnlyPaths`, `RootDirectory`, and `RootImage` overrides are
+refused. The running artifact and configuration are also measured through each
+service's process-root namespace, so removing a drop-in without restarting the
+service cannot conceal a surviving code overlay.
+
+For the existing `VECTORWARP_NODE_ROLE=coordinator` role, only the API must run;
+the local processor must remain inactive, including when masked. The complete
+artifact still requires its declared native hashes, and the running API role
+must match its service plan. Coordinator identity is not radar-behavior or
+hardware qualification, and does not satisfy a radar node's soak requirements.
 
 The runtime probe additionally hashes the entire installed tree, config, host
 identity, actual running executables, mapped project DSOs, and native child
@@ -126,7 +136,7 @@ keys and each `qualifications` map must exactly match the reviewed binding:
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "bindingSha256": "SHA256_OF_EXACT_BINDING_FILE_BYTES",
   "policySha256": "SHA256_OF_REVIEWED_EVALUATION_POLICY",
   "evidenceSha256": "SHA256_OF_RETAINED_EVALUATOR_INPUTS_AND_RESULT",
@@ -134,6 +144,13 @@ keys and each `qualifications` map must exactly match the reviewed binding:
   "evaluatedThroughEpoch": 0,
   "nodes": {
     "site-a": {"retiredCpis": 0, "retiredSamples": 0,
+      "checks": {
+        "detections": {"accepted": true, "evidenceSha256": "SHA256_OF_DETECTION_RESULT"},
+        "measurement-backed-track-continuity": {"accepted": true, "evidenceSha256": "SHA256_OF_CONTINUITY_RESULT"},
+        "false-track-controls": {"accepted": true, "evidenceSha256": "SHA256_OF_NEGATIVE_CONTROL_RESULT"},
+        "cpi-deadlines": {"accepted": true, "evidenceSha256": "SHA256_OF_COMPLETE_CPI_DEADLINE_RESULT"},
+        "capture-health": {"accepted": true, "evidenceSha256": "SHA256_OF_CAPTURE_RESULT"}
+      },
       "qualifications": {"radar-behavior": "SHA256_OF_REVIEWED_RADAR_EVIDENCE",
         "physical-gpu": "SHA256_OF_REVIEWED_PHYSICAL_GPU_EVIDENCE"}}
   },
@@ -148,6 +165,14 @@ is an integrity binding, not an evaluator signature or independent proof that
 the policy is scientifically valid. Missing/unavailable evidence, any nonzero
 retirement, or a reported regression prevents release acceptance. A policy and
 running evaluator must exist before starting the release cohort.
+Each node must explicitly pass all five checks with retained, hash-bound results.
+The reviewed policy defines their measurements, thresholds and required exposure;
+inadequate positive or negative exposure is not a pass. CPI deadline evidence must
+cover completed cycles throughout the interval, including between sampler polls;
+sampled `cpi` percentiles or average cadence alone cannot establish that result.
+Schema-1 evaluator receipts lack this coverage contract and cannot qualify a new
+cohort. A false per-check result rejects the cohort even if the aggregate
+`regressionDetected` value is false.
 
 Release approval requires the full 86,400 clean seconds, both startup and steady
 state acceptance, the fresh regression receipt, and successful same-package

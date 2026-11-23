@@ -23,6 +23,7 @@ FAST_CHECKS = (
                                 "-p", "test_canonical_processing_architecture.py")),
     ("ci_contract", ("python3", "test/packaging/test_ci_workflows.py")),
     ("api_contract", ("node", "--test", "api/heimdall-timing.test.js")),
+    ("effective_radar_plan", ("node", "--test", "api/effective-radar-plan.test.js")),
     ("ui_contract", ("node", "test/ui/deployment.test.js")),
 )
 

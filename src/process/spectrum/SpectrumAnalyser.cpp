@@ -74,6 +74,11 @@ void SpectrumAnalyser::process(const std::vector<std::complex<float>>& samples,
   processSamples(samples, output);
 }
 
+void SpectrumAnalyser::process(blah2::iq::SampleView samples,IqData* output)
+{
+  processSamples(samples,output);
+}
+
 template<class Samples>
 void SpectrumAnalyser::processSamples(const Samples& data, IqData* output)
 {

@@ -50,9 +50,9 @@ struct DeviceAllocations {
   struct Entry { uint32_t type; uint64_t bytes; };
   blah2::gpu_memory::AllocationBudget budget;
   std::unordered_map<VkDeviceMemory, Entry> allocations;
-  DeviceAllocations(uint64_t limit, blah2::gpu_memory::Properties properties,
-      bool separateHostHeaps = false)
-    : budget(limit, std::move(properties), separateHostHeaps) {}
+  DeviceAllocations(blah2::gpu_memory::AllocationPolicy policy,
+      blah2::gpu_memory::Properties properties)
+    : budget(policy, std::move(properties)) {}
 };
 std::mutex allocationsMutex;
 std::unordered_map<VkDevice, DeviceAllocations> deviceAllocations;
@@ -108,7 +108,8 @@ static void budgetFreeMemory(VkDevice device, VkDeviceMemory memory,
 
 namespace blah2 {
 namespace {
-gpu_memory::Properties memoryProperties(VkPhysicalDevice physical);
+gpu_memory::Properties memoryProperties(VkPhysicalDevice physical, VkInstance instance = VK_NULL_HANDLE,
+  const std::vector<VkExtensionProperties>& extensions = {});
 class ClutterRejected final : public std::runtime_error {
 public:
   using std::runtime_error::runtime_error;
@@ -263,11 +264,12 @@ struct Context {
       startupTrace("vkCreateDevice begin");
       check(vkCreateDevice(candidate.physical, &info, nullptr, &device), "device initialization");
       {
-        const auto policy = gpu_memory::allocationPolicy(candidate.info.memoryBytes,
+        const auto properties = memoryProperties(candidate.physical, instance->handle, extensions);
+        const auto policy = gpu_memory::allocationPolicy(properties,
           std::getenv("BLAH2_GPU_ALLOCATION_LIMIT_BYTES"));
         std::lock_guard<std::mutex> lock(allocationsMutex);
-        deviceAllocations.try_emplace(device, policy.bytes,
-          memoryProperties(candidate.physical), policy.separateHostHeaps);
+        deviceAllocations.try_emplace(device, policy,
+          properties);
       }
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);
@@ -306,7 +308,7 @@ constexpr const char* memoryFailureAction = "using CPU";
 class ClutterPipeline {
   Context& context_;
   uint32_t samples_, bins_, channels_, length_;
-  std::unique_ptr<Buffer> reference_, surveillance_, estimate_, crosscorrelation_;
+  std::unique_ptr<Buffer> reference_, surveillance_, estimate_;
   std::unique_ptr<Buffer> filterReference_, weights_, filtered_;
   std::unique_ptr<Buffer> input_, correlations_, weightUpload_, output_;
   std::unique_ptr<Plan> referencePlan_, surveillancePlan_, crossPlan_;
@@ -379,13 +381,6 @@ class ClutterPipeline {
   }
 public:
   void replayCheckpoint(clutter_replay::State* state){replay_=state;}
-  static bool twiddleLut() {
-    const char* setting = std::getenv("BLAH2_GPU_CLUTTER_TWIDDLES");
-    const std::string mode = setting ? setting : "lut";
-    if (mode != "lut" && mode != "native")
-      throw std::invalid_argument("BLAH2_GPU_CLUTTER_TWIDDLES must be lut or native");
-    return mode == "lut";
-  }
   static uint32_t filterLength(const GpuGeometry& g) {
     const char* setting = std::getenv("BLAH2_GPU_CLUTTER_PADDING");
     const std::string mode = setting ? setting : "smooth";
@@ -397,20 +392,20 @@ public:
       throw std::invalid_argument("BLAH2_GPU_CLUTTER_PADDING must be smooth or exact");
     return gpu_memory::nextSmooth(uint64_t(g.clutterSamples) + g.clutterBins - 1);
   }
-  static uint64_t requiredBytes(const GpuGeometry& g) {
+  static uint64_t requiredBytes(const GpuGeometry& g, bool lut = true) {
     if (!g.clutterSamples) return 0;
     const uint64_t n = g.clutterSamples, c = g.channels;
     const uint64_t b = g.clutterBins, l = filterLength(g);
     if (!l) return std::numeric_limits<uint64_t>::max();
-    uint64_t elements = 3*n + 5*n*c + l + 2*l*c + b*c + b*(1+c);
+    uint64_t elements = 3*n + 4*n*c + l + 2*l*c + b*c + b*(1+c);
     // Preflight allowance for the six plan tables. Batched transforms share
     // their LUTs. Actual tables, scratch and upload allocations are additionally
     // enforced by budgetAllocateMemory; this estimate is not the final guard.
-    if (twiddleLut()) elements += 3*n + 3*l;
+    if (lut) elements += 3*n + 3*l;
     return elements * sizeof(std::complex<float>);
   }
   ClutterPipeline(Context& context, const GpuGeometry& g,
-      bool allowDirect, bool forceDirect)
+      bool allowDirect, bool forceDirect, bool lut = true)
     : context_(context), samples_(g.clutterSamples), bins_(g.clutterBins),
       channels_(g.channels), length_(filterLength(g)),
       profile_(context.candidate.physical, context.device, context.candidate.queue,
@@ -457,7 +452,6 @@ public:
     }
     startupTrace(direct_ ? "clutter direct mapped device memory selected" :
       "clutter persistent staging selected");
-    crosscorrelation_ = std::make_unique<Buffer>(context, nc*8, device);
     filterReference_ = std::make_unique<Buffer>(context, l*8, device);
     weights_ = std::make_unique<Buffer>(context, lc*8, device);
     filtered_ = std::make_unique<Buffer>(context, lc*8, device);
@@ -466,15 +460,15 @@ public:
     weightUpload_ = std::make_unique<Buffer>(context, uint64_t(bins_)*channels_*8,
       host, coherent);
     solver_ = std::make_unique<clutter_refinement::DenseSolver>(samples_, bins_, channels_);
-    const bool lut = twiddleLut();
     referencePlan_ = std::make_unique<Plan>(context, *reference_, samples_, 1, lut);
     surveillancePlan_ = std::make_unique<Plan>(context, *surveillance_, samples_, channels_, lut);
-    crossPlan_ = std::make_unique<Plan>(context, *crosscorrelation_, samples_, channels_, lut);
+    // Fenced correlations finish before the larger FIR output overwrites them.
+    crossPlan_ = std::make_unique<Plan>(context, *filtered_, samples_, channels_, lut);
     filterReferencePlan_ = std::make_unique<Plan>(context, *filterReference_, length_, 1, lut);
     weightPlan_ = std::make_unique<Plan>(context, *weights_, length_, channels_, lut);
     filteredPlan_ = std::make_unique<Plan>(context, *filtered_, length_, channels_, lut);
     products_ = std::make_unique<Kernel>(context, clutterProductsSource,
-      std::vector<Buffer*>{reference_.get(), surveillance_.get(), crosscorrelation_.get()});
+      std::vector<Buffer*>{reference_.get(), surveillance_.get(), filtered_.get()});
     multiply_ = std::make_unique<Kernel>(context, clutterMultiplySource,
       std::vector<Buffer*>{filterReference_.get(), weights_.get(), filtered_.get()});
     normalize_ = std::make_unique<Kernel>(context, clutterNormalizeSource,
@@ -528,7 +522,7 @@ public:
     for (uint32_t channel = 0; channel < channels_; ++channel) {
       VkBufferCopy copy{uint64_t(channel)*samples_*8,
         uint64_t(bins_)*(1+channel)*8, uint64_t(bins_)*8};
-      vkCmdCopyBuffer(correlate_, crosscorrelation_->handle, correlations_->handle, 1, &copy);
+      vkCmdCopyBuffer(correlate_, filtered_->handle, correlations_->handle, 1, &copy);
     }
     vkCmdPipelineBarrier(correlate_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
       0, 1, &hostRead, 0, nullptr, 0, nullptr);
@@ -779,7 +773,8 @@ public:
 };
 
 class VulkanBackend final : public GpuBackend, public GpuBufferBackend,
-    public GpuClutterBufferBackend, public clutter_replay::Backend {
+    public GpuClutterBufferBackend, public GpuClutterAvailabilityBackend,
+    public clutter_replay::Backend {
   Context context_;
   GpuGeometry geometry_;
   // Destruction order is intentional: plans/kernels, buffers, then context.
@@ -789,6 +784,7 @@ class VulkanBackend final : public GpuBackend, public GpuBufferBackend,
   VkCommandBuffer command_ = VK_NULL_HANDLE;
   bool direct_ = false;
   std::unique_ptr<ClutterPipeline> clutter_;
+  bool clutterTwiddleLut_ = true;
   std::unique_ptr<clutter_replay::State> replayClutter_;
   uint32_t clutterBatchChannels_ = 0;
 public:
@@ -918,26 +914,28 @@ public:
       // Retain the complete ambiguity/IPC frame, but bound clutter's working
       // storage by its channel batch. The allocator still enforces every
       // aggregate/per-heap limit, including VkFFT scratch and lookup tables.
-      for (uint32_t channels = g.channels; channels > 0; --channels) {
+      clutterBatchChannels_ = selectClutterBatch(g.channels,
+        std::getenv("BLAH2_GPU_CLUTTER_TWIDDLES"), [&](uint32_t channels, bool lut) {
         auto batch = g;
         batch.channels = channels;
-        if (ClutterPipeline::requiredBytes(batch) > budget - ambiguityBytes) continue;
+        if (ClutterPipeline::requiredBytes(batch, lut) > budget - ambiguityBytes) return false;
         startupTrace(("clutter pipeline begin batch_channels=" +
-          std::to_string(channels)).c_str());
+          std::to_string(channels) + " twiddles=" + (lut ? "lut" : "native")).c_str());
         try {
           clutter_ = std::make_unique<ClutterPipeline>(context_, batch,
-            direct_, memoryPath == "direct");
-          clutterBatchChannels_ = channels;
+            direct_, memoryPath == "direct", lut);
+          clutterTwiddleLut_ = lut;
           startupTrace(("clutter pipeline complete batch_channels=" +
             std::to_string(channels) + " frame_channels=" +
-            std::to_string(g.channels)).c_str());
-          break;
+            std::to_string(g.channels) + " twiddles=" + (lut ? "lut" : "native")).c_str());
+          return true;
         } catch (const std::exception& error) {
           startupTrace(error.what());
           // Failed construction releases its buffers/plans before retrying a
-          // smaller batch. No frame input or output has been consumed yet.
+          // smaller-batch candidate. No frame has run yet.
+          return false;
         }
-      }
+      });
       if (!clutter_) startupTrace("clutter capacity or initialization unavailable; ambiguity remains available");
     }
     if (std::getenv("BLAH2_GPU_DIAGNOSTICS")) {
@@ -956,7 +954,7 @@ public:
     VkPhysicalDeviceFeatures features{};vkGetPhysicalDeviceFeatures(context_.candidate.physical,&features);
     auto plan=declared;plan.identity=clutter_replay::hash(plan.identity+context_.candidate.info.id+":"+
       std::to_string(context_.candidate.properties.driverVersion)+":"+std::to_string(features.shaderFloat64)+":"+
-      std::to_string(ClutterPipeline::filterLength(geometry_))+":"+std::to_string(ClutterPipeline::twiddleLut()));
+      std::to_string(ClutterPipeline::filterLength(geometry_))+":"+std::to_string(clutterTwiddleLut_));
     replayClutter_=std::make_unique<clutter_replay::State>(std::move(plan),std::move(binding));
     clutter_->replayCheckpoint(replayClutter_.get());
   }
@@ -1002,6 +1000,7 @@ public:
     result.invalidate(0, result.bytes);
     std::memcpy(output, result.mapped, result.bytes);
   }
+  bool clutterAvailable() const override { return bool(clutter_); }
   bool processClutterBuffers(const std::complex<float>* reference, size_t referenceCount,
       const std::complex<float>* surveillance, size_t surveillanceCount,
       std::complex<float>* output, size_t outputCount) override {
@@ -1012,7 +1011,8 @@ public:
         referenceCount != geometry_.clutterSamples)
       throw std::invalid_argument("GPU clutter buffer dimensions changed");
     if (!clutter_) {
-      // The protocol rejection already reports this stage as unavailable.
+      // New workers withhold the capability; retain a safe refusal for direct
+      // callers and older workers that only inspect the buffer interface.
       return false;
     }
     clutter_->endFrame();

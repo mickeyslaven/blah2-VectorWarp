@@ -469,6 +469,7 @@ int runGpuWorker(const GpuFactory& factory) {
     qualification.device(device.id);
     auto* buffers = dynamic_cast<GpuBufferBackend*>(backend.get());
     auto* clutter = dynamic_cast<GpuClutterBufferBackend*>(backend.get());
+    const auto* clutterAvailability = dynamic_cast<GpuClutterAvailabilityBackend*>(backend.get());
     auto* replayClutter = dynamic_cast<clutter_replay::Backend*>(backend.get());
     if(qualification.clutter().active()){
       if(!gpu_artifact_binding::active()||!replayClutter||!clutter)
@@ -478,7 +479,9 @@ int runGpuWorker(const GpuFactory& factory) {
     Message response;
     response.operation = ready;
     response.memoryBytes = device.memoryBytes;
-    if (clutter && layout.clutterReference) response.capabilities |= clutterCapability;
+    if (clutter && layout.clutterReference &&
+        (!clutterAvailability || clutterAvailability->clutterAvailable()))
+      response.capabilities |= clutterCapability;
     std::snprintf(response.id, sizeof(response.id), "%s", device.id.c_str());
     std::snprintf(response.name, sizeof(response.name), "%s", device.name.c_str());
     sendMessage(3, response);

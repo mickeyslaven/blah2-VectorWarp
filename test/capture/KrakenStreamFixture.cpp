@@ -6,7 +6,9 @@
 #include <unistd.h>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <cstdlib>
 #include <future>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +18,18 @@
 #include <rapidjson/document.h>
 #include <rapidjson/istreamwrapper.h>
 #include <thread>
+
+namespace blah2 {
+struct KrakenClipRecorderTestAccess {
+  static void hold(Kraken& source, std::mutex& gate,
+      std::condition_variable& changed, bool& held, bool& release) {
+    std::lock_guard<std::mutex> recorderLock(source.clipRecorder->mutex);
+    std::unique_lock<std::mutex> gateLock(gate);
+    held = true; changed.notify_one();
+    changed.wait(gateLock, [&] { return release; });
+  }
+};
+}
 
 namespace {
 void be(std::vector<uint8_t>& out, uint32_t value) {
@@ -100,13 +114,38 @@ struct Capture {
     return text;
   }
   void length(unsigned count) { for (const auto* buffer : buffers) assert(const_cast<IqData*>(buffer)->get_length() == count); }
-  void wait_recording(const std::string& previous) {
+  void wait_sample_position(uint64_t nextSample) {
     for (unsigned attempt = 0; attempt < 400; ++attempt) {
+      const auto position = source->sample_position();
+      if (position.available && position.nextSample == nextSample) return;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    assert(false && "Kraken sample position did not advance");
+  }
+  void wait_recording(const std::string& previous) {
+    bool resumedInput = false;
+    for (unsigned attempt = 0; attempt < 400; ++attempt) {
+      source->service_recording(); // Model the separate Capture control loop.
       const auto status = source->recording_status();
       if (status.active && status.file != previous && status.samples == 8) return;
+      if (!resumedInput && status.resumePending && status.file != previous) {
+        // The boundary-triggering block arrived before preparation. Its gap
+        // stays explicit; the next actual block owns the new source position.
+        send_bytes(frame(5, 0, 4, 527000000.0F, 16.0F));
+        resumedInput = true;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     assert(false && "Kraken recording did not roll to the new setting epoch");
+  }
+  blah2::IqClipStatus wait_clip(uint64_t revision) {
+    for (unsigned attempt = 0; attempt < 400; ++attempt) {
+      const auto status = source->clip_status();
+      if (status.revision == revision && !status.error.empty()) return status;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    assert(false && "Kraken clip status did not advance");
+    return {};
   }
   ~Capture() {
     source->stop();
@@ -130,6 +169,55 @@ int main() {
     assert(c.finish(false).find("Unsupported Heimdall ingestion") != std::string::npos); c.length(0); }
   { Capture c; c.send_bytes({'x', 'M', 'x'}); c.send_bytes(frame(), true); c.finish(); c.length(8); }
   { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 1)); c.send_bytes(frame(5, 1)); c.finish(); c.length(16); }
+  // Clip retention never blocks ingress. A deliberately held recorder mutex
+  // drops its optional copy, but coherent inference chronology remains exact;
+  // the dropped clip is explicitly invalid rather than spanning a hole.
+  {
+    Capture c;
+    c.send_bytes(timed_frame(0)); c.send_bytes(timed_frame(1));
+    c.wait_sample_position(16);
+    blah2::IqClipRequest request;
+    request.revision = 71; request.requestedEventTimeMs = 1800000000000LL;
+    request.windowStartMs = 1800000000000LL;
+    request.windowEndMs = 1800000000001LL;
+    c.source->request_clip(request);
+    std::mutex gate; std::condition_variable changed;
+    bool held = false, release = false;
+    std::thread holder([&] { blah2::KrakenClipRecorderTestAccess::hold(
+      *c.source, gate, changed, held, release); });
+    {
+      std::unique_lock<std::mutex> lock(gate);
+      assert(changed.wait_for(lock, std::chrono::seconds(2), [&] { return held; }));
+    }
+    c.send_bytes(timed_frame(2)); c.wait_sample_position(24);
+    {
+      std::lock_guard<std::mutex> lock(gate);
+      release = true;
+    }
+    changed.notify_one(); holder.join();
+    c.send_bytes(timed_frame(3)); c.wait_sample_position(32);
+    const auto dropped = c.wait_clip(71);
+    assert(dropped.revision == 71 && dropped.file.empty() &&
+      dropped.error.find("recorder copy dropped") != std::string::npos);
+    c.finish(); c.length(32);
+    assert(c.source->processing_epoch() == 0);
+  }
+  // An actual acquisition gap remains a processing reset and invalidates the
+  // active clip; it cannot be mistaken for optional recorder contention.
+  {
+    Capture c;
+    c.send_bytes(timed_frame(0)); c.send_bytes(timed_frame(1));
+    c.wait_sample_position(16);
+    blah2::IqClipRequest request;
+    request.revision = 72; request.requestedEventTimeMs = 1800000000000LL;
+    request.windowStartMs = 1800000000000LL;
+    request.windowEndMs = 1800000000001LL;
+    c.source->request_clip(request);
+    c.send_bytes(timed_frame(3)); c.finish(); c.length(8);
+    const auto gap = c.source->clip_status();
+    assert(c.source->processing_epoch() == 1 && gap.revision == 72 &&
+      gap.file.empty() && gap.error.find("USB sample continuity changed") != std::string::npos);
+  }
   // A bounded FIFO retirement is a processing epoch boundary. The main
   // consumer can therefore discard any tail it moved before this overflow
   // instead of forming a CPI from samples on opposite sides of the gap.
@@ -184,7 +272,7 @@ int main() {
     c.send_bytes(frame(5, 0, 4, 527000000.0F, 16.0F));
     c.wait_recording(oldPath);
     const auto newPath = c.source->recording_status().file;
-    c.finish(); c.length(8);
+    c.finish(); c.length(16);
     c.source->close_file();
     std::ifstream sidecar(newPath + ".provenance.json"); assert(sidecar);
     rapidjson::IStreamWrapper stream(sidecar); rapidjson::Document provenance;
@@ -192,7 +280,7 @@ int main() {
     const auto& details = provenance["receiverDetails"];
     assert(details["conditioning"]["alreadyAppliedToRecordedIq"].GetBool());
     assert(details["observedFrame"]["perChannelGainDb"][0].GetFloat() == 16.0F);
-    assert(provenance["timing"]["sourceFirstSample"] == "0");
+    assert(provenance["timing"]["sourceFirstSample"] == "8");
     blah2::ReplayOptions options; options.receiver = "Kraken"; options.channels = 5;
     options.sampleRate = 2400000; options.frequency = 527000000;
     bool incomplete = false;

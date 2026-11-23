@@ -91,6 +91,106 @@ TEST_CASE("two-CPI nextafter motion ties retain the first complete mean-power pa
   }
 }
 
+TEST_CASE("borrowed temporal rows preserve exact banks metrics masks and lineage",
+  "[temporal-parallel]")
+{
+  blah2::utility::FixedExecutor executor(3);
+  std::atomic<uint64_t> generation{7};
+  const blah2::integration::EvidenceWorkBudget budget{
+    std::chrono::steady_clock::time_point::max(), nullptr, &executor, &generation, 7};
+  for (const uint32_t depth : {2u, 4u, 8u})
+    for (const bool gated : {false, true}) {
+      if (depth == 2 && gated) continue;
+      const double drift = depth == 2 ? 0 : -.566;
+      const blah2::integration::TemporalEvidence::Config config{
+        depth, 1, 2, drift, gated ? 8u : 0u, gated ? 0u : UINT32_MAX};
+      auto oracleConfig = config;
+      // All-unknown beam labels leave every path compatible but force the
+      // scalar kernel, independently checking the contiguous non-beam path.
+      if (!gated && depth >= 4) { oracleConfig.beamCount = 8; oracleConfig.beamTolerance = 0; }
+      blah2::integration::TemporalEvidence serial(oracleConfig), parallel(config);
+      // Cross multiple bounded tiles and create invalid fractional/beam paths.
+      auto frame = map(73, 257);
+      std::vector<uint32_t> beams(73 * 257);
+      const std::vector<uint32_t> unknownBeams(73 * 257, 0);
+      for (uint64_t sequence = 1; sequence <= depth + 2; ++sequence) {
+        for (uint32_t row = 0; row < 73; ++row)
+          for (uint32_t column = 0; column < 257; ++column) {
+            const auto cell = row * 257 + column;
+            frame.data[row][column] = {sequence == 1 ? 1. :
+              std::ldexp(1 + double((cell * 7 + sequence * 13) % 23) / 23,
+                int(cell % 11) - 5), column % 2 ? -.25 : .25};
+            beams[cell] = (cell + sequence) % 9;
+          }
+        const auto expected = serial.process(frame, 19, sequence, nullptr,
+          gated ? &beams : depth >= 4 ? &unknownBeams : nullptr);
+        const auto actual = parallel.process(frame, 19, sequence, &budget, gated ? &beams : nullptr);
+        REQUIRE(actual.availableCpis == expected.availableCpis);
+        REQUIRE(actual.map->data == expected.map->data);
+        REQUIRE(actual.map->noisePower == expected.map->noisePower);
+        REQUIRE(actual.map->maxPower == expected.map->maxPower);
+        REQUIRE(actual.selectedBank == expected.selectedBank);
+        for (std::size_t index = 0; index < actual.banks.size(); ++index) {
+          const auto& a = actual.banks[index]; const auto& e = expected.banks[index];
+          REQUIRE(a.ready == e.ready);
+          if (!a.ready) continue;
+          REQUIRE(a.detectorPower == e.detectorPower);
+          REQUIRE(a.map->data == e.map->data);
+          REQUIRE(a.map->noisePower == e.map->noisePower);
+          REQUIRE(a.map->maxPower == e.map->maxPower);
+          REQUIRE(a.validCells == e.validCells);
+          REQUIRE(a.window.supportSequences() == e.window.supportSequences());
+          for (std::size_t cell = 0; cell < a.motion.size(); ++cell) {
+            REQUIRE(a.motion[cell].delay == e.motion[cell].delay);
+            REQUIRE(a.motion[cell].doppler == e.motion[cell].doppler);
+          }
+        }
+      }
+      parallel.reset(); serial.reset();
+      REQUIRE(parallel.process(frame, 20, 1, &budget, gated ? &beams : nullptr).availableCpis == 1);
+      REQUIRE_THROWS(parallel.process(frame, 20, 3, &budget, gated ? &beams : nullptr));
+    }
+  auto frame = map(73, 257);
+  blah2::integration::TemporalEvidence cancelled;
+  generation = 8;
+  REQUIRE_THROWS(cancelled.process(frame, 1, 1, &budget));
+  generation = 7;
+  REQUIRE(cancelled.process(frame, 1, 1, &budget).availableCpis == 1);
+  // A wide accepted map cannot acquire a new scratch-size refusal merely
+  // because a worker pool is available. One row falls back to ordered work.
+  auto wide = map(1, 30000);
+  blah2::integration::TemporalEvidence wideSerial({2, 1, 0}), wideParallel({2, 1, 0});
+  for (uint64_t sequence = 1; sequence <= 2; ++sequence) {
+    const auto a = wideParallel.process(wide, 1, sequence, &budget);
+    const auto e = wideSerial.process(wide, 1, sequence);
+    REQUIRE(a.map->data == e.map->data);
+    REQUIRE(a.map->noisePower == e.map->noisePower);
+    REQUIRE(a.banks[0].validCells == e.banks[0].validCells);
+  }
+}
+
+TEST_CASE("production detector integration borrows its bounded executor",
+  "[temporal-parallel]")
+{
+  blah2::utility::FixedExecutor executor(2);
+  const auto motion = track_before_detect::encodeMotionBins(1, 2, true);
+  blah2::detection::DetectorIntegration serial(8, motion, -.566), parallel(8, motion, -.566);
+  for (uint64_t frame = 0; frame < 10; ++frame) {
+    auto expected = std::make_unique<Map<std::complex<double>>>(map(17, 65));
+    for (uint32_t row = 0; row < 17; ++row)
+      for (uint32_t column = 0; column < 65; ++column)
+        expected->data[row][column] = {double(1 + (frame + row * 7 + column * 13) % 23), 0};
+    auto actual = std::make_unique<Map<std::complex<double>>>(*expected);
+    const auto a = parallel.process(actual, 1, frame * 100, (frame + 1) * 100, true, nullptr, &executor);
+    const auto e = serial.process(expected, 1, frame * 100, (frame + 1) * 100, true);
+    REQUIRE(a.availableCpis == e.availableCpis);
+    REQUIRE(a.ready == e.ready);
+    REQUIRE(actual->data == expected->data);
+    REQUIRE(actual->noisePower == expected->noisePower);
+    REQUIRE(a.evidence->selectedBank == e.evidence->selectedBank);
+  }
+}
+
 TEST_CASE("two-CPI detector uses the integrated null at the decision threshold")
 {
   constexpr double pfa = 1e-4;
@@ -302,6 +402,59 @@ TEST_CASE("temporal evidence matches the unconditioned GPU reference contract")
     checkMetrics(*result.map, {});
   }
   }
+}
+
+TEST_CASE("row-local temporal offsets preserve exact scalar powers and lineage")
+{
+  constexpr uint32_t rows = 9, columns = 43;
+  const std::vector<double> axes{-600, -450, -300, -150, 0, 150, 300, 450, 600};
+  // Three live-carrier geometries plus a half-bin rounding boundary. The
+  // scalar oracle still calculates coordinates independently for every cell.
+  for (const auto maximum : {4u, 8u})
+    for (const double drift : {-3072000. / 539000000., -3072000. / 551000000.,
+         -3072000. / 557000000., -.01}) {
+      blah2::integration::TemporalEvidence engine({maximum, 1, 2, drift});
+      for (uint64_t epoch : {11u, 12u}) {
+        engine.reset();
+        std::vector<std::vector<double>> history;
+        for (uint64_t sequence = 1; sequence <= 10; ++sequence) {
+          auto frame = map(rows, columns);
+          frame.doppler.assign(axes.begin(), axes.end());
+          history.insert(history.begin(), std::vector<double>(rows * columns));
+          for (uint32_t row = 0; row < rows; ++row)
+            for (uint32_t column = 0; column < columns; ++column) {
+              const double amplitude = std::ldexp(1 + double(
+                (sequence * 17 + row * 7 + column * 3) % 101) / 101,
+                int((sequence * 13 + row * 5 + column) % 25) - 12);
+              frame.data[row][column] = {amplitude, amplitude / 3};
+              history[0][row * columns + column] = std::norm(frame.data[row][column]);
+            }
+          const auto result = engine.process(frame, epoch, sequence);
+          for (const auto& bank : result.banks) {
+            if (!bank.ready || bank.name == "baseline2") continue;
+            for (uint32_t row = 0; row < rows; ++row)
+              for (uint32_t column = 0; column < columns; ++column) {
+                double best = -1; int bestDelay = 0, bestDoppler = 0;
+                for (int dr = -2; dr <= 2; ++dr)
+                  for (int dc = -1; dc <= 1; ++dc) {
+                    const double power = track_before_detect::pathMean(history,
+                      columns, axes, row, column, bank.depth, dr, dc, drift);
+                    if (power > best) { best = power; bestDelay = dc; bestDoppler = dr; }
+                  }
+                const uint64_t cell = row * columns + column;
+                REQUIRE(bank.detectorPower[cell] == std::max(0., best));
+                const auto lineage = bank.lineageAt(cell);
+                REQUIRE(lineage.depth == (best < 0 ? 0 : bank.depth));
+                if (best < 0) continue;
+                REQUIRE(lineage.epoch == epoch);
+                REQUIRE(lineage.newestSequence == sequence);
+                REQUIRE(lineage.delayMotion == bestDelay);
+                REQUIRE(lineage.dopplerMotion == bestDoppler);
+              }
+          }
+        }
+      }
+    }
 }
 
 TEST_CASE("temporal motion validity excludes partial and empty rows from CFAR",

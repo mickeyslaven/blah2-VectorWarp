@@ -110,7 +110,7 @@
       "variants": ["linux","darwin"],
       "assertions": [
         {"id":"artifact-release-identity.package-members","facet":"positive","outcome":"Build, install and package validation retain the selected backend profile.","file":"test/packaging/test_artifact_plan.py","anchor":"self.assertEqual(value[\"backend\"], backend)"},
-        {"id":"artifact-release-identity.foreign-ci-refusal","facet":"negative","outcome":"CI source, branch, repository and workflow identity mismatches are refused.","file":"test/packaging/test_release_ci.py","anchor":"with self.subTest(change=change), self.assertRaises(ValueError):"},
+        {"id":"artifact-release-identity.foreign-ci-refusal","facet":"negative","outcome":"CI source, branch, repository and workflow identity mismatches are refused.","file":"test/packaging/test_release_ci.py","anchor":"gate.select_run([run(**change)], \"ci.yml\", SOURCE)"},
         {"id":"artifact-release-identity.artifact-identity","facet":"reset_failure","outcome":"Loaded module identity refuses a disk inode replacement.","file":"test/script/test_soak_identity.py","anchor":"with self.assertRaisesRegex(ValueError, \"inode\"):"},
         {"id":"artifact-release-identity.soak-advancement","facet":"cross_adapter","outcome":"The soak evaluator counts advancing CPIs across observations.","file":"test/script/test_two_node_soak.py","anchor":"self.assertEqual(observation[\"advancement\"], 10)"}
       ],
@@ -244,7 +244,7 @@
       },
       "pending": "Review fixtures for an explicit hold-IQ-constant truth-removal comparison; source and API tests are not live/replay false-track qualification.",
       "assertions": [
-        {"id":"evidence-and-truth-isolation.labelled-truth-history","facet":"positive","outcome":"Evidence eligibility retains its explicit cooperative-truth samples.","file":"api/evidence-statistics.test.js","anchor":"assert.equal(result.eligibility_events[0].truth_samples.length, 3);"},
+        {"id":"evidence-and-truth-isolation.labelled-truth-history","facet":"positive","outcome":"Evidence eligibility retains its explicit cooperative-truth samples.","file":"api/evidence-statistics.test.js","anchor":"assert.equal(stats.state.eligibilityEvents[0].truth_samples.length, 3);"},
         {"id":"evidence-and-truth-isolation.positive-only-refusal","facet":"negative","outcome":"Positive-only calibration evidence cannot qualify production activation.","file":"api/manifold-evaluator.test.js","anchor":"assert.equal(result.evaluation.qualified, false, 'positive-only bearing evidence cannot qualify production activation');"},
         {"id":"evidence-and-truth-isolation.failed-write-accounting","facet":"reset_failure","outcome":"An append failure counts the undurable in-flight evidence record as dropped.","file":"api/causal-funnel-recorder.test.js","anchor":"assert.equal(failing.status().dropped, 1, 'the in-flight record is accounted as dropped');"},
         {"id":"evidence-and-truth-isolation.receiver-defaults","facet":"cross_adapter","outcome":"Generated receiver profiles preserve shared radar defaults; this is not a truth-removal comparison.","file":"api/unified-radar-contract.test.js","anchor":"assert.deepStrictEqual(mismatches, [], 'Generated receiver configurations changed the shared radar defaults:\\n' + mismatches.join('\\n'));"}

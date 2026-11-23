@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {JSDOM} = require('./jsdom');
 const {configurationForReceiver} = require('../../api/config-store');
-const {getDeviceProfiles, FIELD_RULES} = require('../../api/config-manager');
+const configManager = require('../../api/config-manager');
+const {getDeviceProfiles, FIELD_RULES} = configManager;
 const {presetRecord} = require('../../html/js/kraken_geometry');
+const capabilityOwner = require.resolve('../../html/js/processing_capabilities');
+assert.ok(require.cache[capabilityOwner],
+  'Validator loads the browser capability owner directly');
 const browserTopology = require('../../html/js/processing_capabilities');
-assert.equal(require('../../api/processing-capabilities'), browserTopology,
-  'Validator and browser share the same topology implementation');
 const profiles = ['Kraken', 'Usrp', 'RspDuo', 'HackRF'];
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 

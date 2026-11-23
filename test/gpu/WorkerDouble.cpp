@@ -32,7 +32,7 @@ public:
     output.assign(output_, reference.front());
   }
 };
-class RawDouble final : public blah2::GpuBackend, public blah2::GpuBufferBackend,
+class RawDouble : public blah2::GpuBackend, public blah2::GpuBufferBackend,
     public blah2::GpuClutterBufferBackend {
   size_t output_, clutterReference_, clutterSurveillance_;
   std::string mode_;
@@ -72,6 +72,15 @@ public:
     return true;
   }
 };
+class CapacityDouble final : public RawDouble, public blah2::GpuClutterAvailabilityBackend {
+public:
+  explicit CapacityDouble(const blah2::GpuGeometry& g) : RawDouble("capacity-clutter", g) {}
+  bool clutterAvailable() const override { return false; }
+  bool processClutterBuffers(const std::complex<float>*, size_t,
+      const std::complex<float>*, size_t, std::complex<float>*, size_t) override {
+    throw std::runtime_error("Unavailable clutter pipeline must not be dispatched");
+  }
+};
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "ok";
   return blah2::runGpuWorker([&](const blah2::GpuGeometry& g, const std::string&) {
@@ -102,6 +111,8 @@ int main(int argc, char** argv) {
     if (mode == "hang-init") for (;;) pause();
     if (mode == "crash-init") raise(SIGSEGV);
     if (mode == "error-init") throw std::runtime_error("Injected initialization failure");
+    if (mode == "capacity-clutter")
+      return std::unique_ptr<blah2::GpuBackend>(std::make_unique<CapacityDouble>(g));
     if (mode == "raw" || mode == "raw-profile" || mode == "hang-clutter" || mode == "reject-clutter")
       return std::unique_ptr<blah2::GpuBackend>(std::make_unique<RawDouble>(mode, g));
     return std::unique_ptr<blah2::GpuBackend>(std::make_unique<Double>(mode, g));

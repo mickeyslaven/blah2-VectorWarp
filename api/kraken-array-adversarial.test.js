@@ -233,11 +233,11 @@ check('current detector and tracker schemas have no bearing or ADS-B input', () 
   const pipeline = fs.readFileSync(path.join(__dirname,
     '../src/process/pipeline/RadarPipeline.h'), 'utf8');
   assert.match(pipeline,
-    /trackProducts\(\*output\.detections, tracker,\s*position\.timestampMs, output\.integration, &detector\);/);
+    /trackProducts\(\*output\.detections, tracker,\s*position\.timestampMs, output\.integration\);/);
   const integration = fs.readFileSync(path.join(__dirname,
     '../src/process/detection/DetectorIntegration.h'), 'utf8');
   assert.match(integration,
-    /return tracker\.process\(&detections, signalTimeMs, guided\);/);
+    /return tracker\.process\(&detections, signalTimeMs\);/);
 });
 
 let failures = 0;

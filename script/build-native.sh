@@ -138,11 +138,8 @@ run mkdir -p "$DEPS_DIR"
 python3 "$ARTIFACT_PLAN" checkout vcpkg "$DEPS_DIR/vcpkg" "${dependency_options[@]}"
 if [[ ! -x $DEPS_DIR/vcpkg/vcpkg ]]; then
   $OFFLINE && die 'vcpkg is not bootstrapped in the offline dependency cache'
-  # The pinned historical wrapper uses `#!/bin/sh -e`, which some current
-  # Fedora execution policies reject when invoked directly.
-  # The pinned vcpkg bootstrap sources predate CMake 4. Scope CMake's official
-  # compatibility floor to this wrapper only; project configuration remains
-  # subject to its own policy declarations.
+  # Invoke the old sh -e wrapper through sh for Fedora. Its CMake floor is
+  # scoped to bootstrap; the project retains its own policy declarations.
   run env CMAKE_POLICY_VERSION_MINIMUM=3.5 \
     /bin/sh "$DEPS_DIR/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 fi
@@ -195,10 +192,8 @@ if [[ -n $vcpkg_compiler_prefix ]]; then
   vcpkg_tool_path="$compiler_alias_dir:$PATH"
 fi
 
-# RapidJSON's fixed 2023 snapshot still declares a pre-3.5 CMake floor. CMake
-# 4 removed that compatibility mode, so scope its official policy floor to the
-# configure process that performs the pinned vcpkg manifest install. The blah2
-# project declares its own newer minimum and is unaffected.
+# CMake 4 needs a compatibility floor for pinned RapidJSON during vcpkg install;
+# blah2 declares its own newer minimum and is unaffected.
 vcpkg_cmake_prefix=(env CMAKE_POLICY_VERSION_MINIMUM=3.5)
 case "$BUILD_ARCH" in
   arm*|aarch64|s390x|ppc64le|riscv*)
@@ -288,6 +283,10 @@ if ! $DRY_RUN; then
   printf 'build_id=%s\nsource_commit=%s\nsource_clean=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
     "$build_id" "$source_commit" "$source_clean" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
+  printf '{"schema":1,"version":"%s","sourceCommit":"%s","package":"native-candidate"}\n' \
+    "$build_id" "$source_commit" >"$ARTIFACT_TMP/BUILD-RECEIPT.json"
+  python3 "$SOURCE_DIR/tools/vectorwarp_soak_identity.py" --print-installed-hashes \
+    --release "$ARTIFACT_TMP" >>"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"
   say "artifact ready: $ARTIFACT"

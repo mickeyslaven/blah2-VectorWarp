@@ -3,6 +3,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <cstdlib>
+#include <unistd.h>
 using namespace blah2::qualification_observer;
 namespace {
 void require(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
@@ -26,6 +28,8 @@ void clutterEvidence(const std::filesystem::path& parent) {
     Observer observer(c,true,true);require(observer.observesClutter(),"Clutter observer was not enabled");
     rejects([&]{observer.clutter(f,captured);});
     auto invalid=f;invalid.channelIds={1,1};rejects([&]{observer.input(invalid,3,4,sample);});
+    invalid=f;invalid.inputSampleInterval=std::array<uint64_t,2>{101,105};
+    rejects([&]{observer.input(invalid,3,4,sample);});
     observer.input(f,3,4,sample);
     Products products;products.rows=1;products.columns=1;products.channels=2;
     products.delayBins={0};products.dopplerHz={0};products.referenceSamples=4;
@@ -44,6 +48,8 @@ void clutterEvidence(const std::filesystem::path& parent) {
     fabricated=captured;fabricated.enabled=false;fabricated.cpuExecuted=false;
     rejects([&]{observer.clutter(f,fabricated);});
     observer.clutter(f,captured);rejects([&]{observer.clutter(f,captured);});
+    invalid=f;invalid.inputSampleInterval=std::array<uint64_t,2>{101,105};
+    rejects([&]{observer.products(invalid,products);});
     observer.products(f,products);
     ++f.sequence;f.captureFirst=104;f.captureEnd=108;observer.input(f,3,4,sample);
     captured.enabled=false;captured.cpuExecuted=false;
@@ -71,12 +77,13 @@ void clutterEvidence(const std::filesystem::path& parent) {
 void fixedClutterEvidence(const std::filesystem::path& parent){
   Config config;config.directory=parent/"fixed-clutter";config.clutter=true;
   std::filesystem::create_directory(config.directory);
-  Frame f;f.sequence=3;f.captureEpoch=9;f.captureFirst=108;f.captureEnd=112;
+  Frame f;f.sequence=3;f.captureEpoch=9;f.captureFirst=106;f.captureEnd=122;
+  f.inputSamplesPerOutput=4;f.inputSampleInterval=std::array<uint64_t,2>{108,124};
   f.frequencyHz=100000000;f.sampleRateHz=1000;f.samplePositionAvailable=true;
   f.channelIds={1};f.referenceChannelIds={0};f.backend="vulkan";
   const auto sample=[](size_t,size_t){return std::complex<double>(1,.25);};
   auto captured=snapshotClutter(4,1,[&](size_t i){return sample(0,i);},sample,true,0,1,"vulkan",true,false);
-  blah2::clutter_replay::Proof proof{{3,9,108,112},true,std::string(64,'a'),std::string(64,'b')};
+  blah2::clutter_replay::Proof proof{{3,9,108,124},true,std::string(64,'a'),std::string(64,'b')};
   captured.checkpointProof=proof.encode();
   {Observer observer(config,true,true);observer.input(f,2,4,sample);
     auto bad=captured;bad.cpuExecuted=true;rejects([&]{observer.clutter(f,bad);});
@@ -90,6 +97,10 @@ void fixedClutterEvidence(const std::filesystem::path& parent){
   std::getline(in,line);std::getline(in,line);rapidjson::Document doc;doc.Parse(line.c_str());
   require(!doc.HasParseError()&&std::string(doc["filter_policy"].GetString())=="fixed-weights"&&
     std::string(doc["checkpoint_proof"].GetString())==proof.encode(),"Actual checkpoint proof/policy was not serialized");
+  require(doc["captureFirst"].GetUint64()==106&&doc["captureEnd"].GetUint64()==122&&
+    std::string(doc["input_lineage"]["firstInputSampleExact"].GetString())=="108"&&
+    std::string(doc["input_lineage"]["endInputSampleExact"].GetString())=="124",
+    "Raw capture and native clutter checkpoint intervals were conflated");
 }
 // Data-only native wire fixtures exercise the production decoder, never a GPU
 // or a claim of physical allocation acceptance.
@@ -250,6 +261,14 @@ int main(){
       ++lines;
     }
     require(lines==4,"Lost or duplicated stage records");
+    const auto overlap=directory/"one-cpi-overlap";std::filesystem::create_directory(overlap);
+    c.directory=overlap;c.maxFrames=2;
+    {Observer observer(c,true,true);
+      auto first=f;first.sequence=10;first.captureFirst=200;first.captureEnd=202;
+      auto next=first;++next.sequence;next.captureFirst=202;next.captureEnd=204;
+      observer.input(first,2,2,sample);observer.input(next,2,2,sample);
+      observer.products(first,p);observer.products(next,p);
+    }
     const auto tiny=directory/"tiny";std::filesystem::create_directory(tiny);c.directory=tiny;c.maxBytes=32;
     {Observer observer(c,true,true);rejects([&]{observer.input(f,2,2,sample);});}
     require(std::filesystem::file_size(tiny/"coherent-observer.jsonl")==0,"Budget overflow published truncated JSON");

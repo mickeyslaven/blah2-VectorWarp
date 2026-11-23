@@ -28,6 +28,22 @@ identity is rejected. Node additions and removals made in Settings take effect
 immediately and are written atomically. No addresses or credentials belong in
 the public application tree.
 
+A portal with no radar processor declares `VECTORWARP_NODE_ROLE=coordinator`
+on its API service. The default role is `radar`. This explicit role is published
+in status/capabilities and retained on discovery; only declared coordinators are
+excluded from radar-node health. An unavailable radar remains degraded, even if
+it has never published a frame. Managed registry entries may declare the same
+`role` for existing coordinators. No host name or receiver type implies a role.
+
+Finalized pass accounting retains a rolling 24-hour summary in the existing
+statistics ledger while keeping only 500 detailed diagnostic rows. The compact
+history has a 32-MiB per-ledger reserve; migration from older truncated ledgers
+or exhaustion of that reserve marks the requested window incomplete until its
+missing interval ages out. Lifetime totals remain independent of this window.
+Federation preserves pass IDs, evaluation policies, timing quality and detector
+run identities, including passes that span restarts. Its operational counts are
+observations, not detector/tracker regression or release acceptance evidence.
+
 The browser talks only to the coordinator API. The proxy accepts GET requests
 for a fixed list of read endpoints, does not follow redirects, and limits
 response size, duration and concurrency. Node and channel choice is per browser

@@ -23,10 +23,10 @@ double median(std::vector<double> values) {
 }
 Acceleration::Acceleration(std::string mode, GpuGeometry geometry,
   uint32_t correlation, uint32_t sampleRate, double middle, std::string device, BackendFactory factory,
-  TimeSource timeSource)
+  TimeSource timeSource, utility::FixedExecutor* executor)
   : geometry_(geometry), correlation_(correlation), sampleRate_(sampleRate), middle_(middle),
     backendFactory_(std::move(factory)), deviceSelector_(std::move(device)),
-    timeSource_(std::move(timeSource)) {
+    timeSource_(std::move(timeSource)), executor_(executor) {
   if (mode != "auto" && mode != "cpu" && mode != "gpu")
     throw std::invalid_argument("Acceleration must be auto, cpu or gpu");
   if (correlation > geometry.range)
@@ -80,6 +80,20 @@ void Acceleration::prepareStartup(
       throw std::runtime_error("Acceleration startup qualification did not complete");
     processFrame(frame);
   }
+}
+void Acceleration::retryClutterQualificationAfterStartup() {
+  if (!gpu_ || !geometry_.clutterSamples || !clutterDisabled_) return;
+  auto* backend = dynamic_cast<GpuClutterFrameBackend*>(gpu_.get());
+  if (!backend || !backend->clutterAvailable()) return;
+  clutterDisabled_ = false;
+  clutterChecks_ = 0;
+  combinedChecks_ = 0;
+  clutterCpuTimes_.clear();
+  clutterGpuTimes_.clear();
+  clutterStatus_.active = "cpu";
+  clutterStatus_.state = "checking";
+  clutterStatus_.reason =
+    "Startup fixture rejected GPU clutter; checking live RF before admission";
 }
 void Acceleration::beginFrame() { recoverWorkerIfPending(); }
 double Acceleration::now_ms() const { return timeSource_ ? timeSource_() : monotonic_ms(); }
@@ -529,31 +543,35 @@ void Acceleration::processInput(
       referenceData = reference_.data();
       surveillanceData = surveillance_.data();
     }
-    // Fill each channel sequentially and zero only its FFT padding. The old
-    // producer zeroed live samples before immediately overwriting them and
-    // interleaved writes across every surveillance channel.
-    auto referenceSample = reference.begin();
-    uint32_t borrowedReferenceIndex = 0;
-    if (borrowed) {
-      const int64_t start = int64_t(borrowedRotation) % borrowedSamples;
-      borrowedReferenceIndex = uint32_t(start < 0 ? start + borrowedSamples : start);
-    }
-    for (uint32_t d = 0; d < geometry_.doppler; ++d) {
-      const size_t offset = size_t(d) * geometry_.range;
-      for (uint32_t r = 0; r < correlation_; ++r) {
-        const size_t sample = size_t(d) * correlation_ + r;
-        auto value = borrowed ? borrowedReference[borrowedReferenceIndex] :
-          *referenceSample++;
-        if (borrowed && ++borrowedReferenceIndex == borrowedSamples)
-          borrowedReferenceIndex = 0;
-        if (middle_ != 0)
-          value *= std::polar(1.0, 2 * std::acos(-1.0) * middle_ * sample / sampleRate_);
-        referenceData[offset + r] = value;
+    // Reference and surveillance slices have disjoint destinations. Pack them
+    // concurrently through the existing bounded process pool; this shortens
+    // the host-to-GPU critical path without changing sample order or values.
+    const auto pack = [&](size_t job) {
+      if (job == 0) {
+        auto referenceSample = reference.begin();
+        uint32_t borrowedReferenceIndex = 0;
+        if (borrowed) {
+          const int64_t start = int64_t(borrowedRotation) % borrowedSamples;
+          borrowedReferenceIndex = uint32_t(start < 0 ? start + borrowedSamples : start);
+        }
+        for (uint32_t d = 0; d < geometry_.doppler; ++d) {
+          const size_t offset = size_t(d) * geometry_.range;
+          for (uint32_t r = 0; r < correlation_; ++r) {
+            const size_t sample = size_t(d) * correlation_ + r;
+            auto value = borrowed ? borrowedReference[borrowedReferenceIndex] :
+              *referenceSample++;
+            if (borrowed && ++borrowedReferenceIndex == borrowedSamples)
+              borrowedReferenceIndex = 0;
+            if (middle_ != 0)
+              value *= std::polar(1.0, 2 * std::acos(-1.0) * middle_ * sample / sampleRate_);
+            referenceData[offset + r] = value;
+          }
+          std::fill(referenceData + offset + correlation_,
+            referenceData + offset + geometry_.range, std::complex<float>{});
+        }
+        return;
       }
-      std::fill(referenceData + offset + correlation_,
-        referenceData + offset + geometry_.range, std::complex<float>{});
-    }
-    for (size_t channel = 0; channel < surveillance.size(); ++channel) {
+      const size_t channel = job - 1;
       auto* destination = surveillanceData + channel * rangeElements;
       if (borrowed) {
         const auto* source = borrowedSurveillance[channel];
@@ -573,7 +591,10 @@ void Acceleration::processInput(
             destination + offset + geometry_.range, std::complex<float>{});
         }
       }
-    }
+    };
+    const size_t packingJobs = surveillance.size() + 1;
+    if (executor_ && packingJobs > 1) executor_->parallel_for(packingJobs, pack);
+    else for (size_t job = 0; job < packingJobs; ++job) pack(job);
     const std::complex<float>* outputData;
     size_t outputCount;
     if (frameBackend) {
@@ -595,8 +616,11 @@ void Acceleration::processInput(
           return std::isfinite(value.real()) && std::isfinite(value.imag());
         })) throw std::runtime_error("GPU returned invalid radar data; using CPU");
     // Include conversion into the normal map representation in the comparison.
-    for (size_t channel = 0; channel < cpu.size(); ++channel)
+    const auto import = [&](size_t channel) {
       cpu[channel]->import_gpu(outputData + channel * perChannel);
+    };
+    if (executor_ && cpu.size() > 1) executor_->parallel_for(cpu.size(), import);
+    else for (size_t channel = 0; channel < cpu.size(); ++channel) import(channel);
     const double gpuMs = now_ms() - gpuStart;
     if (combinedPending_) {
       if (cpuClutter_.size() != surveillance.size())

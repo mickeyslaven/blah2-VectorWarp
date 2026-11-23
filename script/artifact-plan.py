@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""Shared artifact contract for native builders, installers and CI staging.
-
-Platform adapters own tools/SDKs/signing/service activation, not inventories.
-Historical native manifests are read only at the explicit install boundary.
-"""
+"""Canonical artifacts; legacy install only."""
 import argparse
 import fnmatch
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -18,6 +14,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = json.loads((ROOT / "packaging/artifact-plan.json").read_text())
+IDENTITY = runpy.run_path(str(ROOT / "tools/vectorwarp_soak_identity.py"))
 
 
 def key_values(path):
@@ -112,10 +109,8 @@ def validate(root, level, backend=None, test_only=False):
         if not re.fullmatch(r"[A-Za-z0-9._:-]+", fields.get("build_id", "")):
             raise ValueError("artifact has an invalid build_id")
         marked = fields.get("test_only", "false")
-        if backend == "open-test" and marked != "true":
-            raise ValueError("open-test artifacts must be explicitly marked test-only")
         if marked not in ("true", "false") or (marked == "true") != (backend == "open-test"):
-            raise ValueError("only open-test artifacts may be marked test-only")
+            raise ValueError("only open-test artifacts must be explicitly marked test-only")
         raw = fields.get("compiled_receivers")
         if raw is None:
             # Existing installed kraken/all artifacts predate receiver manifests.
@@ -144,6 +139,15 @@ def validate(root, level, backend=None, test_only=False):
         if backend != ("open-test" if test_only else "all") or fields.get("gpu") != "AUTO":
             raise ValueError("published packages require the unified receiver and CPU plus Vulkan AUTO build")
         require(root, PLAN["required"]["package"])
+        try:
+            receipt = json.loads((root / "BUILD-RECEIPT.json").read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError("artifact has an invalid build receipt") from error
+        if set(receipt) != {"schema", "version", "sourceCommit", "package"} or \
+           receipt.get("schema") != 1 or receipt.get("version") != fields.get("build_id") or \
+           receipt.get("sourceCommit") != fields.get("source_commit") or \
+           receipt.get("package") != "native-candidate":
+            raise ValueError("artifact build receipt disagrees with its immutable manifest")
         require(root, ["bin/blah2-gpu-worker", "libexec/vectorwarp", "libexec/vectorwarp-quiesce",
                        "libexec/vectorwarp-build-kraken.py"], executable=True)
         for notice in PLAN["notices"]:
@@ -154,6 +158,9 @@ def validate(root, level, backend=None, test_only=False):
             if any(fnmatch.fnmatch(path.name.lower(), pattern)
                    for pattern in ("*libsdrplay*", "sdrplay_api*.h", "sdrplay*.run")):
                 raise ValueError("release artifact must not contain the SDRplay vendor SDK or runtime")
+    if level != "build":
+        hashes = IDENTITY["check_declared_hashes"](root.resolve(), allow_legacy=level == "install")
+        fields["artifact_hash_provenance"] = "installed-byte-pinned" if hashes else "legacy-unpinned"
     return fields
 
 
@@ -167,11 +174,7 @@ def native_package(args):
         archive = directory / (name + ".tar.xz")
         subprocess.run(["curl", "--fail", "--location", "--proto", "=https", "--tlsv1.2",
                         pins["NODE_BASE_URL"] + "/" + archive.name, "--output", str(archive)], check=True)
-        digest = hashlib.sha256()
-        with archive.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(block)
-        if digest.hexdigest() != pins[f"NODE_{args.node_arch.upper()}_SHA256"]:
+        if IDENTITY["file_hash"](archive) != pins[f"NODE_{args.node_arch.upper()}_SHA256"]:
             raise ValueError("downloaded Node archive differs from reviewed pin")
         subprocess.run(["tar", "-C", temporary, "-xf", str(archive)], check=True)
         node = directory / name
@@ -203,8 +206,7 @@ def stage(source, output, platform):
         if any(path.is_symlink() for path in (output, destination, *destination.parents)):
             raise ValueError("artifact staging destination must not follow symlinks")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        # One bounded transactional copy for each owned member, preserving old
-        # macOS output on failure. Linux's outer transaction owns whole cohorts.
+        # macOS members roll back individually; Linux owns the outer cohort.
         temporary = Path(tempfile.mkdtemp(prefix=".artifact-", dir=destination.parent))
         staged, previous = temporary / "next", temporary / "previous"
         try:
@@ -227,8 +229,7 @@ def stage(source, output, platform):
                     previous.rename(destination)
                 raise
         finally:
-            # If restoring the old member also fails, retain its only copy for
-            # recovery instead of letting cleanup erase it.
+            # Preserve the old member if both publication and restoration fail.
             if not previous.exists() or destination.exists():
                 shutil.rmtree(temporary)
 

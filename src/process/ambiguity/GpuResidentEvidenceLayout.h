@@ -13,7 +13,7 @@ constexpr size_t times=1536;
 constexpr size_t shape=1600;
 }
 namespace prepared {
-constexpr size_t bytes=61888;
+constexpr size_t bytes=62224;
 constexpr size_t header=0;
 constexpr size_t allocation=256;
 constexpr size_t cpuProof=1088;
@@ -21,12 +21,13 @@ constexpr size_t nativeReference=1408;
 constexpr size_t residentFinalStatus=1536;
 constexpr size_t postprocessStatus=1600;
 constexpr size_t trackerPreparedStatus=1728;
-constexpr size_t times=1984;
-constexpr size_t nativeBatches=2112;
-constexpr size_t hostSummary=4160;
-constexpr size_t hostIntervals=4288;
-constexpr size_t submitThreads=53440;
-constexpr size_t submitContext=61632;
+constexpr size_t trackerDiagnostics=2000,trackerDiagnosticsCapacity=320;
+constexpr size_t times=2320;
+constexpr size_t nativeBatches=2448;
+constexpr size_t hostSummary=4496;
+constexpr size_t hostIntervals=4624;
+constexpr size_t submitThreads=53776;
+constexpr size_t submitContext=61968;
 }
 namespace control {
 constexpr size_t bytes=512;
@@ -35,5 +36,6 @@ namespace device {
 constexpr size_t bytes=512;
 }
 inline constexpr const char* labels[]={nullptr,"captured.upload","captured.submit","captured.status_outputs","captured.commit","captured.query_log","supplied.prepare","radar.upload","radar.native_reference","radar.pack","radar.native_batch","radar.subtract_pack","radar.filtered_tail_copy","radar.batch_query_log","radar.ambiguity_postprocess_submit","radar.map_status_copy","radar.tracker_prepare","radar.tracker_copy","radar.postprocess_copy","radar.postprocess_query_log","radar.end_frame","radar.result_query_log","vkQueueSubmit","vkWaitForFences","vkResetFences","query.read"};
-inline constexpr uint8_t schemaHash[]={0x86,0xbe,0x3f,0x7d,0x5e,0xdf,0xac,0x1a,0x94,0x54,0x2e,0xf3,0x5a,0xd0,0x24,0x41,0xaf,0xb1,0x5d,0xfe,0x1d,0x06,0xcf,0xbc,0x8c,0x2b,0xbf,0x77,0xa9,0xc3,0xdb,0x25};
+// SHA-256 of the ABI18 evidence layout identity (including canonical tracker v2).
+inline constexpr uint8_t schemaHash[]={0xf4,0x0f,0x55,0x37,0xc9,0x9d,0x4d,0x78,0x16,0x19,0x5a,0x87,0x84,0x31,0x17,0x2e,0xbc,0x46,0x7f,0x97,0x72,0x54,0xbe,0x9d,0x8e,0xd9,0x90,0x91,0x48,0xa2,0xb6,0xf7};
 }

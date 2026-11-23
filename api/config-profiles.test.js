@@ -50,6 +50,8 @@ for (const type of ['Kraken', 'Usrp', 'RspDuo', 'HackRF'])
       profiles.applyWeakTargetMode(config, depth === 4 ? 'four' : 'eight');
       Object.assign(config.process.tracker.initiate, {M: 4, N: 1 + depth * 3});
       config.process.tracker.delete = depth - 1;
+      assert.equal(config.process.tracker.initiate.min_snr_db, 5,
+        `${type} ${acceleration} depth-${depth} balanced temporal birth threshold`);
       const backend = {stages: {resident: {selectable: acceleration === 'gpu-resident'}}};
       const check = expected => {
         const available = processingControlCapabilities(config, backend);
@@ -70,6 +72,8 @@ for (const filename of ['config.yml', 'HackRF', 'Kraken',
   assert.equal(shipped.process.tracker.profile, 'balanced', `${filename} tracker profile`);
   assert.deepEqual([shipped.process.tracker.initiate.M, shipped.process.tracker.initiate.N],
     [3, 6], `${filename} balanced confirmation`);
+  assert.equal(shipped.process.tracker.initiate.min_snr_db, 5,
+    `${filename} balanced tracker birth threshold`);
 }
 
 {
