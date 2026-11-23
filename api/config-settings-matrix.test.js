@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const yaml = require('js-yaml');
-const {FIELD_RULES, validateConfig, getDeviceProfiles} = require('./config-manager');
+const {FIELD_RULES, validateConfig, getDeviceProfiles, effectiveRadarPlan} = require('./config-manager');
 const {readConfig, saveConfig, configurationForReceiver, setupDefaults} = require('./config-store');
 // The canonical field contract must load without Node APIs and serialize to
 // exactly the same browser projection; no generated checked-in schema copy.
@@ -59,6 +59,23 @@ function validDifferent(key, current, rule) {
   return undefined;
 }
 try {
+  for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF']) {
+    const source = receiverConfig(type), plan = effectiveRadarPlan(source).semantic_sha256;
+    const filename = path.join(directory, `display-${type}.yml`);
+    fs.writeFileSync(filename, yaml.dump(source));
+    assert.equal(source.display.max_hold_decay_db_per_second, 1);
+    for (const rate of [0, .001, 20]) {
+      const candidate = clone(source); candidate.display.max_hold_decay_db_per_second = rate;
+      assert.equal(validateConfig(candidate, source).valid, true, `${type}: display rate ${rate}`);
+      saveConfig(filename, candidate, readConfig(filename).revision);
+      assert.deepEqual(readConfig(filename).config, candidate, `${type}: display round trip`);
+      assert.equal(effectiveRadarPlan(candidate).semantic_sha256, plan, 'Display cannot change radar math');
+    }
+    delete source.display;
+    fs.writeFileSync(filename, yaml.dump(source));
+    assert.equal(readConfig(filename).config.display.max_hold_decay_db_per_second, 1,
+      'Existing installations receive the same canonical display default');
+  }
   // Upgrade-only flags are covered by tracker-publication.test.js retirement tests.
   const covered = new Set();
   for (const name of ['HackRF', 'Usrp', 'Kraken']) {

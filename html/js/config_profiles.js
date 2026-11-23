@@ -8,6 +8,20 @@
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const ensure = (parent, key) => object(parent[key]) ? parent[key] : (parent[key] = {});
 
+  function serializeConfig(value) {
+    if (Array.isArray(value)) return `[${value.map(serializeConfig).join(',')}]`;
+    if (object(value))
+      return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${serializeConfig(value[key])}`).join(',')}}`;
+    return JSON.stringify(value);
+  }
+
+  function displayOnlyChange(before, after) {
+    if (!before || !after) return false;
+    const {display: previous, ...oldConfig} = before, {display: next, ...newConfig} = after;
+    return serializeConfig(previous) !== serializeConfig(next) &&
+      serializeConfig(oldConfig) === serializeConfig(newConfig);
+  }
+
   function scaleDelayBin(bin, sampleRate, referenceRate, roundUp) {
     if (!Number.isInteger(bin) || bin < -2147483648 || bin > 2147483647 ||
         !Number.isInteger(sampleRate) || sampleRate < 1 || sampleRate > 4294967295 ||
@@ -377,7 +391,7 @@
     return config;
   }
 
-  return {scaleDelayBin, effectiveDelayConfig, legacyDelayReferenceRate,
+  return {serializeConfig, displayOnlyChange, scaleDelayBin, effectiveDelayConfig, legacyDelayReferenceRate,
     detectionProfiles, trackingProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
     detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode,
     temporalConfirmationErrors, temporalConfirmationRequirements,

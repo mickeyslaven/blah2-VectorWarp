@@ -8,6 +8,14 @@ const {processingControlCapabilities} = require('../html/js/config_ui');
 const {configurationForReceiver, setupDefaults} = require('./config-store');
 const source = configurationForReceiver('Kraken');
 const clone = value => JSON.parse(JSON.stringify(value));
+const displayChange = clone(source);
+displayChange.display.max_hold_decay_db_per_second = .001;
+assert.equal(profiles.displayOnlyChange(source, displayChange), true);
+assert.equal(profiles.displayOnlyChange(source, JSON.parse(profiles.serializeConfig(displayChange))), true,
+  'Configuration key order cannot change display-only save classification');
+assert.equal(profiles.displayOnlyChange(source, clone(source)), false);
+displayChange.process.data.cpi += .1;
+assert.equal(profiles.displayOnlyChange(source, displayChange), false, 'Mixed radar edits require their normal apply path');
 const configured = () => {
   const config = clone(source);
   config.capture.device.channel_count = 5;

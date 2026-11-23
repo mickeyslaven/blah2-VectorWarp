@@ -65,10 +65,11 @@ def main():
         config_file = work / 'config.json'
         recording = work / 'synthetic.blah2iq'
         fixture.write_blah2iq(recording, 2, 2000000, 204640000, frames=5)
-        reservations = [socket.socket() for _ in range(8)]
+        port_names = ['api', *fixture.PORT_NAMES, 'config']
+        reservations = [socket.socket() for _ in port_names]
         for listener in reservations:
             listener.bind(('127.0.0.1', 0))
-        ports = dict(zip(['api', *fixture.PORT_NAMES, 'config'], [s.getsockname()[1] for s in reservations]))
+        ports = dict(zip(port_names, [s.getsockname()[1] for s in reservations]))
         for listener in reservations:
             listener.close()
         config = fixture.config('Usrp', 2, recording, ports['api'],

@@ -4,8 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../../html');
 const version = 'ui-consistency-32';
-const assetVersions = {'insights.js': 'stats-policy-34', 'common.js': 'ui-consistency-34', 'blah2.css': 'ui-consistency-35',
-  'plot_timing.js': 'ui-consistency-35', 'plot_spectrum.js': 'ui-consistency-35', 'consolidated_views.js': 'ui-consistency-35',
+const assetVersions = {'insights.js': 'stats-policy-34', 'common.js': 'ui-consistency-34', 'blah2.css': 'ui-consistency-36',
+  'plot_timing.js': 'ui-consistency-35', 'plot_spectrum.js': 'ui-consistency-35', 'consolidated_views.js': 'ui-consistency-36',
+  'plot_map.js': 'ui-consistency-36', 'config_ui.js': 'ui-consistency-36', 'config_profiles.js': 'ui-consistency-36',
   'measured_track_coverage.js': 'ui-consistency-34',
   'fusion_aircraft.js': 'ui-consistency-33'};
 // Changing a dynamic dependency also changes the loader URL at every entry point.

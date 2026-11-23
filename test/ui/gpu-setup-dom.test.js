@@ -14,6 +14,7 @@ let state = {radar: 'receiving', configRevision: 'one', loadedRevision: 'one', e
 window.liveApiUrl = value => value;
 window.fetch = async () => ({ok: true, json: async () => state});
 window.fetchStatusResource = (url, options) => window.fetch(url, options);
+window.eval(fs.readFileSync(path.resolve(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.resolve(__dirname, '../../html/js/config_ui.js'), 'utf8'));
 (async () => {
   await window.refreshConfigDiagnostics();

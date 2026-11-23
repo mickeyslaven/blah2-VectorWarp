@@ -16,7 +16,7 @@ const selectedRoutes=process.env.VECTORWARP_LAYOUT_ROUTES?JSON.parse(process.env
 // Exercise the shipped settings schema, including capability-disabled and
 // experimental fields, rather than a shorter hand-maintained configuration.
 const {configurationForReceiver} = require('../../api/config-store');
-const {getDeviceProfiles, FIELD_RULES} = require('../../api/config-manager');
+const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/config-manager');
 const config = configurationForReceiver('Kraken');
 config.capture.fc = 509e6;
 config.process.performance.acceleration = 'cpu';
@@ -40,12 +40,16 @@ function fixture(url) {
       process.env.VECTORWARP_LAYOUT_FIXTURE === 'statistics-single-kiosk');
     if (result !== undefined) return result;
   }
-  const timestamp = Date.now();
+  const timestamp = Number(url.searchParams.get('frame_timestamp')) || Date.now();
   return {
     '/api/config':config, '/api/runtime/config':config,
     '/api/config/capabilities':{editable:true,restartAvailable:false,
       configRevision:'layout-fixture',deviceProfiles:getDeviceProfiles(),fieldRules:FIELD_RULES},
     '/api/system/status':{serverId:'layout-fixture',radar:'receiving',adsb:'receiving',adsbEnabled:true},
+    '/api/map':{timestamp, delay:Array.from({length:32},(_,i)=>i),
+      doppler:Array.from({length:24},(_,i)=>i*10-120), maxPower:30,
+      data:Array.from({length:24},(_,r)=>Array.from({length:32},(_,c)=>
+        3+27*Math.exp(-((r-15)**2+(c-14)**2)/3)))},
     '/capture/status':{supported:false,available:false,recording:false},
     '/api/federation/nodes':{nodes:[{id:'local',label:'Layout fixture',local:true}]},
     '/api/timing':{timestamp,nCpi:10,uptime_s:50,cpi_data_ms:500,cpi_hop_ms:500,
@@ -76,6 +80,11 @@ function fixture(url) {
 const server = http.createServer((request,response)=>{
   const url = new URL(request.url,'http://127.0.0.1');
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/capture/')) {
+    if(request.method==='POST'&&url.pathname==='/api/config/validate') {
+      let body='';request.on('data',chunk=>body+=chunk);
+      request.on('end',()=>{response.setHeader('Content-Type','application/json');
+        response.end(JSON.stringify(validateConfig(JSON.parse(body),config)));});return;
+    }
     if(request.method!=='GET') {
       response.writeHead(405,{'Content-Type':'application/json'});
       response.end(JSON.stringify({error:'Read-only layout fixture'}));return;
@@ -261,6 +270,14 @@ async function connect(endpoint) {
       for(const [width,height] of [[320,844],[390,844],[720,1280],[768,1024],[1440,900],[1080,1920]]){
         await client.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:Number(process.env.VECTORWARP_LAYOUT_DPR)||1,mobile:false});
         await evaluate('new Promise(resolve=>setTimeout(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)),150))');
+        if(route==='/display/signal/?view=maxhold'&&width<=600) {
+          const plot=await evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
+            const plot=document.querySelector('#data'),size=plot?._fullLayout?._size;
+            if(plot?.data?.[0]?.type==='heatmap'&&size?.w>innerWidth*.55)resolve({width:size.w,left:size.l,right:size.r});
+            else if(Date.now()-start>10000)reject(new Error('Compact max-hold plot is too narrow: '+JSON.stringify(size)));
+            else setTimeout(check,100);};check();})`);
+          assert.ok(plot.left<=50&&plot.right<=20,'Mobile map keeps compact margins after redraw');
+        }
         await record(route);
         if(process.env.VECTORWARP_LAYOUT_SCREENSHOT && width===720 && new URL(route,'http://fixture').searchParams.get('distance_view')==='1') {
           const screenshot=await client.send('Page.captureScreenshot',{format:'png'});
@@ -273,6 +290,23 @@ async function connect(endpoint) {
               document.querySelectorAll('.config-tab-panels [role="tabpanel"]:not([hidden]) details').forEach(item=>item.open=true);`);
             await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
             await record(route,`settings:${tab}`);
+            if(tab==='process') {
+              const decay=await evaluate(`(()=>{const field=document.querySelector('[data-path="display.max_hold_decay_db_per_second"]');
+                const input=field.querySelector('input');field.scrollIntoView({block:'center'});
+                const original=input.value,valid=[0,.001,20].every(value=>{input.value=value;return input.checkValidity();});
+                const refused=[-.001,20.001].every(value=>{input.value=value;return !input.checkValidity();});input.value=original;
+                const box=field.getBoundingClientRect(),control=input.getBoundingClientRect();
+                return {value:original,valid,refused,disabled:input.disabled,technical:!!field.closest('.settings-technical'),
+                  label:input.getAttribute('aria-label'),clipped:box.left<0||box.right>innerWidth||control.left<box.left||control.right>box.right};})()`);
+              assert.deepEqual(decay,{value:'1',valid:true,refused:true,disabled:false,technical:false,
+                label:'Max-hold decay (0 holds)',clipped:false});
+              report.checks.at(-1).maxHoldDecay=decay;
+              if(process.env.VECTORWARP_LAYOUT_SCREENSHOTS&&[390,1440].includes(width)) {
+                const shot=await client.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+                fs.writeFileSync(path.join(process.env.VECTORWARP_LAYOUT_SCREENSHOTS,`settings-maxhold-${width}.png`),Buffer.from(shot.data,'base64'));
+              }
+              await evaluate('window.scrollTo(0,0)');
+            }
           }
         }
         if(new URL(route,'http://fixture').searchParams.get('setup')==='1') {
@@ -305,7 +339,8 @@ async function connect(endpoint) {
     console.log(`${selectedRoutes.length} canonical/query views and ${report.checks.length} viewport/state checks passed.`);
   }finally{
     if(process.env.VECTORWARP_LAYOUT_REPORT)fs.writeFileSync(process.env.VECTORWARP_LAYOUT_REPORT,JSON.stringify(report,null,2));
-    client?.socket.close();browser?.kill('SIGTERM');
+    await client?.send('Browser.close').catch(()=>browser?.kill('SIGTERM'));
+    client?.socket.close();
     if(browser&&browser.exitCode===null)await Promise.race([once(browser,'exit'),new Promise(resolve=>setTimeout(resolve,3000))]);
     await new Promise(resolve=>server.close(resolve));
     fs.rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:150});

@@ -10,7 +10,7 @@ const dom = new JSDOM('<!doctype html><body></body>', {
 });
 const window = dom.window;
 window.KrakenGeometry = {};
-window.VectorWarpConfigProfiles = {};
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
 
 const tabs = window.document.createElement('div');

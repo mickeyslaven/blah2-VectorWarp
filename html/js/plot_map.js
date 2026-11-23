@@ -110,7 +110,7 @@ var urlDetection = null;
 var urlTracker = null;
 var urlAdsbData = null;
 var urlRemoteIdData = liveApiUrl(radarPresentationUrl('/api/remote-id/delay-doppler?overlay=1'));
-var maxHoldGrid = null;
+var maxHoldState = null;
 
 function finiteGridMaximum(grid, fallback = 0) {
   let maximum = Number.NEGATIVE_INFINITY;
@@ -124,19 +124,28 @@ function finiteGridMaximum(grid, fallback = 0) {
   return Number.isFinite(maximum) ? maximum : fallback;
 }
 
-function applyClientMaxHold(frame) {
+function applyClientMaxHold(frame, display, now = performance.now()) {
   if (typeof window === 'undefined' || window.vectorwarpMapMode !== 'maxhold' ||
-      !Array.isArray(frame?.data)) return frame;
-  const sameShape = Array.isArray(maxHoldGrid) && maxHoldGrid.length === frame.data.length &&
-    maxHoldGrid.every((row, index) => Array.isArray(row) && row.length === frame.data[index]?.length);
-  if (!sameShape) maxHoldGrid = frame.data.map(row => row.slice());
-  else maxHoldGrid = frame.data.map((row, rowIndex) => row.map((value, columnIndex) =>
-    Math.max(Number(value), Number(maxHoldGrid[rowIndex][columnIndex]) * .98)));
+      !Array.isArray(frame?.data)) { maxHoldState = null; return frame; }
+  const axes = JSON.stringify([frame.delay, frame.doppler]);
+  const previous = maxHoldState;
+  const timestamp = Number(frame.timestamp);
+  const continuing = previous && previous.axes === axes && now >= previous.at &&
+    !(timestamp < previous.timestamp) && previous.grid.length === frame.data.length &&
+    previous.grid.every((row, index) => row.length === frame.data[index]?.length);
+  const rate = display?.max_hold_decay_db_per_second;
+  const decay = continuing ? (typeof rate === 'number' && Number.isFinite(rate) &&
+    rate >= 0 && rate <= 20 ? rate : 1) * (now - previous.at) / 1000 : 0;
+  // Published map cells are dB: subtract a wall-time rate, including below zero.
+  // A monotonic clock keeps the fade independent of frame cadence and CPI.
+  const grid = frame.data.map((row, r) => row.map((value, c) => continuing ?
+    Math.max(Number(value), previous.grid[r][c] - decay) : Number(value)));
+  maxHoldState = {grid, axes, at: now, timestamp};
   // A full desktop map contains more than 300k cells. Spreading that array
   // into Math.max exceeds JavaScript's argument limit even though the exact
   // same selected-lane frame works after mobile downsampling.
-  return {...frame, data: maxHoldGrid,
-    maxPower: finiteGridMaximum(maxHoldGrid, Number(frame.maxPower) || 0)};
+  return {...frame, data: grid,
+    maxPower: finiteGridMaximum(grid, Number(frame.maxPower) || 0)};
 }
 
 // setup plotly
@@ -281,7 +290,7 @@ if (typeof window !== 'undefined' && window.addEventListener) {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
       plotPresentation = currentDelayDopplerPresentation();
-      Plotly.relayout('data', {
+      const changes = {
         margin: plotPresentation.margin,
         'font.size': plotPresentation.fontSize,
         'xaxis.title.text': plotPresentation.xTitle,
@@ -292,7 +301,12 @@ if (typeof window !== 'undefined' && window.addEventListener) {
         'yaxis.title.font.size': plotPresentation.axisTitleSize,
         'yaxis.tickfont.size': plotPresentation.tickSize,
         'yaxis.nticks': plotPresentation.tickCount || undefined
-      });
+      };
+      for (const [key, value] of Object.entries(changes)) {
+        const parts = key.split('.'), leaf = parts.pop();
+        parts.reduce((target, part) => target[part], layout)[leaf] = value;
+      }
+      Plotly.relayout('data', changes);
       Plotly.restyle('data', {colorbar: plotPresentation.colorbar}, [0]);
       Plotly.restyle('data', {showscale: plotPresentation.showScale}, [0]);
     }, 100);
@@ -304,7 +318,6 @@ async function renderRadarMap(data) {
   const frameChannel = selectedIlluminator;
   const atomicFrame = data?.schema === 'vectorwarp-radar-display-frame-v1' ? data : null;
   if (atomicFrame) data = atomicFrame.map;
-  data = applyClientMaxHold(data);
   const runningConfig = selectedIlluminatorConfig(await getRadarRuntimeConfig());
   const detectionEnabled = runningConfig.process?.detection?.enable !== false;
   const visible = overlayVisibility();
@@ -337,6 +350,7 @@ async function renderRadarMap(data) {
   // during a transient request and lets startRadarPlot retry this timestamp.
   if (trackerFrame === null ||
       (detectionEnabled && visible.detections && detected === null)) return false;
+  data = applyClientMaxHold(data, runningConfig.display);
   detection = detected || {delay: [], doppler: []};
   const tracked = trackerOverlay(trackerFrame, runningConfig);
   if (!visible.tracks) {
@@ -517,7 +531,7 @@ function configureMapChannel(context) {
     '/api/radar/frame' : mapProductPath;
   urlMap = radarDisplayUrl('map', mapPresentationUrl(liveMapPath,
     typeof window === 'undefined' ? 1280 : window.innerWidth), context);
-  maxHoldGrid = null;
+  maxHoldState = null;
   gridSignature = '';
   selectedDelayDopplerTarget = null;
   delayDopplerSelectionTraces = [];

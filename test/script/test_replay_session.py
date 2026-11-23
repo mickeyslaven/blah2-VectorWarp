@@ -169,6 +169,48 @@ class ReplaySessionContract(unittest.TestCase):
         finally:
             sinks.close()
 
+    def test_macos_lifecycle_reserves_every_canonical_output_port(self):
+        for name in ('processor_lifecycle_test', 'homebrew_service_test'):
+            with self.subTest(fixture=name):
+                spec = importlib.util.spec_from_file_location(name, ROOT / f"test/macos/{name}.py")
+                adapter = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(adapter)
+                fixture = adapter.fixture if hasattr(adapter, 'fixture') else adapter.replay
+                names = (*fixture.PORT_NAMES, 'future-output')
+                with patch.object(sys, 'argv', ['lifecycle', '--binary', str(self.binary)]), \
+                     patch.object(Path, 'home', return_value=self.root), \
+                     patch.object(adapter.shutil, 'which', return_value=sys.executable), \
+                     patch.object(adapter.subprocess, 'check_output', return_value=str(self.root)), \
+                     patch.object(adapter.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                     patch.object(fixture, 'write_blah2iq'), patch.object(fixture, 'PORT_NAMES', names), \
+                     patch.object(fixture, 'config', side_effect=RuntimeError('ports captured')) as config:
+                    with self.assertRaisesRegex(RuntimeError, 'ports captured'):
+                        adapter.main()
+                args = config.call_args.args
+                self.assertEqual(set(args[4]), set(names))
+                self.assertEqual(len({args[3], *args[4].values()}), len(names) + 1)
+
+    def test_macos_configuration_matrix_respects_tracker_dependency(self):
+        spec = importlib.util.spec_from_file_location("macos_configuration_fixture",
+            ROOT / "test/macos/config_runtime_test.py")
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        with patch.object(sys, 'argv', ['configuration', '--binary', str(self.binary)]), \
+             patch.object(adapter, 'run_case', return_value={}) as run, patch('builtins.print'):
+            adapter.main()
+        self.assertEqual(run.call_count, 11)
+        for call in run.call_args_list:
+            name, changes = call.args[1:3]
+            config = adapter.replay.config('Usrp', 2, self.root / 'recording', 3000,
+                {key: 3001 + i for i, key in enumerate(adapter.replay.PORT_NAMES)})
+            for key, value in changes.items():
+                adapter.set_field(config, key, value)
+            process = config['process']
+            self.assertFalse(process['tracker']['enable'] and not process['detection']['enable'], name)
+            if name == 'detection-disabled-recording-requested':
+                self.assertFalse(process['detection']['enable'])
+                self.assertTrue(config['save']['detection'])
+
     def test_scientific_adapter_uses_same_session_and_retains_artifact_receipt(self):
         spec = importlib.util.spec_from_file_location("scientific_replay_adapter", ROOT / "script/run-iq-protection-replay.py")
         adapter = importlib.util.module_from_spec(spec)

@@ -9,7 +9,7 @@ const dom = new JSDOM('<main id="root"></main>', {runScripts: 'outside-only',
   url: 'http://radar.invalid/display/configuration'});
 const {window} = dom;
 window.KrakenGeometry = null;
-window.VectorWarpConfigProfiles = {};
+window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_profiles.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 'utf8'));
 
 function disclosure(fields) {

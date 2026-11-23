@@ -24,6 +24,9 @@ capture:
     # Use 'decision-grade' to reject anything without exact bounded v2 timing.
     provenance: 'legacy-unqualified'
 
+display:
+  max_hold_decay_db_per_second: 1
+
 process:
   delay_reference_sample_rate_hz: 2000000
   performance:

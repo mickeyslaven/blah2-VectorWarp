@@ -18,17 +18,18 @@ def main():
   assert subprocess.run(['launchctl','print',f'gui/{os.getuid()}/homebrew.mxcl.vectorwarp'],capture_output=True).returncode != 0
   with tempfile.TemporaryDirectory(prefix='vectorwarp-brew-service-') as temp:
     work=pathlib.Path(temp); state=work/'state'; config=work/'config.json'; recording=work/'loop.blah2iq'; replay.write_blah2iq(recording,2,2000000,204640000,frames=5)
-    sockets=[socket.socket() for _ in range(8)]
+    port_names=['api',*replay.PORT_NAMES,'config']
+    sockets=[socket.socket() for _ in port_names]
     for item in sockets:item.bind(('127.0.0.1',0))
-    ports=[item.getsockname()[1] for item in sockets]
+    ports=dict(zip(port_names,[item.getsockname()[1] for item in sockets]))
     for item in sockets:item.close()
-    payload=replay.config('Usrp',2,recording,ports[0],dict(zip(replay.PORT_NAMES,ports[1:7])),loop=True); payload['network']['ports']['config']=ports[7]
+    payload=replay.config('Usrp',2,recording,ports['api'],{name:ports[name] for name in replay.PORT_NAMES},loop=True); payload['network']['ports']['config']=ports['config']
     base=json.loads(subprocess.check_output([shutil.which('node'),'-e','process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',str(prefix/'libexec/config/config.yml')],cwd=prefix/'libexec/api',text=True))
     base.update(payload); base.setdefault('truth',{}).setdefault('adsb',{})['enabled']=False; base['process']['performance']['acceleration']='cpu'; base['save']['path']=str(work)+'/' ; config.write_text(json.dumps(base))
     cfg=work/'xdg/homebrew/services'; cfg.mkdir(parents=True); (cfg/'vectorwarp.env').write_text('\n'.join([f'VECTORWARP_MACOS_STATE={state}',f'VECTORWARP_MACOS_CONFIG={config}',f'VECTORWARP_MACOS_NODE={shutil.which("node")}', '']) )
     env=dict(os.environ,XDG_CONFIG_HOME=str(work/'xdg'))
     subprocess.run(['brew','trust','--formula','vectorwarp/local/vectorwarp'],env=env,check=True,capture_output=True,text=True)
-    url=f'http://127.0.0.1:{ports[0]}/api/system/status'
+    url=f'http://127.0.0.1:{ports["api"]}/api/system/status'
     def receiving():
       with urllib.request.urlopen(url,timeout=2) as response:
         value=json.load(response); return value if value.get('radar')=='receiving' else None

@@ -639,6 +639,22 @@ function connect(port) {
     assert.equal(validationAccepted.status, 200);
     assert.equal(validationAccepted.body.valid, true);
 
+    const beforeDisplay = (await request('GET', '/api/runtime/config')).body;
+    const displayOnly = (await request('GET', '/api/config')).body;
+    displayOnly.display.max_hold_decay_db_per_second = .001;
+    const displaySaved = await request('PUT', '/api/config?restart=false', displayOnly,
+      {'X-VectorWarp-Receiver-Sync': ''});
+    assert.equal(displaySaved.status, 200, JSON.stringify(displaySaved.body));
+    assert.equal(displaySaved.body.displayApplied, true);
+    assert.equal(displaySaved.body.restarting, false);
+    assert.deepEqual(displaySaved.body.receiverSync, pendingReceiverReceipt,
+      'Display changes preserve unresolved receiver receipts');
+    assert.equal(fs.existsSync(restartMarker), false, 'Display changes cannot restart radar');
+    assert.deepEqual((await request('GET', '/api/runtime/config')).body,
+      {...beforeDisplay, display: displayOnly.display}, 'Only display preferences update live');
+    assert.equal((await request('GET', '/api/runtime/plan')).body.restartRequired, false);
+    revision = displaySaved.body.revision;
+
     const adsbOnly = (await request('GET', '/api/config')).body;
     adsbOnly.truth.adsb.association_lag_cpis = 1;
     const runtimeLagBeforeSave = (await request('GET', '/api/adsb/status')).body.association_lag_cpis;
@@ -675,6 +691,7 @@ function connect(port) {
 
     const updated = JSON.parse(JSON.stringify(config));
     updated.process.data.cpi = 0.25;
+    updated.display.max_hold_decay_db_per_second = 0;
     updated.process.performance.fft_threads = 0;
     const liveTimingSocket = await new Promise((resolve, reject) => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing}, () => {
@@ -722,6 +739,8 @@ function connect(port) {
       0.25);
     assert.equal((await request('GET', '/api/runtime/config')).body.process.data.cpi,
       config.process.data.cpi, 'Saved timing must not impersonate the still-running configuration');
+    assert.equal((await request('GET', '/api/runtime/config')).body.display.max_hold_decay_db_per_second,
+      0, 'Saved display preferences apply without relabeling runtime processing');
     const plans = (await request('GET', '/api/runtime/plan')).body;
     assert.equal(plans.loaded.qualification, 'unpinned');
     assert.equal(plans.observation.schema, 'vectorwarp-runtime-plan-observation-v1');

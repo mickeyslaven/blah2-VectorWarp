@@ -54,7 +54,7 @@
       // lane's live map instead.
       window.urlMap = '/api/map';
       window.vectorwarpMapMode = 'maxhold';
-      load('../../js/plot_map.js?v=ui-consistency-32');
+      load('../../js/plot_map.js?v=ui-consistency-36');
     } else load('../../js/plot_spectrum.js?v=ui-consistency-35');
   } else if (kind === 'detection') {
     const variables = {

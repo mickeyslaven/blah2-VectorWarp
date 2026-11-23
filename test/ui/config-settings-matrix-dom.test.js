@@ -8,6 +8,7 @@ const path = require('path');
 const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
 const {configurationForReceiver, stripLegacyNoOps} = require('../../api/config-store');
+const {displayOnlyChange} = require('../../html/js/config_profiles');
 const clone = value => JSON.parse(JSON.stringify(value));
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
@@ -18,6 +19,7 @@ let saved = configurationForReceiver('Kraken');
 saved.process.bearing.manifold_recorder.enabled = true;
 let revision = 'matrix-0';
 let writes = 0;
+let restartAvailable = false;
 const covered = new Set();
 window.liveApiUrl = value => value;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);
@@ -28,10 +30,12 @@ window.fetch = async (url, options = {}) => {
   if (url === '/api/config/validate') body = validateConfig(JSON.parse(options.body), saved);
   else if (url.startsWith('/api/config?')) {
     assert.equal(options.headers['If-Match'], `"${revision}"`);
+    const displayApplied = displayOnlyChange(saved, JSON.parse(options.body));
+    if (displayApplied) assert.equal(url, '/api/config?restart=false', 'Display save never restarts radar');
     saved = stripLegacyNoOps(JSON.parse(options.body)); revision = `matrix-${++writes}`;
-    body = {ok: true, restarting: false, revision, message: 'Saved locally.'};
+    body = {ok: true, restarting: false, displayApplied, revision, message: 'Saved locally.'};
   } else if (url === '/api/config') body = saved;
-  else if (url === '/api/config/capabilities') body = {editable: true, restartAvailable: false,
+  else if (url === '/api/config/capabilities') body = {editable: true, restartAvailable,
     configRevision: revision, fieldRules: FIELD_RULES,
     deviceProfiles: getDeviceProfiles().map(profile => ({...profile, liveAvailable: false}))};
   else if (url === '/api/upstream/status') body = {supported: false, available: false, matched: false,
@@ -134,6 +138,21 @@ async function saveAndAssert(label, expected) {
     // Fresh receiver setup supplies its physical defaults, independently of
     // the preceding existing-configuration transition/refusal regression.
     saved = configurationForReceiver('RspDuo');
+    restartAvailable = true;
+    await window.renderConfiguration();
+    const decayPath = 'display.max_hold_decay_db_per_second';
+    assert.equal(field(decayPath).closest('[role="tabpanel"]').dataset.tab, 'process');
+    assert.equal(field(decayPath).closest('.settings-technical'), null, 'Decay is a primary setting');
+    assert.equal(control(decayPath).min, '0');
+    assert.equal(control(decayPath).max, '20');
+    assert.equal(control(decayPath).step, 'any');
+    for (const rate of [.001, 0, 20]) {
+      setScalar(decayPath, rate);
+      assert.equal(await window.validateActiveConfiguration(), true);
+      assert.equal(window.document.getElementById('config-save').textContent, 'Save display');
+      await saveAndAssert('Display', {[decayPath]: rate});
+    }
+    restartAvailable = false;
     await window.renderConfiguration();
 
     // Browser validation combines native constraints with API cross-field checks.

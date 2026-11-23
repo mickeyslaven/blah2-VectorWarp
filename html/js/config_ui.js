@@ -28,6 +28,7 @@ function applyIlluminatorStandardDefaults(item, selected) {
 const CONFIG_GROUP_META = {
   'capture': ["Receiver", "Tuning and sites"],
   'process': ["Radar", "Detection and tracking"],
+  'display': ["Display", ""],
   'network': ["Connectivity", "Ports"],
   'truth': ["ADS-B", "Aircraft data"],
   'location': ["Sites", "Receiver and illuminator"],
@@ -349,6 +350,7 @@ let settingsEditedOnly = false;
 let refreshSettingsFilter = () => {};
 let activateSettingsTab = () => {};
 const PRIMARY_SETTING_PATHS = new Set([
+  'display.max_hold_decay_db_per_second',
   'capture.fc', 'capture.fs', 'capture.device.type', 'capture.device.channel_count',
   'capture.device.heimdall.gain_control', 'capture.device.bandwidthNumber',
   'capture.device.agcSetPoint', 'capture.device.gain', 'capture.device.gain_lna',
@@ -619,12 +621,7 @@ async function configFetch(url, options = {}, timeoutMs = 6000) {
   return fetchStatusResource(url, options, timeoutMs);
 }
 
-function serializeConfig(value) {
-  if (Array.isArray(value)) return `[${value.map(serializeConfig).join(',')}]`;
-  if (value !== null && typeof value === 'object')
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${serializeConfig(value[key])}`).join(',')}}`;
-  return JSON.stringify(value);
-}
+const serializeConfig = configProfiles.serializeConfig;
 
 
 function words(value) {
@@ -2057,7 +2054,8 @@ function updateDirtyState() {
   if (action) {
     action.disabled = configurationBusy() || (!dirty && !restartRetry && !receiverApplyPending && !capabilities.setupRequired) ||
       pendingLiveConfig !== null || !capabilities.editable || validationPending || validationErrors.length > 0;
-    if (!configurationBusy()) action.textContent = replayLaunchPending ? 'Start replay' :
+    if (!configurationBusy()) action.textContent = configProfiles.displayOnlyChange(originalConfigObject, activeConfig) ?
+      'Save display' : replayLaunchPending ? 'Start replay' :
       restartRetry ? 'Retry restart' :
       receiverApplyPending ? (capabilities.restartAvailable ? 'Apply & Restart' : 'Apply (manual restart)') :
       capabilities.restartAvailable ? 'Save & Restart' : 'Save (manual restart)';
@@ -2625,7 +2623,7 @@ function renderEditor() {
   }
   const {arrayEditor:hasArrayTab, recorded} = processingControlCapabilities();
   const tabOrder = ['capture', 'array', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
-  const entries = Object.entries(activeConfig).filter(([key]) => key !== 'location');
+  const entries = Object.entries(activeConfig).filter(([key]) => !['location', 'display'].includes(key));
   if (hasArrayTab) entries.push(['array', {}]);
   entries.sort(([left], [right]) =>
     (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
@@ -2701,6 +2699,8 @@ function renderEditor() {
     panel.setAttribute('role', 'tabpanel');
     panel.setAttribute('aria-label', title);
     panel.className = 'config-tab-panel';
+    if (key === 'process' && activeConfig.display)
+      panel.appendChild(group('display', activeConfig.display, [], false));
     const receiverType = activeConfig.capture?.device?.type;
     if (key === 'array') { /* The visual editor is moved here after capture renders. */ }
     else if (key === 'location') panel.appendChild(renderSiteSettings());
@@ -3150,7 +3150,8 @@ function renderReceiverSetup() {
 }
 
 async function saveConfiguration(mode) {
-  const saveLater = mode === 'pending';
+  const displayOnly = configProfiles.displayOnlyChange(originalConfigObject, activeConfig);
+  const saveLater = mode === 'pending' && !displayOnly;
   const button = document.getElementById(saveLater ? 'config-save-later' : 'config-save') ||
     document.getElementById('config-save');
   if (configurationBusy() || pendingLiveConfig || document.getElementById('site-dialog'))
@@ -3174,19 +3175,19 @@ async function saveConfiguration(mode) {
       return false;
     }
     configurationOperation = 'restarting';
-    const measuredGain = !saveLater && activeConfig.capture?.replay?.state !== true &&
+    const measuredGain = !saveLater && !displayOnly && activeConfig.capture?.replay?.state !== true &&
       activeConfig.capture?.device?.type === 'Kraken' &&
       ['measured', 'measured_per_channel'].includes(
         activeConfig.capture?.device?.heimdall?.gain_control);
     const perChannelGain = measuredGain &&
       activeConfig.capture.device.heimdall.gain_control === 'measured_per_channel';
-    setRestartProgress(30, saveLater ? 'Saving without applying…' : measuredGain ?
+    setRestartProgress(30, displayOnly ? 'Saving display…' : saveLater ? 'Saving without applying…' : measuredGain ?
       perChannelGain ? 'Measuring receiver headroom and calibrating each channel…' :
         'Measuring receiver headroom and calibrating shared gain…' : 'Checking receiver settings…');
     document.querySelectorAll('#config-fields input, #config-fields select').forEach(input => { input.disabled = true; });
     writeAttempted = true;
     const response = await configFetch(liveApiUrl(saveLater ? '/api/config?mode=pending&restart=false' :
-      `/api/config?restart=${capabilities.restartAvailable ? 'true' : 'false'}`), {
+      `/api/config?restart=${capabilities.restartAvailable && !displayOnly ? 'true' : 'false'}`), {
       method: 'PUT',
       headers: {'Content-Type': 'application/json', 'If-Match': `"${configRevision}"`,
         'X-VectorWarp-Intent': 'config-write-v1',
@@ -3217,7 +3218,10 @@ async function saveConfiguration(mode) {
         result.receiverSync?.status === 'already-matched')
       setRestartProgress(45,
         'Suite V2 settings confirmed…');
-    if (saveLater) {
+    if (result.displayApplied) {
+      setRestartProgress(100, 'Display saved.', 'complete');
+      showMessage(result.message, 'success');
+    } else if (saveLater) {
       setRestartProgress(100, 'Saved for later; not applied.', 'complete');
       showMessage(result.message, 'warning');
     } else if (result.restarting) {
@@ -3237,9 +3241,9 @@ async function saveConfiguration(mode) {
     }
   } catch (error) {
     const unknownOutcome = writeAttempted && !responseReceived;
-    if (writeAttempted && !saveLater) receiverApplyPending = true;
-    if (unknownOutcome && !saveLater) invalidateGeometryAfterReceiverChange();
-    showMessage(unknownOutcome ? saveLater ?
+    if (writeAttempted && !saveLater && !displayOnly) receiverApplyPending = true;
+    if (unknownOutcome && !saveLater && !displayOnly) invalidateGeometryAfterReceiverChange();
+    showMessage(unknownOutcome ? saveLater || displayOnly ?
       `${error.message || 'Connection lost.'} Save not confirmed. No receiver changes or restart requested. Reload saved settings before retrying.` :
       `${error.message || 'Connection lost.'} Save not confirmed; receiver settings may still change. Reload and check receiver status before retrying.` :
       error.message || 'Unable to save configuration.', 'error');
@@ -3251,7 +3255,7 @@ async function saveConfiguration(mode) {
     showReportAction(document.getElementById('config-message'), reportIncident);
     setRestartProgress(100, saved ? 'Saved; restart needs attention.' : unknownOutcome || fileOutcomeUnknown ?
       'Save not confirmed.' : 'Not saved.', 'failed');
-    restartRetry = saved && !saveLater && capabilities.restartAvailable;
+    restartRetry = saved && !saveLater && !displayOnly && capabilities.restartAvailable;
   } finally {
     configurationOperation = 'idle';
     refreshGeometryEditor();

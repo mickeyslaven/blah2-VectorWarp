@@ -14,6 +14,7 @@ const numeric = (min, max) => ({type: 'number', min, max});
 const setting = (rule, label, description, control) => ({...rule,
   presentation: [label, description], ...(control ? {control} : {})});
 const rules = {
+  'display.max_hold_decay_db_per_second': setting({...numeric(0, 20), optional: true}, "Max-hold decay (0 holds)", "0.001 fades 3.6 dB per hour. 0 holds until the view or channel resets.", {scale: 1, unit: "dB/s"}),
   'capture.fs': setting(integer(1, 4294967295), "Sample rate", "Radio samples per second. Kraken is fixed at 2.4 MS/s.", {scale: 1000000, unit: "MS/s"}),
   'capture.fc': setting(integer(1, 4294967295), "Center frequency", "Tune in MHz, kHz and Hz.", {scale: 1000000, unit: "MHz"}),
   'capture.aircraft_clips.enabled': setting({type: 'boolean', optional: true}, "Record eligible aircraft automatically", "Off by default. Requires ADS-B and a live receiver; manual recording is unaffected."),

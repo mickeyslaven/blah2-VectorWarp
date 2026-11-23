@@ -13,6 +13,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
     const snapshotScopes = [];
     let update;
     let scheduled;
+    let resized;
+    const windowEvents = {};
     const running = {capture: {fs: 2400000}, process: {data: {cpi: .2},
       detection: {enable: true}}, truth: {adsb: {enabled: true}}};
     let detected = {timestamp: 1000, delay: [1], doppler: [2]};
@@ -25,6 +27,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
     ]};
     const context = vm.createContext({
       URL, URLSearchParams,
+      performance: {now: () => 1000},
+      clearTimeout() {}, setTimeout(callback) { resized = callback; return 1; },
       liveApiUrl: url => url,
       radarPresentationUrl: url => `${url}${url.includes('?') ? '&' : '?'}presentation=aligned`,
       getIlluminatorContext: async () => ({enabled: true, id: 'fm-90.5',
@@ -56,7 +60,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
           url.startsWith('/api/tracker') ? tracked :
           url.startsWith('/api/adsb/delay-doppler') ? truthAircraft : new Promise(() => {});
       },
-      window: {innerWidth: 1200, location: new URL('http://vectorwarp.test/display/map/'), addEventListener() {}, clearTimeout() {},
+      window: {innerWidth: 1200, location: new URL('http://vectorwarp.test/display/map/'), addEventListener(name, callback) { windowEvents[name] = callback; }, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},
       Plotly: Object.fromEntries(['react', 'update', 'relayout', 'restyle'].map(method =>
         [method, async (...args) => { calls.push({method, args: clone(args)}); }])),
@@ -82,6 +86,61 @@ const clone = value => JSON.parse(JSON.stringify(value));
     if (context.vectorwarpSpectrumReady) await context.vectorwarpSpectrumReady;
     assert.equal(typeof update, 'function');
     if (kind === 'map') {
+      const frameAt = (at, values = [[-40, -40]]) => ({timestamp: at,
+        delay: [0, 1], doppler: [0], data: values, maxPower: -40});
+      const hold = (at, values, rate) => context.applyClientMaxHold(frameAt(at, values),
+        rate === undefined ? undefined : {max_hold_decay_db_per_second: rate}, at);
+      const reset = () => { context.maxHoldState = null; context.window.vectorwarpMapMode = 'maxhold'; };
+      const initial = frameAt(0, [[20, -10]]), immutable = clone(initial);
+      const fade = step => {
+        reset(); context.applyClientMaxHold(initial, undefined, 0);
+        let result;
+        for (let at = step; at <= 10000; at += step) result = hold(at);
+        return result;
+      };
+      const slow = fade(1000), fast = fade(100);
+      assert.ok(Math.abs(slow.data[0][0] - fast.data[0][0]) < 1e-10,
+        'Equal elapsed time must produce equal decay at different frame rates');
+      assert.deepEqual(clone(slow.data), [[10, -20]], 'dB fade decreases positive and negative cells');
+      assert.equal(slow.maxPower, 10);
+      assert.deepEqual(initial, immutable, 'Display hold must not mutate the radar frame');
+      reset(); hold(0, [[20, -10]], .001);
+      assert.ok(Math.abs(hold(7200000, undefined, .001).data[0][0] - 12.8) < 1e-10,
+        'A two-hour hold loses only 7.2 dB at 0.001 dB/s');
+      reset(); hold(0, [[20, -10]], 0);
+      assert.deepEqual(clone(hold(7200000, undefined, 0).data), [[20, -10]], 'Zero retains peaks');
+      assert.deepEqual(clone(hold(7201000, [[25, -5]], 0).data), [[25, -5]], 'New peaks replace held peaks');
+      for (const rate of [undefined, null, '1', -1, 21, NaN, Infinity]) {
+        reset(); hold(0, [[20, -10]], rate);
+        assert.equal(hold(1000, undefined, rate).data[0][0], 19, 'Invalid display rate uses the bounded default');
+      }
+      reset(); hold(0, [[20, -10]], 1);
+      assert.equal(hold(1000000, undefined, 1).data[0][0], -40, 'Paused tabs catch up to the current floor');
+      for (const changed of [
+        {...frameAt(1000), delay: [1, 2]}, {...frameAt(1000), doppler: [1]},
+        frameAt(1000, [[-40]]), frameAt(-1)
+      ]) {
+        reset(); hold(0, [[20, -10]], 0);
+        assert.equal(context.applyClientMaxHold(changed, {max_hold_decay_db_per_second: 0}, 1000).data[0][0],
+          -40, 'Changed coordinates, shape or backwards frame time clears history');
+      }
+      reset(); hold(1000, [[20, -10]], 0);
+      assert.equal(context.applyClientMaxHold(frameAt(2000), {}, 0).data[0][0], -40,
+        'Backwards display time clears history');
+      reset();
+      context.applyClientMaxHold({...initial, timestamp: undefined}, {}, 0);
+      assert.equal(context.applyClientMaxHold({...frameAt(1000), timestamp: undefined}, {}, 1000).data[0][0],
+        19, 'Untimestamped frames still decay on monotonic display time');
+      const display = {max_hold_decay_db_per_second: .001};
+      assert.strictEqual(common.selectedIlluminatorConfig({...running, display},
+        {enabled: true, id: 'test', item: {output_sample_rate_hz: 300000}}).display, display,
+      'Selected lane configuration preserves the common display preference');
+      reset(); hold(0, [[20, -10]], 0);
+      context.configureMapChannel({id: 'another-lane'});
+      assert.equal(hold(1000, undefined, 0).data[0][0], -40, 'Lane changes clear held peaks');
+      context.configureMapChannel(await context.getIlluminatorContext());
+      context.window.vectorwarpMapMode = undefined;
+      assert.strictEqual(context.applyClientMaxHold(initial, {}, 0), initial, 'Live map remains unchanged');
       const mobile = context.delayDopplerPresentation(390);
       const desktop = context.delayDopplerPresentation(1200);
       const landscapePhone = context.delayDopplerPresentation(844, 390);
@@ -221,11 +280,20 @@ const clone = value => JSON.parse(JSON.stringify(value));
       const tracksOnly = calls.filter(call => call.method === 'update').at(-1);
       assert.deepEqual(tracksOnly.args[1].x[1], [], 'Tracks-only mode hides raw detections');
       assert.ok(tracksOnly.args[1].x[3].length, 'Tracks-only mode preserves confirmed tracks');
+      context.window.innerWidth = 390;
+      context.window.innerHeight = 844;
+      windowEvents.resize(); resized();
       const changedGrid = {...clone(frame), timestamp: 1002, delay: [1, 2], data: [[1, 2], [3, 4]]};
       const changedGridCallsBefore = calls.length;
       await update(changedGrid);
       assert.ok(calls.slice(changedGridCallsBefore).some(call => call.method === 'react'),
         'Map grid changes reconcile the existing Plotly root');
+      const resizedGrid = calls.filter(call => call.method === 'react').at(-1).args;
+      assert.deepEqual(resizedGrid[2].margin, {l: 38, r: 6, b: 38, t: 8, pad: 0},
+        'A later grid redraw retains compact margins instead of restoring startup desktop layout');
+      assert.equal(resizedGrid[2].xaxis.title.text, 'Range (km)');
+      assert.equal(resizedGrid[2].yaxis.title.text, 'Hz');
+      assert.equal(resizedGrid[1][0].showscale, false);
       assert.ok(!calls.some(call => call.method === 'newPlot'), 'Map never tears down the plot root');
       const events = {};
       const plot = {on: (name, callback) => { events[name] = callback; },
@@ -247,6 +315,22 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(context.selectedDelayDopplerTarget, 'track:9');
       context.configureMapChannel({id: 'another-channel'});
       assert.equal(context.selectedDelayDopplerTarget, null, 'Changing channel clears lane-local selection');
+      context.window.vectorwarpMapMode = 'maxhold';
+      running.display = {max_hold_decay_db_per_second: .001};
+      const atomic = (timestamp, values) => ({schema: 'vectorwarp-radar-display-frame-v1',
+        map: {timestamp, delay: [0, 1], doppler: [0], data: [values], maxPower: Math.max(...values)},
+        detections: {delay: [], doppler: []}, tracks: {data: []}});
+      context.performance.now = () => 0;
+      await update(atomic(3000, [20, -10]));
+      context.performance.now = () => 7200000;
+      await update(atomic(3001, [-40, -40]));
+      assert.ok(Math.abs(calls.filter(call => call.method === 'update').at(-1).args[1].z[0][0][0] - 12.8) < 1e-10,
+        'The renderer applies the saved display rate through selected-lane runtime configuration');
+      running.display.max_hold_decay_db_per_second = 0;
+      context.performance.now = () => 10800000;
+      await update(atomic(3002, [-40, -40]));
+      assert.ok(Math.abs(context.maxHoldState.grid[0][0] - 12.8) < 1e-10,
+        'A newly saved display rate applies to the next frame without restarting the view');
     }
   }
   const unavailableCalls = [];

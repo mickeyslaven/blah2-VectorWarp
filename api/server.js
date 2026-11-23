@@ -30,6 +30,7 @@ const directGain = require('./direct-gain.js');
 const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
+const {displayOnlyChange} = require('../html/js/config_profiles');
 const {createAdsbSource} = require('./adsb-source.js');
 const {DelayDopplerHistory} = require('./adsb-geometry.js');
 const {createRemoteIdSource} = require('./remote-id-source.js');
@@ -1086,7 +1087,8 @@ app.get('/api/config', (req, res) => {
 app.get('/api/runtime/config', (req, res) => {
   // API startup snapshot, not hardware acknowledgement. Do not relabel frames
   // with newly saved tuning/site settings until the services have restarted.
-  res.json(config);
+  // Display preferences apply on save; processing and site identity stay pinned.
+  res.json({...config, display: readConfig(configFile).config.display});
 });
 app.get('/api/runtime/plan', (req, res) => {
   const document = readConfig(configFile);
@@ -1094,7 +1096,8 @@ app.get('/api/runtime/plan', (req, res) => {
   res.json({loaded, saved: document.radarPlan, observation,
     execution: assessResolvedRadarPlans(loaded, observation),
     loadedRevision: startupDocument.revision, savedRevision: document.revision,
-    restartRequired: startupDocument.revision !== document.revision});
+    restartRequired: startupDocument.revision !== document.revision &&
+      !displayOnlyChange(startupDocument.config, document.config)});
 });
 app.get('/api/receiver/gain', (req, res) => res.json({
   policy: config.capture?.device?.heimdall?.gain_control || 'fixed',
@@ -1550,14 +1553,6 @@ app.put('/api/config', async (req, res) => {
   if (configWriteInProgress || receiverManagement.busy() || macRspduoBuild?.busy())
     return res.status(409).json({ok: false,
       errors: ['Another settings transaction is in progress. Wait for its result.']});
-  const allowedTypes = configuredReceiverTypes();
-  const replayRequested = req.body?.capture?.replay?.state === true;
-  const localRspRequested = !saveLater && !replayRequested &&
-    req.body?.capture?.device?.type === 'RspDuo' && allowedTypes && !allowedTypes.includes('RspDuo');
-  if (!saveLater && allowedTypes && !replayRequested && !allowedTypes.includes(req.body?.capture?.device?.type) && !localRspRequested)
-    return res.status(422).json({ok: false, errors: [
-      'This receiver backend is unavailable for live capture in this installation. Use Save for later, or install a build containing this backend before applying it.'
-    ]});
   const currentDocument = readConfig(configFile);
   const expectedRevision = req.get('If-Match').replace(/^"|"$/g, '');
   if (expectedRevision !== currentDocument.revision)
@@ -1566,6 +1561,20 @@ app.put('/api/config', async (req, res) => {
   const validation = validateConfig(req.body, currentDocument.config);
   if (!validation.valid)
     return res.status(422).json({ok: false, errors: validation.errors});
+  if (!wantsRestart && displayOnlyChange(currentDocument.config, req.body)) {
+    const saved = saveConfig(configFile, req.body, currentDocument.revision);
+    return res.json({ok: true, restarting: false, displayApplied: true,
+      revision: saved.revision, config: saved.config, receiverSync: receiverSyncState.receipt,
+      message: 'Display saved.'});
+  }
+  const allowedTypes = configuredReceiverTypes();
+  const replayRequested = req.body?.capture?.replay?.state === true;
+  const localRspRequested = !saveLater && !replayRequested &&
+    req.body?.capture?.device?.type === 'RspDuo' && allowedTypes && !allowedTypes.includes('RspDuo');
+  if (!saveLater && allowedTypes && !replayRequested && !allowedTypes.includes(req.body?.capture?.device?.type) && !localRspRequested)
+    return res.status(422).json({ok: false, errors: [
+      'This receiver backend is unavailable for live capture in this installation. Use Save for later, or install a build containing this backend before applying it.'
+    ]});
   const independentChange = receiverIndependentChange(currentDocument.config, req.body);
   const adsbChange = independentChange &&
     JSON.stringify(currentDocument.config?.truth?.adsb) !== JSON.stringify(req.body?.truth?.adsb);

@@ -59,6 +59,10 @@ async function check(platform, type, backend, editable = true) {
       '\nwindow.fixtureDraft = () => JSON.parse(JSON.stringify(activeConfig));' : '')));
     await w.renderConfiguration(); await flush();
     const document = w.document;
+    const decay = document.querySelector('[data-path="display.max_hold_decay_db_per_second"] input');
+    assert.ok(decay, `${identity}: shared display decay`);
+    assert.equal(decay.disabled, !editable, `${identity}: display decay follows write access only`);
+    assert.equal(decay.closest('[role="tabpanel"]').dataset.tab, 'process');
     const tabs = [...document.querySelectorAll('[role="tab"]')];
     assert.ok(tabs.length >= 6, `${identity}: all shared settings categories`);
     const inventory = [];
@@ -127,6 +131,11 @@ async function check(platform, type, backend, editable = true) {
     assert.equal(saved.process.data.cpi, 0.75);
     await w.renderConfiguration();
     assert.equal(document.querySelector('[data-path="process.data.cpi"] input').value, '0.75', `${identity}: reload parity`);
+    const display = document.querySelector('[data-path="display.max_hold_decay_db_per_second"] input');
+    display.value = '.001'; display.dispatchEvent(new w.Event('input', {bubbles: true}));
+    await w.saveConfiguration();
+    assert.equal(saved.display.max_hold_decay_db_per_second, .001, `${identity}: display save parity`);
+    assert.equal(writes, 2);
   } finally { w.close(); }
 }
 (async () => {

@@ -164,7 +164,8 @@ def main():
     args = parser.parse_args()
     binary = args.binary.resolve()
     cases = [
-        ('detection-disabled-recording-requested', {'process.detection.enable': False, 'save.detection': True}),
+        ('detection-disabled-recording-requested', {'process.detection.enable': False,
+            'process.tracker.enable': False, 'save.detection': True}),
         ('detector-tracker-save', {'process.detection.pfa': .05, 'process.detection.nGuard': 1,
             'process.detection.nTrain': 4, 'process.detection.nCentroid': 2,
             'process.detection.minDelay': 2, 'process.detection.minDoppler': 50,

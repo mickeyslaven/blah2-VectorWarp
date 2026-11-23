@@ -685,6 +685,7 @@ body.fusion-scope-active .radar-panel:fullscreen .fusion-scope-layout .visualiza
   .app-nav { grid-template-columns:1fr .6fr .9fr 1.3fr 1.1fr; align-items:stretch; gap:2px; }
   .app-nav a { display:grid; min-height:44px; box-sizing:border-box; place-items:center; padding-inline:2px; font-size:12px; }
 }
+@media (max-width:360px) { .app-nav { grid-template-columns:minmax(0,1fr) repeat(4,max-content); } }
 
 /* Keep the channel picker reachable in plot fullscreen, including the mobile fallback. */
 .fullscreen-target > .illuminator-scope-control { position:absolute; z-index:15; top:8px; left:50%; transform:translateX(-50%); max-width:calc(100% - 120px); padding:5px 8px; border:1px solid var(--line); border-radius:7px; background:var(--surface-raised); }
