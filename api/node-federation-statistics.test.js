@@ -27,10 +27,10 @@ test('network summary uses the bounded association basis contract', () => {
     require.resolve(process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation'),
     'utf8');
   assert.match(source,
-    /association-basis\?timing=provisional&compact=true'[\s\S]*?2500, 512 \* 1024/,
+    /association-basis\?timing=provisional&compact=true'[\s\S]*?timeoutMs, 512 \* 1024/,
     'network polling must not transfer the full measured-track evidence ledger');
   assert.match(source,
-    /association\/passes\?timing=provisional&compact=true'[\s\S]*?2500,\s*8 \* 1024 \* 1024/,
+    /association\/passes\?timing=provisional&compact=true'[\s\S]*?timeoutMs,\s*8 \* 1024 \* 1024/,
     'network polling must request the compact recent-pass transport');
 });
 
