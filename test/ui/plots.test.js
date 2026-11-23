@@ -66,6 +66,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
     const source = fs.readFileSync(path.join(__dirname, '../../html/js', `plot_${kind}.js`), 'utf8');
     assert.ok(!source.includes('setInterval'), `${kind} must use shared frame timing`);
     vm.runInContext(source, context);
+    if (kind === 'spectrum' || kind === 'timing')
+      assert.deepEqual(calls[0].args[1], [], `${kind}: waiting must not fabricate a heatmap`);
     if (kind !== 'map') {
       const initialLayout = calls[0].args[2], initialConfig = calls[0].args[3];
       assert.deepEqual(clone(initialLayout.margin), {l: 92, r: 50, b: 50, t: 10, pad: 0},

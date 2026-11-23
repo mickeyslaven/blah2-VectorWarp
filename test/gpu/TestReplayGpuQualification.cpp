@@ -62,9 +62,11 @@ int main()try{
   a::emit("bounded-datagram");char received[4097];
   check(recv(pair[1],received,sizeof(received),MSG_DONTWAIT)>0,"Dedicated channel did not receive receipt");
   int capacity=4096;check(!setsockopt(a::state().descriptor,SOL_SOCKET,SO_SNDBUF,&capacity,sizeof(capacity)),"Socket bound failed");
+  check(!setsockopt(pair[1],SOL_SOCKET,SO_RCVBUF,&capacity,sizeof(capacity)),"Receipt receive bound failed");
   std::array<char,1> payload{};unsigned fills=0;
   while(fills<10000&&send(a::state().descriptor,payload.data(),payload.size(),MSG_DONTWAIT)==ssize_t(payload.size()))++fills;
-  check(fills<10000&&(errno==EAGAIN||errno==EWOULDBLOCK),"Receipt socket did not fill");
+  // Darwin reports a full UNIX datagram receive queue as ENOBUFS.
+  check(fills<10000&&(errno==EAGAIN||errno==EWOULDBLOCK||errno==ENOBUFS),"Receipt socket did not fill");
   const auto start=std::chrono::steady_clock::now();rejects([&]{a::emit("full-channel");});
   check(std::chrono::steady_clock::now()-start<std::chrono::seconds(1),"Receipt send blocked on stalled runner");
   close(pair[1]);

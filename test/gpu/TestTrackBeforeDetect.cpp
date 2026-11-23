@@ -20,10 +20,13 @@ bool close(double left, double right, double tolerance = 1e-10) {
 int main() try {
   using namespace track_before_detect;
   const double nextAmplitude=std::nextafter(1.0,2.0);
+  // Round the stored sample power before accumulation, as the history does.
+  // Fusing the square with the following sum would change this tie fixture.
+  const volatile double nextPower=nextAmplitude*nextAmplitude;
   for(uint32_t depth:{2u,4u,8u}){
     const double first=(4.0+1.0)/depth;
-    const double later=(4.0+nextAmplitude*nextAmplitude)/depth;
-    check(nextAmplitude*nextAmplitude>1.0&&first==later,
+    const double later=(4.0+nextPower)/depth;
+    check(nextPower>1.0&&first==later,
       "Nextafter fixture did not produce distinct samples with tied path means");
     check(!temporalPathBetter(later,first,false)&&temporalPathBetter(first,later,true),
       "Temporal path tie did not retain canonical first-path order");

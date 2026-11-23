@@ -30,20 +30,34 @@ fi
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C \
   /usr/bin/node @PREFIX@/libexec/vectorwarp-prepare-sdrplay.js \
   @SYSCONFDIR@/config.yml @PREFIX@/current/api @PREFIX@/libexec/vectorwarp-sdrplay-service
+processor_configuration=$(/usr/bin/node -e '
+const fs = require("fs");
+const path = require("path");
+const yaml = require(path.join(process.argv[2], "js-yaml"));
+const config = yaml.load(fs.readFileSync(process.argv[1], "utf8"), {schema: yaml.JSON_SCHEMA});
+process.stdout.write(config?.capture?.device?.type === "Unconfigured" &&
+  config.capture?.replay?.state === false ? "neutral" : "configured");
+' @SYSCONFDIR@/config.yml @PREFIX@/current/api/node_modules)
+[ "$processor_configuration" = neutral ] || [ "$processor_configuration" = configured ] || exit 78
 processor_attempt=1
-while [ "$processor_attempt" -le 5 ]; do
+processor_attempt_limit=12
+processor_retry_seconds=5
+while [ "$processor_attempt" -le "$processor_attempt_limit" ]; do
   /usr/bin/systemctl start vectorwarp-processor.service
   if /usr/bin/systemctl is-active --quiet vectorwarp-processor.service; then
     break
   fi
-  if [ "$processor_attempt" -eq 5 ]; then
-    # A neutral first-run setup deliberately has no live processor to restore.
-    # When processing was active before this transaction, however, an
-    # ExecCondition skip must not be recorded as a successful restart.
-    [ "$processor_was_active" = false ] && break
+  # Only the explicit first-run marker is allowed to remain web-only. A saved
+  # live or replay configuration must recover even when an earlier failed
+  # restart had already left its processor inactive.
+  [ "$processor_was_active" = false ] && [ "$processor_configuration" = neutral ] && break
+  if [ "$processor_attempt" -eq "$processor_attempt_limit" ]; then
+    # Receiver recovery can legitimately keep ExecCondition false for tens of
+    # seconds. Wait within the service's bound, but never finalize a configured
+    # and still-inactive processor as a successful restart.
     echo 'Processor remained inactive after receiver preparation; restart is incomplete.' >&2
     exit 78
   fi
   processor_attempt=$((processor_attempt + 1))
-  /usr/bin/sleep 1
+  /usr/bin/sleep "$processor_retry_seconds"
 done

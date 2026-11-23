@@ -171,7 +171,11 @@ async function connect(endpoint) {
         nav,escaped,current:document.querySelectorAll('.app-nav [aria-current="page"]').length,
         overflowNodes:[...document.querySelectorAll('body *')].filter(visible).filter(e=>e.getBoundingClientRect().right>innerWidth+2)
           .slice(0,12).map(e=>({tag:e.tagName,classes:e.getAttribute('class'),id:e.id,...box(e)})),
+        clippedSettingsControls:[...document.querySelectorAll('.config-field-adsb-sources input,.config-field-adsb-sources select,.config-field-adsb-sources button')]
+          .filter(visible).filter(e=>{const r=box(e),p=box(e.closest('.config-field-adsb-sources'));
+            return r.x<p.x-2||r.right>p.right+2;}).map(e=>({id:e.id,...box(e)})),
         controls:[...document.querySelectorAll('.radar-toolbar > .radar-overlay-control')].filter(visible).map(box),
+        wizardActions:[...document.querySelectorAll('.setup-wizard-content > footer button')].filter(visible).map(box),
         recording:[...document.querySelectorAll('.radar-panel > .plot-state,.radar-panel > .recording-control')].filter(visible).map(box),
         h1:document.querySelectorAll('h1').length,tables:document.querySelectorAll('.data-table-wrap').length,
         visibleHeaders:document.querySelectorAll('.app-header').length};})()`);
@@ -183,16 +187,17 @@ async function connect(endpoint) {
         fs.writeFileSync(path.join(process.env.VECTORWARP_LAYOUT_SCREENSHOTS,
           `${route.replace(/[^a-z0-9]/gi,'_')}-${result.width}.png`),Buffer.from(shot.data,'base64'));
       }
-      if(result.overflow>2||result.escaped.length||result.current!==1||result.visibleHeaders!==1)
+      if(result.overflow>2||result.escaped.length||result.clippedSettingsControls.length||result.current!==1||result.visibleHeaders!==1)
         report.issues.push({route,state,...result});
       if(result.width<=760&&new Set(result.nav.map(item=>Math.round((item.y+item.bottom)/2))).size!==1)
         report.issues.push({route,state,width:result.width,reason:'Primary navigation wraps into multiple rows',nav:result.nav});
       if(result.nav.some(item=>item.clipped))
         report.issues.push({route,state,width:result.width,reason:'Primary navigation labels are clipped',nav:result.nav});
-      for(let i=0;i<result.controls.length;i++)for(let j=i+1;j<result.controls.length;j++){
-        const a=result.controls[i],b=result.controls[j];
+      for(const [kind,controls] of [['Radar toolbar',result.controls],['Setup',result.wizardActions]])
+      for(let i=0;i<controls.length;i++)for(let j=i+1;j<controls.length;j++){
+        const a=controls[i],b=controls[j];
         if(Math.min(a.right,b.right)-Math.max(a.x,b.x)>2&&Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>2)
-          report.issues.push({route,state,width:result.width,reason:'Radar toolbar controls overlap',controls:result.controls});
+          report.issues.push({route,state,width:result.width,reason:kind+' controls overlap',controls});
       }
       if(result.recording.length===2){const [a,b]=result.recording;
         if(Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>2)
@@ -268,6 +273,12 @@ async function connect(endpoint) {
               document.querySelectorAll('.config-tab-panels [role="tabpanel"]:not([hidden]) details').forEach(item=>item.open=true);`);
             await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
             await record(route,`settings:${tab}`);
+          }
+        }
+        if(new URL(route,'http://fixture').searchParams.get('setup')==='1') {
+          for(let step=0;step<6;step++) {
+            await evaluate(`document.querySelector('[data-wizard-step="${step}"]').click()`);
+            await record(route,`wizard:${step}`);
           }
         }
         const expanded=await evaluate(`(()=>{const items=[...document.querySelectorAll('details.statistics-details,details.statistics-table-details,details.recording-card')];

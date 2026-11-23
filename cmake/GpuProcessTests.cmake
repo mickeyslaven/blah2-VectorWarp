@@ -63,7 +63,7 @@ if(TARGET blah2GpuWidebandVulkan)
     ${PROJECT_ROOT}/src/process/ambiguity)
   target_include_directories(testGpuWidebandGatherSoftware SYSTEM PRIVATE
     ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
-  target_link_libraries(testGpuWidebandGatherSoftware PRIVATE blah2GpuWidebandProcess
+  target_link_libraries(testGpuWidebandGatherSoftware PRIVATE blah2GpuWidebandProcess blah2RapidJson
     Vulkan::Vulkan glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
     ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY})
   blah2_isolate_vkfft_vendor_warnings(testGpuWidebandGatherSoftware)
@@ -252,7 +252,7 @@ if(TARGET blah2GpuResidentVulkan)
       ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
     target_include_directories(test${name} SYSTEM PRIVATE
       ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
-    target_link_libraries(test${name} PRIVATE ${ARGN} Vulkan::Vulkan
+    target_link_libraries(test${name} PRIVATE ${ARGN} blah2RapidJson Vulkan::Vulkan
       glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits Threads::Threads)
   endfunction()
   # Explicitly invoked only: this small numerical test requires a physical GPU.

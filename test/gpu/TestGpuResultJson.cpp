@@ -228,7 +228,7 @@ void privateConfirmationCases(){
  constexpr unsigned rows=33,columns=65;
  // A fixed echo is a negative control with all-Doppler quarantine enabled.
  // The positive uses the production private-IQ trajectory, not relaxed gates.
- for(const auto [amplitude,moving]:{std::pair{8.,false},std::pair{4.,true},std::pair{100.,false}}){
+ for(const auto& [amplitude,moving]:{std::pair{8.,false},std::pair{4.,true},std::pair{100.,false}}){
   pipeline::ProductConfig p;p.integrationCpis=8;
   p.integrationMotion=track_before_detect::encodeMotionBins(2,4,true);
   p.delayDriftPerHz=-2400000./509000000.*.5;p.pfa=1e-5/12;

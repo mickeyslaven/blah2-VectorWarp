@@ -254,7 +254,7 @@ class TruthLabels(unittest.TestCase):
             sidecar.write_bytes(b"synthetic lineage")
             helper = root / "helper"
             helper.write_bytes(b"not executed")
-            frame["snapshot"] = str(snapshot)
+            frame["snapshot"] = str(snapshot.resolve())
             self.r["resident_snapshot_export"]["files"][0]["lineage_sha256"] = M.file_sha256(sidecar)
             for name in ("admission", "timeline", "metadata", "profile"):
                 self.r[name + "_sha256"] = self.h[name]

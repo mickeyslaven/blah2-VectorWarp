@@ -8,14 +8,22 @@ RSPduo, particular hostname, site or network provider.
 
 For ordinary local installations, open **Settings → Local radar nodes**, enter
 the other VectorWarp computer's private IP address and API port, and select
-**Add node**. The coordinator probes the node identity, receiver capabilities,
-and RF-channel catalog before saving it. Public addresses and DNS names are
-rejected. The browser's existing channel selector then lists every discovered
+**Add node**. The coordinator probes the node identity, versioned capabilities,
+and status before saving it; this is explicit endpoint discovery, not a network
+scan. Private IPv4, loopback, tailnet addresses and unscoped local IPv6 are
+accepted. Public addresses, DNS names and scoped IPv6 addresses (such as
+`fe80::1%en0`) are rejected by this form. For IPv6 use a ULA address, or use the
+node's private IPv4 address. The browser's channel selector then lists every discovered
 channel with its node name; System shows the combined local fleet.
 
 The coordinator stores the discovered registry outside the application tree
 with mode `0600`. `VECTORWARP_NODE_REGISTRY` may override that location for
-packaging or managed installations. The on-disk shape is:
+packaging or managed installations. macOS uses
+`~/Library/Application Support/VectorWarp/nodes.json`; ordinary Linux users use
+`$XDG_CONFIG_HOME/vectorwarp/nodes.json` or `~/.config/vectorwarp/nodes.json`.
+A Linux process running as root defaults to `/etc/vectorwarp/nodes.json`.
+These paths and the federation protocol do not require a service manager.
+The on-disk shape is:
 
 ```json
 {"nodes":[{"id":"roof-node","label":"Roof node","expectedIdentity":"roof-node","url":"http://192.168.1.20:3000"}]}
@@ -23,9 +31,18 @@ packaging or managed installations. The on-disk shape is:
 
 The ID is a stable lowercase identifier, not an address. Set
 `VECTORWARP_NODE_ID` and, optionally, `VECTORWARP_NODE_LABEL` on each API
-service. Every proxied response carries that identity; a missing or changed
-identity is rejected. Node additions and removals made in Settings take effect
-immediately and are written atomically. No addresses or credentials belong in
+service. Without an explicit ID, the API derives one from the computer's host
+name; set distinct IDs on computers with identical names, and use explicit IDs
+when the identity must survive a host-name change. Reserved IDs `local` and
+`aggregate`, duplicate peer identities/URLs, and entries identifying the local
+API are rejected. Existing registry aliases may differ from `expectedIdentity`;
+the published identity and response checks still use `expectedIdentity`.
+Every proxied response carries that identity; a missing or changed identity is
+rejected. Node additions and removals made in Settings take effect immediately
+and are written atomically. They also discard cached node products and reset
+cooperative fusion state. Requests spanning a membership change return HTTP 409
+and can be retried; they cannot republish removed-peer results. Re-adding a node
+requires fresh discovery and reads. No addresses or credentials belong in
 the public application tree.
 
 A portal with no radar processor declares `VECTORWARP_NODE_ROLE=coordinator`

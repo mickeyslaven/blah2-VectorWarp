@@ -90,15 +90,20 @@ function registry(filename) {
   const data = JSON.parse(fs.readFileSync(resolved, 'utf8'));
   if (!Array.isArray(data.nodes) || data.nodes.length > 16) throw new Error('Invalid node registry');
   const ids = new Set(['local', 'aggregate']);
+  const identities = new Set(ids), origins = new Set();
   return data.nodes.map(node => {
     if (!node || typeof node.id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(node.id) || ids.has(node.id) ||
         typeof node.label !== 'string' || !node.label.trim() || node.label.length > 80)
       throw new Error('Invalid node identity');
     ids.add(node.id);
-    if (typeof node.expectedIdentity !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(node.expectedIdentity)) throw new Error('Expected node identity is required');
+    if (typeof node.expectedIdentity !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(node.expectedIdentity) ||
+        identities.has(node.expectedIdentity)) throw new Error('Expected node identity must be unique and non-reserved');
+    identities.add(node.expectedIdentity);
     const url = new URL(node.url);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
         url.pathname !== '/' || url.search || url.hash) throw new Error('Invalid node URL');
+    if (origins.has(url.origin)) throw new Error('Node URL must be unique');
+    origins.add(url.origin);
     let token = null;
     if (node.tokenFile) {
       if (!path.isAbsolute(node.tokenFile)) throw new Error('Token path must be absolute');
@@ -122,6 +127,7 @@ function localNodeOrigin(host, port) {
   const numericPort = Number(port);
   if (!family || !Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535)
     throw new Error('Enter a local IP address and port');
+  if (address.includes('%')) throw new Error('Scoped IPv6 is not supported; use private IPv4 or ULA IPv6');
   const local = family === 4 ? (() => {
     const octets = address.split('.').map(Number);
     return octets[0] === 10 || octets[0] === 127 || octets[0] === 192 && octets[1] === 168 ||
@@ -208,6 +214,10 @@ async function discoverLocalNode(host, port, label) {
       statusResult.identity !== identity)
     throw new Error('The node did not provide one consistent VectorWarp identity');
   if (capabilitiesResult.value?.schema !== 'vectorwarp-node-capabilities-v1' ||
+      capabilitiesResult.value.protocol_version !== 1 ||
+      !['radar', 'coordinator'].includes(capabilitiesResult.value.node_role) ||
+      !Array.isArray(capabilitiesResult.value.resources) ||
+      !capabilitiesResult.value.resources.every(resource => typeof resource === 'string') ||
       typeof statusResult.value?.radar !== 'string')
     throw new Error('The address is not a compatible VectorWarp node');
   const cleanLabel = typeof label === 'string' && label.trim() ? label.trim() : identity;
@@ -521,9 +531,12 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   const identity = process.env.VECTORWARP_NODE_ID || hostnameIdentity || 'vectorwarp-node';
   const localLabel = process.env.VECTORWARP_NODE_LABEL || 'Local';
   const localRole = nodeRole();
-  if (identity && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(identity)) throw new Error('Invalid node identity');
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(identity) || ['local', 'aggregate'].includes(identity))
+    throw new Error('Invalid node identity');
+  if (nodes.some(node => node.id === identity || node.expectedIdentity === identity))
+    throw new Error('Node registry conflicts with the local identity');
   const trackerConfig = config?.process?.tracker || {};
-  const cooperativeTracker = new CooperativeDetectionTracker({
+  let cooperativeTracker = new CooperativeDetectionTracker({
     cpiSeconds: Number(config?.process?.data?.cpi) || .5,
     m: Number(trackerConfig?.initiate?.M) || 4,
     n: Number(trackerConfig?.initiate?.N) || 6,
@@ -541,6 +554,19 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   let liveAssociationCache = null, liveAssociationCacheAt = 0;
   let liveAssociationPromise = null;
   let cooperativeTotalSourceCount = 0, cooperativeSourceCount = 0, cooperativeAvailableSources = 0;
+  function replaceNodes(updated) {
+    saveRegistry(filename, updated);
+    nodes = updated;
+    cooperativeConfigCache.clear();
+    cooperativeConfigCache.set(identity, {value: config, updatedAt: Date.now()});
+    networkNodeStatisticsCache.clear();
+    networkStatisticsCache = liveAssociationCache = null;
+    networkStatisticsPromise = liveAssociationPromise = null;
+    cooperativeTracker = new CooperativeDetectionTracker(cooperativeTracker.options);
+    geographicFusion.reset();
+    cooperativeLastPollAt = cooperativeLastError = null;
+    cooperativeTotalSourceCount = cooperativeSourceCount = cooperativeAvailableSources = 0;
+  }
   const configuredBindAddress = net.isIP(config?.network?.ip || '') ? config.network.ip : '0.0.0.0';
   const localAddress = configuredBindAddress === '0.0.0.0' ? '127.0.0.1' :
     configuredBindAddress === '::' ? '::1' : configuredBindAddress;
@@ -559,19 +585,22 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   async function cooperativeConfig(entry) {
     const cached = cooperativeConfigCache.get(entry.id);
     if (cached && (entry.local || Date.now() - cached.updatedAt < 60000)) return cached.value;
+    const membership = nodes;
     const value = await cooperativeRead(entry, '/api/runtime/config', 1500);
-    cooperativeConfigCache.set(entry.id, {value, updatedAt: Date.now()});
+    if (membership === nodes) cooperativeConfigCache.set(entry.id, {value, updatedAt: Date.now()});
     return value;
   }
   async function cooperativeTick() {
     if (cooperativeBusy) return;
     cooperativeBusy = true;
+    const membership = nodes;
     try {
       const entries = cooperativeEntries().filter(entry => entry.role !== 'coordinator');
       const configurations = await Promise.all(entries.map(async entry => {
         try { return {entry, config: await cooperativeConfig(entry)}; }
         catch (_) { return {entry, config: null}; }
       }));
+      if (membership !== nodes) return;
       const observationBundles = (await Promise.all(entries.map(async entry => {
         try {
           const requestStartedAt = Date.now();
@@ -583,10 +612,11 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
         }
         catch (_) { return null; }
       }))).filter(Boolean);
+      if (membership !== nodes) return;
       geographicFusion.update(observationBundles);
       const configuredSources = configurations.flatMap(({entry, config: value}) => value ?
         cooperativeSources(entry, value).map(source => ({...source, origin: entry.origin,
-          expectedIdentity: entry.expectedIdentity})) : []);
+          expectedIdentity: entry.expectedIdentity, token: entry.token})) : []);
       cooperativeTotalSourceCount = configuredSources.length;
       const catalog = geometryCatalog(configuredSources,
         Number(process.env.VECTORWARP_COOPERATIVE_COLOCATION_M) || 100);
@@ -606,10 +636,11 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
       const frames = (await Promise.all(sources.map(async source => {
         try {
           const value = await cooperativeRead({id: source.node, origin: source.origin,
-            expectedIdentity: source.expectedIdentity}, source.detection_path);
+            expectedIdentity: source.expectedIdentity, token: source.token}, source.detection_path);
           return {source: source.key, frame: value};
         } catch (_) { return null; }
       }))).filter(Boolean);
+      if (membership !== nodes) return;
       cooperativeAvailableSources = frames.length;
       if (frames.length) cooperativeTracker.update(sources, frames);
       cooperativeLastPollAt = Date.now(); cooperativeLastError = null;
@@ -625,7 +656,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   let discoveries = 0;
   app.get('/api/federation/nodes', (_req, res) => res.json({local_only: true, nodes: [
     {id: 'local', identity: identity || null, label: localLabel, local: true, role: localRole},
-    ...nodes.map(({id, label, role}) => ({id, identity: id, label, local: false, role}))]}));
+    ...nodes.map(({id, expectedIdentity, label, role}) =>
+      ({id, identity: expectedIdentity, label, local: false, role}))]}));
   app.get('/api/federation/cooperative', (_req, res) => res.json({
     ...cooperativeTracker.snapshot(), coordinator: identity,
     polling: {last_poll_at: cooperativeLastPollAt, busy: cooperativeBusy,
@@ -635,6 +667,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   app.get('/api/federation/geographic-fusion', (_req, res) =>
     res.json(geographicFusion.snapshot()));
   app.get('/api/federation/live-aircraft-associations', async (_req, res) => {
+    const membership = nodes;
+    let pending;
     try {
       if (liveAssociationCache && Date.now() - liveAssociationCacheAt < 750)
         return res.json(liveAssociationCache);
@@ -656,13 +690,18 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
         return {schema: 'vectorwarp-federated-live-aircraft-associations-v1', timestamp: Date.now(),
           associations: mergeLiveAircraftAssociations(rows.filter(Boolean))};
       })();
-      liveAssociationCache = await liveAssociationPromise;
+      pending = liveAssociationPromise;
+      const value = await pending;
+      if (membership !== nodes) return res.status(409).json({error: 'Node registry changed; retry the request'});
+      liveAssociationCache = value;
       liveAssociationCacheAt = Date.now();
       res.json(liveAssociationCache);
-    } finally { liveAssociationPromise = null; }
+    } finally { if (pending === liveAssociationPromise) liveAssociationPromise = null; }
   });
   app.get(localRole === 'coordinator' ? ['/api/statistics', '/api/federation/statistics-summary'] :
     '/api/federation/statistics-summary', async (_req, res) => {
+    const membership = nodes;
+    let pending;
     try {
       if (networkStatisticsCache && Date.now() - networkStatisticsCacheAt < 5000)
         return res.json(networkStatisticsCache);
@@ -682,7 +721,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
                 8 * 1024 * 1024)]);
             const value = compactNodeStatistics(entry, status, timing, scorecard,
               associationPasses);
-            if (value.available) networkNodeStatisticsCache.set(entry.id,
+            if (value.available && membership === nodes) networkNodeStatisticsCache.set(entry.id,
               {value, updatedAt: Date.now()});
             return value;
           } catch (error) {
@@ -695,10 +734,13 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
         }));
         return combineNodeStatistics(rows, cooperativeTracker.snapshot());
       })();
-      networkStatisticsCache = await networkStatisticsPromise;
+      pending = networkStatisticsPromise;
+      const value = await pending;
+      if (membership !== nodes) return res.status(409).json({error: 'Node registry changed; retry the request'});
+      networkStatisticsCache = value;
       networkStatisticsCacheAt = Date.now();
       res.json(networkStatisticsCache);
-    } finally { networkStatisticsPromise = null; }
+    } finally { if (pending === networkStatisticsPromise) networkStatisticsPromise = null; }
   });
   app.post('/api/federation/nodes', async (req, res) => {
     if (req.get('X-VectorWarp-Intent') !== 'local-node-add-v1')
@@ -712,12 +754,12 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
       // before the synchronous atomic save so concurrent additions cannot
       // exceed the bound or publish a duplicate identity.
       if (nodes.length >= 16) return res.status(409).json({error: 'The local node limit is 16'});
-      if (discovered.id === identity || nodes.some(node => node.id === discovered.id))
+      if (discovered.id === identity || nodes.some(node => node.id === discovered.id ||
+          node.expectedIdentity === discovered.id || node.origin === discovered.url))
         return res.status(409).json({error: 'That VectorWarp node is already connected'});
       const updated = [...nodes, {...discovered, origin: discovered.url, token: null,
         stored: discovered}];
-      saveRegistry(filename, updated);
-      nodes = updated;
+      replaceNodes(updated);
       res.status(201).json({ok: true, node: {id: discovered.id, label: discovered.label,
         local: false}});
     } catch (error) { res.status(400).json({error: error.message}); }
@@ -728,7 +770,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
       return res.status(428).json({error: 'Local-node intent header required'});
     const kept = nodes.filter(node => node.id !== req.params.id);
     if (kept.length === nodes.length) return res.status(404).json({error: 'Node not found'});
-    try { saveRegistry(filename, kept); nodes = kept; res.json({ok: true}); }
+    try { replaceNodes(kept); res.json({ok: true}); }
     catch (error) { res.status(500).json({error: 'The node registry could not be saved'}); }
   });
   const activeByNode = new Map();
@@ -736,6 +778,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
   app.get('/api/federation/aggregate', async (req, res) => {
     if (aggregateActive >= 2) return res.status(503).json({error: 'Aggregate busy'});
     aggregateActive++;
+    const membership = nodes;
     const entries = [{id: 'local', label: localLabel, local: true},
       ...nodes.map(({id, label}) => ({id, label, local: false}))];
     const host = req.socket.localAddress;
@@ -788,6 +831,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
     }
     try { await Promise.all(Array.from({length: Math.min(2, entries.length)}, worker));
       if (!res.writableEnded && !res.destroyed) {
+        if (membership !== nodes) return res.status(409).json({error: 'Node registry changed; retry the request'});
         res.json({nodes: result, timedOut,
           cooperative: cooperativeTracker.snapshot()});
       }

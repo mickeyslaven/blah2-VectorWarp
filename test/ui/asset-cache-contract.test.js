@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../../html');
 const version = 'ui-consistency-32';
-const assetVersions = {'insights.js': 'stats-policy-34', 'common.js': 'ui-consistency-34',
+const assetVersions = {'insights.js': 'stats-policy-34', 'common.js': 'ui-consistency-34', 'blah2.css': 'ui-consistency-35',
+  'plot_timing.js': 'ui-consistency-35', 'plot_spectrum.js': 'ui-consistency-35', 'consolidated_views.js': 'ui-consistency-35',
   'measured_track_coverage.js': 'ui-consistency-34',
   'fusion_aircraft.js': 'ui-consistency-33'};
 // Changing a dynamic dependency also changes the loader URL at every entry point.
@@ -31,7 +32,7 @@ for (const dependent of ['config_profiles.js', 'kraken_geometry.js', 'setup_assi
   assert.ok(settings.indexOf('processing_capabilities.js') < settings.indexOf(dependent),
     `Shared topology must load before ${dependent}`);
 const loader = fs.readFileSync(path.join(root, 'js/consolidated_views.js'), 'utf8');
-for (const asset of ['insights.js', 'plot_map.js', 'plot_detection.js'])
+for (const asset of ['insights.js', 'plot_map.js', 'plot_detection.js', 'plot_timing.js', 'plot_spectrum.js'])
   assert.ok(loader.includes(`${asset}?v=${assetVersions[asset] || version}`),
     `Dynamic ${asset} dependency is covered`);
 const map = fs.readFileSync(path.join(root, 'display/locations/index.html'), 'utf8');

@@ -324,6 +324,10 @@ public:
   int pair[2];
   if(socketpair(AF_UNIX,SOCK_STREAM,0,pair))throw std::runtime_error("Wideband GPU socket failed");
   socket_=pair[0];peer=pair[1];
+  // Darwin MSG_DONTWAIT alone does not bound sends waiting for buffer space.
+  const int flags=fcntl(socket_,F_GETFL);
+  if(flags<0||fcntl(socket_,F_SETFL,flags|O_NONBLOCK))
+    throw std::runtime_error("Wideband GPU nonblocking transport failed");
   childSocket=fcntl(peer,F_DUPFD_CLOEXEC,10);
   childMemory=fcntl(memory_,F_DUPFD_CLOEXEC,10);
   if(childSocket<0||childMemory<0||fcntl(socket_,F_SETFD,FD_CLOEXEC)||

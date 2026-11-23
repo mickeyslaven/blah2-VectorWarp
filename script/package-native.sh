@@ -170,9 +170,7 @@ sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/no
 sed -i 's|ExecCondition=/usr/bin/node |ExecCondition=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" \
   "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service"
-sed -i 's|^/usr/bin/node /opt/vectorwarp/|/opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/|' \
-  "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart"
-sed -i 's|  /usr/bin/node /opt/vectorwarp/|  /opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/|' \
+sed -i 's|/usr/bin/node|/opt/vectorwarp/runtime/node/bin/node|g' \
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart"
 grep -q '^ExecStart=/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" || die 'could not bind API unit to private Node'

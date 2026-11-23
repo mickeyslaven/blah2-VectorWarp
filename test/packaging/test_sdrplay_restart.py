@@ -39,7 +39,10 @@ class SdrplayRestartTest(unittest.TestCase):
         (prefix / 'current/api/node_modules').mkdir(parents=True)
         sysconf = root / 'etc'
         sysconf.mkdir()
-        (sysconf / 'config.yml').write_text('receiver: RspDuo\n')
+        (sysconf / 'config.yml').write_text(
+            'capture:\n  device:\n    type: ' +
+            ('Unconfigured' if mode == 'neutral-start-skipped' else 'RspDuo') +
+            '\n  replay:\n    state: false\n')
         service = prefix / 'libexec/vectorwarp-sdrplay-service'
         if mode != 'prepare-missing':
             service.write_text('#!/bin/sh\nexit 0\n')
@@ -70,6 +73,7 @@ printf '%s\\n' "systemctl:$*" >> {log!s}
 if [ "$1" = is-active ]; then
   mode=$(cat {marker!s})
   [ "$mode" = neutral-start-skipped ] && exit 3
+  [ "$mode" = configured-inactive-skipped ] && exit 3
   [ "$mode" = processor-start-skipped ] && [ "$(cat {starts!s})" -gt 0 ] && exit 3
   [ "$mode" = processor-start-delayed ] && [ "$(cat {starts!s})" -eq 1 ] && exit 3
 fi
@@ -80,6 +84,11 @@ exit 0
 ''')
         node = executable('node', f'''
 mode=$(cat {marker!s})
+if [ "$1" = -e ]; then
+  printf '%s\n' 'node:processor-configuration' >> {log!s}
+  [ "$mode" = neutral-start-skipped ] && printf neutral || printf configured
+  exit 0
+fi
 case "$2" in
   --finish) printf '%s\\n' "node:prepare-finish:$3" >> {log!s}; exit 0 ;;
   --begin) printf '%s\\n' 'node:prepare-begin' >> {log!s}; exit 0 ;;
@@ -137,6 +146,7 @@ exit 98
                 ' ' + str(script.parent / 'etc/config.yml') + ' ' + str(script.parent / 'prefix/current/api') +
                 ' ' + str(script.parent / 'prefix/libexec/vectorwarp-sdrplay-service'),
                 'node:prepare-sdr',
+                'node:processor-configuration',
                 'systemctl:start vectorwarp-processor.service',
                 'systemctl:is-active --quiet vectorwarp-processor.service',
                 'env:-i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C ' +
@@ -190,8 +200,8 @@ exit 98
             result = self.run_script(script)
             self.assertEqual(result.returncode, 78, result.stderr)
             entries = self.entries(log)
-            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 5)
-            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 6)
+            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 12)
+            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 13)
             self.assertIn('node:prepare-finish:78', entries)
             self.assertNotIn('node:prepare-finish:0', entries)
 
@@ -211,8 +221,19 @@ exit 98
             result = self.run_script(script)
             self.assertEqual(result.returncode, 0, result.stderr)
             entries = self.entries(log)
-            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 5)
+            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 1)
             self.assertIn('node:prepare-finish:0', entries)
+
+    def test_configured_inactive_processor_must_recover(self):
+        temporary, script, log = self.fixture('configured-inactive-skipped')
+        with temporary:
+            result = self.run_script(script)
+            self.assertEqual(result.returncode, 78, result.stderr)
+            entries = self.entries(log)
+            self.assertEqual(entries.count('systemctl:start vectorwarp-processor.service'), 12)
+            self.assertEqual(entries.count('systemctl:is-active --quiet vectorwarp-processor.service'), 13)
+            self.assertIn('node:prepare-finish:78', entries)
+            self.assertNotIn('node:prepare-finish:0', entries)
 
 
 if __name__ == '__main__':

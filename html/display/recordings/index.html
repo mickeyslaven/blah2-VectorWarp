@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VectorWarp · Recordings</title><link rel="stylesheet" href="../../lib/blah2.css?v=ui-consistency-32"></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VectorWarp · Recordings</title><link rel="stylesheet" href="../../lib/blah2.css?v=ui-consistency-35"></head>
 <body data-insight-view="recordings"><main class="app-shell recordings-shell"><header class="app-header"></header>
 <section class="controller-intro"><div><h1>Recordings</h1></div><a class="button-link" href="/display/configuration?tab=save">Recording settings</a></section>
 <section class="recording-library-summary panel" id="recording-library-summary" aria-live="polite">Reading recording storage…</section>
@@ -8,7 +8,7 @@
 <label>Search all recordings<input id="recording-search" type="search" placeholder="Flight, ICAO, receiver, or filename" autocomplete="off"></label>
 <label>Type<select id="recording-kind"><option value="">All recordings</option><option value="automatic">Aircraft clips</option><option value="manual">Manual</option></select></label>
 <label>Sort<select id="recording-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="largest">Largest first</option><option value="smallest">Smallest first</option></select></label>
-<button id="recording-refresh" type="button">Refresh</button></div>
+<button id="recording-refresh" class="button-secondary" type="button">Refresh</button></div>
 <div class="recording-import-controls"><button id="recording-import-button" class="button-link button-secondary" type="button" aria-describedby="recording-import-status">Import recording</button><input id="recording-import" type="file" accept=".vwr,.blah2iq,.mchq" hidden><button id="recording-import-cancel" class="button-secondary" type="button" hidden>Cancel import</button><progress id="recording-import-progress" aria-label="Recording import progress" max="100" value="0" hidden></progress><span id="recording-import-status" role="status" aria-live="polite">Use a complete .vwr replay package or a legacy raw recording.</span></div></section>
 <div class="recording-page-status" id="recording-page-status" aria-live="polite"></div>
 <div class="recording-operation-status" id="recording-operation-status" role="status" aria-live="polite"></div>

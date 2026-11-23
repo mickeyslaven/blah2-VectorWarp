@@ -54,18 +54,8 @@ var layout = {
 };
 var config = VectorWarpPlotTheme.config();
 
-// setup plotly data
-var data = [
-  {
-    z: [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-    colorscale: 'Jet',
-    colorbar: {title: {text: 'dB'}},
-    zauto: false,
-    zmin: -120,
-    zmax: 0,
-    type: 'heatmap'
-  }
-];
+// Keep the waiting canvas empty until measured spectrum arrives.
+var data = [];
 var detection = [];
 
 Plotly.react('data', data, layout, config);

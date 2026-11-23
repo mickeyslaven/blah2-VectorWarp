@@ -59,7 +59,7 @@ void clutterEvidence(const std::filesystem::path& parent) {
   }
   std::ifstream in(std::filesystem::path(c.directory)/"coherent-observer.jsonl");std::string line;unsigned count=0;
   while(std::getline(in,line)){
-    rapidjson::Document d;d.Parse(line.c_str());require(!d.HasParseError(),"Invalid clutter JSON");
+    rapidjson::Document d;d.Parse<rapidjson::kParseFullPrecisionFlag>(line.c_str());require(!d.HasParseError(),"Invalid clutter JSON");
     if(std::string(d["stage"].GetString())!="clutter")continue;
     require(d["captureEpoch"].GetUint64()==9&&d["channel_ids"][0].GetUint()==2,
       "Clutter lost capture/channel lineage");
@@ -252,7 +252,7 @@ int main(){
     }
     std::ifstream in(directory/"coherent-observer.jsonl");std::string line;unsigned lines=0;
     while(std::getline(in,line)){
-      rapidjson::Document d;d.Parse(line.c_str());require(!d.HasParseError(),"Invalid observer JSON");
+      rapidjson::Document d;d.Parse<rapidjson::kParseFullPrecisionFlag>(line.c_str());require(!d.HasParseError(),"Invalid observer JSON");
       require(d["captureEpoch"].GetUint64()==7,"Lost capture epoch");
       require(d["actual_gain_db"][0].GetDouble()==12.25,"Lost exact gain metadata");
       if(d.HasMember("channelized_iq"))require(d["channelized_iq"][0][0][0].GetDouble()==sample(0,0).real(),"Lost full numeric precision");

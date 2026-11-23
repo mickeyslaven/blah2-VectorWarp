@@ -17,6 +17,9 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#ifdef __APPLE__
+#include <unistd.h>
+#endif
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
@@ -328,7 +331,14 @@ inline Layout layout(uint32_t rows,uint32_t columns){
  l.doppler=aligned(l.delay+4*columns);l.input=aligned(l.doppler+8*rows);
  l.display=l.input+16*l.count;l.records=l.display+8*l.count;
  l.flags=l.records+sizeof(Record)*l.count;l.cells=l.flags+4*l.count;
- l.bytes=aligned(l.cells+4*l.count);return l;
+ l.bytes=aligned(l.cells+4*l.count);
+#ifdef __APPLE__
+ // Match Darwin's reported POSIX shared-memory length in both processes.
+ const long page=sysconf(_SC_PAGESIZE);
+ if(page<=0)throw std::runtime_error("Temporal GPU shared-memory page size unavailable");
+ l.bytes=((l.bytes+uint64_t(page)-1)/uint64_t(page))*uint64_t(page);
+#endif
+ return l;
 }
 inline void validate(const Config& c){
  (void)layout(uint32_t(c.dopplerAxis.size()),uint32_t(c.delayAxis.size()));

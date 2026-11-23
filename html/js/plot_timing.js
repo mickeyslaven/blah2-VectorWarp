@@ -54,14 +54,8 @@ async function updatePresentationTiming() {
 var layout = VectorWarpPlotTheme.cartesianLayout('vectorwarp-timing', xTitle, yTitle, {legend: true});
 var config = VectorWarpPlotTheme.config(true);
 
-// setup plotly data
-var data = [
-  {
-    z: [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-    colorscale: 'Jet',
-    type: 'heatmap'
-  }
-];
+// Keep the waiting canvas empty until measured timing arrives.
+var data = [];
 
 Plotly.react('data', data, layout, config);
 
