@@ -8497,6 +8497,21 @@
           "context_tokens:production": [1774465, 1774544],
           "lines:root": [607, 614]
         }
+      },
+      {
+        "owner": "2026-11-23 standalone source-closure availability review",
+        "purpose": "Retry bounded transient DNS, connection and timeout failures while preserving exact checksums and provenance validation for every downloaded corresponding-source input.",
+        "rejected_reuse": "Do not skip source closure, accept unchecked downloads, make provenance advisory, or retry permanently beyond a bounded five-attempt deadline.",
+        "cleanup_plan": "Retain one shared bounded fetch loop and curl's bounded equivalent at the two non-Python closure downloads. These exact CI ceilings have no reserve.",
+        "changes": {
+          "context_characters:production": [7078054, 7078398],
+          "context_characters:release-ci": [138246, 138590],
+          "context_lines:production": [130861, 130867],
+          "context_lines:release-ci": [2655, 2661],
+          "context_tokens:production": [1774544, 1774612],
+          "context_tokens:release-ci": [30847, 30915],
+          "lines:.github": [2655, 2661]
+        }
       }
   ],
   "context_snapshot": {

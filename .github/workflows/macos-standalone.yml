@@ -117,14 +117,20 @@ jobs:
             printf '%s\t%s\tcompile-header\n' "$formula" "$version" >> "$raw_specs"
           done
           python3 - "$raw_specs" "$specs" "$(brew --cellar)" "$api_metadata" <<'PY'
-          import hashlib, json, os, pathlib, re, subprocess, sys, urllib.parse, urllib.request
+          import hashlib, json, os, pathlib, re, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
           raw, output, cellar, api_output = map(pathlib.Path, sys.argv[1:])
           def fetch(url):
               headers = {"Accept": "application/vnd.github+json", "User-Agent": "VectorWarp-source-closure"}
               if os.environ.get("GH_TOKEN") and url.startswith("https://api.github.com/"):
                   headers["Authorization"] = "Bearer " + os.environ["GH_TOKEN"]
-              with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
-                  return response.read()
+              request = urllib.request.Request(url, headers=headers)
+              for attempt in range(5):
+                  try:
+                      with urllib.request.urlopen(request, timeout=30) as response:
+                          return response.read()
+                  except (urllib.error.URLError, TimeoutError):
+                      if attempt == 4: raise
+                      time.sleep(2 ** attempt)
           def without_bottle_block(text):
               result = []; skipping = False
               for line in text.splitlines(keepends=True):
@@ -213,10 +219,10 @@ jobs:
             --output "$closure_inputs" --manifest "$closure_inputs/formula-inputs.json" \
             --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --run-id "${{ github.run_id }}"
           source packaging/node-runtime.env
-          curl --fail --location --proto '=https' --tlsv1.2 "$NODE_BASE_URL/node-v${NODE_VERSION}.tar.gz" --output "$RUNNER_TEMP/node-source.tar.gz"
+          curl --fail --location --retry 5 --retry-all-errors --proto '=https' --tlsv1.2 "$NODE_BASE_URL/node-v${NODE_VERSION}.tar.gz" --output "$RUNNER_TEMP/node-source.tar.gz"
           printf '%s  %s\n' "$NODE_SOURCE_SHA256" "$RUNNER_TEMP/node-source.tar.gz" | shasum -a 256 --check
           git -C build/VkFFT archive --format=tar.gz --output "$RUNNER_TEMP/vkfft-source.tar.gz" $(python3 script/artifact-plan.py pin VkFFT)
-          curl --fail --location --proto '=https' --tlsv1.2 https://www.sqlite.org/copyright.html --output "$RUNNER_TEMP/sqlite-public-domain.html"
+          curl --fail --location --retry 5 --retry-all-errors --proto '=https' --tlsv1.2 https://www.sqlite.org/copyright.html --output "$RUNNER_TEMP/sqlite-public-domain.html"
           printf '%s  %s\n' '44ca9f793055c8e32fc65f65a4f5bcf813a33f5bdaaa084067dd617a4ed3cc70' "$RUNNER_TEMP/sqlite-public-domain.html" | shasum -a 256 --check
           python3 script/export-macos-source-closure.py \
             --inventory "$provenance/inventory.json" \

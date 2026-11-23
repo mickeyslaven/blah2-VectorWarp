@@ -41,6 +41,18 @@ class SourceClosureTest(unittest.TestCase):
         self.assertIn('if has_local_patch &&', exporter_source)
         self.assertIn('Homebrew API local-patch identity differs', exporter_source)
 
+    def test_closure_network_reads_retry_transient_resolution_failures(self):
+        namespace = self.workflow_patch_binder()
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"reviewed"
+        with mock.patch.object(namespace["urllib"].request, "urlopen",
+                               side_effect=[namespace["urllib"].error.URLError("dns"),
+                                            TimeoutError("slow"), response]) as opened, \
+             mock.patch.object(namespace["time"], "sleep") as slept:
+            self.assertEqual(namespace["fetch"]("https://example.invalid/source"), b"reviewed")
+        self.assertEqual(opened.call_count, 3)
+        self.assertEqual([call.args[0] for call in slept.call_args_list], [1, 2])
+
     def workflow_patch_binder(self):
         workflow = (ROOT / ".github/workflows/macos-standalone.yml").read_text()
         block = workflow.split(
