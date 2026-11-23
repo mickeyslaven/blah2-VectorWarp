@@ -18,7 +18,7 @@ struct NativeProductIdentity {
   uint64_t captureEpoch = 0, captureFirst = 0, captureEnd = 0;
   std::vector<uint32_t> channelIds, referenceChannelIds;
   EventTimeProvenance eventTime;
-  std::string productBackend, productDevice, resolvedProductPlan;
+  std::string productBackend, productDevice, resolvedProductPlan, resolvedFrontendPlan;
   bool temporalExecuted = false, detectorExecuted = false, trackerExecuted = false;
   bool bearingExecuted = false;
   bool trackerOnHost = false;
@@ -39,6 +39,9 @@ inline std::string annotate_native_product(std::string json,
   writer.Key("sample_rate_hz"); writer.Uint(identity.sampleRateHz);
   if (!identity.resolvedProductPlan.empty()) {
     writer.Key("resolved_product_plan"); writer.String(identity.resolvedProductPlan.c_str());
+  }
+  if (!identity.resolvedFrontendPlan.empty()) {
+    writer.Key("resolved_frontend_plan"); writer.String(identity.resolvedFrontendPlan.c_str());
   }
   writer.Key("first_input_sample"); writer.Uint64(identity.firstInputSample);
   writer.Key("end_input_sample"); writer.Uint64(identity.endInputSample);

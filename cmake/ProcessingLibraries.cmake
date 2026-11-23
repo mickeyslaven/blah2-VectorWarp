@@ -1,5 +1,14 @@
 include_guard(GLOBAL)
 include(${PROJECT_ROOT}/cmake/RadarProducts.cmake)
+file(READ ${PROJECT_ROOT}/api/frontend-plan-contract.json FRONTEND_PLAN_CONTRACT)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PROJECT_ROOT}/api/frontend-plan-contract.json)
+configure_file(${PROJECT_ROOT}/src/process/conditioning/FrontendPlanContract.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/frontend-plan/FrontendPlanContract.h @ONLY)
+add_library(blah2FrontendPlan INTERFACE)
+target_compile_features(blah2FrontendPlan INTERFACE cxx_std_17)
+target_include_directories(blah2FrontendPlan INTERFACE
+  ${PROJECT_ROOT}/src ${CMAKE_CURRENT_BINARY_DIR}/frontend-plan)
+target_link_libraries(blah2FrontendPlan INTERFACE blah2RapidJson)
 
 # One receiver-independent processing graph for the application, GPU checks,
 # and recorded benchmarks. GPU transports are resolved by GpuAcceleration.cmake.
@@ -43,11 +52,11 @@ add_library(blah2Channelizer STATIC EXCLUDE_FROM_ALL
 target_include_directories(blah2Channelizer SYSTEM PRIVATE
   ${BLAH2_FFTW3_INCLUDE_DIR})
 target_link_libraries(blah2Channelizer PUBLIC
-  blah2FixedExecutor ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
+  blah2FixedExecutor blah2FrontendPlan ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
 add_library(blah2MultiIlluminatorRadar STATIC EXCLUDE_FROM_ALL
   ${PROJECT_ROOT}/src/process/pipeline/CanonicalRadar.cpp)
 target_link_libraries(blah2MultiIlluminatorRadar PUBLIC
-  blah2ProductionRawIq blah2Detection blah2Tracking blah2GpuResidentProcess)
+  blah2ProductionRawIq blah2Detection blah2Tracking blah2GpuResidentProcess blah2FrontendPlan)
 
 foreach(target IN ITEMS blah2FixedExecutor blah2RadarDsp blah2Acceleration blah2ProductionRawIq
     blah2Channelizer blah2MultiIlluminatorRadar)

@@ -1,0 +1,21 @@
+{
+  "schema": "vectorwarp-frontend-plan-v1",
+  "extraction": "direct",
+  "filter": "identity-v1",
+  "source_sample_rate_hz": 0,
+  "source_center_hz": 0,
+  "output_sample_rate_hz": 0,
+  "frequency_hz": 0,
+  "occupied_bandwidth_hz": 0,
+  "standard": "",
+  "filter_taps_per_phase": 0,
+  "filter_tap_count": 1,
+  "transition_width_hz_x2": 0,
+  "cutoff_hz_x4": 0,
+  "input_samples_per_output": 1,
+  "group_delay_input_samples": 0,
+  "decimation_phase": 0,
+  "channel_ids": [],
+  "reference_channel_ids": [],
+  "surveillance_channel_ids": []
+}

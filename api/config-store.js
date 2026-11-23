@@ -10,7 +10,7 @@ const {getDeviceProfiles, validateConfig, writeConfigAtomically, FIELD_RULES,
 const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
 const {siteFingerprint} = require('./manifold-recorder');
 const {legacyDelayReferenceRate, applyReceiverProfile,
-  temporalConfirmationRequirements} = require('../html/js/config_profiles');
+  temporalConfirmationRequirements, trackingProfiles} = require('../html/js/config_profiles');
 const {createReceiverJournal} = require('./receiver-journal');
 
 // Source trees and macOS bundles use config/; native packages use
@@ -20,6 +20,134 @@ const canonicalPath = ['config', 'config-examples'].map(directory =>
   path.join(__dirname, '..', directory, 'config.yml')).find(filename => fs.existsSync(filename));
 if (!canonicalPath) throw new Error('Canonical first-run configuration is missing from this installation.');
 const canonicalDefaults = yaml.load(fs.readFileSync(canonicalPath, 'utf8'));
+const MIGRATION_LIMIT = 131072, MIGRATION_HISTORY = 16;
+const migrationReasons = {
+  ...Object.fromEntries(Object.keys(RETIRED_FIXED_SETTINGS).map(field => [field,
+    'Removed a fixed/no-op setting; the unified pipeline owns this behavior.'])),
+  'process.tracker.publication': 'Removed the native publication alias; only the canonical native radar publisher is supported.',
+  'process.data.overlap': 'Removed the obsolete overlap setting; radar CPI scheduling owns overlap.',
+  'process.tracker.smooth': 'Removed obsolete tracker smoothing; the canonical tracker owns state estimation.',
+  'truth.ais': 'Removed the retired AIS integration; no radar inference is derived from truth feeds.',
+  'truth.adsb.adsb2dd': 'Removed the retired truth adapter alias; ADS-B remains evaluation/training truth only.',
+  ...Object.fromEntries(['process.detection.temporal_shadow', 'process.detection.live_temporal_shadow',
+    'process.detection.doppler_ridge_scrubber', 'process.tracker.track_guided_shadow',
+    'process.bearing.frequency_resolved_shadow', 'process.bearing.manifold_automation',
+    'process.surveillance_fusion.detection_manifold_automation'].map(field => [field,
+    'Removed an observation-only experimental lane; its output is not promoted into the unified radar pipeline.'])),
+  'process.delay_reference_sample_rate_hz': 'Made the original delay-bin sample rate explicit, preserving the configured physical search/filter ranges.',
+  'capture.device.address': 'Replaced the released localhost USB selector with the supported UHD type=b200 selector; custom addresses are unchanged.',
+  'capture.replay.provenance': 'Made the legacy-unqualified replay default explicit; old recordings are not decision-grade evidence.',
+  'process.clutter.followAmbiguity': 'An omitted legacy manual-range policy now follows the complete radar delay range, the current unified clutter-cancellation standard.',
+  'process.tracker.profile': 'An omitted tracker profile now explicitly selects the current balanced standard; explicit initiation settings are retained.',
+  'process.tracker.initiate.min_snr_db': 'Made the native profile-dependent initiation SNR explicit: balanced 5 dB, conservative 7 dB, permissive 4 dB.',
+  'process.tracker.initiate.acceleration_model': 'Replaced an implicit release-dependent acceleration policy with the current profile standard: balanced uses adaptive_gate; conservative/permissive use hypothesis_bank.',
+  'process.tracker.initiate.N': 'Expanded the enabled deep-TBD confirmation window to require disjoint measurement support.',
+  'process.tracker.delete': 'Expanded enabled deep-TBD miss tolerance to cover its disjoint confirmation interval.'
+};
+const valueAt = (config, field) => field.split('.').reduce((value, key) => value?.[key], config);
+const revisionOf = raw => crypto.createHash('sha256').update(raw).digest('hex');
+
+function migrationChanges(before, after) {
+  // Never copy retired objects, device identifiers, paths, endpoints or arbitrary
+  // operator metadata into a status response. Only known non-secret scalars are
+  // relevant to these migrations; retired objects are described, not disclosed.
+  return Object.entries(migrationReasons).flatMap(([field, reason]) => {
+    const oldValue = valueAt(before, field), newValue = valueAt(after, field);
+    return JSON.stringify(oldValue) === JSON.stringify(newValue) ? [] : [{path: field,
+      before: oldValue === undefined ? null : newValue === undefined && !RETIRED_FIXED_SETTINGS[field] ?
+        '[retired settings]' : oldValue,
+      after: newValue ?? null, beforePresent: oldValue !== undefined,
+      afterPresent: newValue !== undefined, reason}];
+  });
+}
+
+function migrationHistory(filename) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(`${filename}.migrations.json`, fs.constants.O_RDONLY |
+      fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > MIGRATION_LIMIT) throw new Error('Invalid migration history');
+    const raw = fs.readFileSync(descriptor, 'utf8');
+    if (Buffer.byteLength(raw) > MIGRATION_LIMIT) throw new Error('Oversized migration history');
+    const history = JSON.parse(raw);
+    const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+    const valid = receipt => receipt && receipt.schema === 'vectorwarp-config-migration-v1' &&
+      hash(receipt.id) && hash(receipt.previousRevision) && hash(receipt.configRevision) &&
+      typeof receipt.createdAt === 'string' && Number.isFinite(Date.parse(receipt.createdAt)) &&
+      receipt.standard === 'Current unified radar pipeline' && Array.isArray(receipt.changes) &&
+      receipt.changes.length > 0 && receipt.changes.length <= 64 && receipt.changes.every(change =>
+        Object.hasOwn(migrationReasons, change.path) && typeof change.reason === 'string' &&
+        change.reason.length > 0 && change.reason.length <= 512 &&
+        typeof change.beforePresent === 'boolean' && typeof change.afterPresent === 'boolean' &&
+        ['before', 'after'].every(key => change[key] === null || typeof change[key] === 'boolean' ||
+          (typeof change[key] === 'number' && Number.isFinite(change[key])) ||
+          ['[retired settings]', 'localhost', 'type=b200', 'legacy-unqualified', 'balanced',
+            'conservative', 'permissive', 'adaptive_gate', 'hypothesis_bank', 'off', 'rectangular'].includes(change[key])));
+    if (history.schemaVersion !== 1 || !Array.isArray(history.receipts) ||
+        history.receipts.length > MIGRATION_HISTORY || !history.receipts.every(valid) ||
+        (history.pending !== null && !valid(history.pending)) ||
+        !Number.isSafeInteger(history.omittedReceipts) || history.omittedReceipts < 0)
+      throw new Error('Invalid migration history');
+    return history;
+  } catch (error) {
+    return {schemaVersion: 1, receipts: [], pending: null, omittedReceipts: 0,
+      error: error.code === 'ENOENT' ? null : 'Configuration migration history is unreadable; existing configuration was not changed.'};
+  } finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
+}
+
+function writeMigrationHistory(filename, history) {
+  let raw = `${JSON.stringify(history)}\n`;
+  // Both count and bytes are bounded. Never truncate a receipt's change list.
+  while (Buffer.byteLength(raw) > MIGRATION_LIMIT && history.receipts.length) {
+    history.receipts.shift(); history.omittedReceipts++;
+    raw = `${JSON.stringify(history)}\n`;
+  }
+  if (Buffer.byteLength(raw) > MIGRATION_LIMIT) throw new Error('Configuration migration history exceeds its size limit.');
+  const target = `${filename}.migrations.json`;
+  const temporary = `${target}.${crypto.randomBytes(12).toString('hex')}.tmp`;
+  let descriptor;
+  try {
+    descriptor = fs.openSync(temporary, 'wx', 0o640);
+    fs.fchownSync(descriptor, -1, fs.statSync(filename).gid);
+    fs.writeFileSync(descriptor, raw);
+    fs.fsyncSync(descriptor); fs.closeSync(descriptor); descriptor = undefined;
+    fs.renameSync(temporary, target);
+    descriptor = fs.openSync(path.dirname(filename), fs.constants.O_RDONLY);
+    fs.fsyncSync(descriptor);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    try { fs.unlinkSync(temporary); } catch (_) {}
+  }
+}
+
+function appliedMigrationHistory(history, revision) {
+  if (history.pending?.configRevision === revision) {
+    history.receipts.push(history.pending);
+    history.pending = null;
+    while (history.receipts.length > MIGRATION_HISTORY) {
+      history.receipts.shift(); history.omittedReceipts++;
+    }
+  }
+  return history;
+}
+
+function readConfigMigrations(filename, revision) {
+  if (revision === undefined) {
+    try {
+      if (fs.statSync(filename).size <= 262144) revision = revisionOf(fs.readFileSync(filename));
+    } catch (_) {}
+  }
+  const history = appliedMigrationHistory(migrationHistory(filename), revision);
+  // Project an explicit public contract: never reflect unknown sidecar fields.
+  return {configMigrations: history.receipts.map(receipt => ({schema: receipt.schema,
+    id: receipt.id, createdAt: receipt.createdAt, previousRevision: receipt.previousRevision,
+    configRevision: receipt.configRevision, standard: receipt.standard,
+    changes: receipt.changes.map(({path, before, after, beforePresent, afterPresent, reason}) =>
+      ({path, before, after, beforePresent, afterPresent, reason})),
+    receiverJournalPreserved: receipt.receiverJournalPreserved === true})),
+  configMigrationError: history.error || null, configMigrationOmitted: history.omittedReceipts};
+}
 
 function setupDefaults() {
   const config = JSON.parse(JSON.stringify(canonicalDefaults));
@@ -48,6 +176,7 @@ function stripLegacyNoOps(config) {
   if (config.process?.data) delete config.process.data.overlap;
   if (config.process?.tracker) delete config.process.tracker.smooth;
   if (config.truth) delete config.truth.ais;
+  if (config.truth?.adsb) delete config.truth.adsb.adsb2dd;
   // Retire observation-only lanes without promoting their unqualified output.
   // This runs in the existing atomic upgrade migration and save sanitizer.
   const detection = config.process?.detection;
@@ -98,8 +227,6 @@ function readConfig(filename, {requiredPlanFile} = {}) {
     parsed = yaml.load(raw, {schema: yaml.JSON_SCHEMA});
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
       throw new Error('The YAML root must contain configuration sections.');
-    if (parsed.truth?.adsb && Object.prototype.hasOwnProperty.call(parsed.truth.adsb, 'adsb2dd'))
-      delete parsed.truth.adsb.adsb2dd;
     stripLegacyNoOps(parsed);
     // Preserve bounded recorder collection defaults from released configs.
     const bearing = parsed.process?.bearing;
@@ -125,12 +252,15 @@ function readConfig(filename, {requiredPlanFile} = {}) {
   // 2-MS/s scale. Persist an unambiguous original rate in the migration.
   if (parsed?.process && parsed.process.delay_reference_sample_rate_hz === undefined)
     delete defaults.process.delay_reference_sample_rate_hz;
-  // A released configuration without a profile is the legacy permissive
-  // tracker. Do not silently migrate it merely by reading and saving another
-  // setting; fresh configurations still start conservative.
-  if (parsed?.process?.tracker && parsed.process.tracker.profile === undefined) {
-    delete defaults.process.tracker.profile;
-    delete defaults.process.tracker.initiate.min_snr_db;
+  // Reading is not an upgrade: match native omission semantics until an
+  // explicit, receipted migration is durably applied.
+  if (parsed?.process?.clutter && parsed.process.clutter.followAmbiguity === undefined)
+    defaults.process.clutter.followAmbiguity = false;
+  if (parsed?.process?.tracker) {
+    const trackerDefaults = trackingProfiles[parsed.process.tracker.profile ?? 'balanced'] || trackingProfiles.balanced;
+    if (parsed.process.tracker.profile === undefined) delete defaults.process.tracker.profile;
+    defaults.process.tracker.initiate.min_snr_db = trackerDefaults.minSnrDb;
+    defaults.process.tracker.initiate.acceleration_model = trackerDefaults.accelerationModel;
   }
   const profile = getDeviceProfiles().find(item => item.type === parsed?.capture?.device?.type);
   if (profile) {
@@ -145,6 +275,8 @@ function readConfig(filename, {requiredPlanFile} = {}) {
       defaults.process.performance.fft_threads = 1;
     }
     if (profile.type === 'Kraken') {
+      // Missing gain policy meant fixed tuner gains, not a fresh-install probe.
+      defaults.capture.device.heimdall.gain_control = 'fixed';
       const count = Number.isInteger(parsed.capture.device.channel_count) ?
         Math.max(2, Math.min(8, parsed.capture.device.channel_count)) : 5;
       const reference = parsed.capture.device.reference_channel ?? 0;
@@ -219,12 +351,30 @@ function readConfig(filename, {requiredPlanFile} = {}) {
   const requiredDefaults = laneTransmittersComplete ?
     suppliedDefaults.filter(field => field !== 'location.tx') : suppliedDefaults;
   const validation = validateConfig(config);
+  const configurationValid = validation.valid;
   const radarPlan = checkRadarPlan(config, filename, requiredPlanFile);
   validation.errors.push(...radarPlan.errors);
   validation.valid = validation.errors.length === 0;
-  return {config, revision: crypto.createHash('sha256').update(exists ? raw : 'missing').digest('hex'),
-    exists, readError, suppliedDefaults: requiredDefaults, validation, radarPlan,
-    setupRequired: Boolean(readError || requiredDefaults.length || !validation.valid)};
+  const features = radarPlan.required_features;
+  const reviewableFeatures = features && typeof features === 'object' && !Array.isArray(features) &&
+    Object.entries(features).every(([key, value]) =>
+      Object.hasOwn(radarPlan.lanes?.[0]?.features || {}, key) &&
+      (typeof value === 'boolean' || Number.isSafeInteger(value)));
+  const radarPlanReview = radarPlan.qualification === 'rejected' ? {
+    required: true, id: revisionOf(`${revisionOf(raw)}:${radarPlan.requirement_sha256 || 'unreadable'}`),
+    configPath: filename, contractFile: radarPlan.contractFile,
+    message: 'The saved receiver configuration is retained. Its independently pinned radar plan requires review; do not repeat receiver setup or weaken required features.',
+    previewCommand: reviewableFeatures ?
+      ['node', path.join(__dirname, 'config-store.js'), 'pin-preview', filename,
+        ...Object.entries(features).map(([key, value]) => `${key}=${JSON.stringify(value)}`)] : null,
+    acceptCommand: ['node', path.join(__dirname, 'config-store.js'), 'accept', filename, 'REVIEWED_REQUIREMENT.json'],
+    instructions: 'Generate a read-only preview with the existing required features, review the effective tracker defaults and any resolved-product assertions independently, then verify the reviewed file with accept. Only then install that reviewed file at contractFile and restart normally. Neither command installs or weakens a pin.',
+    resolvedProductsRequireReview: Boolean(radarPlan.resolved_products)
+  } : null;
+  const revision = revisionOf(exists ? raw : 'missing');
+  return {config, revision, ...readConfigMigrations(filename, revision),
+    exists, readError, suppliedDefaults: requiredDefaults, validation, radarPlan, radarPlanReview,
+    setupRequired: Boolean(readError || requiredDefaults.length || !configurationValid)};
 }
 
 function writable(filename) {
@@ -260,8 +410,9 @@ function migrateKnownDefaults(filename, {report = value => console.error(JSON.st
   try { raw = fs.readFileSync(filename, 'utf8'); parsed = yaml.load(raw, {schema: yaml.JSON_SCHEMA}); }
   catch (_) { return false; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
-  const revision = value => crypto.createHash('sha256').update(value).digest('hex');
-  const previousRevision = revision(raw), receiverFingerprint = revision(JSON.stringify(parsed.capture || {}));
+  if (readConfig(filename).readError) return false;
+  const previousRevision = revisionOf(raw), receiverFingerprint = revisionOf(JSON.stringify(parsed.capture || {}));
+  const before = JSON.parse(JSON.stringify(parsed));
   const journal = createReceiverJournal(filename), predecessor = journal.load();
   const trackerConfirmationChanges = [];
   const beforeRetirement = JSON.stringify(parsed);
@@ -277,6 +428,28 @@ function migrateKnownDefaults(filename, {report = value => console.error(JSON.st
   if (parsed.capture?.device?.type === 'Usrp' && parsed.capture.device.address === 'localhost') {
     parsed.capture.device.address = 'type=b200';
     changed = true;
+  }
+  // Only missing policy fields move to the current standard. Hardware, site,
+  // receiver identity and explicit processing choices are never preset-reset.
+  const tracker = parsed.process?.tracker;
+  if (tracker?.initiate && typeof tracker.initiate === 'object') {
+    if (tracker.profile === undefined) { tracker.profile = 'balanced'; changed = true; }
+    const trackerDefaults = trackingProfiles[tracker.profile];
+    if (!trackerDefaults) throw new Error('Unknown tracker profile; configuration was not migrated.');
+    if (tracker.initiate.min_snr_db === undefined) {
+      tracker.initiate.min_snr_db = trackerDefaults.minSnrDb;
+      changed = true;
+    }
+    if (tracker.initiate.acceleration_model === undefined) {
+      tracker.initiate.acceleration_model = trackerDefaults.accelerationModel;
+      changed = true;
+    }
+  }
+  if (parsed.process?.clutter && parsed.process.clutter.followAmbiguity === undefined) {
+    parsed.process.clutter.followAmbiguity = true; changed = true;
+  }
+  if (parsed.capture?.replay && parsed.capture.replay.provenance === undefined) {
+    parsed.capture.replay.provenance = 'legacy-unqualified'; changed = true;
   }
   // Released deep-TBD configurations predate disjoint confirmation. Repair only
   // that already-enabled policy, never ordinary saves or a new preset selection.
@@ -300,26 +473,48 @@ function migrateKnownDefaults(filename, {report = value => console.error(JSON.st
     }
   }
   if (!changed) return false;
+  if (!writable(filename)) throw new Error('Configuration is read-only; no migration was applied.');
   const planErrors = checkRadarPlan(parsed, filename).errors;
   if (planErrors.length) throw new Error(planErrors.join('; '));
+  const history = appliedMigrationHistory(migrationHistory(filename), previousRevision);
+  if (history.error) throw new Error(history.error);
+  // Stage the receipt first. A crash before the YAML rename hides this pending
+  // entry; a crash after it exposes evidence only for the exact applied hash.
+  const configRevision = revisionOf(yaml.dump(parsed, {noRefs: true, lineWidth: 100,
+    quotingType: '"', forceQuotes: false}));
+  const receipt = {schema: 'vectorwarp-config-migration-v1', previousRevision, configRevision,
+    id: revisionOf(`vectorwarp-config-migration-v1:${previousRevision}:${configRevision}`),
+    createdAt: new Date().toISOString(), standard: 'Current unified radar pipeline',
+    changes: migrationChanges(before, parsed), backup: `${filename}.bak`, trackerConfirmationChanges,
+    receiverJournalPreserved: false};
+  if (!receipt.changes.length || receipt.changes.length > 64)
+    throw new Error('Configuration migration has no complete bounded change receipt.');
+  history.pending = receipt;
+  writeMigrationHistory(filename, history);
+  if (revisionOf(fs.readFileSync(filename)) !== previousRevision)
+    throw new Error('Configuration changed during migration; no migration was applied.');
   writeConfigAtomically(filename, parsed);
   const document = readConfig(filename);
-  const receipt = {schema: 'vectorwarp-config-migration-v1', previousRevision,
-    configRevision: document.revision, backup: `${filename}.bak`, trackerConfirmationChanges,
-    receiverJournalPreserved: false};
+  const receiverAfter = JSON.parse(JSON.stringify(parsed.capture || {}));
+  // Making the dormant legacy replay default explicit does not change live
+  // hardware. Active replay and every other capture/selector change stay bound.
+  if (before.capture?.replay?.state === false && before.capture.replay.provenance === undefined &&
+      receiverAfter.replay?.state === false && receiverAfter.replay.provenance === 'legacy-unqualified')
+    delete receiverAfter.replay.provenance;
   // Only an exact, previously verified Apply may cross this known migration.
   // Direct edits, changed receiver selectors and unresolved transactions retain
   // their interlock. Recheck the journal to avoid overwriting concurrent work.
   if (document.validation.valid && predecessor.configRevision === previousRevision &&
       predecessor.applicationVerified === true && predecessor.reconciliationRequired === false &&
       ['not-required', 'already-matched', 'synchronized'].includes(predecessor.state) &&
-      receiverFingerprint === revision(JSON.stringify(parsed.capture || {})) &&
+      receiverFingerprint === revisionOf(JSON.stringify(receiverAfter)) &&
       JSON.stringify(journal.load()) === JSON.stringify(predecessor)) {
     receipt.receiverJournalPreserved = true;
     journal.write({...predecessor, configRevision: document.revision,
       receipt: {...predecessor.receipt, configRevision: document.revision,
         configMigration: receipt}});
   }
+  writeMigrationHistory(filename, appliedMigrationHistory(history, document.revision));
   report(receipt);
   return true;
 }
@@ -381,12 +576,17 @@ function saveConfig(filename, candidate, expectedRevision) {
     error.status = 422;
     throw error;
   }
+  // Complete a crash-recovered migration receipt before advancing its revision.
+  const history = migrationHistory(filename);
+  if (history.pending?.configRevision === before.revision)
+    writeMigrationHistory(filename, appliedMigrationHistory(history, before.revision));
   writeConfigAtomically(filename, prepared);
   return readConfig(filename);
 }
 
 module.exports = {readConfig, writable, saveConfig, setupDefaults, configurationForReceiver,
-  migrateKnownDefaults, preserveConfigBytesDuringUpgrade, stripLegacyNoOps, checkRadarPlan};
+  migrateKnownDefaults, preserveConfigBytesDuringUpgrade, stripLegacyNoOps, checkRadarPlan,
+  readConfigMigrations};
 
 // Read-only deployment/CI interface. pin-preview emits an artifact for review;
 // it never writes or weakens the independently managed requirement file.
@@ -399,8 +599,9 @@ if (require.main === module) {
         (command === 'pin-preview' && !args.length))
       throw new Error('usage: config-store.js plan CONFIG | pin-preview CONFIG feature=JSON [...] | accept CONFIG REQUIREMENT | accept-runtime CONFIG REQUIREMENT REPORT');
     const document = readConfig(filename, {requiredPlanFile: command.startsWith('accept') ? args[0] : undefined});
-    if (document.readError || !document.validation.valid)
-      throw new Error(document.readError || document.validation.errors.join('; '));
+    const validation = command === 'pin-preview' ? validateConfig(document.config) : document.validation;
+    if (document.readError || !validation.valid)
+      throw new Error(document.readError || validation.errors.join('; '));
     const required_features = {};
     if (command === 'pin-preview') {
       for (const argument of args) {
@@ -408,16 +609,18 @@ if (require.main === module) {
         if (equals < 1) throw new Error('Feature assertions must be feature=JSON');
         required_features[argument.slice(0, equals)] = JSON.parse(argument.slice(equals + 1));
       }
+      const report = effectiveRadarPlan(document.config);
       const requirement = {schema: 'vectorwarp-radar-plan-requirements-v1',
-        semantic_sha256: document.radarPlan.semantic_sha256, required_features};
-      const errors = radarPlanErrors(document.radarPlan, requirement);
+        semantic_sha256: report.semantic_sha256, frontend_sha256: report.frontend_sha256, required_features};
+      const errors = radarPlanErrors(report, requirement);
       if (errors.length) throw new Error(errors.join('; '));
       console.log(JSON.stringify(requirement, null, 2));
     } else if (command === 'accept-runtime') {
       if (fs.statSync(args[1]).size > 262144) throw new Error('Runtime radar plan report exceeds 256 KiB');
       const runtime = JSON.parse(fs.readFileSync(args[1], 'utf8'));
       if (runtime.loadedRevision !== document.revision ||
-          runtime.loaded?.semantic_sha256 !== document.radarPlan.semantic_sha256)
+          runtime.loaded?.semantic_sha256 !== document.radarPlan.semantic_sha256 ||
+          runtime.loaded?.frontend_sha256 !== document.radarPlan.frontend_sha256)
         throw new Error('Runtime radar plan does not attest this exact loaded configuration');
       const result = assessResolvedRadarPlans(document.radarPlan, runtime.observation);
       if (result.errors.length) throw new Error(result.errors.join('; '));

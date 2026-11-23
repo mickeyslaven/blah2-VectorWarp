@@ -212,6 +212,7 @@ struct RadarConfig
 // if a projection cannot be represented by the processor's bounded types.
 RadarConfig scaleRadarConfigForLane(RadarConfig config,
   uint32_t laneSampleRateHz);
+RadarConfig applyLaneTopology(RadarConfig config, const iq::SignalDefinition& definition);
 
 // Resolve physical units once, after canonical ambiguity geometry is known.
 // CPU, portable GPU, resident GPU and startup oracles consume this same plan.
@@ -232,7 +233,7 @@ struct RadarFrame
     double materializationMs = 0;
     double ingestionMs = 0, pilotQualityMs = 0, pilotProjectionMs = 0;
   };
-  std::string illuminatorId, resolvedProductPlan;
+  std::string illuminatorId, resolvedProductPlan, resolvedFrontendPlan;
   uint64_t frequencyHz = 0;
   std::optional<std::array<double, 3>> transmitterLocation;
   std::optional<double> directPathAzimuthRad;
@@ -292,7 +293,7 @@ struct RadarFrame
 // Synchronous read-only native CAF view; pointers are valid only during the
 // observer call, before fusion discards channel phase. Never a startup oracle.
 struct NativeCafView {
-  std::string illuminatorId;
+  std::string illuminatorId, resolvedFrontendPlan;
   uint64_t frequencyHz = 0;
   uint32_t sampleRateHz = 0;
   uint64_t firstInputSample = 0, endInputSample = 0;

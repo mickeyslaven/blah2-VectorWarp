@@ -24,6 +24,7 @@ function configured(depth = 2) {
 function pin(config) {
   return {schema: 'vectorwarp-radar-plan-requirements-v1',
     semantic_sha256: effectiveRadarPlan(config).semantic_sha256,
+    frontend_sha256: effectiveRadarPlan(config).frontend_sha256,
     required_features: {detection: true, tracking: true,
       temporal_cpis: config.process.detection.track_before_detect.enable ?
         config.process.detection.track_before_detect.max_cpis : config.process.detection.integration_cpis}};
@@ -74,11 +75,83 @@ test('recorded topology overrides dormant live roles; physical mapping and geome
   assert.notEqual(effectiveRadarPlan(moved).semantic_sha256, effectiveRadarPlan(live).semantic_sha256);
 });
 
+test('profile omissions bind the native fallback before the profile label is removed', () => {
+  const hashes = new Set();
+  for (const [profile, snr, acceleration] of [[undefined, 5, 'adaptive_gate'],
+    ['balanced', 5, 'adaptive_gate'], ['conservative', 7, 'hypothesis_bank'],
+    ['permissive', 4, 'hypothesis_bank']]) {
+    const implicit = configured();
+    if (profile === undefined) delete implicit.process.tracker.profile;
+    else implicit.process.tracker.profile = profile;
+    delete implicit.process.tracker.initiate.min_snr_db;
+    delete implicit.process.tracker.initiate.acceleration_model;
+    const explicit = clone(implicit);
+    Object.assign(explicit.process.tracker.initiate,
+      {min_snr_db: snr, acceleration_model: acceleration});
+    const original = JSON.stringify(implicit);
+    const report = effectiveRadarPlan(implicit);
+    assert.equal(report.semantic_sha256, effectiveRadarPlan(explicit).semantic_sha256, String(profile));
+    assert.equal(JSON.stringify(implicit), original, 'normalization does not edit the configuration');
+    hashes.add(report.semantic_sha256);
+    explicit.process.tracker.profile = 'permissive';
+    assert.equal(report.semantic_sha256, effectiveRadarPlan(explicit).semantic_sha256,
+      'explicit initiation values override the label');
+  }
+  assert.equal(hashes.size, 3, 'different native fallback policies must not collide');
+  const native = fs.readFileSync(path.join(__dirname, '..', 'src', 'blah2.cpp'), 'utf8');
+  assert.match(native, /trackerProfile="balanced"/);
+  assert.match(native, /trackerMinInitiationSnrDb=5\.0/);
+  assert.match(native, /trackerProfile=="conservative"\)trackerMinInitiationSnrDb=7\.0/);
+  assert.match(native, /trackerProfile=="permissive"\)trackerMinInitiationSnrDb=4\.0/);
+  assert.match(native, /trackerProfile == "balanced" \?\s*"adaptive_gate" : "hypothesis_bank"/);
+});
+
+test('old omission-blind plan pins require review instead of an automatic hash rewrite', () => fixture(({filename, config, contract}) => {
+  delete config.process.tracker.initiate.min_snr_db;
+  delete config.process.tracker.initiate.acceleration_model;
+  fs.writeFileSync(filename, JSON.stringify(config));
+  const report = effectiveRadarPlan(config), oldSemantic = clone(report.semantic);
+  for (const lane of oldSemantic.lanes) {
+    delete lane.process.tracker.initiate.min_snr_db;
+    delete lane.process.tracker.initiate.acceleration_model;
+  }
+  // Semantic objects have canonical key order; deleting the two formerly
+  // omitted fields reconstructs the old report without changing any behavior.
+  const oldPin = {...pin(config), semantic_sha256:
+    crypto.createHash('sha256').update(JSON.stringify(oldSemantic)).digest('hex')};
+  fs.writeFileSync(contract, JSON.stringify(oldPin));
+  const originalConfig = fs.readFileSync(filename, 'utf8'), originalPin = fs.readFileSync(contract, 'utf8');
+  const rejected = readConfig(filename);
+  assert.equal(rejected.radarPlan.qualification, 'rejected');
+  assert.equal(rejected.setupRequired, false, 'a plan-only refusal is not first-run receiver setup');
+  assert.equal(rejected.radarPlanReview.required, true);
+  assert.ok(rejected.radarPlanReview.previewCommand.includes('tracking=true'));
+  assert.throws(() => migrateKnownDefaults(filename, {report() {}}), /differs/);
+  assert.equal(fs.readFileSync(filename, 'utf8'), originalConfig);
+  assert.equal(fs.readFileSync(contract, 'utf8'), originalPin);
+  assert.equal(fs.existsSync(`${filename}.migrations.json`), false);
+  const cli = (...args) => spawnSync(process.execPath, [path.join(__dirname, 'config-store.js'), ...args], {encoding: 'utf8'});
+  const preview = cli('pin-preview', filename, 'temporal_cpis=2', 'tracking=true');
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(fs.readFileSync(contract, 'utf8'), originalPin, 'preview never installs its own requirement');
+  const reviewed = `${filename}.reviewed-plan.json`;
+  fs.writeFileSync(reviewed, preview.stdout);
+  assert.equal(cli('accept', filename, reviewed).status, 0, 'an independently reviewed artifact can be verified without replacing the stale pin');
+  assert.equal(fs.readFileSync(contract, 'utf8'), originalPin, 'accept is read-only too');
+  // The explicit operator installation is outside the API/upgrade mechanism.
+  fs.copyFileSync(reviewed, contract);
+  assert.equal(migrateKnownDefaults(filename, {report() {}}), true);
+  const accepted = readConfig(filename);
+  assert.equal(accepted.radarPlan.qualification, 'matched');
+  assert.equal(accepted.radarPlanReview, null);
+  assert.equal(accepted.setupRequired, false);
+}));
+
 test('direct and channelized ingress share the same effective radar contract', () => {
   const direct = configured(4), channelized = clone(direct);
   channelized.process.multi_illuminator = {enabled: true, illuminators: [{enabled: true,
     id: 'arbitrary-label', standard: 'FM', frequency_hz: direct.capture.fc,
-    output_sample_rate_hz: direct.capture.fs}]};
+    occupied_bandwidth_hz: 200000, output_sample_rate_hz: direct.capture.fs}]};
   assert.equal(effectiveRadarPlan(channelized).semantic_sha256, effectiveRadarPlan(direct).semantic_sha256);
   channelized.process.multi_illuminator.illuminators[0].output_sample_rate_hz /= 2;
   assert.notEqual(effectiveRadarPlan(channelized).semantic_sha256, effectiveRadarPlan(direct).semantic_sha256,
@@ -89,6 +162,7 @@ test('lane reference conditioning, initiation threshold and both transmitter geo
   const config = configured(8);
   config.process.multi_illuminator = {enabled: true, illuminators: [{id: 'atsc', enabled: true,
     standard: 'ATSC-1.0', frequency_hz: config.capture.fc, output_sample_rate_hz: config.capture.fs,
+    occupied_bandwidth_hz: 200000,
     atsc_reference_mode: 'pilot_aided', transmitter: {name: 'Site', latitude: 40, longitude: -79, altitude: 300},
     transmitter_location: {latitude: 40.1, longitude: -79.1, altitude: 310}}]};
   const original = effectiveRadarPlan(config).semantic_sha256;
@@ -106,7 +180,7 @@ test('lane reference conditioning, initiation threshold and both transmitter geo
     'effective conditioning, threshold and geometry matter; aliases and labels do not');
   const fm = configured(8);
   fm.process.multi_illuminator = {enabled: true, illuminators: [{id: 'fm', enabled: true,
-    standard: 'FM', frequency_hz: fm.capture.fc, output_sample_rate_hz: fm.capture.fs}]};
+    standard: 'FM', frequency_hz: fm.capture.fc, occupied_bandwidth_hz: 200000, output_sample_rate_hz: fm.capture.fs}]};
   const raw = effectiveRadarPlan(fm).semantic_sha256;
   fm.process.multi_illuminator.experimental_fm_reference_quality_filter = true;
   assert.notEqual(effectiveRadarPlan(fm).semantic_sha256, raw);
@@ -141,7 +215,7 @@ test('enabled eight-CPI TBD overrides single-CPI integration on every lane and r
   config.process.detection.integration_cpis = 1;
   config.process.multi_illuminator = {enabled: true, illuminators: ['a', 'b', 'c'].map(id =>
     ({enabled: true, id, standard: 'FM', frequency_hz: config.capture.fc,
-      output_sample_rate_hz: config.capture.fs}))};
+      occupied_bandwidth_hz: 200000, output_sample_rate_hz: config.capture.fs}))};
   const report = effectiveRadarPlan(config), requirement = pin(config);
   assert.deepEqual(report.lanes.map(lane => lane.features.temporal_cpis), [8, 8, 8]);
   assert.deepEqual(report.lanes.map(lane => lane.configured_products.integrationCpis), [8, 8, 8]);
@@ -223,7 +297,7 @@ function runtimeFixture({input = 'live', backend = 'cpu', channelized = false, n
   const config = configured(4);
   if (channelized) config.process.multi_illuminator = {enabled: true, illuminators: [
     {enabled: true, id: 'fm', standard: 'FM', frequency_hz: config.capture.fc,
-      output_sample_rate_hz: config.capture.fs}]};
+      occupied_bandwidth_hz: 200000, output_sample_rate_hz: config.capture.fs}]};
   config.capture.replay.state = input === 'replay';
   const report = effectiveRadarPlan(config), lane = report.lanes[0];
   const native = JSON.stringify({schema: 'vectorwarp-resolved-products-v1', ...lane.configured_products});
@@ -234,7 +308,8 @@ function runtimeFixture({input = 'live', backend = 'cpu', channelized = false, n
     firstInputSampleExact: '9007199254740993', endInputSampleExact: '9007199254741993'};
   const execution = {...lineage, known: true, frameBound: true, provenance: 'processor_stage_receipt',
     cpuExecuted: backend === 'cpu', gpuExecuted: backend !== 'cpu'};
-  const frame = {illuminator_id: lane.id, resolved_product_plan: native, input_lineage: lineage,
+  const frame = {illuminator_id: lane.id, resolved_product_plan: native,
+    resolved_frontend_plan: JSON.stringify(lane.frontend), input_lineage: lineage,
     product_stage_execution: Object.fromEntries(['fusion', 'temporal', 'detector', 'tracker']
       .map(stage => [stage, {backend, device: 'fixture-only', execution: {...execution}}]))};
   const observation = {schema: 'vectorwarp-runtime-plan-observation-v1', generation: 0,
@@ -279,6 +354,11 @@ test('runtime acceptance rejects missing intent, stale generations and counterfe
     f => { delete f.observation.products[0].frame.resolved_product_plan; },
     f => { f.observation.products[0].frame.resolved_product_plan = '{bad'; },
     f => { f.observation.products[0].frame.resolved_product_plan += ' '; },
+    f => { delete f.observation.products[0].frame.resolved_frontend_plan; },
+    f => { f.observation.products[0].frame.resolved_frontend_plan = '{bad'; },
+    f => { const plan = JSON.parse(f.observation.products[0].frame.resolved_frontend_plan);
+      plan.source_sample_rate_hz *= 2;
+      f.observation.products[0].frame.resolved_frontend_plan = JSON.stringify(plan); },
     f => { f.observation.products[0].frame.input_lineage.available = false; },
     f => { f.observation.products[0].frame.input_lineage.firstInputSampleExact = 9007199254740993; },
     f => { f.observation.products[0].frame.input_lineage.endInputSampleExact = '18446744073709551616'; },
@@ -309,6 +389,26 @@ test('a self-pinned native downgrade still fails directly comparable configured 
   }
   const fixture = runtimeFixture();
   assert.ok(radarPlanErrors(fixture.report, {...fixture.requirement, resolved_products: {}}).length);
+});
+
+test('runtime frontend admission rejects extraction drift for direct/channelized live/replay and every backend', () => {
+  for (const input of ['live', 'replay']) for (const channelized of [false, true])
+    for (const backend of ['cpu', 'vulkan', 'vulkan-resident']) {
+      const fixture = runtimeFixture({input, channelized, backend});
+      for (const field of ['source_sample_rate_hz', 'source_center_hz', 'output_sample_rate_hz',
+        'frequency_hz', 'occupied_bandwidth_hz', 'standard', 'filter_taps_per_phase',
+        'filter_tap_count', 'transition_width_hz_x2', 'cutoff_hz_x4', 'input_samples_per_output',
+        'group_delay_input_samples', 'decimation_phase', 'extraction', 'filter', 'channel_ids',
+        'reference_channel_ids', 'surveillance_channel_ids']) {
+        const observation = clone(fixture.observation);
+        const frame = observation.products[0].frame, frontend = JSON.parse(frame.resolved_frontend_plan);
+        frontend[field] = typeof frontend[field] === 'number' ? frontend[field] + 1 :
+          typeof frontend[field] === 'string' ? frontend[field] + '-stale' : [...frontend[field]].reverse().concat(7);
+        frame.resolved_frontend_plan = JSON.stringify(frontend);
+        assert.ok(assessResolvedRadarPlans(fixture.report, observation, {now: fixture.now}).errors
+          .some(error => error.includes('frontend')), `${input}/${channelized}/${backend}/${field}`);
+      }
+    }
 });
 
 test('session-owned observations clear on restart and cannot be refreshed by old streams or aliases', () => {

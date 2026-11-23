@@ -8,7 +8,8 @@ const http = require('http');
 const https = require('https');
 const {geometryCatalog, CooperativeDetectionTracker} = require('./cooperative-detection-tracker');
 const {FederatedGeographicFusion} = require('./federated-geographic-fusion');
-const {compactAssociationPass} = require('./evidence-statistics');
+const {compactAssociationPass, expandFederationAssociationPassTransport} =
+  require('./evidence-statistics');
 
 const HTTP_AGENT = new http.Agent({keepAlive: true, maxSockets: 16, maxFreeSockets: 8,
   timeout: 5000});
@@ -22,7 +23,7 @@ const READS = new Set(['/api/federation/capabilities', '/api/system/status', '/a
   '/api/live-scorecard/association-basis', '/api/association/passes',
   '/api/recordings', '/api/bearing', '/api/bearing/diagnostic', '/api/array-calibration/status',
   '/api/locations', '/api/timestamp', '/api/timing',
-  '/api/presentation/status', '/api/runtime/config', '/api/adsb', '/api/adsb/status',
+  '/api/presentation/status', '/api/runtime/config', '/api/config/migrations', '/api/adsb', '/api/adsb/status',
   '/api/adsb/delay-doppler', '/api/remote-id', '/api/remote-id/status',
   '/api/remote-id/delay-doppler', '/api/radar/coverage', '/api/federation/cooperative',
   '/api/federation/statistics-summary', '/api/federation/geographic-fusion',
@@ -348,8 +349,10 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
       .map(pass => ({...pass, channel: pass.channel || row?.identity?.illuminator ||
         row?.selected_channel || 'primary'}))) :
     (scorecard?.recent_scored_passes || scorecard?.recent_finalized_passes || []);
-  const passSources = Array.isArray(associationPasses?.passes) ?
-    associationPasses.passes : scorecardPasses;
+  const transportedPasses = associationPasses?.transport ?
+    expandFederationAssociationPassTransport(associationPasses.transport) : null;
+  const passSources = transportedPasses || (Array.isArray(associationPasses?.passes) ?
+    associationPasses.passes : scorecardPasses);
   const passes = passSources.map(compactPass).filter(Boolean);
   const tracking = status?.featureDiagnostics?.trackingPerformance || status?.trackingPerformance || {};
   const cadenceMs = Number(status?.featureDiagnostics?.processing?.configuredCpiMs) || null;
@@ -524,7 +527,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
     cooperative_tracks: {active: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_ACTIVE').length,
       coasting: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_COASTING').length,
       candidates: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_CANDIDATE').length},
-    nodes: available, channels};
+    nodes: available.map(({passes, ...node}) => ({...node, pass_count: passes.length})), channels};
 }
 
 function installNodeFederation(app, filename = defaultRegistryPath(),
@@ -726,8 +729,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
                 '/api/live-scorecard/association-basis?timing=provisional&compact=true',
                 timeoutMs, 512 * 1024),
               cooperativeRead(entry,
-                '/api/association/passes?timing=provisional&compact=true', timeoutMs,
-                8 * 1024 * 1024)]);
+                '/api/association/passes?timing=provisional&transport=federation-v1', timeoutMs,
+                1024 * 1024)]);
             const value = compactNodeStatistics(entry, status, timing, scorecard,
               associationPasses);
             if (value.available && membership === nodes) networkNodeStatisticsCache.set(entry.id,
@@ -895,7 +898,8 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
         return response.pipe(res);
       }
       let size = 0; const chunks = [];
-      response.on('data', chunk => { size += chunk.length; if (size > MAX_BYTES) response.destroy(new Error('Response too large')); else chunks.push(chunk); });
+      const maximumBytes = target === '/api/config/migrations' ? 131072 : MAX_BYTES;
+      response.on('data', chunk => { size += chunk.length; if (size > maximumBytes) response.destroy(new Error('Response too large')); else chunks.push(chunk); });
       response.on('end', () => {
         if (res.writableEnded) return;
         let body = Buffer.concat(chunks);

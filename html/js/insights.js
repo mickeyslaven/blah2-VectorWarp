@@ -112,7 +112,7 @@
     state.className = `view-state ${tone}`.trim();
   }
 
-  function networkAssociationAggregate(rows, fleet) {
+  function networkAssociationAggregate(rows, fleet, networkSummary = null) {
     if (!rows.length) {
       if (rows.unavailableNodes?.length) return {unavailable_reason:
         'No radar nodes are publishing fresh observations.', availability_failure: true};
@@ -152,8 +152,16 @@
         return totals;
       }, {eligible: 0, associationEligible: 0, detected: 0, tracked: 0,
         seconds: 0, associationSeconds: 0});
+      if (source.cpi_exposure) Object.assign(exposureCounts, {
+        eligible: Number(source.cpi_exposure.eligible_cpis) || 0,
+        associationEligible: Number(source.cpi_exposure.association_eligible_cpis) || 0,
+        detected: Number(source.cpi_exposure.detected_cpis) || 0,
+        tracked: Number(source.cpi_exposure.operationally_tracked_cpis) || 0,
+        seconds: Number(source.cpi_exposure.eligible_seconds) || 0,
+        associationSeconds: Number(source.cpi_exposure.association_eligible_seconds) || 0});
       channels.push({...source, cpi_exposure: exposureFractions(exposureCounts),
-        measured_track_coverage: window.VectorWarpMeasuredCoverage?.aggregate([source.measured_track_basis]),
+        measured_track_coverage: source.measured_track_coverage ||
+          window.VectorWarpMeasuredCoverage?.aggregate([source.measured_track_basis]),
         node_id: node.id, node_label: node.label,
         channel_key: `${node.id}:${channelName}`, display_channel: display,
         identity: {...(source.identity || {}), illuminator: display}});
@@ -284,9 +292,13 @@
           (left.similarity?.score || 0)).slice(0, 50),
       channels: channels.map(channel => ({channel: channel.display_channel,
         node: channel.node_label, ...(channel.track_population || {})}))};
-    const uniqueEligible = groups.length;
-    const uniqueDetected = groups.filter(pass => pass.detected).length;
-    const uniqueTracked = groups.filter(pass => pass.tracked).length;
+    const networkUnique = networkSummary?.system_wide_unique_passes;
+    const uniqueEligible = Number.isFinite(Number(networkUnique?.eligible_adsb_passes)) ?
+      Number(networkUnique.eligible_adsb_passes) : groups.length;
+    const uniqueDetected = Number.isFinite(Number(networkUnique?.detection?.associated_passes)) ?
+      Number(networkUnique.detection.associated_passes) : groups.filter(pass => pass.detected).length;
+    const uniqueTracked = Number.isFinite(Number(networkUnique?.tracking?.associated_passes)) ?
+      Number(networkUnique.tracking.associated_passes) : groups.filter(pass => pass.tracked).length;
     const unique = {scope: 'unique-aircraft-passes-caught-by-any-node-or-channel',
       aggregation: 'deduplicated-aircraft-pass-union',
       cross_channel_aircraft_deduplicated: true,
@@ -1680,10 +1692,18 @@
         (!parameters.has('scope') && !parameters.has('illuminator')));
     let statistics, aggregate, timingLabel, authoritativeFrames = 0;
     if (combinedScope) {
+      const kiosk = document.body.classList?.contains('distance-view');
       const rows = await federatedNodeJson(
         '/api/live-scorecard/association-basis?timing=provisional' +
-          (document.body.classList?.contains('distance-view') ? '&display=kiosk' : ''), fleet);
-      aggregate = networkAssociationAggregate(rows, fleet);
+          (kiosk ? '&display=kiosk' : ''), fleet);
+      // Read node availability first so an all-node outage keeps the established
+      // cache/error semantics instead of being hidden by a secondary aggregate
+      // request failure. The coordinator summary is already cached server-side.
+      const networkSummary = kiosk ?
+        await allChannelJson('/api/federation/statistics-summary').catch(() => {
+          throw new Error('No radar node statistics could be refreshed');
+        }) : null;
+      aggregate = networkAssociationAggregate(rows, fleet, networkSummary);
       if (aggregate.unavailable_reason) {
         renderHtml(root, empty('Combined statistics unavailable', aggregate.unavailable_reason));
         setState(aggregate.availability_failure ? 'Radar observations unavailable' :

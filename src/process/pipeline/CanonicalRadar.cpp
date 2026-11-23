@@ -15,6 +15,7 @@
 #include "process/analysis/StartupIq.h"
 #include "process/analysis/ReplayCoherentObserverViews.h"
 #include "process/conditioning/FmReferenceQualityFilter.h"
+#include "process/conditioning/FrontendPlan.h"
 #include "process/detection/DopplerRidgeAdmission.h"
 #include "process/utility/ProcessingThreads.h"
 
@@ -311,6 +312,8 @@ struct RadarBank::Context
         definition.outputRateHz)),
       reference(samples), conditionedReference(samples), projectedReference(samples)
   {
+    if (definition.frontendPlan) definition.frontendPlan->validateRoles(config.arrayReference ?
+      config.referenceChannels : std::vector<uint32_t>{config.referenceChannel}, config.surveillanceChannels);
     residentBudget = std::move(budget);
     portableBackendFactory = backendFactory;
     qualificationLaneIndex = laneIndex;
@@ -913,6 +916,7 @@ struct RadarBank::Context
   {
     qualification_observer::Frame f;
     f.resolvedProductPlan=products->planIdentity();
+    if (definition.frontendPlan) f.resolvedFrontendPlan = definition.frontendPlan->identity();
     f.lane=definition.id;f.sequence=qualificationSequence;
     f.captureEpoch=liveTemporalIdentity?liveTemporalIdentity->captureEpoch:0;
     f.samplePositionAvailable=liveTemporalIdentity&&liveTemporalIdentity->samplePositionAvailable;
@@ -1447,6 +1451,7 @@ struct RadarBank::Context
     if (nativeObserver) {
       NativeCafView view;
       view.illuminatorId = definition.id;
+      if (definition.frontendPlan) view.resolvedFrontendPlan = definition.frontendPlan->identity();
       view.frequencyHz = definition.frequencyHz;
       view.sampleRateHz = definition.outputRateHz;
       view.firstInputSample = first;
@@ -1534,6 +1539,7 @@ struct RadarBank::Context
     }
     result.illuminatorId = definition.id;
     result.resolvedProductPlan = products->planIdentity();
+    if (definition.frontendPlan) result.resolvedFrontendPlan = definition.frontendPlan->identity();
     result.frequencyHz = definition.frequencyHz;
     if (config.coherentFusion) {
       result.transmitterLocation = definition.transmitterLocation;
@@ -1749,6 +1755,8 @@ RadarBank::RadarBank(uint32_t captureRateHz,
       !std::isfinite(config_.cpiSeconds) || config_.cpiSeconds <= 0)
     throw std::invalid_argument("Multi-illuminator radar configuration is empty");
   config_.stages.validate();
+  for (const auto& lane : illuminators)
+    if (lane.frontendPlan) lane.frontendPlan->validate(captureRateHz_, channelCount_, lane);
   validateAdvancedFeatures(config_.advanced);
   const auto laneMatches = [&](const std::string& id) {
     return std::count_if(illuminators.begin(), illuminators.end(),
@@ -1880,6 +1888,11 @@ std::vector<RadarFrame> RadarBank::processImpl(
       if (found == byId.end() ||
           found->second->frequencyHz != context->definition.frequencyHz)
         throw std::invalid_argument("Multi-illuminator output identity changed");
+      const auto& expected = context->definition.frontendPlan;
+      const auto& supplied = found->second->frontendPlan;
+      if (bool(expected) != bool(supplied) || (expected && expected->identity() != supplied->identity()))
+        throw std::invalid_argument("Canonical signal frontend plan changed");
+      if (expected) expected->validate(found->second->samples);
     }
     std::vector<std::vector<RadarFrame>> perContext(contexts_.size());
     executor_->parallel_for(contexts_.size(), [&](std::size_t index) {

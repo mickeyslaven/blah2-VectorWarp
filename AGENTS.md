@@ -65,15 +65,36 @@ product behavior or general acceptance criteria.
 
 ## UI and settings acceptance
 
-Oppositional review must visit every reachable page and exercise every visible
-setting and action across the supported operating-system, receiver, backend,
-and capability matrix. Controls must work, be unavailable when unsupported,
-and map to the same canonical configuration and behavior on every platform.
+Oppositional review must visit every reachable page. A real-browser control
+inventory must exercise every visible editable setting and action at least once
+across representative capability fixtures; exhaustive DOM/native matrices own
+the remaining operating-system, receiver, backend, and capability combinations.
+Controls must work, be unavailable with a reason when unsupported, and map to
+the same canonical configuration and behavior on every platform.
 Review responsive layouts, navigation, terminology, visual hierarchy, text,
 empty/error states, and consistency between related views. Remove redundant or
 useless subtext, implementation commentary, placeholder prose, and generic
 AI-style explanations. Keep only text that helps a user understand status,
 make a decision, or safely operate the product.
+
+Source and DOM review are not UI acceptance. The canonical real-browser CI
+harness must click every supported setup, settings, migration, node, catalog,
+save, and recovery flow at desktop and narrow viewports. It must fail on page
+errors, missing assets, stale controls, ineffective actions, stuck overlays,
+unreachable content, broken scrolling, and clipping/overflow. Use stable
+interaction and geometry assertions; screenshots are review evidence, not a
+pixel baseline that can be silently regenerated. Every refusal or error must
+state what happened and the next safe action in ordinary user language, with
+advanced detail available through progressive disclosure.
+
+Receiver setup is capability-driven. Never encode a user's station list,
+frequency plan, serial, channel width, or regional broadcast assumption.
+Direct and channelized setup must expose and validate receiver channel/rate
+limits, waveform standard and version, explicit occupied bandwidth, reference
+method capability, extraction passband, and physical channel mapping. Catalog
+selection is an optional, provenance-bearing convenience; manual and offline
+normalized import remain supported. A preset or standard change may not
+silently overwrite an existing extraction plan.
 
 ## Canonical ownership
 
@@ -93,6 +114,11 @@ delete superseded ownership and reduce total code, not merely move it.
    recorded topology, and conversion to canonical coherent samples.
    `src/process/conditioning/` owns input/reference conditioning and channelization.
    Channelization ends at `src/data/CanonicalSignal.h`; it is not a radar route.
+   A separate immutable frontend plan binds capture/lane rates and frequencies,
+   occupied bandwidth, waveform/version, filter/extraction parameters, physical
+   channel roles, and lineage through live, replay, CPU, and GPU publication.
+   Do not fold this identity into the downstream radar-plan hash or admit a
+   runtime whose configured and published frontend identities differ.
 2. `src/process/pipeline/` owns production stage factories, ordering, state
    lifetime, reset boundaries, and canonical signal-bank scheduling. Direct and
    channelized products use its shared clutter → ambiguity → fusion →
@@ -195,6 +221,9 @@ disabled stages. Keep receiver-topology and API stage-toggle parity tests.
 Source checks supplement behavioral/ABI/physical tests; they do not qualify
 hardware or replace numerical tests. Do not weaken a guard simply to retain
 an obsolete path.
+Cross-platform asynchronous tests must wait for an observable condition within
+a bounded deadline. Do not encode sub-second scheduler or process-start timing
+as product behavior with fixed sleeps.
 
 Before an all-target native build, run `script/prebuild_acceptance.py` against
 the configured build directory with a receipt path and every affected

@@ -1,0 +1,137 @@
+capture:
+  # Example values. Keep these in sync with KrakenSDR Suite V2.
+  # KrakenSDR Suite V2 currently streams at 2.4 MS/s.
+  fs: 2400000
+  fc: 204640000
+  device:
+    type: "Kraken"
+    # Standard KrakenSDR Suite V2 Heimdall data interface.
+    heimdall:
+      host: "127.0.0.1"
+      port: 8091
+      control_port: 8092
+      # Preserve the Suite's existing gain unless an operator explicitly selects
+      # automatic (-1) or a manual 0–50 dB Suite gain in Settings.
+      gain: "keep"
+    # Must match the number of channels streamed by the Suite.
+    channel_count: 5
+    reference_channel: 0
+    # Channels that produce independent surveillance maps. In array-eigenbeam
+    # mode these may overlap with the reference-synthesis channels below.
+    surveillance_channels: [0, 1, 2, 3, 4]
+  replay:
+    state: false
+    loop: false
+    file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
+    format: 'auto'
+
+process:
+  performance:
+    # 0 chooses a CPU-aware automatic value. Set to 1 to minimize peak CPU,
+    # or up to the surveillance-channel count on a workstation.
+    surveillance_workers: 0
+    # Keep this at 1 when surveillance paths run concurrently.
+    fft_threads: 1
+  data:
+    cpi: 0.5
+    buffer: 2.0
+    overlap: 0
+  ambiguity:
+    delayMin: -10
+    delayMax: 400
+    dopplerMin: -200
+    dopplerMax: 200
+  clutter:
+    enable: true
+    delayMin: -10
+    delayMax: 400
+  reference_synthesis:
+    mode: "array_eigenbeam"
+    # Optional; all capture channels are used when omitted.
+    channels: [0, 1, 2, 3, 4]
+    analysis_samples: 32768
+    analysis_interval: 10
+    power_iterations: 12
+    covariance_smoothing: 0.8
+    diagonal_loading: 0.001
+  # Existing behavior remains the default. coherent_beam_bank removes the
+  # measured per-channel complex response using the array eigenbeam and the
+  # configured array orientation plus receiver/transmitter locations.
+  # noise_whitened_beam_bank additionally suppresses the measured residual
+  # channel covariance and is available only with gpu-resident acceleration.
+  surveillance_fusion:
+    mode: "noncoherent"
+    beams: 12
+    # Optional. Defaults to beams (the conservative Bonferroni correction).
+    # Lower only after measuring correlated beam-bank trials on the live array.
+    effective_beam_trials: 12
+    # Optional soft spatial null toward the configured transmitter bearing.
+    # Zero preserves the calibrated coherent beam bank.
+    direct_path_null_db: 0
+  detection:
+    enable: true
+    pfa: 0.00001
+    nGuard: 2
+    nTrain: 6
+    minDelay: 5
+    minDoppler: 15
+    nCentroid: 6
+    # Optional GPU-resident noncoherent power integration; 1 preserves legacy behavior.
+    integration_cpis: 1
+    # Optional 2-CPI local trajectory bank. Zero preserves same-cell integration.
+    integration_motion_bins: 0
+  tracker:
+    enable: true
+    initiate:
+      M: 3
+      N: 5
+      maxAcc: 10
+    delete: 10
+    smooth: "none"
+    # Optional maximum circular winning-beam change for track association.
+    # Omit to preserve delay/Doppler-only association.
+    # beam_tolerance: 1
+
+network:
+  ip: 0.0.0.0
+  ports:
+    api: 3000
+    map: 3001
+    detection: 3002
+    track: 3003
+    timestamp: 4000
+    timing: 4001
+    iqdata: 4002
+    config: 4003
+
+truth:
+  adsb:
+    enabled: false
+    tar1090: 'localhost:8080'
+    poll_interval: 1
+    smoothing_window: 10
+    max_position_age: 30
+  ais:
+    enabled: false
+    ip: 0.0.0.0
+    port: 30001
+
+location:
+  rx:
+    # Replace these neutral placeholders before enabling capture or truth data.
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set receiver site"
+  tx:
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set transmitter site"
+
+save:
+  iq: false
+  map: false
+  detection: false
+  timing: false
+  path: "/var/lib/vectorwarp/recordings/"

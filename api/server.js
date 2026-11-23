@@ -16,7 +16,7 @@ const {readNativeProcessingCapabilities, readGpuDriverStatus,
   enrichNativeProcessingCapabilities} =
   require('./native-processing-capabilities.js');
 const {readConfig, writable, saveConfig, migrateKnownDefaults,
-  preserveConfigBytesDuringUpgrade, checkRadarPlan} = require('./config-store.js');
+  preserveConfigBytesDuringUpgrade, checkRadarPlan, readConfigMigrations} = require('./config-store.js');
 const {getUpstreamStatus} = require('./upstream-status.js');
 const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./receiver-routes.js');
 const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
@@ -44,7 +44,8 @@ const {diagnoseUpstreamArrayChannels} = require('./array-channel-health.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {buildObservationBundle} = require('./radar-observation-bundle.js');
 const {createEvidenceStatisticsLanes, provisionalTimingFrame,
-  defaultProvisionalEvidenceStatisticsPath, compactAssociationPass} =
+  defaultProvisionalEvidenceStatisticsPath, compactAssociationPass,
+  federationAssociationPassTransport} =
   require('./evidence-statistics.js');
 const {MultiIlluminatorEvidence, primaryRadarContext, associationStatistics} =
   require('./multi-illuminator-evidence.js');
@@ -901,19 +902,23 @@ app.get('/api/association/passes', async (req, res, next) => {
   try {
     const timing = req.query.timing === 'exact' ? 'exact' : 'provisional';
     const durationMs = 24 * 60 * 60 * 1000;
+    const federationTransport = req.query.transport === 'federation-v1';
     const passes = multiIlluminatorEvidence.enabled ?
-      multiIlluminatorEvidence.associationPasses({timing, durationMs}) :
+      multiIlluminatorEvidence.associationPasses({timing, durationMs,
+        federation: federationTransport}) :
       (timing === 'exact' ? evidenceStatistics : provisionalEvidenceStatistics)
-        .associationPasses({durationMs}).map(pass => ({...pass, channel: 'primary'}));
-    const responsePasses = String(req.query.compact) === 'true' ?
-      passes.map(compactAssociationPass) : passes;
+        .associationPasses({durationMs, federation: federationTransport})
+        .map(pass => ({...pass, channel: 'primary'}));
+    const responsePasses = federationTransport ? null :
+      String(req.query.compact) === 'true' ? passes.map(compactAssociationPass) : passes;
     const statisticsWindow = multiIlluminatorEvidence.enabled ?
       multiIlluminatorEvidence.associationWindow({timing, durationMs}) :
       (timing === 'exact' ? evidenceStatistics : provisionalEvidenceStatistics).associationWindow(durationMs);
     await sendDisplayResponse(req, res, {schema: 'vectorwarp-association-passes-v1',
       scope: 'node-all-channels', timing_policy: timing,
       window: 'past-24-hours-finalized-passes', statistics_window: statisticsWindow,
-      passes: responsePasses});
+      ...(federationTransport ? {transport: federationAssociationPassTransport(passes)} :
+        {passes: responsePasses})});
   } catch (error) { next(error); }
 });
 app.get('/api/live-scorecard', async (req, res, next) => {
@@ -988,6 +993,12 @@ app.get('/api/live-scorecard/association-basis', async (req, res, next) => {
         schema: 'vectorwarp-association-basis-v1', timing_policy: timing,
         channels: [{selected_channel: 'primary', updated_at: status.updated_at,
           association_statistics: associationStatistics(status)}]});
+    if (kiosk) return await sendDisplayResponse(req, res, {
+      schema: 'vectorwarp-association-basis-v1', timing_policy: timing,
+      channels: [kioskAssociationChannel({selected_channel: 'primary',
+        updated_at: status.updated_at, association_statistics: associationStatistics(status),
+        measured_track_coverage: status.current_setup_lifetime?.measured_track_coverage,
+        cpi_exposure: status.current_setup_lifetime?.cpi_exposure})]});
     const population = status.track_population || {};
     const channel = {selected_channel: 'primary',
         measured_track_basis: statistics.measuredTrackBasis(),
@@ -998,7 +1009,7 @@ app.get('/api/live-scorecard/association-basis', async (req, res, next) => {
         passes: typeof statistics.associationPasses === 'function' ?
           statistics.associationPasses() : []};
     await sendDisplayResponse(req, res, {schema: 'vectorwarp-association-basis-v1',
-      timing_policy: timing, channels: [kiosk ? kioskAssociationChannel(channel) : channel]});
+      timing_policy: timing, channels: [channel]});
   } catch (error) { next(error); }
 });
 app.get('/api/suspicious-track-ledger', async (req, res, next) => {
@@ -1084,6 +1095,12 @@ app.get('/api/config', (req, res) => {
   const document = readConfig(configFile);
   res.set('ETag', `"${document.revision}"`).json(document.config);
 });
+app.get('/api/config/migrations', (req, res) => {
+  const document = readConfig(configFile), evidence = readConfigMigrations(configFile, document.revision);
+  res.json({schema: 'vectorwarp-config-migrations-v1', ...evidence,
+    radarPlanReview: document.radarPlanReview,
+    error: evidence.configMigrationError});
+});
 app.get('/api/runtime/config', (req, res) => {
   // API startup snapshot, not hardware acknowledgement. Do not relabel frames
   // with newly saved tuning/site settings until the services have restarted.
@@ -1155,6 +1172,10 @@ app.get('/api/config/capabilities', async (req, res) => {
     setupMessage: document.readError,
     suppliedDefaults: document.suppliedDefaults,
     configRevision: document.revision,
+    configMigrations: document.configMigrations,
+    configMigrationError: document.configMigrationError,
+    configMigrationOmitted: document.configMigrationOmitted,
+    radarPlanReview: document.radarPlanReview,
     validation: document.validation,
     configPath: configFile
   });
@@ -1203,6 +1224,7 @@ app.get('/api/system/status', async (req, res) => {
   // The header is present on every page and polls continuously. Keep its
   // response cheap: receiver discovery, GPU setup, build metadata and the full
   // ADS-B source report belong to their dedicated/settings views.
+  const document = readConfig(configFile);
   if (req.query.summary === '1') {
     const headerProcessor = processor ? {
       input: processor.input, state: processor.state, error: processor.error || '',
@@ -1211,6 +1233,10 @@ app.get('/api/system/status', async (req, res) => {
       sampleRate: processor.sampleRate, file: processor.file
     } : null;
     return res.json({radar, node_role: nodeRole(), rfInputQuality: inputQuality, trackingPerformance,
+      configMigrations: document.configMigrations,
+      configMigrationError: document.configMigrationError,
+      configMigrationOmitted: document.configMigrationOmitted,
+      radarPlanReview: document.radarPlanReview,
       adsbEnabled: config.truth?.adsb?.enabled === true,
       remoteIdEnabled: config.truth?.remote_id?.enabled === true,
       recordedAdsb: processor?.input === 'replay' && recordingTimeline.has(processor.file),
@@ -1219,7 +1245,6 @@ app.get('/api/system/status', async (req, res) => {
       errors: [...serviceErrors.values()],
       message: radarSession.lastFrameAt === null ? 'No radar frames received.' : null});
   }
-  const document = readConfig(configFile);
   const sdrplayStartup = activeSdrplayStartup(document.revision, document.config.capture?.device?.type);
   const persistedRestart = sdrplayStartup && sdrplayStartup.updatedAt >= (restartState.requestedAt || 0) ?
     {state: sdrplayStartup.inProgress ? 'running' : sdrplayStartup.state === 'failed' ? 'failed' : 'command-complete',
@@ -1297,6 +1322,10 @@ app.get('/api/system/status', async (req, res) => {
     }
   };
   res.json({serverId, node_role: nodeRole(), configRevision: document.revision,
+    configMigrations: document.configMigrations,
+    configMigrationError: document.configMigrationError,
+    configMigrationOmitted: document.configMigrationOmitted,
+    radarPlanReview: document.radarPlanReview,
     build: releaseBuild,
     system: {os: os.platform(), architecture: os.arch(), kernel: os.release()},
     uptimeSeconds: Math.floor(process.uptime()),

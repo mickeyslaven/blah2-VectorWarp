@@ -225,6 +225,58 @@ function compactAssociationPass(value) {
     tracked: value.tracked === true};
 }
 
+// Federation needs pass identity and outcome to deduplicate aircraft observed
+// by several nodes, but it must not repeatedly transport the full evidence
+// ledger. A small columnar contract removes repeated field names and channel /
+// outcome strings while retaining every finalized pass used by the network
+// scorecard. Detailed provenance remains available from the node-local API.
+function federationAssociationPassTransport(values) {
+  const channels = [], outcomes = [];
+  const channelIndex = new Map(), outcomeIndex = new Map();
+  const intern = (value, dictionary, indexes) => {
+    const key = String(value ?? '');
+    if (!indexes.has(key)) { indexes.set(key, dictionary.length); dictionary.push(key); }
+    return indexes.get(key);
+  };
+  const rows = (Array.isArray(values) ? values : []).map(value => {
+    const pass = compactAssociationPass(value);
+    const flags = Number(pass.eligible !== false) |
+      (Number(pass.detected === true) << 1) |
+      (Number(pass.tracked === true) << 2) |
+      (Number(pass.sensitivity_epoch_mixed === true) << 3);
+    return [String(pass.hex || ''), String(pass.flight || ''),
+      Number(pass.started_at) || 0, Number(pass.finalized_at) || 0,
+      intern(pass.outcome, outcomes, outcomeIndex),
+      intern(pass.channel, channels, channelIndex),
+      Number(pass.eligible_cpis) || 0, Number(pass.detected_cpis) || 0,
+      Number(pass.tracked_cpis) || 0, flags];
+  });
+  return {schema: 'vectorwarp-federation-association-passes-v1',
+    fields: ['hex', 'flight', 'started_at', 'finalized_at', 'outcome_index',
+      'channel_index', 'eligible_cpis', 'detected_cpis', 'tracked_cpis', 'flags'],
+    dictionaries: {channels, outcomes}, rows};
+}
+
+function expandFederationAssociationPassTransport(value) {
+  if (value?.schema !== 'vectorwarp-federation-association-passes-v1' ||
+      !Array.isArray(value.rows)) return Array.isArray(value?.passes) ? value.passes : [];
+  const channels = Array.isArray(value.dictionaries?.channels) ?
+    value.dictionaries.channels : [];
+  const outcomes = Array.isArray(value.dictionaries?.outcomes) ?
+    value.dictionaries.outcomes : [];
+  return value.rows.map(row => {
+    const flags = Number(row?.[9]) || 0;
+    return {hex: String(row?.[0] || ''), flight: String(row?.[1] || ''),
+      started_at: Number(row?.[2]) || 0, finalized_at: Number(row?.[3]) || 0,
+      outcome: outcomes[Number(row?.[4])] || null,
+      channel: channels[Number(row?.[5])] || 'primary',
+      eligible_cpis: Number(row?.[6]) || 0, detected_cpis: Number(row?.[7]) || 0,
+      tracked_cpis: Number(row?.[8]) || 0, eligible: Boolean(flags & 1),
+      detected: Boolean(flags & 2), tracked: Boolean(flags & 4),
+      sensitivity_epoch_mixed: Boolean(flags & 8)};
+  });
+}
+
 function coverageBasis(passes) {
   const eligible = passes.filter(pass => pass.eligibleFrames > 0);
   return {version: 1, complete: eligible.every(pass => pass.measuredCoverage?.complete === true),
@@ -2157,6 +2209,46 @@ class EvidenceStatistics {
         stationary: live.filter(item => item.stationary_clutter === true).length}}};
   }
 
+  associationQuality(timestamp) {
+    const audits = [...this.state.passes.filter(pass => this.isLivePass(pass)).slice(-50),
+      ...Object.values(this.state.active).filter(pass => this.isLivePass(pass))]
+      .flatMap(pass => pass.cpiAudit || []);
+    const exactTiming = audits.filter(item => item.timing?.epoch !== undefined &&
+      item.timing?.exact_event_time !== false).length;
+    const joinFrames = new Map();
+    for (const item of audits) {
+      const row = joinFrames.get(item.timestamp_ms) || {timestamp_ms: item.timestamp_ms,
+        aircraft: 0,
+        exact_timing: Boolean(item.timing) && item.timing?.exact_event_time !== false,
+        timing_quality: item.timing?.exact_event_time === false ? 'provisional' :
+          (item.timing ? 'exact' : 'missing'),
+        timing_source: item.timing?.event_time_source ?? null,
+        timing_timestamp_ms: item.timing?.timestamp_ms ?? null};
+      row.aircraft += 1; joinFrames.set(item.timestamp_ms, row);
+    }
+    const decisionGrade = this.timingPolicy === 'exact' && exactTiming > 0;
+    const warning = this.timingPolicy === 'provisional' ?
+      'Operational association uses an inexact receiver time estimate; do not use for acceptance decisions.' :
+      (!decisionGrade && this.eventTimeRejections > 0 ?
+        'Authoritative scoring is blocked because the receiver has not supplied exact RF event time.' :
+        (!decisionGrade ? 'Authoritative scoring is waiting for an exact-timed CPI.' : null));
+    return {audits, exactTiming, joinFrames, decisionGrade, warning};
+  }
+
+  associationStatus() {
+    const timestamp = this.now();
+    const quality = this.associationQuality(timestamp);
+    return {updated_at: this.state.updatedAt, timing_policy: this.timingPolicy,
+      decision_grade: quality.decisionGrade, warning: quality.warning,
+      evaluation_contract_hash: this.scoreContractHash,
+      evaluation_policy_hash: this.scorePolicyHash,
+      evaluation_contract_started_at: this.state.liveScoreContract?.startedAt || timestamp,
+      sensitivity_epoch: this.state.sensitivityEpoch || null,
+      current_setup_lifetime: this.summarize(Infinity, timestamp),
+      data_quality: {audited_aircraft_cpis: quality.audits.length,
+        exact_timed_aircraft_cpis: quality.exactTiming}};
+  }
+
   liveStatus() {
     const timestamp = this.now();
     const contractStartedAt = this.state.liveScoreContract?.startedAt || timestamp;
@@ -2191,34 +2283,14 @@ class EvidenceStatistics {
     const finalized = finalizedPasses.slice(0, 50).map(passSummary);
     const scoredFinalized = finalizedPasses.filter(pass => associationCpis(pass) >= 3)
       .slice(0, 50).map(passSummary);
-    const audits = [...this.state.passes.filter(pass => this.isLivePass(pass)).slice(-50),
-      ...Object.values(this.state.active).filter(pass => this.isLivePass(pass))]
-      .flatMap(pass => pass.cpiAudit || []);
-    const exactTiming = audits.filter(item => item.timing?.epoch !== undefined &&
-      item.timing?.exact_event_time !== false).length;
-    const joinFrames = new Map();
-    for (const item of audits) {
-      const row = joinFrames.get(item.timestamp_ms) || {timestamp_ms: item.timestamp_ms,
-        aircraft: 0,
-        exact_timing: Boolean(item.timing) && item.timing?.exact_event_time !== false,
-        timing_quality: item.timing?.exact_event_time === false ? 'provisional' :
-          (item.timing ? 'exact' : 'missing'),
-        timing_source: item.timing?.event_time_source ?? null,
-        timing_timestamp_ms: item.timing?.timestamp_ms ?? null};
-      row.aircraft += 1; joinFrames.set(item.timestamp_ms, row);
-    }
-    const decisionGrade = this.timingPolicy === 'exact' && exactTiming > 0;
+    const {audits, exactTiming, joinFrames, decisionGrade, warning} =
+      this.associationQuality(timestamp);
     const sensitivityEpoch = this.state.sensitivityEpoch || null;
     const sameRun = pass => sensitivityEpoch && !pass.sensitivityEpochMixed &&
       pass.sensitivityEpochId === sensitivityEpoch.id;
     const hour = end => this.retainedPasses().filter(pass => this.isLivePass(pass) && sameRun(pass) &&
       pass.lastAt >= end - WINDOWS.hour && pass.lastAt < end && associationCpis(pass) >= 3);
     const mixAdjusted = standardizedComparison(hour(timestamp), hour(timestamp - WINDOWS.hour));
-    const warning = this.timingPolicy === 'provisional' ?
-      'Operational association uses an inexact receiver time estimate; do not use for acceptance decisions.' :
-      (!decisionGrade && this.eventTimeRejections > 0 ?
-        'Authoritative scoring is blocked because the receiver has not supplied exact RF event time.' :
-        (!decisionGrade ? 'Authoritative scoring is waiting for an exact-timed CPI.' : null));
     return {schema: 'vectorwarp-live-aircraft-scorecard-v1', updated_at: this.state.updatedAt,
       timing_policy: this.timingPolicy, decision_grade: decisionGrade, warning,
       adsb_quality: adsbQuality(this.config),
@@ -2278,7 +2350,8 @@ class EvidenceStatistics {
         last_at: pass.lastAt || 0}));
   }
 
-  associationPasses({durationMs = Infinity, sensitivityEpochId = null} = {}) {
+  associationPasses({durationMs = Infinity, sensitivityEpochId = null,
+    federation = false} = {}) {
     const cutoff = durationMs === Infinity ? -Infinity : this.now() - durationMs;
     const bands = (values, axes = ['minimum', 'maximum']) => Object.fromEntries(Object.entries(values || {})
       .filter(([, band]) => associationCpis(band) >= 3)
@@ -2287,13 +2360,20 @@ class EvidenceStatistics {
         tracked: (band.trackedFrames || 0) >= 3}]));
     return this.retainedPasses().filter(pass => this.isLivePass(pass) && pass.lastAt >= cutoff &&
       (!sensitivityEpochId || !pass.sensitivityEpochMixed && pass.sensitivityEpochId === sensitivityEpochId) &&
-      associationCpis(pass) >= 3).map(pass => ({
-      pass_id: pass.id || null, hex: pass.hex || null, flight: pass.flight || '',
+      associationCpis(pass) >= 3).map(pass => {
+      const shared = {pass_id: pass.id || null, hex: pass.hex || null, flight: pass.flight || '',
       site_epoch: pass.siteKey, evaluation_contract_hash: pass.evaluationContractHash || null,
       evaluation_policy_hash: this.scorePolicyHash, timing_policy: this.timingPolicy,
       decision_grade: this.timingPolicy === 'exact' && pass.missingTimingFrames === 0 &&
         Boolean(pass.sensitivityEpochId) && pass.sensitivityEpochMixed !== true,
-      started_at: pass.startedAt, finalized_at: pass.lastAt,
+      started_at: pass.startedAt, finalized_at: pass.lastAt};
+      if (federation) return {...shared, outcome: eligibilityOutcome(pass),
+        sensitivity_epoch_id: pass.sensitivityEpochId || null,
+        sensitivity_epoch_mixed: pass.sensitivityEpochMixed === true,
+        eligible_cpis: pass.eligibleFrames, association_eligible_cpis: associationCpis(pass),
+        detected_cpis: pass.detectedFrames, tracked_cpis: pass.trackedFrames,
+        eligible: true, detected: pass.detectedFrames >= 3, tracked: pass.trackedFrames >= 3};
+      return {...shared,
       ...passExposure(pass, this.limits?.cpiSeconds || .5),
       detected: pass.detectedFrames >= 3, tracked: pass.trackedFrames >= 3,
       truth_doppler_diagnostics: {
@@ -2306,8 +2386,8 @@ class EvidenceStatistics {
       receiver_slant_range_bands: bands(pass.slantRangeBands),
       elevation_bands: bands(pass.elevationBands),
       azimuth_bands: bands(pass.azimuthBands),
-      azimuth_elevation_bands: bands(pass.azimuthElevationBands, ['azimuth_band', 'elevation_band'])
-    }));
+      azimuth_elevation_bands: bands(pass.azimuthElevationBands, ['azimuth_band', 'elevation_band'])};
+    });
   }
 
   measuredTrackBasis() {
@@ -2386,6 +2466,7 @@ function createEvidenceStatisticsLanes(config, adsbSource, {exact = {}, operatio
 
 module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
   nextPhase, StatisticsFlushScheduler, compactAssociationPass,
+  federationAssociationPassTransport, expandFederationAssociationPassTransport,
   TRIGGER_EVENT_TRUTH_SAMPLES, TRUTH_SAMPLE_MS, MAX_ACTIVE_CAPTURE_TIMESTAMPS, MAX_CAPTURE_ASSOCIATIONS,
   limits, associationGates, assignments, delayBandEdges, delayBand, adsbQuality,
   trackingFailureClass,

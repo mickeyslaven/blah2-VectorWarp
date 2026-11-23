@@ -1,0 +1,132 @@
+capture:
+  fs: 2000000
+  fc: 204640000
+  device:
+    type: "Usrp"
+    address: "localhost"
+    subdev: "A:A A:B"
+    antenna: ["RX2", "RX2"]
+    gain: [20.0, 20.0]
+  replay:
+    state: false
+    loop: false
+    file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
+    format: 'auto'
+    provenance: 'legacy-unqualified'
+
+process:
+  data:
+    cpi: 0.5
+    buffer: 1.5
+    overlap: 0
+  ambiguity:
+    delayMin: -10
+    delayMax: 400
+    dopplerMin: -200
+    dopplerMax: 200
+  clutter:
+    enable: true
+    # Covers ambiguity.delayMin through ambiguity.delayMax (inclusive).
+    followAmbiguity: true
+    delayMin: -10
+    delayMax: 400
+  detection:
+    enable: true
+    pfa: 0.00001
+    nGuard: 2
+    nTrain: 6
+    minDelay: 5
+    minDoppler: 15
+    nCentroid: 6
+    integration_cpis: 1
+    integration_motion_bins: 0
+    track_before_detect:
+      enable: false
+      max_cpis: 8
+      motion_bins: 1
+  tracker:
+    enable: true
+    track_guided_shadow:
+      enable: false
+      promote: false
+      max_tracks: 64
+    initiate:
+      M: 3
+      N: 5
+      maxAcc: 10
+      acceleration_model: hypothesis_bank
+    delete: 10
+    smooth: "none"
+  bearing:
+    enable: false
+    min_consistent: 3
+    min_peak_separation_db: 3
+    frequency_resolved_shadow:
+      enabled: false
+      fft_size: 2048
+      subbands: 24
+      bandwidth_fraction: 0.9
+      diagonal_loading: 0.01
+      capture_seconds: 0.25
+      interval_s: 300
+      timeout_ms: 15000
+    manifold_automation:
+      auto_promote: true
+    manifold_recorder:
+      enabled: false
+      path: "/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl"
+      min_snr_db: 6
+      min_elevation_deg: 0
+      max_elevation_deg: 15
+      max_delay_error_km: 0.25
+      max_doppler_error_hz: 5
+      max_truth_age_s: 3
+      max_file_mb: 64
+      max_files: 4
+
+network:
+  ip: 0.0.0.0
+  ports:
+    api: 3000
+    map: 3001
+    detection: 3002
+    track: 3003
+    bearing: 3004
+    manifold: 3005
+    timestamp: 4000
+    timing: 4001
+    iqdata: 4002
+    config: 4003
+
+truth:
+  adsb:
+    enabled: false
+    tar1090: 'localhost:8080'
+    poll_interval: 1
+    smoothing_window: 10
+    max_position_age: 30
+    provisional_event_time_uncertainty_s: 1
+  ais:
+    enabled: false
+    ip: 0.0.0.0
+    port: 30001
+
+location:
+  rx:
+    # Replace these neutral placeholders before enabling capture or truth data.
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set receiver site"
+  tx:
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set transmitter site"
+
+save:
+  iq: false
+  map: false
+  detection: false
+  timing: false
+  path: "/var/lib/vectorwarp/recordings/"

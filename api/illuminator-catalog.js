@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const stationCatalog = require('../html/js/transmitter_catalog');
 
 const SCHEMA = 'vectorwarp-illuminator-transmitter-catalog-v1';
 const STANDARDS = new Set(['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0',
@@ -15,6 +16,9 @@ const SOURCES = Object.freeze([
   Object.freeze({id: 'fcc-lms-us', authority: 'US Federal Communications Commission',
     jurisdiction: 'US', standards: Object.freeze(['FM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0']),
     landing_url: 'https://opendata.fcc.gov/Media/LMS-Public-Database-Files/nsck-y87u',
+    database_url: 'https://enterpriseefiling.fcc.gov/dataentry/public/tv/lmsDatabase.html',
+    antenna_url: 'https://geo.fcc.gov/api/contours/antenna.json',
+    ingestion_status: 'normalized-import-required',
     update_mode: 'download-normalize-pin', coordinate_system: 'WGS84'}),
   Object.freeze({id: 'ofcom-txparams-vhf-uk', authority: 'Ofcom', jurisdiction: 'UK',
     standards: Object.freeze(['FM']),
@@ -37,6 +41,18 @@ const SOURCES = Object.freeze([
 
 function catalogSources() {
   return SOURCES.map(source => ({...source, standards: [...source.standards]}));
+}
+
+// Setup consumes explicit station records, never the legacy survey band-plan
+// width. A regulator adapter must join current station/facility/application
+// facts and antenna coordinates before producing this bounded snapshot.
+function createStationProvider(input) {
+  const provider = stationCatalog.createProvider(input);
+  const descriptor = catalogSources().find(source => source.id === provider.id) ||
+    {id: provider.id, jurisdiction: provider.region, update_mode: 'validate-and-pin'};
+  const snapshot = provider.exportSnapshot();
+  return Object.freeze({...provider, descriptor,
+    fingerprint_sha256: catalogFingerprint(snapshot)});
 }
 
 function finite(value) {
@@ -147,4 +163,5 @@ function resolveCatalog(catalog, {plan, receiverLocation, radiusKm, asOf}) {
 }
 
 module.exports = {SCHEMA, catalogSources, catalogFingerprint, validateCatalog,
-  resolveCatalog, haversineKm};
+  resolveCatalog, haversineKm, createStationProvider,
+  stationRecordSchema: stationCatalog.SNAPSHOT_SCHEMA};

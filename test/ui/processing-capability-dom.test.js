@@ -87,6 +87,24 @@ const capacity = 'process.tracker.gpu_capacity';
 
 (async()=>{
   const local = configuration('Kraken', {array:true});
+  await fixture(local,true,({w})=>{
+    w.document.querySelector('.kraken-geometry').open=false;
+    w.renderEditor();
+    assert.equal(w.document.querySelector('.kraken-geometry').open,true,
+      'A remembered closed state cannot hide a standalone array panel with no disclosure button');
+    w.document.querySelector('.geometry-manual').open=true;
+    const reference=w.document.querySelector('.geometry-reference-mode select');
+    reference.focus();reference.value='dedicated';reference.dispatchEvent(new w.Event('change',{bubbles:true}));
+    assert.equal(w.document.querySelector('.kraken-geometry').open,true,'Reference edits retain the open array editor');
+    assert.equal(w.document.querySelector('.geometry-manual').open,true,'Measured-layout disclosure remains open');
+    assert.equal(w.document.querySelector('.kraken-geometry').classList.contains('kraken-geometry-standalone'),true,
+      'Array-tab refresh preserves its standalone presentation');
+    assert.deepEqual([...w.document.querySelectorAll('.kraken-geometry details.config-group')]
+      .filter(group=>!group.querySelector('input,select,textarea,button')).map(group=>group.querySelector('summary')?.textContent),
+    [],'Geometry refresh leaves no empty disclosures after moving canonical fields to their existing controls');
+    assert.equal(w.document.activeElement,w.document.querySelector('.geometry-reference-mode select'),
+      'Replacing geometry controls restores reference-selection keyboard focus');
+  });
   for (const mode of ['noncoherent','coherent_beam_bank','noise_whitened_beam_bank']) {
     const observed = clone(local); observed.process.performance.acceleration = 'gpu-resident';
     observed.process.surveillance_fusion.mode = mode;

@@ -12,6 +12,8 @@ const {routeInventory, copyIssues} = require('../helpers/ui-acceptance');
 const root = path.resolve(__dirname, '../../html');
 const {pages, aliases, routes} = routeInventory();
 const selectedRoutes=process.env.VECTORWARP_LAYOUT_ROUTES?JSON.parse(process.env.VECTORWARP_LAYOUT_ROUTES):routes;
+const interactionFixture=process.env.VECTORWARP_LAYOUT_INTERACTIONS==='1'?
+  require('./setup-upgrade-fixture.cjs').createFixture():null;
 
 // Exercise the shipped settings schema, including capability-disabled and
 // experimental fields, rather than a shorter hand-maintained configuration.
@@ -35,6 +37,8 @@ const scorecard = {decision_grade:true,collecting:true,limits:{delayMinKm:1,dela
   active_passes:[{flight:'LAYOUT123',status:'eligible',eligible_cpis:5,detected_cpis:4,
     tracked_cpis:3,last_truth:{delay_km:12,doppler_hz:45}}],recent_finalized_passes:[]};
 function fixture(url) {
+  const interaction=interactionFixture?.read(url);
+  if(interaction!==undefined)return interaction;
   if (['statistics-kiosk','statistics-single-kiosk'].includes(process.env.VECTORWARP_LAYOUT_FIXTURE)) {
     const result = require('./statistics-kiosk-fixture.cjs')(url,config,
       process.env.VECTORWARP_LAYOUT_FIXTURE === 'statistics-single-kiosk');
@@ -77,9 +81,10 @@ function fixture(url) {
         receiver:'Kraken',channels:5,kind:'manual',complete:true,aircraft:[]}))}
   }[url.pathname] || {};
 }
-const server = http.createServer((request,response)=>{
+const server = http.createServer(async(request,response)=>{
   const url = new URL(request.url,'http://127.0.0.1');
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/capture/')) {
+    if(interactionFixture?.state&&await interactionFixture.write(request,response,url))return;
     if(request.method==='POST'&&url.pathname==='/api/config/validate') {
       let body='';request.on('data',chunk=>body+=chunk);
       request.on('end',()=>{response.setHeader('Content-Type','application/json');
@@ -90,7 +95,7 @@ const server = http.createServer((request,response)=>{
       response.end(JSON.stringify({error:'Read-only layout fixture'}));return;
     }
     response.setHeader('Content-Type','application/json');
-    response.setHeader('ETag','"layout-fixture"'); response.end(JSON.stringify(fixture(url))); return;
+    response.setHeader('ETag',interactionFixture?.state?`"interaction-${interactionFixture.state.revision}"`:'"layout-fixture"'); response.end(JSON.stringify(fixture(url))); return;
   }
   let filename = path.resolve(root,'.'+url.pathname);
   if (!filename.startsWith(root+path.sep) && filename!==root) {response.writeHead(404);response.end();return;}
@@ -120,7 +125,9 @@ async function connect(endpoint) {
 }
 (async()=>{
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'vectorwarp-all-routes-'));
-  let browser,client,currentRoute; const report={pages:pages.length,aliases,checks:[],issues:[],exceptions:[]};
+  let browser,client,currentRoute; const report={pages:pages.length,aliases,checks:[],issues:[],exceptions:[],missingAssets:[]};
+  if(process.env.VECTORWARP_LAYOUT_REPORT)fs.mkdirSync(path.dirname(process.env.VECTORWARP_LAYOUT_REPORT),{recursive:true});
+  if(process.env.VECTORWARP_LAYOUT_SCREENSHOTS)fs.mkdirSync(process.env.VECTORWARP_LAYOUT_SCREENSHOTS,{recursive:true});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try {
     browser=spawn(process.env.VECTORWARP_CHROME_EXECUTABLE||'/usr/bin/chromium-browser',
@@ -137,9 +144,21 @@ async function connect(endpoint) {
     const targets=await(await fetch(`http://${new URL(endpoint).host}/json/list`)).json();
     client=await connect(targets.find(item=>item.type==='page').webSocketDebuggerUrl);
     await client.send('Page.enable');
+    client.on('Page.frameNavigated',({frame})=>{
+      if(!frame.parentId&&frame.url.startsWith('http:')){const url=new URL(frame.url);currentRoute=url.pathname+url.search;}
+    });
     client.on('Runtime.exceptionThrown',event=>report.exceptions.push({route:currentRoute,
       message:event.exceptionDetails?.exception?.description||event.exceptionDetails?.text}));
     await client.send('Runtime.enable');
+    await client.send('Network.enable');
+    client.on('Network.responseReceived',({response,type})=>{
+      if(response.status>=400&&!['Fetch','XHR'].includes(type))
+        report.missingAssets.push({route:currentRoute,url:response.url,status:response.status,type});
+    });
+    client.on('Network.loadingFailed',({type,errorText,canceled})=>{
+      if(!canceled&&['Document','Script','Stylesheet','Image','Font'].includes(type))
+        report.missingAssets.push({route:currentRoute,type,error:errorText});
+    });
     client.on('Fetch.requestPaused',event=>{
       const json=event.request.url.endsWith('tilejson.json');
       const body=json?Buffer.from(JSON.stringify({tilejson:'3.0.0',tiles:['https://tiles.example.test/{z}/{x}/{y}.png'],minzoom:0,maxzoom:12})).toString('base64'):
@@ -156,19 +175,20 @@ async function connect(endpoint) {
       currentRoute=route;
       const loaded=new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error(`Load timed out: ${route}`)),30000);
         client.on('Page.loadEventFired',()=>{clearTimeout(timeout);resolve();});});
-      await client.send('Page.navigate',{url:base+route});
-      await loaded;
+      await Promise.all([client.send('Page.navigate',{url:base+route}),loaded]);
       await evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
         const root=document.querySelector('#view-root'),config=document.querySelector('#configuration');
         if(document.readyState==='complete'&&document.querySelector('.app-nav')&&
           (!${requireView}||((!root||root.dataset.ready==='true')&&(!config||config.querySelector('.config-tabs'))&&
+          (!document.querySelector('.location-map-panel')||document.getElementById('data')?._vectorwarpMap)&&
           (!document.querySelector('#recording-list')||document.querySelector('.recording-card')))))
           requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)));
         else if(Date.now()-start>20000)reject(new Error('Route not ready: '+location.pathname+' '+document.body.innerText.slice(-400)));
         else setTimeout(check,100);};check();})`);
     };
     const measure=()=>evaluate(`(()=>{
-      const visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+      const visible=e=>{const closed=e.closest('details:not([open])');return !!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&
+        (!closed||closed.querySelector(':scope > summary')?.contains(e));};
       const box=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height};};
       const nav=[...document.querySelectorAll('.app-nav a')].map(e=>({label:e.textContent,clipped:e.scrollWidth>e.clientWidth+1,...box(e)}));
       const escaped=[...document.querySelectorAll('.app-header,.insight-topbar,.view-state,.controller-intro,.info-card,.metric-card,.data-table-wrap,.view-tabs,.config-tabs,.recording-card,input,select,button,#data .annotation-text')]
@@ -265,11 +285,21 @@ async function connect(endpoint) {
         }
       }
     };
+    const screenshot=async name=>{
+      if(!process.env.VECTORWARP_LAYOUT_SCREENSHOTS)return;
+      const shot=await client.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+      fs.writeFileSync(path.join(process.env.VECTORWARP_LAYOUT_SCREENSHOTS,`${name}.png`),Buffer.from(shot.data,'base64'));
+    };
     for(const route of selectedRoutes){
       await navigate(route);
       for(const [width,height] of [[320,844],[390,844],[720,1280],[768,1024],[1440,900],[1080,1920]]){
         await client.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:Number(process.env.VECTORWARP_LAYOUT_DPR)||1,mobile:false});
-        await evaluate('new Promise(resolve=>setTimeout(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)),150))');
+        await evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
+          const plots=[...document.querySelectorAll('.js-plotly-plot')].filter(e=>e.getClientRects().length&&e.clientWidth>0);
+          if(innerWidth===${width}&&innerHeight===${height}&&plots.every(e=>!e._fullLayout||Math.abs(e._fullLayout.width-e.clientWidth)<=3))
+            requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)));
+          else if(Date.now()-start>10000)reject(new Error('Responsive viewport/plot resize did not settle'));
+          else setTimeout(check,40);};check();})`);
         if(route==='/display/signal/?view=maxhold'&&width<=600) {
           await evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
             const plot=document.querySelector('#data'),size=plot?._fullLayout?._size;
@@ -331,17 +361,28 @@ async function connect(endpoint) {
       const actual=await evaluate('location.pathname+location.search');
       assert.equal(actual.replace(/\/(?=\?|$)/,''),alias.destination.replace(/\/(?=\?|$)/,''),alias.route);
     }
+    if(interactionFixture)await require('./setup-upgrade-fixture.cjs').runInteractions({
+      fixture:interactionFixture,client,evaluate,navigate,record,screenshot,report,profile});
     if(process.env.VECTORWARP_LAYOUT_REPORT)fs.writeFileSync(process.env.VECTORWARP_LAYOUT_REPORT,JSON.stringify(report,null,2));
     assert.equal(report.issues.length,0,JSON.stringify(report.issues.map(({route,state,width,reason,overflow,escaped})=>
       ({route,state,width,reason,overflow,escaped})),null,2));
     assert.deepEqual(report.exceptions,[],'Every reachable view must render without uncaught JavaScript exceptions');
+    assert.deepEqual(report.missingAssets,[],'Every reachable view must load its scripts, styles, images and fonts');
     console.log(`${selectedRoutes.length} canonical/query views and ${report.checks.length} viewport/state checks passed.`);
+  }catch(error){
+    report.failure={route:currentRoute,message:error.message};
+    console.error(`Browser acceptance failed: ${error.message}`);
+    if(client&&process.env.VECTORWARP_LAYOUT_SCREENSHOTS){
+      const shot=await client.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false}).catch(()=>null);
+      if(shot)fs.writeFileSync(path.join(process.env.VECTORWARP_LAYOUT_SCREENSHOTS,'failure.png'),Buffer.from(shot.data,'base64'));
+    }
+    throw error;
   }finally{
     if(process.env.VECTORWARP_LAYOUT_REPORT)fs.writeFileSync(process.env.VECTORWARP_LAYOUT_REPORT,JSON.stringify(report,null,2));
     await client?.send('Browser.close').catch(()=>browser?.kill('SIGTERM'));
     client?.socket.close();
     if(browser&&browser.exitCode===null)await Promise.race([once(browser,'exit'),new Promise(resolve=>setTimeout(resolve,3000))]);
-    await new Promise(resolve=>server.close(resolve));
+    server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
     fs.rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:150});
   }
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -2,6 +2,8 @@
   'use strict';
   const topology = typeof module !== 'undefined' && module.exports ?
     require('./processing_capabilities') : root.VectorWarpProcessingCapabilities;
+  const configProfiles = typeof module !== 'undefined' && module.exports ?
+    require('./config_profiles') : root.VectorWarpConfigProfiles;
   const c = 299792458;
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, character =>
@@ -109,7 +111,14 @@
       const device = config.capture?.device || {};
       return `<h2>Choose the receiver</h2><label class="setup-wizard-field">Receiver<select data-wizard-receiver title="Detected receivers are selected automatically.">${profiles.map(profile => `<option value="${escape(profile.type)}"${profile.type === config.capture?.device?.type ? ' selected' : ''}>${escape(profile.label || profile.type)}</option>`).join('')}</select></label>${readiness}`;
     }
-    if (index === 1) return `<h2>Set frequency and sample rate</h2><div class="setup-wizard-fields"><label class="setup-wizard-field">Center frequency (MHz)<input data-wizard-fc type="number" min="0.001" step="0.001" value="${valueAttr(Number(config.capture?.fc || 0) / 1e6)}"></label><label class="setup-wizard-field">Sample rate (MS/s)<input data-wizard-fs type="number" min="0.001" step="0.001" value="${valueAttr(Number(config.capture?.fs || 0) / 1e6)}"></label></div>`;
+    if (index === 1) {
+      const rates = profiles.find(profile => profile.type === config.capture?.device?.type)?.sampleRates || {};
+      const values = rates.values || rates.suggestions || [];
+      const rateControl = rates.values ? `<select data-wizard-fs>${values.includes(config.capture?.fs) ? '' : `<option selected value="${valueAttr(config.capture?.fs / 1e6)}">${valueAttr(config.capture?.fs / 1e6)} MS/s (saved; unsupported)</option>`}${values.map(rate =>
+        `<option value="${rate / 1e6}"${rate === config.capture?.fs ? ' selected' : ''}>${rate / 1e6} MS/s</option>`).join('')}</select>` :
+        `<input data-wizard-fs type="number" min="${(rates.min || 1) / 1e6}"${rates.max ? ` max="${rates.max / 1e6}"` : ''} step="0.000001" list="wizard-rates" value="${valueAttr(Number(config.capture?.fs || 0) / 1e6)}"><datalist id="wizard-rates">${values.map(rate => `<option value="${rate / 1e6}"></option>`).join('')}</datalist>`;
+      return `<h2>Set frequency and sample rate</h2><div class="setup-wizard-fields"><label class="setup-wizard-field">Center frequency (MHz)<input data-wizard-fc type="number" min="0.000001" step="0.000001" value="${valueAttr(Number(config.capture?.fc || 0) / 1e6)}"></label><label class="setup-wizard-field">Sample rate per input (MS/s)${rateControl}</label></div><p>Rates must match hardware readback; suggestions do not guarantee host throughput. Direct input uses the full band. Configure optional RF channel extraction in Settings before starting.</p>`;
+    }
     if (index === 2) {
       const site = (role, title) => { const item = config.location?.[role] || {}; return `<fieldset class="setup-wizard-site"><legend>${title}</legend><label>Name<input data-site="${role}.name" value="${valueAttr(item.name)}"></label><label>Latitude<input data-site="${role}.latitude" type="number" min="-90" max="90" step="any" value="${valueAttr(item.latitude)}"></label><label>Longitude<input data-site="${role}.longitude" type="number" min="-180" max="180" step="any" value="${valueAttr(item.longitude)}"></label><label>Altitude (m)<input data-site="${role}.altitude" type="number" step="any" value="${valueAttr(item.altitude)}"></label></fieldset>`; };
       return `<h2>Locate the receiver and illuminator</h2><div class="setup-wizard-sites">${site('rx','Receiver site')}${site('tx','Illuminator site')}</div>`;
@@ -135,7 +144,8 @@
     dialog.innerHTML = `<div class="setup-wizard-shell"><aside><div><strong id="setup-wizard-title">VectorWarp setup</strong><small>Step ${wizardStep + 1} of ${checks.length}</small></div><nav aria-label="Setup steps">${checks.map((item, index) => `<button type="button" data-wizard-step="${index}" class="${index === wizardStep ? 'active' : ''} ${item.complete ? 'complete' : ''}"${index === wizardStep ? ' aria-current="step"' : ''}${locked(index) ? ' disabled' : ''}><span>${item.complete ? '✓' : index + 1}</span>${escape(item.title)}</button>`).join('')}</nav></aside><section class="setup-wizard-content">${wizardPanel(config, wizardStep, profiles)}<p class="setup-wizard-notice" role="status"${wizardNotice ? '' : ' hidden'}>${escape(wizardNotice)}</p><p class="setup-wizard-error" role="alert"${wizardError ? '' : ' hidden'}>${escape(wizardError)}</p><footer><button type="button" class="button-secondary" data-wizard-close>Cancel</button><span></span>${wizardStep ? '<button type="button" class="button-secondary" data-wizard-back>Back</button>' : ''}<button type="button" class="button-primary" data-wizard-next>${wizardStep === checks.length - 1 ? 'Finish & Start radar' : 'Save step & Continue'}</button></footer></section></div>`;
     target.appendChild(dialog);
     const close = () => { wizardOpen = false; wizardAutomatic = null;
-      if (typeof dialog.close === 'function') dialog.close(); dialog.remove(); };
+      if (typeof dialog.close === 'function') dialog.close(); dialog.remove();
+      target.querySelector('[data-start-setup]')?.focus(); };
     dialog.querySelector('[data-wizard-close]').addEventListener('click', close);
     dialog.querySelector('[data-wizard-receiver]')?.addEventListener('change', event => {
       wizardError = '';
@@ -172,8 +182,8 @@
           throw new Error('Complete the required receiver hardware fields before continuing.');
         wizardVisited.add(0);
       } else if (wizardStep === 1) {
-        api.set(['capture','fc'], Number(dialog.querySelector('[data-wizard-fc]').value) * 1e6);
-        api.set(['capture','fs'], Number(dialog.querySelector('[data-wizard-fs]').value) * 1e6);
+        api.set(['capture','fc'], configProfiles.scaledInputNumber(dialog.querySelector('[data-wizard-fc]').value, 1e6));
+        api.set(['capture','fs'], configProfiles.scaledInputNumber(dialog.querySelector('[data-wizard-fs]').value, 1e6));
         wizardVisited.add(1);
       } else if (wizardStep === 2) {
         dialog.querySelectorAll('[data-site]').forEach(input => {
@@ -199,12 +209,14 @@
         if (config.capture?.aircraft_clips)
           api.set(['capture','aircraft_clips','enabled'], automatic.clips);
         const saved = await api.save();
-        if (saved === false) throw new Error('VectorWarp could not apply the completed setup. Review the error above and try again.');
+        if (saved === false) throw new Error(api.saveError?.() ||
+          'VectorWarp could not apply the completed setup. Cancel to review Settings, then try again.');
         close(); advance = false;
       }
       if (advance) {
         const saved = await api.saveStep();
-        if (saved === false) throw new Error('This step could not be saved. Correct the highlighted setting and try again.');
+        if (saved === false) throw new Error(api.saveError?.() ||
+          'This step could not be saved. Correct the highlighted setting and try again.');
         wizardStep += 1;
         api.refresh();
       }
@@ -214,6 +226,11 @@
       } finally { wizardBusy = false; }
     });
     if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+    if (wizardError) {
+      const error = dialog.querySelector('.setup-wizard-error');
+      error.tabIndex = -1; error.focus({preventScroll: true});
+      error.scrollIntoView?.({block: 'center'});
+    }
   }
   function render(target, api) {
     if (!target) return;

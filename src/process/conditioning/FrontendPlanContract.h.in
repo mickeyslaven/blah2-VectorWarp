@@ -1,0 +1,5 @@
+#pragma once
+// Generated in the build tree from the API/native serialization owner.
+namespace blah2::iq {
+inline constexpr char frontendPlanContract[] = R"frontend(@FRONTEND_PLAN_CONTRACT@)frontend";
+}

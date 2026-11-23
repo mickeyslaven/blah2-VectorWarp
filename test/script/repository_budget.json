@@ -7703,7 +7703,750 @@
         "context_tokens:installation": [48846, 48855],
         "context_tokens:production": [1755485, 1755494]
       }
-    }
+    },
+    {
+      "owner": "2026-11-23 bounded federation statistics transport review",
+      "purpose": "Replace repeated multi-megabyte node pass ledgers with one bounded columnar federation contract and preaggregate kiosk CPI exposure while preserving deduplicated network pass scoring and exact measured-track intervals.",
+      "rejected_reuse": "Do not raise response caps, poll full evidence ledgers, duplicate radar scoring, infer missing node data, weaken outage semantics, or introduce receiver-, OS-, site- or host-specific behavior.",
+      "cleanup_plan": "Retain one node-local evidence owner, one federation decoder, bounded transport and kiosk regression fixtures, exact owner packets and no reserve. Later source reductions must ratchet these ceilings downward.",
+      "changes": {
+        "lines:api": [26066, 26141],
+        "lines:html": [13590, 13620],
+        "oversized_bytes:api/evidence-statistics.js": [138256, 141083],
+        "oversized_bytes:api/server.js": [135917, 136567],
+        "oversized_bytes:html/js/insights.js": [175631, 177157],
+        "oversized_lines:api/evidence-statistics.js": [2400, 2453],
+        "oversized_lines:api/server.js": [2408, 2417],
+        "oversized_lines:html/js/insights.js": [2297, 2317],
+        "context_characters:build-release/contracts": [368897, 369547],
+        "context_characters:evidence-api": [303580, 307090],
+        "context_characters:evidence-api/contracts": [97795, 98351],
+        "context_characters:installation/contracts": [245119, 245769],
+        "context_characters:operational-tools/contracts": [498051, 498701],
+        "context_characters:production": [6997696, 7004220],
+        "context_characters:runtime-api": [466940, 467872],
+        "context_characters:runtime-api/contracts": [850900, 854966],
+        "context_characters:ui-insights": [205074, 206600],
+        "context_characters:ui-presentation": [280125, 280681],
+        "context_characters:ui-presentation/contracts": [647222, 648748],
+        "context_lines:build-release/contracts": [7469, 7478],
+        "context_lines:evidence-api": [5374, 5437],
+        "context_lines:evidence-api/contracts": [1694, 1704],
+        "context_lines:installation/contracts": [4153, 4162],
+        "context_lines:operational-tools/contracts": [8720, 8729],
+        "context_lines:production": [129655, 129760],
+        "context_lines:runtime-api": [8331, 8343],
+        "context_lines:runtime-api/contracts": [14771, 14844],
+        "context_lines:ui-insights": [2823, 2843],
+        "context_lines:ui-presentation": [3043, 3053],
+        "context_lines:ui-presentation/contracts": [10547, 10567],
+        "context_tokens:build-release/contracts": [87870, 87981],
+        "context_tokens:evidence-api": [70117, 71006],
+        "context_tokens:evidence-api/contracts": [24258, 24365],
+        "context_tokens:installation/contracts": [58046, 58157],
+        "context_tokens:operational-tools/contracts": [125681, 125792],
+        "context_tokens:production": [1755494, 1756939],
+        "context_tokens:runtime-api": [115713, 115878],
+        "context_tokens:runtime-api/contracts": [202425, 203421],
+        "context_tokens:ui-insights": [57373, 57657],
+        "context_tokens:ui-presentation": [86705, 86812],
+        "context_tokens:ui-presentation/contracts": [170820, 171104]
+      }
+    },
+    {
+      "owner": "2026-11-23 bounded association projection review",
+      "purpose": "Replace the compact federation route's full multi-window scorecard scan with one canonical lifetime association projection and avoid constructing rich node-local pass diagnostics for the bounded federation transport, while preserving shared timing quality, pass scoring and measured coverage math.",
+      "rejected_reuse": "Do not hide the stall with larger IQ queues, weaken score semantics, duplicate quality calculations, branch by receiver or host, or return the full research scorecard to display and federation consumers.",
+      "cleanup_plan": "Retain one EvidenceStatistics association owner, focused projection and federation regressions, exact owner packets and no reserve. Later reductions must ratchet these ceilings downward.",
+      "changes": {
+        "lines:api": [26141, 26174],
+        "oversized_bytes:api/evidence-statistics.js": [141083, 142570],
+        "oversized_bytes:api/server.js": [136567, 136650],
+        "oversized_lines:api/evidence-statistics.js": [2453, 2481],
+        "oversized_lines:api/server.js": [2417, 2419],
+        "context_characters:build-release/contracts": [369547, 369630],
+        "context_characters:evidence-api": [307090, 308738],
+        "context_characters:installation/contracts": [245769, 245852],
+        "context_characters:operational-tools/contracts": [498701, 498784],
+        "context_characters:production": [7004220, 7005951],
+        "context_characters:runtime-api": [467872, 467955],
+        "context_characters:runtime-api/contracts": [854966, 856614],
+        "context_lines:build-release/contracts": [7478, 7480],
+        "context_lines:evidence-api": [5437, 5468],
+        "context_lines:installation/contracts": [4162, 4164],
+        "context_lines:operational-tools/contracts": [8729, 8731],
+        "context_lines:production": [129760, 129793],
+        "context_lines:runtime-api": [8343, 8345],
+        "context_lines:runtime-api/contracts": [14844, 14875],
+        "context_tokens:build-release/contracts": [87981, 87989],
+        "context_tokens:evidence-api": [71006, 71296],
+        "context_tokens:installation/contracts": [58157, 58165],
+        "context_tokens:operational-tools/contracts": [125792, 125800],
+        "context_tokens:production": [1756939, 1757237],
+        "context_tokens:runtime-api": [115878, 115886],
+        "context_tokens:runtime-api/contracts": [203421, 203711]
+      }
+    },
+      {
+        "owner": "2026-11-23 portable frontend and setup acceptance review",
+        "purpose": "Bind one immutable acquisition and channelization identity through live, replay, CPU and GPU paths; migrate released configurations with evidence; add capability-driven receiver and broadcast setup; and qualify every reachable UI route and action in a real browser.",
+        "rejected_reuse": "Do not duplicate radar pipelines, encode a site or receiver deployment, silently mutate presets, infer unsupported demodulation, weaken frontend identity, hide configuration migration, or treat DOM inspection and screenshots as substitutes for clicked browser behavior.",
+        "cleanup_plan": "Retain one frontend contract, one configuration owner, one catalog import contract and one browser acceptance harness. These ceilings are exact with no reserve; remove superseded adapters and ratchet every later source or contract reduction downward.",
+        "changes": {
+          "context_characters:build-integration": [
+            100981,
+            102076
+          ],
+          "context_characters:build-integration/contracts": [
+            1386398,
+            1389948
+          ],
+          "context_characters:build-release/contracts": [
+            369630,
+            384717
+          ],
+          "context_characters:canonical-data": [
+            154194,
+            154319
+          ],
+          "context_characters:configuration-policy": [
+            203772,
+            224420
+          ],
+          "context_characters:configuration-policy/contracts": [
+            156042,
+            158766
+          ],
+          "context_characters:evidence-api/contracts": [
+            98351,
+            103290
+          ],
+          "context_characters:installation/contracts": [
+            245852,
+            248475
+          ],
+          "context_characters:native-ambiguity/contracts": [
+            195444,
+            195569
+          ],
+          "context_characters:native-analysis": [
+            121279,
+            121549
+          ],
+          "context_characters:native-analysis/contracts": [
+            113773,
+            113908
+          ],
+          "context_characters:native-conditioning": [
+            85672,
+            91619
+          ],
+          "context_characters:native-conditioning/contracts": [
+            27112,
+            27237
+          ],
+          "context_characters:native-pipeline": [
+            153341,
+            154528
+          ],
+          "context_characters:native-pipeline/contracts": [
+            300714,
+            306196
+          ],
+          "context_characters:native-runtime": [
+            192489,
+            193759
+          ],
+          "context_characters:native-runtime/contracts": [
+            280590,
+            285847
+          ],
+          "context_characters:native-spectrum/contracts": [
+            12791,
+            12916
+          ],
+          "context_characters:operational-tools": [
+            609416,
+            609785
+          ],
+          "context_characters:operational-tools/contracts": [
+            498784,
+            520063
+          ],
+          "context_characters:production": [
+            7005951,
+            7077240
+          ],
+          "context_characters:receiver-control-api/contracts": [
+            31424,
+            45375
+          ],
+          "context_characters:recording-api/contracts": [
+            9379,
+            10995
+          ],
+          "context_characters:release-ci": [
+            137679,
+            138234
+          ],
+          "context_characters:release-ci/contracts": [
+            361258,
+            361627
+          ],
+          "context_characters:replay-evidence-tools/contracts": [
+            169127,
+            169271
+          ],
+          "context_characters:runtime-api": [
+            467955,
+            473533
+          ],
+          "context_characters:runtime-api/contracts": [
+            856614,
+            890888
+          ],
+          "context_characters:ui-insights/contracts": [
+            121283,
+            127417
+          ],
+          "context_characters:ui-presentation": [
+            280681,
+            295603
+          ],
+          "context_characters:ui-presentation/contracts": [
+            648748,
+            673010
+          ],
+          "context_characters:ui-settings": [
+            266849,
+            280038
+          ],
+          "context_characters:ui-settings/contracts": [
+            30833,
+            49525
+          ],
+          "context_characters:ui-shared": [
+            125852,
+            131986
+          ],
+          "context_characters:ui-shared/contracts": [
+            21454,
+            24777
+          ],
+          "context_contract:build-integration->api/frontend-plan-contract.json": [
+            0,
+            1
+          ],
+          "context_contract:build-integration->src/process/conditioning/FrontendPlanContract.h.in": [
+            0,
+            1
+          ],
+          "context_contract:configuration-policy->api/frontend-plan.js": [
+            0,
+            1
+          ],
+          "context_contract:native-pipeline->src/process/conditioning/FrontendPlan.h": [
+            0,
+            1
+          ],
+          "context_contract:native-runtime->src/process/conditioning/FrontendPlan.h": [
+            0,
+            1
+          ],
+          "context_contract:runtime-api->html/js/transmitter_catalog.js": [
+            0,
+            1
+          ],
+          "context_contract:ui-settings->html/js/transmitter_catalog.js": [
+            0,
+            1
+          ],
+          "context_files:build-integration/contracts": [
+            84,
+            86
+          ],
+          "context_files:configuration-policy/contracts": [
+            7,
+            8
+          ],
+          "context_files:native-conditioning": [
+            12,
+            14
+          ],
+          "context_files:native-pipeline/contracts": [
+            36,
+            37
+          ],
+          "context_files:native-runtime/contracts": [
+            47,
+            48
+          ],
+          "context_files:production": [
+            575,
+            580
+          ],
+          "context_files:runtime-api": [
+            32,
+            34
+          ],
+          "context_files:runtime-api/contracts": [
+            39,
+            40
+          ],
+          "context_files:ui-presentation": [
+            36,
+            37
+          ],
+          "context_files:ui-settings/contracts": [
+            2,
+            3
+          ],
+          "context_imports:build-integration": [
+            130,
+            132
+          ],
+          "context_imports:configuration-policy": [
+            8,
+            9
+          ],
+          "context_imports:native-conditioning": [
+            10,
+            11
+          ],
+          "context_imports:native-pipeline": [
+            44,
+            45
+          ],
+          "context_imports:native-runtime": [
+            47,
+            48
+          ],
+          "context_imports:runtime-api": [
+            45,
+            46
+          ],
+          "context_imports:ui-presentation": [
+            34,
+            35
+          ],
+          "context_imports:ui-settings": [
+            4,
+            6
+          ],
+          "context_lines:build-integration": [
+            1880,
+            1895
+          ],
+          "context_lines:build-integration/contracts": [
+            28284,
+            28345
+          ],
+          "context_lines:build-release/contracts": [
+            7480,
+            7701
+          ],
+          "context_lines:canonical-data": [
+            4159,
+            4163
+          ],
+          "context_lines:configuration-policy": [
+            3010,
+            3306
+          ],
+          "context_lines:configuration-policy/contracts": [
+            2723,
+            2761
+          ],
+          "context_lines:evidence-api/contracts": [
+            1704,
+            1780
+          ],
+          "context_lines:installation/contracts": [
+            4164,
+            4199
+          ],
+          "context_lines:native-ambiguity/contracts": [
+            4159,
+            4163
+          ],
+          "context_lines:native-analysis": [
+            2331,
+            2335
+          ],
+          "context_lines:native-analysis/contracts": [
+            2544,
+            2545
+          ],
+          "context_lines:native-conditioning": [
+            2107,
+            2213
+          ],
+          "context_lines:native-conditioning/contracts": [
+            670,
+            674
+          ],
+          "context_lines:native-pipeline": [
+            3073,
+            3087
+          ],
+          "context_lines:native-pipeline/contracts": [
+            5764,
+            5863
+          ],
+          "context_lines:native-runtime": [
+            3486,
+            3501
+          ],
+          "context_lines:native-runtime/contracts": [
+            5903,
+            5997
+          ],
+          "context_lines:native-spectrum/contracts": [
+            346,
+            350
+          ],
+          "context_lines:operational-tools": [
+            11394,
+            11399
+          ],
+          "context_lines:operational-tools/contracts": [
+            8731,
+            9056
+          ],
+          "context_lines:production": [
+            129793,
+            130850
+          ],
+          "context_lines:receiver-control-api/contracts": [
+            593,
+            796
+          ],
+          "context_lines:recording-api/contracts": [
+            150,
+            176
+          ],
+          "context_lines:release-ci": [
+            2643,
+            2654
+          ],
+          "context_lines:release-ci/contracts": [
+            6886,
+            6891
+          ],
+          "context_lines:runtime-api": [
+            8345,
+            8441
+          ],
+          "context_lines:runtime-api/contracts": [
+            14875,
+            15378
+          ],
+          "context_lines:ui-insights/contracts": [
+            2246,
+            2350
+          ],
+          "context_lines:ui-presentation": [
+            3053,
+            3273
+          ],
+          "context_lines:ui-presentation/contracts": [
+            10567,
+            10914
+          ],
+          "context_lines:ui-settings": [
+            4587,
+            4754
+          ],
+          "context_lines:ui-settings/contracts": [
+            549,
+            832
+          ],
+          "context_lines:ui-shared": [
+            2333,
+            2437
+          ],
+          "context_lines:ui-shared/contracts": [
+            399,
+            449
+          ],
+          "context_tokens:build-integration": [
+            16280,
+            16458
+          ],
+          "context_tokens:build-integration/contracts": [
+            341867,
+            342612
+          ],
+          "context_tokens:build-release/contracts": [
+            87989,
+            91390
+          ],
+          "context_tokens:canonical-data": [
+            37952,
+            37975
+          ],
+          "context_tokens:configuration-policy": [
+            49743,
+            54571
+          ],
+          "context_tokens:configuration-policy/contracts": [
+            39243,
+            39863
+          ],
+          "context_tokens:evidence-api/contracts": [
+            24365,
+            25591
+          ],
+          "context_tokens:installation/contracts": [
+            58165,
+            58701
+          ],
+          "context_tokens:native-ambiguity/contracts": [
+            46940,
+            46963
+          ],
+          "context_tokens:native-analysis": [
+            33272,
+            33333
+          ],
+          "context_tokens:native-analysis/contracts": [
+            29114,
+            29133
+          ],
+          "context_tokens:native-conditioning": [
+            20238,
+            21580
+          ],
+          "context_tokens:native-conditioning/contracts": [
+            6110,
+            6133
+          ],
+          "context_tokens:native-pipeline": [
+            31254,
+            31501
+          ],
+          "context_tokens:native-pipeline/contracts": [
+            81101,
+            82351
+          ],
+          "context_tokens:native-runtime": [
+            38952,
+            39197
+          ],
+          "context_tokens:native-runtime/contracts": [
+            71330,
+            72533
+          ],
+          "context_tokens:native-spectrum/contracts": [
+            2979,
+            3002
+          ],
+          "context_tokens:operational-tools": [
+            148538,
+            148630
+          ],
+          "context_tokens:operational-tools/contracts": [
+            125800,
+            130711
+          ],
+          "context_tokens:production": [
+            1757237,
+            1774381
+          ],
+          "context_tokens:receiver-control-api/contracts": [
+            7539,
+            10737
+          ],
+          "context_tokens:recording-api/contracts": [
+            2196,
+            2566
+          ],
+          "context_tokens:release-ci": [
+            30763,
+            30846
+          ],
+          "context_tokens:release-ci/contracts": [
+            94270,
+            94362
+          ],
+          "context_tokens:replay-evidence-tools/contracts": [
+            42136,
+            42186
+          ],
+          "context_tokens:runtime-api": [
+            115886,
+            117097
+          ],
+          "context_tokens:runtime-api/contracts": [
+            203711,
+            212077
+          ],
+          "context_tokens:ui-insights/contracts": [
+            31679,
+            33188
+          ],
+          "context_tokens:ui-presentation": [
+            86812,
+            90738
+          ],
+          "context_tokens:ui-presentation/contracts": [
+            171104,
+            177238
+          ],
+          "context_tokens:ui-settings": [
+            68027,
+            71426
+          ],
+          "context_tokens:ui-settings/contracts": [
+            7253,
+            12038
+          ],
+          "context_tokens:ui-shared": [
+            32892,
+            34401
+          ],
+          "context_tokens:ui-shared/contracts": [
+            5057,
+            5913
+          ],
+          "files:api": [
+            90,
+            92
+          ],
+          "files:html": [
+            49,
+            50
+          ],
+          "files:src": [
+            213,
+            215
+          ],
+          "lines:.github": [
+            2643,
+            2654
+          ],
+          "lines:api": [
+            26174,
+            26490
+          ],
+          "lines:cmake": [
+            1260,
+            1269
+          ],
+          "lines:html": [
+            13620,
+            14187
+          ],
+          "lines:root": [
+            601,
+            607
+          ],
+          "lines:script": [
+            27866,
+            27871
+          ],
+          "lines:src": [
+            45453,
+            45596
+          ],
+          "oversized_bytes:api/server.js": [
+            136650,
+            137642
+          ],
+          "oversized_bytes:html/js/config_ui.js": [
+            189454,
+            201105
+          ],
+          "oversized_bytes:html/lib/blah2.css": [
+            150503,
+            151437
+          ],
+          "oversized_bytes:src/blah2.cpp": [
+            192489,
+            193759
+          ],
+          "oversized_lines:api/config-manager.js": [
+            1723,
+            1740
+          ],
+          "oversized_lines:api/server.js": [
+            2419,
+            2437
+          ],
+          "oversized_lines:html/js/common.js": [
+            2246,
+            2350
+          ],
+          "oversized_lines:html/js/config_ui.js": [
+            3525,
+            3675
+          ],
+          "oversized_lines:src/blah2.cpp": [
+            3486,
+            3501
+          ],
+          "oversized_lines:src/process/pipeline/CanonicalRadar.cpp": [
+            1959,
+            1972
+          ]
+        }
+    },
+      {
+        "owner": "2026-11-23 final browser interaction opposition review",
+        "purpose": "Keep refreshed standalone array controls reachable, remove empty advanced disclosures, and provide manual report-copy recovery when browser clipboard permission is denied, as proven by the complete real-browser action inventory.",
+        "rejected_reuse": "Do not exempt late disclosures, leave empty settings groups, persist an unreachable closed standalone panel, assume clipboard permission, or replace interaction assertions with screenshots or DOM presence checks.",
+        "cleanup_plan": "Retain the focused DOM regressions and the complete clicked browser census. These exact UI ceilings have no reserve and must ratchet downward when related presentation code is consolidated.",
+        "changes": {
+          "context_characters:production": [
+            7077240,
+            7077575
+          ],
+          "context_characters:ui-presentation/contracts": [
+            673010,
+            673345
+          ],
+          "context_characters:ui-settings": [
+            280038,
+            280373
+          ],
+          "context_lines:production": [
+            130850,
+            130853
+          ],
+          "context_lines:ui-presentation/contracts": [
+            10914,
+            10917
+          ],
+          "context_lines:ui-settings": [
+            4754,
+            4757
+          ],
+          "context_tokens:production": [
+            1774381,
+            1774464
+          ],
+          "context_tokens:ui-presentation/contracts": [
+            177238,
+            177321
+          ],
+          "context_tokens:ui-settings": [
+            71426,
+            71509
+          ],
+          "lines:html": [
+            14187,
+            14190
+          ],
+          "oversized_bytes:html/js/config_ui.js": [
+            201105,
+            201440
+          ],
+          "oversized_lines:html/js/config_ui.js": [
+            3675,
+            3678
+          ]
+        }
+      }
   ],
   "context_snapshot": {
     "policy": {

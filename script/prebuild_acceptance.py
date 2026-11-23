@@ -24,6 +24,7 @@ FAST_CHECKS = (
     ("ci_contract", ("python3", "test/packaging/test_ci_workflows.py")),
     ("api_contract", ("node", "--test", "api/heimdall-timing.test.js")),
     ("effective_radar_plan", ("node", "--test", "api/effective-radar-plan.test.js")),
+    ("frontend_plan", ("node", "--test", "api/frontend-plan.test.js")),
     ("ui_contract", ("node", "test/ui/deployment.test.js")),
 )
 
@@ -101,6 +102,10 @@ def main(argv=None, root=ROOT, command=invoke, changes=changed_paths):
         checks = [("diff_check_cached", ("git", "diff", "--check", "--cached")),
                   ("diff_check", ("git", "diff", "--check")), *FAST_CHECKS]
         if not args.skip_target_build:
+            # Cross-language admission is required in every native cohort.
+            # Keep the bounded header-only probe even when callers omit it.
+            targets = list(dict.fromkeys([*targets, "testFrontendPlan"]))
+            tests = list(dict.fromkeys([*tests, "frontendPlanParity"]))
             cache = args.build_dir / "CMakeCache.txt"
             enabled = cache.is_file() and re.search(
                 r"^CMAKE_COMPILE_WARNING_AS_ERROR(?::[^=]+)?=ON$", cache.read_text(), re.M)

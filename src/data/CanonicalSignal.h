@@ -17,6 +17,8 @@
 
 namespace blah2::iq {
 
+class FrontendPlan;
+
 // Immutable canonical FP32 storage view. Ownership belongs to BorrowedSamples;
 // consumers may retain that owner, never an unowned pointer past consumption.
 struct SampleView
@@ -120,6 +122,7 @@ struct SignalDefinition
   // Explicit physical site, never inferred from frequency or receiver name.
   std::optional<std::array<double, 3>> transmitterLocation;
   std::string detectionManifoldFile, bearingManifoldFile;
+  std::shared_ptr<const FrontendPlan> frontendPlan;
 };
 
 struct SignalBlock
@@ -127,6 +130,7 @@ struct SignalBlock
   std::string id;
   uint64_t frequencyHz = 0;
   CoherentSamples samples;
+  std::shared_ptr<const FrontendPlan> frontendPlan;
 };
 
 

@@ -145,6 +145,32 @@ function experimentalSettingSupport(config, topology = processingCapabilities(co
     ridgeBirth: !residentProducts && process.detection?.enable === true && process.tracker?.enable === true};
 }
 
+// Waveform knowledge gates only conditioning/reconstruction. Raw measured IQ
+// remains usable by the common channelizer for any explicitly described band.
+function waveformReferenceCapability({standard, referenceMethod = 'dedicated',
+  atscReferenceMode = 'raw'} = {}) {
+  const errors = [];
+  const atsc1 = ['ATSC', 'ATSC-1.0'].includes(standard);
+  const atsc = atsc1 || standard === 'ATSC-3.0';
+  if (!['dedicated', 'array_eigenbeam'].includes(referenceMethod))
+    errors.push('Synthesized waveform reference is unavailable; select a dedicated physical reference or a qualified array reference with raw IQ.');
+  if (!['automatic', 'raw', 'pilot_aided'].includes(atscReferenceMode))
+    errors.push('Reference conditioning must be automatic, raw, or pilot_aided.');
+  else if (!atsc && atscReferenceMode !== 'raw')
+    errors.push('Reference conditioning requires an ATSC standard unless it is raw.');
+  else if (atscReferenceMode === 'pilot_aided') {
+    if (!atsc1)
+      errors.push('pilot_aided requires standard ATSC 1.0; use raw physical reference for ATSC 3.0 (payload demodulation/synthesis is unavailable).');
+    if (referenceMethod === 'array_eigenbeam')
+      errors.push('pilot_aided does not support array reference; select raw or a dedicated physical reference.');
+  }
+  return {supported: errors.length === 0, errors,
+    raw_channelization: ['dedicated', 'array_eigenbeam'].includes(referenceMethod),
+    effective_conditioning: atscReferenceMode === 'automatic' ?
+      (atsc1 && referenceMethod === 'dedicated' ? 'pilot_aided' : 'raw') : atscReferenceMode};
+}
+
 return {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon,
-  residentRouteRequired, residentRouteRequested, experimentalSettingSupport};
+  residentRouteRequired, residentRouteRequested, experimentalSettingSupport,
+  waveformReferenceCapability};
 });

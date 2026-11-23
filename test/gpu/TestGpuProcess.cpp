@@ -136,7 +136,7 @@ int main() {
     for (const char* setting : std::vector<const char*>{nullptr, "", "0", "1", "true"}) {
       if (setting) setenv("BLAH2_GPU_CLUTTER_HOST_WORK_OVERLAP", setting, 1);
       else unsetenv("BLAH2_GPU_CLUTTER_HOST_WORK_OVERLAP");
-      const bool overlap = setting && std::string(setting) == "1";
+      const bool overlap = !setting || std::string(setting) != "0";
       blah2::GpuProcessOptions options;
       options.executable = blah2::gpuSiblingPath("testGpuWorkerDouble");
       options.argument = "raw"; options.startupMs = 2000; options.frameMs = 150;

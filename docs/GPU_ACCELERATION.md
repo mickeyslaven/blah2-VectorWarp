@@ -11,14 +11,14 @@ implemented. This is not a claim of qualified execution on every Linux GPU.
 ## Unified-artifact acceptance
 
 Portable-worker host reference preparation (including ATSC pilot projection)
-runs before clutter submission by default. For a controlled concurrency A/B,
-`BLAH2_GPU_CLUTTER_HOST_WORK_OVERLAP=1` opts into running that same host work
-after submission, alongside worker FP64 refinement. Only the exact value `1`
-enables it; absent, empty, or other values remain non-overlapped. Each worker
-snapshots the setting at construction. The switch changes scheduling only,
-not precision, math, fallback, worker/session counts, or allocation limits.
-Compare inclusive `processingCycle` timing and capture-backlog growth, not
-individual `cpi` samples, before considering overlap for live use.
+runs after clutter submission, alongside worker FP64 refinement. For a
+controlled serial-order diagnostic, `BLAH2_GPU_CLUTTER_HOST_WORK_OVERLAP=0`
+disables that overlap; absent or other values retain the production default.
+Each worker snapshots the setting at construction. The switch changes
+scheduling only, not precision, math, fallback, worker/session counts, or
+allocation limits.
+Evaluate inclusive `processingCycle` timing and capture-backlog growth, not
+individual `cpi` samples, when validating this scheduling path.
 
 Portable lane workers have independent transaction locks and may overlap within
 the configured, CPU-bounded lane executor. Their shared reservation limits total

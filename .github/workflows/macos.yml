@@ -106,19 +106,24 @@ jobs:
           node api/receiver-management.test.js
           node test/ui/deployment.test.js
       - name: Check real browser map, all routes and responsive states
+        timeout-minutes: 15
+        env:
+          VECTORWARP_LAYOUT_INTERACTIONS: '1'
+          VECTORWARP_LAYOUT_REPORT: ../../build/macos/browser-acceptance/browser-layout.json
+          VECTORWARP_LAYOUT_SCREENSHOTS: ../../build/macos/browser-acceptance/screenshots
         run: |
           npm ci --prefix test/browser --ignore-scripts --no-audit --no-fund
           cd test/browser
           npx playwright install chromium
           node locations.cjs
           VECTORWARP_CHROME_EXECUTABLE="$(node -p "require('playwright').chromium.executablePath()")" \
-            VECTORWARP_LAYOUT_REPORT=../../build/macos/browser-layout.json node all-routes-layout.cjs
+            node all-routes-layout.cjs
       - name: Preserve browser-route evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: browser-layout-${{ matrix.runner }}-${{ github.sha }}
-          path: build/macos/browser-layout.json
+          path: build/macos/browser-acceptance/
           if-no-files-found: warn
           retention-days: 14
       - name: Run local lifecycle and actual API/CPU replay integration

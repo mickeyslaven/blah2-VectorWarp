@@ -400,6 +400,36 @@ def assert_temporal_processor_outputs(sinks, minimum_cpis):
             f"temporal replay completed after {completed_cpis} CPIs; expected {minimum_cpis}")
 
 
+def assert_frontend_plans(sinks, config, channels, channelized):
+    """Recorded RF metadata and extraction survive the canonical publication path."""
+    capture = config["capture"]
+    lane = config["process"]["multi_illuminator"]["illuminators"][0] if channelized else None
+    expected = {"schema": "vectorwarp-frontend-plan-v1",
+                "extraction": "channelized" if channelized else "direct",
+                "source_sample_rate_hz": capture["fs"], "source_center_hz": capture["fc"],
+                "output_sample_rate_hz": lane["output_sample_rate_hz"] if lane else capture["fs"],
+                "frequency_hz": lane["frequency_hz"] if lane else capture["fc"],
+                "occupied_bandwidth_hz": lane["occupied_bandwidth_hz"] if lane else capture["fs"],
+                "standard": lane["standard"] if lane else "",
+                "filter_taps_per_phase": lane["filter_taps_per_phase"] if lane else 0,
+                "channel_ids": list(range(channels))}
+    frames = ([product for frame in json_values(sinks.payloads["illuminator"], "illuminator")
+               for product in (frame.get("map"), frame.get("detections"), frame.get("tracks"))
+               if isinstance(product, dict)] if channelized else
+              [frame for name in ("map", "detection", "track")
+               for frame in json_values(sinks.payloads[name], name)])
+    if not frames:
+        raise AssertionError("replay produced no frontend-bound products")
+    identity = None
+    for frame in frames:
+        plan = json.loads(frame.get("resolved_frontend_plan", "null"))
+        if not isinstance(plan, dict) or any(plan.get(key) != value for key, value in expected.items()):
+            raise AssertionError("replay frontend differs from recording/extraction metadata")
+        if identity is not None and identity != plan:
+            raise AssertionError("replay products mix frontend plans")
+        identity = plan
+
+
 def assert_processor_outputs(sinks, receiver, minimum_cpis=1):
     if not all(sinks.bytes[name] for name in ("map", "timestamp", "timing")):
         raise AssertionError("processor did not produce map, timestamp and timing output")
@@ -579,6 +609,7 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
                     assert_temporal_processor_outputs(sinks, minimum_cpis)
                 else:
                     assert_processor_outputs(sinks, receiver, minimum_cpis)
+                assert_frontend_plans(sinks, payload, channels, temporal_lane)
             product_fingerprints = None
             product_frames = None
             if kind == "complete":

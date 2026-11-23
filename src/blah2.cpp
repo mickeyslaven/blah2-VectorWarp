@@ -37,6 +37,7 @@
 #include "process/ambiguity/ResidentTemporalPublication.h"
 #include "process/analysis/MultiIlluminatorPipelineState.h"
 #include "process/conditioning/IlluminatorChannelizerBank.h"
+#include "process/conditioning/FrontendPlan.h"
 #include "process/detection/DopplerRidgeAdmission.h"
 #include "process/spectrum/SpectrumAnalyser.h"
 #include "process/tracker/Tracker.h"
@@ -259,6 +260,7 @@ blah2::analysis::NativeProductIdentity native_product_identity(
 {
   blah2::analysis::NativeProductIdentity result;
   result.illuminatorId = frame.illuminatorId;
+  result.resolvedFrontendPlan = frame.resolvedFrontendPlan;
   result.frequencyHz = frame.frequencyHz;
   result.sampleRateHz = frame.sampleRateHz;
   result.firstInputSample = frame.firstInputSample;
@@ -672,6 +674,7 @@ try
               definition.standard != "ATSC" &&
               definition.standard != "ATSC-1.0" &&
               definition.standard != "ATSC-3.0" &&
+              definition.standard != "DVB-T" && definition.standard != "DVB-T2" &&
               definition.standard != "DVB-T/T2" &&
               definition.standard != "ISDB-T" &&
               definition.standard != "DTMB" &&
@@ -680,9 +683,13 @@ try
             !definition.occupiedBandwidthHz || definition.tapsPerPhase < 4 ||
             definition.tapsPerPhase > 128 || fs % definition.outputRateHz ||
             definition.occupiedBandwidthHz >= definition.outputRateHz ||
-            std::abs(int64_t(definition.frequencyHz) - int64_t(fc)) +
-              int64_t(definition.occupiedBandwidthHz) / 2 >= int64_t(fs) / 2)
+            2 * std::abs(int64_t(definition.frequencyHz) - int64_t(fc)) +
+              int64_t(definition.occupiedBandwidthHz) >= int64_t(fs))
           throw std::invalid_argument("Invalid enabled multi-illuminator definition");
+        for (const auto& previous : illuminatorDefinitions)
+          if (2 * std::abs(int64_t(definition.frequencyHz) - int64_t(previous.frequencyHz)) <
+              int64_t(definition.occupiedBandwidthHz) + int64_t(previous.occupiedBandwidthHz))
+            throw std::invalid_argument("Enabled illuminator occupied passbands overlap; choose non-overlapping waveform bands");
         illuminatorDefinitions.push_back(std::move(definition));
       }
     }
@@ -1996,6 +2003,14 @@ try
     primary.transmitterLocation = geographicTx;
     illuminatorDefinitions.push_back(std::move(primary));
   }
+  // fs/fc/channelCount already reflect admitted capture readback or the replay
+  // recording header. Freeze extraction before any CPU/GPU worker is created.
+  for (auto& lane : illuminatorDefinitions) {
+    const auto topology = blah2::pipeline::applyLaneTopology(radarIntent, lane);
+    lane.frontendPlan = std::make_shared<const blah2::iq::FrontendPlan>(
+      fc, fs, captureChannelCount, lane, multiIlluminatorEnabled, topology.arrayReference ?
+        topology.referenceChannels : std::vector<uint32_t>{topology.referenceChannel}, topology.surveillanceChannels);
+  }
   std::unique_ptr<blah2::channelizer::IlluminatorChannelizerBank>
     multiChannelizer;
   std::unique_ptr<blah2::pipeline::RadarBank> multiRadar;
@@ -3031,7 +3046,7 @@ try
             const auto convertGpu = [&](std::vector<blah2::wideband_gpu::LaneOutput> gpu) {
               std::vector<blah2::channelizer::IlluminatorOutput> converted;
               converted.reserve(gpu.size());
-              for(size_t index=0;index<gpu.size();++index){blah2::channelizer::SubbandChannelizer::Output samples;samples.channels=std::move(gpu[index].channels);samples.firstInputSample=gpu[index].firstInputSample;samples.hasFirstInputSample=gpu[index].hasFirstInputSample;samples.inputSamplesPerOutput=gpu[index].inputSamplesPerOutput;samples.groupDelayInputSamples=multiGroupDelays[index];converted.push_back({illuminatorDefinitions[index].id,gpu[index].frequencyHz,std::move(samples)});}
+              for(size_t index=0;index<gpu.size();++index){blah2::channelizer::SubbandChannelizer::Output samples;samples.channels=std::move(gpu[index].channels);samples.firstInputSample=gpu[index].firstInputSample;samples.hasFirstInputSample=gpu[index].hasFirstInputSample;samples.inputSamplesPerOutput=gpu[index].inputSamplesPerOutput;samples.groupDelayInputSamples=multiGroupDelays[index];converted.push_back({illuminatorDefinitions[index].id,gpu[index].frequencyHz,std::move(samples),illuminatorDefinitions[index].frontendPlan});}
               return converted;
             };
             const auto convertLeasedGpu = [&](std::vector<blah2::wideband_gpu::LeasedLaneOutput> gpu) {
@@ -3045,7 +3060,7 @@ try
                 samples.inputSamplesPerOutput=gpu[index].inputSamplesPerOutput;
                 samples.groupDelayInputSamples=multiGroupDelays[index];
                 converted.push_back({illuminatorDefinitions[index].id,
-                  gpu[index].frequencyHz,std::move(samples)});
+                  gpu[index].frequencyHz,std::move(samples),illuminatorDefinitions[index].frontendPlan});
               }
               return converted;
             };
@@ -3170,7 +3185,7 @@ try
                   captureOwner,std::move(views)};
               }
               std::vector<blah2::iq::SignalBlock> current;
-              current.push_back({"primary", fc, std::move(samples)});
+              current.push_back({"primary", fc, std::move(samples), illuminatorDefinitions.front().frontendPlan});
               queueCurrent(std::move(current), currentPublication(0));
             } else if(!state&&multiGpuChannelizer&&multiGpuChannelizer->supportsSplitFrame()){
               multiPipelineDelayed=true;

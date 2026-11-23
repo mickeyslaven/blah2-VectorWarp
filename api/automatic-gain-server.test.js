@@ -145,13 +145,32 @@ async function start() {
     env: {...process.env, BLAH2_CONFIG_RESTART_COMMAND: JSON.stringify([process.execPath, '-e',
       `const fs=require('fs'),crypto=require('crypto');fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({state:'complete',inProgress:false,updatedAt:Date.now(),configRevision:crypto.createHash('sha256').update(fs.readFileSync(${JSON.stringify(filename)})).digest('hex')}))`])}, stdio: ['ignore', 'ignore', 'pipe']});
   child.stderr.on('data', chunk => { stderr += chunk; });
-  for (let i = 0; i < 100; i++) {
+  // Loaded cross-platform CI hosts can spend several seconds starting Node
+  // after a detached lifecycle helper exits. Keep the readiness wait bounded,
+  // but do not confuse scheduler delay with a server contract failure.
+  for (let i = 0; i < 400; i++) {
     try { const r = await request('GET', '/api/config/capabilities'); revision = r.body.configRevision; return; }
     catch (_) { await new Promise(resolve => setTimeout(resolve, 25)); }
   }
   throw new Error(stderr);
 }
 async function stop() { if (child && child.exitCode === null) await new Promise(resolve => { child.once('exit', resolve); child.kill(); }); }
+async function waitForFile(target, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(target)) return true;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  return fs.existsSync(target);
+}
+async function waitForCondition(check, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await check()) return true;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
+  return false;
+}
 (async () => {
   try {
     await listen(suite); await listen(iq);
@@ -197,8 +216,8 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal(result.body.receiverSync.automaticGain.settling[1].transitionObserved, true);
     assert.equal(commands.filter(row => row.command === 'reset_lag_compensation').length, 2);
     assert.equal((await request('GET', '/api/detection')).status, 503, 'No old-pipeline publication before restart');
-    for (let i = 0; i < 30 && !fs.existsSync(marker); i++) await new Promise(resolve => setTimeout(resolve, 25));
-    assert.ok(fs.existsSync(marker));
+    assert.equal(await waitForFile(marker), true,
+      'The detached restart helper must complete within its bounded test deadline');
     await stop();
     assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.device.heimdall.gain, 13);
     await start();
@@ -272,8 +291,8 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
       'Pending marker must allow explicit reconciliation: ' + JSON.stringify(recovered.body));
     assert.equal((await request('GET', '/api/detection')).status, 503,
       'Reconciliation cannot publish from the old API process');
-    for (let i = 0; i < 30 && !fs.existsSync(marker); i++) await new Promise(resolve => setTimeout(resolve, 25));
-    assert.ok(fs.existsSync(marker));
+    assert.equal(await waitForFile(marker), true,
+      'Reconciliation must request restart within its bounded test deadline');
     await stop(); await start();
     assert.equal((await request('GET', '/api/detection')).status, 503);
     assert.equal((await request('POST', '/api/processor/status', processor)).status, 204);
@@ -282,8 +301,9 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
         socket.end(JSON.stringify({timestamp: Date.now()})); setTimeout(resolve, 25);
       });
     });
-    assert.notEqual((await request('GET', '/api/detection')).status, 503,
-      'Only the replacement API and fresh processor evidence release recovered publication');
+    assert.equal(await waitForCondition(async () =>
+      (await request('GET', '/api/detection')).status !== 503), true,
+    'Only the replacement API and fresh processor evidence release recovered publication');
     const reconciled = JSON.parse(fs.readFileSync(filename + '.receiver-state.json', 'utf8'));
     assert.equal(reconciled.reconciliationRequired, false);
     assert.equal(reconciled.receipt.automaticGain.restartPendingAt, undefined);
@@ -321,9 +341,8 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal(adsbJournal.reconciliationRequired, false);
     assert.equal(adsbJournal.receipt.apiRuntimeRestartRequired, true);
     assert.deepEqual(adsbJournal.receipt.automaticGain, verifiedAutomaticGain);
-    for (let i = 0; i < 30 && !fs.existsSync(marker); i++)
-      await new Promise(resolve => setTimeout(resolve, 25));
-    assert.ok(fs.existsSync(marker), 'ADS-B-only Apply must request the API/processor restart');
+    assert.equal(await waitForFile(marker), true,
+      'ADS-B-only Apply must request the API/processor restart within its bounded test deadline');
     await stop(); await start();
     revision = adsbSave.body.revision;
     const pendingConfig = (await request('GET', '/api/config')).body;

@@ -45,7 +45,7 @@
     } else {
       document.body.dataset.insightView = view;
       content.innerHTML = '<div id="view-root"></div>';
-      load('../../js/insights.js?v=stats-policy-34');
+      load('../../js/insights.js?v=stats-policy-35');
     }
   } else if (kind === 'signal') {
     if (view === 'maxhold') {

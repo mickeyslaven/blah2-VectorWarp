@@ -93,11 +93,13 @@ jobs:
             --native-target testDetectionMath \
             --native-target testGpuTrackerCorrectness \
             --native-target testMultiIlluminatorRadar \
+            --native-target testFrontendPlan \
             --native-test gpuTrackerCapacityAdmission \
             --native-test testTracker \
             --native-test testDetectionMath \
             --native-test residentTrackerSoftwareVulkanParity \
             --native-test multiIlluminatorRadar \
+            --native-test frontendPlanParity \
             --receipt build/ci/prebuild-acceptance.json
       - name: Build configured native targets
         run: |
@@ -186,9 +188,12 @@ jobs:
           node test/packaging/upgrade_state.test.js
       - name: Check all browser routes and responsive states
         if: matrix.runner == 'ubuntu-24.04'
+        timeout-minutes: 15
         env:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
-          VECTORWARP_LAYOUT_REPORT: build/ci/browser-layout.json
+          VECTORWARP_LAYOUT_REPORT: build/ci/browser-acceptance/browser-layout.json
+          VECTORWARP_LAYOUT_SCREENSHOTS: build/ci/browser-acceptance/screenshots
+          VECTORWARP_LAYOUT_INTERACTIONS: '1'
         run: |
           npm ci --prefix test/browser --ignore-scripts --no-audit --no-fund
           test/browser/node_modules/.bin/playwright install --with-deps chromium
@@ -199,7 +204,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: browser-layout-${{ matrix.runner }}-${{ github.sha }}
-          path: build/ci/browser-layout.json
+          path: build/ci/browser-acceptance/
           if-no-files-found: warn
           retention-days: 14
       - name: Generate immutable upstream review artifact

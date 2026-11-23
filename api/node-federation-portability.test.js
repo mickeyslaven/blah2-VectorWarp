@@ -117,6 +117,34 @@ async function portal(t, filename) {
   return listener;
 }
 
+test('migration evidence uses authenticated bounded read-only federation transport', async t => {
+  const state = {identity: 'migration-peer', oversized: false, authorization: null};
+  const evidence = {schema: 'vectorwarp-config-migrations-v1', configMigrations: [{id: 'receipt'}]};
+  const remote = await serve(t, (req, res) => {
+    state.authorization = req.headers.authorization;
+    res.setHeader('X-VectorWarp-Node-Id', state.identity);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(state.oversized ? 'x'.repeat(131073) : JSON.stringify(evidence));
+  });
+  const filename = registryFile(t);
+  const tokenFile = path.join(path.dirname(filename), 'token');
+  fs.writeFileSync(tokenFile, 'test-peer-token', {mode: 0o600});
+  fs.writeFileSync(filename, JSON.stringify({nodes: [{id: 'migration-peer', label: 'Upgrade peer', url: remote.origin,
+    expectedIdentity: 'migration-peer', tokenFile}]}), {mode: 0o600});
+  const local = await portal(t, filename);
+  const url = '/api/federation/nodes/migration-peer/api/config/migrations';
+  const response = await request(local.origin, url);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.value, evidence);
+  assert.equal(state.authorization, 'Bearer test-peer-token');
+  assert.equal((await request(local.origin, url, 'POST')).status, 405);
+  assert.equal((await request(local.origin, `${url}/arbitrary`)).status, 404);
+  state.identity = 'wrong-peer';
+  assert.equal((await request(local.origin, url)).status, 502);
+  state.identity = 'migration-peer'; state.oversized = true;
+  assert.equal((await request(local.origin, url)).status, 502);
+});
+
 test('manual endpoints support portable private address families and reject public targets', () => {
   for (const host of ['10.22.3.4', '172.25.4.9', '192.168.13.4', '100.96.0.5',
     '127.0.0.1', '169.254.2.3', '::1', 'fd12::1', 'fe80::1'])

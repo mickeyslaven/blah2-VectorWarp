@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const {compactNodeStatistics, combineNodeStatistics, probeJson} = require(
   process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation');
+const {federationAssociationPassTransport} = require('./evidence-statistics');
 
 test('large association reads require an explicit bounded allowance', async t => {
   const body = JSON.stringify({passes: ['x'.repeat(2 * 1024 * 1024)]});
@@ -30,8 +31,8 @@ test('network summary uses the bounded association basis contract', () => {
     /association-basis\?timing=provisional&compact=true'[\s\S]*?timeoutMs, 512 \* 1024/,
     'network polling must not transfer the full measured-track evidence ledger');
   assert.match(source,
-    /association\/passes\?timing=provisional&compact=true'[\s\S]*?timeoutMs,\s*8 \* 1024 \* 1024/,
-    'network polling must request the compact recent-pass transport');
+    /association\/passes\?timing=provisional&transport=federation-v1'[\s\S]*?timeoutMs,\s*1024 \* 1024/,
+    'network polling must request the bounded columnar recent-pass transport');
 });
 
 function node(id, eligible, detected, tracked, pass) {
@@ -158,7 +159,7 @@ test('compact and deduplicated network statistics preserve scoring and restart p
       timing_policy: 'provisional', decision_grade: false, sensitivity_epoch: {id: 'new-run'}}}]},
     {timing_policy: 'provisional', statistics_window: {complete: false}, passes: [pass]});
   const combined = combineNodeStatistics([compact]);
-  assert.equal(combined.nodes[0].passes[0].evaluation_contract_hash, 'contract');
+  assert.equal(combined.nodes[0].pass_count, 1);
   assert.equal(combined.channels[0].evaluation_policy_hash, 'policy');
   const provenance = combined.unique_recent_passes.passes[0].provenance[0];
   assert.equal(provenance.node, 'alpha');
@@ -171,4 +172,25 @@ test('compact and deduplicated network statistics preserve scoring and restart p
   const other = structuredClone(compact);
   other.id = 'beta'; other.channels[0].evaluation_policy_hash = 'different-policy';
   assert.equal(combineNodeStatistics([compact, other]).evaluation.policy_compatible, false);
+});
+
+test('columnar node transport preserves network outcomes without returning node ledgers', () => {
+  const passes = [{hex: 'abc123', started_at: 1000, finalized_at: 2000,
+    outcome: 'tracked', channel: 'primary', eligible_cpis: 6, detected_cpis: 4,
+    tracked_cpis: 3, eligible: true, detected: true, tracked: true},
+  {hex: 'def456', started_at: 3000, finalized_at: 4000,
+    outcome: 'no_radar_return', channel: 'primary', eligible_cpis: 6,
+    eligible: true, detected: false, tracked: false}];
+  const compact = compactNodeStatistics({id: 'alpha'},
+    {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
+    {timing_policy: 'provisional', channels: [{selected_channel: 'primary',
+      association_statistics: {evaluation_policy_hash: 'p'}}]},
+    {timing_policy: 'provisional', statistics_window: {complete: true},
+      transport: federationAssociationPassTransport(passes)});
+  const combined = combineNodeStatistics([compact]);
+  assert.equal(combined.system_wide_unique_passes.eligible_adsb_passes, 2);
+  assert.equal(combined.system_wide_unique_passes.detection.associated_passes, 1);
+  assert.equal(combined.system_wide_unique_passes.tracking.associated_passes, 1);
+  assert.equal(combined.nodes[0].pass_count, 2);
+  assert.equal(combined.nodes[0].passes, undefined);
 });

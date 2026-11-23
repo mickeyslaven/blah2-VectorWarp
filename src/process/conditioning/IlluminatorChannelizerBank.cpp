@@ -1,4 +1,5 @@
 #include "process/conditioning/IlluminatorChannelizerBank.h"
+#include "process/conditioning/FrontendPlan.h"
 #include "process/utility/FftwThreads.h"
 #include "process/utility/ProcessingThreads.h"
 
@@ -76,7 +77,7 @@ std::vector<IlluminatorOutput> process_bank(const Input& input,
   std::vector<IlluminatorOutput> output(channelizers.size());
   executor->parallel_for(channelizers.size(), [&](std::size_t index) {
     output[index] = {definitions[index].id, definitions[index].frequencyHz,
-      channelizers[index]->process(input, firstInputSample)};
+      channelizers[index]->process(input, firstInputSample), definitions[index].frontendPlan};
   });
   return output;
 }
@@ -236,6 +237,7 @@ struct IlluminatorChannelizerBank::SharedRasterState
     {
       result[lane].id = definitions[lane].id;
       result[lane].frequencyHz = definitions[lane].frequencyHz;
+      result[lane].frontendPlan = definitions[lane].frontendPlan;
       auto& output = result[lane].samples;
       output.channels.resize(channels);
       output.inputSamplesPerOutput = decimation;
@@ -422,6 +424,11 @@ IlluminatorChannelizerBank::IlluminatorChannelizerBank(
     if (std::abs(double(offset)) + illuminator.occupiedBandwidthHz / 2.0 >=
         captureRateHz_ / 2.0)
       throw std::invalid_argument("Illuminator lies outside the capture passband");
+    if (illuminator.frontendPlan) {
+      illuminator.frontendPlan->validate(captureRateHz_, channelCount_, illuminator);
+      if (illuminator.frontendPlan->sourceCenterHz() != captureCenterHz_ || !illuminator.frontendPlan->isChannelized())
+        throw std::invalid_argument("Channelizer differs from its immutable frontend plan");
+    }
   }
   try
   {

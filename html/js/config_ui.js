@@ -4,27 +4,10 @@ const configProfiles = typeof module !== 'undefined' && module.exports ?
   require('./config_profiles') : window.VectorWarpConfigProfiles;
 const processingTopology = typeof module !== 'undefined' && module.exports ?
   require('./processing_capabilities') : window.VectorWarpProcessingCapabilities;
+const transmitterCatalog = typeof module !== 'undefined' && module.exports ?
+  require('./transmitter_catalog') : window.VectorWarpTransmitterCatalog;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
-const ATSC_CHANNELIZER_DEFAULTS = Object.freeze({
-  // A/53 8-VSB nominal occupied bandwidth.  The surrounding part of the
-  // 6 MHz allocation is transition band, not useful carriers.
-  ATSC: Object.freeze({occupiedBandwidthHz: 5380000, tapsPerPhase: 64}),
-  'ATSC-1.0': Object.freeze({occupiedBandwidthHz: 5380000, tapsPerPhase: 64}),
-  // A/322 6 MHz, bsr_coefficient=2, C_red=0.  Other ATSC 3 channel widths
-  // remain editable; this prevents a new 6 MHz lane inheriting A/53's width.
-  'ATSC-3.0': Object.freeze({occupiedBandwidthHz: 5832844, tapsPerPhase: 128})
-});
-
-function applyIlluminatorStandardDefaults(item, selected) {
-  item.standard = selected;
-  const profile = ATSC_CHANNELIZER_DEFAULTS[selected];
-  if (!profile) return item;
-  item.occupied_bandwidth_hz = profile.occupiedBandwidthHz;
-  item.filter_taps_per_phase = profile.tapsPerPhase;
-  item.atsc_reference_mode = 'automatic';
-  return item;
-}
 const CONFIG_GROUP_META = {
   'capture': ["Receiver", "Tuning and sites"],
   'process': ["Radar", "Detection and tracking"],
@@ -43,7 +26,7 @@ const CONFIG_GROUP_META = {
   'process.performance': ["Performance", "CPU and GPU settings"],
   'process.evidence': ["Evidence collection", "Optional bounded, truth-blind research evidence."],
   'process.evidence.causal_funnel': ["Causal-funnel evidence", "Bounded truth-blind candidate records for offline analysis."],
-  'process.multi_illuminator': ["Multiple illuminators", "Process several broadcast channels independently."],
+  'process.multi_illuminator': ["RF channel extraction", "Optional channelization before the shared radar pipeline."],
   'process.multi_illuminator.illuminators.input_role_mode': ["Input roles", "Use the receiver default or select an explicit reference input."],
   'process.data': ["Frame timing", ""],
   'process.data.overlap': ["Frame overlap", "Not used by this processor. Frames do not overlap."],
@@ -412,6 +395,7 @@ function refreshSetupAssistant() {
         (capabilities.deviceProfiles || []).some(profile => profile.type === receiver.type));
     },
     saveStep: () => saveConfiguration('pending'),
+    saveError: () => document.getElementById('config-message')?.firstChild?.nodeValue || '',
     save: () => saveConfiguration()
   });
 }
@@ -1084,6 +1068,89 @@ function arrayInput(value, path) {
   return wrapper;
 }
 
+function stationImportControl(item, apply) {
+  const panel = document.createElement('details'), summary = document.createElement('summary');
+  panel.className = 'station-import';
+  summary.textContent = 'Import station metadata (manual fields remain editable)'; panel.appendChild(summary);
+  const input = document.createElement('textarea'); input.rows = 3; input.maxLength = transmitterCatalog.LIMITS.bytes;
+  input.setAttribute('aria-label', 'Station provider JSON');
+  input.placeholder = 'Paste a provider snapshot or schema-1 station record. No network lookup or regional tuning defaults.';
+  const file = document.createElement('input'); file.type = 'file'; file.accept = '.json,application/json';
+  file.setAttribute('aria-label', 'Import station JSON file');
+  const load = document.createElement('button'); load.type = 'button'; load.className = 'button-secondary'; load.textContent = 'Preview imported stations';
+  const choices = document.createElement('select'); choices.setAttribute('aria-label', 'Imported station'); choices.hidden = true;
+  const search = document.createElement('input'); search.type = 'search'; search.hidden = true;
+  search.maxLength = 256;
+  search.setAttribute('aria-label', 'Search imported stations'); search.placeholder = 'City, state, callsign or RF channel';
+  const preview = document.createElement('p'); preview.className = 'config-field-help'; preview.setAttribute('role', 'status');
+  const controls = document.createElement('div'); controls.hidden = true;
+  const field = (label, type = 'number') => {
+    const wrapper = document.createElement('label'); wrapper.textContent = label;
+    const control = document.createElement('input'); control.type = type; control.step = 'any';
+    wrapper.appendChild(control); controls.appendChild(wrapper); return control;
+  };
+  const width = field('Reviewed occupied bandwidth (kHz)'), altitude = field('Verified altitude AMSL (m)');
+  const reason = field('Reason for overriding source bandwidth/altitude', 'text'); reason.maxLength = 512;
+  const reference = selectInput([{value: 'raw', label: 'Raw physical reference'},
+    {value: 'automatic', label: 'Automatic ATSC conditioning'}, {value: 'pilot_aided', label: 'ATSC 1.0 pilot suppression'}],
+    item.atsc_reference_mode || 'raw', () => review());
+  reference.setAttribute('aria-label', 'Imported station reference conditioning'); controls.appendChild(reference);
+  const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'button-secondary';
+  confirm.textContent = 'Confirm station changes'; confirm.disabled = true; let records = [], selected = null;
+  const review = () => {
+    confirm.disabled = true;
+    if (!selected) return null;
+    try {
+      const result = transmitterCatalog.previewSelection(selected, {
+        occupied_bandwidth_hz: width.value === '' ? undefined : configProfiles.scaledInputNumber(width.value, 1000),
+        altitude: altitude.value === '' ? undefined : Number(altitude.value), reason: reason.value,
+        reference_method: Number.isInteger(item.reference_channel) ? 'dedicated' :
+          processingControlCapabilities().topology.referenceMode,
+        atsc_reference_mode: reference.value});
+      const candidate = {...item, ...result.selection, atsc_reference_mode: reference.value};
+      const band = configProfiles.channelizerPreview(activeConfig, candidate);
+      const errors = [...result.errors, ...band.errors];
+      preview.textContent = `${selected.provider.id} · ${selected.provider.region} · ${selected.provider.source} · retrieved ${selected.provider.retrieved_at}. ` +
+        `${candidate.standard} · ${candidate.frequency_hz / 1e6} MHz · source channel ${result.channel_bandwidth_hz / 1e6} MHz, occupied ${candidate.occupied_bandwidth_hz / 1e6} MHz · ${band.lowerHz / 1e6}–${band.upperHz / 1e6} MHz. ` +
+        `${candidate.transmitter.latitude}, ${candidate.transmitter.longitude}, ${candidate.transmitter.altitude ?? '?'} m AMSL. ` +
+        `${errors.concat(result.warnings).join(' ')} Capture tuning, output rate and filter taps stay unchanged.`;
+      confirm.disabled = errors.length > 0; return errors.length ? null : candidate;
+    } catch (error) { preview.textContent = error.message; return null; }
+  };
+  const select = () => {
+    selected = records[Number(choices.value)]; width.value = selected.occupied_bandwidth_hz / 1000;
+    altitude.value = selected.transmitter.altitude ?? ''; reason.value = ''; controls.hidden = false; review();
+  };
+  const filter = () => {
+    choices.replaceChildren();
+    for (const record of transmitterCatalog.search(records, {query: search.value, limit: 100}).records) {
+      const option = document.createElement('option'); option.value = records.findIndex(original =>
+        original.id === record.id && original.provider.id === record.provider.id);
+      option.textContent = `${record.callsign || record.transmitter.name} · ${record.city}, ${record.state} · ${record.frequency_hz / 1e6} MHz`;
+      choices.appendChild(option);
+    }
+    if (choices.options.length) select();
+    else { selected = null; confirm.disabled = true; controls.hidden = true; preview.textContent = 'No matching imported stations.'; }
+  };
+  load.addEventListener('click', () => {
+    try {
+      records = transmitterCatalog.parseImport(input.value); search.value = '';
+      choices.hidden = search.hidden = false; filter();
+    } catch (error) { selected = null; confirm.disabled = true; preview.textContent = error.message; }
+  });
+  file.addEventListener('change', async () => {
+    try {
+      if (!file.files[0] || file.files[0].size > transmitterCatalog.LIMITS.bytes) throw new Error('Choose a station JSON file up to 4 MiB.');
+      input.value = await file.files[0].text(); load.click();
+    } catch (error) { preview.textContent = error.message; confirm.disabled = true; }
+  });
+  choices.addEventListener('change', select);
+  search.addEventListener('input', filter);
+  for (const control of [width, altitude, reason]) control.addEventListener('input', review);
+  confirm.addEventListener('click', () => { const candidate = review(); if (candidate) apply(candidate); });
+  panel.append(input, file, load, search, choices, controls, preview, confirm); return panel;
+}
+
 function illuminatorListInput(value, path) {
   const wrapper = document.createElement('div');
   wrapper.className = 'illuminator-list';
@@ -1134,6 +1201,15 @@ function illuminatorListInput(value, path) {
       const legend = document.createElement('legend');
       legend.textContent = item.id || `Illuminator ${index + 1}`;
       card.appendChild(legend);
+      const preview = document.createElement('p');
+      preview.className = 'config-field-help channelizer-preview';
+      preview.setAttribute('role', 'status');
+      const updatePreview = () => {
+        const result = configProfiles.channelizerPreview(activeConfig, item);
+        const mhz = hz => Number.isFinite(hz) ? `${Number((hz / 1e6).toFixed(6))}` : '?';
+        preview.textContent = result.errors.length ? result.errors.join('. ') :
+          `Extract ${mhz(result.lowerHz)}–${mhz(result.upperHz)} MHz from ${mhz(result.captureLowerHz)}–${mhz(result.captureUpperHz)} MHz · decimation ${result.decimation} · ${result.filterTaps} FIR taps · ${result.transitionHz / 1000} kHz transition on each side.`;
+      };
       const addText = (label, key, transform = value => value, optional = false) => {
         const control = document.createElement('label');
         control.textContent = label;
@@ -1148,13 +1224,15 @@ function illuminatorListInput(value, path) {
             if (parts.length === 2 && Object.keys(target).length === 0) delete item[parts[0]];
           } else target[parts.at(-1)] = transform(input.value);
           if (key === 'id') legend.textContent = input.value || `Illuminator ${index + 1}`;
-          commit();
+          commit(); updatePreview();
         });
         control.appendChild(input); card.appendChild(control);
         return input;
       };
-      const addNumber = (label, key, scale = 1) => addText(label, key,
-        input => input === '' ? null : Number(input) * scale);
+      const addNumber = (label, key, scale = 1) => {
+        const input = addText(label, key, value => value === '' ? null : configProfiles.scaledInputNumber(value, scale));
+        input.type = 'number'; input.step = 'any'; return input;
+      };
       const enabled = document.createElement('label');
       enabled.className = 'illuminator-enabled';
       const checkbox = document.createElement('input');
@@ -1165,15 +1243,30 @@ function illuminatorListInput(value, path) {
       enabled.append(checkbox, document.createTextNode('Enabled')); card.appendChild(enabled);
       addText('ID', 'id');
       const standardLabel = document.createElement('label');
-      standardLabel.textContent = 'Standard';
-      const standard = selectInput(['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0',
-        'DVB-T/T2', 'ISDB-T', 'DTMB', 'CUSTOM'], item.standard,
-        selected => { applyIlluminatorStandardDefaults(item, selected); commit(); renderEditor(); });
-      standard.title = 'ATSC defaults use the matching US 6 MHz waveform; review bandwidth for 7 or 8 MHz ATSC 3 deployments.';
+      standardLabel.textContent = 'Waveform standard / version';
+      const standard = selectInput(configProfiles.channelizerStandards.map(value => ({value,
+        label: value === 'ATSC' ? 'ATSC (legacy 1.0)' : value === 'DVB-T/T2' ? 'DVB-T/T2 (legacy unspecified)' : value})), item.standard,
+        selected => { item.standard = selected; commit(); renderEditor(); });
+      standard.dataset.laneField = 'standard';
+      standard.title = 'Changing the standard preserves every bandwidth, rate, filter and reference setting. Review the explicit waveform width; no regional channel plan is inferred.';
       standardLabel.appendChild(standard); card.appendChild(standardLabel);
+      if (configProfiles.channelizerPresets[item.standard]) {
+        const preset = document.createElement('button');
+        preset.type = 'button'; preset.className = 'button-secondary';
+        preset.dataset.channelizerPreset = item.standard;
+        preset.textContent = item.standard === 'ATSC-3.0' ?
+          'Apply 6 MHz ATSC 3.0 width (bsr 2, C_red 0) + 128 taps/phase' :
+          'Apply 6 MHz ATSC 1.0 width + 64 taps/phase';
+        preset.addEventListener('click', () => {
+          Object.assign(item, configProfiles.channelizerPresets[item.standard]); commit(); renderEditor();
+        });
+        card.appendChild(preset);
+      }
       const atscReferenceLabel = document.createElement('label');
-      atscReferenceLabel.textContent = 'ATSC reference conditioning';
-      const atscReferenceMode = selectInput(['automatic', 'raw', 'pilot_aided'],
+      atscReferenceLabel.textContent = 'Physical-reference conditioning (not payload demodulation)';
+      const atscReferenceMode = selectInput([{value: 'automatic', label: 'Automatic ATSC conditioning'},
+        {value: 'raw', label: 'Raw physical reference'},
+        {value: 'pilot_aided', label: 'ATSC 1.0 pilot suppression'}],
         item.atsc_reference_mode ||
           (['ATSC', 'ATSC-1.0', 'ATSC-3.0'].includes(item.standard) ?
             'automatic' : 'raw'), selected => {
@@ -1181,13 +1274,18 @@ function illuminatorListInput(value, path) {
         });
       const atsc1 = item.standard === 'ATSC' || item.standard === 'ATSC-1.0';
       const atsc3 = item.standard === 'ATSC-3.0';
-      atscReferenceMode.disabled = !(atsc1 || atsc3);
-      atscReferenceMode.title = atsc1 || atsc3 ?
-        'Automatic compares each channel with its own raw control and fails closed to raw.' :
-        'ATSC reference conditioning applies only to ATSC channels.';
-      for (const option of atscReferenceMode.options)
-        if (option.value === 'pilot_aided') option.disabled = true;
+      atscReferenceMode.dataset.laneField = 'atsc_reference_mode';
+      const arrayReference = processingControlCapabilities().topology.referenceMode === 'array_eigenbeam' &&
+        !Number.isInteger(item.reference_channel);
+      atscReferenceMode.title = atsc1 ? 'Pilot suppression uses a physical reference and fails closed to raw; it does not synthesize a demodulated waveform.' :
+        'Raw I/Q extraction is supported. Payload demodulation/synthesized references are unavailable; ATSC 3.0 automatic uses raw reference.';
+      for (const option of atscReferenceMode.options) {
+        if (option.value === 'automatic') option.disabled = !(atsc1 || atsc3);
+        if (option.value === 'pilot_aided') option.disabled = !atsc1 || arrayReference;
+      }
       atscReferenceLabel.appendChild(atscReferenceMode); card.appendChild(atscReferenceLabel);
+      const referenceHelp = document.createElement('p'); referenceHelp.className = 'config-field-help';
+      referenceHelp.textContent = atscReferenceMode.title; card.appendChild(referenceHelp);
       const inputRoleLabel = document.createElement('label');
       inputRoleLabel.textContent = 'Reference input for this RF channel';
       const topology = processingControlCapabilities().topology;
@@ -1211,9 +1309,10 @@ function illuminatorListInput(value, path) {
             item.surveillance_channels = Array.from({length: inputCount}, (_, channel) => channel)
               .filter(channel => channel !== item.reference_channel);
           }
-          commit();
+          commit(); renderEditor();
         });
       role.title = 'Use the receiver topology or explicitly choose this illuminator’s reference input.';
+      role.dataset.laneField = 'reference_channel';
       const coherent = ['coherent_beam_bank', 'noise_whitened_beam_bank']
         .includes(activeConfig.process.surveillance_fusion?.mode);
       if (coherent) {
@@ -1225,13 +1324,17 @@ function illuminatorListInput(value, path) {
       addNumber('Frequency (MHz)', 'frequency_hz', 1e6); item.frequency_hz = originalFrequency;
       const originalBandwidth = item.occupied_bandwidth_hz;
       item.occupied_bandwidth_hz = originalBandwidth / 1000;
-      addNumber('Bandwidth (kHz)', 'occupied_bandwidth_hz', 1000);
+      addNumber('Occupied waveform bandwidth (kHz)', 'occupied_bandwidth_hz', 1000);
       item.occupied_bandwidth_hz = originalBandwidth;
       const originalRate = item.output_sample_rate_hz;
       item.output_sample_rate_hz = originalRate / 1000;
       addNumber('Output rate (kS/s)', 'output_sample_rate_hz', 1000);
       item.output_sample_rate_hz = originalRate;
-      addNumber('Filter taps', 'filter_taps_per_phase');
+      addNumber('Filter taps per phase (4–128)', 'filter_taps_per_phase');
+      updatePreview(); card.appendChild(preview);
+      if (transmitterCatalog) card.appendChild(stationImportControl(item, candidate => {
+        Object.assign(item, candidate); commit(); renderEditor();
+      }));
       addText('Transmitter', 'transmitter.name');
       addText('Transmitter site group', 'transmitter.site_id');
       addNumber('Latitude', 'transmitter.latitude');
@@ -1268,8 +1371,8 @@ function illuminatorListInput(value, path) {
     add.type = 'button'; add.className = 'button-secondary'; add.textContent = 'Add illuminator';
     add.addEventListener('click', () => {
       items.push({id: `illuminator-${items.length + 1}`, enabled: true, standard: 'FM',
-        frequency_hz: activeConfig.capture?.fc || 100000000,
-        occupied_bandwidth_hz: 200000, output_sample_rate_hz: 300000,
+        frequency_hz: activeConfig.capture?.replay?.state === true ? activeConfig.capture.replay.frequency_hz ?? activeConfig.capture.fc : activeConfig.capture?.fc,
+        occupied_bandwidth_hz: 200000, output_sample_rate_hz: activeConfig.capture?.replay?.state === true ? activeConfig.capture.replay.sample_rate_hz ?? activeConfig.capture.fs : activeConfig.capture?.fs,
         filter_taps_per_phase: 24, atsc_reference_mode: 'raw', input_role_mode: 'manual',
         transmitter: {name: '', latitude: 0, longitude: 0, altitude: 0}});
       commit(); renderEditor();
@@ -1622,11 +1725,10 @@ function typedInput(value, path) {
   if (rule.choices)
     return selectInput(rule.choices, value, selected =>
       setValue(path, rule.type === 'number' ? Number(selected) : selected));
-  if (key === 'capture.fs' &&
-      ['RspDuo', 'Kraken'].includes(activeConfig.capture?.device?.type)) {
-    const sampleRates = activeConfig.capture.device.type === 'Kraken' ?
-      [2400000] : [62500, 125000, 250000, 500000, 1000000, 2000000];
-    return selectInput(sampleRates.map(rate => ({value: rate, label: rate >= 1000000 ?
+  const rateCapabilities = key === 'capture.fs' && activeConfig.capture?.replay?.state !== true ?
+    capabilities.deviceProfiles?.find(profile => profile.type === activeConfig.capture?.device?.type)?.sampleRates : null;
+  if (rateCapabilities?.values) {
+    return selectInput(rateCapabilities.values.map(rate => ({value: rate, label: rate >= 1000000 ?
       `${rate / 1000000} MS/s` : `${rate / 1000} kS/s`})), value,
     selected => setValue(path, Number(selected)));
   }
@@ -1638,10 +1740,12 @@ function typedInput(value, path) {
     input.step = rule.integer ? 1 / scale : 'any';
     if (rule.min !== undefined) input.min = rule.min / scale;
     if (rule.max !== undefined) input.max = rule.max / scale;
+    if (rateCapabilities?.min !== undefined) input.min = rateCapabilities.min / scale;
+    if (rateCapabilities?.max !== undefined) input.max = rateCapabilities.max / scale;
     input.required = true;
     input.value = value / scale;
     input.addEventListener('input', () => {
-      setValue(path, input.value === '' ? null : Number(input.value) * scale);
+      setValue(path, input.value === '' ? null : configProfiles.scaledInputNumber(input.value, scale));
     });
     if (presentation) {
       const wrapper = document.createElement('div');
@@ -1649,6 +1753,13 @@ function typedInput(value, path) {
       const unit = document.createElement('span');
       unit.textContent = presentation.unit;
       wrapper.append(input, unit);
+      if (rateCapabilities?.suggestions) {
+        const choices = document.createElement('datalist'); choices.id = 'capture-rate-suggestions';
+        for (const rate of rateCapabilities.suggestions) {
+          const option = document.createElement('option'); option.value = rate / scale; choices.appendChild(option);
+        }
+        input.setAttribute('list', choices.id); wrapper.appendChild(choices);
+      }
       return wrapper;
     }
   } else {
@@ -2026,7 +2137,16 @@ function refreshGeometryEditor() {
   const old = document.querySelector('.kraken-geometry');
   if (old && geometryEditor) {
     if (processingControlCapabilities().arrayEditor || activeConfig.capture?.device?.array_geometry !== undefined) {
+      const focused = document.activeElement;
+      const focusedId = old.contains(focused) ? focused.id : null;
+      const focusedSelector = old.contains(focused) && focused.tagName === 'SELECT' ?
+        focused.closest('.geometry-reference-mode') ? '.geometry-reference-mode select' :
+          focused.closest('.geometry-channel-panel') ? '.geometry-channel-panel select' : null : null;
       const next = makeGeometryEditor();
+      next.classList.toggle('kraken-geometry-standalone', old.classList.contains('kraken-geometry-standalone'));
+      next.open = next.classList.contains('kraken-geometry-standalone') || old.open;
+      const manual = next.querySelector('.geometry-manual');
+      if (manual) manual.open = old.querySelector('.geometry-manual')?.open === true;
       // Technical layout moves fields outside the geometry section. Refresh
       // their existing controls rather than leaving stale duplicate inputs.
       const moved = [...document.querySelectorAll('.config-field[data-path]')]
@@ -2035,7 +2155,11 @@ function refreshGeometryEditor() {
         const existing = moved.find(item => item.dataset.path === field.dataset.path);
         if (existing) existing.replaceWith(field);
       }
+      removeEmptySettingsGroups(next);
       old.replaceWith(next);
+      const restored = focusedId ? document.getElementById(focusedId) :
+        focusedSelector ? next.querySelector(focusedSelector) : null;
+      restored?.focus({preventScroll: true});
     }
     else old.remove();
   }
@@ -2516,7 +2640,7 @@ function makeSettingsFilter(tabs, panels, activate) {
       }
     } else if (restoreState) {
       for (const [details, open] of restoreState.disclosures)
-        if (details.isConnected) details.open = open;
+        if (details.isConnected) details.open = details.classList.contains('kraken-geometry-standalone') || open;
       if (restoreState.tab && tabs.querySelector(`[data-tab="${restoreState.tab}"]`))
         activate(restoreState.tab, false);
       restoreState = null;
@@ -2605,6 +2729,21 @@ function organizeTechnicalControls(panel, tab) {
 
 function renderEditor() {
   const target = document.getElementById('config-fields');
+  const activeTab = target.querySelector('[role="tab"][aria-selected="true"]')?.dataset.tab;
+  const detailsKey = element => {
+    const parts = [element.closest('[role="tabpanel"]')?.dataset.tab || '',
+      element.closest('.illuminator-card')?.querySelector('legend')?.textContent || ''];
+    for (let node = element; node && node !== target; node = node.parentElement)
+      if (node.tagName === 'DETAILS') parts.push(node.dataset.configGroup ||
+        node.querySelector(':scope > summary')?.textContent || '');
+    return JSON.stringify(parts);
+  };
+  const expanded = new Map([...target.querySelectorAll('details')]
+    .map(element => [detailsKey(element), element.open]));
+  const focused = document.activeElement;
+  const focusedLane = focused?.dataset.laneField ? {
+    index: [...target.querySelectorAll('.illuminator-card')].indexOf(focused.closest('.illuminator-card')),
+    field: focused.dataset.laneField} : null;
   let upstream = document.getElementById('upstream-status');
   if (upstream) upstream.remove();
   target.replaceChildren();
@@ -2638,7 +2777,8 @@ function renderEditor() {
   const requestedTabRaw = new URLSearchParams(window.location.search).get('tab');
   const requestedTab = requestedTabRaw === 'location' ? 'capture' : requestedTabRaw;
   if (savedTab === 'location') savedTab = 'capture';
-  const initialTab = capabilities.setupRequired ? 'capture' :
+  const initialTab = entries.some(([key]) => key === activeTab) ? activeTab :
+    capabilities.setupRequired ? 'capture' :
     entries.some(([key]) => key === requestedTab) ? requestedTab :
       entries.some(([key]) => key === savedTab) ? savedTab : entries[0]?.[0];
   const activate = (selectedKey, remember = true) => {
@@ -2749,12 +2889,23 @@ function renderEditor() {
     organizeTechnicalControls(panel, panel.dataset.tab));
   target.append(makeSettingsFilter(tabs, panels, activate));
   target.append(tabs, panels);
+  target.querySelectorAll('details').forEach(element => {
+    const key = detailsKey(element); if (expanded.has(key))
+      element.open = element.classList.contains('kraken-geometry-standalone') || expanded.get(key);
+  });
   updateProcessingControlAvailability(target);
   activate(initialTab);
   displayFieldErrors(validationErrors);
   displayValidationNotices();
   updateDirtyState();
   refreshSetupAssistant();
+  if (focusedLane) {
+    const card = target.querySelectorAll('.illuminator-card')[focusedLane.index];
+    const input = [...(card?.querySelectorAll('[data-lane-field]') || [])]
+      .find(element => element.dataset.laneField === focusedLane.field);
+    input?.focus({preventScroll: true});
+    input?.scrollIntoView?.({block: 'nearest'});
+  }
 }
 
 function renderReceiverOverload(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-health')) {
@@ -3388,6 +3539,9 @@ async function renderConfiguration() {
       copy.textContent = ' Complete the setup assistant before starting.';
       setup.append(title, copy);
     }
+    // Upgrade history must stay reachable when there are no unsaved changes;
+    // the save toolbar is deliberately hidden in that state.
+    window.renderConfigMigrationHistory?.(setup, capabilities.configMigrations, capabilities);
     target.querySelector('.config-toolbar').after(setup);
     const assistant = document.createElement('div');
     assistant.id = 'setup-assistant-root';
@@ -3518,7 +3672,6 @@ function accelerationSummary(value, radar) {
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities, processingControlCapabilities,
     experimentalSettingCapability,
-    applyIlluminatorStandardDefaults, ATSC_CHANNELIZER_DEFAULTS,
     receiverSpecificProcessPath, delaySampleDescription, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, receiverUsesUpstreamStatus, accelerationSummary,

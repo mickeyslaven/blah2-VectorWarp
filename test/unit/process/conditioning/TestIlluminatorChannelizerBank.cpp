@@ -1,4 +1,5 @@
 #include "process/conditioning/IlluminatorChannelizerBank.h"
+#include "process/conditioning/FrontendPlan.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
@@ -68,6 +69,27 @@ TEST_CASE("one Kraken passband yields two independent FM illuminators")
       output[1].samples.channels[channel], -31000, 300000);
     REQUIRE(std::abs(std::arg(lowerChannel / lower) - phase[channel]) < 1e-3);
     REQUIRE(std::abs(std::arg(upperChannel / upper) + .4 * phase[channel]) < 1e-3);
+  }
+}
+
+TEST_CASE("channelizer binds both shared-raster and independent lanes to immutable extraction")
+{
+  using namespace blah2;
+  for (const uint32_t outputRate : {20000, 10000}) {
+    std::vector<iq::SignalDefinition> lanes{
+      {"a", 100000000, 8000, 20000, 16}, {"b", 100020000, 8000, outputRate, 16}};
+    for (auto& lane : lanes) lane.frontendPlan = std::make_shared<const iq::FrontendPlan>(
+      100000000, 80000, 2, lane, true, std::vector<uint32_t>{0}, std::vector<uint32_t>{1});
+    channelizer::IlluminatorChannelizerBank bank(100000000, 80000, 2, lanes);
+    auto output = bank.process(std::vector<std::vector<std::complex<float>>>(2,
+      std::vector<std::complex<float>>(800)), 0);
+    for (size_t i = 0; i < output.size(); ++i) {
+      REQUIRE(output[i].frontendPlan == lanes[i].frontendPlan);
+      REQUIRE_NOTHROW(output[i].frontendPlan->validate(output[i].samples));
+    }
+    lanes.front().occupiedBandwidthHz = 6000;
+    REQUIRE_THROWS_AS(channelizer::IlluminatorChannelizerBank(100000000, 80000, 2, lanes),
+      std::invalid_argument);
   }
 }
 

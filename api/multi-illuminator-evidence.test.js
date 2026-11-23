@@ -123,6 +123,13 @@ assert.equal(evidence.response('statistics', {illuminator: 'fm-a'}).measured_tra
 assert.equal(evidence.response('scorecard', {illuminator: 'fm-a'}).measured_track_basis, undefined);
 assert.equal(evidence.associationBasis().channels[0].measured_track_basis.aircraft[0].measured.length, 8192,
   'The explicit federation evidence contract retains its full interval basis');
+const kioskBasis = evidence.associationBasis({timing: 'exact', kiosk: true});
+assert.ok(Buffer.byteLength(JSON.stringify(kioskBasis)) < 64 * 1024,
+  'Kiosk basis preaggregates retained intervals into bounded coverage metrics');
+assert.ok(kioskBasis.channels.every(channel => channel.measured_track_basis === undefined &&
+  channel.passes === undefined), 'Kiosk polling does not rescan retained evidence');
+assert.strictEqual(evidence.associationBasis({timing: 'exact', kiosk: true}), kioskBasis,
+  'Kiosk polling reuses the bounded display aggregate');
 evidence.close();
 assert.ok(created.every(value => value.exact.closed && value.operational.closed));
 assert.equal(fakeSuspiciousLedger.closed, true);

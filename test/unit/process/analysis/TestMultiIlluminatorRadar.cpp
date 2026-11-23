@@ -1,4 +1,5 @@
 #include "process/analysis/MultiIlluminatorRadar.h"
+#include "process/conditioning/FrontendPlan.h"
 #include "process/pipeline/RawIqStages.h"
 #include "process/analysis/MultiIlluminatorPipelineState.h"
 #include "process/analysis/MultiIlluminatorStatus.h"
@@ -1263,8 +1264,10 @@ TEST_CASE("direct and channelized ingress share canonical products and disabled 
   using namespace blah2;
   constexpr uint32_t captureRate = 40000, rate = 20000, samples = 2000;
   constexpr uint64_t frequency = 100000000;
-  const std::vector<iq::SignalDefinition> definitions{
+  std::vector<iq::SignalDefinition> definitions{
     {"canonical", frequency, 10000, rate, 16}};
+  definitions.front().frontendPlan = std::make_shared<const iq::FrontendPlan>(
+    frequency, captureRate, 2, definitions.front(), true, std::vector<uint32_t>{0}, std::vector<uint32_t>{1});
   const std::vector<pipeline::Stages> selections{
     {true, true, true}, {false, true, true},
     {true, true, false}, {false, false, false}};
@@ -1393,6 +1396,8 @@ TEST_CASE("direct and channelized ingress share canonical products and disabled 
       REQUIRE(lane.map->data == directMap->data);
       REQUIRE(lane.resolvedProductPlan == products.planIdentity());
       REQUIRE(lane.resolvedProductPlan == live.front().resolvedProductPlan);
+      REQUIRE(lane.resolvedFrontendPlan == definitions.front().frontendPlan->identity());
+      REQUIRE(lane.resolvedFrontendPlan == live.front().resolvedFrontendPlan);
       REQUIRE(lane.map->delay == directMap->delay);
       REQUIRE(lane.map->doppler == directMap->doppler);
       REQUIRE(lane.detectionEnabled == selected.detection);
@@ -1999,6 +2004,37 @@ TEST_CASE("multi-illuminator radar buffers partial CPIs and rejects identity cha
   complete = signal("only", 100000000, outputRate, 2, 2, 4000, 8, 30, 9);
   complete.samples.firstInputSample = 4000;
   REQUIRE(radar.process({complete}).size() == 2);
+}
+
+TEST_CASE("canonical ingress refuses missing stale or mismatched frontend plans before products")
+{
+  using namespace blah2;
+  for (const bool replay : {false, true}) for (const bool channelized : {false, true}) {
+    const uint32_t rate = 20000, captureRate = channelized ? 40000 : rate;
+    iq::SignalDefinition lane{"only", 100000000, 10000, rate, 16};
+    lane.frontendPlan = std::make_shared<const iq::FrontendPlan>(
+      lane.frequencyHz, captureRate, 2, lane, channelized, std::vector<uint32_t>{0}, std::vector<uint32_t>{1});
+    auto config = smallLaneConfig(); config.offlineReplay = replay;
+    auto wrongRoles = config; wrongRoles.referenceChannel = 1; wrongRoles.surveillanceChannels = {0};
+    REQUIRE_THROWS_AS(pipeline::RadarBank(captureRate, 2, {lane}, wrongRoles), std::invalid_argument);
+    pipeline::RadarBank radar(captureRate, 2, {lane}, config);
+    auto input = signal(lane.id, lane.frequencyHz, rate, captureRate / rate, 2, 2000, 8, 30, 4);
+    input.frontendPlan = lane.frontendPlan;
+    input.samples.groupDelayInputSamples = channelized ? 16 : 0;
+    auto absent = input; absent.frontendPlan.reset();
+    REQUIRE_THROWS_AS(radar.process({absent}), std::invalid_argument);
+    auto changed = input; changed.samples.groupDelayInputSamples++;
+    REQUIRE_THROWS_AS(radar.process({changed}), std::invalid_argument);
+    auto other = lane; other.tapsPerPhase = 24;
+    if (!channelized) other.frequencyHz++;
+    changed = input;
+    changed.frontendPlan = std::make_shared<const iq::FrontendPlan>(
+      other.frequencyHz, captureRate, 2, other, channelized, std::vector<uint32_t>{0}, std::vector<uint32_t>{1});
+    REQUIRE_THROWS_AS(radar.process({changed}), std::invalid_argument);
+    const auto frames = radar.process({input});
+    REQUIRE(frames.size() == 1);
+    REQUIRE(frames.front().resolvedFrontendPlan == lane.frontendPlan->identity());
+  }
 }
 
 TEST_CASE("multi-illuminator radar discards adaptive state across a sample gap")

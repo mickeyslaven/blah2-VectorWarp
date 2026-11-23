@@ -153,6 +153,30 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
       `${path} is applied from the recommended defaults`);
 });
 
+test('failed setup shows the concrete save recovery action inside the modal', async () => {
+  const dom = new JSDOM('<div id="assistant"></div>');
+  const target = dom.window.document.getElementById('assistant');
+  const config = configurationForReceiver('Usrp');
+  config.location = {rx: {name: 'Fixture receiver', latitude: 1, longitude: 2, altitude: 10},
+    tx: {name: 'Fixture transmitter', latitude: 1.2, longitude: 2.1, altitude: 100}};
+  const api = {getConfig: () => config, receiverProfiles: getDeviceProfiles, set() {},
+    discoverReceivers: async () => [], save: async () => false,
+    saveError: () => 'Receiver disconnected. Reconnect the USB cable, then save again.',
+    refresh: () => render(target, api)};
+  render(target, api); target.querySelector('[data-start-setup]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  target.querySelector('[data-wizard-step="5"]').click();
+  target.querySelector('[data-wizard-next]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(target.querySelector('.setup-wizard-error').textContent, /Reconnect the USB cable/);
+  assert.equal(dom.window.document.activeElement, target.querySelector('.setup-wizard-error'),
+    'Failed saves bring the recovery message into keyboard focus');
+  assert.equal(target.querySelector('[data-wizard-next]').disabled, false, 'Failure can be retried');
+  target.querySelector('[data-wizard-close]').click();
+  assert.equal(dom.window.document.activeElement, target.querySelector('[data-start-setup]'));
+  dom.window.close();
+});
+
 test('assistant automatically selects one discovered supported receiver', async () => {
   const dom = new JSDOM('<div id="assistant"></div>');
   const target = dom.window.document.getElementById('assistant');

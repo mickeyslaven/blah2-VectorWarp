@@ -164,6 +164,7 @@ jobs:
             -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
           python3 script/prebuild_acceptance.py --build-dir build/ci \
             --native-target blah2 --native-target testDetectionMath --native-target testTracker \
+            --native-target testFrontendPlan --native-test frontendPlanParity \
             --native-test testDetectionMath --native-test testTracker --receipt build/ci/prebuild-acceptance.json
           cmake --build build/ci --parallel 2
           ctest --test-dir build/ci --output-on-failure --no-tests=error

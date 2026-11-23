@@ -344,7 +344,7 @@ class CanonicalProcessingArchitecture(unittest.TestCase):
             self.assertRegex(direct, rf"for\s*\(\s*const auto& channel\s*:\s*{channels}\s*\)")
             self.assertRegex(direct,
                 rf"BorrowedSamples\s*\{{\s*{owner}\s*,\s*std::move\(views\)\s*\}}")
-        self.assertIn('current.push_back({"primary", fc, std::move(samples)})', direct)
+        self.assertIn('current.push_back({"primary", fc, std::move(samples), illuminatorDefinitions.front().frontendPlan})', direct)
         self.assertIn("queueCurrent(std::move(current), currentPublication(0))", direct)
         self.assertNotIn("processPipelined", direct)
         self.assertNotIn("ProductStages", direct)

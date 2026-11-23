@@ -1,7 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {EvidenceStatistics, compactAssociationPass} = require('./evidence-statistics');
+const {EvidenceStatistics, compactAssociationPass, federationAssociationPassTransport,
+  expandFederationAssociationPassTransport} = require('./evidence-statistics');
 
 const DAY = 86400000;
 const config = {capture: {fs: 2400000, fc: 563000000},
@@ -94,6 +95,29 @@ test('compact association transport retains per-pass policy, timing and sensitiv
   assert.equal(value.sensitivity_epoch_mixed, true);
   assert.equal(value.decision_grade, false);
   assert.equal(value.association_eligible_cpis, 6);
+});
+
+test('federation pass transport is bounded and preserves network scoring inputs', () => {
+  const passes = Array.from({length: 4000}, (_, index) => ({
+    pass_id: `pass-${index}`, hex: (index % 400).toString(16).padStart(6, '0'),
+    flight: `FLT${index % 400}`, started_at: 1000 + index * 500,
+    finalized_at: 1500 + index * 500,
+    outcome: ['no_radar_return', 'detected_not_tracked', 'tracked'][index % 3],
+    channel: ['first', 'second', 'third'][index % 3], eligible_cpis: 20,
+    detected_cpis: index % 3 ? 5 : 0, tracked_cpis: index % 3 === 2 ? 4 : 0,
+    eligible: true, detected: index % 3 !== 0, tracked: index % 3 === 2,
+    sensitivity_epoch_mixed: index % 17 === 0,
+    evaluation_contract_hash: 'a'.repeat(64), evaluation_policy_hash: 'b'.repeat(64),
+    site_epoch: 'c'.repeat(64), cpi_audit: Array(40).fill({unused: true})}));
+  const transport = federationAssociationPassTransport(passes);
+  const expanded = expandFederationAssociationPassTransport(transport);
+  assert.equal(expanded.length, passes.length);
+  assert.deepEqual(expanded[17], {hex: passes[17].hex, flight: passes[17].flight,
+    started_at: passes[17].started_at, finalized_at: passes[17].finalized_at,
+    outcome: passes[17].outcome, channel: passes[17].channel, eligible_cpis: 20,
+    detected_cpis: 5, tracked_cpis: 4, eligible: true, detected: true,
+    tracked: true, sensitivity_epoch_mixed: true});
+  assert.ok(Buffer.byteLength(JSON.stringify(transport)) < 1024 * 1024);
 });
 
 test('public statistics retain metrics without streaming durable capture and truth evidence', () => {

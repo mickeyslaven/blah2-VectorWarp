@@ -47,8 +47,23 @@ class PrebuildAcceptanceTests(unittest.TestCase):
                                      ("git", "diff", "--check")])
         self.assertEqual([row["name"] for row in receipt["commands"]],
                          ["diff_check_cached", "diff_check", "prebuild_contract", "repository_budget",
-                          "canonical_architecture", "ci_contract", "api_contract", "effective_radar_plan", "ui_contract"])
+                          "canonical_architecture", "ci_contract", "api_contract", "effective_radar_plan", "frontend_plan", "ui_contract"])
         self.assertEqual(receipt["outcome"], "passed")
+
+    def test_frontend_changes_require_native_api_parity(self):
+        calls = []
+        def command(line, root):
+            calls.append(line)
+            return {"command": list(line), "returncode": 0, "stdout": "", "stderr": ""}
+        with tempfile.TemporaryDirectory() as temporary:
+            build = Path(temporary)
+            (build / "CMakeCache.txt").write_text("CMAKE_COMPILE_WARNING_AS_ERROR:BOOL=ON\n")
+            code = GATE.main(["--build-dir", temporary, "--receipt", str(build / "receipt.json"),
+                              "--native-target", "blah2", "--native-test", "testTracker"],
+                             ROOT, command, lambda root: ["src/blah2.cpp"])
+        self.assertEqual(code, 0)
+        self.assertTrue(any(line[-1] == "testFrontendPlan" for line in calls))
+        self.assertTrue(any("^frontendPlanParity$" in line for line in calls))
 
     def test_empty_target_is_not_a_declaration(self):
         code, calls, receipt = self.invoke(["cmake/NewOwner.cmake"], (" ",), (" ",))

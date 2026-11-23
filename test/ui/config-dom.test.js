@@ -28,6 +28,13 @@ window.liveApiUrl = value => value;
 window.confirm = () => true;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);
 window.rememberApiPort = () => {};
+const migrationReceipts = [{id: 'settings-migration', changes: [{path: 'process.legacy'}]}];
+window.renderConfigMigrationHistory = (target, receipts, evidence) => {
+  assert.equal(target.className, 'config-setup-note');
+  assert.deepEqual(receipts, migrationReceipts);
+  assert.deepEqual(evidence.configMigrations, migrationReceipts);
+  window.__migrationHistoryRendered = true;
+};
 window.VectorWarpSetupAssistant = {render(_target, api) { window.__settingsModeApi = api; }};
 window.fetch = async (url, options = {}) => {
   let body;
@@ -48,6 +55,7 @@ window.fetch = async (url, options = {}) => {
   } else if (url === '/api/config') body = saved;
   else if (url === '/api/config/capabilities') body = {
     editable: true, restartAvailable: false, configRevision: revision,
+    configMigrations: migrationReceipts,
     deviceProfiles: getDeviceProfiles().map(profile => ({...profile,
       liveAvailable: profile.type === 'Kraken'})), fieldRules: FIELD_RULES
   };
@@ -73,6 +81,7 @@ function change(input, value, event = 'input') {
 (async () => {
   try {
     await window.renderConfiguration();
+    assert.equal(window.__migrationHistoryRendered, true, 'Settings keeps migration evidence discoverable');
     const aircraftClipSettings = saved.capture.aircraft_clips;
     delete saved.capture.aircraft_clips;
     await window.renderConfiguration();
@@ -453,7 +462,7 @@ function change(input, value, event = 'input') {
       /replay only/i);
     window.switchDevice('Usrp');
     assert.equal(query('capture.device.type').querySelector('select').selectedOptions[0].textContent,
-      'Ettus USRP');
+      'Ettus USRP B210');
     assert.match(window.document.getElementById('config-message').textContent,
       /install its receiver software in Receiver setup/i);
     assert.doesNotMatch(window.document.getElementById('config-message').textContent,

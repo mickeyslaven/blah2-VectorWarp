@@ -334,7 +334,10 @@
     const updateComment = () => { report.comment = clean(commentInput.value, 2000); preview.textContent = JSON.stringify(report, null, 2); };
     commentInput.addEventListener('input', updateComment);
     view.onclick = () => { updateComment(); preview.hidden = !preview.hidden; copy.hidden = preview.hidden; view.textContent = preview.hidden ? 'View report' : 'Hide report'; };
-    copy.onclick = async () => { await navigator.clipboard.writeText(preview.textContent); state.textContent = 'Report copied.'; };
+    copy.onclick = async () => {
+      try { await navigator.clipboard.writeText(preview.textContent); state.textContent = 'Report copied.'; }
+      catch (_) { preview.hidden = false; state.textContent = 'Clipboard access was blocked. Select the report text and copy it manually.'; }
+    };
     const close = () => { dialog.close?.(); dialog.remove(); };
     cancel.onclick = close; dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
     send.onclick = async () => { updateComment(); send.disabled = true; state.textContent = 'Sending…'; try { const id = await submit(report); state.textContent = `Report sent. Report ID: ${id}`; send.textContent = 'Sent'; cancel.textContent = 'Close'; } catch (error) { retain(report); state.textContent = `${error.message}. The report is retained in this browser; retry or copy it.`; send.disabled = false; send.textContent = 'Retry'; preview.hidden = false; copy.hidden = false; } };

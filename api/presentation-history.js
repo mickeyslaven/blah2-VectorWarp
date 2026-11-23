@@ -231,6 +231,7 @@ class RadarSessionStore extends IlluminatorFrameHistory {
     this.planProducts.set(`${lane}:${name}`, {lane_id: lane, product: name,
       received_at: this.now(), generation: this.restartGeneration,
       frame: {resolved_product_plan: value?.resolved_product_plan,
+        resolved_frontend_plan: value?.resolved_frontend_plan,
         input_lineage: value?.input_lineage, product_stage_execution: value?.product_stage_execution}});
   }
   planObservation() {

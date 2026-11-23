@@ -43,7 +43,7 @@ struct Frame {
   std::vector<double> actualGainDb;
   std::vector<std::array<double,3>> positionsM;
   std::string detectionManifoldFile,bearingManifoldFile;
-  std::string resolvedProductPlan;
+  std::string resolvedProductPlan, resolvedFrontendPlan;
   // Raw capture identity above and canonical output-grid lineage are distinct
   // when acquisition starts between decimation positions. Never rebase either.
   std::optional<std::array<uint64_t,2>> inputSampleInterval;
@@ -159,6 +159,7 @@ class Observer {
     w.Key("backend");w.String(f.backend.c_str());w.Key("device");w.String(f.device.c_str());
     w.Key("product_backend");w.String(f.productBackend.c_str());
     w.Key("resolved_product_plan");w.String(f.resolvedProductPlan.c_str());
+    w.Key("resolved_frontend_plan");w.String(f.resolvedFrontendPlan.c_str());
     w.Key("channel_ids");w.StartArray();for(auto c:f.channelIds)w.Uint(c);w.EndArray();
     w.Key("reference_channel_ids");w.StartArray();for(auto c:f.referenceChannelIds)w.Uint(c);w.EndArray();
     w.Key("actual_gain_db");w.StartArray();for(auto gain:f.actualGainDb)number(w,gain);w.EndArray();

@@ -159,6 +159,10 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn("--native-test testDetectionMath --native-test testTracker", source)
         self.assertIn("-DBLAH2_GPU=OFF", source, "The independent CPU-only build is not redundant")
         self.assertNotIn("--skip-target-build", source)
+        for name in ("ci.yml", "release-packages.yml"):
+            pipeline = (WORKFLOWS / name).read_text()
+            self.assertIn("--native-target testFrontendPlan", pipeline)
+            self.assertIn("--native-test frontendPlanParity", pipeline)
         evidence = next(s for s in job["steps"] if s.get("with", {}).get("path") ==
                         "build/ci/prebuild-acceptance.json")
         self.assertEqual(evidence["if"], "always()")
@@ -169,7 +173,12 @@ class WorkflowContracts(unittest.TestCase):
             step = next(s for s in job["steps"] if "node " in s.get("run", "") and
                         "all-routes-layout.cjs" in s["run"])
             self.assertNotIn("continue-on-error", step)
+            self.assertEqual(step["env"]["VECTORWARP_LAYOUT_INTERACTIONS"], "1")
+            self.assertTrue(step["env"]["VECTORWARP_LAYOUT_SCREENSHOTS"].endswith("/screenshots"))
+            self.assertTrue(step["env"]["VECTORWARP_LAYOUT_REPORT"].endswith("/browser-layout.json"))
+            self.assertLessEqual(int(step["timeout-minutes"]), 15)
             self.assertNotIn("VECTORWARP_LAYOUT_ROUTES", step["run"], "Do not select a partial route subset")
+            self.assertNotIn("VECTORWARP_LAYOUT_ROUTES", step["env"])
             self.assertIn("chromium.executablePath()", step["run"])
             self.assertIn("playwright install", step["run"])
             self.assertNotIn("--only-shell", step["run"], "CDP runner launches the full Chromium binary")
@@ -180,8 +189,9 @@ class WorkflowContracts(unittest.TestCase):
             else:
                 self.assertNotIn("if", step)
                 self.assertEqual(job["strategy"]["matrix"]["runner"], ["macos-15", "macos-15-intel"])
-            evidence = next(s for s in job["steps"] if s.get("with", {}).get("path", "").endswith("browser-layout.json"))
+            evidence = next(s for s in job["steps"] if s.get("with", {}).get("path", "").endswith("browser-acceptance/"))
             self.assertIn("always()", evidence["if"])
+            self.assertEqual(int(evidence["with"]["retention-days"]), 14)
 
     def test_publication_requires_explicit_dispatch_opt_in(self):
         for name, job_name, ref in (

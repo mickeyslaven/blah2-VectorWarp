@@ -8,6 +8,55 @@
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const ensure = (parent, key) => object(parent[key]) ? parent[key] : (parent[key] = {});
 
+  // Shift decimal units before parsing: multiplying an already rounded binary
+  // float turns valid whole-Hz entries such as 2.000001 MS/s into fractions.
+  function scaledInputNumber(value, scale = 1) {
+    const exponent = Math.log10(scale);
+    const decimal = String(value).trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:e([+-]?\d+))?$/i);
+    return decimal && Number.isInteger(exponent) ?
+      Number(`${decimal[1]}e${Number(decimal[2] || 0) + exponent}`) : Number(value) * scale;
+  }
+
+  // Descriptors, not regional tuning defaults. Only ATSC reference conditioning
+  // distinguishes versions; all other standards use the same raw-IQ extractor.
+  const channelizerStandards = Object.freeze(['AM', 'FM', 'DAB', 'DRM', 'ATSC',
+    'ATSC-1.0', 'ATSC-3.0', 'DVB-T', 'DVB-T2', 'DVB-T/T2', 'ISDB-T', 'DTMB', 'CUSTOM']);
+  const channelizerPresets = Object.freeze({
+    ATSC: {occupied_bandwidth_hz: 5380000, filter_taps_per_phase: 64},
+    'ATSC-1.0': {occupied_bandwidth_hz: 5380000, filter_taps_per_phase: 64},
+    'ATSC-3.0': {occupied_bandwidth_hz: 5832844, filter_taps_per_phase: 128}
+  });
+  function channelizerPreview(config, lane) {
+    const capture = config.capture || {}, replay = capture.replay || {};
+    const rate = replay.state === true ? replay.sample_rate_hz ?? capture.fs : capture.fs;
+    const center = replay.state === true ? replay.frequency_hz ?? capture.fc : capture.fc;
+    const {frequency_hz: frequency, occupied_bandwidth_hz: width,
+      output_sample_rate_hz: output, filter_taps_per_phase: taps = 24} = lane;
+    const errors = [];
+    if (![rate, center, frequency, width, output, taps].every(Number.isSafeInteger) ||
+        Math.min(rate, center, frequency, width, output) <= 0)
+      errors.push('Frequency, occupied bandwidth and sample rates must be positive whole Hz; filter taps must be an integer');
+    else {
+      if (rate % output !== 0) errors.push(`output_sample_rate_hz must divide ${rate} Hz exactly`);
+      if (width >= output) errors.push('occupied_bandwidth_hz must be smaller than output_sample_rate_hz');
+      if (Math.abs(frequency - center) + width / 2 >= rate / 2)
+        errors.push('frequency_hz and occupied bandwidth must fit inside the captured passband');
+      if (taps < 4 || taps > 128) errors.push('filter_taps_per_phase must be between 4 and 128');
+      if (rate % output === 0 && taps * (rate / output) + 1 > 131071)
+        errors.push('full-quality channel filter exceeds 131,071 taps');
+      for (const other of config.process?.multi_illuminator?.illuminators || []) {
+        if (other?.enabled !== true || other.id === lane.id) continue;
+        if (Math.abs(frequency - other.frequency_hz) < (width + other.occupied_bandwidth_hz) / 2)
+          errors.push(`occupied passband overlaps enabled channel ${other.id}; choose non-overlapping waveform bands`);
+      }
+    }
+    const requestedTaps = taps * (rate / output) + 1;
+    return {errors, rate, center, lowerHz: frequency - width / 2,
+      upperHz: frequency + width / 2, captureLowerHz: center - rate / 2,
+      captureUpperHz: center + rate / 2, transitionHz: (output - width) / 2,
+      decimation: rate / output, filterTaps: requestedTaps % 2 === 0 ? requestedTaps + 1 : requestedTaps};
+  }
+
   function serializeConfig(value) {
     if (Array.isArray(value)) return `[${value.map(serializeConfig).join(',')}]`;
     if (object(value))
@@ -391,7 +440,8 @@
     return config;
   }
 
-  return {serializeConfig, displayOnlyChange, scaleDelayBin, effectiveDelayConfig, legacyDelayReferenceRate,
+  return {serializeConfig, displayOnlyChange, scaledInputNumber, channelizerStandards, channelizerPresets,
+    channelizerPreview, scaleDelayBin, effectiveDelayConfig, legacyDelayReferenceRate,
     detectionProfiles, trackingProfiles, gainMode, applyGainMode, clutterMode, applyClutterMode,
     detectionSensitivity, applyDetectionSensitivity, weakTargetMode, applyWeakTargetMode,
     temporalConfirmationErrors, temporalConfirmationRequirements,

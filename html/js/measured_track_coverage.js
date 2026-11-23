@@ -156,12 +156,22 @@
   }
   // Keep every pass and exact interval while omitting display-unused diagnostics.
   function kioskAssociationChannel(channel) {
+    if (channel.measured_track_coverage || channel.cpi_exposure)
+      return {...Object.fromEntries(['identity', 'selected_channel', 'updated_at',
+        'association_statistics', 'measured_track_coverage', 'cpi_exposure']
+        .filter(key => key in channel).map(key => [key, channel[key]]))};
+    const exposureFields = ['eligible_cpis', 'association_eligible_cpis',
+      'detected_cpis', 'operationally_tracked_cpis', 'eligible_seconds',
+      'association_eligible_seconds'];
+    const cpiExposure = (channel.passes || []).reduce((sum, pass) => {
+      for (const field of exposureFields)
+        sum[field] += Number(pass?.cpi_exposure?.[field]) || 0;
+      return sum;
+    }, Object.fromEntries(exposureFields.map(field => [field, 0])));
     return {...Object.fromEntries(['identity', 'selected_channel', 'updated_at',
       'association_statistics'].filter(key => key in channel).map(key => [key, channel[key]])),
-    measured_track_basis: compactBasis(channel.measured_track_basis),
-    passes: (channel.passes || []).map(pass => Object.fromEntries([
-      'hex', 'started_at', 'finalized_at', 'eligible', 'detected', 'tracked', 'cpi_exposure'
-    ].filter(key => key in pass).map(key => [key, pass[key]])))};
+    measured_track_coverage: aggregate([channel.measured_track_basis]),
+    cpi_exposure: cpiExposure};
   }
   return {union, extendUnion, intersect, aggregate, compactBasis, expandBasis, kioskAssociationChannel};
 });

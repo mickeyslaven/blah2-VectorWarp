@@ -274,12 +274,12 @@ async function saveAndAssert(label, expected) {
     assert.ok(field('capture.aircraft_clips.enabled'),
       'Automatic aircraft IQ clips are receiver independent');
     setScalar('capture.device.address', 'type=b200,serial=matrix');
-    setScalar('capture.device.subdev', 'A:0 A:1');
+    setScalar('capture.device.subdev', 'A:B A:A');
     const antennas = field('capture.device.antenna').querySelectorAll('input');
     const gains = field('capture.device.gain').querySelectorAll('input');
     change(antennas[0], 'RX2'); change(antennas[1], 'TX/RX'); change(gains[0], 20); change(gains[1], 21);
     await saveAndAssert('USRP', {'capture.device.address': 'type=b200,serial=matrix',
-      'capture.device.subdev': 'A:0 A:1', 'capture.device.antenna': ['RX2', 'TX/RX'],
+      'capture.device.subdev': 'A:B A:A', 'capture.device.antenna': ['RX2', 'TX/RX'],
       'capture.device.gain': [20, 21], 'capture.device.type': 'Usrp'});
 
     saved = configurationForReceiver('Kraken');
@@ -365,8 +365,9 @@ async function saveAndAssert(label, expected) {
         const input = widget.querySelector('input');
         assert.equal(widget.querySelector('span').textContent, rule.control.unit, key);
         assert.equal(input.step, String(rule.integer ? 1 / rule.control.scale : 'any'), key);
-        if (rule.min !== undefined) assert.equal(input.min, String(rule.min / rule.control.scale), key);
-        if (rule.max !== undefined) assert.equal(input.max, String(rule.max / rule.control.scale), key);
+        const limits = key === 'capture.fs' ? getDeviceProfiles().find(profile => profile.type === receiver).sampleRates : {};
+        if (rule.min !== undefined) assert.equal(input.min, String((limits.min ?? rule.min) / rule.control.scale), key);
+        if (rule.max !== undefined) assert.equal(input.max, String((limits.max ?? rule.max) / rule.control.scale), key);
         change(input, '1.25');
         assert.equal(parent[names.at(-1)], 1.25 * rule.control.scale, `${receiver}/${key}: persistence units`);
         change(input, '');

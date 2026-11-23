@@ -150,11 +150,11 @@ class Process final : public GpuBackend, public GpuFrameBackend,
   bool clutterSupported_ = false;
   const bool profileDrain_ = stream_profile::frameLimit()!=0;
   stream_profile::Worker streamProfile_{"portable-parent",2};
-  // Snapshot once per worker. Default-off isolates host projection from worker
-  // FP64 refinement; only the exact opt-in "1" enables their CPU overlap.
+  // Host projection is independent of GPU refinement, so overlap by default.
+  // Exact "0" (off) preserves serial diagnostic order; math is unmodified.
   const bool clutterHostWorkOverlap_ = [] {
     const char* value = std::getenv("BLAH2_GPU_CLUTTER_HOST_WORK_OVERLAP");
-    return value && std::strcmp(value, "1") == 0;
+    return !value || std::strcmp(value, "0") != 0;
   }();
   void stop(bool offlineDrain=false) noexcept {
     if (child_) child_->stop(offlineDrain);

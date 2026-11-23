@@ -3,13 +3,15 @@ const path = require('path');
 const yaml = require('js-yaml');
 const net = require('net');
 const crypto = require('crypto');
+const {frontendPlan} = require('./frontend-plan');
 const {sourceAddress} = require('./adsb-source');
 const {classifyAdsbSource, SOURCE_CHOICES} = require('./adsb-discovery');
 const {recordErrors} = require('../html/js/kraken_geometry');
 const {evaluateKrakenArray} = require('./kraken-array');
-const {effectiveDelayConfig, temporalConfirmationErrors} = require('../html/js/config_profiles');
+const {effectiveDelayConfig, temporalConfirmationErrors, channelizerStandards,
+  channelizerPreview, trackingProfiles} = require('../html/js/config_profiles');
 const {processingCapabilities, residentReferenceCompatible, regularSurveillancePolygon,
-  residentRouteRequested, experimentalSettingSupport} = require('../html/js/processing_capabilities');
+  residentRouteRequested, experimentalSettingSupport, waveformReferenceCapability} = require('../html/js/processing_capabilities');
 const FIELD_RULES = require('./config-rules')(SOURCE_CHOICES);
 
 // Upgrade-only values, absent from the advertised settings contract. Keep
@@ -64,6 +66,7 @@ const DEVICE_PROFILES = [
       manifold: true
     },
     sampleRate: 2400000,
+    sampleRates: {values: [2400000], channels: {min: 2, max: 8}},
     device: {
       type: 'Kraken',
       heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092,
@@ -98,6 +101,7 @@ const DEVICE_PROFILES = [
     description: 'Two coherent tuners in dual-tuner mode',
     features: {residentIntegration: true},
     sampleRate: 2000000,
+    sampleRates: {values: [62500, 125000, 250000, 500000, 1000000, 2000000], channels: {min: 2, max: 2}},
     device: {
       type: 'RspDuo', agcSetPoint: -20, bandwidthNumber: 5,
       serial: '',
@@ -108,10 +112,12 @@ const DEVICE_PROFILES = [
   {
     type: 'Usrp',
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
-    label: 'Ettus USRP',
-    description: 'Two coherent receive channels through UHD',
+    label: 'Ettus USRP B210',
+    description: 'Two coherent B210 receive channels through UHD; requested tuning and rate must match hardware readback',
     features: {residentIntegration: true},
     sampleRate: 2000000,
+    sampleRates: {min: 1, max: 30720000, suggestions: [2000000, 6000000, 12288000, 24576000, 30720000],
+      channels: {min: 2, max: 2}, requiresReadback: true},
     device: {
       type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
       timing_source: 'internal',
@@ -125,6 +131,7 @@ const DEVICE_PROFILES = [
     description: 'Two synchronized HackRF receivers',
     features: {residentIntegration: true},
     sampleRate: 2000000,
+    sampleRates: {min: 2000000, max: 20000000, channels: {min: 2, max: 2}, requiresReadback: true},
     device: {
       type: 'HackRF',
       serial: ['REFERENCE_DEVICE_SERIAL_NUMBER',
@@ -169,6 +176,14 @@ function effectiveRadarPlan(config) {
     for (const name of ['performance', 'evidence', 'multi_illuminator', 'delay_reference_sample_rate_hz'])
       delete process[name];
     delete process.data.buffer;
+    // These optional fields are resolved by the native tracker from its profile.
+    // Bind their effective values before removing the presentation-only label.
+    const trackerDefaults = trackingProfiles[process.tracker.profile ?? 'balanced'];
+    if (!trackerDefaults) throw new Error('Unknown tracker profile');
+    if (process.tracker.initiate.min_snr_db === undefined)
+      process.tracker.initiate.min_snr_db = trackerDefaults.minSnrDb;
+    if (process.tracker.initiate.acceleration_model === undefined)
+      process.tracker.initiate.acceleration_model = trackerDefaults.accelerationModel;
     delete process.tracker.profile;
     delete process.tracker.gpu_capacity;
     delete process.bearing?.manifold_recorder;
@@ -217,7 +232,10 @@ function effectiveRadarPlan(config) {
     if (lane.tracker_min_snr_db !== undefined) process.tracker.initiate.min_snr_db = lane.tracker_min_snr_db;
     for (const field of ['detection_manifold_file', 'bearing_manifold_file'])
       if (lane[field] !== undefined) signal[field] = lane[field];
-    return {id: lane.id, features, semantic: {signal, process},
+    const frontend = frontendPlan(config, lane, topology.channelCount,
+      reference.channels, signal.surveillance_channels);
+    return {id: lane.id, features, semantic: {signal, process}, frontend,
+      frontend_sha256: planSha256(frontend),
       configured_products: {'stages.clutter': features.clutter, 'stages.detection': features.detection,
         'stages.tracking': features.tracking, integrationCpis: depth,
         trackerM: process.tracker.initiate.M, trackerN: process.tracker.initiate.N,
@@ -225,9 +243,11 @@ function effectiveRadarPlan(config) {
   });
   const semantic = {schema: 'vectorwarp-configured-radar-plan-v1',
     lanes: plans.map(lane => canonicalPlanJson(lane.semantic)).sort().map(value => JSON.parse(value))};
+  const frontend = {schema: 'vectorwarp-configured-frontends-v1',
+    lanes: plans.map(lane => ({id: lane.id, plan: lane.frontend})).sort((a, b) => a.id.localeCompare(b.id))};
   return {schema: 'vectorwarp-radar-plan-report-v1',
     scope: 'configured-intent; native execution and outcome evidence required separately',
-    semantic_sha256: planSha256(semantic),
+    semantic_sha256: planSha256(semantic), frontend_sha256: planSha256(frontend), frontend,
     semantic, lanes: plans.map(({semantic, ...lane}) =>
       ({...lane, configured_sha256: planSha256(semantic)}))};
 }
@@ -236,11 +256,16 @@ function radarPlanErrors(report, requirement) {
   if (!isObject(requirement) || requirement.schema !== 'vectorwarp-radar-plan-requirements-v1' ||
       !/^[a-f0-9]{64}$/.test(requirement.semantic_sha256 || '') ||
       !isObject(requirement.required_features) || !Object.keys(requirement.required_features).length ||
-      Object.keys(requirement).some(key => !['schema', 'semantic_sha256', 'required_features', 'resolved_products'].includes(key)) ||
+      Object.keys(requirement).some(key => !['schema', 'semantic_sha256', 'frontend_sha256', 'required_features', 'resolved_products'].includes(key)) ||
+      (requirement.frontend_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(requirement.frontend_sha256)) ||
       (requirement.resolved_products !== undefined && (!isObject(requirement.resolved_products) ||
         Object.entries(requirement.resolved_products).flat().some(value => !/^[a-f0-9]{64}$/.test(value)))))
     return ['Required radar plan is malformed'];
   const errors = [];
+  if (!requirement.frontend_sha256)
+    errors.push('Required radar plan predates frontend extraction binding; review and explicitly replace the pin');
+  else if (report.frontend_sha256 !== requirement.frontend_sha256)
+    errors.push('Effective frontend extraction plan differs from the independently pinned intended plan');
   if (report.semantic_sha256 !== requirement.semantic_sha256)
     errors.push('Effective radar plan differs from the independently pinned intended plan');
   for (const [feature, expected] of Object.entries(requirement.required_features)) {
@@ -292,6 +317,13 @@ function assessResolvedRadarPlans(configured, observation, {now = Date.now(), ma
       if (hash !== expectedHash) reject(`Lane ${lane.id} ${name} native plan differs from its qualified pin`);
       if (nativeHash && nativeHash !== hash) reject(`Lane ${lane.id} mixes native product plans`);
       nativeHash = hash;
+      try {
+        if (typeof frame.resolved_frontend_plan !== 'string' || frame.resolved_frontend_plan.length > 8192)
+          throw new Error('missing identity');
+        const frontend = JSON.parse(frame.resolved_frontend_plan);
+        if (!lane.frontend_sha256 || planSha256(frontend) !== lane.frontend_sha256)
+          throw new Error('different extraction');
+      } catch (_) { reject(`Lane ${lane.id} ${name} frontend differs from its reviewed extraction plan`); }
       for (const [field, expected] of Object.entries(lane.configured_products || {}))
         if (native[field] !== expected) reject(`Lane ${lane.id} native ${field} differs from configured intent`);
       const input = frame.input_lineage;
@@ -319,7 +351,8 @@ function assessResolvedRadarPlans(configured, observation, {now = Date.now(), ma
           reject(`Lane ${lane.id} ${name} lacks frame-bound ${stage} execution`);
       }
     }
-    lanes.push({id: lane.id, configured_sha256: lane.configured_sha256, native_sha256: nativeHash, input_interval: lineage});
+    lanes.push({id: lane.id, configured_sha256: lane.configured_sha256, frontend_sha256: lane.frontend_sha256,
+      native_sha256: nativeHash, input_interval: lineage});
   }
   return {schema: 'vectorwarp-runtime-plan-acceptance-v1',
     scope: 'native plan and stage reporting; numerical parity and radar outcomes require separate qualification',
@@ -765,6 +798,14 @@ function validateConfig(config, baseline = null, options = {}) {
         errors.push('capture.device.address must use unique UHD key=value arguments, such as type=b200 or type=b200,serial=…');
     }
     string(device.subdev, 'capture.device.subdev');
+    if (typeof device.subdev === 'string') {
+      const mapping = device.subdev.trim().split(/\s+/);
+      if (mapping.length !== 2 || new Set(mapping).size !== 2 ||
+          mapping.some(channel => !['A:A', 'A:B'].includes(channel)))
+        errors.push('capture.device.subdev must map both B210 inputs exactly once: A:A A:B (or A:B A:A to reverse reference/surveillance)');
+    }
+    if (replay.state !== true && capture.fs > DEVICE_PROFILES.find(profile => profile.type === device.type).sampleRates.max)
+      errors.push('capture.fs must not exceed 30.72 MS/s for the qualified two-channel B210 adapter; UHD must also accept the exact requested rate');
     if (device.timing_source !== undefined && !['internal', 'gpsdo'].includes(device.timing_source))
       errors.push('capture.device.timing_source must be internal or gpsdo');
     if (!Array.isArray(device.antenna) || device.antenna.length !== 2)
@@ -846,8 +887,6 @@ function validateConfig(config, baseline = null, options = {}) {
   // the saved live receiver profile independent of the recorded passband.
   const sampleRate = replay.state === true && Number.isFinite(replay.sample_rate_hz) ?
     replay.sample_rate_hz : Number.isFinite(capture.fs) ? capture.fs : null;
-  const inputFrequency = replay.state === true && Number.isFinite(replay.frequency_hz) ?
-    replay.frequency_hz : capture.fc;
   const topologyInputCount = replay.state === true && Number.isInteger(replay.channel_count) ?
     replay.channel_count : device.type === 'Kraken' && Number.isInteger(device.channel_count) ?
       device.channel_count : 2;
@@ -912,23 +951,15 @@ function validateConfig(config, baseline = null, options = {}) {
         if (illuminator.tracker_min_snr_db !== undefined)
           number(illuminator.tracker_min_snr_db, `${field}.tracker_min_snr_db`,
             {min: -100, max: 100});
-        oneOf(illuminator.standard, `${field}.standard`,
-          ['AM', 'FM', 'DAB', 'DRM', 'ATSC', 'ATSC-1.0', 'ATSC-3.0',
-            'DVB-T/T2', 'ISDB-T', 'DTMB', 'CUSTOM']);
+        oneOf(illuminator.standard, `${field}.standard`, channelizerStandards);
         if (illuminator.atsc_reference_mode !== undefined) {
           oneOf(illuminator.atsc_reference_mode, `${field}.atsc_reference_mode`,
             ['automatic', 'raw', 'pilot_aided']);
-          if (!['ATSC', 'ATSC-1.0', 'ATSC-3.0'].includes(illuminator.standard) &&
-              illuminator.atsc_reference_mode !== 'raw')
-            errors.push(`${field}.atsc_reference_mode requires an ATSC standard unless it is raw`);
-          if (illuminator.standard === 'ATSC-3.0' &&
-              illuminator.atsc_reference_mode === 'pilot_aided')
-            errors.push(`${field}.atsc_reference_mode pilot_aided requires standard ATSC 1.0`);
-          if (illuminator.atsc_reference_mode === 'pilot_aided') {
-            if (illuminator.reference_channel === undefined &&
-                processingCapabilities(root).referenceMode === 'array_eigenbeam')
-              errors.push(`${field}.atsc_reference_mode pilot_aided does not support array reference`);
-          }
+          const compatibility = waveformReferenceCapability({standard: illuminator.standard,
+            referenceMethod: illuminator.reference_channel === undefined ?
+              processingCapabilities(root).referenceMode : 'dedicated',
+            atscReferenceMode: illuminator.atsc_reference_mode});
+          errors.push(...compatibility.errors.map(error => `${field}.atsc_reference_mode ${error}`));
         }
         const laneReference = illuminator.reference_channel === undefined ? null :
           number(illuminator.reference_channel, `${field}.reference_channel`,
@@ -972,17 +1003,7 @@ function validateConfig(config, baseline = null, options = {}) {
         if (frequencies.has(frequency))
           errors.push('process.multi_illuminator illuminator frequencies must be unique');
         frequencies.add(frequency);
-        if (activeLane && Number.isInteger(sampleRate) && Number.isInteger(outputRate) &&
-            sampleRate % outputRate !== 0)
-          errors.push(`${field}.output_sample_rate_hz must divide ${replay.state === true ?
-            'the replay sample rate' : 'capture.fs'} exactly`);
-        if (activeLane && Number.isFinite(bandwidth) && Number.isFinite(outputRate) &&
-            bandwidth >= outputRate)
-          errors.push(`${field}.occupied_bandwidth_hz must be smaller than output_sample_rate_hz`);
-        if (activeLane && Number.isFinite(frequency) && Number.isFinite(bandwidth) &&
-            Number.isFinite(inputFrequency) && Number.isFinite(sampleRate) &&
-            Math.abs(frequency - inputFrequency) + bandwidth / 2 >= sampleRate / 2)
-          errors.push(`${field}.frequency_hz and occupied bandwidth must fit inside the captured passband`);
+        if (activeLane) errors.push(...channelizerPreview(root, illuminator).errors.map(error => `${field}.${error}`));
         if (illuminator.filter_taps_per_phase !== undefined)
           number(illuminator.filter_taps_per_phase,
             `${field}.filter_taps_per_phase`, {integer: true, min: 4, max: 128});
@@ -998,10 +1019,6 @@ function validateConfig(config, baseline = null, options = {}) {
             bandwidth === 5380000 && tapsPerPhase < 48)
           advise(`${field}.filter_taps_per_phase`,
             'A short channel filter attenuates the ATSC 1.0 occupied-band edge; 48 to 64 taps per phase preserves it more accurately.');
-        if (activeLane && Number.isInteger(sampleRate) && Number.isInteger(outputRate) &&
-            outputRate > 0 && sampleRate % outputRate === 0 &&
-            tapsPerPhase * (sampleRate / outputRate) + 1 > 131071)
-          errors.push(`${field} full-quality channel filter exceeds 131,071 taps`);
         const transmitter = requireObject(illuminator.transmitter,
           `${field}.transmitter`);
         string(transmitter.name, `${field}.transmitter.name`);

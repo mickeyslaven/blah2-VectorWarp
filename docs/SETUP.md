@@ -19,7 +19,7 @@ Choose the receiver connected to the radar computer:
 
 - **KrakenSDR Suite V2**
 - **SDRplay RSPduo**
-- **Ettus USRP / UHD**, including B210
+- **Ettus USRP B210** (the currently qualified two-input UHD adapter)
 - **Dual HackRF**
 
 VectorWarp uses the detected connection automatically. Receiver-specific host,
@@ -36,6 +36,39 @@ Enter:
 
 - **Center frequency:** the broadcast frequency used as the illuminator.
 - **Sample rate:** a rate supported by the selected receiver.
+
+The B210 adapter requires both inputs (`A:A A:B`, or `A:B A:A` to reverse
+reference/surveillance) and limits live dual-input capture to 30.72 MS/s.
+Sample-rate suggestions are editable requests, not measured throughput
+guarantees: UHD must report the exact requested rate before capture starts.
+Recorded sample rates are independent of the selected live adapter.
+
+**RF channel extraction → Channelized input** is off for direct full-band
+processing. Enable it to extract one or more explicitly configured bands before
+the same radar stages. Enter the waveform/version, occupied waveform bandwidth
+(not merely the allocated channel width), output sample rate and FIR taps per
+phase. Output rates must divide the input rate exactly, occupied bands must not
+overlap or cross capture Nyquist, and bandwidth must be below the output rate.
+The preview shows passband edges, transition width, decimation and actual tap
+count. Review the CPI budget after choosing long filters or wide inputs.
+
+An independently pinned radar configuration also binds its RF extraction plan:
+capture rate and center, output rate and frequency, occupied bandwidth,
+waveform/version, filter and physical channel mapping. Changing these requires
+reviewing a new pin. Existing pins without this frontend identity remain
+review-required; upgrades do not rewrite them. `api/config-store.js pin-preview`
+prints the proposed downstream and frontend identities for review, and `accept`
+checks a separately supplied requirement. Runtime acceptance additionally checks
+the frontend identity published on each fresh native product.
+
+Changing a standard never changes existing widths, rates or filters. The
+optional 6 MHz ATSC presets are explicit actions for the stated waveform
+profile, not regional defaults; other channel widths remain editable.
+ATSC 1.0 supports pilot suppression of a measured physical reference. ATSC 3.0,
+DVB-T/T2 and other waveforms support raw-IQ extraction; this is not payload
+demodulation or a synthesized broadcast reference. See
+[offline station import](transmitter-catalog.md) for source-aware previews and
+explicit confirmation without automatic retuning.
 
 ### 3. Sites
 

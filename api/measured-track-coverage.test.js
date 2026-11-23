@@ -223,7 +223,7 @@ console.log('PASS measured track coverage: source intervals, coast exclusion, ov
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
-test('kiosk projection keeps every pass and exact measured interval without diagnostic payloads', () => {
+test('kiosk projection preaggregates pass exposure and measured coverage', () => {
   const channel = {selected_channel:'lane', updated_at:123, association_statistics:{evaluation_policy_hash:'a'.repeat(64)},
     measured_track_basis:{version:1,complete:true,aircraft:[{hex:'abc123',
       eligible:[[0,10.25]],scored:[[0,10.25]],measured:[[.25,5.75],[7,10.25]]}]},
@@ -233,11 +233,16 @@ test('kiosk projection keeps every pass and exact measured interval without diag
       cpi_audit:Array(100).fill({large:'diagnostic'}), azimuth_bands:{unused:1}})),
     track_population:{diagnostic:'not used on distance display'}};
   const result = kioskAssociationChannel(channel);
-  assert.equal(result.passes.length, 4000);
-  assert.deepEqual(result.passes, channel.passes.map(({cpi_audit,azimuth_bands,...pass}) => pass));
-  assert.deepEqual(coverage.aggregate([result.measured_track_basis]), coverage.aggregate([channel.measured_track_basis]));
-  assert.deepEqual(coverage.expandBasis(result.measured_track_basis), channel.measured_track_basis);
+  assert.equal(result.passes, undefined);
+  assert.deepEqual(result.cpi_exposure, {eligible_cpis:40000,
+    association_eligible_cpis:32000, detected_cpis:16000,
+    operationally_tracked_cpis:0, eligible_seconds:0,
+    association_eligible_seconds:0});
+  assert.deepEqual(result.measured_track_coverage, coverage.aggregate([channel.measured_track_basis]));
+  assert.equal(result.measured_track_basis, undefined);
   assert.equal(result.association_statistics, channel.association_statistics);
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) < 64 * 1024,
+    'Pass volume cannot grow the long-lived kiosk response');
   assert.ok(JSON.stringify(result).length < JSON.stringify(channel).length / 5);
   assert.ok(!('track_population' in result));
 });
@@ -258,8 +263,12 @@ test('compact interval transport retains sparse breaks, fractional times and inc
 });
 
 test('multi-channel route uses the same projection and leaves normal and compact responses unchanged', () => {
-  const statistics = {liveStatus:()=>({updated_at:1,current_setup_lifetime:{eligible_passes:3}}),
-    measuredTrackBasis:()=>({version:1,complete:true,aircraft:[]}),
+  const basis = {version:1,complete:true,aircraft:[]};
+  const statistics = {liveStatus:()=>({updated_at:1,current_setup_lifetime:{eligible_passes:3,
+      measured_track_coverage: coverage.aggregate([basis]), cpi_exposure:{eligible_cpis:0,
+        association_eligible_cpis:0, detected_cpis:0, operationally_tracked_cpis:0,
+        eligible_seconds:0, association_eligible_seconds:0}}}),
+    measuredTrackBasis:()=>basis,
     associationPasses:()=>[{hex:'abc',started_at:0,finalized_at:1,cpi_audit:['large']}]};
   const multi = Object.create(MultiIlluminatorEvidence.prototype);
   multi.lanes = new Map([['a',{illuminator:{id:'a'},exact:statistics,operational:statistics}]]);
@@ -269,6 +278,6 @@ test('multi-channel route uses the same projection and leaves normal and compact
   assert.ok(full.channels[0].passes[0].cpi_audit);
   assert.equal(multi.associationBasis({compact:true}).channels[0].passes, undefined);
   const source = require('node:fs').readFileSync(require.resolve('./server'),'utf8');
-  assert.match(source,/channels: \[kiosk \? kioskAssociationChannel\(channel\) : channel\]/,
-    'Single-channel receivers use the identical projection');
+  assert.match(source,/if \(kiosk\) return await sendDisplayResponse[\s\S]*?kioskAssociationChannel/,
+    'Single-channel receivers use the bounded projection before materializing detail');
 });

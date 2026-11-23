@@ -71,6 +71,19 @@ const procedural = [
     document.querySelector('.site-dialog-actions button:nth-last-child(2)').click();
   }
 
+  await reports.open({incident: procedural[0][1], status: base, config});
+  const copyButton=[...document.querySelectorAll('#report-dialog button')].find(button=>button.textContent==='Copy report');
+  document.querySelector('#report-dialog button').click();
+  Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{
+    throw new dom.window.DOMException('Write permission denied','NotAllowedError');}}});
+  await copyButton.onclick();
+  assert.equal(document.querySelector('.report-preview').hidden,false);
+  assert.match(document.querySelector('.report-state').textContent,/Select the report text and copy it manually/);
+  let copied='';navigator.clipboard.writeText=async value=>{copied=value;};await copyButton.onclick();
+  assert.equal(document.querySelector('.report-state').textContent,'Report copied.');
+  assert.equal(copied,document.querySelector('.report-preview').textContent);
+  document.getElementById('report-dialog').remove();
+
   const hostile = ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: "Bearer ghp_quoted"',
     'password=\\"correct horse battery staple\\"',
     '{\\"hex\\":\\"a1b2c3\\",\\"flight\\":\\"PRIVATE12\\",\\"icao24\\":\\"abc123\\",\\"flightNumber\\":\\"VW123\\",\\"call_sign\\":\\"SECRET7\\"}',

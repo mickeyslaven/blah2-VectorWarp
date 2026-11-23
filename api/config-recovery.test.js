@@ -9,9 +9,177 @@ const net = require('net');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
 const {readConfig, saveConfig, writable, migrateKnownDefaults,
-  preserveConfigBytesDuringUpgrade, configurationForReceiver} = require('./config-store');
+  preserveConfigBytesDuringUpgrade, configurationForReceiver, readConfigMigrations} = require('./config-store');
+const {createReceiverJournal} = require('./receiver-journal');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-recovery-'));
 const file = path.join(dir, 'config.yml');
+
+function migrationRegressions() {
+  for (const [name, replay, address, preserved] of [
+    ['dormant-replay-default', false, 'type=b200', true],
+    ['active-replay-default', true, 'type=b200', false],
+    ['changed-selector', false, 'localhost', false]
+  ]) {
+    const filename = path.join(dir, `${name}.yml`), config = configurationForReceiver('Usrp');
+    config.capture.replay.state = replay;
+    config.capture.device.address = address;
+    delete config.capture.replay.provenance;
+    fs.writeFileSync(filename, yaml.dump(config));
+    const before = readConfig(filename), journal = createReceiverJournal(filename);
+    journal.write({state: 'already-matched', applicationVerified: true,
+      reconciliationRequired: false, configRevision: before.revision,
+      receipt: {configRevision: before.revision}});
+    assert.equal(migrateKnownDefaults(filename, {report() {}}), true);
+    const after = readConfig(filename);
+    assert.equal(after.validation.valid, true, after.validation.errors.join('; '));
+    assert.equal(after.configMigrations[0].receiverJournalPreserved, preserved, name);
+    assert.equal(journal.recover(after.revision).applicationVerified, preserved, name);
+    assert.deepEqual(after.config.capture.device, {...config.capture.device, address: 'type=b200'});
+    assert.equal(after.config.capture.replay.provenance, 'legacy-unqualified');
+  }
+  // Exact released files, not current presets with a few fields removed. Tags
+  // are recorded in fixture names; tests also run outside a Git checkout.
+  const fixtures = path.join(__dirname, '..', 'test', 'fixtures', 'config-upgrades');
+  for (const name of fs.readdirSync(fixtures)) {
+    const filename = path.join(dir, name);
+    const before = yaml.load(fs.readFileSync(path.join(fixtures, name), 'utf8'));
+    before.location.rx.name = 'never-publish-this-secret';
+    before.truth.adsb.adsb2dd = 'never-publish-this-secret';
+    fs.writeFileSync(filename, yaml.dump(before));
+    const original = fs.readFileSync(filename, 'utf8');
+    const preMigration = readConfig(filename);
+    if (before.process.clutter.followAmbiguity === undefined)
+      assert.equal(preMigration.config.process.clutter.followAmbiguity, false);
+    if (before.capture.device.type === 'Kraken')
+      assert.equal(preMigration.config.capture.device.heimdall.gain_control, 'fixed',
+        'a legacy fixed-gain receiver must not become a measured-gain probe');
+    const reports = [];
+    assert.equal(migrateKnownDefaults(filename, {report: receipt => reports.push(receipt)}), true);
+    const after = readConfig(filename), written = yaml.load(fs.readFileSync(filename, 'utf8'));
+    assert.deepEqual(after.suppliedDefaults, [], `${name}: new optional policy must not reopen setup`);
+    assert.equal(after.setupRequired, before.capture.device.type === 'HackRF',
+      `${name}: only released HackRF placeholder serials need operator repair`);
+    const expectedDevice = structuredClone(before.capture.device);
+    if (expectedDevice.type === 'Usrp' && expectedDevice.address === 'localhost') expectedDevice.address = 'type=b200';
+    assert.deepEqual(written.capture.device, expectedDevice, 'explicit receiver controls are retained');
+    assert.deepEqual(written.location, before.location, 'site geometry is not a preset');
+    assert.equal(written.capture.fs, before.capture.fs);
+    assert.equal(written.capture.fc, before.capture.fc);
+    assert.equal(written.process.detection.pfa, before.process.detection.pfa);
+    assert.equal(written.process.tracker.initiate.M, before.process.tracker.initiate.M);
+    assert.equal(written.truth.adsb.adsb2dd, undefined, 'truth alias is removed by the canonical sanitizer');
+    assert.equal(fs.readFileSync(`${filename}.bak`, 'utf8'), original);
+    assert.equal(after.configMigrations.length, 1);
+    assert.equal(after.configMigrations[0].id, reports[0].id);
+    assert.equal(after.configMigrations[0].configRevision, after.revision);
+    assert.equal(JSON.stringify(after.configMigrations).includes('never-publish-this-secret'), false);
+    assert.equal(fs.statSync(`${filename}.migrations.json`).mode & 0o777, 0o640);
+    // Every changed leaf is covered, including leaves inside removed blocks.
+    const changedLeaves = (left, right, prefix = '') => {
+      if (left && right && typeof left === 'object' && typeof right === 'object')
+        return [...new Set([...Object.keys(left), ...Object.keys(right)])].flatMap(key =>
+          changedLeaves(left[key], right[key], prefix ? `${prefix}.${key}` : key));
+      return JSON.stringify(left) === JSON.stringify(right) ? [] : [prefix];
+    };
+    for (const changed of changedLeaves(before, written))
+      assert.ok(after.configMigrations[0].changes.some(change =>
+        changed === change.path || changed.startsWith(`${change.path}.`)), `${name}: unreceipted change ${changed}`);
+    assert.equal(migrateKnownDefaults(filename), false);
+    const saved = saveConfig(filename, after.config, after.revision);
+    assert.deepEqual(saved.configMigrations, after.configMigrations, 'ordinary saves retain the same one-time notice');
+    assert.equal(migrateKnownDefaults(filename), false);
+  }
+
+  for (const profile of ['balanced', 'conservative', 'permissive']) {
+    const filename = path.join(dir, `profile-${profile}.yml`), config = configurationForReceiver('Usrp');
+    config.process.tracker.profile = profile;
+    delete config.process.tracker.initiate.min_snr_db;
+    delete config.process.tracker.initiate.acceleration_model;
+    fs.writeFileSync(filename, yaml.dump(config));
+    const loaded = readConfig(filename);
+    assert.equal(loaded.config.process.tracker.initiate.min_snr_db,
+      profile === 'conservative' ? 7 : profile === 'permissive' ? 4 : 5);
+    assert.equal(loaded.config.process.tracker.initiate.acceleration_model,
+      profile === 'balanced' ? 'adaptive_gate' : 'hypothesis_bank');
+    assert.equal(migrateKnownDefaults(filename, {report() {}}), true);
+    assert.deepEqual(readConfig(filename).config.process.tracker, loaded.config.process.tracker);
+  }
+
+  const filename = path.join(dir, 'transaction.yml'), sidecar = `${filename}.migrations.json`;
+  const config = configurationForReceiver('Usrp');
+  config.capture.device.address = 'localhost';
+  fs.writeFileSync(filename, yaml.dump(config));
+  const raw = fs.readFileSync(filename, 'utf8');
+  fs.chmodSync(filename, 0o444);
+  assert.throws(() => migrateKnownDefaults(filename, {report() {}}), /read-only/);
+  assert.equal(fs.existsSync(sidecar), false);
+  assert.equal(fs.readFileSync(filename, 'utf8'), raw);
+  fs.chmodSync(filename, 0o640);
+  const rename = fs.renameSync;
+  try {
+    fs.renameSync = (source, target) => {
+      if (target === filename) throw new Error('simulated config rename failure');
+      return rename(source, target);
+    };
+    assert.throws(() => migrateKnownDefaults(filename, {report() {}}), /simulated/);
+  } finally { fs.renameSync = rename; }
+  assert.equal(fs.readFileSync(filename, 'utf8'), raw);
+  assert.deepEqual(readConfigMigrations(filename).configMigrations, [], 'unapplied pending receipts stay hidden');
+  const stagedId = JSON.parse(fs.readFileSync(sidecar)).pending.id;
+  let sidecarRenames = 0;
+  try {
+    fs.renameSync = (source, target) => {
+      if (target === sidecar && ++sidecarRenames === 2) throw new Error('simulated receipt finalization failure');
+      return rename(source, target);
+    };
+    assert.throws(() => migrateKnownDefaults(filename, {report() {}}), /simulated/);
+  } finally { fs.renameSync = rename; }
+  const recovered = readConfig(filename);
+  assert.equal(recovered.configMigrations[0].id, stagedId, 'retry IDs depend on the transition, not wall-clock time');
+  assert.equal(recovered.config.capture.device.address, 'type=b200');
+  saveConfig(filename, recovered.config, recovered.revision);
+  assert.equal(JSON.parse(fs.readFileSync(sidecar)).pending, null);
+  assert.equal(readConfig(filename).configMigrations[0].id, stagedId);
+  const olderHistory = JSON.parse(fs.readFileSync(sidecar));
+  olderHistory.receipts[0].changes[0].reason = 'A previous release used this explanation.';
+  olderHistory.receipts[0].private_note = 'never-publish-this-secret';
+  fs.writeFileSync(sidecar, JSON.stringify(olderHistory));
+  assert.equal(readConfigMigrations(filename).configMigrationError, null,
+    'wording changes in a later release do not invalidate durable history');
+  assert.equal(JSON.stringify(readConfigMigrations(filename)).includes('never-publish-this-secret'), false);
+
+  for (const invalid of ['not json', '{}', 'x'.repeat(131073)]) {
+    fs.writeFileSync(sidecar, invalid);
+    const loaded = readConfig(filename);
+    assert.equal(loaded.setupRequired, false, 'receipt recovery is independent of receiver setup');
+    assert.deepEqual(loaded.configMigrations, []);
+    assert.match(loaded.configMigrationError, /unreadable/);
+    const candidate = {...loaded.config, process: {...loaded.config.process, data: {...loaded.config.process.data, overlap: 0}}};
+    fs.writeFileSync(filename, yaml.dump(candidate));
+    const bytes = fs.readFileSync(filename, 'utf8');
+    assert.throws(() => migrateKnownDefaults(filename, {report() {}}), /unreadable/);
+    assert.equal(fs.readFileSync(filename, 'utf8'), bytes, 'missing durable evidence must block config mutation');
+  }
+  fs.unlinkSync(sidecar);
+  const secret = path.join(dir, 'secret.json');
+  fs.writeFileSync(secret, 'never-publish-this-secret');
+  fs.symlinkSync(secret, sidecar);
+  assert.match(readConfig(filename).configMigrationError, /unreadable/);
+  assert.throws(() => migrateKnownDefaults(filename, {report() {}}), /unreadable/);
+  assert.equal(fs.readFileSync(secret, 'utf8'), 'never-publish-this-secret');
+  fs.unlinkSync(sidecar);
+  for (let index = 0; index < 19; index++) {
+    const candidate = configurationForReceiver('Usrp');
+    candidate.process.data.overlap = 0;
+    candidate.location.rx.name = `Migration test ${index}`;
+    fs.writeFileSync(filename, yaml.dump(candidate));
+    assert.equal(migrateKnownDefaults(filename, {report() {}}), true);
+  }
+  const bounded = readConfigMigrations(filename);
+  assert.equal(bounded.configMigrations.length, 16);
+  assert.equal(bounded.configMigrationOmitted, 3);
+  assert.equal(fs.statSync(sidecar).size < 131072, true);
+}
 
 function request(port, url, timeout = 500) {
   return new Promise((resolve, reject) => {
@@ -45,6 +213,7 @@ function availablePort(usedPorts) {
   let child;
   const conflict = net.createServer();
   try {
+    migrationRegressions();
     for (const name of ['config.yml', 'HackRF', 'Usrp', 'Kraken', 'RspDuo']) {
       const source = name === 'config.yml' ? path.join(__dirname, '..', 'config', name) : file;
       if (name !== 'config.yml') fs.writeFileSync(file, yaml.dump(configurationForReceiver(name)));
@@ -240,6 +409,24 @@ function availablePort(usedPorts) {
       'a byte-preserving package-upgrade start must not create a migration backup');
     assert.ok(response.body.errors.some(error => error.includes('map data port')));
     assert.equal((await request(apiPort, '/api/config/capabilities')).body.editable, true);
+    const migrations = (await request(apiPort, '/api/config/migrations')).body;
+    assert.equal(migrations.schema, 'vectorwarp-config-migrations-v1');
+    assert.deepEqual(response.body.configMigrations, migrations.configMigrations);
+    for (const route of ['/api/system/status?summary=1', '/api/config/capabilities'])
+      assert.deepEqual((await request(apiPort, route)).body.configMigrations, migrations.configMigrations);
+    assert.equal(Object.hasOwn((await request(apiPort, '/api/config')).body, 'configMigrations'), false,
+      'migration metadata never becomes an editable/native YAML field');
+    const pinnedRequirement = JSON.stringify({schema: 'vectorwarp-radar-plan-requirements-v1',
+      semantic_sha256: '0'.repeat(64), required_features: {tracking: true}});
+    fs.writeFileSync(`${file}.radar-plan.json`, pinnedRequirement);
+    const reviewCapabilities = (await request(apiPort, '/api/config/capabilities')).body;
+    assert.equal(reviewCapabilities.setupRequired, false, 'a pin-only rejection does not reopen first-run setup');
+    assert.equal(reviewCapabilities.radarPlanReview.required, true);
+    for (const route of ['/api/system/status?summary=1', '/api/config/migrations'])
+      assert.deepEqual((await request(apiPort, route)).body.radarPlanReview, reviewCapabilities.radarPlanReview);
+    assert.equal(fs.readFileSync(`${file}.radar-plan.json`, 'utf8'), pinnedRequirement,
+      'viewing review instructions cannot install a different pin');
+    fs.unlinkSync(`${file}.radar-plan.json`);
     fs.writeFileSync(file, 'not: [valid yaml');
     assert.equal((await request(apiPort, '/api/config/capabilities')).body.setupRequired, true);
     console.log('First-run, malformed-config recovery, atomic backup, permissions, stale revision and occupied-port tests passed.');

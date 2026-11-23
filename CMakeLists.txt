@@ -202,6 +202,12 @@ if(BUILD_TESTING)
   set_target_properties(testCanonicalIqLineage PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
   add_test(NAME canonicalIqLineageContract COMMAND testCanonicalIqLineage)
+  add_executable(testFrontendPlan test/unit/process/conditioning/TestFrontendPlan.cpp)
+  target_link_libraries(testFrontendPlan PRIVATE blah2FrontendPlan)
+  add_test(NAME frontendPlanParity COMMAND ${CMAKE_COMMAND} -E env
+    VECTORWARP_FRONTEND_PLAN_TEST=$<TARGET_FILE:testFrontendPlan>
+    node --test ${PROJECT_SOURCE_DIR}/api/frontend-plan.test.js)
+  set_tests_properties(frontendPlanParity PROPERTIES TIMEOUT 15)
   set_tests_properties(canonicalIqLineageContract PROPERTIES TIMEOUT 10)
   add_executable(testProductionRawIq
     test/unit/process/analysis/TestProductionRawIq.cpp)

@@ -208,11 +208,11 @@ try {
       `${type}: receiver selection must not disable supported power temporal integration`);
   }
 
-  const mixed = clone(config); mixed.capture.fs = 153600000;
+  const mixed = clone(config); mixed.capture.fs = 30720000;
   mixed.process.data.cpi = .02;
-  mixed.process.multi_illuminator.illuminators = [2400000, 6144000, 300000].map((rate, index) => ({
+  mixed.process.multi_illuminator.illuminators = [1920000, 6144000, 307200].map((rate, index) => ({
     id: `lane-${index}`, enabled: true, standard: index === 2 ? 'FM' : 'ATSC',
-    frequency_hz: 527000000 + index * 10000000,
+    frequency_hz: mixed.capture.fc + (index - 1) * 8000000,
     occupied_bandwidth_hz: rate - 100000, output_sample_rate_hz: rate,
     filter_taps_per_phase: 24, transmitter: config.location.tx}));
   assert.equal(validateConfig(mixed).valid, true, validateConfig(mixed).errors.join('; '));

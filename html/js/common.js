@@ -1257,6 +1257,109 @@ function renderReplayTransport(processor) {
   }, 500);
 }
 
+// Acknowledgement is browser-local; the API retains the migration evidence.
+const acknowledgedConfigMigrations = new Set();
+function showConfigMigrations(receipts, history = false, evidence = {}) {
+  if (!Array.isArray(receipts)) receipts = [];
+  const prefix = `vectorwarp:config-migration:v1:${new URL(liveApiUrl('/api/config'), window.location.href).href}:`;
+  const unseen = receipt => {
+    const key = prefix + receipt.id;
+    if (acknowledgedConfigMigrations.has(key)) return false;
+    try { if (window.localStorage.getItem(key) === 'seen') return false; } catch (_) {}
+    return true;
+  };
+  const selected = receipts.filter(receipt => receipt && typeof receipt.id === 'string' &&
+    Array.isArray(receipt.changes) && receipt.changes.length && (history || unseen(receipt)));
+  const review = evidence.radarPlanReview?.required && typeof evidence.radarPlanReview.id === 'string' ?
+    {...evidence.radarPlanReview, id: `plan-review:${evidence.radarPlanReview.id}`} : null;
+  const showReview = review && (history || unseen(review));
+  if ((!selected.length && !showReview && !(history && (evidence.configMigrationError || evidence.configMigrationOmitted > 0))) ||
+      document.getElementById('config-migration-dialog') ||
+      document.querySelector('dialog[open]')) return;
+  const previouslyFocused = document.activeElement;
+  const dialog = document.createElement('dialog');
+  dialog.id = 'config-migration-dialog';
+  dialog.className = 'site-dialog config-migration-dialog';
+  dialog.setAttribute('aria-labelledby', 'config-migration-title');
+  const title = document.createElement('h2');
+  title.tabIndex = -1;
+  title.id = 'config-migration-title'; title.textContent = history ? 'Upgrade changes' :
+    showReview && !selected.length ? 'Radar plan review required' : 'Configuration updated';
+  dialog.appendChild(title);
+  if (history && (evidence.configMigrationError || evidence.configMigrationOmitted > 0)) {
+    const note = document.createElement('p');
+    note.textContent = evidence.configMigrationError ? `Upgrade history unavailable: ${evidence.configMigrationError}` :
+      `${evidence.configMigrationOmitted} earlier receipts are no longer retained.`;
+    dialog.appendChild(note);
+  }
+  const value = (entry, present) => present === false ? 'not set' : JSON.stringify(entry);
+  if (showReview) {
+    const message = document.createElement('p'); message.textContent = review.message;
+    const instructions = document.createElement('p'); instructions.textContent = review.instructions;
+    const destination = document.createElement('p'); destination.textContent = `Reviewed pin destination: ${review.contractFile}`;
+    dialog.append(message, instructions, destination);
+    for (const [label, command] of [['Preview command arguments', review.previewCommand],
+      ['Verify reviewed file command arguments', review.acceptCommand]]) {
+      if (!Array.isArray(command)) continue;
+      const heading = document.createElement('h3'); heading.textContent = label;
+      const code = document.createElement('pre'); code.textContent = JSON.stringify(command, null, 2);
+      dialog.append(heading, code);
+    }
+  }
+  for (const receipt of selected) {
+    const heading = document.createElement('h3');
+    heading.textContent = receipt.standard || 'Upgrade changes';
+    dialog.appendChild(heading);
+    if (receipt.createdAt) {
+      const date = document.createElement('time');
+      date.dateTime = receipt.createdAt; date.textContent = receipt.createdAt;
+      dialog.appendChild(date);
+    }
+    const changes = document.createElement('ul');
+    for (const change of receipt.changes) {
+      const row = document.createElement('li');
+      const field = document.createElement('code'); field.textContent = change.path;
+      const transition = document.createElement('div');
+      transition.textContent = `${value(change.before, change.beforePresent)} → ${value(change.after, change.afterPresent)}`;
+      const reason = document.createElement('p'); reason.textContent = change.reason || '';
+      row.append(field, transition, reason); changes.appendChild(row);
+    }
+    dialog.appendChild(changes);
+  }
+  const link = document.createElement('a');
+  link.href = liveApiUrl('/api/config/migrations');
+  link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = 'View migration receipts (JSON)';
+  const actions = document.createElement('div'); actions.className = 'site-dialog-actions';
+  const close = document.createElement('button');
+  close.type = 'button'; close.className = 'button-primary'; close.textContent = 'Got it';
+  const acknowledge = () => {
+    for (const receipt of [...selected, ...(showReview ? [review] : [])]) {
+      const key = prefix + receipt.id; acknowledgedConfigMigrations.add(key);
+      try { window.localStorage.setItem(key, 'seen'); } catch (_) {}
+    }
+    if (typeof dialog.close === 'function') dialog.close();
+    dialog.remove(); previouslyFocused?.focus();
+  };
+  close.addEventListener('click', acknowledge);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); acknowledge(); });
+  actions.appendChild(close); dialog.append(link, actions); document.body.appendChild(dialog);
+  if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+  title.focus({preventScroll: true});
+  dialog.scrollTop = 0;
+}
+
+function renderConfigMigrationHistory(target, receipts, evidence = {}) {
+  if (!receipts?.length && !evidence.configMigrationError && !evidence.configMigrationOmitted && !evidence.radarPlanReview?.required) return;
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'button-secondary';
+  button.id = 'config-migration-history';
+  button.textContent = evidence.radarPlanReview?.required ? 'Review radar plan' :
+    evidence.configMigrationError ? 'Upgrade history needs attention' : 'Upgrade changes';
+  button.addEventListener('click', () => showConfigMigrations(receipts, true, evidence));
+  target.appendChild(button);
+  showConfigMigrations(receipts, false, evidence);
+}
+
 async function refreshLiveStatus() {
   const radarLabel = document.getElementById('live-status');
   const adsbLabel = document.getElementById('adsb-status');
@@ -1267,6 +1370,7 @@ async function refreshLiveStatus() {
     const response = await fetchStatusResource(liveApiUrl('/api/system/status?summary=1'), {cache: 'no-store'});
     if (!response.ok) throw new Error('Radar status unavailable');
     const status = await response.json();
+    showConfigMigrations(status.configMigrations, false, status);
     renderReceiverHealth(status);
     const processor = status.processorFresh ? status.processor : null;
     renderReplayTransport(processor);

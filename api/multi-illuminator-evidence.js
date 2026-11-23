@@ -437,12 +437,14 @@ class MultiIlluminatorEvidence {
     return this.suspiciousLedger.attachTruthAssessment(eventId, assessment);
   }
 
-  associationPasses({timing = 'provisional', durationMs = 24 * 60 * 60 * 1000} = {}) {
+  associationPasses({timing = 'provisional', durationMs = 24 * 60 * 60 * 1000,
+    federation = false} = {}) {
     return [...this.lanes.values()].flatMap(lane => {
       const statistics = timing === 'exact' ? lane.exact : lane.operational;
       const channel = lane.illuminator.id;
       return (typeof statistics.associationPasses === 'function' ?
-        statistics.associationPasses({durationMs}) : []).map(pass => ({...pass, channel}));
+        statistics.associationPasses({durationMs, federation}) : [])
+        .map(pass => ({...pass, channel}));
     });
   }
 
@@ -492,12 +494,22 @@ class MultiIlluminatorEvidence {
   }
 
   associationBasis({timing = 'exact', compact = false, kiosk = false} = {}) {
+    this.kioskAssociationBasisCache ||= new Map();
+    const cached = kiosk ? this.kioskAssociationBasisCache.get(timing) : null;
+    if (cached && Date.now() - cached.timestamp < 10000) return cached.value;
     const channels = [...this.lanes.values()].map(lane => {
       const statistics = timing === 'provisional' ? lane.operational : lane.exact;
-      const status = statistics.liveStatus();
+      const status = (compact || kiosk) && typeof statistics.associationStatus === 'function' ?
+        statistics.associationStatus() : statistics.liveStatus();
       if (compact) return {identity: identity(lane.illuminator, statistics),
         selected_channel: lane.illuminator.id, updated_at: status.updated_at,
         association_statistics: associationStatistics(status)};
+      if (kiosk) return measuredCoverage.kioskAssociationChannel({
+        identity: identity(lane.illuminator, statistics),
+        selected_channel: lane.illuminator.id, updated_at: status.updated_at,
+        association_statistics: associationStatistics(status),
+        measured_track_coverage: status.current_setup_lifetime?.measured_track_coverage,
+        cpi_exposure: status.current_setup_lifetime?.cpi_exposure});
       const population = status.track_population || {};
       const channel = {identity: identity(lane.illuminator, statistics),
         measured_track_basis: statistics.measuredTrackBasis(),
@@ -507,10 +519,11 @@ class MultiIlluminatorEvidence {
           aircraft_like_candidates: (population.aircraft_like_candidates || []).slice(0, 10)},
         passes: typeof statistics.associationPasses === 'function' ?
           statistics.associationPasses() : []};
-      return kiosk ? measuredCoverage.kioskAssociationChannel(channel) : channel;
+      return channel;
     });
-    return {schema: 'vectorwarp-association-basis-v1', timing_policy: timing,
-      channels};
+    const value = {schema: 'vectorwarp-association-basis-v1', timing_policy: timing, channels};
+    if (kiosk) this.kioskAssociationBasisCache.set(timing, {timestamp: Date.now(), value});
+    return value;
   }
 
   activeAssociations({timing = 'provisional'} = {}) {
