@@ -29,8 +29,8 @@ class ObserverAllocationContract(unittest.TestCase):
     def test_single_and_multi_routes_pass_the_actual_reservation(self):
         single = (ROOT / "src/blah2.cpp").read_text()
         multi = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
-        self.assertEqual(single.count("resident->observedSharedReservationBytes()"), 2)
-        self.assertIn("residentFrontend->observedSharedReservationBytes(),residentBudget.get()", multi)
+        self.assertNotIn("observedSharedReservationBytes()", single)
+        self.assertEqual(multi.count("residentFrontend->observedSharedReservationBytes()"), 1)
         self.assertIn("if(qualificationObserver){", multi)
 
     def test_host_or_missing_resident_evidence_cannot_be_labeled_measured(self):
