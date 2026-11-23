@@ -7610,6 +7610,24 @@
         "context_tokens:operational-tools": [148325, 148398],
         "context_tokens:production": [1754851, 1754924]
       }
+    },
+    {
+      "owner": "2026-11-23 explicit restricted-procfs cohort provenance",
+      "purpose": "Complete capability-bounded installed-service support by distinguishing deep procfs inspection from a systemd service-plan proof when cross-UID executable, environment, module and process-root inspection is denied. Preserve exact absolute command/config and installed-byte validation and publish the inspection provenance instead of claiming unavailable runtime evidence.",
+      "rejected_reuse": "Do not grant CAP_SYS_PTRACE, catch errors other than PermissionError, report service-plan evidence as procfs inspection, relax command/config hashes, or fork behavior by distro, receiver or host.",
+      "cleanup_plan": "Retain both restricted and deep-inspection regressions, require deep procfs evidence on ordinary release soak hosts, keep exact ceilings without reserve and ratchet later reductions.",
+      "changes": {
+        "lines:tools": [2132, 2147],
+        "context_characters:build-release/contracts": [368184, 368897],
+        "context_characters:operational-tools": [608703, 609416],
+        "context_characters:production": [6995012, 6995725],
+        "context_lines:build-release/contracts": [7454, 7469],
+        "context_lines:operational-tools": [11379, 11394],
+        "context_lines:production": [129601, 129616],
+        "context_tokens:build-release/contracts": [87730, 87870],
+        "context_tokens:operational-tools": [148398, 148538],
+        "context_tokens:production": [1754924, 1755064]
+      }
     }
   ],
   "context_snapshot": {

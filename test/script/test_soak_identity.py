@@ -18,9 +18,15 @@ class ArtifactIdentityTests(unittest.TestCase):
         proc, declared = MagicMock(), Path('/declared/service/cwd')
         proc.__truediv__.return_value.resolve.side_effect = PermissionError('ptrace denied')
         self.assertEqual(IDENTITY.process_cwd(proc, declared), declared)
+        executable = MagicMock()
+        executable.resolve.return_value = Path('/usr/bin/node')
+        self.assertEqual(IDENTITY.process_executable(proc, executable),
+                         (Path('/usr/bin/node'), 'service-plan'))
         proc.__truediv__.return_value.resolve.side_effect = FileNotFoundError('process disappeared')
         with self.assertRaises(FileNotFoundError):
             IDENTITY.process_cwd(proc, declared)
+        with self.assertRaises(FileNotFoundError):
+            IDENTITY.process_executable(proc, executable)
 
     def fixture(self, root):
         root.chmod(0o755)

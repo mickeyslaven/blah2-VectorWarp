@@ -68,6 +68,13 @@ def process_cwd(proc: Path, declared: Path) -> Path:
         return declared
 
 
+def process_executable(proc: Path, declared: Path) -> tuple[Path, str]:
+    try:
+        return (proc / "exe").resolve(strict=True), "procfs"
+    except PermissionError:
+        return declared.resolve(strict=True), "service-plan"
+
+
 def check_candidate_access(release: Path, units: dict) -> None:
     """Prove daemon access despite privileged ExecCondition."""
     if any(values.get("User", "") in {"", "root", "0"} for values in units.values()):
@@ -108,7 +115,7 @@ def preflight(release: Path, config: Path, units: dict | None = None,
     role, units = cohort_units(units)
     check_candidate_access(release, units)
     declared_hashes = check_declared_hashes(release, allow_legacy=allow_legacy)
-    executables, modules, children, processes = {}, {}, {}, []
+    executables, modules, children, inspection, processes = {}, {}, {}, {}, []
     for unit, values in units.items():
         for key in ("BindPaths", "BindReadOnlyPaths", "RootDirectory", "RootImage"):
             if values.get(key):
@@ -137,17 +144,24 @@ def preflight(release: Path, config: Path, units: dict | None = None,
         # daemon-reload changes the next plan, not the already running code.
         if values.get("ActiveState") == "active":
             proc = Path("/proc") / str(int(values["MainPID"]))
-            processes.append(proc)
             running = (proc / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
             check_arguments(unit, running, process_cwd(proc, cwd), release, config)
-            if unit == "vectorwarp-processor.service" and (proc / "exe").resolve(strict=True) != release / "bin/blah2":
+            # Capability-bounded root cannot always inspect another service UID;
+            # systemd's absolute command and installed bytes remain pinned.
+            executable, inspection[unit] = process_executable(proc, Path(running[0]))
+            if unit == "vectorwarp-processor.service" and executable != release / "bin/blah2":
                 raise ValueError("active processor differs from the candidate service plan")
+            if inspection[unit] == "service-plan":
+                executables[unit] = {"path": str(executable), "sha256": file_hash(executable)}
+                modules[unit], children[unit] = {}, []
+                continue
+            processes.append(proc)
             running_environment = dict(item.split("=", 1) for item in
                 (proc / "environ").read_bytes().decode().rstrip("\0").split("\0") if "=" in item)
             check_loader_environment(running_environment, release)
             if unit == UNITS[0] and (running_environment.get("VECTORWARP_NODE_ROLE") or "radar") != role:
                 raise ValueError("active API node role differs from the service plan")
-            executables[unit] = {"path": str((proc / "exe").resolve(strict=True)), "sha256": file_hash(proc / "exe")}
+            executables[unit] = {"path": str(executable), "sha256": file_hash(proc / "exe")}
             modules[unit], children[unit] = loaded_modules(proc, release), []
             pending, seen = [proc], set()
             while pending:
@@ -186,7 +200,8 @@ def preflight(release: Path, config: Path, units: dict | None = None,
             "verifiedDeclaredHashes": declared_hashes,
             "artifactHashProvenance": "installed-byte-pinned" if declared_hashes else "legacy-unpinned",
             "artifactSha256": artifact, "runtimeExecutables": executables,
-            "runtimeModules": modules, "runtimeChildren": children}
+            "runtimeModules": modules, "runtimeChildren": children,
+            "runtimeInspection": inspection}
 
 
 def installed_hashes(release: Path) -> dict:
