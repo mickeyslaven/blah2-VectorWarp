@@ -22,6 +22,16 @@ const config = {capture: {fs: 2400000, fc: 563000000},
 
 assert.equal(defaultEvidenceStatisticsPath(config, {VECTORWARP_MACOS_STATE: '/Users/test/state'}),
   '/Users/test/state/evidence-statistics.json');
+const portableConfig = structuredClone(config);
+portableConfig.process.bearing.manifold_recorder.path =
+  '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl';
+assert.equal(defaultEvidenceStatisticsPath(portableConfig,
+  {VECTORWARP_MACOS_STATE: '/Users/test/state'}),
+  '/Users/test/state/evidence-statistics.json',
+  'macOS lifecycle state must outrank the canonical Linux manifold path');
+assert.equal(defaultEvidenceStatisticsPath(portableConfig,
+  {VECTORWARP_MACOS_STATE: '/Users/test/state', BLAH2_STATISTICS_PATH: '/custom/evidence.json'}),
+  '/custom/evidence.json', 'an explicit evidence path must still outrank lifecycle defaults');
 assert.equal(defaultProvisionalEvidenceStatisticsPath(config,
   {VECTORWARP_MACOS_STATE: '/Users/test/state'}),
   '/Users/test/state/evidence-statistics-provisional.json');

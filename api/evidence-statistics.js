@@ -2438,10 +2438,10 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
 
 function defaultEvidenceStatisticsPath(config, environment = process.env) {
   if (environment.BLAH2_STATISTICS_PATH) return environment.BLAH2_STATISTICS_PATH;
-  const recorderPath = config.process?.bearing?.manifold_recorder?.path;
-  if (recorderPath) return path.join(path.dirname(recorderPath), 'evidence-statistics.json');
   if (environment.VECTORWARP_MACOS_STATE)
     return path.join(environment.VECTORWARP_MACOS_STATE, 'evidence-statistics.json');
+  const recorderPath = config.process?.bearing?.manifold_recorder?.path;
+  if (recorderPath) return path.join(path.dirname(recorderPath), 'evidence-statistics.json');
   return '/var/lib/vectorwarp-api/evidence-statistics.json';
 }
 
