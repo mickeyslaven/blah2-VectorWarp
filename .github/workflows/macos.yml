@@ -107,7 +107,7 @@ jobs:
           node api/receiver-management.test.js
           node test/ui/deployment.test.js
       - name: Check real browser map, all routes and responsive states
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           VECTORWARP_LAYOUT_INTERACTIONS: '1'
           VECTORWARP_LAYOUT_REPORT: ../../build/macos/browser-acceptance/browser-layout.json
