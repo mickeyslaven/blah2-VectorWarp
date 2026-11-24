@@ -54,6 +54,9 @@ public:
   const AccelerationStatus& status() const { return status_; }
   const AccelerationStatus& clutterStatus() const { return clutterStatus_; }
   const ClutterTiming& clutterTiming() const { return clutterTiming_; }
+  // Host diagnostics only; no worker or receiver module ABI fields. Counts
+  // renewed qualification attempts, including failed replacement attempts.
+  uint64_t requalificationCount() const noexcept { return requalifications_; }
   bool available() const { return gpu_ != nullptr; }
   // True while clutter is qualifying or admitted. A rejected clutter stage
   // can retain its independently qualified ambiguity worker.
@@ -109,5 +112,6 @@ private:
   bool recoveryPending_ = false;
   unsigned recoveryFailures_ = 0;
   unsigned recoveryCooldownFrames_ = 0;
+  uint64_t requalifications_ = 0;
 };
 }

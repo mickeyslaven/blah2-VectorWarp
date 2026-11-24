@@ -1,6 +1,7 @@
 #include "Timing.h"
 #include "data/meta/BackendMembership.h"
 #include "data/meta/StageExecution.h"
+#include <stdexcept>
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
@@ -13,6 +14,65 @@ Timing::Timing(uint64_t _tStart)
   tNow = _tStart;
   uptime = 0;
   n = 0;
+  anchorMonoNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    CycleClock::now().time_since_epoch()).count();
+  anchorUtcNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+void Timing::begin_processing_evidence(CycleClock::time_point start,
+    const CaptureEvidence& capture) noexcept
+{
+  if (evidencePending) { fail_processing_evidence("overlapping-cycle"); return; }
+  if (evidenceSequence == UINT64_MAX) { fail_processing_evidence("sequence-overflow"); return; }
+  pendingEvidence = {};
+  pendingEvidence.sequence = ++evidenceSequence;
+  pendingEvidence.startNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    start.time_since_epoch()).count();
+  pendingEvidence.before = capture;
+  evidencePending = true;
+}
+
+void Timing::processing_evidence_outcome(const char* outcome) noexcept
+{
+  if (evidencePending) pendingEvidence.outcome = outcome;
+}
+
+uint64_t Timing::capture_sample_sum(std::initializer_list<uint64_t> values)
+{
+  uint64_t total = 0;
+  for (const auto value : values) {
+    if (value > UINT64_MAX - total) {
+      fail_processing_evidence("capture-counter-overflow");
+      throw std::overflow_error("Capture sample accounting overflow");
+    }
+    total += value;
+  }
+  return total;
+}
+
+void Timing::complete_processing_evidence(CycleClock::time_point end,
+    const CaptureEvidence& capture) noexcept
+{
+  if (!evidencePending) return;
+  pendingEvidence.endNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    end.time_since_epoch()).count();
+  const auto nowMono = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    CycleClock::now().time_since_epoch()).count();
+  const auto nowUtc = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  if (pendingEvidence.endNs <= pendingEvidence.startNs ||
+      pendingEvidence.startNs < anchorMonoNs || uint64_t(nowMono) < anchorMonoNs ||
+      uint64_t(nowMono) - anchorMonoNs > UINT64_MAX - anchorUtcNs)
+    fail_processing_evidence("monotonic-clock-fault");
+  else {
+    const auto mapped = anchorUtcNs + uint64_t(nowMono) - anchorMonoNs;
+    const auto drift = mapped > uint64_t(nowUtc) ? mapped - uint64_t(nowUtc) : uint64_t(nowUtc) - mapped;
+    if (drift > 100000000) fail_processing_evidence("utc-clock-drift");
+  }
+  pendingEvidence.after = capture;
+  cycleEvidence[(pendingEvidence.sequence - 1) % cycleEvidence.size()] = pendingEvidence;
+  evidencePending = false;
 }
 
 void Timing::update(uint64_t _tNow, std::vector<double> _time, std::vector<std::string> _name)
@@ -56,14 +116,63 @@ void Timing::complete_processing_cycle(CycleClock::time_point end) noexcept
 
 std::string Timing::to_json()
 {
+  return to_json(false);
+}
+
+std::string Timing::to_json(bool evidenceOnly)
+{
   rapidjson::Document document;
   document.SetObject();
   rapidjson::Document::AllocatorType &allocator = document.GetAllocator();
+  if (evidenceOnly) document.AddMember("cycleEvidenceOnly", true, allocator);
 
   document.AddMember("timestamp", tNow, allocator);
   document.AddMember("nCpi", n, allocator);
   document.AddMember("uptime_s", uptime/1000.0, allocator);
   document.AddMember("uptime_days", uptime/1000.0/60/60/24, allocator);
+  const auto exact = [&](uint64_t value) {
+    const auto text = std::to_string(value);
+    return rapidjson::Value(text.c_str(), allocator);
+  };
+  rapidjson::Value evidence(rapidjson::kObjectType), records(rapidjson::kArrayType);
+  evidence.AddMember("schema", "vectorwarp-processing-cycles-v1", allocator);
+  evidence.AddMember("anchorMonoNs", exact(anchorMonoNs), allocator);
+  evidence.AddMember("anchorUtcNs", exact(anchorUtcNs), allocator);
+  evidence.AddMember("fault", rapidjson::Value(evidenceFault, allocator), allocator);
+  const auto captureJson = [&](const CaptureEvidence& value) {
+    rapidjson::Value result(rapidjson::kObjectType), lanes(rapidjson::kArrayType);
+    result.AddMember("available", value.available && value.lanes && value.lanes <= value.accepted.size(), allocator);
+    result.AddMember("epoch", exact(value.epoch), allocator);
+    result.AddMember("discontinuities", exact(value.discontinuities), allocator);
+    result.AddMember("requalifications", exact(value.requalifications), allocator);
+    result.AddMember("retiredCpis", exact(value.retiredCpis), allocator);
+    result.AddMember("retiredSamples", exact(value.retiredSamples), allocator);
+    for (std::size_t i = 0; i < std::min(value.lanes, value.accepted.size()); ++i) {
+      rapidjson::Value lane(rapidjson::kObjectType);
+      lane.AddMember("acceptedSamples", exact(value.accepted[i]), allocator);
+      lane.AddMember("droppedSamples", exact(value.dropped[i]), allocator);
+      lane.AddMember("discardedSamples", exact(value.discarded[i]), allocator);
+      lanes.PushBack(lane, allocator);
+    }
+    result.AddMember("lanes", lanes, allocator);
+    return result;
+  };
+  const auto through = evidenceSequence - (evidencePending ? 1 : 0);
+  const auto first = through < cycleEvidence.size() ? 1 : through - cycleEvidence.size() + 1;
+  for (uint64_t sequence = first; sequence && sequence <= through; ++sequence) {
+    const auto& value = cycleEvidence[(sequence - 1) % cycleEvidence.size()];
+    rapidjson::Value record(rapidjson::kObjectType);
+    record.AddMember("sequence", exact(value.sequence), allocator);
+    record.AddMember("startMonoNs", exact(value.startNs), allocator);
+    record.AddMember("endMonoNs", exact(value.endNs), allocator);
+    record.AddMember("drainBatches", exact(value.drainBatches), allocator);
+    record.AddMember("outcome", rapidjson::Value(value.outcome, allocator), allocator);
+    record.AddMember("captureBefore", captureJson(value.before), allocator);
+    record.AddMember("captureAfter", captureJson(value.after), allocator);
+    records.PushBack(record, allocator);
+  }
+  evidence.AddMember("records", records, allocator);
+  document.AddMember("cycleEvidence", evidence, allocator);
   if (processingCycleMetrics[4].samples) {
     rapidjson::Value cycles(rapidjson::kObjectType);
     cycles.AddMember("scope", "completed_multi_consumer_cycles", allocator);

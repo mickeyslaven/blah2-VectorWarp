@@ -179,6 +179,8 @@ jobs:
           python3 test/packaging/test_ci_workflows.py -v
           python3 test/packaging/test_release_soak.py -v
           python3 test/packaging/test_release_ci.py -v
+          python3 test/script/test_release_regression.py -v
+          python3 test/script/test_export_cycles.py -v
       - name: Run repository generator unit and ephemeral integration tests
         run: |
           python3 test/packaging/test_repository.py -v

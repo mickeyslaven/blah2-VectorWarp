@@ -615,6 +615,7 @@ function emptyPass(hex, flight, at, key, evaluationContractHash) {
     firstTruth: null, lastTruth: null, truthHistory: [], cpiAudit: [],
     firstEligibleAt: null, lastEligibleAt: null,
     firstDetectionAt: null, firstTrackAt: null,
+    currentRadarAt: null, currentDetected: false, currentTracked: false,
     detectionTimestamps: [], trackTimestamps: [], sampledBuckets: [],
     qualityCpi: {observed: 0, preexistingEligibleCpis: 0,
       detectedAndTracked: 0, detectedNotTracked: 0, trackedWithoutDetection: 0,
@@ -1683,6 +1684,15 @@ class EvidenceStatistics {
     const associationReason = !integrity.valid ? integrity.reason : associationValid ? null :
       uncertaintyAdmission?.reason || 'uncertainty-admission-unavailable';
     if (!associationValid) detectedAssociation = trackedAssociation = null;
+    const detectedAt = associationTimestamp(detectedAssociation);
+    const trackedAt = associationTimestamp(trackedAssociation);
+    // An older asynchronous truth/radar join must not replace the state from a
+    // newer CPI.  Historical counters below still retain that older evidence.
+    if (!finite(pass.currentRadarAt) || timestamp >= pass.currentRadarAt) {
+      pass.currentRadarAt = timestamp;
+      pass.currentDetected = finite(detectedAt);
+      pass.currentTracked = finite(trackedAt);
+    }
     const age = finite(prediction.timestamp) ? Math.max(0, timestamp / 1000 - prediction.timestamp) : Infinity;
     pass.cpiAudit ||= [];
     pass.cpiAudit.push({timestamp_ms: timestamp, timing, observation_coordinates: coordinates,
@@ -1800,8 +1810,6 @@ class EvidenceStatistics {
             window.truth_samples.length - MAX_ACTIVE_CAPTURE_TIMESTAMPS);
       }
     }
-    const detectedAt = associationTimestamp(detectedAssociation);
-    const trackedAt = associationTimestamp(trackedAssociation);
     if (finite(detectedAt)) {
       pass.detectedFrames += 1;
       pass.firstDetectionAt = finite(pass.firstDetectionAt) ?
@@ -2344,10 +2352,22 @@ class EvidenceStatistics {
   // not build the full scorecard (historical windows, interval unions and
   // track-population quantiles) for their one-second presentation poll.
   activeAssociations() {
+    const now = this.now();
+    const cpiMs = (this.limits?.cpiSeconds || .5) * 1000;
+    const deleteCpis = Math.max(0, Number(this.config.process?.tracker?.delete) || 8);
+    const lagCpis = Math.max(0, Number(this.config.truth?.adsb?.association_lag_cpis) || 0);
+    const freshForMs = Math.max(TRUTH_SAMPLE_MS * 2, cpiMs * (deleteCpis + lagCpis + 1));
     return Object.values(this.state.active).filter(pass => this.isLivePass(pass))
-      .map(pass => ({hex: pass.hex, flight: pass.flight || '',
+      .map(pass => {
+        const current = finite(pass.currentRadarAt) && pass.currentRadarAt <= now + cpiMs &&
+          now - pass.currentRadarAt <= freshForMs;
+        return {hex: pass.hex, flight: pass.flight || '',
+        detected: current && pass.currentDetected === true,
+        tracked: current && pass.currentTracked === true,
         detected_cpis: pass.detectedFrames || 0, tracked_cpis: pass.trackedFrames || 0,
-        last_at: pass.lastAt || 0}));
+        radar_at: pass.currentRadarAt || null,
+        last_at: pass.lastAt || 0};
+      });
   }
 
   associationPasses({durationMs = Infinity, sensitivityEpochId = null,

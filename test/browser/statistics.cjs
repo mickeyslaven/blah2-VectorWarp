@@ -26,11 +26,12 @@ const scorecard = {
     clutterMaxKm: 5, matchDelayKm: .5, matchDopplerHz: 5},
   data_quality: {exact_timed_cpi_frames: 0, unique_cpi_frames: 100,
     nuisance_accounting: 'excluded_from_denominator'},
-  windows: {hour: {...period(10, 8, 6), delay_strata: {bands},
+  windows: {hour: period(10, 8, 6),
+    day: {...period(20, 15, 12), delay_strata: {bands},
       receiver_slant_range_strata: {bands}, elevation_strata: {bands}, azimuth_strata: {bands},
       azimuth_elevation_strata: {bands: {'0–30|30–60': {azimuth_band: '0–30',
         elevation_band: '30–60', eligible_passes: 4, detection_yield: .75, tracking_yield: .5}}}},
-    day: period(20, 15, 12), week: period(30, 23, 18), lifetime: period(40, 32, 24)},
+    week: period(30, 23, 18), lifetime: period(40, 32, 24)},
   mix_adjusted_previous_hour_comparison: {current: {detection_yield: .8, tracking_yield: .6},
     baseline: {detection_yield: .7, tracking_yield: .5}, common_support_coverage: .9,
     common_strata: ['a', 'b'], decision_grade: false},
@@ -73,17 +74,20 @@ const server = http.createServer((request, response) => {
     const page = await browser.newPage({viewport: {width: 1280, height: 900}});
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(`http://127.0.0.1:${server.address().port}/display/statistics/`,
+    await page.goto(`http://127.0.0.1:${server.address().port}/display/statistics/?scope=local`,
       {waitUntil: 'domcontentloaded'});
     await page.waitForSelector('#view-root[data-ready="true"]');
     assert.deepEqual(errors, []);
     assert.deepEqual(await page.locator('.statistics-section > header > h2').allTextContents(),
-      ['Performance', 'Current-hour coverage', 'Aircraft evidence']);
+      ['Past 24 hours']);
     assert.equal(await page.getByText('Provisional timing', {exact: false}).count(), 0);
     assert.equal(await page.getByText('Exact-timed CPI frames', {exact: false}).count(), 0);
-    assert.equal(await page.locator('.metric-card').count(), 4);
-    assert.equal(await page.locator('.statistics-details').getAttribute('open'), null);
-    assert.match(await page.locator('.statistics-score').innerText(), /Lifetime/);
+    assert.equal(await page.locator('.metric-card').count(), 8);
+    assert.deepEqual(await page.locator('.statistics-details').evaluateAll(items =>
+      items.map(item => item.hasAttribute('open'))), [false, false, false]);
+    assert.equal(await page.locator('.statistics-details.statistics-wide > summary').innerText(),
+      'Detailed pass and CPI windows');
+    await page.getByText('Directional values', {exact: true}).click();
     assert.match(await page.getByRole('heading', {name: 'Angle bands'}).locator('..').innerText(),
       /Elevation deg/);
 
@@ -97,9 +101,9 @@ const server = http.createServer((request, response) => {
     assert.equal(layout.bodyWidth, layout.viewport, 'The statistics page must not overflow the mobile viewport');
     assert.equal(layout.columns.trim().split(/\s+/).length, 2, 'Summary cards should remain a compact 2 × 2 grid');
     assert.ok(layout.sectionWidth <= layout.viewport);
-    await page.locator('.statistics-details > summary').click();
+    await page.getByText('Eligibility and scoring details', {exact: true}).click();
     assert.match(await page.getByRole('heading', {name: 'Scoring method'}).locator('..').innerText(),
-      /Operational and descriptive/);
+      /Operational receiver-event alignment/);
     console.log('Statistics DOM: hierarchy, timing de-emphasis, scientific detail and mobile layout passed.');
   } finally {
     if (browser) await browser.close();

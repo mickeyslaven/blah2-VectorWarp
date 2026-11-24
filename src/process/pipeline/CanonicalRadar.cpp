@@ -214,6 +214,7 @@ struct RadarBank::Context
   std::vector<std::complex<double>> qualificationReference;
   std::optional<qualification_observer::Clutter> qualificationClutter;
   uint64_t qualificationSequence=0;
+  uint64_t residentRequalifications = 0;
   uint64_t residentLogical = 0, residentConsumed = 0, residentAllocationLimit = 0;
   uint32_t qualificationLaneIndex = 0;
   bool residentExecuted = false;
@@ -1146,6 +1147,7 @@ struct RadarBank::Context
         residentProducts.reset();
         residentDetections.reset();
         resetAdaptiveState("resident_frontend_failure");
+        if (residentRequalifications != UINT64_MAX) ++residentRequalifications;
         initializePortableAcceleration();
         qualificationResidentRecovery = true;
         if(replay_gpu_qualification::enabled())
@@ -1954,6 +1956,20 @@ std::vector<LaneHealthStatus> RadarBank::laneHealth() const
   std::vector<LaneHealthStatus> result;
   result.reserve(contexts_.size());
   for (const auto& context : contexts_) result.push_back(context->health);
+  return result;
+}
+
+uint64_t RadarBank::requalificationCount() const noexcept
+{
+  uint64_t result = 0;
+  for (const auto& context : contexts_) {
+    const uint64_t counters[]{context->residentRequalifications,
+      context->acceleration ? context->acceleration->requalificationCount() : 0};
+    for (const auto value : counters) {
+      if (value > UINT64_MAX - result) return UINT64_MAX;
+      result += value;
+    }
+  }
   return result;
 }
 

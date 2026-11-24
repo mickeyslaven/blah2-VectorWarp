@@ -352,6 +352,8 @@ public:
   // not produce RadarFrame objects and therefore cannot be inferred from the
   // aggregate acceleration status.
   std::vector<LaneHealthStatus> laneHealth() const;
+  // Exact host-owned renewed qualification attempts; survives input resets.
+  uint64_t requalificationCount() const noexcept;
   // Live ingress may retain the receiver's native FP32 representation when
   // every direct consumer has a qualified resident frontend. Receiver and OS
   // identity are deliberately absent from this capability query.

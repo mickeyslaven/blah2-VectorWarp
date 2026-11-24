@@ -259,8 +259,9 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(result.windows.hour.live_to_date.detected_passes, 1);
   assert.equal(result.windows.hour.live_to_date.tracked_passes, 1);
   assert.deepEqual(stats.activeAssociations(), [{hex: 'abc123', flight: 'TEST1',
-    detected_cpis: 3, tracked_cpis: 3, last_at: clock - 1000}],
-  'The map association feed reads bounded active counters without building a scorecard');
+    detected: true, tracked: true, detected_cpis: 3, tracked_cpis: 3,
+    radar_at: clock - 1000, last_at: clock - 1000}],
+  'The map association feed exposes current ACTIVE measurement support and cumulative diagnostics');
   clock += 121000;
   source.get = async () => ({});
   stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
@@ -364,6 +365,47 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   recovered.close();
   assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).schema,
     'vectorwarp-evidence-statistics-v2');
+
+  let liveClock = 1_850_000_000_000;
+  const liveSource = {async get() { return {abc123: {...prediction,
+    timestamp: liveClock / 1000}}; }};
+  const liveStats = new EvidenceStatistics(config, liveSource, {
+    filename: path.join(directory, 'live-associations.json'), now: () => liveClock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const acceptLive = async ({state = 'ACTIVE', measured = true, detection = true} = {}) => {
+    liveStats.acceptTracker({timestamp: liveClock, data: [{id: 'track-live', state,
+      measured, source: 'unassisted', confidence: 'primary', n: 7,
+      delay: 10 / limits(config).kmPerBin, doppler: 100}]});
+    liveStats.acceptDetection({timestamp: liveClock,
+      delay: detection ? [10] : [], doppler: detection ? [100] : [],
+      snr: detection ? [8] : []});
+    while (liveStats.running) await new Promise(resolve => setImmediate(resolve));
+  };
+  await acceptLive();
+  assert.equal(liveStats.activeAssociations()[0].tracked, true,
+    'A measured ACTIVE tracker cell must appear as current radar support');
+  liveClock += 1000;
+  await acceptLive({state: 'COASTING', measured: false, detection: false});
+  assert.deepEqual(liveStats.activeAssociations()[0], {hex: 'abc123', flight: 'TEST1',
+    detected: false, tracked: false, detected_cpis: 1, tracked_cpis: 1,
+    radar_at: liveClock, last_at: liveClock},
+  'A measured-to-COASTING transition must clear current badges without erasing history');
+  liveClock += 1000;
+  await acceptLive();
+  const reacquired = liveStats.activeAssociations()[0];
+  assert.equal(reacquired.tracked, true,
+    'One fresh measured ACTIVE reacquisition restores the current badge without requalification');
+  const reacquiredAt = reacquired.radar_at;
+  liveStats.observe('abc123', {...prediction, timestamp: (liveClock - 5000) / 1000},
+    liveClock - 5000, null, null, null, null, limits(config));
+  assert.deepEqual(liveStats.activeAssociations()[0], reacquired,
+    'A late older join must not overwrite current radar-support state');
+  liveClock += 10000;
+  assert.deepEqual(liveStats.activeAssociations()[0], {...reacquired,
+    detected: false, tracked: false},
+  'Current badges must expire after a bounded source gap while cumulative counts remain visible');
+  assert.equal(liveStats.state.active.abc123.currentRadarAt, reacquiredAt);
+  liveStats.close();
 
   const outageFilename = path.join(directory, 'detector-outage.json');
   let outageClock = 1_900_000_000_000, sampler, samplerMs, unrefCalled = false;

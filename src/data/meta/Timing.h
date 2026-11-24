@@ -10,6 +10,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <initializer_list>
 #include <stdint.h>
 #include <vector>
 #include <string>
@@ -84,6 +85,28 @@ private:
   uint64_t completedCycleNCpi = 0, completedCycleTimestamp = 0;
 
 public:
+  // Observation-only release evidence. Decimal strings on the wire preserve
+  // uint64 through JavaScript; receiver/module layouts are unchanged.
+  struct CaptureEvidence {
+    bool available = false;
+    uint64_t epoch = 0, discontinuities = 0, requalifications = 0;
+    uint64_t retiredCpis = 0, retiredSamples = 0;
+    std::size_t lanes = 0;
+    std::array<uint64_t, 16> accepted{}, dropped{}, discarded{};
+  };
+private:
+  struct CycleEvidence {
+    uint64_t sequence = 0, startNs = 0, endNs = 0, drainBatches = 0;
+    const char* outcome = "rejected";
+    CaptureEvidence before, after;
+  };
+  std::array<CycleEvidence, 8> cycleEvidence{};
+  CycleEvidence pendingEvidence;
+  uint64_t evidenceSequence = 0, anchorMonoNs = 0, anchorUtcNs = 0;
+  const char* evidenceFault = "";
+  bool evidencePending = false;
+
+public:
   /// @brief Constructor.
   /// @param tStart Start time (POSIX ms).
   /// @return The object.
@@ -99,6 +122,7 @@ public:
   /// @brief Generate JSON of the map and metadata.
   /// @return JSON string.
   std::string to_json();
+  std::string to_json(bool evidenceOnly);
 
   // Only a successfully published ordinary multi-lane CPI is recorded. Its
   // diagnostics appear in a later publication with explicit completed-CPI
@@ -107,6 +131,17 @@ public:
     CycleClock::time_point pipelineStart, CycleClock::time_point pipelineEnd,
     CycleClock::time_point publicationEnd) noexcept;
   void complete_processing_cycle(CycleClock::time_point end) noexcept;
+  bool processing_evidence_pending() const noexcept { return evidencePending; }
+  void begin_processing_evidence(CycleClock::time_point start,
+    const CaptureEvidence& capture) noexcept;
+  void processing_evidence_outcome(const char* outcome) noexcept;
+  void processing_evidence_drain() noexcept { ++pendingEvidence.drainBatches; }
+  void complete_processing_evidence(CycleClock::time_point end,
+    const CaptureEvidence& capture) noexcept;
+  uint64_t capture_sample_sum(std::initializer_list<uint64_t> values);
+  void fail_processing_evidence(const char* reason) noexcept {
+    if (!*evidenceFault) evidenceFault = reason;
+  }
   void set_acceleration(const blah2::AccelerationStatus& value) {
     acceleration = value; ambiguityExecutionSet = false;
   }
