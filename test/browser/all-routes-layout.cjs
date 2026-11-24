@@ -182,7 +182,7 @@ async function connect(endpoint) {
           (!${requireView}||((!root||root.dataset.ready==='true')&&(!config||config.querySelector('.config-tabs'))&&
           (!document.querySelector('.location-map-panel')||document.getElementById('data')?._vectorwarpMap)&&
           (!document.querySelector('#recording-list')||document.querySelector('.recording-card')))))
-          requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)));
+          resolve(true);
         else if(Date.now()-start>20000)reject(new Error('Route not ready: '+location.pathname+' '+document.body.innerText.slice(-400)));
         else setTimeout(check,100);};check();})`);
     };
