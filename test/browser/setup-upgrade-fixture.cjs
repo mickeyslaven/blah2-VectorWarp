@@ -667,8 +667,18 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     accept=true;await click('.local-node-list button');await wait(`${query('.local-node-message')}.textContent.includes('Node removed')`);
     assert.equal(fixture.state.nodes.length,0);
     await wait(`!${query('.local-node-list button')}&&!validationPending&&!upstreamPending`);
-    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    await check(`nodes-recovery-${width}`);
+    const nodeRecovery=await evaluate(`(()=>{const panel=${query('#local-radar-nodes')},message=${query('.local-node-message')};
+      const r=panel.getBoundingClientRect();return {buttons:panel.querySelectorAll('.local-node-list button').length,
+        message:message.textContent.trim(),contained:r.left>=-2&&r.right<=innerWidth+2,
+        overflow:panel.scrollWidth-panel.clientWidth};})()`);
+    assert.equal(nodeRecovery.buttons,0,'Removed peers are absent from the rendered list');
+    assert.match(nodeRecovery.message,/Node removed/,'Node removal reports success');
+    assert.equal(nodeRecovery.contained,true,`Node panel stays inside the ${width}px viewport`);
+    assert.ok(nodeRecovery.overflow<=2,`Node panel has no horizontal overflow at ${width}px`);
+    report.checks.push({route:await evaluate('location.pathname+location.search'),
+      state:`interaction:nodes-recovery-${width}`,width,nodeRecovery});
+    await screenshot(`interaction-nodes-recovery-${width}`);
+    report.interactions.push(`nodes-recovery-${width}`);console.log(`Checked interaction nodes-recovery-${width}`);
   }
   // Header links must navigate through the shipped browser handlers, not just
   // respond to direct URL loads in the route/geometry sweep above.
