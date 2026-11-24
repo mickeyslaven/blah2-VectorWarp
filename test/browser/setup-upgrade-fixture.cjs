@@ -665,7 +665,10 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     let accept=false;client.on('Page.javascriptDialogOpening',()=>client.send('Page.handleJavaScriptDialog',{accept}).catch(()=>{}));
     await click('.local-node-list button');assert.equal(fixture.state.nodes.length,1,'Cancel preserves peer');
     accept=true;await click('.local-node-list button');await wait(`${query('.local-node-message')}.textContent.includes('Node removed')`);
-    assert.equal(fixture.state.nodes.length,0);await check(`nodes-recovery-${width}`);
+    assert.equal(fixture.state.nodes.length,0);
+    await wait(`!${query('.local-node-list button')}&&!validationPending&&!upstreamPending`);
+    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await check(`nodes-recovery-${width}`);
   }
   // Header links must navigate through the shipped browser handlers, not just
   // respond to direct URL loads in the route/geometry sweep above.
