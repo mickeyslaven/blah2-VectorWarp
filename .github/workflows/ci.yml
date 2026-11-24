@@ -31,7 +31,10 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # A cold hosted runner can spend more than 20 minutes resolving the unified
+    # SDR/GPU dependency set before the measured browser acceptance begins.
+    # Preserve the complete gate instead of cancelling healthy work at 45 min.
+    timeout-minutes: 75
     env:
       VCPKG_FORCE_SYSTEM_BINARIES: 1
     steps:

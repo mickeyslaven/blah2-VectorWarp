@@ -144,6 +144,22 @@ def unit_properties(unit):
     return state, int(pid)
 
 
+def settled_processor_state():
+    """Boundedly absorb a concurrent systemd processor transition.
+
+    Starting the management/API path can overlap an already-authorized health
+    recovery.  Treat that as an idempotent start, while retaining the installed
+    start-limit and refusing to wait forever for a wedged unit.
+    """
+    state, pid = unit_properties(PROCESSOR)
+    for _ in range(200):
+        if state not in ('activating', 'deactivating', 'reloading'):
+            return state, pid
+        time.sleep(.1)
+        state, pid = unit_properties(PROCESSOR)
+    return state, pid
+
+
 def action(command):
     if command == 'stop':
         # The helper owns the exclusive package-upgrade lock and broker drain.
@@ -180,7 +196,7 @@ def service_action(command):
         broker_state, broker_pid = unit_properties(BROKER)
         if socket_state != 'active' or broker_state != 'active' or broker_pid <= 0:
             raise RuntimeError('Receiver management did not become ready. Run: vectorwarp status')
-        state, processor_pid = unit_properties(PROCESSOR)
+        state, processor_pid = settled_processor_state()
         if state == 'active':
             if processor_pid <= 0:
                 raise RuntimeError('Radar reports active without a processor PID. Run: vectorwarp status')

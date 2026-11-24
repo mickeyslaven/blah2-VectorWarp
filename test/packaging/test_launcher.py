@@ -102,6 +102,25 @@ class LauncherTests(unittest.TestCase):
                              [call.args[0] for call in run.call_args_list])
             self.assertIn('already running', self.output.getvalue())
 
+    def test_start_absorbs_concurrent_processor_activation(self):
+        observations = iter((('activating', 0), ('active', 78)))
+
+        def transitioning(args, **kwargs):
+            if args[:2] == [launcher.SYSTEMCTL, 'show'] and args[-1] == launcher.PROCESSOR:
+                state, pid = next(observations)
+                return Mock(stdout=f'ActiveState={state}\nMainPID={pid}\n')
+            return self.unit_reply(args, **kwargs)
+
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher, 'run', side_effect=transitioning) as run, \
+             patch.object(launcher, 'api_url', return_value='http://127.0.0.1:3000/'), \
+             patch.object(launcher, 'wait_web'), \
+             patch.object(launcher.time, 'sleep'):
+            launcher.main(['start'])
+            self.assertNotIn([launcher.SYSTEMCTL, 'start', launcher.RESTART],
+                             [call.args[0] for call in run.call_args_list])
+            self.assertIn('already running', self.output.getvalue())
+
     def test_stop_uses_exclusive_helper_without_shared_launcher_guard(self):
         self.guard.stop()
         def stopped(args, **kwargs):
