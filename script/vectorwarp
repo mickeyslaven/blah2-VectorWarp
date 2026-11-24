@@ -144,22 +144,6 @@ def unit_properties(unit):
     return state, int(pid)
 
 
-def settled_processor_state():
-    """Boundedly absorb a concurrent systemd processor transition.
-
-    Starting the management/API path can overlap an already-authorized health
-    recovery.  Treat that as an idempotent start, while retaining the installed
-    start-limit and refusing to wait forever for a wedged unit.
-    """
-    state, pid = unit_properties(PROCESSOR)
-    for _ in range(200):
-        if state not in ('activating', 'deactivating', 'reloading'):
-            return state, pid
-        time.sleep(.1)
-        state, pid = unit_properties(PROCESSOR)
-    return state, pid
-
-
 def action(command):
     if command == 'stop':
         # The helper owns the exclusive package-upgrade lock and broker drain.
@@ -185,9 +169,6 @@ def service_action(command):
         wait_web(url)
         return url
     if command == 'start':
-        # A stopped stack must restore its management path before checked
-        # processor startup. Repeated start may repair the web/broker without
-        # interrupting an already-running processor.
         run([SYSTEMCTL, 'start', SOCKET])
         run([SYSTEMCTL, 'start', BROKER])
         run([SYSTEMCTL, 'start', API])
@@ -196,7 +177,11 @@ def service_action(command):
         broker_state, broker_pid = unit_properties(BROKER)
         if socket_state != 'active' or broker_state != 'active' or broker_pid <= 0:
             raise RuntimeError('Receiver management did not become ready. Run: vectorwarp status')
-        state, processor_pid = settled_processor_state()
+        state, processor_pid = unit_properties(PROCESSOR)
+        deadline = time.monotonic() + 20
+        while state in ('activating', 'deactivating', 'reloading') and time.monotonic() < deadline:
+            time.sleep(.1)
+            state, processor_pid = unit_properties(PROCESSOR)
         if state == 'active':
             if processor_pid <= 0:
                 raise RuntimeError('Radar reports active without a processor PID. Run: vectorwarp status')
@@ -204,8 +189,6 @@ def service_action(command):
             return None
         if state not in ('inactive', 'failed'):
             raise RuntimeError('Radar is changing state. Wait, then check vectorwarp status.')
-        # Same checked startup path used by Save & Restart. Never launch the
-        # DSP as root or bypass receiver reconciliation/local SDK checks.
         run([SYSTEMCTL, 'start', RESTART])
         print('Radar start requested. Check vectorwarp status or the web interface for receiver readiness.')
     elif command == 'stop':

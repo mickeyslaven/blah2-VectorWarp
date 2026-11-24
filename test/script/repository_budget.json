@@ -8603,6 +8603,21 @@
           "context_tokens:installation/contracts": [58826, 58784],
           "context_tokens:operational-tools/contracts": [130948, 130906]
         }
+      },
+      {
+        "owner": "2026-11-24 portable release lifecycle review",
+        "purpose": "Absorb a bounded concurrent processor transition during idempotent installed start and restart while increasing only the hosted CI wall-clock allowance measured on cold runners.",
+        "rejected_reuse": "Do not add distro branches, disable systemd start limits, hide a wedged service, weaken installed-package acceptance, or reserve deleted source headroom for later growth.",
+        "cleanup_plan": "Keep the transition handling in the single installed launcher and permanently ratchet the operational-tools and total production budgets to the reduced implementation size.",
+        "changes": {
+          "lines:script": [27887, 27886],
+          "context_characters:operational-tools": [610559, 610433],
+          "context_characters:production": [7081738, 7081612],
+          "context_lines:operational-tools": [11415, 11414],
+          "context_lines:production": [130926, 130925],
+          "context_tokens:operational-tools": [148810, 148800],
+          "context_tokens:production": [1775460, 1775450]
+        }
       }
   ],
   "context_snapshot": {
