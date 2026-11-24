@@ -297,7 +297,7 @@ async function connect(endpoint) {
         await evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
           const plots=[...document.querySelectorAll('.js-plotly-plot')].filter(e=>e.getClientRects().length&&e.clientWidth>0);
           if(innerWidth===${width}&&innerHeight===${height}&&plots.every(e=>!e._fullLayout||Math.abs(e._fullLayout.width-e.clientWidth)<=3))
-            requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)));
+            resolve(true);
           else if(Date.now()-start>10000)reject(new Error('Responsive viewport/plot resize did not settle'));
           else setTimeout(check,40);};check();})`);
         if(route==='/display/signal/?view=maxhold'&&width<=600) {
@@ -317,7 +317,6 @@ async function connect(endpoint) {
           for(const tab of tabs){
             await evaluate(`document.querySelector('.config-tabs button[data-tab="${tab}"]').click();
               document.querySelectorAll('.config-tab-panels [role="tabpanel"]:not([hidden]) details').forEach(item=>item.open=true);`);
-            await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
             await record(route,`settings:${tab}`);
             if(tab==='process') {
               const decay=await evaluate(`(()=>{const field=document.querySelector('[data-path="display.max_hold_decay_db_per_second"]');

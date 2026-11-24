@@ -122,7 +122,7 @@ async function connect(endpoint) {
       const check = () => {
         const plot = document.getElementById('fusion-scope');
         if (plot?._fullLayout && plot.layout?.images?.length === 4 && document.querySelector('#fusion-diagnostics h2')) {
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+          resolve(true);
         } else if (Date.now() - started > 15000) reject(new Error('Fusion fixture did not render'));
         else setTimeout(check, 50);
       }; check();
@@ -199,7 +199,6 @@ async function connect(endpoint) {
     assert.equal(await evaluate(`document.activeElement.dataset.aircraftId`),'adsb:detected');
     await client.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',text:'\r',unmodifiedText:'\r',windowsVirtualKeyCode:13});
     await client.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
-    await evaluate(`new Promise(resolve=>requestAnimationFrame(resolve))`);
     assert.match(await evaluate(`document.getElementById('fusion-diagnostics').textContent`),/DETECT123.*ADS-B position.*Radar detected/);
     assert.equal(await evaluate(`document.activeElement.dataset.aircraftId`),'adsb:detected');
     await evaluate(`window.statusChanges=0;new MutationObserver(()=>window.statusChanges++).observe(document.getElementById('fusion-scope-status'),{subtree:true,childList:true,characterData:true})`);

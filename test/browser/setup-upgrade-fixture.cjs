@@ -723,7 +723,6 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       await Promise.all([click(`.app-nav a[href="${href}"]`),loaded]);
       await wait(`location.pathname===${JSON.stringify(new URL(href,'http://fixture').pathname)}&&document.readyState==='complete'&&document.querySelector('.app-nav [aria-current="page"]')&&(!document.querySelector('#view-root')||document.querySelector('#view-root').dataset.ready==='true')`);
       if(href.includes('/locations'))await wait('document.getElementById("data")?._vectorwarpMap&&document.querySelector(".maplibregl-canvas")');
-      await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       await check(`navigation-${href.replace(/[^a-z0-9]/gi,'_')}-${width}`);
     }
   }
