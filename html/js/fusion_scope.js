@@ -220,10 +220,11 @@
         radar:displayedAircraft.filter(value=>value.source==='radar').length};
       const countLabels = [['adsb','ADS-B only'],['detected','Radar detected'],['tracked','Radar tracked'],['radar','Independent radar positions']];
       const summary = countLabels.map(([key,label])=>`${counts[key]} ${label}`).join(' · ');
-      const radarStatus = unavailable ? 'Radar data unavailable' : 'Live';
+      const noRadarEvidence = unavailable && counts.detected + counts.tracked + counts.radar === 0;
+      const radarStatus = noRadarEvidence ? 'Radar data unavailable' : 'Live';
       if (distanceView) setHtml(scopeStatus, countLabels.map(([key,label])=>
         `<span class="fusion-glance-metric ${key}"><strong>${counts[key]}</strong><small class="fusion-evidence-key ${key === 'radar' ? 'fused' : key}">${key === 'adsb' ? '' : '<i aria-hidden="true"></i>'}${label}</small></span>`).join('') +
-        (unavailable ? '<span class="fusion-data-warning">Radar data unavailable</span>' : ''));
+        (noRadarEvidence ? '<span class="fusion-data-warning">Radar data unavailable</span>' : ''));
       else if(scopeStatus.textContent !== `${radarStatus} · ${summary}`) scopeStatus.textContent = `${radarStatus} · ${summary}`;
       scopeStatus.hidden = false;
       const emptyMode = !displayedAircraft.length;

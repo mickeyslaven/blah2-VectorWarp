@@ -68,7 +68,9 @@ const source = fs.readFileSync(path.join(__dirname,'../../html/js/fusion_scope.j
 assert.doesNotMatch(source,/Radar-fused|MULTI-SITE<br>FUSED|symbol:'star'|symbol:'diamond'|glow|fusion-evidence-note/);
 assert.match(source,/mode:'text'/,'aircraft labels do not draw another marker');
 assert.match(source,/Independent radar position/,'Fusion legend distinguishes independently solved positions');
-assert.match(source,/hypothesesToggle\.checked \? \[/,'diagnostics require explicit opt-in');
+assert.match(source,/noRadarEvidence = unavailable && counts\.detected \+ counts\.tracked \+ counts\.radar === 0/,
+  'A missing independent position solve cannot hide live detection and tracking evidence');
+assert.match(source,/hypothesesToggle\.checked \? envelopeCandidates\.map/,'diagnostics require explicit opt-in');
 assert.match(source,/transition:\{duration:0\}/);
 assert.match(fs.readFileSync(path.join(__dirname,'../../html/lib/blah2.css'),'utf8'),/prefers-reduced-motion:reduce/);
 const index = fs.readFileSync(path.join(__dirname,'../../html/index.html'),'utf8');

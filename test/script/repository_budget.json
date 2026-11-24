@@ -8666,6 +8666,21 @@
           "lines:script": [27886, 27907],
           "lines:tools": [2147, 2577]
         }
+      },
+      {
+        "owner": "2026-11-24 federated kiosk evidence presentation review",
+        "purpose": "Keep the live kiosk from claiming all radar data is unavailable when detection or tracking evidence is present but an independent multi-site position solution is not currently available.",
+        "rejected_reuse": "Do not falsify geographic-fusion availability, hide a real all-radar outage, add another kiosk transport, or infer a radar position from evaluation-only aircraft truth.",
+        "cleanup_plan": "Retain one evidence-aware warning condition in the existing fusion renderer and no new UI component, route, setting, cache or scientific behavior. These exact ceilings provide no reserve.",
+        "changes": {
+          "context_characters:production": [7111643, 7111751],
+          "context_characters:ui-presentation": [295658, 295766],
+          "context_lines:production": [131419, 131420],
+          "context_lines:ui-presentation": [3276, 3277],
+          "context_tokens:production": [1782186, 1782208],
+          "context_tokens:ui-presentation": [90770, 90792],
+          "lines:html": [14205, 14206]
+        }
       }
   ],
   "context_snapshot": {
