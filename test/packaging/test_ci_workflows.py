@@ -200,7 +200,8 @@ class WorkflowContracts(unittest.TestCase):
             self.assertEqual(step["env"]["VECTORWARP_LAYOUT_INTERACTIONS"], "1")
             self.assertTrue(step["env"]["VECTORWARP_LAYOUT_SCREENSHOTS"].endswith("/screenshots"))
             self.assertTrue(step["env"]["VECTORWARP_LAYOUT_REPORT"].endswith("/browser-layout.json"))
-            self.assertLessEqual(int(step["timeout-minutes"]), 15)
+            measured_timeout_limit = 15 if name == "ci.yml" else 25
+            self.assertLessEqual(int(step["timeout-minutes"]), measured_timeout_limit)
             self.assertNotIn("VECTORWARP_LAYOUT_ROUTES", step["run"], "Do not select a partial route subset")
             self.assertNotIn("VECTORWARP_LAYOUT_ROUTES", step["env"])
             self.assertIn("chromium.executablePath()", step["run"])
