@@ -126,8 +126,17 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     return actions;
   };
   let extraControls;
-  const wait=expression=>evaluate(`new Promise((resolve,reject)=>{const start=Date.now();const check=()=>{
-    if(${expression})resolve(true);else if(Date.now()-start>10000)reject(new Error('UI condition timed out: '+${JSON.stringify(expression)}+' '+[...document.querySelectorAll('#config-message,.config-field-error,.setup-wizard-error')].map(e=>e.textContent).filter(Boolean).join('; ')));else setTimeout(check,40);};check();})`);
+  const wait=async expression=>{
+    const deadline=Date.now()+10000;
+    let result;
+    while(Date.now()<deadline){
+      result=await evaluate(`(()=>({ready:!!(${expression}),detail:[...document.querySelectorAll('#config-message,.config-field-error,.setup-wizard-error')]
+        .map(e=>e.textContent).filter(Boolean).join('; ')}))()`);
+      if(result.ready)return true;
+      await new Promise(resolve=>setTimeout(resolve,40));
+    }
+    throw new Error(`UI condition timed out: ${expression} ${result?.detail||''}`);
+  };
   const query=selector=>`document.querySelector(${JSON.stringify(selector)})`;
   const click=async selector=>{
     await wait(query(selector));
