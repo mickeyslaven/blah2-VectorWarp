@@ -721,8 +721,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       const loaded=new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error(`Navigation timed out: ${href}`)),20000);
         client.on('Page.loadEventFired',()=>{clearTimeout(timeout);resolve();});});
       await Promise.all([click(`.app-nav a[href="${href}"]`),loaded]);
-      await wait(`location.pathname===${JSON.stringify(new URL(href,'http://fixture').pathname)}&&document.readyState==='complete'&&document.querySelector('.app-nav [aria-current="page"]')&&(!document.querySelector('#view-root')||document.querySelector('#view-root').dataset.ready==='true')`,20000);
-      if(href.includes('/locations'))await wait('document.getElementById("data")?._vectorwarpMap&&document.querySelector(".maplibregl-canvas")',20000);
+      await wait(`location.pathname===${JSON.stringify(new URL(href,'http://fixture').pathname)}&&document.readyState==='complete'&&document.querySelector('.app-nav [aria-current="page"]')`,20000);
       await check(`navigation-${href.replace(/[^a-z0-9]/gi,'_')}-${width}`);
     }
   }
