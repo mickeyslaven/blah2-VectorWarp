@@ -224,8 +224,8 @@ assert.doesNotMatch(sourceSetup, /\blibhackrf-devel\b/);
 const packagingGuide = read('packaging/README.md');
 assert.ok(packagingGuide.includes('x86-64 (amd64 / x86_64)'));
 assert.ok(packagingGuide.includes('ARM64 (arm64 / aarch64)'));
-assert.match(releaseWorkflow, /expected eleven package manifests/);
-assert.match(releaseWorkflow, /-eq 11/);
+assert.match(releaseWorkflow, /expected twelve package manifests/);
+assert.match(releaseWorkflow, /-eq 12/);
 assert.match(releaseWorkflow, /Stable tags must point to the exact current main commit/);
 assert.match(releaseWorkflow, /Unsigned test packages must be built from the exact current main commit/);
 assert.match(releaseWorkflow, /'version': version, 'source_commit': source_commit\.lower\(\)/);
@@ -313,6 +313,7 @@ for (const [id, version, ubuntuCodename, versionCodename, machine, expected, dpk
   ['raspbian', '13', '', 'trixie', 'arm64', 'apt/trixie/arm64'],
   ['debian', '13', '', 'trixie', 'aarch64', 'apt/trixie/arm64', 'arm64', 'raspbian'],
   ['fedora', '44', '', '', 'x86_64', 'dnf//x86_64'],
+  ['fedora', '43', '', '', 'x86_64', 'dnf//x86_64'],
   ['fedora', '44', '', '', 'aarch64', 'dnf//aarch64'],
   ['dragonos-focalx', 'FocalX', 'jammy', 'jammy', 'x86_64', 'apt/jammy/amd64'],
   ['dragonos-focalx', 'FocalX', 'jammy', 'jammy', 'arm64', 'apt/jammy/arm64'],
@@ -345,7 +346,9 @@ for (const fixture of [
   ['dragonos', '26.04', 'noble', '', 'x86_64'],
   ['dragonos', 'R1', 'resolute', 'noble', 'x86_64'],
   ['ubuntu', '24.04', 'jammy', 'jammy', 'x86_64'],
-  ['fedora', '44', '', '', 'riscv64']
+  ['fedora', '44', '', '', 'riscv64'],
+  ['fedora', '43', '', '', 'aarch64'],
+  ['fedora', '42', '', '', 'x86_64']
 ]) {
   const actual = detectPlatform(...fixture);
   assert.notEqual(actual.status, 0, `unexpected supported fixture: ${fixture.join('/')}`);

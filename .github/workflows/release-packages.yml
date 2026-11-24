@@ -94,7 +94,7 @@ jobs:
             echo 'Version must be an immutable stable vMAJOR.MINOR.PATCH tag.' >&2; exit 1; }
           printf 'tag=%s\nversion=%s\ntagged_release=%s\n' "$tag" "${tag#v}" "$tagged_release" >> "$GITHUB_OUTPUT"
   fedora-pam:
-    name: Fedora container authentication (${{ matrix.runner }})
+    name: Fedora container authentication (${{ matrix.distro }}, ${{ matrix.runner }})
     needs: validate
     if: inputs.publish != true
     runs-on: ${{ matrix.runner }}
@@ -102,7 +102,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - {distro: fedora43, runner: ubuntu-24.04}
+          - {distro: fedora44, runner: ubuntu-24.04}
+          - {distro: fedora44, runner: ubuntu-24.04-arm}
     steps:
       - name: Check out the exact release revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -113,12 +116,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends podman
       - name: Check Fedora sudo and record host authentication denials
-        run: sudo python3 test/packaging/fedora_apparmor_ci.py -- python3 test/packaging/fedora_pam_preflight.py --evidence fedora-pam-evidence
+        run: sudo python3 test/packaging/fedora_apparmor_ci.py -- python3 test/packaging/fedora_pam_preflight.py --distro '${{ matrix.distro }}' --evidence fedora-pam-evidence
       - name: Preserve authentication preflight evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fedora-pam-${{ matrix.runner }}-${{ github.sha }}
+          name: fedora-pam-${{ matrix.distro }}-${{ matrix.runner }}-${{ github.sha }}
           path: fedora-pam-evidence/
           if-no-files-found: warn
           retention-days: 14
@@ -207,6 +210,7 @@ jobs:
           python3 test/packaging/test_smoke_receiver_status.py -v
           python3 test/packaging/test_sdrplay_distribution.py -v
           python3 test/packaging/test_rpm_local_kit.py -v
+          python3 test/packaging/test_new_target_upgrade.py -v
       - name: Preserve CPU package-gate evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -297,7 +301,7 @@ jobs:
                 fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
               git config --global --add safe.directory /src
               python3 script/artifact-plan.py native-package --format rpm \
-                --version "$VERSION" --distro "fedora44" --node-arch "$NODE_ARCH"
+                --version "$VERSION" --distro "${{ matrix.distro_env }}" --node-arch "$NODE_ARCH"
             '
       - id: node-pin
         run: version=$(python3 script/artifact-plan.py pin node) && echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -322,13 +326,12 @@ jobs:
           set -euo pipefail
           case "$DISTRO" in
             ubuntu24.04) image=docker.io/library/ubuntu:24.04 ;;
-            fedora44) image=registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 ;;
             *) image=$PINNED_IMAGE ;;
           esac
           package=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
           test_command=(bash script/test-installed-package.sh --package "$package" --image "$image"
             --evidence service-evidence --browser-modules test/browser/node_modules)
-          if [[ $DISTRO == fedora44 ]]; then
+          if [[ $DISTRO == fedora43 || $DISTRO == fedora44 ]]; then
             test_command=(python3 test/packaging/fedora_apparmor_ci.py -- "${test_command[@]}")
           fi
           sudo env "PATH=$PATH" "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" \
@@ -336,14 +339,29 @@ jobs:
       - name: Download the previous published package for this exact target
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           candidate_tag=
           if [[ $GITHUB_REF_TYPE == tag ]]; then candidate_tag=$GITHUB_REF_NAME; fi
           mkdir -p previous-package
           script/download-previous-package.sh --distro '${{ matrix.distro }}' \
-            --arch '${{ matrix.arch }}' --candidate-tag "$candidate_tag" \
+            --arch '${{ matrix.arch }}' --candidate-tag "$candidate_tag" --candidate-version "$VERSION" \
             --output previous-package | tee previous-package/resolution.txt
+      - name: Build the pinned preceding release only for a newly introduced target
+        if: matrix.distro == 'fedora43'
+        run: |
+          set -euo pipefail
+          if [[ -f previous-package/bootstrap-request.json ]]; then
+            podman run --rm --userns=keep-id --user root --security-opt label=disable \
+              -v "$GITHUB_WORKSPACE:/src:Z" -w /src '${{ matrix.image }}' \
+              bash -euo pipefail -c '
+                dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config python3 sudo tar unzip util-linux xz zip \
+                  fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
+                python3 test/packaging/new_target_upgrade.py build \
+                  --request previous-package/bootstrap-request.json --output previous-package
+              '
+          fi
       - name: Upgrade the published package to the candidate without replacing the SDR ecosystem
         env:
           DISTRO: ${{ matrix.distro }}
@@ -353,7 +371,6 @@ jobs:
           set -euo pipefail
           case "$DISTRO" in
             ubuntu24.04) image=docker.io/library/ubuntu:24.04 ;;
-            fedora44) image=registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 ;;
             *) image=$PINNED_IMAGE ;;
           esac
           previous=$(find previous-package -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
@@ -363,7 +380,7 @@ jobs:
           if [[ $DISTRO == ubuntu22.04 && $ARCH == amd64 ]]; then
             command+=(--dragonos-uhd-fixture)
           fi
-          if [[ $DISTRO == fedora44 ]]; then
+          if [[ $DISTRO == fedora43 || $DISTRO == fedora44 ]]; then
             command=(python3 test/packaging/fedora_apparmor_ci.py -- "${command[@]}")
           fi
           sudo env "PATH=$PATH" "${command[@]}"
@@ -382,6 +399,7 @@ jobs:
           name: package-upgrade-${{ matrix.distro }}-${{ matrix.arch }}-${{ github.sha }}
           path: |
             previous-package/resolution.txt
+            previous-package/bootstrap-*.json
             upgrade-evidence/
           if-no-files-found: warn
           retention-days: 14
@@ -466,10 +484,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import datetime, json, os, pathlib, re
+          import datetime, json, os, pathlib, re, runpy
           manifests = sorted(pathlib.Path('packages').glob('*.manifest.json'))
-          if len(manifests) != 11:
-              raise SystemExit(f'expected eleven package manifests, found {len(manifests)}')
+          if len(manifests) != 12:
+              raise SystemExit(f'expected twelve package manifests, found {len(manifests)}')
           entries = [json.loads(path.read_text()) for path in manifests]
           required = {'name', 'version', 'release', 'format', 'distro', 'distro_version',
                       'arch', 'filename', 'sha256', 'size', 'backend', 'compiled_receivers',
@@ -482,19 +500,8 @@ jobs:
               raise SystemExit('source commit must be a full Git object ID')
           if any(entry['version'] != version for entry in entries):
               raise SystemExit('every package must match the immutable tag version')
-          expected = {
-              ('deb', 'ubuntu', '22.04', arch) for arch in ('amd64', 'arm64')
-          } | {
-              ('deb', 'ubuntu', '24.04', arch) for arch in ('amd64', 'arm64')
-          } | {
-              ('deb', 'ubuntu', '26.04', arch) for arch in ('amd64', 'arm64')
-          } | {
-              ('deb', 'debian', '12', 'arm64')
-          } | {
-              ('deb', 'debian', '13', arch) for arch in ('amd64', 'arm64')
-          } | {
-              ('rpm', 'fedora', '44', arch) for arch in ('x86_64', 'aarch64')
-          }
+          targets = runpy.run_path('script/artifact-plan.py')['release_targets'](version)
+          expected = {(*target, arch) for target, (_, arches) in targets.items() for arch in arches}
           actual = {(entry['format'], entry['distro'], entry['distro_version'], entry['arch'])
                     for entry in entries}
           if actual != expected:
@@ -569,7 +576,7 @@ jobs:
             --output release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
           gpgv --keyring repository/keys/vectorwarp.gpg \
             release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
-          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 11
+          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 12
       - name: Create draft release for maintainer review
         env:
           GH_TOKEN: ${{ github.token }}

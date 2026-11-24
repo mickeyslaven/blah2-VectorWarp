@@ -18,6 +18,23 @@ SPEC.loader.exec_module(plan)
 
 
 class ArtifactPlanTests(unittest.TestCase):
+    def test_fedora43_preserves_historical_release_inventory(self):
+        previous = plan.release_filenames('0.1.38')
+        current = plan.release_filenames('0.1.39')
+        self.assertEqual(len(previous), 11)
+        self.assertEqual(len(current), 12)
+        self.assertEqual(current - {name.replace('0.1.38', '0.1.39') for name in previous},
+                         {'vectorwarp-0.1.39-1.fc43.x86_64.rpm'})
+        rows = [row for row in plan.matrix()['include'] if row['distro'] == 'fedora43']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]['arch'], rows[0]['node_arch']), ('x86_64', 'x64'))
+        self.assertRegex(rows[0]['image'], r'^registry.fedoraproject.org/fedora@sha256:[a-f0-9]{64}$')
+        for arch, version, accepted in (('x64', '43', True), ('arm64', '43', False), ('x64', '44', False)):
+            result = subprocess.run(['python3', str(ROOT / 'script/artifact-plan.py'), 'target', 'fedora43',
+                '--format', 'rpm', '--node-arch', arch, '--os-id', 'fedora', '--os-version', version],
+                text=True, capture_output=True)
+            self.assertEqual(result.returncode == 0, accepted, result.stderr)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -206,7 +223,8 @@ class ArtifactPlanTests(unittest.TestCase):
 
     def test_one_lifecycle_for_both_architectures_and_package_formats(self):
         for architecture in ("x64", "arm64"):
-            for kind, distro in (("deb", "debian13"), ("rpm", "fedora44")):
+            for kind, distro in (("deb", "debian13"), ("rpm", "fedora44"),
+                                *((('rpm', 'fedora43'),) if architecture == 'x64' else ())):
                 with self.subTest(architecture=architecture, format=kind):
                     (self.root / "dist").mkdir(exist_ok=True)
                     for old in (self.root / "dist").glob("*"): old.unlink()

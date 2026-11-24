@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import pathlib
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -40,6 +41,20 @@ class Session:
 
 
 class DnfTest(unittest.TestCase):
+    def test_platform_accepts_only_packaged_fedora_releases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filename = pathlib.Path(directory) / 'os-release'
+            for version in ('43', '44'):
+                filename.write_text(f'ID=fedora\nVERSION_ID="{version}"\n')
+                self.assertEqual(adapter.platform(filename),
+                                 {'id': 'fedora', 'version': version})
+            for body in ('ID=fedora\nVERSION_ID=42\n',
+                         'ID=other\nVERSION_ID=44\n'):
+                filename.write_text(body)
+                with self.assertRaises(adapter.Refused) as caught:
+                    adapter.platform(filename)
+                self.assertEqual(caught.exception.code, 'UNSUPPORTED_PLATFORM')
+
     def test_shared_native_uhd_floor_is_41(self):
         for version in ['4.1.0.5-3', '4.6.0.0-2', '1:4.9.0.1-1.fc44']:
             adapter.common.require_uhd_version(version)

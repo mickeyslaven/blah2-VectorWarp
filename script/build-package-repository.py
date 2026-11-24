@@ -56,7 +56,7 @@ def release_installation(manifest):
 
     for distro, distro_version in (("ubuntu", "22.04"), ("ubuntu", "24.04"),
                                    ("ubuntu", "26.04"), ("debian", "12"), ("debian", "13"),
-                                   ("fedora", "44")):
+                                   ("fedora", "43"), ("fedora", "44")):
         row(f"{distro.title()} {distro_version}", distro, distro_version)
     for distro_version in ("22.04", "24.04", "26.04"):
         row(f"DragonOS · Ubuntu {distro_version} base", "ubuntu", distro_version)
@@ -132,7 +132,7 @@ Your package manager selects the right package and handles dependencies and upda
 You do not need to choose an individual download.</p>
 <nav class="install-choices" aria-label="Recommended installation methods">
 <a href="#install-linux"><strong>Ubuntu, Debian &amp; DragonOS</strong><span>APT · recommended for these Linux systems</span></a>
-<a href="#install-fedora"><strong>Fedora 44</strong><span>DNF · recommended for Fedora</span></a>
+<a href="#install-fedora"><strong>Fedora 43 / 44</strong><span>DNF · recommended for Fedora</span></a>
 <a href="#install-macos"><strong>macOS</strong><span>Homebrew · recommended for Mac</span></a>
 </nav>
 <p>Linux: keep your existing supported 64-bit OS. The installer selects its matching
@@ -141,7 +141,7 @@ installs prerequisites, configures the repository, installs VectorWarp and opens
 the web interface. Enter your administrator password if prompted.</p>
 <h4 id="install-linux">Ubuntu, Debian and compatible DragonOS — APT</h4>
 <pre><code>{escape(apt_install)}</code></pre>
-<h4 id="install-fedora">Fedora 44 — DNF</h4>
+<h4 id="install-fedora">Fedora 43 (x86-64) / 44 — DNF</h4>
 <pre><code>{escape(fedora_install)}</code></pre>
 <p>The Linux commands download over HTTPS and verify the repository's pinned signing
 key. The <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/script/install-release.sh">installer source</a>

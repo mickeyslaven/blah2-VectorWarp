@@ -130,6 +130,7 @@ Use the radar computer's hostname or IP address in place of
 | Debian | 12 Bookworm | ARM64 | APT |
 | Debian | 13 Trixie | x86-64 or ARM64 | APT |
 | Fedora | 44 | x86-64 or ARM64 | DNF |
+| Fedora | 43 | x86-64 | DNF |
 | DragonOS | Matching supported Ubuntu base | x86-64 or ARM64 | APT |
 | Raspberry Pi OS | Debian 12 or 13 base | ARM64 | APT |
 | macOS | Current supported release | Apple Silicon | Homebrew |

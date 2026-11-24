@@ -106,9 +106,10 @@ detect_platform() {
   esac
   case "$os_id" in
     fedora)
-      [[ $os_version == 44 ]] || die "Fedora $os_version is not packaged; use Fedora 44 or build from source"
-      manager=dnf; codename=; package_arch=$rpm_arch
-      platform_description="Fedora 44 ($package_arch RPM)"; return ;;
+      [[ $os_version == 44 || ( $os_version == 43 && $rpm_arch == x86_64 ) ]] ||
+        die "Fedora $os_version ($rpm_arch) is not packaged; use Fedora 43 x86-64 or Fedora 44, or build from source"
+      manager=dnf; codename=; package_arch=$rpm_arch; distro_version=$os_version
+      platform_description="Fedora $os_version ($package_arch RPM)"; return ;;
     ubuntu) base_version=$os_version ;;
     debian)
       family=debian; base_version=$os_version
@@ -139,7 +140,7 @@ detect_platform() {
         22.04|24.04|26.04)
           [[ $os_version == "$base_version" ]] || die 'conflicting DragonOS Ubuntu version and codename in /etc/os-release' ;;
       esac ;;
-    *) die "distribution '$os_id' is not packaged; supported systems are Fedora 44, Debian 12 ARM64, Debian 13, Ubuntu 22.04/24.04/26.04, matching DragonOS editions and 64-bit Raspberry Pi OS Bookworm or Trixie" ;;
+    *) die "distribution '$os_id' is not packaged; supported systems are Fedora 43 x86-64, Fedora 44, Debian 12 ARM64, Debian 13, Ubuntu 22.04/24.04/26.04, matching DragonOS editions and 64-bit Raspberry Pi OS Bookworm or Trixie" ;;
   esac
   if $pi; then
     [[ $machine == aarch64 || $machine == arm64 ]] ||
@@ -293,7 +294,7 @@ else
   {
     printf '[vectorwarp]\n'
     printf 'name=VectorWarp signed packages\n'
-    printf 'baseurl=%s/rpm/fedora/44/$basearch\n' "$REPOSITORY_URL"
+    printf 'baseurl=%s/rpm/fedora/%s/$basearch\n' "$REPOSITORY_URL" "$distro_version"
     printf 'enabled=1\n'
     printf 'gpgcheck=1\n'
     printf 'repo_gpgcheck=1\n'

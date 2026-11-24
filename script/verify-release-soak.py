@@ -31,6 +31,7 @@ def module(name, path):
 
 identity = module("soak_identity", ROOT / "tools/vectorwarp_soak_identity.py")
 monitor = module("soak_monitor", ROOT / "tools/vectorwarp_two_node_soak.py")
+artifact_plan = module("artifact_plan", ROOT / "script/artifact-plan.py")
 
 
 def require(condition, message):
@@ -175,7 +176,8 @@ def inventory(packages, manifest, source, version):
         require(identity.file_hash(package) == entry["sha256"] and package.stat().st_size == entry["size"],
                 "candidate package bytes differ from manifest")
         result[name] = {"packageSha256": entry["sha256"], **payload(package, source, version)}
-    require(len(result) == 11, "promotion requires the complete eleven-package candidate")
+    require(set(result) == artifact_plan.release_filenames(version),
+            "promotion requires the complete exact package target matrix")
     return result
 
 

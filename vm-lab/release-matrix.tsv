@@ -4,6 +4,7 @@ ubuntu2404-amd64	ubuntu	24.04	x86_64	ubuntu24.04/amd64
 ubuntu2604-amd64	ubuntu	26.04	x86_64	ubuntu26.04/amd64
 debian13-amd64	debian	13	x86_64	debian13/amd64
 fedora44-x86_64	fedora	44	x86_64	fedora44/x86_64
+fedora43-x86_64	fedora	43	x86_64	fedora43/x86_64
 dragonos-focalx-r37.1	dragonos	22.04	x86_64	ubuntu22.04/amd64
 dragonos-noble-r9	dragonos	24.04	x86_64	ubuntu24.04/amd64
 dragonos-resolute-r1	dragonos	26.04	x86_64	ubuntu26.04/amd64

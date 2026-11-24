@@ -6,14 +6,15 @@ set -euo pipefail
 
 die() { printf 'download-previous-package: %s\n' "$*" >&2; exit 1; }
 repo=mickeyslaven/blah2-VectorWarp
-distro= arch= output= candidate_tag=
+distro= arch= output= candidate_tag= candidate_version=
 while (($#)); do
   case "$1" in
-    --repo|--distro|--arch|--output|--candidate-tag)
+    --repo|--distro|--arch|--output|--candidate-tag|--candidate-version)
       (($# >= 2)) || die "missing value for $1"
       case "$1" in
         --repo) repo=$2;; --distro) distro=$2;; --arch) arch=$2;;
         --output) output=$2;; --candidate-tag) candidate_tag=$2;;
+        --candidate-version) candidate_version=$2;;
       esac
       shift 2 ;;
     *) die "unknown argument: $1" ;;
@@ -38,11 +39,19 @@ gh api -H 'Accept: application/octet-stream' "$manifest_url" >"$manifest"
 artifact_plan=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/artifact-plan.py
 distribution=$(python3 "$artifact_plan" distribution "$distro") || exit 1
 read -r family version format <<<"$distribution"
-filename=$(jq -er --arg format "$format" --arg family "$family" --arg version "$version" --arg arch "$arch" '
+filename=$(jq -r --arg format "$format" --arg family "$family" --arg version "$version" --arg arch "$arch" '
   [.packages[] | select(.format == $format and .distro == $family and
     .distro_version == $version and .arch == $arch)] |
-  if length == 1 then .[0].filename else error("package matrix match was not unique") end' "$manifest") ||
+  if length == 1 then .[0].filename elif length == 0 then "" else error("package matrix match was not unique") end' "$manifest") ||
   die "$tag has no unique $distro/$arch package"
+if [[ -z $filename ]]; then
+  python3 "$(dirname "$artifact_plan")/../test/packaging/new_target_upgrade.py" prepare \
+    --distro "$distro" --arch "$arch" --candidate "$candidate_version" --tag "$tag" \
+    --manifest "$manifest" --output "$output/bootstrap-request.json" ||
+    die "$tag has no package or qualified introduction baseline for $distro/$arch"
+  printf 'tag=%s\nbootstrap_request=%s\n' "$tag" "$output/bootstrap-request.json"
+  exit 0
+fi
 asset_url=$(jq -er --arg filename "$filename" '.assets[] | select(.name == $filename) | .url' <<<"$release_json") ||
   die "$tag does not contain $filename"
 gh api -H 'Accept: application/octet-stream' "$asset_url" >"$output/$filename"

@@ -48,7 +48,7 @@ class DistributionTests(unittest.TestCase):
         uploads = [step for step in package['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
         self.assertEqual([step['with']['path'] for step in uploads], [
             'service-evidence/',
-            'previous-package/resolution.txt\nupgrade-evidence/\n',
+            'previous-package/resolution.txt\nprevious-package/bootstrap-*.json\nupgrade-evidence/\n',
             'dist/'
         ])
         evidence = uploads[0]
@@ -69,6 +69,7 @@ class DistributionTests(unittest.TestCase):
                     for arch in ('amd64', 'arm64')]
         expected += [('debian12', 'deb', 'arm64'),
                      ('debian13', 'deb', 'amd64'), ('debian13', 'deb', 'arm64'),
+                     ('fedora43', 'rpm', 'x86_64'),
                      ('fedora44', 'rpm', 'x86_64'), ('fedora44', 'rpm', 'aarch64')]
         # Check each supported target (including Bookworm ARM64), not just a
         # count that could hide a missing target behind a duplicated entry.

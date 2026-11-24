@@ -1,0 +1,34 @@
+{
+  "schema": "vectorwarp-release-regression-policy-v1",
+  "status": "awaiting-reviewed-measurements-and-limits",
+  "reviewedAtEpoch": null,
+  "reviewEvidenceSha256": null,
+  "measurementMethodSha256": null,
+  "selectionMethodSha256": null,
+  "tuningCutoffEpoch": null,
+  "truthUsage": "offline-evaluation-only",
+  "minimumFreeBytes": null,
+  "nodes": {
+    "REPLACE_WITH_EXACT_BINDING_NODE": {
+      "baseline": {
+        "sourceCommit": null,
+        "artifactSha256": null,
+        "configSha256": null
+      },
+      "exposure": {
+        "retrospective-positive": {"minimumPasses": null, "minimumSeconds": null, "minimumOpportunities": null},
+        "retrospective-negative": {"minimumPasses": null, "minimumSeconds": null, "minimumOpportunities": 0},
+        "prospective-positive": {"minimumPasses": null, "minimumSeconds": null, "minimumOpportunities": null},
+        "prospective-negative": {"minimumPasses": null, "minimumSeconds": null, "minimumOpportunities": 0}
+      },
+      "limits": {
+        "minimumDetectionFraction": null,
+        "minimumDetectionDelta": null,
+        "minimumContinuityFraction": null,
+        "minimumContinuityDelta": null,
+        "maximumFalseTracksPerHour": null,
+        "maximumCompletedCycleMs": null
+      }
+    }
+  }
+}
