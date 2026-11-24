@@ -652,25 +652,38 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     'Upgrade notice opens with its title visible and focused, not scrolled to acknowledgement');
     assert.match(await evaluate(`${query('#config-migration-dialog')}.textContent`),/Do not repeat receiver setup/);
     await check(`migration-review-${width}`);
+    const mark=label=>{if(width===1440)console.log(`Node recovery diagnostic: ${label}`);};
+    mark('migration review recorded');
     if(width===390)await popup('#config-migration-dialog a');
     else {
+      mark('receipt inspection start');
       const receiptLink=await evaluate(`(()=>{const e=${query('#config-migration-dialog a')};return {href:e.href,target:e.target,rel:e.rel};})()`);
+      mark('receipt inspection complete');
       assert.equal(new URL(receiptLink.href).origin,await evaluate('location.origin'),'Desktop receipt link stays fixture-local');
+      mark('receipt origin complete');
       assert.equal(receiptLink.target,'_blank','Desktop receipt link preserves a separate review surface');
       assert.match(receiptLink.rel,/noreferrer/,'Desktop receipt link isolates the review surface');
     }
+    mark('acknowledgement click start');
     await click('#config-migration-dialog button');
+    mark('acknowledgement click complete');
     await navigate(route);assert.equal(await evaluate('!!document.querySelector("#config-migration-dialog")'),false,'Acknowledgement survives reload');
+    mark('acknowledgement reload complete');
     await click('#config-migration-history');await wait(query('#config-migration-dialog[open]'));
+    mark('history dialog open');
     await client.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await client.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await wait('!document.querySelector("#config-migration-dialog")');assert.equal(fixture.state.writes.length,0,'Acknowledgement never writes settings');
+    mark('history dialog closed');
     await text('#local-radar-nodes [name="host"]','bad');await click('#local-radar-nodes button[type="submit"]');
     await wait(`${query('.local-node-message')}.textContent.includes('IP address')`);
+    mark('invalid node complete');
     await text('#local-radar-nodes [name="host"]','192.0.2.10');fixture.state.failNode=true;
     await click('#local-radar-nodes button[type="submit"]');await wait(`${query('.local-node-message')}.textContent.includes('try again')`);
+    mark('failed node complete');
     fixture.state.failNode=false;await click('#local-radar-nodes button[type="submit"]');
     await wait(query('.local-node-list button'));assert.equal(fixture.state.nodes.length,1);
+    mark('node added');
     let accept=false,dialogClosed;
     client.on('Page.javascriptDialogOpening',()=>client.send('Page.handleJavaScriptDialog',{accept}).catch(()=>{}));
     client.on('Page.javascriptDialogClosed',()=>{dialogClosed?.();dialogClosed=null;});
@@ -680,13 +693,17 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       await click('.local-node-list button');await closed;
     };
     await clickRemoval();assert.equal(fixture.state.nodes.length,1,'Cancel preserves peer');
+    mark('cancel removal complete');
     accept=true;await clickRemoval();await wait(`${query('.local-node-message')}.textContent.includes('Node removed')`);
+    mark('accepted removal complete');
     assert.equal(fixture.state.nodes.length,0);
     await wait(`!${query('.local-node-list button')}&&!validationPending&&!upstreamPending`);
+    mark('node state settled');
     const nodeRecovery=await evaluate(`(()=>{const panel=${query('#local-radar-nodes')},message=${query('.local-node-message')};
       const r=panel.getBoundingClientRect();return {buttons:panel.querySelectorAll('.local-node-list button').length,
         message:message.textContent.trim(),contained:r.left>=-2&&r.right<=innerWidth+2,
         overflow:panel.scrollWidth-panel.clientWidth};})()`);
+    mark('node layout inspected');
     assert.equal(nodeRecovery.buttons,0,'Removed peers are absent from the rendered list');
     assert.match(nodeRecovery.message,/Node removed/,'Node removal reports success');
     assert.equal(nodeRecovery.contained,true,`Node panel stays inside the ${width}px viewport`);
