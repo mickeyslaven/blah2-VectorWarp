@@ -9,7 +9,7 @@ const assetVersions = {'error_reporting.js': 'reporting-4', 'transmitter_catalog
   'plot_map.js': 'ui-consistency-36', 'config_ui.js': 'ui-consistency-38', 'config_profiles.js': 'ui-consistency-37',
   'processing_capabilities.js': 'ui-consistency-37', 'setup_assistant.js': 'ui-consistency-37',
   'measured_track_coverage.js': 'ui-consistency-37',
-  'fusion_aircraft.js': 'ui-consistency-33'};
+  'fusion_aircraft.js': 'ui-consistency-33', 'fusion_scope.js': 'ui-consistency-33'};
 // Changing a dynamic dependency also changes the loader URL at every entry point.
 const assets = ['error_reporting.js', 'transmitter_catalog.js', 'common.js', 'insights.js', 'plot_map.js', 'blah2.css', 'consolidated_views.js',
   'plot_detection.js', 'plot_timing.js', 'plot_spectrum.js', 'recordings.js', 'config_ui.js', 'setup_assistant.js',
