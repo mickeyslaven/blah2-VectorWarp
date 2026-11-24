@@ -141,8 +141,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
   const click=async selector=>{
     await wait(query(selector));
     await wait('typeof validationPending==="undefined"||!validationPending');
-    const point=await evaluate(`(async()=>{const e=${query(selector)};e.scrollIntoView({block:'center',behavior:'instant'});
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const point=await evaluate(`(()=>{const e=${query(selector)};e.scrollIntoView({block:'center',behavior:'instant'});
       if(e.disabled)throw new Error('Disabled action: '+${JSON.stringify(selector)});
       const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);
       if(!hit||!(hit===e||e.contains(hit)))throw new Error('Covered or clipped action: '+${JSON.stringify(selector)}+' '+JSON.stringify({rect:r.toJSON(),hit:hit?.outerHTML.slice(0,300),ancestors:(()=>{const a=[];let p=e;while(p){if(p.hidden||p.tagName==='DETAILS')a.push({tag:p.tagName,hidden:p.hidden,open:p.open,label:p.querySelector(':scope > summary')?.textContent});p=p.parentElement;}return a;})()}));
