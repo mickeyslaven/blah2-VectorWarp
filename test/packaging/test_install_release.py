@@ -107,6 +107,13 @@ class InstallerFailureTests(unittest.TestCase):
             fi
             /usr/bin/cp "$TEST_CURL_SOURCE" "$output"
         """)
+        cls.write_executable("uname", """
+            if [ "${1:-}" = -m ] && [ -n "${TEST_UNAME_MACHINE:-}" ]; then
+              printf '%s\n' "$TEST_UNAME_MACHINE"
+              exit 0
+            fi
+            exec /usr/bin/uname "$@"
+        """)
         cls.path = str(cls.fake_bin) + os.pathsep + os.environ.get("PATH", "")
 
     @classmethod
@@ -290,8 +297,10 @@ class InstallerFailureTests(unittest.TestCase):
                 events = self.log.read_text().splitlines()
                 self.assertEqual(sum(event.startswith("install-system ") for event in events), writes)
                 other = [event for event in events if not event.startswith("install-system ")]
-                self.assertEqual(other, ["gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp"]
-                                 if fedora else [])
+                self.assertEqual(other, [
+                    "gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp",
+                    "baseurl=https://mickeyslaven.github.io/blah2-VectorWarp/rpm/fedora/44/$basearch",
+                ] if fedora else [])
                 self.log.write_text("")
                 denied = self.invoke("--repo-only", "--key-file", str(self.public),
                                      "--fingerprint", "0" * 40,
@@ -335,7 +344,8 @@ class InstallerFailureTests(unittest.TestCase):
 
     def test_fedora43_installs_from_its_own_repository(self):
         result = self.invoke('--key-file', str(self.public), '--fingerprint', self.fingerprint,
-                             simulated_root=True, fedora=43)
+                             simulated_root=True, fedora=43,
+                             environment={"TEST_UNAME_MACHINE": "x86_64"})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('/rpm/fedora/43/$basearch', self.log.read_text())
         self.assertNotIn('/rpm/fedora/44/', self.log.read_text())
