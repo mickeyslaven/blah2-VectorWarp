@@ -264,10 +264,12 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
         await click(selector);await wait(query('#report-dialog[open]'));await extraControls('#report-dialog');
         await button('#report-dialog','View report');await observeActions();
         await client.send('Browser.setPermission',{origin:await evaluate('location.origin'),permission:{name:'clipboard-write'},setting:'denied'});
+        await evaluate(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new DOMException('Clipboard denied','NotAllowedError');}}})`);
         await button('#report-dialog','Copy report');
         await wait('document.querySelector(".report-state").textContent.includes("copy it manually")');
         assert.equal(await evaluate('document.querySelector(".report-preview").hidden'),false);
         await check('clipboard-denied-recovery');
+        await evaluate(`delete navigator.clipboard`);
         await client.send('Browser.grantPermissions',{origin:await evaluate('location.origin'),permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
         await button('#report-dialog','Copy report');
         await wait('document.querySelector(".report-state").textContent==="Report copied."');
