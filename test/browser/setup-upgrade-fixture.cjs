@@ -125,12 +125,22 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       else if(withheldActions.get(action.key)==='Disabled in the rendered capability/draft state')withheldActions.delete(action.key);}
     return actions;
   };
+  const inspect=async expression=>{
+    try{return await evaluate(expression);}
+    catch(error){
+      if(!/Runtime\.evaluate timed out/.test(error.message))throw error;
+      report.transientEvaluationTimeouts??=[];
+      report.transientEvaluationTimeouts.push({route:await evaluate('location.pathname+location.search').catch(()=>null),expression});
+      await new Promise(resolve=>setTimeout(resolve,100));
+      return evaluate(expression);
+    }
+  };
   let extraControls;
   const wait=async expression=>{
     const deadline=Date.now()+10000;
     let result;
     while(Date.now()<deadline){
-      result=await evaluate(`(()=>({ready:!!(${expression}),detail:[...document.querySelectorAll('#config-message,.config-field-error,.setup-wizard-error')]
+      result=await inspect(`(()=>({ready:!!(${expression}),detail:[...document.querySelectorAll('#config-message,.config-field-error,.setup-wizard-error')]
         .map(e=>e.textContent).filter(Boolean).join('; ')}))()`);
       if(result.ready)return true;
       await new Promise(resolve=>setTimeout(resolve,40));
@@ -676,7 +686,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     accept=true;await click('.local-node-list button');await wait(`${query('.local-node-message')}.textContent.includes('Node removed')`);
     assert.equal(fixture.state.nodes.length,0);
     await wait(`!${query('.local-node-list button')}&&!validationPending&&!upstreamPending`);
-    const nodeRecovery=await evaluate(`(()=>{const panel=${query('#local-radar-nodes')},message=${query('.local-node-message')};
+    const nodeRecovery=await inspect(`(()=>{const panel=${query('#local-radar-nodes')},message=${query('.local-node-message')};
       const r=panel.getBoundingClientRect();return {buttons:panel.querySelectorAll('.local-node-list button').length,
         message:message.textContent.trim(),contained:r.left>=-2&&r.right<=innerWidth+2,
         overflow:panel.scrollWidth-panel.clientWidth};})()`);
@@ -684,7 +694,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     assert.match(nodeRecovery.message,/Node removed/,'Node removal reports success');
     assert.equal(nodeRecovery.contained,true,`Node panel stays inside the ${width}px viewport`);
     assert.ok(nodeRecovery.overflow<=2,`Node panel has no horizontal overflow at ${width}px`);
-    report.checks.push({route:await evaluate('location.pathname+location.search'),
+    report.checks.push({route:await inspect('location.pathname+location.search'),
       state:`interaction:nodes-recovery-${width}`,width,nodeRecovery});
     await screenshot(`interaction-nodes-recovery-${width}`);
     report.interactions.push(`nodes-recovery-${width}`);console.log(`Checked interaction nodes-recovery-${width}`);
