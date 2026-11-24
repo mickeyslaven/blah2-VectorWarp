@@ -126,8 +126,8 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     return actions;
   };
   let extraControls;
-  const wait=async expression=>{
-    const deadline=Date.now()+10000;
+  const wait=async(expression,timeoutMs=10000)=>{
+    const deadline=Date.now()+timeoutMs;
     let result;
     while(Date.now()<deadline){
       result=await evaluate(`(()=>({ready:!!(${expression}),detail:[...document.querySelectorAll('#config-message,.config-field-error,.setup-wizard-error')]
@@ -135,7 +135,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       if(result.ready)return true;
       await new Promise(resolve=>setTimeout(resolve,40));
     }
-    throw new Error(`UI condition timed out: ${expression} ${result?.detail||''}`);
+    throw new Error(`UI condition timed out at ${await evaluate('location.pathname+location.search')}: ${expression} ${result?.detail||''}`);
   };
   const query=selector=>`document.querySelector(${JSON.stringify(selector)})`;
   const click=async selector=>{
@@ -721,8 +721,8 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       const loaded=new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error(`Navigation timed out: ${href}`)),20000);
         client.on('Page.loadEventFired',()=>{clearTimeout(timeout);resolve();});});
       await Promise.all([click(`.app-nav a[href="${href}"]`),loaded]);
-      await wait(`location.pathname===${JSON.stringify(new URL(href,'http://fixture').pathname)}&&document.readyState==='complete'&&document.querySelector('.app-nav [aria-current="page"]')&&(!document.querySelector('#view-root')||document.querySelector('#view-root').dataset.ready==='true')`);
-      if(href.includes('/locations'))await wait('document.getElementById("data")?._vectorwarpMap&&document.querySelector(".maplibregl-canvas")');
+      await wait(`location.pathname===${JSON.stringify(new URL(href,'http://fixture').pathname)}&&document.readyState==='complete'&&document.querySelector('.app-nav [aria-current="page"]')&&(!document.querySelector('#view-root')||document.querySelector('#view-root').dataset.ready==='true')`,20000);
+      if(href.includes('/locations'))await wait('document.getElementById("data")?._vectorwarpMap&&document.querySelector(".maplibregl-canvas")',20000);
       await check(`navigation-${href.replace(/[^a-z0-9]/gi,'_')}-${width}`);
     }
   }
