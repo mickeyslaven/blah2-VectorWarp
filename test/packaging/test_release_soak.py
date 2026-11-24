@@ -221,14 +221,20 @@ class ExactCandidatePromotion(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="vectorwarp-promotion-test-") as directory:
             root = Path(directory)
             entries = []
-            for number in range(11):
-                name = f"vectorwarp_1.2.3_target{number}.deb"
+            for name in sorted(gate.artifact_plan.release_filenames("1.2.3")):
                 (root / name).write_bytes(b"candidate package")
                 entries.append({"filename": name, "sha256": gate.identity.file_hash(root / name),
                                 "size": (root / name).stat().st_size})
             manifest = {"source_commit": SOURCE, "version": "1.2.3", "packages": entries}
             with patch.object(gate, "payload", return_value={"artifactSha256": HASH}):
-                self.assertEqual(len(gate.inventory(root, manifest, SOURCE, "1.2.3")), 11)
+                self.assertEqual(len(gate.inventory(root, manifest, SOURCE, "1.2.3")), 12)
+                with self.assertRaisesRegex(ValueError, "complete exact"):
+                    gate.inventory(root, {**manifest, "packages": entries[:-1]}, SOURCE, "1.2.3")
+                unexpected = root / "vectorwarp_1.2.3_unreviewed.deb"
+                unexpected.write_bytes(b"candidate package")
+                wrong = {**entries[0], "filename": unexpected.name}
+                with self.assertRaisesRegex(ValueError, "complete exact"):
+                    gate.inventory(root, {**manifest, "packages": [wrong, *entries[1:]]}, SOURCE, "1.2.3")
                 (root / entries[0]["filename"]).write_bytes(b"same-SHA rebuild is not the same package")
                 with self.assertRaises(ValueError):
                     gate.inventory(root, manifest, SOURCE, "1.2.3")

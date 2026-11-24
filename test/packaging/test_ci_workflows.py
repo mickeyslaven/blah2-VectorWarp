@@ -120,7 +120,7 @@ class WorkflowContracts(unittest.TestCase):
         self.assertNotIn("environment", package)
         self.assertEqual(package["strategy"]["matrix"], "${{ fromJSON(needs.validate.outputs.matrix) }}")
         matrix = json.loads(subprocess.check_output(["python3", str(ROOT / "script/artifact-plan.py"), "matrix"], text=True))
-        self.assertEqual(len(matrix["include"]), 11)
+        self.assertEqual(len(matrix["include"]), 12)
         self.assertEqual(sum("script/artifact-plan.py native-package" in step.get("run", "")
                              for step in package["steps"]), 3)
 

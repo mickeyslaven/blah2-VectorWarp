@@ -23,8 +23,11 @@ class WorkflowContractTests(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / '.github/workflows/release-packages.yml').read_text())
         probe = workflow['jobs']['fedora-pam']
         self.assertEqual(probe['needs'], 'validate')
-        self.assertEqual(probe['strategy']['matrix']['runner'],
-                         ['ubuntu-24.04', 'ubuntu-24.04-arm'])
+        self.assertEqual(probe['strategy']['matrix']['include'], [
+            {'distro': 'fedora43', 'runner': 'ubuntu-24.04'},
+            {'distro': 'fedora44', 'runner': 'ubuntu-24.04'},
+            {'distro': 'fedora44', 'runner': 'ubuntu-24.04-arm'},
+        ])
         self.assertIn('fedora-pam', workflow['jobs']['package']['needs'])
         package = workflow['jobs']['package']
         self.assertEqual(package['if'], 'always() && inputs.publish != true')
@@ -77,7 +80,7 @@ class WorkflowContractTests(unittest.TestCase):
         # Local source-overlay diagnostics must never become a CI bypass.
         self.assertNotIn('--overlay', wrapper)
         self.assertIn('test/packaging/fedora_apparmor_ci.py --', steps[0]['run'])
-        self.assertIn('if [[ $DISTRO == fedora44 ]]', steps[0]['run'])
+        self.assertIn('if [[ $DISTRO == fedora43 || $DISTRO == fedora44 ]]', steps[0]['run'])
         self.assertIn('--security-opt="apparmor=$apparmor_profile"', wrapper)
         self.assertIn('--label="vectorwarp-ci-apparmor=$apparmor_profile"', wrapper)
         self.assertIn('cat /proc/self/attr/apparmor/current', wrapper)

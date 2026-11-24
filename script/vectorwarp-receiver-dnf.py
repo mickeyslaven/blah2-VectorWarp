@@ -17,14 +17,17 @@ common = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(common)
 require, Refused, read_regular = common.require, common.Refused, common.read_regular
 ROOTS = {'HackRF': 'hackrf', 'Usrp': 'uhd'}
+SUPPORTED_FEDORA_VERSIONS = frozenset({'43', '44'})
 
 
-def platform():
+def platform(filename='/etc/os-release'):
     values = {}
-    for line in pathlib.Path('/etc/os-release').read_text().splitlines():
+    for line in pathlib.Path(filename).read_text().splitlines():
         key, _, value = line.partition('='); values[key] = value.strip('"')
-    require(values.get('ID') == 'fedora' and values.get('VERSION_ID') == '44',
-            'UNSUPPORTED_PLATFORM', 'This native DNF5 adapter currently qualifies Fedora 44 only.')
+    require(values.get('ID') == 'fedora' and
+            values.get('VERSION_ID') in SUPPORTED_FEDORA_VERSIONS,
+            'UNSUPPORTED_PLATFORM',
+            'This native DNF5 adapter qualifies packaged Fedora 43 and 44 releases only.')
     return {'id': 'fedora', 'version': values['VERSION_ID']}
 
 
@@ -136,7 +139,7 @@ class FedoraSession:
                 'origin': 'Fedora', 'archive': pkg.get_repo_id(), 'site': 'mirrors.fedoraproject.org'})
         require(len(changes) <= 64 and sum(pkg['size'] for pkg in changes) <= 512 * 1024 * 1024,
                 'TRANSACTION_TOO_LARGE', 'Review transactions above 64 packages or 512 MiB locally.')
-        return {'platform': 'fedora:44', 'packages': roots,
+        return {'platform': f"fedora:{self.host['version']}", 'packages': roots,
                 'changes': sorted(changes, key=lambda item: (item['name'], item['architecture'])),
                 'statusSha256': self.status()}
 

@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import runpy
 import tempfile
 import subprocess
 import unittest
@@ -200,12 +201,10 @@ class AgentPolicyTest(unittest.TestCase):
             detail.assert_not_called()
 
     def linux_assets(self, number, *, bookworm=False):
-        names = [f"vectorwarp_{number}-1_{distro}_{arch}.deb"
-                 for distro in ("ubuntu22.04", "ubuntu24.04", "ubuntu26.04", "debian13")
-                 for arch in ("amd64", "arm64")]
-        if bookworm:
-            names.append(f"vectorwarp_{number}-1_debian12_arm64.deb")
-        names += [f"vectorwarp-{number}-1.fc44.{arch}.rpm" for arch in ("x86_64", "aarch64")]
+        plan = runpy.run_path(str(ROOT / "script" / "artifact-plan.py"))
+        names = sorted(plan["release_filenames"](number))
+        if not bookworm and f"vectorwarp_{number}-1_debian12_arm64.deb" in names:
+            names.remove(f"vectorwarp_{number}-1_debian12_arm64.deb")
         names += ["SHA256SUMS", "SHA256SUMS.asc", "package-manifest.json"]
         if agent.version("v" + number) > agent.MIN_VERSION:
             names += ["release-ci-provenance.json", "release-soak-provenance.json"]

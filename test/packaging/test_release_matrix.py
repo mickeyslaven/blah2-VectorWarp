@@ -21,6 +21,7 @@ class ReleaseMatrixTest(unittest.TestCase):
             ('ubuntu26.04', 'amd64'), ('ubuntu26.04', 'arm64'),
             ('debian12', 'arm64'),
             ('debian13', 'amd64'), ('debian13', 'arm64'),
+            ('fedora43', 'x86_64'),
             ('fedora44', 'x86_64'), ('fedora44', 'aarch64'),
         }
         matrix = json.loads(subprocess.check_output(["python3", str(ROOT / "script/artifact-plan.py"), "matrix"], text=True))
@@ -107,6 +108,7 @@ exit 0
             'ubuntu24.04/amd64', 'ubuntu24.04/arm64',
             'ubuntu26.04/amd64', 'ubuntu26.04/arm64',
             'debian12/arm64', 'debian13/amd64', 'debian13/arm64',
+            'fedora43/x86_64',
             'fedora44/x86_64', 'fedora44/aarch64',
         }.issubset(targets))
         names = {row[0] for row in rows}

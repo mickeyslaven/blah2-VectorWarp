@@ -174,6 +174,14 @@ Schema-1 evaluator receipts lack this coverage contract and cannot qualify a new
 cohort. A false per-check result rejects the cohort even if the aggregate
 `regressionDetected` value is false.
 
+The executable producer is `tools/vectorwarp_release_regression.py`; its
+[policy and retained-input contract](RELEASE_REGRESSION_EVALUATOR.md) describes
+the reviewed baseline, separate positive/negative retrospective/prospective
+exposure, complete CPI ledger, capture counters, and atomic publication.
+`config/release-regression-policy.unapproved.json` is an intentionally
+unapproved template and cannot qualify any cohort. A reviewed input scorer and
+policy are prerequisites; synthetic test fixtures do not supply that review.
+
 Release approval requires the full 86,400 clean seconds, both startup and steady
 state acceptance, the fresh regression receipt, and successful same-package
 verification by `script/verify-release-soak.py`. Signing may change the RPM

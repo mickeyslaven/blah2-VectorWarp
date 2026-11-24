@@ -164,9 +164,11 @@ def validate(root, level, backend=None, test_only=False):
     return fields
 
 
-def native_package(args):
+def native_package(args, root=None, package_script=None, output_dir=None):
     """One Linux package lifecycle; callers supply only reviewed OS bindings."""
-    pins = key_values(ROOT / PLAN["node_pins"])
+    root = ROOT if root is None else Path(root)
+    output = Path(output_dir) if output_dir is not None else root / 'dist'
+    pins = key_values(root / PLAN["node_pins"])
     version = pins["NODE_VERSION"]
     name = f"node-v{version}-linux-{args.node_arch}"
     with tempfile.TemporaryDirectory(prefix="vectorwarp-package-node-") as temporary:
@@ -179,17 +181,19 @@ def native_package(args):
         subprocess.run(["tar", "-C", temporary, "-xf", str(archive)], check=True)
         node = directory / name
         environment = {**os.environ, "PATH": str(node / "bin") + os.pathsep + os.environ["PATH"]}
-        subprocess.run(["bash", str(ROOT / "script/build-native.sh"), "--backend", "all", "--gpu", "auto",
-                        "--build-dir", "build/package", "--jobs", "2", "--test"], cwd=ROOT, env=environment, check=True)
-        subprocess.run(["bash", str(ROOT / "script/package-native.sh"), "--format", args.format,
+        subprocess.run(["bash", str(root / "script/build-native.sh"), "--backend", "all", "--gpu", "auto",
+                        "--build-dir", "build/package", "--jobs", "2", "--test"], cwd=root, env=environment, check=True)
+        subprocess.run(["bash", str(package_script or root / "script/package-native.sh"), "--format", args.format,
                         "--artifact", "build/package/artifact", "--node-runtime", str(node),
-                        "--version", args.version, "--distro", args.distro, "--output-dir", "dist"],
-                       cwd=ROOT, env=environment, check=True)
-        packages = list((ROOT / "dist").glob("*." + args.format))
+                        "--version", args.version, "--distro", args.distro,
+                        "--output-dir", str(output_dir) if output_dir is not None else "dist"],
+                       cwd=root, env=environment, check=True)
+        packages = list(output.glob("*." + args.format))
         if len(packages) != 1:
             raise ValueError("package output is not one exact native artifact")
-        subprocess.run(["bash", str(ROOT / "script/smoke-native-package.sh"), "--package", str(packages[0])],
-                       cwd=ROOT, env=environment, check=True)
+        subprocess.run(["bash", str(root / "script/smoke-native-package.sh"), "--package", str(packages[0])],
+                       cwd=root, env=environment, check=True)
+        return packages[0]
 
 
 def stage(source, output, platform):

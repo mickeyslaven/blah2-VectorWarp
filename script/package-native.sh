@@ -20,7 +20,7 @@ Usage: script/package-native.sh [options]
 Build a distro-native VectorWarp release package from a native artifact.
 
   --format deb|rpm        Package format
-  --distro NAME           ubuntu22.04, ubuntu24.04, ubuntu26.04, debian12, debian13 or fedora44
+  --distro NAME           ubuntu22.04, ubuntu24.04, ubuntu26.04, debian12, debian13, fedora43 or fedora44
   --version X.Y.Z         Stable release version (without v)
   --artifact PATH         Artifact made by build-native.sh
   --node-runtime PATH     Extracted official pinned Node.js Linux archive
@@ -133,7 +133,7 @@ run mkdir -p "$OUTPUT_DIR"
 if [[ $FORMAT == deb ]]; then
   EXPECTED_ASSET="vectorwarp_${VERSION}-${PACKAGE_RELEASE}_${DISTRO}_${DEB_ARCH}.deb"
 else
-  EXPECTED_ASSET="vectorwarp-${VERSION}-${PACKAGE_RELEASE}.fc44.${RPM_ARCH}.rpm"
+  EXPECTED_ASSET="vectorwarp-${VERSION}-${PACKAGE_RELEASE}.fc${DISTRO_VERSION}.${RPM_ARCH}.rpm"
 fi
 for destination in "$OUTPUT_DIR/$EXPECTED_ASSET" "$OUTPUT_DIR/$EXPECTED_ASSET.manifest.json"; do
   [[ ! -e $destination && ! -L $destination ]] ||
@@ -283,7 +283,7 @@ else
   install -m 0644 "$SOURCE_DIR/script/finalize-rspduo-kit.py" \
     "$TOPDIR/SOURCES/finalize-rspduo-kit.py"
   tar -C "$STAGE" -cf "$TOPDIR/SOURCES/vectorwarp-root.tar" .
-  RPM_RELEASE="${PACKAGE_RELEASE}.fc44"
+  RPM_RELEASE="${PACKAGE_RELEASE}.fc${DISTRO_VERSION}"
   sed -e "s|@VERSION@|$VERSION|g" -e "s|@RPM_RELEASE@|$RPM_RELEASE|g" \
     "$SOURCE_DIR/packaging/rpm/vectorwarp.spec.in" |
     awk -v script="$SOURCE_DIR/packaging/deb/preinst" '

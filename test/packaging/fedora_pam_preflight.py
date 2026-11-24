@@ -7,6 +7,7 @@ Only the disposable test container receives a user and a narrowly scoped rule.
 
 import argparse
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import re
@@ -15,9 +16,10 @@ import sys
 import uuid
 
 
-IMAGE = ('registry.fedoraproject.org/fedora@sha256:'
-         'c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6')
 ROOT = Path(__file__).resolve().parents[2]
+IMAGES = {name: value['image'] for name, value in
+          json.loads((ROOT / 'packaging/artifact-plan.json').read_text())['linux_distros'].items()
+          if value['id'] == 'fedora'}
 HELPER = re.compile(r'unix[-_]chkpwd', re.IGNORECASE)
 POLICY_LINE = re.compile(r'\b(capability|include|profile|unix[-_]chkpwd)\b', re.IGNORECASE)
 CI_PROFILE = re.compile(r'vectorwarp-fedora-ci-[0-9a-f]{32}\Z')
@@ -40,10 +42,10 @@ def command(args, *, output=None, check=True):
     return result
 
 
-def build_args(image_name):
+def build_args(image_name, distro='fedora44'):
     return ['podman', 'build', '--jobs=1', '--memory=2g', '--memory-swap=2g',
             '--cpu-period=100000', '--cpu-quota=50000',
-            '--build-arg', f'BASE_IMAGE={IMAGE}', '-t', image_name,
+            '--build-arg', f'BASE_IMAGE={IMAGES[distro]}', '-t', image_name,
             '-f', str(ROOT / 'test/packaging/Containerfile.service-rpm'),
             str(ROOT / 'test/packaging')]
 
@@ -125,7 +127,7 @@ def exec_in(container_name, *args, output=None, check=True):
     return command(['podman', 'exec', container_name, *args], output=output, check=check)
 
 
-def probe(evidence):
+def probe(evidence, distro='fedora44'):
     if os.geteuid() != 0:
         raise RuntimeError('Run with sudo on a disposable CI runner')
     evidence.mkdir(parents=True, exist_ok=True)
@@ -137,7 +139,7 @@ def probe(evidence):
     container_created = False
     image_created = False
     try:
-        command(build_args(image_name), output=evidence / 'base-image.log')
+        command(build_args(image_name, distro), output=evidence / 'base-image.log')
         image_created = True
         command(run_args(name, image_name), output=evidence / 'container-id.txt')
         container_created = True
@@ -213,9 +215,10 @@ def probe(evidence):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence', required=True, type=Path)
+    parser.add_argument('--distro', choices=IMAGES, default='fedora44')
     args = parser.parse_args()
     try:
-        probe(args.evidence)
+        probe(args.evidence, args.distro)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         print(f'Fedora PAM preflight failed: {exc}', file=sys.stderr)
         return 1

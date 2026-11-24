@@ -19,8 +19,14 @@ class FedoraPamPreflightTests(unittest.TestCase):
     def test_uses_pinned_image_and_installed_test_runtime_bounds(self):
         build = PREFLIGHT.build_args('localhost/probe')
         run = PREFLIGHT.run_args('probe', 'localhost/probe')
-        self.assertIn('BASE_IMAGE=' + PREFLIGHT.IMAGE, build)
+        self.assertIn('BASE_IMAGE=' + PREFLIGHT.IMAGES['fedora44'], build)
+        self.assertIn('BASE_IMAGE=' + PREFLIGHT.IMAGES['fedora43'],
+                      PREFLIGHT.build_args('localhost/probe43', 'fedora43'))
         self.assertIn('Containerfile.service-rpm', ' '.join(build))
+        containerfile = (PREFLIGHT.ROOT / 'test/packaging/Containerfile.service-rpm').read_text()
+        self.assertIn('VERSION_ID" = 43', containerfile)
+        self.assertIn('systemctl enable dbus-broker.service', containerfile)
+        self.assertIn('systemctl enable dbus-daemon.service', containerfile)
         for option in ('--memory=2g', '--memory-swap=2g'):
             self.assertIn(option, build)
             self.assertIn(option, run)

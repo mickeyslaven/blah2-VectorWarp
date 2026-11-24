@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 PACKAGE = 'mesa-vulkan-drivers'
+SUPPORTED_FEDORA_VERSIONS = frozenset({'43', '44'})
 COMMAND = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver'
 ACCESS_COMMAND = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access'
 FIX_URL = 'https://gitlab.freedesktop.org/mesa/mesa/-/commit/2cd51a6efcdfde07e219869e3fd663c88da92a04'
@@ -282,7 +283,8 @@ def dnf_plan(host):
     import libdnf5
     import rpm
     common = adapter('dnf')
-    require(host['version'] == '44', 'The guarded native DNF setup currently supports Fedora 44 only.')
+    require(host['version'] in SUPPORTED_FEDORA_VERSIONS,
+            'The guarded native DNF setup supports packaged Fedora 43 and 44 releases only.')
     base = libdnf5.base.Base(); base.load_config()
     config = base.get_config(); config.get_plugins_option().set(False)
     base.setup()
@@ -292,7 +294,7 @@ def dnf_plan(host):
         if repo.get_id() not in ('fedora', 'updates'):
             repo.get_config().get_enabled_option().set(False)
         else:
-            common.verify_repo(repo, {'version': '44'}, arch)
+            common.verify_repo(repo, {'version': host['version']}, arch)
             repo.get_config().get_enabled_option().set(True)
     sack.load_repos()
     query = libdnf5.rpm.PackageQuery(base); query.filter_name([PACKAGE]); query.filter_arch([arch])

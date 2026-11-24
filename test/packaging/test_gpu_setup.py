@@ -16,6 +16,9 @@ ACCESS = {'state': 'available', 'nodes': []}
 
 
 class SetupTests(unittest.TestCase):
+    def test_guarded_fedora_versions_match_packaged_releases(self):
+        self.assertEqual(gpu.SUPPORTED_FEDORA_VERSIONS, frozenset({'43', '44'}))
+
     def test_bounded_child_exit_and_timeout(self):
         self.assertEqual(gpu.run_readonly([gpu.sys.executable, '-c', 'print("fixture")']), 'fixture')
         self.assertIsNone(gpu.run_readonly([gpu.sys.executable, '-c', 'print("not installed"); raise SystemExit(1)']))
@@ -326,22 +329,26 @@ class DnfPlanTests(unittest.TestCase):
             return gpu.dnf_plan({**HOST, 'distribution': 'fedora', 'version': version})
 
     def test_signed_native_repo_exact_candidate_and_native_prompt(self):
-        command = self.plan()
-        self.assertEqual(command[0], '/usr/bin/dnf')
-        self.assertIn('--repo=fedora,updates', command)
-        self.assertIn('--setopt=gpgcheck=1', command)
-        self.assertIn('--setopt=fedora.gpgkey=', command, 'No automatic key import')
-        self.assertIn('--setopt=assumeyes=False', command)
-        self.assertEqual(self.checked, ['fedora', 'updates'])
-        self.assertFalse(self.options['get_enabled_option'], 'Third-party repositories disabled')
-        self.assertNotIn('--allowerasing', command)
-        self.assertTrue(command[-1].startswith('mesa-vulkan-drivers-0:26.1.8-1.fc44.'))
+        for version in ('43', '44'):
+            with self.subTest(version=version):
+                self.setUp()
+                command = self.plan(version)
+                self.assertEqual(command[0], '/usr/bin/dnf')
+                self.assertIn('--repo=fedora,updates', command)
+                self.assertIn('--setopt=gpgcheck=1', command)
+                self.assertIn('--setopt=fedora.gpgkey=', command, 'No automatic key import')
+                self.assertIn('--setopt=assumeyes=False', command)
+                self.assertEqual(self.checked, ['fedora', 'updates'])
+                self.assertFalse(self.options['get_enabled_option'], 'Third-party repositories disabled')
+                self.assertNotIn('--allowerasing', command)
+                self.assertTrue(command[-1].startswith('mesa-vulkan-drivers-0:26.1.8-1.fc44.'))
 
     def test_absent_equal_or_older_candidate_and_other_distro_refuse(self):
         for version in [None, '26.0.3', '25.0.0']:
             self.version = version
             with self.assertRaises(gpu.Refused): self.plan()
-        with self.assertRaises(gpu.Refused): self.plan('43')
+        self.version = '26.1.8'
+        with self.assertRaises(gpu.Refused): self.plan('42')
 
     def test_untrusted_repo_refuses_before_native_command(self):
         self.common.verify_repo = lambda *args: (_ for _ in ()).throw(gpu.Refused('untrusted'))

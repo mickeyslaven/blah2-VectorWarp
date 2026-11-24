@@ -44,6 +44,9 @@ const server = http.createServer((request, response) => {
         {hex:'matched',flight:'RADAR123',lat:40.15,lon:-79.9,track:15}].filter(item=>plainVisible||item.hex!=='plain')},
       '/api/live-aircraft-associations': {associations: associationsAvailable ? [
         {hex:'detected',detected:true,channels:['channel-0','channel-1']},
+        {hex:'tracked',tracked:true,channels:['channel-0']}] : []},
+      '/api/federation/live-aircraft-associations': {associations: associationsAvailable ? [
+        {hex:'detected',detected:true,channels:['channel-0','channel-1']},
         {hex:'tracked',tracked:true,channels:['channel-0']}] : []}
     }[pathname] || {};
     response.setHeader('Content-Type', 'application/json');
@@ -121,7 +124,11 @@ async function connect(endpoint) {
       const started = Date.now();
       const check = () => {
         const plot = document.getElementById('fusion-scope');
-        if (plot?._fullLayout && plot.layout?.images?.length === 4 && document.querySelector('#fusion-diagnostics h2')) {
+        const states = new Set((plot?.data || []).filter(trace => trace.meta?.kind === 'aircraft')
+          .map(trace => trace.meta.positionSource + ':' + trace.meta.evidenceState));
+        if (plot?._fullLayout && plot.layout?.images?.length === 4 &&
+            states.has('adsb:detected') && states.has('adsb:tracked') && states.has('radar:tracked') &&
+            document.querySelector('#fusion-diagnostics h2')) {
           resolve(true);
         } else if (Date.now() - started > 15000) reject(new Error('Fusion fixture did not render'));
         else setTimeout(check, 50);
@@ -290,7 +297,19 @@ async function connect(endpoint) {
       };check();})`);
     assert.deepEqual(await evaluate(`[...document.querySelectorAll('.fusion-glance-metric strong')].map(element=>Number(element.textContent))`),[2,1,1,0],
       'radar outage removes the independent category and restores the external position');
+    assert.equal(await evaluate(`document.querySelector('.fusion-data-warning')?.textContent || ''`), '',
+      'detected and tracked evidence must not be hidden behind a radar-unavailable warning');
     await screenshot('fusion-portrait-radar-unavailable-1080x1920.png');
+    associationsAvailable = false;
+    await evaluate(`new Promise((resolve,reject)=>{
+      const started=Date.now();const check=()=>{
+        if(document.querySelector('.fusion-data-warning')?.textContent==='Radar data unavailable')resolve(true);
+        else if(Date.now()-started>5000)reject(new Error('Kiosk true no-evidence warning did not update'));
+        else setTimeout(check,100);
+      };check();})`);
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('.fusion-glance-metric strong')].map(element=>Number(element.textContent))`),[4,0,0,0],
+      'true no-evidence state retains ADS-B positions without inventing radar evidence');
+    associationsAvailable = true;
     radarAvailable = true;
     // Exercise the actual geographic Map and its existing 3D aircraft renderer.
     client.on('Fetch.requestPaused', event => {

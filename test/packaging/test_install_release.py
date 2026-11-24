@@ -44,6 +44,10 @@ class InstallerFailureTests(unittest.TestCase):
         cls.fedora_installer.write_text(source.replace(
             ". /etc/os-release\n", "ID=fedora\nVERSION_ID=44\n"))
         cls.fedora_installer.chmod(0o755)
+        cls.fedora43_installer = cls.root / "fedora43-install-release.sh"
+        cls.fedora43_installer.write_text(source.replace(
+            ". /etc/os-release\n", "ID=fedora\nVERSION_ID=43\n"))
+        cls.fedora43_installer.chmod(0o755)
         cls.keys = cls.root / "keys"
         cls.keys.mkdir(mode=0o755)
         cls.public, cls.secret, cls.fingerprint = cls.make_key("one")
@@ -80,6 +84,7 @@ class InstallerFailureTests(unittest.TestCase):
                 for argument do previous=$last; last=$argument; done
                 if [ "$last" = /etc/yum.repos.d/vectorwarp.repo ]; then
                   /usr/bin/grep '^gpgkey=' "$previous" >>"$TEST_LOG"
+                  /usr/bin/grep '^baseurl=' "$previous" >>"$TEST_LOG"
                 fi
                 if [ "$last" = "${TEST_INSTALL_FAIL_DEST:-}" ]; then exit 1; fi
                 exit "${TEST_INSTALL_EXIT:-0}" ;;
@@ -101,6 +106,13 @@ class InstallerFailureTests(unittest.TestCase):
               exit 22
             fi
             /usr/bin/cp "$TEST_CURL_SOURCE" "$output"
+        """)
+        cls.write_executable("uname", """
+            if [ "${1:-}" = -m ] && [ -n "${TEST_UNAME_MACHINE:-}" ]; then
+              printf '%s\n' "$TEST_UNAME_MACHINE"
+              exit 0
+            fi
+            exec /usr/bin/uname "$@"
         """)
         cls.path = str(cls.fake_bin) + os.pathsep + os.environ.get("PATH", "")
 
@@ -156,7 +168,8 @@ class InstallerFailureTests(unittest.TestCase):
                fedora=False):
         env = {**os.environ, "PATH": self.path, "TEST_LOG": str(self.log),
                "TEST_CURL_SOURCE": str(self.public), **(environment or {})}
-        command = ["bash", str(self.fedora_installer if fedora else self.installer), *arguments]
+        installer = self.fedora43_installer if fedora == 43 else self.fedora_installer if fedora else self.installer
+        command = ["bash", str(installer), *arguments]
         if simulated_root and os.geteuid() != 0:
             sudo = shutil.which("sudo")
             if not sudo:
@@ -284,8 +297,10 @@ class InstallerFailureTests(unittest.TestCase):
                 events = self.log.read_text().splitlines()
                 self.assertEqual(sum(event.startswith("install-system ") for event in events), writes)
                 other = [event for event in events if not event.startswith("install-system ")]
-                self.assertEqual(other, ["gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp"]
-                                 if fedora else [])
+                self.assertEqual(other, [
+                    "gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp",
+                    "baseurl=https://mickeyslaven.github.io/blah2-VectorWarp/rpm/fedora/44/$basearch",
+                ] if fedora else [])
                 self.log.write_text("")
                 denied = self.invoke("--repo-only", "--key-file", str(self.public),
                                      "--fingerprint", "0" * 40,
@@ -326,6 +341,15 @@ class InstallerFailureTests(unittest.TestCase):
                              environment={"TEST_DNF_INSTALL_EXIT": "1"})
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("DNF package installation failed", failed.stderr)
+
+    def test_fedora43_installs_from_its_own_repository(self):
+        result = self.invoke('--key-file', str(self.public), '--fingerprint', self.fingerprint,
+                             simulated_root=True, fedora=43,
+                             environment={"TEST_UNAME_MACHINE": "x86_64"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('/rpm/fedora/43/$basearch', self.log.read_text())
+        self.assertNotIn('/rpm/fedora/44/', self.log.read_text())
+        self.assertIn('dnf install vectorwarp', self.log.read_text())
 
     def test_fedora_key_and_repo_write_failures_stop_before_package_actions(self):
         common = ("--key-file", str(self.public), "--fingerprint", self.fingerprint)

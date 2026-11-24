@@ -50,7 +50,7 @@ class HomepageTests(unittest.TestCase):
             for arch in sorted(architectures):
                 label = f"{distro}{version}"
                 filename = (f"vectorwarp_1.2.3-1_{label}_{arch}.deb" if format == "deb" else
-                            f"vectorwarp-1.2.3-1.fc44.{arch}.rpm")
+                            f"vectorwarp-1.2.3-1.fc{version}.{arch}.rpm")
                 entries.append(dict(format=format, distro=distro, distro_version=version,
                                     arch=arch, filename=filename))
         return dict(version="1.2.3", source_commit="a" * 40,
@@ -76,7 +76,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('checksum alone does not authenticate', manual)
         self.assertNotRegex(manual, r'(?i)raspberry pi|pi 4')
         self.assertEqual(len({link for link in re.findall(r'href="([^"]+)"', manual)
-                              if link.endswith(('.deb', '.rpm'))}), 11)
+                              if link.endswith(('.deb', '.rpm'))}), 12)
         self.assertNotRegex(page, r'<details[^>]*\bopen(?:[ =>])')
         self.assertLess(page.index('id="install-macos"'), page.index('id="package-downloads"'))
         self.assertLess(page.index('id="features"'), page.index('id="install-pi"'))
@@ -104,8 +104,8 @@ class HomepageTests(unittest.TestCase):
         package_links = {link for link in links if link.endswith((".deb", ".rpm"))}
         base = "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3"
         self.assertEqual(package_links, {f"{base}/{entry['filename']}" for entry in manifest['packages']})
-        self.assertEqual(len(package_links), 11)
-        for label in ('Ubuntu 22.04', 'Ubuntu 24.04', 'Ubuntu 26.04', 'Debian 12', 'Debian 13', 'Fedora 44',
+        self.assertEqual(len(package_links), 12)
+        for label in ('Ubuntu 22.04', 'Ubuntu 24.04', 'Ubuntu 26.04', 'Debian 12', 'Debian 13', 'Fedora 43', 'Fedora 44',
                       'DragonOS · Ubuntu 22.04 base', 'DragonOS · Ubuntu 24.04 base',
                       'DragonOS · Ubuntu 26.04 base', 'Limited platform: Raspberry Pi 4B',
                       'amd64 / x86_64', 'arm64 / aarch64'):
@@ -615,7 +615,7 @@ class PublicDeploymentTests(unittest.TestCase):
         manifest = HomepageTests().release_manifest()
         expected = {f'https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3/{p["filename"]}'
                     for p in manifest['packages']}
-        for mode, count in (('current', 15), ('retry', 16)):
+        for mode, count in (('current', 16), ('retry', 17)):
             with self.subTest(mode=mode):
                 result, requests = self.run_check(mode)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -626,7 +626,7 @@ class PublicDeploymentTests(unittest.TestCase):
         manifest = HomepageTests().release_manifest()
         manifest["version"] = "0.1.9"
         manifest["packages"] = [entry for entry in manifest["packages"]
-                                if entry["distro_version"] != "12"]
+                                if entry["distro_version"] not in ("12", "43")]
         for entry in manifest["packages"]:
             entry["filename"] = entry["filename"].replace("1.2.3", "0.1.9")
         result, requests = self.run_check(manifest=manifest)
@@ -745,12 +745,18 @@ class ManifestTests(unittest.TestCase):
         for format, distro, version, arch in repository.release_targets_for_version("1.2.3"):
             entries.append({"format": format, "distro": distro, "distro_version": version,
                             "arch": arch})
-        repository.verify_release_matrix(entries, "0.1.10")
+        repository.verify_release_matrix(entries, "0.1.39")
         with self.assertRaisesRegex(ValueError, "matrix"):
-            repository.verify_release_matrix(entries[:-1], "0.1.10")
+            repository.verify_release_matrix(entries[:-1], "0.1.39")
         with self.assertRaisesRegex(ValueError, "matrix"):
-            repository.verify_release_matrix(entries + [entries[0]], "0.1.10")
-        legacy = [entry for entry in entries if entry["distro_version"] != "12"]
+            repository.verify_release_matrix(entries + [entries[0]], "0.1.39")
+        previous = [entry for entry in entries if entry["distro_version"] != "43"]
+        self.assertEqual(len(previous), 11)
+        for version in ("0.1.10", "0.1.38"):
+            repository.verify_release_matrix(previous, version)
+        with self.assertRaisesRegex(ValueError, "matrix"):
+            repository.verify_release_matrix(previous, "0.1.39")
+        legacy = [entry for entry in previous if entry["distro_version"] != "12"]
         repository.verify_release_matrix(legacy, "0.1.9")
         with self.assertRaisesRegex(ValueError, "matrix"):
             repository.verify_release_matrix(entries, "0.1.9")
