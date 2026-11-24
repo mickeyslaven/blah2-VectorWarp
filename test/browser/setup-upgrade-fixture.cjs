@@ -394,7 +394,9 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       return item.value+'x';
     };
     const exercise=async(item,type,scope,depth=0)=>{
-      item=(await controls(scope)).find(current=>current.selector===item.selector)||item;
+      const current=(await controls(scope)).find(candidate=>candidate.selector===item.selector);
+      if(!current)return;
+      item=current;
       const key=identity(item,type);if(visited.has(key))return;
       report.controlInventory.current=key;
       if(item.disabled||item.readOnly){unavailable.set(key,item.reason||item.label||'Read-only capability');return;}
