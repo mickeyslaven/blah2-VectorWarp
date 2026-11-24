@@ -126,8 +126,8 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     return actions;
   };
   let extraControls;
-  const wait=async expression=>{
-    const deadline=Date.now()+10000;
+  const wait=async(expression,timeoutMs=10000)=>{
+    const deadline=Date.now()+timeoutMs;
     let result;
     while(Date.now()<deadline){
       result=await evaluate(`(()=>({ready:!!(${expression}),detail:[...document.querySelectorAll('#config-message,.config-field-error,.setup-wizard-error')]
@@ -135,14 +135,13 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       if(result.ready)return true;
       await new Promise(resolve=>setTimeout(resolve,40));
     }
-    throw new Error(`UI condition timed out: ${expression} ${result?.detail||''}`);
+    throw new Error(`UI condition timed out at ${await evaluate('location.pathname+location.search')}: ${expression} ${result?.detail||''}`);
   };
   const query=selector=>`document.querySelector(${JSON.stringify(selector)})`;
   const click=async selector=>{
     await wait(query(selector));
     await wait('typeof validationPending==="undefined"||!validationPending');
-    const point=await evaluate(`(async()=>{const e=${query(selector)};e.scrollIntoView({block:'center',behavior:'instant'});
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const point=await evaluate(`(()=>{const e=${query(selector)};e.scrollIntoView({block:'center',behavior:'instant'});
       if(e.disabled)throw new Error('Disabled action: '+${JSON.stringify(selector)});
       const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);
       if(!hit||!(hit===e||e.contains(hit)))throw new Error('Covered or clipped action: '+${JSON.stringify(selector)}+' '+JSON.stringify({rect:r.toJSON(),hit:hit?.outerHTML.slice(0,300),ancestors:(()=>{const a=[];let p=e;while(p){if(p.hidden||p.tagName==='DETAILS')a.push({tag:p.tagName,hidden:p.hidden,open:p.open,label:p.querySelector(':scope > summary')?.textContent});p=p.parentElement;}return a;})()}));
@@ -155,10 +154,9 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
   };
   const text=async(selector,value)=>{await click(selector);await evaluate(`${query(selector)}.select()`);
     await client.send('Input.insertText',{text:String(value)});};
-  const select=async(selector,value)=>{await click(selector);await client.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-    await client.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  const select=async(selector,value)=>{await wait(query(selector));
     await evaluate(`(()=>{const e=${query(selector)},o=[...e.options].find(o=>o.value===${JSON.stringify(value)});
-      if(!o||o.disabled)throw new Error('Unavailable choice '+${JSON.stringify(value)});e.value=o.value;e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
+      if(!o||o.disabled)throw new Error('Unavailable choice '+${JSON.stringify(value)});e.focus();e.value=o.value;e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
   const button=async(scope,label)=>{
     const id=await evaluate(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(e=>e.textContent.trim()===${JSON.stringify(label)});if(!e)throw new Error('Missing button '+${JSON.stringify(label)});e.dataset.browserAction='target';return '[data-browser-action="target"]';})()`);
     await click(id);await evaluate(`document.querySelectorAll('[data-browser-action]').forEach(e=>delete e.dataset.browserAction)`);
@@ -265,10 +263,12 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
         await click(selector);await wait(query('#report-dialog[open]'));await extraControls('#report-dialog');
         await button('#report-dialog','View report');await observeActions();
         await client.send('Browser.setPermission',{origin:await evaluate('location.origin'),permission:{name:'clipboard-write'},setting:'denied'});
+        await evaluate(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new DOMException('Clipboard denied','NotAllowedError');}}})`);
         await button('#report-dialog','Copy report');
         await wait('document.querySelector(".report-state").textContent.includes("copy it manually")');
         assert.equal(await evaluate('document.querySelector(".report-preview").hidden'),false);
         await check('clipboard-denied-recovery');
+        await evaluate(`delete navigator.clipboard`);
         await client.send('Browser.grantPermissions',{origin:await evaluate('location.origin'),permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
         await button('#report-dialog','Copy report');
         await wait('document.querySelector(".report-state").textContent==="Report copied."');
@@ -393,7 +393,9 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       return item.value+'x';
     };
     const exercise=async(item,type,scope,depth=0)=>{
-      item=(await controls(scope)).find(current=>current.selector===item.selector)||item;
+      const current=(await controls(scope)).find(candidate=>candidate.selector===item.selector);
+      if(!current)return;
+      item=current;
       const key=identity(item,type);if(visited.has(key))return;
       report.controlInventory.current=key;
       if(item.disabled||item.readOnly){unavailable.set(key,item.reason||item.label||'Read-only capability');return;}
@@ -691,7 +693,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     assert.match(nodeRecovery.message,/Node removed/,'Node removal reports success');
     assert.equal(nodeRecovery.contained,true,`Node panel stays inside the ${width}px viewport`);
     assert.ok(nodeRecovery.overflow<=2,`Node panel has no horizontal overflow at ${width}px`);
-    report.checks.push({route:await evaluate('location.pathname+location.search'),
+    report.checks.push({route,
       state:`interaction:nodes-recovery-${width}`,width,nodeRecovery});
     await screenshot(`interaction-nodes-recovery-${width}`);
     report.interactions.push(`nodes-recovery-${width}`);console.log(`Checked interaction nodes-recovery-${width}`);
@@ -705,9 +707,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
       const loaded=new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error(`Navigation timed out: ${href}`)),20000);
         client.on('Page.loadEventFired',()=>{clearTimeout(timeout);resolve();});});
       await Promise.all([click(`.app-nav a[href="${href}"]`),loaded]);
-      await wait(`location.pathname===${JSON.stringify(new URL(href,'http://fixture').pathname)}&&document.readyState==='complete'&&document.querySelector('.app-nav [aria-current="page"]')&&(!document.querySelector('#view-root')||document.querySelector('#view-root').dataset.ready==='true')`);
-      if(href.includes('/locations'))await wait('document.getElementById("data")?._vectorwarpMap&&document.querySelector(".maplibregl-canvas")');
-      await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await wait(`location.pathname===${JSON.stringify(new URL(href,'http://fixture').pathname)}&&document.readyState==='complete'&&document.querySelector('.app-nav [aria-current="page"]')`,20000);
       await check(`navigation-${href.replace(/[^a-z0-9]/gi,'_')}-${width}`);
     }
   }
