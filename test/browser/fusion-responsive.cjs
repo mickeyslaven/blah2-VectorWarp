@@ -297,7 +297,19 @@ async function connect(endpoint) {
       };check();})`);
     assert.deepEqual(await evaluate(`[...document.querySelectorAll('.fusion-glance-metric strong')].map(element=>Number(element.textContent))`),[2,1,1,0],
       'radar outage removes the independent category and restores the external position');
+    assert.equal(await evaluate(`document.querySelector('.fusion-data-warning')?.textContent || ''`), '',
+      'detected and tracked evidence must not be hidden behind a radar-unavailable warning');
     await screenshot('fusion-portrait-radar-unavailable-1080x1920.png');
+    associationsAvailable = false;
+    await evaluate(`new Promise((resolve,reject)=>{
+      const started=Date.now();const check=()=>{
+        if(document.querySelector('.fusion-data-warning')?.textContent==='Radar data unavailable')resolve(true);
+        else if(Date.now()-started>5000)reject(new Error('Kiosk true no-evidence warning did not update'));
+        else setTimeout(check,100);
+      };check();})`);
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('.fusion-glance-metric strong')].map(element=>Number(element.textContent))`),[4,0,0,0],
+      'true no-evidence state retains ADS-B positions without inventing radar evidence');
+    associationsAvailable = true;
     radarAvailable = true;
     // Exercise the actual geographic Map and its existing 3D aircraft renderer.
     client.on('Fetch.requestPaused', event => {
