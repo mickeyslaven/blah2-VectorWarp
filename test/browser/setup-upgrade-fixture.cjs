@@ -154,10 +154,9 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
   };
   const text=async(selector,value)=>{await click(selector);await evaluate(`${query(selector)}.select()`);
     await client.send('Input.insertText',{text:String(value)});};
-  const select=async(selector,value)=>{await click(selector);await client.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-    await client.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  const select=async(selector,value)=>{await wait(query(selector));
     await evaluate(`(()=>{const e=${query(selector)},o=[...e.options].find(o=>o.value===${JSON.stringify(value)});
-      if(!o||o.disabled)throw new Error('Unavailable choice '+${JSON.stringify(value)});e.value=o.value;e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
+      if(!o||o.disabled)throw new Error('Unavailable choice '+${JSON.stringify(value)});e.focus();e.value=o.value;e.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
   const button=async(scope,label)=>{
     const id=await evaluate(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(e=>e.textContent.trim()===${JSON.stringify(label)});if(!e)throw new Error('Missing button '+${JSON.stringify(label)});e.dataset.browserAction='target';return '[data-browser-action="target"]';})()`);
     await click(id);await evaluate(`document.querySelectorAll('[data-browser-action]').forEach(e=>delete e.dataset.browserAction)`);
