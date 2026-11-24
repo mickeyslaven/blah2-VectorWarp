@@ -707,7 +707,7 @@ async function runInteractions({fixture,client,evaluate,navigate,record,screensh
     assert.match(nodeRecovery.message,/Node removed/,'Node removal reports success');
     assert.equal(nodeRecovery.contained,true,`Node panel stays inside the ${width}px viewport`);
     assert.ok(nodeRecovery.overflow<=2,`Node panel has no horizontal overflow at ${width}px`);
-    report.checks.push({route:await evaluate('location.pathname+location.search'),
+    report.checks.push({route,
       state:`interaction:nodes-recovery-${width}`,width,nodeRecovery});
     await screenshot(`interaction-nodes-recovery-${width}`);
     report.interactions.push(`nodes-recovery-${width}`);console.log(`Checked interaction nodes-recovery-${width}`);
