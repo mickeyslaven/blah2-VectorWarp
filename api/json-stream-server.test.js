@@ -136,6 +136,7 @@ async function send(port, chunks) {
     assert.equal(operationalEvidence.associationPasses().length, 1);
     operationalEvidence.close();
     const apiEnvironment = {...process.env, BLAH2_RECEIVER_TYPES: 'Kraken',
+        VECTORWARP_CYCLE_LEDGER_DIR: path.join(directory, 'cycles'),
         BLAH2_STATISTICS_PATH: statisticsPath,
         BLAH2_PROVISIONAL_STATISTICS_PATH: path.join(directory, 'statistics-provisional.json'),
         BLAH2_OPRS_EVENTS_PATH: path.join(directory, 'oprs.ndjson')};
@@ -213,8 +214,11 @@ async function send(port, chunks) {
       ['bearing', '/api/bearing'], ['timing', '/api/timing'], ['iqdata', '/api/iqdata']
     ];
     for (const [name, route] of routes) {
-      const first = JSON.stringify({stream: name, message: `fragmented 🙂 ${name}`});
-      const second = JSON.stringify({stream: name, sequence: 2});
+      const cycleEvidence = {schema: 'vectorwarp-processing-cycles-v1',
+        anchorMonoNs: '1000000', anchorUtcNs: '1795500000000000000', fault: '', records: []};
+      const evidence = name === 'timing' ? {cycleEvidence} : {};
+      const first = JSON.stringify({stream: name, message: `fragmented 🙂 ${name}`, ...evidence});
+      const second = JSON.stringify({stream: name, sequence: 2, ...evidence});
       const bytes = Buffer.from(first);
       // Split the emoji across byte chunks and coalesce the final first frame
       // with a complete second frame on the same TCP connection.
@@ -239,6 +243,22 @@ async function send(port, chunks) {
         assert.equal(parsed.sequence, 2);
         assert.ok(Object.hasOwn(parsed, 'capture_backlog_ms'),
           'Timing responses include derived capture health fields');
+        const capture = acceptedSamples => ({available: true, epoch: '1', discontinuities: '0',
+          requalifications: '0', retiredCpis: '0', retiredSamples: '0',
+          lanes: [{acceptedSamples, droppedSamples: '0', discardedSamples: '0'}]});
+        cycleEvidence.records.push({sequence: '1', startMonoNs: '2000000', endMonoNs: '2500000',
+          drainBatches: '0', outcome: 'warmup', captureBefore: capture('1'), captureAfter: capture('2')});
+        liveSocket.write(JSON.stringify({cycleEvidenceOnly: true, stream: name, sequence: 999, cycleEvidence}));
+        const deadline = Date.now() + 5000;
+        let retained = false;
+        while (!retained && Date.now() < deadline) {
+          try { retained = JSON.parse(fs.readFileSync(path.join(directory, 'cycles/status.json'))).throughSequence === '1'; }
+          catch (_) { /* Checkpoint publication is asynchronous. */ }
+          if (!retained) await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        assert.equal(retained, true, 'Checkpoint proves the evidence-only frame reached the real API');
+        assert.equal(JSON.parse((await request(apiPort, route)).body).sequence, 2);
+        assert.equal(JSON.parse((await request(apiPort, route)).body).cycleEvidenceOnly, undefined);
       } else assert.equal(response.body, second, `${name} must retain the final coalesced frame`);
       if (liveSocket) await close(liveSocket);
     }

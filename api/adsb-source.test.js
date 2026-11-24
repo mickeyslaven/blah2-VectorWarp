@@ -97,6 +97,9 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
     'Latest display positions accept and project feeder snapshots within max_position_age');
   assert.equal(latestDisplay.aircraft[0].vectorwarp.projected_seconds, 1.75,
     'Display freshness is measured after source I/O instead of before it');
+  assert.equal(latestDisplay.vectorwarp_presentation.max_position_age_s,
+    (await displaySource.status()).presentation_max_position_age_s,
+    'The aircraft response carries the canonical presentation budget without a second status request');
 
   let exactReads = 0;
   const exactProjection = createAdsbSource(config, {now: () => 100000,

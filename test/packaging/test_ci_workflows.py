@@ -56,6 +56,12 @@ def condition(expression, event, ref="refs/heads/main", **inputs):
 
 
 class WorkflowContracts(unittest.TestCase):
+    def test_release_cycle_evidence_is_gated_in_ci_and_packages(self):
+        for name in ("ci.yml", "release-packages.yml"):
+            workflow = (ROOT / ".github" / "workflows" / name).read_text()
+            self.assertIn("test/script/test_release_regression.py", workflow)
+            self.assertIn("test/script/test_export_cycles.py", workflow)
+
     def test_setup_node_receives_reviewed_version_from_executable_step_output(self):
         expected = subprocess.check_output(
             ["python3", str(ROOT / "script/artifact-plan.py"), "pin", "node"], text=True).strip()
@@ -207,6 +213,16 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn("chromium.executablePath()", step["run"])
             self.assertIn("playwright install", step["run"])
             self.assertNotIn("--only-shell", step["run"], "CDP runner launches the full Chromium binary")
+            self.assertIn("fusion-responsive.cjs", step["run"],
+                          "The portrait fusion kiosk needs its real-browser regression")
+            self.assertIn("statistics.cjs", step["run"],
+                          "The statistics kiosk needs its real-browser regression")
+            self.assertIn("VECTORWARP_SCREENSHOT_DIR", step["run"],
+                          "Retain fusion-kiosk screenshots with route evidence")
+            self.assertLess(step["run"].index("fusion-responsive.cjs"),
+                            step["run"].index("all-routes-layout.cjs"))
+            self.assertLess(step["run"].index("statistics.cjs"),
+                            step["run"].index("all-routes-layout.cjs"))
             if name == "ci.yml":
                 self.assertEqual(step["if"], "matrix.runner == 'ubuntu-24.04'")
                 self.assertIn("patch", " ".join(s.get("run", "") for s in job["steps"]
@@ -250,7 +266,9 @@ class WorkflowContracts(unittest.TestCase):
                                 ("gpu", "test_recorded_iq_qualification"),
                                 ("script", "test_replay_session"),
                                 ("script", "test_run_isolated_iq_replay"),
-                                ("script", "test_observer_allocation_contract"))]
+                                ("script", "test_observer_allocation_contract"))] + [
+                    "python3 test/script/test_release_regression.py -v",
+                    "python3 test/script/test_export_cycles.py -v"]
                 self.assertEqual(step["run"].splitlines(), expected)
                 source = "\n".join(step.get("run", "") for step in job["steps"])
                 self.assertNotIn("test/gpu/recorded_iq_qualification.py", source)

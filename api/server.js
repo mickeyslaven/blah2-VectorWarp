@@ -8,6 +8,9 @@ const path = require('path');
 const os = require('os');
 const zlib = require('zlib');
 const {buildMetadata, compiledReceiverTypes} = require('./build-metadata');
+const {ProcessingCycleLedger} = require('./processing-cycle-ledger');
+const processingCycleLedger = new ProcessingCycleLedger({
+  directory: process.env.VECTORWARP_CYCLE_LEDGER_DIR});
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
 const {getDeviceProfiles, validateConfig, FIELD_RULES, publicationPolicyError,
@@ -951,10 +954,8 @@ app.get('/api/live-aircraft-associations', async (_req, res, next) => {
     for (const channel of channels) for (const pass of channel.active_passes || []) {
       const hex = String(pass?.hex || '').trim().toLowerCase();
       if (!hex) continue;
-      const tracked = Number(pass.tracked_cpis) >= 3 ||
-        String(pass.status || '').includes('tracked');
-      const detected = tracked || Number(pass.detected_cpis) >= 3 ||
-        String(pass.status || '').includes('detected');
+      const tracked = pass.tracked === true;
+      const detected = tracked || pass.detected === true;
       if (!detected) continue;
       const current = byAircraft.get(hex) || {hex, flight: pass.flight || '',
         detected: false, tracked: false, channels: [], detected_cpis: 0, tracked_cpis: 0,
@@ -2418,6 +2419,8 @@ listenData(jsonStreamServer('timestamp', (frame, connection, parsed) => {
 
 listenData(jsonStreamServer('timing', (frame, connection, parsed) => {
   if (!radarSession.activate(connection)) return false;
+  processingCycleLedger.accept(parsed);
+  if (parsed.cycleEvidenceOnly === true) return;
   // Terminal capture accounting is telemetry, not another scientific CPI.
   radarSession.acceptProduct('timing', frame,
     {history: parsed.captureTerminal !== true, parsed});
@@ -2435,6 +2438,7 @@ process.on('SIGTERM', async () => {
   multiIlluminatorEvidence?.close();
   oprsEventRecorder.close();
   gainMonitor.stop();
+  await processingCycleLedger.close();
   try { await recordingTimeline.stop(null, Date.now()); }
   catch (error) { console.error(`Manual recording ADS-B timeline failed: ${error.message}`); }
   process.exit(0);

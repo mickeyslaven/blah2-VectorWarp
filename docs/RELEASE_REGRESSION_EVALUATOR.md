@@ -156,6 +156,53 @@ ingress lane and receiver recovery counter without rebasing; raw traces retain
 per-lane detail. This offline format requires exact JSON integers, not rounded
 JavaScript values or substituted zeros. A reset cannot repair a failed cohort.
 
+The canonical `Timing.cycleEvidence` observation retains eight consecutive
+consumer cycles, including warmup, rejected, drain, and final outcomes. All
+sequence, monotonic-nanosecond, UTC-anchor, and capture counters use decimal
+strings on the native/API boundary. The UTC anchor is fixed for the process;
+more than 100 ms of wall-clock drift invalidates evidence. Completed durations
+include local destruction, and nested drains are retained as `drainBatches`.
+The existing timing socket is best-effort: transport loss never waits on DSP,
+and a gap exceeding the retained window invalidates the ledger.
+
+Set `VECTORWARP_CYCLE_LEDGER_DIR` to a unique nonexistent directory before API
+startup to retain observations. No collection is enabled by default. The API
+keeps at most 32 pending records and 512 MiB of ledger data with a 1 GiB disk
+reserve. It never resumes, rotates away, or rebases a failed cohort. Sequence,
+clock, counter, queue, disk, or write failures are sticky. Every append revokes
+the old checkpoint before writing; a replacement becomes eligible only after
+data and checkpoint fsync. A clean shutdown seals the same stream. An exporter
+pins one valid checkpoint, reads exactly its byte count, and verifies its hash
+and consecutive sequence. Concurrent later appends cannot contaminate that
+prefix; truncation, corruption, or an incomplete checkpoint is refused.
+
+FIFO receiver evidence uses the existing coherent sample-position authority
+for every physical lane, `processing_epoch()` for receiver discontinuities,
+and each FIFO's exact drops plus consumer boundary/stop discards. Processing
+retirements retain distinct CPI/sample totals; ingress losses are not relabeled
+as processing retirements. Host `Acceleration` and `RadarBank` retain renewed
+qualification attempts across input resets; channelizer replacement attempts
+join that total. Initial private qualification is not a requalification.
+The optional paired queue has no exact lifetime sample-counter capability in
+its current module ABI and remains explicitly ineligible. No counter is
+invented or silently set to zero to make an unsupported path eligible.
+
+Export a retained checkpoint without contacting or stopping a processor:
+
+```sh
+python3 tools/vectorwarp_export_cycles.py \
+  --ledger /retained/unique-cycle-ledger --binding /reviewed/immutable-binding.json \
+  --node site-a --evidence-dir /retained/sha256 --output /retained/runtime-export.json
+```
+
+The output's `runtimeEvidence` list supplies the existing evaluator input's
+`nodes[NAME].runtimeBlocks`; its bounds supply the evaluation interval. The
+reviewed binding supplies candidate identity and must match the independently
+measured live cohort. The retained raw blocks preserve exact nanoseconds and
+per-lane counters; runtime-v1's UTC seconds retain its existing JSON-number
+representation. This exporter supplies runtime evidence only, not scored radar
+outcomes, physical qualification, or release authority.
+
 ## Running and publication
 
 After separately reviewing and retaining policy and evidence:

@@ -177,6 +177,19 @@ class StartupPreparation(unittest.TestCase):
         self.assertIn("stages->resetReference();", warm)
         self.assertIn("channel->clear();", warm)
 
+    def test_terminal_evidence_follows_producer_join_and_counts_fifo_tail(self):
+        source = (ROOT / "src/blah2.cpp").read_text()
+        consumer_end = source.split('capture->processing_failure_or_stop("Unknown processing failure");', 1)[1]
+        self.assertIn("if (!state && t1.joinable())", consumer_end)
+        self.assertLess(consumer_end.index("capture->request_stop();"), consumer_end.index("t1.join();"))
+        self.assertLess(consumer_end.index("t1.join();"), consumer_end.index("publishTerminalCaptureAccounting();"))
+        self.assertEqual(source.count("publishTerminalCaptureAccounting();"), 1)
+        terminal = source.split("publishTerminalCaptureAccounting = [&]", 1)[1].split("// The consumer's queues", 1)[0]
+        self.assertIn("captureBuffers[channel]->get_length()", terminal)
+        self.assertRegex(terminal, r"consumerStopDiscarded\[channel\] = timing->capture_sample_sum\(\{consumerStopDiscarded\[channel\],\s*backlog\[channel\]\}\)")
+        self.assertLess(terminal.index("consumerStopDiscarded[channel] ="), terminal.rindex("completeCycleEvidence();"))
+        self.assertIn('fail_processing_evidence("terminal-capture-accounting-fault")', terminal)
+
     def test_parallel_startup_owns_and_drains_every_lane(self):
         source = (ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text()
         driver = STARTUP_DRIVER.replace("// PRODUCTION_STARTUP", startup_definition(source))

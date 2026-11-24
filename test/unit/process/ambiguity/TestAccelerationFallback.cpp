@@ -379,6 +379,11 @@ void testTransientWorkerRecovery() {
     });
   }
   check(creations == 2, "Transient worker recovery spawned more than one replacement");
+  check(acceleration.requalificationCount() == 1,
+    "Transient recovery did not retain its exact renewed qualification count");
+  acceleration.beginFrame();
+  check(acceleration.requalificationCount() == 1,
+    "Ordinary frame entry must not rebase or increment recovery evidence");
   check(cpuCalls == 5, "Recovered worker skipped one-frame numerical requalification or retained CPU fallback");
   check(acceleration.status().active == "vulkan" && acceleration.status().state == "ready",
     "Recovered worker did not return to qualified GPU execution");
@@ -394,6 +399,10 @@ int main(int argc, char**) {
     testIndependentPortableLanesCanOverlap();
     testStartupPreparation();
     testTransientWorkerRecovery();
+    blah2::Acceleration cpuEvidence("cpu", {64, 4, 3, 1, -1}, 32, 48000, 0);
+    cpuEvidence.beginFrame();
+    check(cpuEvidence.requalificationCount() == 0,
+      "CPU-only frames must expose exact zero renewed GPU qualifications");
     for (const std::string mode : {"cpu", "auto", "gpu"}) {
       bool rejected = false;
       try {

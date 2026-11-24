@@ -39,6 +39,11 @@ part of prebuild acceptance. No pixel snapshots are silently updated: interactio
 focus, visible geometry, page errors and missing assets determine acceptance;
 screenshots support human review.
 
+Those jobs also run `fusion-responsive.cjs` and `statistics.cjs` before the route
+matrix. They retain fusion kiosk screenshots in the same evidence artifact. The
+fusion test launches its own disposable Chromium with `--remote-debugging-port=0`
+and discovers that test process's endpoint.
+
 The setup fixture uses validated, synthetic configurations and memory-only writes.
 It never installs drivers, starts receivers, contacts peers, or changes operational
 configuration. OS/receiver fixtures test UI capabilities, not RF, GPU performance,

@@ -286,7 +286,8 @@ function clockedPage(cpi = .5) {
   const adapters = {project: item => item.point,
     model: {operationalTracks: result => result.available ? result.tracks : [], radarPoint: item => item.point}};
   const historyBundle = {config: {}, result: {available: true, tracks: [track]},
-    adsbData: {aircraft: [{hex: 'ABC', point: [2, 2], gs: 100, track: 90}]},
+    adsbData: {now: 0, vectorwarp_presentation: {max_position_age_s: 5},
+      aircraft: [{hex: 'ABC', point: [2, 2], gs: 100, track: 90}]},
     associationData: {associations: [{hex: 'abc', tracked: true}]}};
   historyPage.context.updateNetworkDisplayHistory(historyBundle, adapters);
   assert.equal(historyBundle.adsbAircraft[0].association.tracked, true);
@@ -308,11 +309,38 @@ function clockedPage(cpi = .5) {
   for (let index = 1; index <= 70; index++) {
     track.timestamp = 6000 + index * 100;
     await historyPage.advance(100);
-    historyBundle.adsbData.aircraft = [{hex: 'ABC', point: [2, 2]}];
+    historyBundle.adsbData = {now: historyPage.now() / 1000,
+      vectorwarp_presentation: {max_position_age_s: 5},
+      aircraft: [{hex: 'ABC', point: [2, 2]}]};
     historyPage.context.updateNetworkDisplayHistory(historyBundle, adapters);
   }
   assert.equal(historyBundle.fusedHistory.get('F1').length, 20);
   assert.equal(historyBundle.adsbAircraft[0].trail.length, 60);
+
+  const stalePage = clockedPage(), staleBundle = {config: {}, result: {available: true, tracks: []},
+    adsbData: {now: 0, vectorwarp_presentation: {max_position_age_s: 5},
+      aircraft: [{hex: 'STALE', point: [3, 3], seen_pos: 0}]}, associationData: {associations: []}};
+  stalePage.context.updateNetworkDisplayHistory(staleBundle, adapters);
+  await stalePage.advance(4900);
+  stalePage.context.updateNetworkDisplayHistory(staleBundle, adapters);
+  assert.equal(staleBundle.adsbAircraft.length, 1,
+    'A brief source gap remains smooth inside the canonical presentation-age budget');
+  await stalePage.advance(200);
+  stalePage.context.updateNetworkDisplayHistory(staleBundle, adapters);
+  assert.equal(staleBundle.adsbAircraft.length, 0,
+    'Replaying an unchanged cached snapshot cannot renew its original observation age');
+  assert.deepEqual(stalePage.context.clientJsonCachePolicy('/api/adsb?presentation=latest'),
+    {freshMs: 0, staleMs: 0, storage: null},
+    'The live network presentation never replays session-cached aircraft');
+  const sourceBudgetPage = clockedPage(), sourceBudgetBundle = {config: {truth: {adsb: {max_position_age: 5}}},
+    result: {available: true, tracks: []}, adsbData: {now: 7,
+      vectorwarp_presentation: {max_position_age_s: 9.25},
+      aircraft: [{hex: 'BUDGET', point: [4, 4], seen_pos: 7}]},
+    associationData: {associations: []}};
+  await sourceBudgetPage.advance(7000);
+  sourceBudgetPage.context.updateNetworkDisplayHistory(sourceBudgetBundle, adapters);
+  assert.equal(sourceBudgetBundle.adsbAircraft.length, 1,
+    'A successful aircraft response carries its own source budget and never depends on a status request');
   historyBundle.result.available = false;
   historyBundle.adsbData.aircraft = [];
   await historyPage.advance(20001);

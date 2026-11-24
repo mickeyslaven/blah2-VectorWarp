@@ -1675,6 +1675,98 @@ TEST_CASE("consumer cycle timing includes omitted phases and retains explicit co
   REQUIRE(second["completion_interval"]["latestMs"].GetDouble() == 1100);
 }
 
+TEST_CASE("cycle evidence retains consecutive outcomes and lossless capture counters")
+{
+  using Clock = std::chrono::steady_clock;
+  Timing timing(1000);
+  const auto start = Clock::now();
+  Timing::CaptureEvidence capture;
+  capture.available = true; capture.epoch = 7; capture.lanes = 2;
+  capture.accepted[0] = capture.accepted[1] = (uint64_t{1} << 53) + 1;
+  const char* outcomes[]{"completed", "warmup", "rejected", "drain", "final"};
+  for (unsigned index = 0; index < 10; ++index) {
+    const auto begin = start + std::chrono::microseconds(index * 10);
+    timing.begin_processing_evidence(begin, capture);
+    timing.processing_evidence_outcome(outcomes[index % 5]);
+    if (index % 5 == 3) timing.processing_evidence_drain();
+    ++capture.accepted[0]; ++capture.accepted[1];
+    timing.complete_processing_evidence(begin + std::chrono::microseconds(5), capture);
+    timing.complete_processing_evidence(begin + std::chrono::microseconds(6), capture);
+  }
+  rapidjson::Document json;
+  json.Parse(timing.to_json().c_str());
+  const auto& evidence = json["cycleEvidence"];
+  REQUIRE(std::string(evidence["fault"].GetString()).empty());
+  REQUIRE(evidence["anchorUtcNs"].IsString());
+  REQUIRE(evidence["records"].Size() == 8);
+  for (unsigned index = 0; index < 8; ++index) {
+    const auto& record = evidence["records"][index];
+    REQUIRE(std::string(record["sequence"].GetString()) == std::to_string(index + 3));
+    REQUIRE(std::string(record["outcome"].GetString()) == outcomes[(index + 2) % 5]);
+    REQUIRE(record["captureAfter"]["available"].GetBool());
+    REQUIRE(std::string(record["captureBefore"]["lanes"][0]["acceptedSamples"].GetString()) ==
+      std::to_string((uint64_t{1} << 53) + index + 3));
+  }
+  REQUIRE(std::string(evidence["records"][1]["drainBatches"].GetString()) == "1");
+}
+
+TEST_CASE("cycle evidence clock and lifecycle faults are sticky without changing radar metrics")
+{
+  using Clock = std::chrono::steady_clock;
+  Timing timing(1000);
+  Timing::CaptureEvidence capture;
+  capture.available = true; capture.lanes = 1;
+  const auto start = Clock::now();
+  timing.begin_processing_evidence(start, capture);
+  timing.complete_processing_evidence(start - std::chrono::nanoseconds(1), capture);
+  timing.update(1500, {400}, {"cpi"});
+  rapidjson::Document json;
+  json.Parse(timing.to_json().c_str());
+  REQUIRE(std::string(json["cycleEvidence"]["fault"].GetString()) == "monotonic-clock-fault");
+  REQUIRE(json["cpi"].GetDouble() == 400);
+  REQUIRE(json["nCpi"].GetUint64() == 1);
+  timing.fail_processing_evidence("later-fault");
+  json.Parse(timing.to_json().c_str());
+  REQUIRE(std::string(json["cycleEvidence"]["fault"].GetString()) == "monotonic-clock-fault");
+  Timing overlap(1000);
+  overlap.begin_processing_evidence(start, capture);
+  overlap.begin_processing_evidence(start, capture);
+  json.Parse(overlap.to_json().c_str());
+  REQUIRE(std::string(json["cycleEvidence"]["fault"].GetString()) == "overlapping-cycle");
+}
+
+TEST_CASE("terminal evidence retains post-quiescence FIFO losses independently of processing retirement")
+{
+  using Clock = std::chrono::steady_clock;
+  Timing timing(0);
+  Timing::CaptureEvidence capture;
+  capture.available = true; capture.lanes = 1; capture.epoch = 7;
+  capture.accepted[0] = (uint64_t{1} << 53) + 1;
+  const auto start = Clock::now();
+  timing.begin_processing_evidence(start, capture);
+  timing.processing_evidence_outcome("final");
+  // The producer can deliver a tail and increment overflow after stop was
+  // requested. The final snapshot must use these reconciled values.
+  capture.accepted[0] += 13;
+  capture.dropped[0] = 3;
+  const uint64_t fifo = 13, consumer = 7, claimed = 5, previousStop = 2;
+  const auto backlog = timing.capture_sample_sum({fifo, consumer, claimed});
+  capture.discarded[0] = timing.capture_sample_sum({previousStop, backlog});
+  timing.complete_processing_evidence(start + std::chrono::microseconds(1), capture);
+  rapidjson::Document json;
+  json.Parse(timing.to_json(true).c_str());
+  const auto& final = json["cycleEvidence"]["records"][0]["captureAfter"];
+  REQUIRE(std::string(final["lanes"][0]["acceptedSamples"].GetString()) ==
+    std::to_string((uint64_t{1} << 53) + 14));
+  REQUIRE(std::string(final["lanes"][0]["discardedSamples"].GetString()) == "27");
+  REQUIRE(std::string(final["lanes"][0]["droppedSamples"].GetString()) == "3");
+  REQUIRE(std::string(final["retiredSamples"].GetString()) == "0");
+  REQUIRE(timing.capture_sample_sum({UINT64_MAX - 2, 2}) == UINT64_MAX);
+  REQUIRE_THROWS_AS(timing.capture_sample_sum({UINT64_MAX, 1}), std::overflow_error);
+  json.Parse(timing.to_json(true).c_str());
+  REQUIRE(std::string(json["cycleEvidence"]["fault"].GetString()) == "capture-counter-overflow");
+}
+
 TEST_CASE("resident lane reservations cap all sessions before worker allocation")
 {
   blah2::resident::LaneBudget budget(3, 2, 128ULL << 20);

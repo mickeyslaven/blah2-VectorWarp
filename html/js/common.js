@@ -962,6 +962,8 @@ function clientJsonCachePolicy(url) {
   if (['/api/tracker/fused', '/api/live-aircraft-associations',
     '/api/federation/live-aircraft-associations'].includes(path))
     return {freshMs: 0, staleMs: 0, storage: null};
+  if (path === '/api/adsb' && parsed.searchParams.get('presentation') === 'latest')
+    return {freshMs: 0, staleMs: 0, storage: null};
   if (/^\/(?:stash|capture)(?:\/|$)/.test(path) ||
       /^\/api\/(?:iqdata|spectrum)(?:\/|$)/.test(path))
     return {freshMs: 0, staleMs: 0, storage: null};
@@ -1590,20 +1592,34 @@ function updateNetworkDisplayHistory(bundle, {project, model, fusedTracks = mode
   const {result, config, adsbData, associationData} = bundle;
   const {fused, adsb, trails} = radarDisplayLanes.network.history;
   const receiver = config?.location?.rx, now = Date.now(), current = new Set();
+  const finite = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+  const presentationAgeSeconds = finite(adsbData?.vectorwarp_presentation?.max_position_age_s) ?
+    Math.max(0, Number(adsbData.vectorwarp_presentation.max_position_age_s)) :
+    Math.max(0, Number(config?.truth?.adsb?.max_position_age ?? 5));
+  const observationAt = item => {
+    const explicit = item?.vectorwarp?.observation_position_timestamp_s;
+    if (finite(explicit)) return Number(explicit) * 1000;
+    const snapshot = adsbData?.now, age = finite(item?.seen_pos) ? Number(item.seen_pos) :
+      finite(item?.seen) ? Number(item.seen) : 0;
+    return finite(snapshot) ? (Number(snapshot) - age) * 1000 : now - age * 1000;
+  };
   const associations = new Map((associationData?.associations || []).filter(item => item?.hex)
     .map(item => [String(item.hex).trim().toLowerCase(), item]));
   (Array.isArray(adsbData?.aircraft) ? adsbData.aircraft : []).forEach((item, index) => {
     const key = String(item.hex || item.flight || `anonymous-${index}`).trim().toLowerCase();
-    const point = project(item, receiver);
+    const point = project(item, receiver), observedAt = observationAt(item);
     if (!point || Math.hypot(...point) > 65) return;
+    if (!finite(observedAt) || observedAt > now + 1000 || now - observedAt > presentationAgeSeconds * 1000) return;
     current.add(key);
-    adsb.set(key, {item, point, lastSeen: now});
+    const prior = adsb.get(key);
+    if (!prior || observedAt >= prior.observedAt)
+      adsb.set(key, {item, point, observedAt, lastSeen: now,
+        expiresAt: observedAt + presentationAgeSeconds * 1000});
   });
   bundle.adsbAircraft = [];
   for (const [key, entry] of adsb) {
-    if (now - entry.lastSeen > 20000) { adsb.delete(key); trails.delete(key); continue; }
+    if (now > entry.expiresAt) { adsb.delete(key); trails.delete(key); continue; }
     const ageSeconds = Math.max(0, (now - entry.lastSeen) / 1000), point = [...entry.point];
-    const finite = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
     if (ageSeconds > 0 && finite(entry.item.gs) && finite(entry.item.track)) {
       const distance = Number(entry.item.gs) * 1.852 / 3600 * ageSeconds;
       const heading = Number(entry.item.track) * Math.PI / 180;

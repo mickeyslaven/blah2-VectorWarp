@@ -61,6 +61,8 @@ jobs:
           python3 -m unittest discover -s test/script -p test_replay_session.py
           python3 -m unittest discover -s test/script -p test_run_isolated_iq_replay.py
           python3 -m unittest discover -s test/script -p test_observer_allocation_contract.py
+          python3 test/script/test_release_regression.py -v
+          python3 test/script/test_export_cycles.py -v
       - name: Verify npm 11 installs the API in an absolute artifact directory
         run: python3 test/macos/build_macos_npm_install_test.py
       - name: Build unified GPU processing and open receiver adapters
@@ -106,7 +108,7 @@ jobs:
           node api/macos-lifecycle-server.test.js
           node api/receiver-management.test.js
           node test/ui/deployment.test.js
-      - name: Check real browser map, all routes and responsive states
+      - name: Check real browser map, all routes and kiosk-responsive states
         timeout-minutes: 25
         env:
           VECTORWARP_LAYOUT_INTERACTIONS: '1'
@@ -117,8 +119,10 @@ jobs:
           cd test/browser
           npx playwright install chromium
           node locations.cjs
-          VECTORWARP_CHROME_EXECUTABLE="$(node -p "require('playwright').chromium.executablePath()")" \
-            node all-routes-layout.cjs
+          export VECTORWARP_CHROME_EXECUTABLE="$(node -p "require('playwright').chromium.executablePath()")"
+          VECTORWARP_SCREENSHOT_DIR="$VECTORWARP_LAYOUT_SCREENSHOTS/fusion" node fusion-responsive.cjs
+          node statistics.cjs
+          node all-routes-layout.cjs
       - name: Preserve browser-route evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

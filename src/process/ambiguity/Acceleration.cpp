@@ -85,6 +85,7 @@ void Acceleration::retryClutterQualificationAfterStartup() {
   if (!gpu_ || !geometry_.clutterSamples || !clutterDisabled_) return;
   auto* backend = dynamic_cast<GpuClutterFrameBackend*>(gpu_.get());
   if (!backend || !backend->clutterAvailable()) return;
+  if (requalifications_ != UINT64_MAX) ++requalifications_;
   clutterDisabled_ = false;
   clutterChecks_ = 0;
   combinedChecks_ = 0;
@@ -136,6 +137,7 @@ bool Acceleration::recoverableWorkerFailure(const std::string& message) {
 void Acceleration::recoverWorkerIfPending() {
   if (!recoveryPending_ || gpu_) return;
   if (recoveryCooldownFrames_) { --recoveryCooldownFrames_; return; }
+  if (requalifications_ != UINT64_MAX) ++requalifications_;
   try {
     auto replacement = backendFactory_ ? backendFactory_(geometry_, deviceSelector_) :
       createGpuProcess(geometry_, deviceSelector_);

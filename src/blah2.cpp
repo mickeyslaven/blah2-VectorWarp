@@ -101,7 +101,7 @@ std::unique_ptr<Socket> socket_illuminator;
 std::unique_ptr<Socket> socket_bearing;
 std::unique_ptr<Socket> socket_manifold;
 std::unique_ptr<Socket> socket_timestamp;
-std::unique_ptr<Socket> socket_timing;
+std::unique_ptr<blah2::BestEffortSocket> socket_timing;
 std::unique_ptr<Socket> socket_iqdata;
 
 void signal_callback_handler(int signum);
@@ -996,7 +996,7 @@ try
     if(bearingEnabled)socket_bearing = std::make_unique<Socket>(ip, port_bearing);
     if(manifoldRecorderEnabled)socket_manifold = std::make_unique<Socket>(ip, port_manifold);
     socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
-    socket_timing = std::make_unique<Socket>(ip, port_timing);
+    socket_timing = std::make_unique<blah2::BestEffortSocket>(ip, port_timing);
     socket_iqdata = std::make_unique<Socket>(ip, port_iqdata);
   } catch (const std::exception& e) {
     std::cerr << "Failed to initialize socket connections: " << e.what() << "\n";
@@ -2216,7 +2216,26 @@ try
       throw;
     }
   };
+  uint64_t retiredProcessingCpis = 0, retiredProcessingSamples = 0;
+  bool retirementEvidenceValid = true;
   const auto resetMultiRadar = [&] {
+    try {
+      auto retired = multiRadar ? multiRadar->pendingPublicationSequences() : std::vector<uint64_t>{};
+      std::sort(retired.begin(), retired.end());
+      retired.erase(std::unique(retired.begin(), retired.end()), retired.end());
+      for (const auto sequence : retired) {
+        const auto& publication = multiProductPublications.at(sequence);
+        if (!publication.samplePositionAvailable || publication.captureEnd < publication.captureFirst ||
+            retiredProcessingCpis == UINT64_MAX ||
+            publication.captureEnd - publication.captureFirst > UINT64_MAX / captureChannelCount) {
+          retirementEvidenceValid = false; continue;
+        }
+        ++retiredProcessingCpis;
+        const auto samples = (publication.captureEnd - publication.captureFirst) * captureChannelCount;
+        if (samples > UINT64_MAX - retiredProcessingSamples) retirementEvidenceValid = false;
+        else retiredProcessingSamples += samples;
+      }
+    } catch (...) { retirementEvidenceValid = false; }
     if (multiRadar) multiRadar->reset();
     multiProductPublications.reset();
   };
@@ -2343,6 +2362,53 @@ try
     bool pairedQueueWasActive = false;
     bool terminalCaptureAccountingPublished = false;
     std::function<void()> publishTerminalCaptureAccounting = [] {};
+    uint64_t evidenceRequalifications = 0, evidenceRetiredCpis = 0, evidenceRetiredSamples = 0;
+    const auto retireOwnedCpi = [&]() noexcept {
+      const auto samples = uint64_t(nSamples) * captureChannelCount;
+      if (evidenceRetiredCpis == UINT64_MAX || samples > UINT64_MAX - evidenceRetiredSamples)
+        timing->fail_processing_evidence("retirement-counter-overflow");
+      else { ++evidenceRetiredCpis; evidenceRetiredSamples += samples; }
+    };
+    const auto captureEvidence = [&]() {
+      Timing::CaptureEvidence result;
+      result.lanes = captureChannelCount;
+      result.discontinuities = capture->input_generation();
+      const auto radarRequalifications = multiRadar ? multiRadar->requalificationCount() : 0;
+      if (radarRequalifications >= UINT64_MAX - evidenceRequalifications)
+        timing->fail_processing_evidence("requalification-counter-overflow");
+      else result.requalifications = evidenceRequalifications + radarRequalifications;
+      if (!retirementEvidenceValid || evidenceRetiredCpis > UINT64_MAX - retiredProcessingCpis)
+        timing->fail_processing_evidence("retirement-counter-unavailable");
+      else result.retiredCpis = evidenceRetiredCpis + retiredProcessingCpis;
+      if (evidenceRetiredSamples > UINT64_MAX - retiredProcessingSamples)
+        timing->fail_processing_evidence("retirement-counter-overflow");
+      else result.retiredSamples = retiredProcessingSamples + evidenceRetiredSamples;
+      // The existing positioned FIFO contract supplies all coherent lanes.
+      // The optional paired queue exposes no exact lifetime sample counter;
+      // refuse evidence there without changing the receiver/module ABI.
+      if (pairedQueueWasActive || captureChannelCount > result.accepted.size()) return result;
+      BufferLocks locks(captureBuffers);
+      const auto position = capture->live_sample_position();
+      result.available = position.available;
+      result.epoch = position.epoch;
+      for (std::size_t channel = 0; channel < captureChannelCount; ++channel) {
+        result.accepted[channel] = position.nextSample;
+        result.dropped[channel] = captureBuffers[channel]->get_dropped_samples();
+        if (consumerBoundaryDiscarded[channel] > UINT64_MAX - consumerStopDiscarded[channel]) {
+          result.available = false;
+          timing->fail_processing_evidence("capture-counter-overflow");
+        } else result.discarded[channel] = consumerBoundaryDiscarded[channel] + consumerStopDiscarded[channel];
+      }
+      return result;
+    };
+    const auto completeCycleEvidence = [&]() noexcept {
+      if (!timing->processing_evidence_pending()) return;
+      try {
+        const auto snapshot = captureEvidence();
+        timing->complete_processing_evidence(std::chrono::steady_clock::now(), snapshot);
+        socket_timing->sendData(timing->to_json(true));
+      } catch (...) { timing->fail_processing_evidence("evidence-publication-fault"); }
+    };
     try {
       const auto publishRadarTiming = [&](const std::vector<blah2::pipeline::RadarFrame>& frames,
           const auto& publications,
@@ -2377,8 +2443,15 @@ try
         }
       };
       const auto drainMultiPublications = [&] {
+        const bool ownCycle = !timing->processing_evidence_pending();
+        if (ownCycle && multiRadar && (multiPendingPublication.has_value() ||
+            !multiRadar->pendingPublicationSequences().empty())) {
+          timing->begin_processing_evidence(std::chrono::steady_clock::now(), captureEvidence());
+          timing->processing_evidence_outcome("drain");
+        }
         while(multiRadar && (multiPendingPublication.has_value() ||
             !multiRadar->pendingPublicationSequences().empty())){using DrainClock=std::chrono::steady_clock;
+          timing->processing_evidence_drain();
           const auto drainStart=DrainClock::now();
           blah2::multi_illuminator::PublicationContext publication;
           std::vector<blah2::multi_illuminator::RadarFrame> frames;
@@ -2421,6 +2494,7 @@ try
              milliseconds(drainEnd,serializationEnd),0.0,
              milliseconds(drainEnd,drainStart)});
         }
+        if (ownCycle) completeCycleEvidence();
       };
       uint64_t inputGeneration = 0;
       bool haveInputGeneration = false;
@@ -2443,21 +2517,23 @@ try
         if (terminalCaptureAccountingPublished || state) return;
         terminalCaptureAccountingPublished = true;
         try {
+          completeCycleEvidence();
+          timing->begin_processing_evidence(std::chrono::steady_clock::now(), captureEvidence());
+          timing->processing_evidence_outcome("final");
           std::vector<uint64_t> backlog(captureChannelCount),
             dropped(captureChannelCount);
           if (pairedQueueWasActive && pairedCpiQueue) {
             const auto queue = pairedCpiQueue->stats();
             const uint64_t queued = pairedCpiQueue->backlog_samples();
-            const uint64_t retired = queue.discardedSamples +
-              queue.trailingSamples;
+            const uint64_t retired = timing->capture_sample_sum({queue.discardedSamples,
+              queue.trailingSamples});
             for (std::size_t channel = 0; channel < captureChannelCount;
                  ++channel) {
-              backlog[channel] = queued + consumerClaimedSamples[channel];
-              consumerStopDiscarded[channel] += queue.trailingSamples +
-                consumerClaimedSamples[channel];
-              dropped[channel] = retired +
-                consumerBoundaryDiscarded[channel] +
-                consumerClaimedSamples[channel];
+              backlog[channel] = timing->capture_sample_sum({queued, consumerClaimedSamples[channel]});
+              consumerStopDiscarded[channel] = timing->capture_sample_sum({consumerStopDiscarded[channel],
+                queued, queue.trailingSamples, consumerClaimedSamples[channel]});
+              dropped[channel] = timing->capture_sample_sum({retired, queued,
+                consumerBoundaryDiscarded[channel], consumerClaimedSamples[channel]});
             }
           } else {
             BufferLocks locks(captureBuffers);
@@ -2466,13 +2542,15 @@ try
               const uint64_t consumer = nativeFloatGpuCapture ?
                 pendingFloatCapture[channel].size() :
                 pendingCapture[channel].size();
-              backlog[channel] = consumer + consumerClaimedSamples[channel] +
-                captureBuffers[channel]->get_length();
-              consumerStopDiscarded[channel] += consumer +
-                consumerClaimedSamples[channel];
-              dropped[channel] = captureBuffers[channel]->get_dropped_samples() +
-                consumerBoundaryDiscarded[channel] +
-                consumerStopDiscarded[channel];
+              // Producer is joined: FIFO length and overflow counters are final.
+              // Unprocessed FIFO/consumer tails are ingress discards, never
+              // processing-retired samples or silently healthy shutdown loss.
+              backlog[channel] = timing->capture_sample_sum({consumer, consumerClaimedSamples[channel],
+                captureBuffers[channel]->get_length()});
+              consumerStopDiscarded[channel] = timing->capture_sample_sum({consumerStopDiscarded[channel],
+                backlog[channel]});
+              dropped[channel] = timing->capture_sample_sum({captureBuffers[channel]->get_dropped_samples(),
+                consumerBoundaryDiscarded[channel], consumerStopDiscarded[channel]});
               pendingCapture[channel].clear();
               pendingFloatCapture[channel].clear();
             }
@@ -2482,11 +2560,16 @@ try
           timing->set_capture_discard_accounting(consumerBoundaryDiscarded,
             consumerStopDiscarded);
           timing->set_capture_terminal(true);
+          completeCycleEvidence();
           socket_timing->sendData(timing->to_json());
         } catch (const std::exception& error) {
+          timing->fail_processing_evidence("terminal-capture-accounting-fault");
+          try { socket_timing->sendData(timing->to_json(true)); } catch (...) {}
           std::cerr << "Final consumer capture accounting: " << error.what()
             << '\n';
         } catch (...) {
+          timing->fail_processing_evidence("terminal-capture-accounting-fault");
+          try { socket_timing->sendData(timing->to_json(true)); } catch (...) {}
           std::cerr << "Final consumer capture accounting failed\n";
         }
       };
@@ -2509,6 +2592,7 @@ try
         // ownership protocol cannot see them.
         const bool chunkLiveCapture = !state && !usePairedQueue;
         const bool directFloatCapture = chunkLiveCapture && nativeFloatGpuCapture;
+        completeCycleEvidence();
         const auto residentWholeStart=std::chrono::steady_clock::now();
         streamProfile.complete(residentWholeStart);
         const bool profileCycle=streamProfile.enabled();
@@ -2791,6 +2875,7 @@ try
         }
         if (ready)
         {
+          timing->begin_processing_evidence(residentWholeStart, captureEvidence());
           if(profileCycle){profileRecord.time[3]=std::chrono::steady_clock::now();
             profileRecord.sequence=++streamProfileSequence;profileRecord.epoch=captureEpoch;
             profileRecord.first=captureFirstEpochSample;profileRecord.end=captureEndEpochSample;
@@ -2805,6 +2890,7 @@ try
               consumerClaimedSamples.end(), nSamples);
           const uint64_t currentInputGeneration = capture->input_generation();
           if (currentInputGeneration != extractedInputGeneration) {
+            retireOwnedCpi();
             for (std::size_t channel = 0; channel < captureChannelCount;
                  ++channel) {
               consumerBoundaryDiscarded[channel] +=
@@ -2826,6 +2912,7 @@ try
               captureEpoch,captureFirstEpochSample,captureEndEpochSample);
             blah2::replay_gpu_qualification::event("capture-owned");
             if(blah2::replay_gpu_qualification::discardGap()) {
+              retireOwnedCpi();
               // The CPI has been extracted and owned once. Discard its real
               // samples; the next CPI retains its original recording position.
               for(std::size_t channel=0;channel<captureChannelCount;++channel){
@@ -2991,6 +3078,7 @@ try
             if(multiGpuRecoveryPending && !multiGpuChannelizer){
               if(multiGpuRecoveryCooldownFrames) --multiGpuRecoveryCooldownFrames;
               else try {
+                if (evidenceRequalifications != UINT64_MAX) ++evidenceRequalifications;
                 if(!multiGpuConfig)
                   throw std::logic_error("Wideband GPU recovery lacks its frozen configuration");
                 auto replacement=blah2::wideband_gpu::createLeasedProcess(
@@ -3279,6 +3367,7 @@ try
                 channelizerMs,qualificationFrame,gpuExecuted,cpuExecuted));
             };
             if(!haveChannelized){finishCurrent();
+              timing->processing_evidence_outcome("warmup");
               time.clear();
               std::fill(consumerClaimedSamples.begin(),
                 consumerClaimedSamples.end(), 0);continue;}
@@ -3297,6 +3386,10 @@ try
             if (profileCycle && !framePublications.empty())
               profileRecord.publishedFirst = framePublications.front().second.captureFirst;
             const auto laneHealth = multiRadar->laneHealth();
+            const bool rejected = std::any_of(laneHealth.begin(), laneHealth.end(),
+              [](const auto& lane) { return lane.hasLastCpi && !lane.lastAccepted; });
+            timing->processing_evidence_outcome(rejected ? "rejected" :
+              (framePublications.empty() ? "warmup" : "completed"));
             const auto radarEnd=PipelineClock::now();
             if(profileCycle)profileRecord.time[9]=radarEnd;
             struct SerializedIlluminatorFrame
@@ -3369,19 +3462,27 @@ try
         }
       }
       timing->complete_processing_cycle(std::chrono::steady_clock::now());
+      completeCycleEvidence();
       // Live stop and finite replay both complete the held channelizer and
       // product CPIs. Capture/loop boundaries use this same publication drain.
       drainMultiPublications();
-      publishTerminalCaptureAccounting();
     } catch (const std::exception& error) {
+      timing->fail_processing_evidence("processing-exception");
       try { resetMultiRadar(); } catch (...) {}
-      publishTerminalCaptureAccounting();
       capture->processing_failure_or_stop(error.what());
     } catch (...) {
+      timing->fail_processing_evidence("processing-exception");
       try { resetMultiRadar(); } catch (...) {}
-      publishTerminalCaptureAccounting();
       capture->processing_failure_or_stop("Unknown processing failure");
     }
+    // A stop request is not producer quiescence. Receiver callbacks, FIFO
+    // overflow totals and Capture's final reconciliation finish before sealing
+    // the terminal cycle; the consumer's pending tails remain alive here.
+    if (!state && t1.joinable()) {
+      capture->request_stop();
+      t1.join();
+    }
+    publishTerminalCaptureAccounting();
     });
   t2.join();
   if (t1.joinable()) t1.join();

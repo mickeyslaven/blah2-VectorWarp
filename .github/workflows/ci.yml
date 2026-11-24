@@ -126,6 +126,8 @@ jobs:
           python3 -m unittest discover -s test/script -p test_replay_session.py
           python3 -m unittest discover -s test/script -p test_run_isolated_iq_replay.py
           python3 -m unittest discover -s test/script -p test_observer_allocation_contract.py
+          python3 test/script/test_release_regression.py -v
+          python3 test/script/test_export_cycles.py -v
       - name: Run offline full-processor replay harness
         run: |
           python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2 | tee build/ci/processor-replay.json
@@ -186,7 +188,7 @@ jobs:
           python3 test/packaging/test_receiver_build.py -v
           sudo python3 test/packaging/test_package_upgrade.py -v
           node test/packaging/upgrade_state.test.js
-      - name: Check all browser routes and responsive states
+      - name: Check all browser routes and kiosk-responsive states
         if: matrix.runner == 'ubuntu-24.04'
         timeout-minutes: 15
         env:
@@ -197,8 +199,10 @@ jobs:
         run: |
           npm ci --prefix test/browser --ignore-scripts --no-audit --no-fund
           test/browser/node_modules/.bin/playwright install --with-deps chromium
-          VECTORWARP_CHROME_EXECUTABLE="$(node -p "require('./test/browser/node_modules/playwright').chromium.executablePath()")" \
-            node test/browser/all-routes-layout.cjs
+          export VECTORWARP_CHROME_EXECUTABLE="$(node -p "require('./test/browser/node_modules/playwright').chromium.executablePath()")"
+          VECTORWARP_SCREENSHOT_DIR="$VECTORWARP_LAYOUT_SCREENSHOTS/fusion" node test/browser/fusion-responsive.cjs
+          node test/browser/statistics.cjs
+          node test/browser/all-routes-layout.cjs
       - name: Preserve browser-route evidence
         if: always() && matrix.runner == 'ubuntu-24.04'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -409,7 +409,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       maxPositionAgeSeconds: presentationAgeSeconds,
       maxObservationOffsetSeconds: presentationAgeSeconds},
       presentationSnapshots);
-    if (kind === 'aircraft') return data;
+    if (kind === 'aircraft') return {...data, vectorwarp_presentation: {
+      schema: 'vectorwarp-adsb-presentation-v1', max_position_age_s: presentationAgeSeconds}};
     return presentationGeometry.update(data).data;
   }
   async function getPresentationAt(kind, targetAtMs) {
@@ -420,7 +421,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const data = await rawAircraft(targetAtMs, {
       maxPositionAgeSeconds: presentationAgeSeconds,
       maxObservationOffsetSeconds: presentationAgeSeconds}, presentationSnapshots);
-    if (kind === 'aircraft') return data;
+    if (kind === 'aircraft') return {...data, vectorwarp_presentation: {
+      schema: 'vectorwarp-adsb-presentation-v1', max_position_age_s: presentationAgeSeconds}};
     return presentationGeometry.update(data).data;
   }
   async function status() {
