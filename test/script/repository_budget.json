@@ -8568,6 +8568,41 @@
           "oversized_lines:html/js/common.js": [2350, 2359],
           "oversized_lines:html/js/insights.js": [2317, 2320]
         }
+      },
+      {
+        "owner": "2026-11-23 delay-Doppler presentation integrity review",
+        "purpose": "Replace presentation-only max pooling with RMS-energy pooling, keep map and overlay lineage atomic across omitted-map CPIs, and preserve producer-session reset isolation without changing scientific detector or tracker products.",
+        "rejected_reuse": "Do not alter native ambiguity values, detector thresholds, tracker inputs, or scientific map resolution; do not retain repeated max pooling, mix overlays from a newer CPI with an older map, or serve maps across a regressed producer sample counter.",
+        "cleanup_plan": "Retain one native presentation reducer, one API fallback reducer, and one atomic retained-frame contract. These exact ceilings have no reserve; the API owner reductions are permanently ratcheted downward.",
+        "changes": {
+          "lines:html": [14202, 14205],
+          "lines:src": [45596, 45600],
+          "context_characters:build-integration/contracts": [1389948, 1390316],
+          "context_characters:canonical-data": [154319, 154687],
+          "context_characters:production": [7081204, 7081738],
+          "context_characters:runtime-api": [474348, 474459],
+          "context_characters:ui-presentation": [295603, 295658],
+          "context_lines:build-integration/contracts": [28345, 28349],
+          "context_lines:canonical-data": [4163, 4167],
+          "context_lines:production": [130919, 130926],
+          "context_lines:ui-presentation": [3273, 3276],
+          "context_tokens:build-integration/contracts": [342612, 342712],
+          "context_tokens:canonical-data": [37975, 38075],
+          "context_tokens:production": [1775288, 1775460],
+          "context_tokens:runtime-api": [117291, 117331],
+          "context_tokens:ui-presentation": [90738, 90770],
+          "oversized_bytes:api/server.js": [138171, 137964],
+          "oversized_lines:api/server.js": [2445, 2441],
+          "context_characters:build-release/contracts": [385246, 385039],
+          "context_characters:installation/contracts": [249004, 248797],
+          "context_characters:operational-tools/contracts": [521061, 520854],
+          "context_lines:build-release/contracts": [7709, 7705],
+          "context_lines:installation/contracts": [4207, 4203],
+          "context_lines:operational-tools/contracts": [9073, 9069],
+          "context_tokens:build-release/contracts": [91515, 91473],
+          "context_tokens:installation/contracts": [58826, 58784],
+          "context_tokens:operational-tools/contracts": [130948, 130906]
+        }
       }
   ],
   "context_snapshot": {

@@ -485,7 +485,7 @@ const {value: parsedFrame} = parserSession.acceptIlluminator(JSON.stringify({
   schema:'vectorwarp-multi-illuminator-frame-v1', id:'lane', timestamp:1,
   frequency_hz:100000000, sample_rate_hz:200000, first_input_sample:0, end_input_sample:100,
   map:{timestamp:1,nRows:1,nCols:1,sourceRows:2,sourceCols:2,
-    presentationStride:2,presentation_only:true,presentation_pooling:'max',data:[[12.25]]},
+    presentationStride:2,presentation_only:true,presentation_pooling:'energy_mean',data:[[12.25]]},
   detections:{data:[]},tracks:{data:[]}}));
 assert.equal(parsedFrame.map.presentation_only, true,
   'Compact parser must retain the presentation-only scientific boundary');

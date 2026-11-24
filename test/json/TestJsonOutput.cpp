@@ -188,7 +188,7 @@ void correctness() {
       "Presentation map is not valid JSON");
     require(map["presentationStride"].GetUint() == 3 &&
       map["presentation_only"].GetBool() &&
-      std::string(map["presentation_pooling"].GetString()) == "max" &&
+      std::string(map["presentation_pooling"].GetString()) == "energy_mean" &&
       map["presentation_precision_db"].GetDouble() == .25 &&
       map["sourceRows"].GetUint() == 601 &&
       map["sourceCols"].GetUint() == 1261 &&
@@ -197,8 +197,8 @@ void correctness() {
     require(map["data"].Size() == 201 && map["data"][0].Size() == 421 &&
       map["delay"].Size() == 421 && map["doppler"].Size() == 201,
       "Presentation map axes and raster differ");
-    require(map["data"][0][0].GetDouble() > 40.0,
-      "Presentation max pooling lost an off-grid peak");
+    require(map["data"][0][0].GetDouble() > 35.0,
+      "Presentation energy pooling lost an off-grid peak neighborhood");
     require(display.data == original,
       "Presentation serialization mutated source samples");
     require(meta["data_omitted"].GetBool() &&
@@ -224,8 +224,8 @@ void correctness() {
       block.noisePower = 0; block.maxPower = 60;
       rapidjson::Document pooled;
       pooled.Parse(block.to_json_presentation_km(1, 6144000, true, 1).c_str());
-      require(!pooled.HasParseError() && pooled["data"][0][0].GetDouble() == 60,
-        "Presentation pooling lost a peak at within-block offset " +
+      require(!pooled.HasParseError() && pooled["data"][0][0].GetDouble() == 57,
+        "Presentation pooling changed energy with within-block offset " +
           std::to_string(peak));
     }
     Map<double> edge(3, 3); edge.delay = {0, 1, 2}; edge.doppler = {0, 1, 2};

@@ -23,8 +23,8 @@ function presentationQuery(request = {}) {
   return request.query || {};
 }
 
-// Produce a display-only, peak-preserving view of a delay-Doppler map.  This
-// never changes the processor map used by detection, recording, or evidence.
+// Reduce display cells by RMS energy; max pooling biases noise with viewport size.
+// Detection, recording and evidence continue to use the native processor map.
 function presentMap(frame, query = {}) {
   const maxRows = requestedLimit(query.max_rows);
   const maxColumns = requestedLimit(query.max_cols);
@@ -34,6 +34,7 @@ function presentMap(frame, query = {}) {
     try { parsed = JSON.parse(frame); }
     catch (_) { return frame; }
   }
+  if (parsed?.presentation_only === true) return parsed;
   if (!Array.isArray(parsed.data) || !Array.isArray(parsed.doppler) ||
       !Array.isArray(parsed.delay) || parsed.data.length !== parsed.doppler.length ||
       !parsed.data.length || !parsed.data.every(row =>
@@ -53,11 +54,14 @@ function presentMap(frame, query = {}) {
     const output = [];
     for (let column = 0; column < parsed.delay.length; column += columnStep) {
       const columnEnd = Math.min(parsed.delay.length, column + columnStep);
-      let peak = -Infinity;
+      const block = [];
       for (let sourceRow = row; sourceRow < rowEnd; sourceRow++)
         for (let sourceColumn = column; sourceColumn < columnEnd; sourceColumn++)
-          peak = Math.max(peak, parsed.data[sourceRow][sourceColumn]);
-      output.push(peak);
+          block.push(Number(parsed.data[sourceRow][sourceColumn]));
+      const peak = Math.max(...block);
+      const mean = peak + 5 * Math.log10(block.reduce((sum, value) =>
+        sum + 10 ** ((value - peak) / 5), 0) / block.length);
+      output.push(Math.round(mean * 4) / 4);
     }
     data.push(output);
   }
@@ -70,7 +74,7 @@ function presentMap(frame, query = {}) {
   cachedSource = frame;
   cachedKey = key;
   cachedResult = {...parsed, data, delay, doppler, nRows: data.length, nCols: delay.length,
-    presentation: {peak_preserving: true, source_rows: parsed.doppler.length,
+    presentation: {pooling: 'energy_mean', source_rows: parsed.doppler.length,
       source_cols: parsed.delay.length, row_step: rowStep, column_step: columnStep}};
   return cachedResult;
 }

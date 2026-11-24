@@ -93,16 +93,15 @@ class IlluminatorFrameHistory {
   add(frame, bytes = Buffer.byteLength(JSON.stringify(frame))) {
     const previous = this.latest(frame.id);
     if (frame?.map?.data_omitted === true) {
-      frame.display_map_json = previous?.display_map_json || previous?.map_json || null;
-      frame.display_map_timestamp = previous?.display_map_timestamp ??
-        previous?.map?.timestamp ?? previous?.timestamp ?? null;
+      frame.presentation_frame = previous?.presentation_frame || null;
     } else if (typeof frame?.map_json === 'string') {
-      frame.display_map_json = frame.map_json;
-      frame.display_map_timestamp = frame.map?.timestamp ?? frame.timestamp ?? null;
+      frame.presentation_frame = {timestamp: frame.map?.timestamp ?? frame.timestamp,
+        first_input_sample: frame.first_input_sample, end_input_sample: frame.end_input_sample,
+        map_json: frame.map_json, detections: frame.detections, tracks: frame.tracks};
     }
-    // Charge retained display bytes even after their original frame is evicted.
-    const retainedBytes = frame.display_map_json && frame.display_map_json !== frame.map_json ?
-      Buffer.byteLength(frame.display_map_json) : 0;
+    // Charge retained display bytes after their original frame is evicted.
+    const retainedMap = frame.presentation_frame?.map_json;
+    const retainedBytes = retainedMap && retainedMap !== frame.map_json ? Buffer.byteLength(retainedMap) : 0;
     const accountedBytes = bytes + retainedBytes;
     const lane = this.frames.get(frame.id) || [];
     const duplicate = lane.findIndex(item => item.frame.timestamp === frame.timestamp &&
@@ -298,8 +297,9 @@ class RadarSessionStore extends IlluminatorFrameHistory {
     const previous = this.latest(value.id);
     // A reconnect alone is not a restart; retain in-flight capture cohorts.
     if (connection.firstFrame === true && previous &&
-        value.timestamp > previous.timestamp &&
-        value.first_input_sample <= previous.end_input_sample) {
+        (value.first_input_sample < previous.first_input_sample ||
+         value.timestamp > previous.timestamp &&
+         value.first_input_sample <= previous.end_input_sample)) {
       this.clear();
       this.onReset();
     }

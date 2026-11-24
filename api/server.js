@@ -800,11 +800,8 @@ app.get('/api/illuminators/live', (req, res) => {
         timestamp: live?.timestamp ?? null};
     })});
 });
-// Deliver the selected lane's map, detections and tracker state from one
-// retained processor frame. Fetching a large map and then asking for its exact
-// overlays in two later requests raced the bounded history on slower tablets.
-// This display-only bundle is atomic and may still use peak-preserving map
-// presentation; it does not change detector or tracker data.
+// One retained processor frame owns the display map, overlays and lineage;
+// independent browser requests previously raced adjacent CPIs.
 app.get('/api/radar/frame', async (req, res, next) => {
   if (req.query.illuminator === undefined)
     return res.status(400).json({available: false, reason: 'Select an illuminator.'});
@@ -812,15 +809,14 @@ app.get('/api/radar/frame', async (req, res, next) => {
   if (selected === undefined) return res.status(404).json({available: false,
     reason: 'Unknown or not-yet-live illuminator.'});
   const query = presentationQuery(req);
-  query.max_rows ||= '192'; query.max_cols ||= '256';
-  const mapFrame = presentMap(selected.display_map_json || selected.map_json || selected.map, query);
+  query.max_rows ||= '384'; query.max_cols ||= '512';
+  const display = selected.presentation_frame || selected;
+  const mapFrame = presentMap(display.map_json || selected.map_json || selected.map, query);
   try {
     await sendDisplayResponse(req, res, {schema: 'vectorwarp-radar-display-frame-v1',
-      timestamp: selected.timestamp, first_input_sample: selected.first_input_sample,
-      end_input_sample: selected.end_input_sample,
-      map_timestamp: selected.display_map_timestamp ?? mapFrame?.timestamp ?? null,
-      map: mapFrame,
-      detections: selected.detections, tracks: selected.tracks});
+      timestamp: display.timestamp, first_input_sample: display.first_input_sample,
+      end_input_sample: display.end_input_sample, map_timestamp: mapFrame?.timestamp ?? display.timestamp,
+      map: mapFrame, detections: display.detections, tracks: display.tracks});
   } catch (error) { next(error); }
 });
 for (const [route, name, field] of [['/api/map', 'map', 'map'],
@@ -831,7 +827,7 @@ app.get(route, async (req, res, next) => {
     if (selected === undefined) return res.status(404).json({available: false,
       reason: 'Unknown or not-yet-live illuminator.'});
     const frame = selected ? (name === 'map' &&
-      (selected.display_map_json || selected.map_json) || JSON.stringify(selected[field])) :
+      (selected.presentation_frame?.map_json || selected.map_json) || JSON.stringify(selected[field])) :
       presentationFrame(req, name, radarSession.products[name]);
     if (name === 'map') await sendDisplayResponse(req, res, frame, presentationQuery(req));
     else res.type('application/json').send(frame);

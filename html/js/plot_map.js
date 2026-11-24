@@ -91,14 +91,10 @@ function currentDelayDopplerPresentation() {
 
 var plotPresentation = currentDelayDopplerPresentation();
 
-function mapPresentationUrl(path, width) {
+function mapPresentationUrl(path, _width) {
   const separator = path.includes('?') ? '&' : '?';
-  // The native 601x511 JSON map is about 1.8 MB per frame.  A peak-preserving
-  // server presentation keeps every web client bounded without changing
-  // detector processing or the underlying scientific grid. Desktop gets more
-  // visual detail; tablets and phones avoid unnecessary transfer and paint.
-  const compact = Number.isFinite(width) && width <= 1024;
-  return `${path}${separator}max_rows=${compact ? 128 : 192}&max_cols=${compact ? 128 : 256}`;
+  // Avoid a second reduction of the processor's bounded presentation raster.
+  return `${path}${separator}max_rows=384&max_cols=512`;
 }
 
 // setup API
@@ -122,6 +118,13 @@ function finiteGridMaximum(grid, fallback = 0) {
     }
   }
   return Number.isFinite(maximum) ? maximum : fallback;
+}
+
+function delayDopplerColorMaximum(grid, floor = 13) {
+  const values = (Array.isArray(grid) ? grid : []).flatMap(row => Array.isArray(row) ? row : [])
+    .map(Number).filter(Number.isFinite).sort((left, right) => left - right);
+  const robust = values[Math.floor((values.length - 1) * .99)];
+  return Number.isFinite(robust) ? Math.max(floor, robust) : floor;
 }
 
 function applyClientMaxHold(frame, display, now = performance.now()) {
@@ -395,7 +398,7 @@ async function renderRadarMap(data) {
         colorscale: 'Viridis',
         zauto: false,
         zmin: 0,
-        zmax: Math.max(13, data.maxPower),
+        zmax: delayDopplerColorMaximum(data.data),
         showscale: plotPresentation.showScale,
         colorbar: plotPresentation.colorbar,
         type: 'heatmap'
@@ -492,7 +495,7 @@ async function renderRadarMap(data) {
       x: [data.delay, detection.delay, adsb.delay, tracked.updated.delay, tracked.coasting.delay, remoteId.delay],
       y: [data.doppler, detection.doppler, adsb.doppler, tracked.updated.doppler, tracked.coasting.doppler, remoteId.doppler],
       z: [data.data, [], [], [], [], []],
-      zmax: [Math.max(13, data.maxPower), [], [], [], [], []],
+      zmax: [delayDopplerColorMaximum(data.data), [], [], [], [], []],
       text: [[], [], adsb.hover, tracked.updated.hover, tracked.coasting.hover, remoteId.hover],
       customdata: [[], [], adsb.customdata, [], [], remoteId.customdata]
     };

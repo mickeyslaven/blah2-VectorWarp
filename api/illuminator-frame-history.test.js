@@ -25,15 +25,20 @@ cohorts.add({...aligned('b', 12), capture_epoch: 4});
 assert.deepEqual(cohorts.latestCohort(['a', 'b']).map(item => item.timestamp), [10, 11],
   'cohort selection uses capture provenance rather than unrelated latest frames');
 const display = new IlluminatorFrameHistory({maxFramesPerIlluminator: 4});
-display.add({...frame('a', 20), map: {data: [[1]]}, map_json: '{"data":[[1]]}'});
+display.add({...frame('a', 20), map: {data: [[1]]}, map_json: '{"data":[[1]]}',
+  detections: {timestamp: 20, delay: [1]}, tracks: {timestamp: 20, data: [{id: 'old'}]}});
 display.add({...frame('a', 21), map: {data_omitted: true}, map_json:
-  '{"data_omitted":true}'});
-assert.equal(display.latest('a').display_map_json, '{"data":[[1]]}',
+  '{"data_omitted":true}', detections: {timestamp: 21, delay: [2]},
+  tracks: {timestamp: 21, data: [{id: 'new'}]}});
+assert.equal(display.latest('a').presentation_frame.map_json, '{"data":[[1]]}',
   'compact current products retain the most recent full display matrix');
-assert.equal(display.latest('a').display_map_timestamp, 20,
+assert.equal(display.latest('a').presentation_frame.timestamp, 20,
   'retained display maps preserve their own product timestamp');
 assert.equal(display.latest('a').map.data_omitted, true,
   'current map metadata remains distinct from retained display data');
+assert.equal(display.latest('a').presentation_frame.detections.timestamp, 20);
+assert.equal(display.latest('a').presentation_frame.tracks.timestamp, 20,
+  'retained display overlays remain bound to the exact retained heatmap frame');
 const boundedDisplay = new IlluminatorFrameHistory({maxFramesPerIlluminator: 1,
   maxBytes: 30});
 boundedDisplay.add({...frame('a', 30), map: {data: [[1]]},

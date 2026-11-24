@@ -156,11 +156,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(landscapePhone.showScale, false);
       assert.equal(landscapePhone.xTitle, 'Range (km)');
       assert.equal(context.mapPresentationUrl('/api/map', 768),
-        '/api/map?max_rows=128&max_cols=128',
-        'Tablets request the bounded peak-preserving map representation');
+        '/api/map?max_rows=384&max_cols=512',
+        'Tablets request the processor presentation without a second reduction');
       assert.equal(context.mapPresentationUrl('/api/map', 1280),
-        '/api/map?max_rows=192&max_cols=256',
-        'Desktop uses the bounded higher-detail display representation');
+        '/api/map?max_rows=384&max_cols=512',
+        'Desktop and compact screens render the same bounded raster');
+      assert.equal(context.delayDopplerColorMaximum([[0, 1, 2, 100]]), 13,
+        'One direct-path outlier cannot wash out the target-field contrast');
     }
     if (kind === 'spectrum') {
       const fallback = context.spectrumColorRange([[NaN, Infinity]]);

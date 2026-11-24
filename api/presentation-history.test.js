@@ -133,7 +133,7 @@ for (const legacyFirst of [true, false]) {
     {map: {timestamp: 101, data_omitted: true}})), {firstFrame: true});
   store.publishPrimary(compact);
   assert.equal(store.products.map, JSON.stringify(value.map));
-  assert.equal(store.latest('fm').display_map_timestamp, 100);
+  assert.equal(store.latest('fm').presentation_frame.timestamp, 100);
   assert.equal(store.histories.detection.exact(101), JSON.stringify(compact.detections));
   assert.equal(store.histories.map.exact(101), null,
     'Compact metadata cannot relabel a retained display matrix as a new observation');
@@ -144,7 +144,7 @@ for (const legacyFirst of [true, false]) {
   assert.equal(calls.filter(call => call.name !== 'map').length, before);
   assert.deepEqual(JSON.parse(store.products.map).data, [[3]],
     'A later full matrix for the same capture interval remains publishable');
-  assert.equal(store.latest('fm').display_map_timestamp, 101);
+  assert.equal(store.latest('fm').presentation_frame.timestamp, 101);
 }
 
 let resets = 0;

@@ -28,14 +28,22 @@ const large = {timestamp: 124, nRows: 96, nCols: 96,
 const reduced = presentMap(large, {max_rows: '32', max_cols: '32'});
 assert.equal(reduced.data.length, 32);
 assert.equal(reduced.data[0].length, 32);
-assert.equal(reduced.data[0][0], 2002, 'each display cell preserves its source-block peak');
-assert.deepEqual(reduced.presentation, {peak_preserving: true, source_rows: 96,
+const block = [0, 1, 2, 1000, 1001, 1002, 2000, 2001, 2002];
+const peak = Math.max(...block);
+const expectedMean = peak + 5 * Math.log10(block.reduce((sum, value) =>
+  sum + 10 ** ((value - peak) / 5), 0) / block.length);
+assert.ok(Math.abs(reduced.data[0][0] - Math.round(expectedMean * 4) / 4) < 1e-9,
+  'each display cell preserves mean linear map energy without max-noise bias');
+assert.deepEqual(reduced.presentation, {pooling: 'energy_mean', source_rows: 96,
   source_cols: 96, row_step: 3, column_step: 3});
 assert.equal(reduced.timestamp, large.timestamp);
 assert.ok(JSON.stringify(reduced).length < JSON.stringify(large).length / 5,
   'compact display transfer must be materially smaller than the processor grid');
 assert.strictEqual(presentMap(large, {max_rows: '32', max_cols: '32'}), reduced,
   'repeated clients reuse the compact representation for one source frame');
+const processorPresentation = {...large, presentation_only: true, presentationStride: 3};
+assert.strictEqual(presentMap(processorPresentation, {max_rows: '32', max_cols: '32'}),
+  processorPresentation, 'a processor-reduced raster is never pooled and edge-misweighted again');
 const serialized = JSON.stringify({...large, timestamp: 125});
 const serializedReduced = presentMap(serialized, {max_rows: '32', max_cols: '32'});
 assert.equal(serializedReduced.data.length, 32,
@@ -52,7 +60,7 @@ assert.ok(encoded.body.length < Buffer.byteLength(serialized) / 5,
   'HTTP content negotiation keeps remote live-map transfers bounded');
 assert.strictEqual(compact, frame);
 
-console.log('Peak-preserving mobile map presentation passed.');
+console.log('Energy-preserving mobile map presentation passed.');
 
 Promise.all([
   encodeMapResponseAsync(serialized, {max_rows: '32', max_cols: '32'}, 'gzip'),

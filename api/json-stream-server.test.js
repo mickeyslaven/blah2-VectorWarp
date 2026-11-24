@@ -414,9 +414,25 @@ async function send(port, chunks) {
       'end_input_sample', 'map_timestamp', 'map', 'detections', 'tracks']);
     assert.equal(bundle.schema, 'vectorwarp-radar-display-frame-v1');
     assert.equal(bundle.map.data.length, 20);
-    assert.equal(bundle.map.data[0][0], 41, 'Map reduction remains peak preserving');
+    const blockPeak = 41;
+    const blockMean = blockPeak + 5 * Math.log10([0, 1, 40, 41].reduce((sum, value) =>
+      sum + 10 ** ((value - blockPeak) / 5), 0) / 4);
+    assert.equal(bundle.map.data[0][0], Math.round(blockMean * 4) / 4,
+      'Map reduction preserves RMS map energy without max-noise bias');
     assert.deepEqual(bundle.tracks, nextIlluminatorFrame.tracks);
     assert.deepEqual(bundle.detections, nextIlluminatorFrame.detections);
+    for (const timestamp of [12, 13]) await send(config.network.ports.illuminator,
+      [Buffer.from(JSON.stringify({...nextIlluminatorFrame, timestamp,
+        first_input_sample: timestamp * 1200000, end_input_sample: timestamp * 1200000 + 1199999,
+        map: {timestamp, data_omitted: true},
+        detections: {timestamp, delay: [timestamp]}, tracks: {timestamp, data: []}}))]);
+    const retainedBundle = JSON.parse((await request(apiPort, bundleRoute)).body);
+    assert.deepEqual([retainedBundle.timestamp, retainedBundle.first_input_sample,
+      retainedBundle.end_input_sample, retainedBundle.map_timestamp],
+    [11, 1200000, 2399999, 11], 'retained heatmap owns the complete display identity');
+    assert.deepEqual(retainedBundle.detections, nextIlluminatorFrame.detections);
+    assert.deepEqual(retainedBundle.tracks, nextIlluminatorFrame.tracks,
+      'metadata-only CPIs cannot repaint stale maps with current overlays');
     const mapRoute = '/api/map?illuminator=fm-90.5&max_rows=32&max_cols=32';
     const plainMap = await request(apiPort, mapRoute);
     assert.deepEqual(JSON.parse(plainMap.body), bundle.map);

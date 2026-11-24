@@ -285,7 +285,7 @@ std::string Map<T>::to_json_presentation_km(uint64_t timestamp, uint32_t fs,
   writer.Key("sourceCols"); writer.Uint(nCols);
   writer.Key("presentationStride"); writer.Uint(stride);
   writer.Key("presentation_only"); writer.Bool(true);
-  writer.Key("presentation_pooling"); writer.String("max");
+  writer.Key("presentation_pooling"); writer.String("energy_mean");
   writer.Key("presentation_precision_db"); writer.Double(0.25);
   writer.Key("noisePower"); writer.Double(noisePower);
   writer.Key("maxPower"); writer.Double(maxPower);
@@ -315,9 +315,13 @@ std::string Map<T>::to_json_presentation_km(uint64_t timestamp, uint32_t fs,
         double peak = -std::numeric_limits<double>::infinity();
         for (uint32_t sourceRow = row; sourceRow < rowEnd; ++sourceRow)
           for (uint32_t sourceColumn = column; sourceColumn < columnEnd; ++sourceColumn)
-            peak = std::max(peak,
-              mapLevel(data[sourceRow][sourceColumn]) - noisePower);
-        writer.Double(std::round(peak * 4.0) / 4.0);
+            peak=std::max(peak,mapLevel(data[sourceRow][sourceColumn])-noisePower);
+        double energy=0; uint32_t cells=0;
+        for (uint32_t sourceRow = row; sourceRow < rowEnd; ++sourceRow)
+          for (uint32_t sourceColumn = column; sourceColumn < columnEnd; ++sourceColumn)
+          {energy+=std::pow(10.0,(mapLevel(data[sourceRow][sourceColumn])-noisePower-peak)/5.0);++cells;}
+        const double mean = peak + 5.0 * std::log10(energy / cells);
+        writer.Double(std::round(mean * 4.0) / 4.0);
       }
       writer.EndArray();
     }
