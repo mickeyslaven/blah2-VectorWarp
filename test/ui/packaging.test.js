@@ -200,8 +200,10 @@ const releaseCommands = releaseWorkflow.replace(/\\\n\s*/g, ' ').split('\n');
 const debHackrfInstalls = releaseCommands.filter(line => /apt-get install|apt-install-with-retry\.sh/.test(line) && /\blibhackrf-dev\b/.test(line));
 const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\bhackrf-devel\b/.test(line));
 assert.doesNotMatch(releaseWorkflow, /\blibhackrf-devel\b/, 'Fedora calls its SDK package hackrf-devel');
-assert.ok(debHackrfInstalls.length >= 3, 'Every Debian-family build path needs the complete SDK');
-assert.ok(rpmHackrfInstalls.length >= 1, 'Every Fedora build path needs the complete SDK');
+assert.equal(debHackrfInstalls.length, 2,
+  'The native and isolated Debian-family builders each need the complete SDK once');
+assert.equal(rpmHackrfInstalls.length, 2,
+  'The candidate and pinned prior-release Fedora builders each need the complete SDK once');
 for (const command of debHackrfInstalls) {
   assert.match(command, /\blibusb-1\.0-0-dev\b/, 'HackRF pkg-config exposes libusb headers on Debian-family builds');
   assert.match(command, /\blibuhd-dev\b/);

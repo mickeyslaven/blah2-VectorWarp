@@ -8829,6 +8829,64 @@
           "oversized_bytes:api/server.js": [138143, 138084],
           "oversized_lines:api/server.js": [2445, 2444]
         }
+      },
+      {
+        "owner": "2026-11-25 release CI duplication removal",
+        "purpose": "Run platform-independent contracts once, keep native architecture coverage, and require explicit exact-source release packaging instead of rebuilding the processor, API and replay suite in every pull request and package workflow.",
+        "rejected_reuse": "Do not weaken exact-source publication, native architecture, installed-package, browser, SDR, GPU or soak qualification; removed CI headroom cannot fund unrelated workflow growth.",
+        "cleanup_plan": "Keep pull requests bounded to required source checks and fast release-policy validation. Full macOS, Homebrew, standalone and twelve-target installed-package qualification remains mandatory on main or explicit candidate runs, and further reductions ratchet downward.",
+        "changes": {
+          "lines:.github": [2679, 2631],
+          "context_characters:production": [7150076, 7146862],
+          "context_characters:release-ci": [140176, 136962],
+          "context_imports:release-ci": [50, 49],
+          "context_lines:production": [132142, 132094],
+          "context_lines:release-ci": [2679, 2631],
+          "context_tokens:production": [1790965, 1790375],
+          "context_tokens:release-ci": [31248, 30658]
+        }
+      },
+      {
+        "owner": "2026-11-25 automatic tag rebuild removal",
+        "purpose": "Require explicit candidate building and explicit publication so creation of a release tag cannot rebuild the already-soaked twelve-package payload matrix.",
+        "rejected_reuse": "Do not restore automatic tag builds, rebuild soaked payloads during promotion, or reuse the deleted workflow allowance.",
+        "cleanup_plan": "Keep candidate construction on explicit main dispatch and publication on explicit immutable-tag dispatch; both remain fail-closed through exact source and candidate receipts.",
+        "changes": {
+          "lines:.github": [2631, 2627],
+          "context_characters:production": [7146862, 7146682],
+          "context_characters:release-ci": [136962, 136782],
+          "context_lines:production": [132094, 132090],
+          "context_lines:release-ci": [2631, 2627],
+          "context_tokens:production": [1790375, 1790335],
+          "context_tokens:release-ci": [30658, 30618]
+        }
+      },
+      {
+        "owner": "2026-11-25 event-scoped macOS runner matrix",
+        "purpose": "Express the reviewed one-runner pull-request and two-runner main matrix through GitHub's supported dynamic matrix context instead of an invalid job-level matrix condition.",
+        "rejected_reuse": "Do not restore the invalid job condition, omit either main architecture, or use this exact syntax correction as unrelated workflow allowance.",
+        "cleanup_plan": "Keep Apple Silicon PR qualification and both macOS architectures on main; the browser matrix remains once per OS and further simplification ratchets downward.",
+        "changes": {
+          "lines:.github": [2627, 2626],
+          "context_characters:production": [7146682, 7146686],
+          "context_characters:release-ci": [136782, 136786],
+          "context_lines:production": [132090, 132089],
+          "context_lines:release-ci": [2627, 2626],
+          "context_tokens:production": [1790335, 1790348],
+          "context_tokens:release-ci": [30618, 30631]
+        }
+      },
+      {
+        "owner": "2026-11-25 superseded PR release-check cancellation",
+        "purpose": "Let a newer pull-request revision cancel its obsolete release-policy run while preserving non-preemptive explicit candidate and publication jobs.",
+        "rejected_reuse": "Do not cancel explicit package candidates, publication, or reuse this exact concurrency expression for unrelated workflow growth.",
+        "cleanup_plan": "Keep event-scoped cancellation on the canonical release workflow; newer PR revisions must not queue behind obsolete package-policy checks.",
+        "changes": {
+          "context_characters:production": [7146686, 7146723],
+          "context_characters:release-ci": [136786, 136823],
+          "context_tokens:production": [1790348, 1790360],
+          "context_tokens:release-ci": [30631, 30643]
+        }
       }
   ],
   "context_snapshot": {

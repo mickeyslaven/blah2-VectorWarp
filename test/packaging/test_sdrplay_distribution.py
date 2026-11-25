@@ -27,11 +27,15 @@ class DistributionTests(unittest.TestCase):
 
     def test_public_verification_does_not_take_sdk_inputs(self):
         workflow = workflow_document()
-        verify = workflow['jobs']['verify']
-        text = str(verify)
-        self.assertIn('-DBLAH2_ENABLE_RSPDUO=OFF', text)
-        self.assertNotIn('prepare-sdrplay-build-sdk.sh', text)
-        self.assertNotIn('secrets.', text)
+        ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+        qualification = str(ci['jobs']['test'])
+        self.assertIn('-DBLAH2_ENABLE_RSPDUO=OFF', qualification)
+        self.assertNotIn('prepare-sdrplay-build-sdk.sh', qualification)
+        self.assertNotIn('secrets.', qualification)
+        release_verification = str(workflow['jobs']['verify'])
+        self.assertIn('script/verify-release-ci.py', release_verification)
+        self.assertNotIn('prepare-sdrplay-build-sdk.sh', release_verification)
+        self.assertNotIn('secrets.', release_verification)
         self.assertNotIn('VECTORWARP_SDRPLAY', str(workflow.get('env', {})))
 
     def test_actual_packages_stage_local_rspduo_kit_without_sdk_inputs(self):

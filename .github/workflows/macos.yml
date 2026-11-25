@@ -1,5 +1,4 @@
 name: macOS unified GPU and receiver adapters
-
 on:
   pull_request:
   push:
@@ -19,14 +18,14 @@ concurrency:
 
 jobs:
   local-runtime:
-    # Preserve the check name used by branch protection.
+    # Protected check label.
     name: CPU, open receiver adapters and local lifecycle (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel]
+        runner: ${{ fromJSON(github.event_name == 'pull_request' && '["macos-15"]' || '["macos-15","macos-15-intel"]') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
+    timeout-minutes: 105
     env:
       NODE_PATH: ${{ github.workspace }}/api/node_modules
       HOMEBREW_NO_AUTO_UPDATE: 1
@@ -109,6 +108,7 @@ jobs:
           node api/receiver-management.test.js
           node test/ui/deployment.test.js
       - name: Check real browser map, all routes and kiosk-responsive states
+        if: matrix.runner == 'macos-15'
         timeout-minutes: 25
         env:
           VECTORWARP_LAYOUT_INTERACTIONS: '1'
@@ -124,7 +124,7 @@ jobs:
           node statistics.cjs
           node all-routes-layout.cjs
       - name: Preserve browser-route evidence
-        if: always()
+        if: always() && matrix.runner == 'macos-15'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: browser-layout-${{ matrix.runner }}-${{ github.sha }}
@@ -132,6 +132,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Run local lifecycle and actual API/CPU replay integration
+        timeout-minutes: 15
         run: |
           script/vectorwarp-macos.test.sh
           python3 test/macos/processor_lifecycle_test.py --binary build/macos/artifact/bin/blah2 --endurance-seconds 360
