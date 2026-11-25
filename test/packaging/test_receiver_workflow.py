@@ -30,7 +30,14 @@ class WorkflowContractTests(unittest.TestCase):
         ])
         self.assertIn('fedora-pam', workflow['jobs']['package']['needs'])
         package = workflow['jobs']['package']
-        self.assertEqual(package['if'], 'always() && inputs.publish != true')
+        self.assertEqual(
+            package['if'],
+            "always() && github.event_name != 'pull_request' && inputs.publish != true",
+        )
+        self.assertEqual(
+            probe['if'],
+            "github.event_name != 'pull_request' && inputs.publish != true",
+        )
         gate = package['steps'][0]
         self.assertIn('needs.fedora-pam.result', gate['env']['PAM_RESULT'])
         self.assertIn('test "$PAM_RESULT" = success', gate['run'])
