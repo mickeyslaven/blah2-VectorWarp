@@ -273,7 +273,7 @@ async function finalizeCaptureAdmission(revision, file, samples) {
   const recordedAdmissions = Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
     [id, {valid: truth.valid && integrity.valid,
       reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}]));
-  if (multiIlluminatorEvidence.enabled)
+  if (multiIlluminatorEvidence?.enabled)
     captureAdmissionEvidence.recordCaptureAdmissions(recordedAdmissions, records);
   else captureAdmissionEvidence.recordCaptureAdmissions(recordedAdmissions);
   captureAdmissionEvidence.acceptCaptureEvents(records);
@@ -883,7 +883,7 @@ app.get('/api/statistics', async (req, res, next) => {
   // Operational statistics share the association-history lane on ordinary
   // SDRs. Exact RF timing remains an explicitly requested evaluation view.
   const timing = req.query.timing === 'exact' ? 'exact' : 'provisional';
-  if (multiIlluminatorEvidence.enabled) {
+  if (multiIlluminatorEvidence?.enabled) {
     const value = multiIlluminatorEvidence.response('statistics', {
       illuminator: req.query.illuminator, timing});
     if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
@@ -902,7 +902,7 @@ app.get('/api/association/passes', async (req, res, next) => {
     const timing = req.query.timing === 'exact' ? 'exact' : 'provisional';
     const durationMs = 24 * 60 * 60 * 1000;
     const federationTransport = req.query.transport === 'federation-v1';
-    const passes = multiIlluminatorEvidence.enabled ?
+    const passes = multiIlluminatorEvidence?.enabled ?
       multiIlluminatorEvidence.associationPasses({timing, durationMs,
         federation: federationTransport}) :
       (timing === 'exact' ? evidenceStatistics : provisionalEvidenceStatistics)
@@ -910,7 +910,7 @@ app.get('/api/association/passes', async (req, res, next) => {
         .map(pass => ({...pass, channel: 'primary'}));
     const responsePasses = federationTransport ? null :
       String(req.query.compact) === 'true' ? passes.map(compactAssociationPass) : passes;
-    const statisticsWindow = multiIlluminatorEvidence.enabled ?
+    const statisticsWindow = multiIlluminatorEvidence?.enabled ?
       multiIlluminatorEvidence.associationWindow({timing, durationMs}) :
       (timing === 'exact' ? evidenceStatistics : provisionalEvidenceStatistics).associationWindow(durationMs);
     await sendDisplayResponse(req, res, {schema: 'vectorwarp-association-passes-v1',
@@ -922,7 +922,7 @@ app.get('/api/association/passes', async (req, res, next) => {
 });
 app.get('/api/live-scorecard', async (req, res, next) => {
   try {
-  if (multiIlluminatorEvidence.enabled) {
+  if (multiIlluminatorEvidence?.enabled) {
     const value = multiIlluminatorEvidence.response('scorecard', {
       illuminator: req.query.illuminator, timing: 'exact'});
     if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
@@ -933,7 +933,7 @@ app.get('/api/live-scorecard', async (req, res, next) => {
 });
 app.get('/api/live-scorecard/provisional', async (req, res, next) => {
   try {
-  if (multiIlluminatorEvidence.enabled) {
+  if (multiIlluminatorEvidence?.enabled) {
     const value = multiIlluminatorEvidence.response('scorecard', {
       illuminator: req.query.illuminator, timing: 'provisional'});
     if (!value) return res.status(404).json({available: false, reason: 'Unknown illuminator.'});
@@ -946,7 +946,7 @@ app.get('/api/live-scorecard/provisional', async (req, res, next) => {
 // large and should not be polled by a visualization every few seconds.
 app.get('/api/live-aircraft-associations', async (_req, res, next) => {
   try {
-    const channels = multiIlluminatorEvidence.enabled ?
+    const channels = multiIlluminatorEvidence?.enabled ?
       multiIlluminatorEvidence.activeAssociations({timing: 'provisional'}) :
       [{selected_channel: 'primary',
         active_passes: provisionalEvidenceStatistics.activeAssociations()}];
@@ -979,7 +979,7 @@ app.get('/api/live-scorecard/association-basis', async (req, res, next) => {
     const timing = req.query.timing === 'exact' ? 'exact' : 'provisional';
     const compact = String(req.query.compact) === 'true';
     const kiosk = req.query.display === 'kiosk';
-    if (multiIlluminatorEvidence.enabled)
+    if (multiIlluminatorEvidence?.enabled)
       return await sendDisplayResponse(req, res,
         multiIlluminatorEvidence.associationBasis({timing, compact, kiosk}));
     const statistics = timing === 'exact' ? evidenceStatistics :
@@ -1011,7 +1011,7 @@ app.get('/api/live-scorecard/association-basis', async (req, res, next) => {
 });
 app.get('/api/suspicious-track-ledger', async (req, res, next) => {
   try {
-    if (!multiIlluminatorEvidence.enabled)
+    if (!multiIlluminatorEvidence?.enabled)
       return res.json({schema: 'vectorwarp-suspicious-track-ledger-v1', available: false,
         reason: 'Multi-illuminator tracking is not enabled.'});
     await sendDisplayResponse(req, res, multiIlluminatorEvidence.suspiciousTracks({
@@ -1216,7 +1216,7 @@ app.get('/api/system/status', async (req, res) => {
     (config.process.multi_illuminator.illuminators || [])
       .filter(item => item?.enabled === true).map(item => item.id) : ['primary']);
   const trackingPerformance = radarPerformanceHealth.snapshot();
-  const evidenceHealth = multiIlluminatorEvidence.enabled ? multiIlluminatorEvidence.health() : (() => {
+  const evidenceHealth = multiIlluminatorEvidence?.enabled ? multiIlluminatorEvidence.health() : (() => {
     const errors = [evidenceStatistics?.state?.error, provisionalEvidenceStatistics?.state?.error]
       .filter(value => typeof value === 'string' && value);
     return {status: errors.length ? 'degraded' : 'healthy', channels: [
@@ -1225,9 +1225,8 @@ app.get('/api/system/status', async (req, res) => {
   const radar = baseRadar === 'receiving' &&
     (rfInputDegraded || trackingPerformance.status === 'degraded' ||
       evidenceHealth.status === 'degraded') ? 'degraded' : baseRadar;
-  // The header is present on every page and polls continuously. Keep its
-  // response cheap: receiver discovery, GPU setup, build metadata and the full
-  // ADS-B source report belong to their dedicated/settings views.
+  // This header polls continuously. Dedicated/settings views own receiver
+  // discovery, GPU setup, build metadata and the full ADS-B source report.
   const document = readConfig(configFile);
   if (req.query.summary === '1') {
     const headerProcessor = processor ? {
@@ -2022,7 +2021,7 @@ app.get('/api/radar/coverage', (req, res) => {
   const bins = Number(req.query.bins || 72);
   const altitudeBand = String(req.query.altitude || 'all');
   res.set('Cache-Control', 'private, max-age=30');
-  if (multiIlluminatorEvidence.enabled) {
+  if (multiIlluminatorEvidence?.enabled) {
     const value = multiIlluminatorEvidence.response('coverage', {
       illuminator: req.query.illuminator, timing: 'provisional',
       options: {hours, bins, altitudeBand}});

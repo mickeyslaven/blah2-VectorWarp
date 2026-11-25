@@ -608,6 +608,10 @@ async function send(port, chunks) {
       stdio: ['ignore', 'ignore', 'pipe']});
     child.stderr.on('data', chunk => { stderr += chunk; });
     await waitFor(apiPort, '/api/statistics', response => response.status === 200);
+    const coordinatorStatus = JSON.parse((await request(apiPort,
+      '/api/system/status?summary=1')).body);
+    assert.equal(coordinatorStatus.node_role, 'coordinator');
+    assert.equal(coordinatorStatus.evidenceHealth.status, 'healthy');
     const network = JSON.parse((await request(apiPort, '/api/statistics')).body);
     assert.equal(network.schema, 'vectorwarp-network-statistics-v1');
     assert.equal(network.health.nodes_total, 0);
