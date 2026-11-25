@@ -153,8 +153,8 @@ public:
   guarded([&]{deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);auto init=request(Op::initialize);transport::sendPacket(child_->fd(),init);response(init,Op::initialized,Phase::idle);});
  }
  ~Process()override{
-  // Explicit Quit lets the healthy worker destroy its GPU objects before the
-  // bounded reap. Error paths use stop() directly and never claim cleanup.
+  // Qualification subprocesses decommission accelerator allocations preceding finalization.
+  // Exceptions circumvent deallocations.
   if(child_&&(phase_==Phase::idle||phase_==Phase::settled))try{
    deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);
    auto p=request(Op::quit);
@@ -173,8 +173,8 @@ public:
   std::copy_n(control.data+112,16,identity.begin()+32);
   std::copy_n(control.data+488,16,identity.begin()+48);
   const auto device=map_.read(Section::device);blah2::Sha256 hash;
-  hash.update(device.data,device.size);const auto digest=hash.finishBytes();
-  std::copy(digest.begin(),digest.end(),identity.begin()+64);return identity;
+  hash.update(device.data,56);hash.update(device.data+64,device.size-64);const auto d=hash.finishBytes();
+  std::copy(d.begin(),d.end(),identity.begin()+64);return identity;
  }
  Span<std::complex<double>> input()override{inactive();
  auto b=map_.bytes(Section::canonical);

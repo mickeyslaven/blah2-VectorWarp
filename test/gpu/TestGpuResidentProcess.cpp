@@ -60,6 +60,10 @@ public:
    std::fill_n(m_.bytes(Section::controlEvidence).data+488,16,0);
   }
   if(mode_=="driver-change")wire::Writer{m_.bytes(Section::device)}.u32(16,2);
+  if(mode_=="budget-change"){
+   wire::Writer{m_.bytes(Section::device)}.u64(56,(1<<20)+4096);
+   wire::Writer{m_.bytes(Section::controlEvidence)}.u64(432,(1<<20)+4096);
+  }
  }
  bool prepareReference(const Packet&p)override{
   if(mode_=="reference-error")return false;
@@ -378,6 +382,8 @@ void startupQualification(const std::string&exe){
  }
  {
   auto baseline=session(exe,"normal");const auto identity=baseline->qualificationIdentity();baseline.reset();reaped();
+  auto budget=session(exe,"budget-change");check(budget->qualificationIdentity()==identity,
+   "Volatile device budget changed private qualification identity");budget.reset();reaped();
   for(const char* mutation:{"image-change","driver-change"}){
    auto changed=session(exe,mutation);check(changed->qualificationIdentity()!=identity,
     "Changed module/driver retained private qualification identity");changed.reset();reaped();
