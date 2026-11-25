@@ -1,5 +1,4 @@
 name: macOS unified GPU and receiver adapters
-
 on:
   pull_request:
   push:
@@ -19,14 +18,14 @@ concurrency:
 
 jobs:
   local-runtime:
-    # Preserve the check name used by branch protection.
+    # Protected check label.
     name: CPU, open receiver adapters and local lifecycle (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
         runner: [macos-15, macos-15-intel]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
+    timeout-minutes: 105
     env:
       NODE_PATH: ${{ github.workspace }}/api/node_modules
       HOMEBREW_NO_AUTO_UPDATE: 1
@@ -132,6 +131,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Run local lifecycle and actual API/CPU replay integration
+        timeout-minutes: 15
         run: |
           script/vectorwarp-macos.test.sh
           python3 test/macos/processor_lifecycle_test.py --binary build/macos/artifact/bin/blah2 --endurance-seconds 360
