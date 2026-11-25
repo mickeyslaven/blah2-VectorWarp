@@ -8860,6 +8860,21 @@
           "context_tokens:production": [1790375, 1790335],
           "context_tokens:release-ci": [30658, 30618]
         }
+      },
+      {
+        "owner": "2026-11-25 event-scoped macOS runner matrix",
+        "purpose": "Express the reviewed one-runner pull-request and two-runner main matrix through GitHub's supported dynamic matrix context instead of an invalid job-level matrix condition.",
+        "rejected_reuse": "Do not restore the invalid job condition, omit either main architecture, or use this exact syntax correction as unrelated workflow allowance.",
+        "cleanup_plan": "Keep Apple Silicon PR qualification and both macOS architectures on main; the browser matrix remains once per OS and further simplification ratchets downward.",
+        "changes": {
+          "lines:.github": [2627, 2626],
+          "context_characters:production": [7146682, 7146686],
+          "context_characters:release-ci": [136782, 136786],
+          "context_lines:production": [132090, 132089],
+          "context_lines:release-ci": [2627, 2626],
+          "context_tokens:production": [1790335, 1790348],
+          "context_tokens:release-ci": [30618, 30631]
+        }
       }
   ],
   "context_snapshot": {

@@ -18,13 +18,12 @@ concurrency:
 
 jobs:
   local-runtime:
-    if: github.event_name != 'pull_request' || matrix.runner == 'macos-15'
     # Protected check label.
     name: CPU, open receiver adapters and local lifecycle (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel]
+        runner: ${{ fromJSON(github.event_name == 'pull_request' && '["macos-15"]' || '["macos-15","macos-15-intel"]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 105
     env:

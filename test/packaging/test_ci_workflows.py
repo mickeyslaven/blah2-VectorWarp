@@ -258,7 +258,9 @@ class WorkflowContracts(unittest.TestCase):
                                                 if "apt-get install" in s.get("run", "")))
             else:
                 self.assertEqual(step["if"], "matrix.runner == 'macos-15'")
-                self.assertEqual(job["strategy"]["matrix"]["runner"], ["macos-15", "macos-15-intel"])
+                runners = job["strategy"]["matrix"]["runner"]
+                self.assertIn("github.event_name == 'pull_request'", runners)
+                self.assertIn('["macos-15","macos-15-intel"]', runners)
             evidence = next(s for s in job["steps"] if s.get("with", {}).get("path", "").endswith("browser-acceptance/"))
             self.assertIn("always()", evidence["if"])
             self.assertEqual(int(evidence["with"]["retention-days"]), 14)
