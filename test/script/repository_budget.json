@@ -8875,6 +8875,18 @@
           "context_tokens:production": [1790335, 1790348],
           "context_tokens:release-ci": [30618, 30631]
         }
+      },
+      {
+        "owner": "2026-11-25 superseded PR release-check cancellation",
+        "purpose": "Let a newer pull-request revision cancel its obsolete release-policy run while preserving non-preemptive explicit candidate and publication jobs.",
+        "rejected_reuse": "Do not cancel explicit package candidates, publication, or reuse this exact concurrency expression for unrelated workflow growth.",
+        "cleanup_plan": "Keep event-scoped cancellation on the canonical release workflow; newer PR revisions must not queue behind obsolete package-policy checks.",
+        "changes": {
+          "context_characters:production": [7146686, 7146723],
+          "context_characters:release-ci": [136786, 136823],
+          "context_tokens:production": [1790348, 1790360],
+          "context_tokens:release-ci": [30631, 30643]
+        }
       }
   ],
   "context_snapshot": {

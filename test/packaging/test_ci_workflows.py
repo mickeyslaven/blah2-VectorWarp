@@ -127,6 +127,8 @@ class WorkflowContracts(unittest.TestCase):
         release = workflow("release-packages.yml")
         self.assertIn("pull_request", release["on"])
         self.assertNotIn("push", release["on"])
+        self.assertEqual(release["concurrency"]["cancel-in-progress"],
+                         "${{ github.event_name == 'pull_request' }}")
         self.assertEqual(release["jobs"]["verify"]["timeout-minutes"], "10")
         self.assertIn("github.event_name != 'pull_request'", release["jobs"]["package"]["if"])
         self.assertEqual(workflow("macos-standalone.yml")["jobs"]["runtime"]["if"],
