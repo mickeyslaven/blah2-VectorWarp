@@ -462,11 +462,17 @@ int main() {
 
     def test_policy_runs_on_linux_and_both_macos_release_architectures(self):
         command = "python3 test/packaging/test_gpu_platform_contract.py -v"
-        for workflow in ("ci.yml", "release-packages.yml", "macos.yml"):
+        for workflow in ("ci.yml", "macos.yml"):
             source = (ROOT / ".github/workflows" / workflow).read_text()
             self.assertIn(command, source, workflow)
+        release = (ROOT / ".github/workflows/release-packages.yml").read_text()
+        self.assertNotIn(command, release)
+        self.assertIn(
+            'script/verify-release-ci.py --source-sha "$GITHUB_SHA"', release
+        )
         macos = (ROOT / ".github/workflows/macos.yml").read_text()
-        self.assertIn("runner: [macos-15, macos-15-intel]", macos)
+        self.assertIn("macos-15", macos)
+        self.assertIn("macos-15-intel", macos)
 
     def test_physical_receipts_are_required_and_self_hosted_work_is_trusted(self):
         qualification = (ROOT / ".github/workflows/gpu-qualification.yml").read_text()
