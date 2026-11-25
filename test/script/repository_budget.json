@@ -8803,6 +8803,32 @@
           "context_tokens:ui-presentation/contracts": [177471, 177735],
           "context_tokens:ui-shared": [34513, 34777]
         }
+      },
+      {
+        "owner": "2026-11-24 coordinator-only status null-safety review",
+        "purpose": "Keep the canonical status publisher valid when a coordinator has no local multi-illuminator evidence owner, and permanently ratchet the nearby explanatory comment reduction.",
+        "rejected_reuse": "Do not fabricate local evidence, add a coordinator-only status route, weaken the repository budget, or retain deleted comment headroom for unrelated growth.",
+        "cleanup_plan": "Retain one null-safe projection in the canonical status publisher and one coordinator regression. These exact downward ceilings provide no reserve.",
+        "changes": {
+          "context_characters:build-release/contracts": [385558, 385499],
+          "context_characters:installation/contracts": [248976, 248917],
+          "context_characters:operational-tools/contracts": [522380, 522321],
+          "context_characters:production": [7150135, 7150076],
+          "context_characters:runtime-api": [485563, 485504],
+          "context_lines:build-release/contracts": [7713, 7712],
+          "context_lines:installation/contracts": [4207, 4206],
+          "context_lines:operational-tools/contracts": [9090, 9089],
+          "context_lines:production": [132143, 132142],
+          "context_lines:runtime-api": [8686, 8685],
+          "context_tokens:build-release/contracts": [91567, 91563],
+          "context_tokens:installation/contracts": [58803, 58799],
+          "context_tokens:operational-tools/contracts": [131276, 131272],
+          "context_tokens:production": [1790969, 1790965],
+          "context_tokens:runtime-api": [120162, 120158],
+          "lines:api": [26767, 26766],
+          "oversized_bytes:api/server.js": [138143, 138084],
+          "oversized_lines:api/server.js": [2445, 2444]
+        }
       }
   ],
   "context_snapshot": {
