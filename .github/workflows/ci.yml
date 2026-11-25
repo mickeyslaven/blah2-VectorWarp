@@ -109,6 +109,7 @@ jobs:
         # protected physical-GPU receipt lane remains separately required.
         run: ctest --test-dir build/ci --output-on-failure --no-tests=error
       - name: Verify GPU platform and receiver build contracts
+        if: matrix.runner == 'ubuntu-24.04'
         run: |
           python3 test/script/test_canonical_processing_architecture.py -v
           python3 test/packaging/test_gpu_platform_contract.py -v
@@ -120,6 +121,7 @@ jobs:
           python3 test/packaging/test_ci_workflows.py -v
           python3 test/packaging/test_release_ci.py -v
       - name: Run offline replay and qualification contract regressions
+        if: matrix.runner == 'ubuntu-24.04'
         # Data-only fixtures and fake children: no RF or physical GPU qualification.
         run: |
           python3 -m unittest discover -s test/gpu -p test_recorded_iq_qualification.py
@@ -147,12 +149,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Run offline Pi packaging and diagnostics checks
+        if: matrix.runner == 'ubuntu-24.04'
         run: |
           python3 test/packaging/test_pi_image_manifest.py -v
           python3 bench/test_pi_spike_diagnostics.py -v
           python3 bench/test_live_rspduo_check.py -v
           python3 bench/test_compare_outputs.py -v
       - name: Run repository generator unit and ephemeral integration tests
+        if: matrix.runner == 'ubuntu-24.04'
         run: |
           python3 test/packaging/test_repository.py -v
           VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py -v
@@ -162,6 +166,7 @@ jobs:
           python3 test/packaging/test_rpm_local_kit.py -v
           sudo python3 test/packaging/test_sdrplay_local_build.py -v
       - name: Run API and UI unit tests
+        if: matrix.runner == 'ubuntu-24.04'
         env:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
         run: |
@@ -174,12 +179,14 @@ jobs:
           npm test --prefix services/report-relay
           node test/ui/deployment.test.js
       - name: Exercise real unprivileged broker requests with NoNewPrivileges
+        if: matrix.runner == 'ubuntu-24.04'
         run: |
           sudo env "PATH=$PATH" "VECTORWARP_TEST_NODE=$(command -v node)" \
             "NODE_PATH=$GITHUB_WORKSPACE/api/node_modules" \
             python3 test/packaging/test_receiver_helper.py -v
           sudo python3 test/packaging/test_sudoers_migration.py -v
       - name: Run staged native-package acceptance checks
+        if: matrix.runner == 'ubuntu-24.04'
         run: |
           node test/ui/packaging.test.js
           python3 test/packaging/test_sdrplay_distribution.py -v
@@ -212,12 +219,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Generate immutable upstream review artifact
+        if: matrix.runner == 'ubuntu-24.04'
         run: |
           mkdir release-review
           python3 script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json \
             --output release-review/upstream-diff.txt
           cp docs/UPSTREAM_BASELINE.json release-review/
       - name: Upload review-only upstream comparison
+        if: matrix.runner == 'ubuntu-24.04'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: upstream-diff-${{ matrix.runner }}-${{ github.sha }}

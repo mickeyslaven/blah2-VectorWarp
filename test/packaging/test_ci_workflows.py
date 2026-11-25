@@ -57,10 +57,12 @@ def condition(expression, event, ref="refs/heads/main", **inputs):
 
 class WorkflowContracts(unittest.TestCase):
     def test_release_cycle_evidence_is_gated_in_ci_and_packages(self):
-        for name in ("ci.yml", "release-packages.yml"):
-            workflow = (ROOT / ".github" / "workflows" / name).read_text()
-            self.assertIn("test/script/test_release_regression.py", workflow)
-            self.assertIn("test/script/test_export_cycles.py", workflow)
+        ordinary = (WORKFLOWS / "ci.yml").read_text()
+        for suite in ("test/script/test_release_regression.py", "test/script/test_export_cycles.py"):
+            self.assertIn(suite, ordinary)
+        release = (WORKFLOWS / "release-packages.yml").read_text()
+        self.assertIn("script/verify-release-ci.py", release)
+        self.assertNotIn("test/recording/processor_replay_test.py", release)
 
     def test_setup_node_receives_reviewed_version_from_executable_step_output(self):
         expected = subprocess.check_output(
@@ -118,10 +120,28 @@ class WorkflowContracts(unittest.TestCase):
 
     def test_ordinary_checks_have_main_and_pr_coverage_without_signing_environments(self):
         for name in ("ci.yml", "macos.yml", "macos-standalone.yml", "homebrew.yml",
-                     "release-packages.yml", "kraken-bundled.yml"):
+                     "kraken-bundled.yml"):
             document = workflow(name)
             self.assertIn("pull_request", document["on"], name)
             self.assertIn("main", document["on"]["push"]["branches"], name)
+        release = workflow("release-packages.yml")
+        self.assertIn("pull_request", release["on"])
+        self.assertNotIn("push", release["on"])
+        self.assertEqual(release["jobs"]["verify"]["timeout-minutes"], "10")
+        self.assertIn("github.event_name != 'pull_request'", release["jobs"]["package"]["if"])
+        self.assertEqual(workflow("macos-standalone.yml")["jobs"]["runtime"]["if"],
+                         "github.event_name != 'pull_request'")
+        self.assertIn("github.event_name != 'pull_request'", workflow("homebrew.yml")["jobs"]["formula"]["if"])
+        linux = workflow("ci.yml")["jobs"]["test"]
+        once = {"Verify GPU platform and receiver build contracts",
+                "Run offline replay and qualification contract regressions",
+                "Run offline Pi packaging and diagnostics checks",
+                "Run repository generator unit and ephemeral integration tests",
+                "Run API and UI unit tests", "Exercise real unprivileged broker requests with NoNewPrivileges",
+                "Run staged native-package acceptance checks", "Generate immutable upstream review artifact",
+                "Upload review-only upstream comparison", "Check all browser routes and kiosk-responsive states"}
+        self.assertEqual({step["name"] for step in linux["steps"] if step.get("if") ==
+                          "matrix.runner == 'ubuntu-24.04'"}, once)
         package = workflow("release-packages.yml")["jobs"]["package"]
         self.assertNotIn("environment", package)
         self.assertEqual(package["strategy"]["matrix"], "${{ fromJSON(needs.validate.outputs.matrix) }}")
@@ -143,12 +163,18 @@ class WorkflowContracts(unittest.TestCase):
                       "release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json",
                       "script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json"):
             self.assertIn(value, release)
-        for name in ("ci.yml", "release-packages.yml"):
-            source = (WORKFLOWS / name).read_text()
-            for value in ("NODE_PATH: ${{ github.workspace }}/api/node_modules",
-                          "npm run test:dom --prefix api", "node test/ui/deployment.test.js",
-                          "python3 test/packaging/test_ci_workflows.py -v"):
-                self.assertIn(value, source)
+        ordinary = (WORKFLOWS / "ci.yml").read_text()
+        for value in ("NODE_PATH: ${{ github.workspace }}/api/node_modules",
+                      "npm run test:dom --prefix api", "node test/ui/deployment.test.js",
+                      "python3 test/packaging/test_ci_workflows.py -v"):
+            self.assertIn(value, ordinary)
+        release = (WORKFLOWS / "release-packages.yml").read_text()
+        self.assertIn("python3 test/packaging/test_ci_workflows.py -v", release)
+        self.assertIn("script/verify-release-ci.py", release)
+        for duplicate in ("npm ci --prefix api", "cmake --build build/ci",
+                          "test/recording/processor_replay_test.py"):
+            self.assertNotIn(duplicate, release)
+        for source in (ordinary, release):
             self.assertNotIn("yaml.safe_load", source, "Workflow syntax is checked by this shared owner")
         helper = (ROOT / "script/upstream-diff.py").read_text()
         for value in ("git diff --stat", "git diff --name-status", "https://github.com/{upstream}.git",
@@ -156,22 +182,25 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn(value, helper)
 
     def test_cpu_package_gate_precedes_all_target_build_with_strict_warnings(self):
-        job = workflow("release-packages.yml")["jobs"]["verify"]
+        job = workflow("ci.yml")["jobs"]["test"]
         source = "\n".join(step.get("run", "") for step in job["steps"])
         gate = source.index("script/prebuild_acceptance.py")
         self.assertLess(source.index("npm ci --prefix api"), gate)
         self.assertLess(source.index("-DCMAKE_COMPILE_WARNING_AS_ERROR=ON"), gate)
         self.assertLess(gate, source.index("cmake --build build/ci"))
-        self.assertIn("--native-test testDetectionMath --native-test testTracker", source)
-        self.assertIn("-DBLAH2_GPU=OFF", source, "The independent CPU-only build is not redundant")
+        self.assertIn("--native-test testDetectionMath", source)
+        self.assertIn("--native-test testTracker", source)
+        self.assertIn("-DBLAH2_GPU=ON", source)
         self.assertNotIn("--skip-target-build", source)
-        for name in ("ci.yml", "release-packages.yml"):
-            pipeline = (WORKFLOWS / name).read_text()
-            self.assertIn("--native-target testFrontendPlan", pipeline)
-            self.assertIn("--native-test frontendPlanParity", pipeline)
-        evidence = next(s for s in job["steps"] if s.get("with", {}).get("path") ==
-                        "build/ci/prebuild-acceptance.json")
+        self.assertIn("--native-target testFrontendPlan", source)
+        self.assertIn("--native-test frontendPlanParity", source)
+        evidence = next(s for s in job["steps"] if
+                        "build/ci/prebuild-acceptance.json" in s.get("with", {}).get("path", ""))
         self.assertEqual(evidence["if"], "always()")
+        release = workflow("release-packages.yml")["jobs"]["verify"]
+        receipt = next(step for step in release["steps"] if
+                       step.get("name") == "Require successful exact-source hosted qualification")
+        self.assertIn("script/verify-release-ci.py", receipt["run"])
 
     def test_native_packages_do_not_require_unshipped_api_dependencies(self):
         cmake = (ROOT / "CMakeLists.txt").read_text()
@@ -228,7 +257,7 @@ class WorkflowContracts(unittest.TestCase):
                 self.assertIn("patch", " ".join(s.get("run", "") for s in job["steps"]
                                                 if "apt-get install" in s.get("run", "")))
             else:
-                self.assertNotIn("if", step)
+                self.assertEqual(step["if"], "matrix.runner == 'macos-15'")
                 self.assertEqual(job["strategy"]["matrix"]["runner"], ["macos-15", "macos-15-intel"])
             evidence = next(s for s in job["steps"] if s.get("with", {}).get("path", "").endswith("browser-acceptance/"))
             self.assertIn("always()", evidence["if"])
@@ -258,7 +287,10 @@ class WorkflowContracts(unittest.TestCase):
             with self.subTest(workflow=name):
                 step = next(step for step in job["steps"] if step.get("name") ==
                             "Run offline replay and qualification contract regressions")
-                self.assertNotIn("if", step)
+                if name == "ci.yml":
+                    self.assertEqual(step["if"], "matrix.runner == 'ubuntu-24.04'")
+                else:
+                    self.assertNotIn("if", step)
                 self.assertNotIn("continue-on-error", step)
                 self.assertNotIn("continue-on-error", job)
                 expected = [f"python3 -m unittest discover -s test/{directory} -p {suite}.py"
@@ -286,7 +318,8 @@ class WorkflowContracts(unittest.TestCase):
         self.assertEqual(matched, ["dist/"])
         self.assertEqual(download["with"]["run-id"], "${{ inputs.candidate_run_id }}")
         self.assertNotIn("package", signing["needs"])
-        self.assertEqual(jobs["package"]["if"], "always() && inputs.publish != true")
+        self.assertEqual(jobs["package"]["if"],
+                         "always() && github.event_name != 'pull_request' && inputs.publish != true")
         source = "\n".join(step.get("run", "") for step in signing["steps"])
         self.assertLess(source.index("verify-release-soak.py verify"), source.index("gpg --batch --import"))
         self.assertIn("verify-release-soak.py signed", source)

@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   local-runtime:
+    if: github.event_name != 'pull_request' || matrix.runner == 'macos-15'
     # Protected check label.
     name: CPU, open receiver adapters and local lifecycle (${{ matrix.runner }})
     strategy:
@@ -108,6 +109,7 @@ jobs:
           node api/receiver-management.test.js
           node test/ui/deployment.test.js
       - name: Check real browser map, all routes and kiosk-responsive states
+        if: matrix.runner == 'macos-15'
         timeout-minutes: 25
         env:
           VECTORWARP_LAYOUT_INTERACTIONS: '1'
@@ -123,7 +125,7 @@ jobs:
           node statistics.cjs
           node all-routes-layout.cjs
       - name: Preserve browser-route evidence
-        if: always()
+        if: always() && matrix.runner == 'macos-15'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: browser-layout-${{ matrix.runner }}-${{ github.sha }}

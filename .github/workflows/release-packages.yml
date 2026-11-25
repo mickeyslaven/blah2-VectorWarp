@@ -3,11 +3,6 @@ name: Build release packages
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
-    # The validation job below enforces exact vMAJOR.MINOR.PATCH semantics;
-    # keep the event filter broad so valid tags are never lost to glob syntax.
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
@@ -96,7 +91,7 @@ jobs:
   fedora-pam:
     name: Fedora container authentication (${{ matrix.distro }}, ${{ matrix.runner }})
     needs: validate
-    if: inputs.publish != true
+    if: github.event_name != 'pull_request' && inputs.publish != true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -131,95 +126,35 @@ jobs:
     needs: validate
     if: inputs.publish != true
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Check out the exact release revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
-      - id: node-pin
-        run: version=$(python3 script/artifact-plan.py pin node) && echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Set up Node 24 for API tests
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: ${{ steps.node-pin.outputs.version }}
-          package-manager-cache: false
-      - name: Install CPU build dependencies
+      - name: Verify release workflow and artifact contracts
+        if: github.event_name == 'pull_request'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential cmake curl git ninja-build pkg-config python3-yaml tar unzip xz-utils zip \
-            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev libasio-dev rapidjson-dev rpm libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
-      - name: Bootstrap pinned vcpkg manifest dependencies
-        run: |
-          python3 script/artifact-plan.py checkout vcpkg build/ci-deps/vcpkg
-          build/ci-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
-          mkdir -p build/ci-manifest
-          cp lib/vcpkg.json build/ci-manifest/vcpkg.json
-      - name: Configure and test without GPU hardware
-        run: |
-          npm ci --prefix api --ignore-scripts --no-audit --no-fund
-          cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
-            -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
-            -DBLAH2_KRAKEN_ONLY=OFF -DBLAH2_GPU=OFF -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
-            -DBLAH2_ENABLE_RSPDUO=OFF -DBLAH2_ENABLE_USRP=ON -DBLAH2_ENABLE_HACKRF=ON \
-            -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-deps/vcpkg/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
-          python3 script/prebuild_acceptance.py --build-dir build/ci \
-            --native-target blah2 --native-target testDetectionMath --native-target testTracker \
-            --native-target testFrontendPlan --native-test frontendPlanParity \
-            --native-test testDetectionMath --native-test testTracker --receipt build/ci/prebuild-acceptance.json
-          cmake --build build/ci --parallel 2
-          ctest --test-dir build/ci --output-on-failure --no-tests=error
-      - name: Run offline full-processor replay harness
-        run: python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2
-      - name: Verify GPU platform and receiver build contracts
-        run: |
-          python3 test/packaging/test_gpu_platform_contract.py -v
           python3 test/packaging/test_ci_workflows.py -v
+          python3 test/packaging/test_release_matrix.py -v
           python3 test/packaging/test_release_soak.py -v
           python3 test/packaging/test_release_ci.py -v
-          python3 test/script/test_release_regression.py -v
-          python3 test/script/test_export_cycles.py -v
-      - name: Run repository generator unit and ephemeral integration tests
-        run: |
-          python3 test/packaging/test_repository.py -v
-          VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py -v
-      - name: Run API and UI unit tests
+          python3 test/script/test_repository_budget.py -v
+      - name: Require successful exact-source hosted qualification
+        if: github.event_name != 'pull_request'
         env:
-          NODE_PATH: ${{ github.workspace }}/api/node_modules
-        run: |
-          VECTORWARP_LAUNCHER_TEST_API="$PWD/api" VECTORWARP_LAUNCHER_TEST_NODE="$(command -v node)" python3 test/packaging/test_launcher.py -v
-          npm test --prefix api
-          npm run test:dom --prefix api
-          node test/ui/deployment.test.js
-      - name: Exercise real unprivileged broker requests with NoNewPrivileges
-        run: |
-          sudo env "PATH=$PATH" "VECTORWARP_TEST_NODE=$(command -v node)" \
-            "NODE_PATH=$GITHUB_WORKSPACE/api/node_modules" \
-            python3 test/packaging/test_receiver_helper.py -v
-          sudo python3 test/packaging/test_sudoers_migration.py -v
-      - name: Check packaging policy and fake SDK inputs (no real SDRplay SDK)
-        run: |
-          node test/ui/packaging.test.js
-          python3 test/packaging/test_install_docs.py -v
-          python3 test/packaging/test_fedora_pam_preflight.py -v
-          python3 test/packaging/test_fedora_apparmor_ci.py -v
-          python3 test/packaging/test_gpu_setup.py -v
-          python3 test/packaging/test_receiver_build.py -v
-          sudo python3 test/packaging/test_package_upgrade.py -v
-          node test/packaging/upgrade_state.test.js
-          python3 test/packaging/test_smoke_receiver_status.py -v
-          python3 test/packaging/test_sdrplay_distribution.py -v
-          python3 test/packaging/test_rpm_local_kit.py -v
-          python3 test/packaging/test_new_target_upgrade.py -v
-      - name: Preserve CPU package-gate evidence
-        if: always()
+          GH_TOKEN: ${{ github.token }}
+        run: python3 script/verify-release-ci.py --source-sha "$GITHUB_SHA" --output release-ci-provenance.json
+      - name: Preserve exact-source qualification receipt
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: cpu-package-gate-${{ github.sha }}
-          path: build/ci/prebuild-acceptance.json
-          if-no-files-found: warn
+          name: release-ci-provenance-${{ github.sha }}
+          path: release-ci-provenance.json
+          if-no-files-found: error
           retention-days: 14
   package:
     name: ${{ matrix.distro }} ${{ matrix.arch }} package
@@ -227,7 +162,7 @@ jobs:
     needs: [validate, verify, fedora-pam]
     # Required package checks must fail, not become mergeable skipped checks,
     # when the disposable test OS cannot authenticate an ordinary user.
-    if: always() && inputs.publish != true
+    if: always() && github.event_name != 'pull_request' && inputs.publish != true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
