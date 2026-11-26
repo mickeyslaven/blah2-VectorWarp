@@ -33,7 +33,7 @@ int main(int argc,char** argv)try {
     std::string(argv[5])!="--max-cpis"||std::string(argv[7])!="--delay-motion"||
     std::string(argv[9])!="--doppler-motion") {
     std::cerr<<"Usage: directPathCoherentReplayInspect --channels 0,1,... --anchor N "
-      "--max-cpis 2|4|8 --delay-motion N --doppler-motion N [--migration-rates 0,RATE,...] FRAME.vwrps...\n";
+      "--max-cpis 2|4|8 --delay-motion N --doppler-motion N [--migration-rates 0,RATE,...] [--refine-phase] FRAME.vwrps...\n";
     return 2;
   }
   integration::DirectPathCoherentExperiment::Config config;
@@ -42,19 +42,28 @@ int main(int argc,char** argv)try {
   config.temporal.delayMotionBins=number(argv[8],"delay motion");
   config.temporal.dopplerMotionBins=number(argv[10],"Doppler motion");
   int firstFrame = 11;
-  if (std::string(argv[firstFrame]) == "--migration-rates") {
-    if (argc < 14) throw std::invalid_argument("Migration rates need a list and snapshot");
-    std::stringstream input(argv[12]); std::string item;
+  bool migrationSeen=false,phaseSeen=false;
+  while(firstFrame<argc && (std::string(argv[firstFrame])=="--migration-rates" ||
+      std::string(argv[firstFrame])=="--refine-phase")) {
+    if(std::string(argv[firstFrame])=="--refine-phase") {
+      if(phaseSeen)throw std::invalid_argument("Duplicate phase option");
+      phaseSeen=true;config.temporal.refineDopplerPhase=true;++firstFrame;continue;
+    }
+    if(firstFrame+2>=argc) throw std::invalid_argument("Trial option needs a list and snapshot");
+    if(migrationSeen)throw std::invalid_argument("Duplicate trial option");
+    migrationSeen=true;
+    auto& values=config.migrationRates;
+    values.clear();const std::string list=argv[firstFrame+1];
+    std::stringstream input(list); std::string item;
     while (std::getline(input, item, ',')) {
       size_t used = 0; const double rate = std::stod(item, &used);
-      if (used != item.size()) throw std::invalid_argument("Invalid migration rate");
-      config.migrationRates.push_back(rate);
+      if (used != item.size()) throw std::invalid_argument("Invalid trial value");
+      values.push_back(rate);
     }
-    if (std::string(argv[12]).empty() || std::string(argv[12]).back() == ',')
-      throw std::invalid_argument("Invalid migration rate list");
-    firstFrame = 13;
+    if (list.empty() || list.back() == ',') throw std::invalid_argument("Invalid trial list");
+    firstFrame+=2;
   }
-  if(argc-firstFrame>int(blah2::resident_replay::frameLimit))
+  if(firstFrame>=argc || argc-firstFrame>int(blah2::resident_replay::frameLimit))
     throw std::invalid_argument("Replay experiment exceeds the snapshot frame bound");
   config.temporal.minimumCoherence=.6; config.minimumPilotCoherence=.25;
   config.maximumCells=1u<<20;
@@ -71,6 +80,8 @@ int main(int argc,char** argv)try {
       <<" rate_corrected_fallback="<<rate.rateCorrectedFallback
       <<" per_rate_trials="<<rate.declaredPerCellTrials
       <<" combined_trials="<<rate.combinedPerCellTrials
+      <<" refined_phase="<<config.temporal.refineDopplerPhase
+      <<" pilot_coherence="<<(rate.measuredPilot?rate.measuredPilot->coherence:0)
       <<" interpolation_white_noise_gain="<<rate.whiteNoiseGain<<" reason="<<result.reason;
     for(size_t index=0;index<result.banks.size();++index) {
       const auto& bank=result.banks[index];

@@ -175,3 +175,38 @@ warnings treated as errors. The build used one job and a 2 GiB memory cap,
 including the canonical processing and offline replay CMake owners. All 86
 architecture checks and 943 repository-budget ceilings passed. This validates
 the numerical contracts, not recorded-radar benefit or live promotion.
+
+## Fractional inter-CPI range and residual phase
+
+The replay experiment can refine residual slow-time phase with `--refine-phase`:
+depths 2/4/8 search 4/8/16 unique frequency offsets over one `1/hop` alias
+interval. The zero hypothesis is retained and the negative Nyquist endpoint is
+included only once. This is a charged frequency search, not an unambiguous
+Doppler estimate. At half-between-grid frequencies the ideal 8-CPI worst-case
+coherence exceeds 0.81; the former nine-point grid could fall below 0.42.
+Every immutable rate history remains independent. Combined trial accounting
+charges all 28 phase/depth trials plus the three power-fallback depths, each
+multiplied by every spatial, delay-motion, Doppler-motion and migration trial.
+
+When the sealed configuration enables fractional delay, only the coherent
+history samples the continuous physical range path. It reuses the prepared
+Lanczos-8 owner in `RangeMigrationReplay`, caches rows across residual integer
+paths, refuses missing interpolation support and records fixed-path white
+range-noise gain. That gain is provenance, not a search-null calibration.
+Selected-beam inputs cannot be fractionally mixed. The canonical noncoherent
+nearest-cell contract is unchanged. Direct complex inputs specify their
+remaining heterodyne range ramp; the composed reader supplies zero after its
+existing complete de-ramp, preventing a double correction.
+
+Calibration-only continuous-IQ injections localized three distinct failures:
+missing temporal drift in the development harness, under-resolved residual
+phase trials, and nearest-cell discontinuities on a moving complex path.
+After correction the moving-path true-phase oracle recovered
+2.98/5.96/8.97 dB at 2/4/8 CPIs, with approximately 0.994/0.986/0.985 coherence.
+This gain is relative to the matched path's single-CPI signal power, **not**
+relative to an already-integrating noncoherent baseline. Near-threshold tests
+also found that a 0.6 coherence pre-gate can discard weak coherent returns.
+No live gate or default is changed: an ungated replay statistic still needs
+full joint trial calibration, untouched RF controls and prospective acceptance.
+Current single-core full-bank replay exceeds the 100 ms experimental cadence;
+correct numerical gain is not a runtime or radar-promotion result.

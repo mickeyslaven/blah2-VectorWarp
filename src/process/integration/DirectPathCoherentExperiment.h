@@ -165,7 +165,7 @@ public:
       result.banks[bank].depth = 2u << bank;
     result.powerFallback = &powerFallback;
     result.declaredPerCellTrials = uint64_t(config_.declaredSpatialTrials) *
-      (config_.temporal.maximumCpis == 8 ? 3u : config_.temporal.maximumCpis == 4 ? 2u : 1u) *
+      CoherentPathEvidence::totalPhaseTrials(config_.temporal) *
       (2u * config_.temporal.delayMotionBins + 1u) *
       (2u * config_.temporal.dopplerMotionBins + 1u);
     const auto fail = [&](const char* reason) {
@@ -304,6 +304,7 @@ public:
     uint64_t declaredPerCellTrials = 0, combinedPerCellTrials = 0;
     uint32_t correlationSamples = 0;
     Sidecar source; // Original, uncropped raw sample span and sealed config hash.
+    std::optional<DirectPathCoherentExperiment::Pilot> measuredPilot;
     bool rateCorrectedFallback = false;
     // Recorded native beam choices on the common crop, retained as provenance.
     // Migration fallback is one fixed spatial projection, not these choices.
@@ -463,6 +464,10 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     const auto motion = track_before_detect::decodeMotionBins(config.detector.integrationMotionBins);
     bound.temporal.delayDriftPerHz = motion.fractionalDelay ?
       track_before_detect::delayDriftPerHz(config.geometry.clutterSamples, config.temporalCarrierHz()) : 0;
+    bound.temporal.interpolateDelay = motion.fractionalDelay;
+    // Composed migration maps below already remove the complete range ramp.
+    // Legacy maps retain it; never de-ramp the same gauge twice.
+    bound.temporal.heterodyneCenterHz = migration ? 0 : config.dopplerAxis.at(config.geometry.doppler / 2);
     // A corrected fixed projection has no native selected-beam decisions.
     bound.fallbackBeamCount = migration ? 0 : config.fusion.beams;
     bound.fallbackBeamTolerance = config.detector.integrationBeamTolerance;
@@ -472,6 +477,7 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
   std::vector<RateResult> results;
   try { for (size_t index = 0; index < count; ++index) {
     RateResult item; item.rateIndex = uint32_t(index); item.source = validated.sidecar;
+    item.measuredPilot = decoded.pilot;
     item.correlationSamples = config.correlation; item.rateCorrectedFallback = migration;
     auto maps = migration ? std::vector<DirectPathCoherentExperiment::ComplexMap>{} : std::move(decoded.maps);
     if (migration) {
@@ -508,7 +514,9 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     // fallback uses the declared fixed spatial hypothesis instead.
     const uint64_t fallbackSpatialTrials = migration ? config_.declaredSpatialTrials : std::max(1u, config.fusion.beams);
     item.declaredPerCellTrials = item.result.declaredPerCellTrials +
-      (item.result.declaredPerCellTrials / config_.declaredSpatialTrials) * fallbackSpatialTrials;
+      (config_.temporal.maximumCpis == 8 ? 3u : config_.temporal.maximumCpis == 4 ? 2u : 1u) *
+      (2u * config_.temporal.delayMotionBins + 1u) *
+      (2u * config_.temporal.dopplerMotionBins + 1u) * fallbackSpatialTrials;
     item.combinedPerCellTrials = count * item.declaredPerCellTrials;
     results.push_back(std::move(item));
   }} catch (...) { experiments_.clear(); throw; }

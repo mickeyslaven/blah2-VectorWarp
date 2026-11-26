@@ -9795,6 +9795,91 @@
           ]
         }
       }
+    ,
+    {
+      "owner": "2026-11-26 offline coherent phase and continuous-range review",
+      "purpose": "Bound and charge depth-aware 4/8/16 phase trials, reuse the canonical prepared Lanczos sampler for coherent-only inter-CPI paths, preserve newest-coordinate phase and noise-gain lineage, and cache FFTW slow-time batches in the existing offline owner. The canonical noncoherent contract and all live entry points remain unchanged.",
+      "rejected_reuse": "The prior nearest-cell path and nine-point phase grid demonstrably lost known moving/off-grid echoes; no winner-history splicing, copied interpolator, reduced validators or uncharged hypotheses are permitted. Existing FFTW and migration owners supply the numerical primitives.",
+      "cleanup_plan": "Retain independent scalar, continuous-IQ, half-grid, noise-power and fallback tests. Remove the replaced scalar phase-search loop rather than retaining another backend, and require complete null calibration plus held-out and prospective radar/cadence evidence before promotion.",
+      "changes": {
+        "context_characters:build-integration": [
+          103128,
+          103142
+        ],
+        "context_characters:build-integration/contracts": [
+          1412051,
+          1412711
+        ],
+        "context_characters:native-integration": [
+          97051,
+          111481
+        ],
+        "context_characters:operational-tools": [
+          654328,
+          654988
+        ],
+        "context_characters:operational-tools/contracts": [
+          542434,
+          546465
+        ],
+        "context_characters:production": [
+          7181464,
+          7196568
+        ],
+        "context_lines:build-integration/contracts": [
+          28743,
+          28754
+        ],
+        "context_lines:native-integration": [
+          1968,
+          2225
+        ],
+        "context_lines:operational-tools": [
+          12159,
+          12170
+        ],
+        "context_lines:operational-tools/contracts": [
+          9459,
+          9536
+        ],
+        "context_lines:production": [
+          132722,
+          132990
+        ],
+        "context_tokens:build-integration": [
+          16599,
+          16600
+        ],
+        "context_tokens:build-integration/contracts": [
+          347844,
+          348017
+        ],
+        "context_tokens:native-integration": [
+          23772,
+          27636
+        ],
+        "context_tokens:operational-tools": [
+          159068,
+          159241
+        ],
+        "context_tokens:operational-tools/contracts": [
+          136022,
+          136970
+        ],
+        "context_tokens:production": [
+          1798880,
+          1802918
+        ],
+        "lines:src": [
+          46362,
+          46619
+        ],
+        "lines:tools": [
+          2883,
+          2894
+        ]
+      }
+    }
   ],
   "context_snapshot": {
     "policy": {

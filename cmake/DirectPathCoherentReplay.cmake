@@ -7,7 +7,7 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
     ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
   target_compile_features(blah2DirectPathCoherentReplay PUBLIC cxx_std_17)
   target_include_directories(blah2DirectPathCoherentReplay PUBLIC ${PROJECT_ROOT}/src)
-  target_link_libraries(blah2DirectPathCoherentReplay PUBLIC blah2RadarData blah2FixedExecutor)
+  target_link_libraries(blah2DirectPathCoherentReplay PUBLIC blah2RadarData blah2FixedExecutor blah2RadarDsp)
   add_executable(directPathCoherentReplayInspect
     ${PROJECT_ROOT}/tools/DirectPathCoherentReplayInspect.cpp)
   target_link_libraries(directPathCoherentReplayInspect PRIVATE blah2DirectPathCoherentReplay)

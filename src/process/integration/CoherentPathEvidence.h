@@ -3,6 +3,7 @@
 
 #include "data/Map.h"
 #include "process/integration/TemporalEvidence.h"
+#include "process/integration/RangeMigrationReplay.h"
 
 #include <algorithm>
 #include <array>
@@ -12,8 +13,10 @@
 #include <deque>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
+#include <fftw3.h>
 
 namespace blah2::integration
 {
@@ -40,6 +43,14 @@ public:
     // Zero declares one immutable spatial projection. Selected-beam inputs
     // require a known, identical beam along the entire coherent path.
     uint32_t beamCount = 0;
+    // Twofold zero-padded slow-time frequency bank: 4/8/16 trials at 2/4/8
+    // CPIs. One Nyquist endpoint only; offsets are aliases modulo 1/hop.
+    // Histories remain immutable, and the full bank is charged/calibrated.
+    bool refineDopplerPhase = false;
+    // Opt-in research sampling, never changes the canonical power baseline.
+    // center is the CAF heterodyne range ramp, not a target frequency.
+    bool interpolateDelay = false;
+    double heterodyneCenterHz = 0;
   };
 
   struct Bank
@@ -50,9 +61,12 @@ public:
     std::vector<double> coherence;
     std::vector<uint8_t> valid;
     std::vector<EvidenceMotion> motion;
+    std::vector<double> dopplerOffsetHz;
+    std::vector<double> whiteRangeNoiseGain;
     EvidenceLineage window;
     std::array<uint64_t, 8> firstSamples{};
     uint32_t sampleRateHz = 0;
+    uint32_t phaseTrials = 1;
 
     EvidenceLineage lineageAt(uint64_t cell) const
     {
@@ -75,8 +89,17 @@ public:
         !std::isfinite(config_.minimumCoherence) ||
         (config_.phaseDirection != -1 && config_.phaseDirection != 1) ||
         !std::isfinite(config_.delayDriftPerHz) || config_.delayDriftPerHz > 0 ||
-        config_.beamCount > 360)
+        config_.beamCount > 360 || !std::isfinite(config_.heterodyneCenterHz) ||
+        (config_.interpolateDelay && config_.beamCount))
       throw std::invalid_argument("Coherent temporal evidence configuration invalid");
+  }
+
+  static uint32_t phaseTrials(uint32_t depth, bool refine) { return refine ? 2 * depth : 1; }
+  static uint32_t totalPhaseTrials(const Config& config) {
+    uint32_t count = 0;
+    for (uint32_t depth : {2u, 4u, 8u})
+      if (depth <= config.maximumCpis) count += phaseTrials(depth, config.refineDopplerPhase);
+    return count;
   }
 
   void reset()
@@ -107,6 +130,21 @@ public:
       throw std::invalid_argument("Coherent temporal evidence lineage changed");
     if (!sampleRateHz)
       throw std::invalid_argument("Coherent temporal evidence sample rate invalid");
+    if (config_.interpolateDelay) {
+      if (columns > 4096 || uint64_t(rows) * columns > 65536 || map.delay.size() != columns ||
+          std::abs(config_.heterodyneCenterHz) > .5 * sampleRateHz)
+        throw std::invalid_argument("Coherent interpolation requires bounded explicit range coordinates");
+      for (uint32_t column = 1; column < columns; ++column)
+        if (int64_t(map.delay[column]) != int64_t(map.delay[0]) + column)
+          throw std::invalid_argument("Coherent interpolation requires contiguous sample-delay bins");
+    }
+    uint64_t phaseWork = 0;
+    for (uint32_t depth : {2u, 4u, 8u})
+      if (depth <= config_.maximumCpis) phaseWork += depth * phaseTrials(depth, config_.refineDopplerPhase);
+    const uint64_t work = uint64_t(rows) * columns * phaseWork *
+      (2 * config_.delayMotionBins + 1) * (2 * config_.dopplerMotionBins + 1);
+    if (work > (uint64_t(1) << 30))
+      throw std::invalid_argument("Coherent phase bank exceeds bounded path work");
     if (config_.beamCount && (!beams || beams->size() != uint64_t(rows) * columns ||
         std::any_of(beams->begin(), beams->end(), [&](uint32_t beam) {
           return beam > config_.beamCount;
@@ -151,12 +189,24 @@ public:
       const auto cells = uint64_t(rows) * columns;
       bank.coherence.assign(cells, 0); bank.valid.assign(cells, 0);
       bank.motion.resize(cells); bank.window = lineage(bank.depth, 0, 0);
+      bank.dopplerOffsetHz.assign(cells, 0);
+      bank.whiteRangeNoiseGain.assign(cells, 0);
       bank.sampleRateHz = sampleRateHz;
+      bank.phaseTrials = phaseTrials(bank.depth, config_.refineDopplerPhase);
+      std::array<const Frame*, 8> history{};
       for (uint32_t age = 0; age < bank.depth; ++age)
+      {
+        history[age] = &frames_[frames_.size() - 1 - age];
         bank.firstSamples[age] = frames_[frames_.size() - 1 - age].firstSample;
+      }
       for (uint32_t row = 0; row < rows; ++row)
-        for (uint32_t column = 0; column < columns; ++column)
-          accumulate(bank, row, column);
+      {
+        // Phase depends on row/path/age, never on delay column. Cache the
+        // rotations once per row rather than calling sin/cos in every cell.
+        const auto rotations = phaseRotations(row, bank.depth, history);
+        const auto paths = rowPaths(row, bank.depth, history);
+        accumulate(bank, row, paths.paths, rotations);
+      }
       bank.map->set_metrics();
     }
     return result;
@@ -230,80 +280,209 @@ private:
     return result;
   }
 
-  void accumulate(Bank& bank, uint32_t row, uint32_t column)
+  using Rotations = std::vector<std::array<std::complex<double>, 8>>;
+  static constexpr uint32_t tile = 128;
+  // Same FFTW backend as canonical Ambiguity. One bounded batch per path/tile,
+  // cached per immutable depth; no cell-level allocation or phase fitting.
+  struct PhaseTransform {
+    std::vector<std::complex<double>> values;
+    fftw_plan plan = nullptr;
+    static std::mutex& plannerMutex() { static std::mutex mutex; return mutex; }
+    PhaseTransform(uint32_t depth, int direction) : values(2 * depth * tile) {
+      const int length = int(2 * depth);
+      auto* data = reinterpret_cast<fftw_complex*>(values.data());
+      std::lock_guard<std::mutex> lock(plannerMutex());
+      plan = fftw_plan_many_dft(1, &length, int(tile), data, nullptr, int(tile), 1,
+        data, nullptr, int(tile), 1, direction > 0 ? FFTW_BACKWARD : FFTW_FORWARD,
+        FFTW_ESTIMATE);
+      if (!plan) throw std::runtime_error("Coherent slow-time FFT planning failed");
+    }
+    ~PhaseTransform() { std::lock_guard<std::mutex> lock(plannerMutex()); if (plan) fftw_destroy_plan(plan); }
+    PhaseTransform(const PhaseTransform&) = delete;
+    PhaseTransform& operator=(const PhaseTransform&) = delete;
+  };
+  struct Path {
+    int dr = 0, dc = 0, first = 0, last = 0;
+    std::array<int, 8> shifts{};
+    std::array<const std::complex<double>*, 8> values{};
+    std::array<const uint32_t*, 8> beams{};
+    std::array<std::complex<double>, 8> rangePhase{};
+    double noiseGain = 1;
+  };
+  struct RowPaths {
+    std::vector<Path> paths;
+    std::vector<std::vector<std::complex<double>>> samples;
+  };
+  RowPaths rowPaths(uint32_t row, uint32_t depth,
+    const std::array<const Frame*, 8>& history) const
+  {
+    RowPaths result;
+    result.paths.reserve((2 * config_.dopplerMotionBins + 1) * (2 * config_.delayMotionBins + 1));
+    result.samples.reserve((2 * config_.dopplerMotionBins + 1) * depth);
+    for (int dr = -int(config_.dopplerMotionBins); dr <= int(config_.dopplerMotionBins); ++dr) {
+      std::array<const std::complex<double>*, 8> values{};
+      std::array<int, 8> first{}, last{};
+      std::array<double, 8> physical{}, gain{};
+      for (uint32_t age = 0; age < depth; ++age) {
+        const int older = int(row) - dr * int(age);
+        if (older < 0 || older >= int(rows_)) break;
+        values[age] = history[age]->cells.data() + uint64_t(older) * columns_;
+        last[age] = int(columns_); gain[age] = 1;
+        if (!config_.interpolateDelay) continue;
+        physical[age] = -config_.delayDriftPerHz * .5 *
+          (dopplerHz(row) + dopplerHz(uint32_t(older))) * age;
+        if (!physical[age]) continue;
+        const auto kernel = RangeMigrationReplay::prepareProfile(physical[age],
+          config_.heterodyneCenterHz, history[age]->sampleRateHz);
+        first[age] = std::max(0, int(std::ceil(RangeMigrationReplay::radius - physical[age])));
+        last[age] = std::min(int(columns_), int(std::ceil(double(columns_) - RangeMigrationReplay::radius - physical[age])));
+        if (first[age] + physical[age] < RangeMigrationReplay::radius) ++first[age];
+        if (last[age] - 1 + physical[age] + RangeMigrationReplay::radius >= columns_) --last[age];
+        auto& samples = result.samples.emplace_back(columns_);
+        for (int column = first[age]; column < last[age]; ++column)
+          samples[column] = RangeMigrationReplay::sampleProfile(history[age]->cells,
+            columns_, uint32_t(older), uint32_t(column), kernel);
+        values[age] = samples.data(); gain[age] = kernel.whiteNoiseGain();
+      }
+      for (int dc = -int(config_.delayMotionBins); dc <= int(config_.delayMotionBins); ++dc) {
+        Path path; path.dr = dr; path.dc = dc; path.last = int(columns_); path.noiseGain = 0;
+        for (uint32_t age = 0; age < depth; ++age) {
+          const int older = int(row) - dr * int(age);
+          if (older < 0 || older >= int(rows_)) { path.last = 0; break; }
+          const int shift = config_.interpolateDelay ? -dc * int(age) : track_before_detect::delayPathColumn(0, dc, age,
+            config_.delayDriftPerHz, dopplerHz(row), dopplerHz(uint32_t(older)));
+          path.first = std::max(path.first, first[age] - shift);
+          path.last = std::min(path.last, last[age] - shift);
+          path.shifts[age] = shift;
+          path.values[age] = values[age]; path.noiseGain += gain[age] / depth;
+          path.rangePhase[age] = std::polar(1., config_.interpolateDelay ?
+            -2 * std::acos(-1.) * config_.heterodyneCenterHz * (physical[age] + shift) / history[age]->sampleRateHz : 0);
+          if (config_.beamCount) path.beams[age] = history[age]->beams.data() + uint64_t(older) * columns_;
+        }
+        if (path.first < path.last) result.paths.push_back(path);
+      }
+    }
+    return result;
+  }
+  double phaseOffsetHz(uint32_t trial, uint32_t depth) const {
+    if (!trial) return 0;
+    const int index = trial <= depth ? int(trial) - int(depth) - 1 : int(trial) - int(depth);
+    return double(index) * frames_.back().sampleRateHz / (double(2 * depth) * double(lockedHopSamples_));
+  }
+  Rotations phaseRotations(uint32_t row, uint32_t depth,
+    const std::array<const Frame*, 8>& history) const
   {
     constexpr double pi = 3.14159265358979323846;
-    double best = -1, bestCoherence = 0; int bestDelay = 0, bestDoppler = 0;
-    std::complex<double> bestValue{};
-    for (int dr = -int(config_.dopplerMotionBins);
-         dr <= int(config_.dopplerMotionBins); ++dr)
-      for (int dc = -int(config_.delayMotionBins);
-           dc <= int(config_.delayMotionBins); ++dc)
-      {
-        std::complex<double> sum{}; double power = 0, scale = 0, phaseCycles = 0;
-        bool usable = true;
-        for (uint32_t age = 0; age < bank.depth; ++age)
-        {
-          const int rr = int(row) - dr * int(age);
-          if (rr < 0 || rr >= int(rows_)) { usable = false; break; }
-          const int cc = track_before_detect::delayPathColumn(int(column), dc, age,
-            config_.delayDriftPerHz, dopplerHz(row), dopplerHz(uint32_t(rr)));
-          if (cc < 0 || cc >= int(columns_))
-          { usable = false; break; }
-          if (config_.beamCount) {
-            const auto newestBeam = frames_.back().beams[uint64_t(row) * columns_ + column];
-            if (!newestBeam || frames_[frames_.size() - 1 - age].beams[
-                uint64_t(rr) * columns_ + uint32_t(cc)] != newestBeam)
-            { usable = false; break; }
-          }
-          const auto value = frames_[frames_.size() - 1 - age].cells[
-            uint64_t(rr) * columns_ + uint32_t(cc)];
-          if (age)
-          {
-            const auto& newer = frames_[frames_.size() - age];
-            const auto& older = frames_[frames_.size() - 1 - age];
-            const double elapsed = double(newer.firstSample - older.firstSample) /
-              newer.sampleRateHz;
-            // Integrate every segment of the selected Doppler trajectory.
-            // Explicit axes need not be uniformly spaced, so a single
-            // endpoint average would not describe the intermediate path.
-            phaseCycles += .5 * (dopplerHz(uint32_t(rr + dr)) +
-              dopplerHz(uint32_t(rr))) * elapsed;
-          }
-          const double phase = config_.phaseDirection * 2 * pi *
-            phaseCycles;
-          const double magnitude = std::abs(value);
-          if (!std::isfinite(magnitude)) { usable = false; break; }
-          if (magnitude > scale) {
-            const double ratio = scale / magnitude;
-            sum *= ratio; power *= ratio * ratio; scale = magnitude;
-          }
-          if (scale > 0) {
-            const auto normalized = value / scale;
-            power += std::norm(normalized);
-            sum += normalized * std::polar(1.0, phase);
+    Rotations result(2 * config_.dopplerMotionBins + 1);
+    for (int dr = -int(config_.dopplerMotionBins); dr <= int(config_.dopplerMotionBins); ++dr) {
+      double cycles = 0;
+      for (uint32_t age = 0; age < depth; ++age) {
+        const int older = int(row) - dr * int(age);
+        if (older < 0 || older >= int(rows_)) break;
+        if (age) cycles += .5 * (dopplerHz(uint32_t(older + dr)) + dopplerHz(uint32_t(older))) *
+          double(history[age - 1]->firstSample - history[age]->firstSample) / history[age]->sampleRateHz;
+        result[dr + int(config_.dopplerMotionBins)][age] = std::polar(1.,
+          config_.phaseDirection * 2 * pi * cycles);
+      }
+    }
+    return result;
+  }
+
+  void accumulate(Bank& bank, uint32_t row,
+    const std::vector<Path>& paths, const Rotations& rotations)
+  {
+    // Contiguous columns let the compiler vectorize the bounded reductions.
+    // Each cell retains newest-to-oldest addition and dr/dc/trial tie order.
+    std::array<std::array<double, tile>, 8> real{}, imaginary{};
+    std::array<double, tile> scale{}, power{}, sumReal{}, sumImaginary{}, best{},
+      pathBest{}, pathReal{}, pathImaginary{}, pathCoherence{}, pathOffset{};
+    std::array<uint8_t, tile> usable{};
+    const double rootDepth = std::sqrt(double(bank.depth));
+    PhaseTransform* transform = nullptr;
+    if (config_.refineDopplerPhase) {
+      auto& cached = transforms_[bank.depth == 2 ? 0 : bank.depth == 4 ? 1 : 2];
+      if (!cached) cached = std::make_unique<PhaseTransform>(bank.depth, config_.phaseDirection);
+      transform = cached.get();
+    }
+    for (uint32_t begin = 0; begin < columns_; begin += tile) {
+      const uint32_t count = std::min(tile, columns_ - begin);
+      best.fill(-1);
+      for (const auto& path : paths) {
+        const int first = std::max(int(begin), path.first) - int(begin);
+        const int last = std::min(int(begin + count), path.last) - int(begin);
+        if (first >= last) continue;
+        scale.fill(0); power.fill(0); usable.fill(1);
+        for (uint32_t age = 0; age < bank.depth; ++age) {
+          const auto* source = path.values[age] + int(begin) + first + path.shifts[age];
+          for (int c = first; c < last; ++c)
+            scale[c] = std::max(scale[c], std::max(std::abs(source[c - first].real()), std::abs(source[c - first].imag())));
+          if (config_.beamCount)
+            for (int c = first; c < last; ++c) {
+              const auto newest = path.beams[0][begin + c];
+              usable[c] &= newest && path.beams[age][int(begin) + c + path.shifts[age]] == newest;
+            }
+        }
+        for (uint32_t age = 0; age < bank.depth; ++age) {
+          const auto* source = path.values[age] + int(begin) + first + path.shifts[age];
+          for (int c = first; c < last; ++c) {
+            const double divisor = scale[c] > 0 ? scale[c] : 1.;
+            real[age][c] = source[c - first].real() / divisor;
+            imaginary[age][c] = source[c - first].imag() / divisor;
+            power[c] += real[age][c] * real[age][c] + imaginary[age][c] * imaginary[age][c];
           }
         }
-        const double sumPower = std::norm(sum);
-        if (!usable || !(power > 0) || !std::isfinite(power) ||
-            !std::isfinite(sumPower)) continue;
-        const double coherence = sumPower / (double(bank.depth) * power);
-        const auto coherentValue = (sum / std::sqrt(double(bank.depth))) * scale;
-        const double amplitude = std::abs(coherentValue);
-        if (!std::isfinite(coherence) || coherence < 0 || coherence > 1 + 1e-9 ||
-            !std::isfinite(amplitude)) continue;
-        if (coherence >= config_.minimumCoherence && amplitude > best)
-        { best = amplitude; bestCoherence = std::min(1.0, coherence);
-          bestDelay = dc; bestDoppler = dr; bestValue = coherentValue; }
+        const auto& phases = rotations[path.dr + int(config_.dopplerMotionBins)];
+        if (transform) {
+          std::fill(transform->values.begin(), transform->values.end(), std::complex<double>{});
+          for (uint32_t age = 0; age < bank.depth; ++age) {
+            const auto phase = phases[age] * path.rangePhase[age];
+            for (int c = first; c < last; ++c)
+              transform->values[age * tile + c] = std::complex<double>{real[age][c], imaginary[age][c]} * phase;
+          }
+          fftw_execute(transform->plan);
+        }
+        pathBest.fill(-1);
+        for (uint32_t trial = 0; trial < bank.phaseTrials; ++trial) {
+          sumReal.fill(0); sumImaginary.fill(0);
+          const double offsetHz = phaseOffsetHz(trial, bank.depth);
+          if (transform) {
+            const int index = !trial ? 0 : trial <= bank.depth ? int(trial) - int(bank.depth) - 1 : int(trial) - int(bank.depth);
+            const auto bin = uint32_t((index + int(bank.phaseTrials)) % int(bank.phaseTrials));
+            for (int c = first; c < last; ++c) {
+              const auto z = transform->values[bin * tile + c];
+              sumReal[c] = z.real(); sumImaginary[c] = z.imag();
+            }
+          } else for (uint32_t age = 0; age < bank.depth; ++age) {
+            const auto phase = phases[age] * path.rangePhase[age];
+            for (int c = first; c < last; ++c) {
+              sumReal[c] += real[age][c] * phase.real() - imaginary[age][c] * phase.imag();
+              sumImaginary[c] += real[age][c] * phase.imag() + imaginary[age][c] * phase.real();
+            }
+          }
+          for (int c = first; c < last; ++c) {
+            if (!usable[c] || !(power[c] > 0)) continue;
+            const double sumPower = sumReal[c] * sumReal[c] + sumImaginary[c] * sumImaginary[c];
+            const double coherence = sumPower / (double(bank.depth) * power[c]);
+            if (coherence < config_.minimumCoherence || coherence > 1 + 1e-9) continue;
+            if (sumPower <= pathBest[c]) continue;
+            pathBest[c] = sumPower; pathReal[c] = sumReal[c]; pathImaginary[c] = sumImaginary[c];
+            pathCoherence[c] = coherence; pathOffset[c] = offsetHz;
+          }
+        }
+        for (int c = first; c < last; ++c) {
+          if (pathBest[c] < 0) continue;
+          const double amplitude = std::sqrt(pathBest[c] / double(bank.depth)) * scale[c];
+          if (!std::isfinite(amplitude) || amplitude <= best[c]) continue;
+          best[c] = amplitude;
+          const uint64_t cell = uint64_t(row) * columns_ + begin + c;
+          bank.map->data[row][begin + c] = std::complex<double>{pathReal[c] / rootDepth, pathImaginary[c] / rootDepth} * scale[c];
+          bank.valid[cell] = 1; bank.coherence[cell] = std::min(1., pathCoherence[c]);
+          bank.motion[cell] = {int8_t(path.dc), int8_t(path.dr)};
+          bank.dopplerOffsetHz[cell] = pathOffset[c];
+          bank.whiteRangeNoiseGain[cell] = path.noiseGain;
+        }
       }
-    const uint64_t cell = uint64_t(row) * columns_ + column;
-    if (best >= 0)
-    {
-      bank.map->data[row][column] = bestValue; bank.valid[cell] = 1;
-      bank.coherence[cell] = bestCoherence;
-      bank.motion[cell] = {int8_t(bestDelay), int8_t(bestDoppler)};
     }
-    else bank.map->data[row][column] = {};
   }
 
   Config config_;
@@ -311,6 +490,7 @@ private:
   std::deque<int> delay_; std::deque<double> doppler_;
   std::deque<Frame> frames_;
   uint64_t lockedHopSamples_ = 0;
+  std::array<std::unique_ptr<PhaseTransform>, 3> transforms_;
 };
 
 } // namespace blah2::integration

@@ -214,6 +214,9 @@ void composedMigration(const fs::path& directory) {
         "Composed migration lost rate/raw/config lineage");
       check(rate.declaredPerCellTrials == 18 && rate.combinedPerCellTrials == 54,
         "Composed migration did not charge depth/path/rate/fallback trials");
+      check(bool(rate.measuredPilot)==(sequence!=9) && (sequence==9 ||
+        std::abs(rate.measuredPilot->normalizedCorrelation-std::polar(1.,-gauge))<1e-12),
+        "Composed result lost measured pilot phase or its failure state");
       check(rate.recordedBeams.size() == rows * migrated.columns &&
         rate.recordedBeams[0] == migrated.firstColumn % value.fusion.beams + 1,
         "Recorded beam lineage did not use the same delay crop");
@@ -250,6 +253,162 @@ void composedMigration(const fs::path& directory) {
     rejects([&] { reader.appendAll(sealed); }, "Duplicate source frame bridged rate histories");
   }
 }
+void fractionalPhase() {
+  using Experiment = blah2::integration::DirectPathCoherentExperiment;
+  using Complex = Experiment::Complex;
+  Experiment::Config config; config.channelIds={0};config.anchorChannelId=0;config.spatialCoefficients={1.};
+  config.temporal.delayMotionBins=0;config.temporal.dopplerMotionBins=0;
+  config.temporal.minimumCoherence=.99;config.temporal.refineDopplerPhase=true;
+  Experiment refined(config,true);auto baselineConfig=config;baselineConfig.temporal.refineDopplerPhase=false;
+  Experiment baseline(baselineConfig,true);Experiment::ComplexMap map(3,1),power(3,1);
+  map.delay={0};map.doppler={-10.,0.,10.};power.delay=map.delay;power.doppler=map.doppler;
+  Experiment::Result result,unrefined;
+  constexpr uint64_t first=9007199254741000ULL;
+  for(uint64_t sequence=1;sequence<=8;++sequence){
+    const Experiment::Frame frame{3,sequence,first+(sequence-1)*8,first+sequence*8,509000000,1,80,true,true};
+    map.data[1][0]=std::polar(1.,2*std::acos(-1.)*2.5*.1*double(sequence-1));power.data[1][0]=1.;
+    const Experiment::Pilot pilot{frame,0,1.,1.};
+    result=refined.process({&map},{0},frame,pilot,power);
+    unrefined=baseline.process({&map},{0},frame,pilot,power);
+  }
+  check(result.declaredPerCellTrials==28,"Fractional phase hypotheses were not charged");
+  for(size_t bank=0;bank<3;++bank){
+    const auto& value=result.banks[bank];
+    check(value.valid[1]&&std::abs(std::norm(value.map->data[1][0])-double(2u<<bank))<1e-11&&
+      std::abs(value.dopplerOffsetHz[1]-2.5)<1e-12,"Off-grid 2/4/8 phase refinement lost coherent gain or frequency");
+    check(!unrefined.banks[bank].valid[1]&&unrefined.hybridAt(bank,1).power==1.,
+      "Off-grid baseline did not preserve noncoherent fallback");
+    check(value.lineageAt(1).firstSamples[0]==first+56,"Fractional phase lost exact large sample counter");
+  }
+  config.temporal.minimumCoherence=0;baselineConfig.temporal.minimumCoherence=0;
+  Experiment noiseRefined(config,true),noiseBaseline(baselineConfig,true);
+  std::mt19937 random(991);std::normal_distribution<double> normal(0,1/std::sqrt(2.));
+  double searched=0,fixed=0;
+  for(unsigned trial=0;trial<128;++trial){
+    noiseRefined.reset();noiseBaseline.reset();
+    for(uint64_t sequence=1;sequence<=8;++sequence){
+      const Experiment::Frame frame{3,sequence,first+(sequence-1)*8,first+sequence*8,509000000,1,80,true,true};
+      map.data[1][0]=Complex(normal(random),normal(random));power.data[1][0]=std::norm(map.data[1][0]);
+      const Experiment::Pilot pilot{frame,0,1.,1.};
+      result=noiseRefined.process({&map},{0},frame,pilot,power);
+      unrefined=noiseBaseline.process({&map},{0},frame,pilot,power);
+    }
+    const double a=std::norm(result.banks[2].map->data[1][0]),b=std::norm(unrefined.banks[2].map->data[1][0]);
+    check(a+1e-12>=b,"Fractional phase bank dropped its zero-frequency hypothesis");searched+=a;fixed+=b;
+  }
+  check(searched>1.2*fixed,"Noise phase-search inflation control is insensitive");
+}
+void cachedPhaseParity(bool fractional=false,int direction=1) {
+  using Engine=blah2::integration::CoherentPathEvidence;using Complex=std::complex<double>;
+  Engine::Config config;config.delayMotionBins=1;config.dopplerMotionBins=1;
+  config.delayDriftPerHz=-.02;config.minimumCoherence=.3;config.refineDopplerPhase=true;
+  config.interpolateDelay=fractional;config.heterodyneCenterHz=3;
+  config.phaseDirection=direction;
+  const unsigned columns=fractional?41:17;
+  Engine engine(config);Map<Complex> map(9,columns);map.delay.resize(columns);map.doppler.resize(9);
+  for(unsigned c=0;c<columns;++c)map.delay[c]=c;
+  for(unsigned r=0;r<9;++r)map.doppler[r]=(int(r)-4)*10.;
+  std::mt19937 random(313);std::normal_distribution<double> normal;
+  std::vector<std::vector<Complex>> history;std::array<Engine::Bank,3> banks;
+  for(unsigned n=0;n<8;++n){
+    history.emplace_back();for(auto& row:map.data)for(auto& z:row){z={normal(random),normal(random)};history.back().push_back(z);}
+    banks=engine.process(map,1,n+1,100+n*8,80);
+  }
+  const double tau=2*std::acos(-1.);
+  for(unsigned b=0;b<3;++b)for(unsigned r=0;r<9;++r)for(unsigned c=0;c<columns;++c){
+    const auto depth=2u<<b;double best=-1;Complex expected{};
+    for(int dr=-1;dr<=1;++dr)for(int dc=-1;dc<=1;++dc)for(unsigned trial=0;trial<2*depth;++trial){
+      const int index=trial==0?0:trial<=depth?int(trial)-int(depth)-1:int(trial)-int(depth);
+      const double offsetHz=double(index)/(2*depth*.1);
+      Complex sum{};double power=0,cycles=0;bool usable=true;
+      for(unsigned age=0;age<depth;++age){
+        const int rr=int(r)-dr*int(age);if(rr<0||rr>=9){usable=false;break;}
+        const int cc=track_before_detect::delayPathColumn(c,dc,age,config.delayDriftPerHz,map.doppler[r],map.doppler[rr]);
+        if(cc<0||cc>=int(columns)){usable=false;break;}
+        if(age)cycles+=.05*(map.doppler[rr+dr]+map.doppler[rr]);
+        Complex z=history[7-age][rr*columns+cc];
+        if(fractional){
+          const double physical=-config.delayDriftPerHz*.5*(map.doppler[r]+map.doppler[rr])*age;
+          const double shift=physical-dc*int(age),coordinate=c+shift;
+          if(physical){
+            if(coordinate<8||coordinate+8>=columns){usable=false;break;}
+            z=blah2::integration::RangeMigrationReplay::sampleProfile(history[7-age],columns,rr,coordinate,3,80);
+          }else z=history[7-age][rr*columns+int(c)-dc*int(age)];
+          z*=std::polar(1.,-tau*3*shift/80);
+        }
+        power+=std::norm(z);
+        sum+=z*std::polar(1.,direction*tau*(cycles+offsetHz*.1*age));
+      }
+      const double score=std::norm(sum)/depth;
+      if(usable&&score/(power)>config.minimumCoherence&&score>best){best=score;expected=sum/std::sqrt(double(depth));}
+    }
+    const auto cell=r*columns+c;check(bool(banks[b].valid[cell])==(best>=0),"Cached path validity differs from scalar oracle");
+    if(best>=0)check(std::abs(banks[b].map->data[r][c]-expected)<1e-11,"Cached fractional phase differs from independent scalar oracle");
+  }
+}
+void phaseGridAndPowerControls() {
+  using Engine=blah2::integration::CoherentPathEvidence;
+  Engine::Config config;config.delayMotionBins=0;config.dopplerMotionBins=0;config.refineDopplerPhase=true;
+  Map<std::complex<double>> map(1,1);map.delay={0};map.doppler={0};
+  const double tau=2*std::acos(-1.);
+  // Sweep all coarse bins AND half-between-bin worst cases. The grid is tied
+  // to capture hop, including overlapping CPIs, not the fast-CAF bin spacing.
+  std::array<double,3> minimumCoherence{1.,1.,1.};
+  for(unsigned depth:{2u,4u,8u})for(unsigned index=0;index<4*depth;++index){
+    config.maximumCpis=depth;Engine engine(config);std::array<Engine::Bank,3> result;
+    const double hz=(double(index)-2*depth)/(4*depth*.1);
+    for(unsigned n=0;n<depth;++n){map.data[0][0]=std::polar(1.,tau*hz*.1*n);result=engine.process(map,1,n+1,100+n*8,80,nullptr,120+n*8);}
+    const auto& bank=result[depth==2?0:depth==4?1:2];
+    minimumCoherence[depth==2?0:depth==4?1:2]=std::min(minimumCoherence[depth==2?0:depth==4?1:2],bank.coherence[0]);
+    check(bank.phaseTrials==2*depth&&bank.valid[0]&&bank.coherence[0]>.81,
+      "Twofold slow-time grid loses a half-bin echo or duplicates Nyquist");
+    check(std::norm(bank.map->data[0][0])>double(depth)*.81,"Slow-time phase grid lost its worst-case gain bound");
+    check(bank.lineageAt(0).endSamples[0]==120+(depth-1)*8,"Overlapping CPI ranges were lost by phase refinement");
+  }
+  // Noncoherent mean power retains signal/noise units; its benefit is lower
+  // noise variance, not an invented N-fold reduction in mean noise power.
+  blah2::integration::TemporalEvidence power({8,0,0});
+  std::mt19937 random(575);std::normal_distribution<double> normal(0,1/std::sqrt(2.));
+  std::array<double,4> sum{},squares{};constexpr unsigned trials=2048;
+  for(unsigned trial=0;trial<trials;++trial){
+    power.reset();blah2::integration::TemporalEvidence::Result result;
+    for(unsigned n=0;n<8;++n){const std::complex<double> noise{normal(random),normal(random)};map.data[0][0]=std::norm(noise);result=power.process(map,1,n+1,nullptr,nullptr,blah2::integration::TemporalEvidence::Input::realPower);}
+    const std::array<double,4> values{map.data[0][0].real(),result.banks[1].detectorPower[0],result.banks[2].detectorPower[0],result.banks[3].detectorPower[0]};
+    for(unsigned b=0;b<4;++b){sum[b]+=values[b];squares[b]+=values[b]*values[b];}
+  }
+  for(unsigned b=0;b<4;++b){const double mean=sum[b]/trials,variance=squares[b]/trials-mean*mean;
+    check(std::abs(mean-1)<.1&&std::abs(variance*double(1u<<b)-1)<.2,"Canonical noncoherent noise mean/variance changed");
+    std::cout<<"noncoherent_noise depth="<<(1u<<b)<<" mean="<<mean<<" variance="<<variance<<'\n';}
+  for(unsigned b=0;b<3;++b)std::cout<<"phase_grid depth="<<(2u<<b)<<" minimum_coherence="<<minimumCoherence[b]<<'\n';
+}
+void fractionalComplexRange() {
+  using Engine=blah2::integration::CoherentPathEvidence;
+  using Migration=blah2::integration::RangeMigrationReplay;
+  const double tau=2*std::acos(-1.);
+  for(double center:{0.,137.}) {
+    Engine::Config config;config.delayMotionBins=0;config.dopplerMotionBins=0;
+    config.delayDriftPerHz=-.01;config.interpolateDelay=true;config.heterodyneCenterHz=center;
+    Engine engine(config);Map<std::complex<double>> map(1,64);map.delay.resize(64);map.doppler={20};
+    for(unsigned c=0;c<64;++c)map.delay[c]=c;
+    std::array<Engine::Bank,3> result;
+    for(unsigned n=0;n<8;++n) {
+      for(unsigned c=0;c<64;++c)map.data[0][c]=std::polar(1.,tau*(.125*(c+.2*n)+center*c/1000+20*.1*n));
+      result=engine.process(map,1,n+1,100+n*100,1000,nullptr,200+n*100);
+    }
+    for(unsigned b=0;b<3;++b) {
+      const auto depth=2u<<b;const auto& bank=result[b];double gain=1.;
+      for(unsigned age=1;age<depth;++age)gain+=Migration::prepareProfile(.2*age,center,1000).whiteNoiseGain();
+      check(bank.valid[32]&&bank.coherence[32]>.9999,"Fractional range path loses continuous echo phase");
+      check(std::abs(bank.map->data[0][32]-std::sqrt(double(depth))*map.data[0][32])<.005,
+        "Fractional range interpolation omits/doubles newest-coordinate center correction");
+      check(std::abs(bank.whiteRangeNoiseGain[32]-gain/depth)<1e-12,
+        "Fractional range path lost interpolation noise-gain lineage");
+      check(!bank.valid[0]&&!bank.valid[63]&&bank.lineageAt(32).firstSamples[depth-1]==100+(8-depth)*100,
+        "Fractional range path pads missing support or loses raw ranges");
+    }
+    config.beamCount=2;rejects([&]{Engine refused(config);},"Fractional range mixes selected-beam identities");
+  }
+}
 }
 
 int main() {
@@ -277,6 +436,7 @@ int main() {
     fractionalMaps(directory);
     hybridReplay(directory);
     composedMigration(directory);
+    fractionalPhase();cachedPhaseParity();cachedPhaseParity(true);cachedPhaseParity(true,-1);phaseGridAndPowerControls();fractionalComplexRange();
     const auto one=directory/"one.vwrps", two=directory/"two.vwrps", three=directory/"three.vwrps"; write(one,firstBytes); write(two,secondBytes); write(three,thirdBytes);
     rejects([&]{cr::readSidecar(one);}, "missing sidecar accepted");
     cr::writeSidecarExclusive(one,firstSidecar);
