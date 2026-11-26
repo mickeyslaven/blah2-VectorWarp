@@ -9662,6 +9662,18 @@
         "context_tokens:release-ci": [30413, 30433],
         "context_tokens:release-ci/contracts": [94667, 94706]
       }
+    },
+    {
+      "owner": "2026-11-26 release owner physical qualification timing review",
+      "purpose": "Let GPU qualification reject duplicate timing JSON keys before excluding explicit cycle-evidence-only records from publication counts.",
+      "rejected_reuse": "Reuse the canonical concatenated JSON parser through its standard decoder object hook instead of copying a second stream parser. Default callers retain their existing behavior.",
+      "cleanup_plan": "Retain duplicate-key, explicit-discriminator, strict sequential publication and missing-product regressions. This parser hook changes no native radar processing or acceptance threshold.",
+      "changes": {
+        "context_characters:production": [7180819, 7180881],
+        "context_characters:replay-evidence-tools": [300273, 300335],
+        "context_tokens:production": [1798318, 1798327],
+        "context_tokens:replay-evidence-tools": [67257, 67266]
+      }
     }
   ],
   "context_snapshot": {

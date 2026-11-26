@@ -268,9 +268,9 @@ class BoundedLog:
             self.error = str(error)
 
 
-def json_values(payload, name):
+def json_values(payload, name, *, object_pairs_hook=None):
     text = bytes(payload).decode()
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(object_pairs_hook=object_pairs_hook)
     values = []
     position = 0
     while position < len(text):

@@ -47,6 +47,18 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def publication_timings(payload):
+    """Cycle-ledger updates repeat nCpi; only publication rows bind products."""
+    def unique_object(pairs):
+        result = dict(pairs)
+        assert len(result) == len(pairs), "duplicate timing JSON key"
+        return result
+    rows = replay.json_values(payload, "timing", object_pairs_hook=unique_object)
+    assert all(isinstance(row, dict) and ("cycleEvidenceOnly" not in row or
+               type(row["cycleEvidenceOnly"]) is bool) for row in rows), "invalid timing discriminator"
+    return [row for row in rows if row.get("cycleEvidenceOnly") is not True]
+
+
 def compare(expected, actual, label="products", *, exact=False, absolute=ABS_TOLERANCE):
     """Compare every field and array position; never erase IDs or lineage."""
     if isinstance(expected, dict):
@@ -204,7 +216,7 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
                 if refuse:
                     return any(frame.get("state") == "error" for frame in status.snapshot())
                 try:
-                    return len(replay.json_values(sinks.payloads["timing"], "timing")) >= FRAMES
+                    return len(publication_timings(sinks.payloads["timing"])) >= FRAMES
                 except (ValueError, AssertionError):
                     return False  # a socket write can still be in progress
             assert replay.wait_for(completed, time.monotonic() + 180), "bounded GPU replay timed out"
@@ -234,7 +246,7 @@ def run_case(binary, recording, receiver, mode, temporal, device, *, refuse=Fals
             assert not exited and not forced and process.returncode == 0, output[-6000:]
             assert not any(any(frame.get("captureDroppedSamples", [])) for frame in status.snapshot()), \
                 "lossless replay dropped samples"
-            timings = replay.json_values(sinks.payloads["timing"], "timing")[:FRAMES]
+            timings = publication_timings(sinks.payloads["timing"])[:FRAMES]
             lanes = replay.json_values(sinks.payloads["illuminator"], "illuminator")[:FRAMES] if temporal else []
             if temporal:
                 trace = replay.canonical_temporal_trace(sinks.payloads["illuminator"])[:FRAMES]

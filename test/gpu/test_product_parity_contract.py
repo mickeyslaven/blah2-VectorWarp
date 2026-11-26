@@ -90,6 +90,40 @@ def feature_receipt(baseline):
 
 
 class ProductParityContractTest(unittest.TestCase):
+    def test_interleaved_cycle_evidence_is_not_a_publication(self):
+        published = frames("cpu")
+        interleaved = [value for row in published for value in
+                       (row, {**row, "cycleEvidenceOnly": True})]
+        payload = b"".join(json.dumps(row).encode() for row in interleaved)
+        actual = parity.publication_timings(payload)
+        self.assertEqual(actual, published)
+        parity.assert_execution(actual, [], "cpu", False, DEVICE)
+        # Repeated evidence rows cannot turn six publications into twelve.
+        prefix = b"".join(json.dumps(row).encode() for row in interleaved[:12])
+        incomplete = parity.publication_timings(prefix)
+        self.assertEqual(len(incomplete), 6)
+        with self.assertRaisesRegex(AssertionError, "incomplete frame-bound"):
+            parity.assert_execution(incomplete, [], "cpu", False, DEVICE)
+        duplicated = copy.deepcopy(actual)
+        duplicated[1]["nCpi"] = 1
+        with self.assertRaises(AssertionError):
+            parity.assert_execution(duplicated, [], "cpu", False, DEVICE)
+
+    def test_timing_discriminator_is_explicit_and_fail_closed(self):
+        row = {**frames("cpu")[0], "cycleEvidenceOnly": False}
+        self.assertEqual(parity.publication_timings(json.dumps(row).encode()), [row])
+        for invalid in (None, 0, 1, "true", "false"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(AssertionError, "discriminator"):
+                parity.publication_timings(json.dumps({**row, "cycleEvidenceOnly": invalid}).encode())
+        with self.assertRaisesRegex(AssertionError, "concatenated JSON"):
+            parity.publication_timings(b'{"nCpi":1')
+        for raw in (b'{"cycleEvidenceOnly":null,"cycleEvidenceOnly":true}',
+                    b'{"cycleEvidenceOnly":true,"cycleEvidenceOnly":false}',
+                    b'{"nCpi":1,"nCpi":2}',
+                    b'{"cycleEvidenceOnly":true,"nested":{"x":1,"x":2}}'):
+            with self.subTest(raw=raw), self.assertRaisesRegex(AssertionError, "duplicate timing JSON key"):
+                parity.publication_timings(raw)
+
     def test_receipt_refuses_missing_or_backend_changed_native_plan(self):
         for change in (None, "b" * 64):
             value = receipt("fp64")

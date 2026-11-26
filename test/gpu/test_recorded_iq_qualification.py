@@ -42,7 +42,7 @@ def fixture():
         run["products"]["detection"].append({**public, "delay": [], "doppler": []})
         run["products"]["track"].append({**public, "n": 0, "data": []})
         run["products"]["timestamp"].append({"timestamp": index})
-        run["products"]["timing"].append({"timestamp": index, "captureEpoch": epoch,
+        run["products"]["timing"].append({"nCpi": index + 1, "timestamp": index, "captureEpoch": epoch,
             "captureFirstEpochSample": first, "captureEndEpochSample": end,
             "acceleration": execution, "clutterAcceleration": execution})
         run["events"].append({"boundary": "publication-complete", "captureEpoch": epoch,
@@ -190,7 +190,7 @@ def policy_fixture(root, minimum=2):
                                    "doppler": 100., "measured": index < 16}]
                     row.update(n=len(tracks)+(index == 0), nTentative=int(index == 0), data=tracks)
                 if name == "timing":
-                    row.update(captureFirstEpochSample=index*1000, captureEndEpochSample=(index+1)*1000,
+                    row.update(nCpi=index+1, captureFirstEpochSample=index*1000, captureEndEpochSample=(index+1)*1000,
                         trackerDiagnostics={"inactivity_deleted": int(index in (10, 14)), "tentative_expired": 0})
                 run["products"][name].append(row)
             event = copy.deepcopy(template["events"][0]);event.update(captureFirstEpochSample=index*1000, captureEndEpochSample=(index+1)*1000)

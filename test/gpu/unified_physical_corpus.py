@@ -307,7 +307,7 @@ def run_case(binary, device, case, recording, scene, *, timeout=CASE_TIMEOUT, co
                 if configuration is not None:
                     return any(value.get("state") == "complete" for value in status.snapshot())
                 try:
-                    return len(replay.json_values(sinks.payloads["timing"], "timing")) >= PUBLISHED_FRAMES
+                    return len(parity.publication_timings(sinks.payloads["timing"])) >= PUBLISHED_FRAMES
                 except (ValueError, AssertionError):
                     return False
             assert replay.wait_for(completed, time.monotonic() + timeout), "bounded physical replay timed out"
@@ -324,7 +324,8 @@ def run_case(binary, device, case, recording, scene, *, timeout=CASE_TIMEOUT, co
             events = parse_events(output)
             if not case.get("refusal") and (not fault or fault == "cpu-oracle-reset"):
                 assert not exited and process.returncode == 0, output[-6000:]
-            values = {name: replay.json_values(payload, name) if payload else []
+            values = {name: (parity.publication_timings(payload) if name == "timing" else
+                            replay.json_values(payload, name)) if payload else []
                       for name, payload in sinks.payloads.items()}
             for value in values.values(): replay.assert_finite(value)
             observer = read_observer(root) if values["timing"] else []
@@ -395,6 +396,8 @@ def complete_publications(run):
     """Validate every drained sink, including frames beyond the scoring prefix."""
     products = run["products"]
     timing = products["timing"]
+    assert all(type(row.get("nCpi")) is int for row in timing) and \
+        [row["nCpi"] for row in timing] == list(range(1, len(timing) + 1)), "nonsequential publication nCpi"
     events = [item for item in run["events"] if item.get("boundary") == "publication-complete"]
     assert len(events) == len(timing), "publication event/timing count differs"
     intervals = [(item["captureEpoch"], item["captureFirstEpochSample"], item["captureEndEpochSample"])

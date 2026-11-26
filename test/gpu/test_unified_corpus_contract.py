@@ -18,6 +18,20 @@ import unified_physical_corpus as corpus
 
 
 class UnifiedCorpusContractTest(unittest.TestCase):
+    def test_interleaved_evidence_rows_preserve_full_publication_alignment(self):
+        run = self.publication_unit_run(corpus.PUBLISHED_FRAMES)
+        published = copy.deepcopy(run["products"]["timing"])
+        for sequence, row in enumerate(published, 1):
+            row["nCpi"] = sequence
+        stream = b"".join(fixtures.canonical(value) for row in published for value in
+                          (row, {**row, "cycleEvidenceOnly": True}))
+        run["products"]["timing"] = corpus.parity.publication_timings(stream)
+        self.assertEqual(run["products"]["timing"], published)
+        self.assertEqual(len(corpus.complete_publications(run)["corpus-0"]), corpus.PUBLISHED_FRAMES)
+        run["products"]["illuminator"].pop()
+        with self.assertRaisesRegex(AssertionError, "partial trailing lane"):
+            corpus.complete_publications(run)
+
     def test_map_stream_retains_every_frame_and_pins_full_arrays(self):
         values = [{"id": "lane", "map": {"nRows": 1, "nCols": 2, "data": [[index+.01, index+.02]]},
                    "detections": {"delay": [index]}, "tracks": {"data": [{"n": index}]}}
@@ -68,7 +82,7 @@ class UnifiedCorpusContractTest(unittest.TestCase):
                      "captureEndEpochSample": first + 20, "route": "capture", "lane": 0,
                      "workerPid": 0, "boundary": "publication-complete"}
             run["events"].append(event)
-            run["products"]["timing"].append(dict(stamp))
+            run["products"]["timing"].append({**stamp, "nCpi": offset + 1})
             run["products"]["timestamp"].append(dict(stamp))
             for lane in range(2):
                 lineage = {**stamp, "capture_epoch": 7, "capture_first_input_sample": first,
@@ -95,6 +109,11 @@ class UnifiedCorpusContractTest(unittest.TestCase):
     def test_all_trailing_publications_are_checked(self):
         run = self.publication_unit_run(corpus.PUBLISHED_FRAMES + 1)
         self.assertEqual(len(corpus.complete_publications(run)["corpus-0"]), corpus.PUBLISHED_FRAMES + 1)
+        for value in (None, True, 1, 3, 2.0):
+            bad = copy.deepcopy(run)
+            bad["products"]["timing"][1]["nCpi"] = value
+            with self.subTest(nCpi=value), self.assertRaisesRegex(AssertionError, "nonsequential publication nCpi"):
+                corpus.complete_publications(bad)
         bad = copy.deepcopy(run)
         bad["products"]["illuminator"].pop()
         with self.assertRaisesRegex(AssertionError, "partial trailing lane"):
