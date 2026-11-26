@@ -536,12 +536,12 @@ class GpuArtifactBinding(unittest.TestCase):
     def test_resident_and_temporal_interfaces_share_one_pinned_module(self):
         resident = artifact_events(self.binding, role="resident")
         temporal = artifact_events(self.binding, worker=987656, role="resident")
-        temporal[3].update(abi=1, factory="blah2_gpu_create_temporal", workerMode="--temporal-v1")
+        temporal[3].update(abi=2, factory="blah2_gpu_create_temporal", workerMode="--temporal-v1")
         temporal[4].update(factory="blah2_gpu_create_temporal", workerMode="--temporal-v1")
         result = self.validate(resident + temporal)
-        self.assertEqual([item["abi"] for item in result["loaded"]], [18, 1])
+        self.assertEqual([item["abi"] for item in result["loaded"]], [19, 2])
         self.assertEqual(result["loaded"][0]["module"], result["loaded"][1]["module"])
-        for field, value in (("abi", 18), ("factory", "blah2_gpu_create_resident"),
+        for field, value in (("abi", 19), ("factory", "blah2_gpu_create_resident"),
                              ("workerMode", "--resident-v5"), ("factory", None)):
             broken = copy.deepcopy(temporal)
             broken[3][field] = value
@@ -554,12 +554,25 @@ class GpuArtifactBinding(unittest.TestCase):
 
     def test_resident_binding_matches_native_module_abi(self):
         header = (Path(__file__).parents[2] / "src/process/ambiguity/GpuResidentBackend.h").read_text()
-        match = re.search(r"namespace blah2::resident\s*\{.*?constexpr unsigned moduleAbi\s*=\s*(\d+)\s*;",
-                          header, re.DOTALL)
-        self.assertIsNotNone(match)
-        expected = int(match.group(1))
-        self.assertEqual(RUN.ARTIFACTS.MODULES["resident"][1], expected)
-        self.assertEqual(RUN.ARTIFACTS.FACTORIES["resident"]["blah2_gpu_create_resident"][0], expected)
+        for namespace, factory in (("resident", "blah2_gpu_create_resident"),
+                                   ("temporal_gpu", "blah2_gpu_create_temporal")):
+            with self.subTest(namespace=namespace):
+                match = re.search(rf"namespace blah2::{namespace}\s*\{{.*?constexpr unsigned moduleAbi\s*=\s*(\d+)\s*;",
+                                  header, re.DOTALL)
+                self.assertIsNotNone(match)
+                expected = int(match.group(1))
+                self.assertEqual(RUN.ARTIFACTS.FACTORIES["resident"][factory][0], expected)
+                if namespace == "resident":
+                    self.assertEqual(RUN.ARTIFACTS.MODULES["resident"][1], expected)
+
+    def test_stale_resident_and_temporal_module_abis_are_rejected(self):
+        for factory, mode, abi in (("blah2_gpu_create_resident", "--resident-v5", 18),
+                                   ("blah2_gpu_create_temporal", "--temporal-v1", 1)):
+            events = artifact_events(self.binding, role="resident")
+            events[3].update(abi=abi, factory=factory, workerMode=mode)
+            events[4].update(factory=factory, workerMode=mode)
+            with self.subTest(factory=factory), self.assertRaisesRegex(ValueError, "unexpected module"):
+                self.validate(events)
 
     def test_module_and_worker_replacement_are_rejected(self):
         for role in ("processor", "worker", "portable"):
