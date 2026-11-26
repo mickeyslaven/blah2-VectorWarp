@@ -40,12 +40,12 @@ Complex target(double sample, bool pair) {
   }
   return value;
 }
-blah2::resident::Config configuration() {
+blah2::resident::Config configuration(uint32_t rawSamples = samples) {
   blah2::resident::Config c; auto& g = c.geometry;
   g.range = 90; g.doppler = rows; g.delays = columns; g.channels = 2;
-  g.delayMin = -24; g.clutterSamples = samples; g.clutterBins = 4;
+  g.delayMin = -24; g.clutterSamples = rawSamples; g.clutterBins = 4;
   c.inputChannels = 2; c.correlation = correlation; c.sampleRate = rateHz; c.epoch = 9;
-  c.surveillanceChannels = {0, 1}; c.reference.channels = {0, 1}; c.reference.analysisSamples = samples;
+  c.surveillanceChannels = {0, 1}; c.reference.channels = {0, 1}; c.reference.analysisSamples = rawSamples;
   c.reference.bandwidthHz = 64; c.reference.centreHz = carrier; c.spectrumBins = 17;
   for (int d = -24; d <= 24; ++d) c.delayAxis.push_back(d);
   for (int f = -8; f <= 8; ++f) c.dopplerAxis.push_back(f);
@@ -56,25 +56,27 @@ blah2::resident::Config configuration() {
 blah2::integration::DirectPathCoherentExperiment::Config request() {
   blah2::integration::DirectPathCoherentExperiment::Config c;
   c.channelIds = {0, 1}; c.anchorChannelId = 0; c.spatialCoefficients = {0., 1.};
-  c.migrationRates = {0., -.0005, .0005}; return c;
+  c.migrationRates = {0., -.0005, .0005}; c.retainApertureProducts = true;
+  c.apertureRetentionMaximumBytes = 8u << 20; c.apertureRetentionRemainingBytes = 8u << 20;
+  c.apertureRetentionRemainingWork = Migration::maximumMacs; return c;
 }
 cr::ValidatedSnapshot fixture(const std::filesystem::path& path, uint64_t sequence, bool pair,
-    bool goodPilot = true, uint64_t firstOverride = 0) {
-  auto c = configuration(); auto s = rr::test::fixture(c, 1, {sequence, sequence, sequence + 1000});
-  std::deque<Complex> reference; IqData surveillance(samples);
+    bool goodPilot = true, uint64_t firstOverride = 0, uint32_t rawSamples = samples, uint64_t stride = hop) {
+  auto c = configuration(rawSamples); auto s = rr::test::fixture(c, 1, {sequence, sequence, sequence + 1000});
+  std::deque<Complex> reference; IqData surveillance(rawSamples);
   auto writer = [&](rr::BlockKind kind) { auto& b = s.blocks.at(uint32_t(kind) - 1).bytes;
     return blah2::resident::wire::Writer{{b.data(), b.size()}}; };
   auto raw = writer(rr::BlockKind::rawIq), ref = writer(rr::BlockKind::referenceIq);
   const double gauge = .29 * sequence;
-  for (uint32_t n = 0; n < samples; ++n) {
-    const double global = double((sequence - 1) * hop + n);
+  for (uint32_t n = 0; n < rawSamples; ++n) {
+    const double global = double((sequence - 1) * stride + n);
     const auto x = waveform(global), y = target(global, pair), r = x * std::polar(1., gauge);
     reference.push_back(r); surveillance.push_back(y);
     raw.f64(n * 16, goodPilot ? x.real() : 0); raw.f64(n * 16 + 8, goodPilot ? x.imag() : 0);
-    raw.f64((samples + n) * 16, y.real()); raw.f64((samples + n) * 16 + 8, y.imag());
+    raw.f64((rawSamples + n) * 16, y.real()); raw.f64((rawSamples + n) * 16 + 8, y.imag());
     ref.f64(n * 16, r.real()); ref.f64(n * 16 + 8, r.imag());
   }
-  Ambiguity ambiguity(-24, 24, -8, 8, rateHz, samples, true);
+  Ambiguity ambiguity(-24, 24, -8, 8, rateHz, rawSamples, true);
   check(ambiguity.get_n_corr() == correlation, "Fixture correlation geometry");
   const auto caf = ambiguity.process(reference, &surveillance);
   auto maps = writer(rr::BlockKind::channelMaps);
@@ -87,8 +89,8 @@ cr::ValidatedSnapshot fixture(const std::filesystem::path& path, uint64_t sequen
   const auto bytes = rr::encode(s, c);
   { std::ofstream file(path, std::ios::binary); file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size()); check(bool(file), "Fixture write"); }
   cr::Sidecar side; side.identity = s.identity; side.sourceHash = c.replay.sourceHash; side.rfHash = c.replay.rfHash;
-  side.captureEpoch = 3; side.firstSample = firstOverride ? firstOverride : startSample + (sequence - 1) * hop;
-  side.endSample = side.firstSample + samples; side.tuningHz = uint64_t(carrier); side.sampleRateHz = rateHz;
+  side.captureEpoch = 3; side.firstSample = firstOverride ? firstOverride : startSample + (sequence - 1) * stride;
+  side.endSample = side.firstSample + rawSamples; side.tuningHz = uint64_t(carrier); side.sampleRateHz = rateHz;
   side.gainCalibrationEpoch = 2; side.actualGainDb = c.replay.actualGainDb;
   cr::writeSidecarExclusive(path, side); return cr::loadValidatedSnapshot(path);
 }
@@ -182,61 +184,95 @@ void endToEnd(const std::filesystem::path& directory, bool pair, std::ostream* e
   const auto misaligned = reader.aperture(fixture(directory / (std::to_string(pair) + "-unaligned.vwrps"), 2, pair, true, startSample + hop + 1));
   rejects([&] { fresh.append(misaligned); }, "Partial block overlap was silently double-counted");
 }
-void declaredTails(const std::filesystem::path& directory) {
-  auto config = request(); config.migrationRates = {0.};
-  cr::ExperimentReader reader(config); cr::PassiveIsarAperture aperture;
-  auto parent = fixture(directory / "tail-parent.vwrps", 1, false).sidecar;
-  // Explicit synthetic typed-product fixture, not a fabricated native snapshot.
-  // Five raw samples per CPI are intentionally outside all correlation blocks.
-  constexpr uint64_t rawSamples = samples + 5;
-  parent.endSample = startSample + 8 * rawSamples;
-  cr::DerivedIqLineage lineage; lineage.planJson = "synthetic continuous-IQ tail contract";
-  lineage.receiptJson = "synthetic typed boundary, not a native snapshot";
-  const auto hash = [](const std::string& bytes) { blah2::Sha256 h; h.update(bytes.data(), bytes.size()); return h.finishBytes(); };
-  lineage.planHash = hash(lineage.planJson); lineage.receiptHash = hash(lineage.receiptJson);
-  lineage.payloadHash = hash("synthetic analytic block products");
-  for (uint64_t seq = 1; seq <= 8; ++seq) {
-    cr::ExperimentReader::ApertureInput input; input.source = parent; input.derived = lineage;
-    input.sequence = seq; input.firstSample = startSample + (seq - 1) * rawSamples;
-    input.endSample = input.firstSample + rawSamples; input.correlationSamples = correlation; input.carrierHz = carrier;
-    input.pilot = blah2::integration::DirectPathCoherentExperiment::Pilot{
-      {parent.captureEpoch, seq, input.firstSample, input.endSample, parent.tuningHz,
-        parent.gainCalibrationEpoch, rateHz, true, true}, 0, {1., 0.}, 1.};
-    std::vector<Complex> profiles(rows * columns);
-    for (uint32_t b = 0; b < rows; ++b) for (uint32_t col = 0; col < columns; ++col)
-      profiles[b * columns + col] = bruteBlock((seq - 1) * rawSamples + b * correlation, int(col) - 24, false);
-    for (unsigned channel = 0; channel < 2; ++channel) {
-      Map<Complex> caf(rows, columns);
-      for (int delay = -24; delay <= 24; ++delay) caf.delay.push_back(delay);
-      for (int frequency = -8; frequency <= 8; ++frequency) caf.doppler.push_back(frequency);
-      for (uint32_t f = 0; f < rows; ++f) for (uint32_t col = 0; col < columns; ++col) {
-        caf.data[f][col] = 0.;
-        if (channel == 1) for (uint32_t b = 0; b < rows; ++b)
-          caf.data[f][col] += profiles[b * columns + col] *
-            std::polar(1., -tau * (double(f) - rows / 2) * b / rows);
+// This is the real producer seam: appendAll owns migration once, publishes a
+// sealed post-hop product, and P-SAR only consumes that product.  The fixture
+// hop is correlation-aligned, unlike the deliberate unaligned refusal control.
+void producerApertureEndToEnd(const std::filesystem::path& directory, bool pair, std::ostream* evidence = nullptr) {
+  cr::ExperimentReader reader(request()); cr::PassiveIsarAperture aperture;
+  std::vector<double> frequencies; for (int i = -16; i <= 16; ++i) frequencies.push_back(.25 * i);
+  uint32_t products = 0;
+  for (uint64_t seq = 1; seq <= 9; ++seq) {
+    const auto sealed = fixture(directory / ("producer-" + std::to_string(pair) + "-" + std::to_string(seq) + ".vwrps"), seq, pair);
+    reader.appendAll(sealed); const auto product = reader.apertureProduct();
+    if (seq == 1) { check(!product, "Producer published before hop lock"); continue; }
+    check(product && product->hopSamples == hop && product->phaseQualified &&
+      product->migration[1].banks[0].rangeSlowTime.size() == size_t(rows) * product->migration[1].columns,
+      "Producer product lost locked complex aperture support");
+    const auto frame = reader.aperture(*product); aperture.append(frame); ++products;
+    if (products == 2 || products == 4 || products == 8) {
+      const auto spectrum = aperture.spectrum(0, 0., frequencies);
+      check(spectrum.uniqueBlocks == rows + uint64_t(products - 1) * hop / correlation,
+        "Producer aperture overlap support is not exact");
+      for (size_t k = 0; k < frequencies.size(); ++k) {
+        Complex expected{};
+        // First accepted product is seq2/sample=hop.  Every later aligned
+        // overlap contributes exactly the new final eight correlation blocks;
+        // this oracle deliberately does not read aperture ownership internals.
+        for (uint32_t frame = 0; frame < products; ++frame) for (uint32_t b = frame ? hop / correlation + 1 : 0;
+            b < rows; ++b) {
+          const double global = double(hop + uint64_t(frame) * hop + uint64_t(b) * correlation);
+          expected += bruteBlock(uint64_t(global), 0, pair) * std::polar(1., -tau * frequencies[k] *
+            (global - hop + .5 * (correlation - 1)) / rateHz);
+        }
+        expected /= std::sqrt(double(spectrum.uniqueBlocks));
+        close(spectrum.amplitude[k], expected, 3e-6, "Producer product spectrum differs from independent oracle");
       }
-      input.caf.push_back(std::move(caf));
+      if (evidence) {
+        *evidence << std::setprecision(17) << "{\"schema\":\"vectorwarp-synthetic-aperture-psf-v1\",\"synthetic_only\":true,\"producer_seam\":true,\"metric_image\":false,\"scatterers\":"
+          << (pair ? 2 : 1) << ",\"frames\":" << products << ",\"unique_blocks\":" << spectrum.uniqueBlocks
+          << ",\"sample_rate_hz\":" << rateHz << ",\"correlation_samples\":" << correlation
+          << ",\"first_sample\":\"" << startSample + hop << "\",\"bins\":[";
+        for (size_t k = 0; k < frequencies.size(); ++k) {
+          if (k) *evidence << ',';
+          Complex oracle{};
+          for (uint32_t frame = 0; frame < products; ++frame) for (uint32_t b = frame ? hop / correlation + 1 : 0;
+              b < rows; ++b) {
+            const double global = double(hop + uint64_t(frame) * hop + uint64_t(b) * correlation);
+            oracle += bruteBlock(uint64_t(global), 0, pair) * std::polar(1., -tau * frequencies[k] *
+              (global - hop + .5 * (correlation - 1)) / rateHz);
+          }
+          oracle /= std::sqrt(double(spectrum.uniqueBlocks));
+          *evidence << '[' << frequencies[k] << ',' << spectrum.amplitude[k].real() << ',' << spectrum.amplitude[k].imag()
+            << ',' << oracle.real() << ',' << oracle.imag() << ']';
+        }
+        *evidence << "]}\n";
+      }
     }
-    auto bad = input; ++bad.firstSample; ++bad.endSample;
-    bad.pilot->frame.firstSample = bad.firstSample; bad.pilot->frame.endSample = bad.endSample;
-    if (seq == 2) rejects([&] { aperture.append(reader.aperture(bad)); }, "Acquisition gap disguised as tail");
-    bad = input; --bad.firstSample; --bad.endSample;
-    bad.pilot->frame.firstSample = bad.firstSample; bad.pilot->frame.endSample = bad.endSample;
-    if (seq == 2) rejects([&] { aperture.append(reader.aperture(bad)); }, "Derived acquisition overlap accepted");
-    aperture.append(reader.aperture(std::move(input)));
-    check(aperture.uniqueBlocks() == seq * rows && aperture.missingSupportSamples() == (seq - 1) * 5,
+  }
+  cr::PassiveIsarAperture nonfull; nonfull.append(aperture.entries().back().frame);
+  const auto lost = fixture(directory / ("producer-pilot-loss-" + std::to_string(pair) + ".vwrps"), 10, pair, false);
+  reader.appendAll(lost); const auto product = reader.apertureProduct();
+  check(product && !product->phaseQualified && !reader.aperture(*product)->phaseQualified,
+    "Producer pilot loss was hidden by retained aperture product");
+  rejects([&] { nonfull.append(reader.aperture(*product)); }, "P-SAR accepted producer pilot-loss product into nonfull aperture");
+}
+void producerDeclaredTails(const std::filesystem::path& directory) {
+  // Five native raw samples per CPI are intentionally outside all correlation
+  // blocks. This exercises the producer route, never the standalone derived-IQ
+  // calibration ingress: appendAll -> sealed product -> aperture -> P-SAR.
+  constexpr uint64_t rawSamples = samples + 5;
+  cr::ExperimentReader reader(request()); cr::PassiveIsarAperture aperture; uint32_t products = 0;
+  for (uint64_t seq = 1; seq <= 9; ++seq) {
+    const auto sealed = fixture(directory / ("producer-tail-" + std::to_string(seq) + ".vwrps"), seq, false, true,
+      startSample + (seq - 1) * rawSamples, rawSamples, rawSamples);
+    reader.appendAll(sealed); const auto product = reader.apertureProduct();
+    if (seq == 1) { check(!product, "Tail producer published before hop lock"); continue; }
+    check(product && product->input.endSample - product->input.firstSample == rawSamples,
+      "Producer product lost declared raw tail");
+    aperture.append(reader.aperture(*product)); ++products;
+    check(aperture.uniqueBlocks() == products * rows && aperture.missingSupportSamples() == (products - 1) * 5,
       "Declared tails were erased or credited as independent samples");
-    if (seq == 2 || seq == 4 || seq == 8) {
+    if (products == 2 || products == 4 || products == 8) {
       const auto spectrum = aperture.spectrum(0, 0., {1.75, 2., 2.25});
       for (size_t k = 0; k < 3; ++k) {
         Complex expected{};
-        for (uint64_t frame = 0; frame < seq; ++frame) for (uint32_t b = 0; b < rows; ++b) {
-          const uint64_t start = frame * rawSamples + b * correlation;
+        for (uint64_t frame = 0; frame < products; ++frame) for (uint32_t b = 0; b < rows; ++b) {
+          const uint64_t start = rawSamples + frame * rawSamples + b * correlation;
           expected += bruteBlock(start, 0, false) * std::polar(1., -tau * spectrum.residualDopplerHz[k] *
-            (start + .5 * (correlation - 1)) / rateHz);
+            (start - rawSamples + .5 * (correlation - 1)) / rateHz);
         }
-        expected /= std::sqrt(double(seq * rows));
-        close(spectrum.amplitude[k], expected, 1e-10, "Declared-tail nonuniform-time complex oracle");
+        expected /= std::sqrt(double(products * rows));
+        close(spectrum.amplitude[k], expected, 3e-6, "Producer declared-tail nonuniform-time complex oracle");
       }
     }
   }
@@ -257,8 +293,12 @@ int main(int argc, char** argv) try {
   if (argc == 3) { evidence.open(directory / "synthetic-psf.jsonl"); check(bool(evidence), "Evidence file open"); }
   endToEnd(directory, false, argc == 3 ? &evidence : nullptr);
   endToEnd(directory, true, argc == 3 ? &evidence : nullptr);
-  declaredTails(directory);
-  if (argc == 3) { evidence.flush(); check(bool(evidence), "Evidence write"); }
+  std::ofstream producerEvidence;
+  if (argc == 3) { producerEvidence.open(directory / "producer-seam-psf.jsonl"); check(bool(producerEvidence), "Producer evidence file open"); }
+  producerApertureEndToEnd(directory, false, argc == 3 ? &producerEvidence : nullptr);
+  producerApertureEndToEnd(directory, true, argc == 3 ? &producerEvidence : nullptr);
+  producerDeclaredTails(directory);
+  if (argc == 3) { evidence.flush(); producerEvidence.flush(); check(bool(evidence) && bool(producerEvidence), "Evidence write"); }
   else std::filesystem::remove_all(directory); // Only this test's newly created fixture directory.
   std::cout << "Passive ISAR aperture: immutable phase, independent IQ/PSF, overlap, center and refusal contracts passed\n";
   return 0;

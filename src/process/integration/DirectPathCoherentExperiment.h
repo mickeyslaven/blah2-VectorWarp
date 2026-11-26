@@ -36,6 +36,12 @@ public:
     uint32_t migrationRateIndex = UINT32_MAX, migrationRateCount = 0;
     double migrationRate = 0;
     std::string upstreamPlanSha256;
+    bool retainApertureProducts = false;
+    uint64_t apertureRetentionMaximumBytes = 0;
+    // The producer must be given the caller's remaining aggregate offline
+    // allowance.  It is identity-bound so a product cannot be replayed under
+    // a larger consumer budget after its admission decision.
+    uint64_t apertureRetentionRemainingBytes = 0, apertureRetentionRemainingWork = 0;
   };
   struct ProducerIdentity {
     uint32_t rateIndex = UINT32_MAX, rateCount = 0;
@@ -143,7 +149,8 @@ public:
       << t.sourceDomain.minimumAbsDopplerHz << ' ' << c.anchorChannelId << ' '
       << c.declaredSpatialTrials << ' ' << c.maximumCells << ' ' << c.minimumPilotCoherence << ' '
       << c.fallbackBeamCount << ' ' << c.fallbackBeamTolerance << ' ' << c.migrationRateIndex << ' '
-      << c.migrationRateCount << ' ' << c.migrationRate << ' ' << c.upstreamPlanSha256 << " channels ";
+      << c.migrationRateCount << ' ' << c.migrationRate << ' ' << c.upstreamPlanSha256 << ' '
+      << c.retainApertureProducts << ' ' << c.apertureRetentionMaximumBytes << " channels ";
     for (auto value : c.channelIds) s << value << ' ';
     s << "weights "; for (auto value : c.spatialCoefficients) s << value.real() << ' ' << value.imag() << ' ';
     s << "rates "; for (double value : c.migrationRates) s << value << ' ';
@@ -170,7 +177,14 @@ public:
           config_.migrationRateIndex != UINT32_MAX || config_.migrationRate != 0) ||
         ((config_.migrationRateCount || !config_.upstreamPlanSha256.empty()) &&
           (config_.upstreamPlanSha256.size() != 64 ||
-           config_.upstreamPlanSha256.find_first_not_of("0123456789abcdef") != std::string::npos)))
+           config_.upstreamPlanSha256.find_first_not_of("0123456789abcdef") != std::string::npos)) ||
+        (config_.retainApertureProducts && (!config_.apertureRetentionMaximumBytes ||
+          config_.apertureRetentionMaximumBytes > (256u << 20) ||
+          !config_.apertureRetentionRemainingBytes || !config_.apertureRetentionRemainingWork ||
+          config_.apertureRetentionRemainingBytes > config_.apertureRetentionMaximumBytes ||
+          config_.apertureRetentionRemainingWork > RangeMigrationReplay::maximumMacs)) ||
+        (!config_.retainApertureProducts && (config_.apertureRetentionMaximumBytes ||
+          config_.apertureRetentionRemainingBytes || config_.apertureRetentionRemainingWork)))
       throw std::invalid_argument("Direct-path coherent experiment configuration invalid");
     auto ids = config_.channelIds;
     std::sort(ids.begin(), ids.end());
@@ -394,6 +408,20 @@ public:
     uint64_t retainedBytes = 0, complexMacBound = 0;
     double minimumPilotCoherence = 0;
   };
+  // The sole coherent-to-P-SAR handoff.  It retains the already corrected
+  // per-channel products after the raw hop is immutable; it is unavailable to
+  // runtime code and must never be rebuilt by an aperture consumer.
+  struct CoherentApertureProduct {
+    ApertureInput input;
+    std::vector<RangeMigrationReplay::Result> migration;
+    uint64_t hopSamples = 0;
+    double delayDriftPerHz = 0, heterodyneCenterHz = 0;
+    std::complex<double> gaugeCorrection{};
+    bool phaseQualified = false;
+    uint64_t retainedBytes = 0, reservedWork = 0;
+    std::vector<DirectPathCoherentExperiment::ProducerIdentity> producers;
+    std::string seal; // Producer-computed full-content seal; all consumer input is verified.
+  };
   struct RateResult {
     uint32_t rateIndex = 0, firstColumn = 0;
     double delayRateBinsPerSecond = 0, heterodyneCenterHz = 0, whiteNoiseGain = 1;
@@ -433,6 +461,18 @@ public:
     resident::wire::require(std::filesystem::file_size(path) <= (128u << 20), "Aperture snapshot exceeds 128 MiB");
     return aperture(loadValidatedSnapshot(path), maximumWork, maximumBytes);
   }
+  std::shared_ptr<const ApertureFrame> aperture(const CoherentApertureProduct&,
+    uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 128u << 20) const;
+  std::shared_ptr<const CoherentApertureProduct> apertureProduct() const { return apertureProduct_; }
+  // Offline scheduler supplies its currently available execution allowance;
+  // this never changes the producer configuration identity or sealed math.
+  void setApertureExecutionAllowance(uint64_t bytes, uint64_t work) {
+    resident::wire::require(config_.retainApertureProducts && bytes <= config_.apertureRetentionMaximumBytes &&
+      work <= RangeMigrationReplay::maximumMacs && bytes >= publishedApertureBytes_,
+      "Aperture execution allowance invalid");
+    remainingApertureBytes_ = bytes - publishedApertureBytes_;
+    remainingApertureWork_ = work;
+  }
 private:
   struct DecodedFrame {
     std::vector<DirectPathCoherentExperiment::ComplexMap> maps;
@@ -450,6 +490,16 @@ private:
   uint64_t hopSamples_ = 0;
   std::unique_ptr<DirectPathCoherentExperiment::ComplexMap> fallback_;
   std::optional<Sidecar> previous_;
+  std::shared_ptr<const CoherentApertureProduct> apertureProduct_;
+  // Execution allowance is deliberately not part of producer numerical
+  // identity: it is consumed and released as products are replaced.
+  uint64_t remainingApertureBytes_ = 0, remainingApertureWork_ = 0;
+  uint64_t publishedApertureBytes_ = 0, publishedApertureWork_ = 0;
+  std::shared_ptr<const ApertureFrame> aperturePrepared(ApertureInput,
+    const std::vector<RangeMigrationReplay::Result>*, uint64_t, uint64_t) const;
+  static std::string apertureProductSeal(const CoherentApertureProduct&);
+  DirectPathCoherentExperiment::Config producerBinding(const resident::Config&, const Sidecar&, double,
+    uint32_t, uint32_t, double) const;
 };
 
 } // namespace blah2::integration::coherent_replay
@@ -491,6 +541,12 @@ inline ExperimentReader::ExperimentReader(DirectPathCoherentExperiment::Config c
   : config_(std::move(config)) {
   require(!config_.migrationRateCount && config_.migrationRateIndex == UINT32_MAX && config_.migrationRate == 0,
     "Reader binds active migration identity from canonical banks, not caller labels");
+  require(config_.retainApertureProducts ?
+    (config_.apertureRetentionMaximumBytes && config_.apertureRetentionMaximumBytes <= (256u << 20) &&
+      config_.apertureRetentionRemainingBytes && config_.apertureRetentionRemainingBytes <= config_.apertureRetentionMaximumBytes &&
+      config_.apertureRetentionRemainingWork && config_.apertureRetentionRemainingWork <= RangeMigrationReplay::maximumMacs) :
+    (!config_.apertureRetentionMaximumBytes && !config_.apertureRetentionRemainingBytes &&
+      !config_.apertureRetentionRemainingWork), "Reader aperture retention configuration invalid");
   if (!config_.migrationRates.empty()) {
     require(config_.migrationRates.size() <= RangeMigrationReplay::maximumTrials &&
       std::find(config_.migrationRates.begin(), config_.migrationRates.end(), 0.) != config_.migrationRates.end(),
@@ -500,6 +556,8 @@ inline ExperimentReader::ExperimentReader(DirectPathCoherentExperiment::Config c
         std::find(config_.migrationRates.begin(), config_.migrationRates.begin() + i, config_.migrationRates[i]) == config_.migrationRates.begin() + i,
         "Migration rates must be finite and unique");
   }
+  remainingApertureBytes_ = config_.apertureRetentionRemainingBytes;
+  remainingApertureWork_ = config_.apertureRetentionRemainingWork;
 }
 inline DirectPathCoherentExperiment::Result ExperimentReader::append(const std::filesystem::path& path) {
   return append(loadValidatedSnapshot(path));
@@ -510,6 +568,19 @@ inline std::vector<DirectPathCoherentExperiment::ComplexMap> channelMaps(const V
   for (uint32_t channel = 0; channel < frame.config.geometry.channels; ++channel)
     result.push_back(experiment_detail::channelMap(frame.snapshot, frame.config, channel));
   return result;
+}
+inline DirectPathCoherentExperiment::Config ExperimentReader::producerBinding(const resident::Config& source,
+    const Sidecar& sidecar, double drift, uint32_t rateIndex, uint32_t rateCount, double rate) const {
+  auto bound = config_; bound.migrationRates.clear();
+  bound.upstreamPlanSha256 = DirectPathCoherentExperiment::planSha256(sidecar.identity.configHash);
+  bound.temporal.delayDriftPerHz = drift;
+  bound.temporal.interpolateDelay = drift != 0;
+  bound.temporal.heterodyneCenterHz = 0; // Corrected maps have already removed it.
+  bound.fallbackBeamCount = 0;
+  bound.fallbackBeamTolerance = source.detector.integrationBeamTolerance;
+  bound.migrationRateIndex = rateCount ? rateIndex : UINT32_MAX; bound.migrationRateCount = rateCount;
+  bound.migrationRate = rateCount ? rate : 0;
+  return bound;
 }
 inline DirectPathCoherentExperiment::Result ExperimentReader::append(const ValidatedSnapshot& validated) {
   require(config_.migrationRates.empty(), "Migration requires appendAll; upstream rate winners are forbidden");
@@ -566,19 +637,57 @@ inline ExperimentReader::DecodedFrame ExperimentReader::decode(const ValidatedSn
   return decoded;
 }
 inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(const ValidatedSnapshot& validated) {
+  require(!config_.retainApertureProducts || !apertureProduct_ || apertureProduct_.use_count() == 1,
+    "Coherent aperture product remains externally retained");
   auto decoded = decode(validated);
   const auto& config = validated.config;
   const bool migration = !config_.migrationRates.empty();
   const size_t count = migration ? config_.migrationRates.size() : 1;
   std::vector<RangeMigrationReplay::Result> corrected;
+  uint64_t retentionBytes = 0, retentionWork = 0;
   if (migration) {
     const uint64_t processed = uint64_t(config.geometry.doppler) * config.correlation;
     require(processed && processed <= config.geometry.clutterSamples &&
       config.geometry.clutterSamples - processed < config.geometry.doppler,
       "Migration raw sample span is incompatible with correlation blocks");
+    if (config_.retainApertureProducts) {
+      // Admission precedes every migration allocation/history mutation.  This
+      // is an exact structural ledger, not a discretionary headroom: retained
+      // CAF/axes, uncropped inverse profiles, every rate cells/slow-time/
+      // kernel, source/config/hash/seal copies and the one-channel transform
+      // workspace are all charged before RangeMigrationReplay::process().
+      const uint64_t rows = config.geometry.doppler, columns = config.geometry.delays;
+      require(columns > 2 * RangeMigrationReplay::radius, "Aperture retention crop unavailable");
+      const uint64_t crop = columns - 2 * RangeMigrationReplay::radius, channels = config.geometry.channels;
+      const uint64_t rates = config_.migrationRates.size();
+      const uint64_t caf = channels * (rows * columns * sizeof(std::complex<double>) + rows * sizeof(std::vector<std::complex<double>>) +
+        (columns + rows) * sizeof(double));
+      const uint64_t retainedMigration = channels * (rows * columns * sizeof(std::complex<double>) +
+        rates * (2 * rows * crop * sizeof(std::complex<double>) + rows * sizeof(RangeMigrationReplay::Kernel) +
+          sizeof(RangeMigrationReplay::Bank))) + channels * sizeof(RangeMigrationReplay::Result);
+      const uint64_t sourceConfig = sizeof(resident::Config) + config.delayAxis.size() * sizeof(int32_t) +
+        config.dopplerAxis.size() * sizeof(double) + config.surveillanceChannels.size() * sizeof(uint32_t) +
+        config.reference.channels.size() * sizeof(uint32_t) + config.replay.actualGainDb.size() * sizeof(double) +
+        config.device.size() + config.fusion.manifoldResponses.size() * sizeof(std::complex<float>) +
+        config.fusion.directResponse.size() * sizeof(std::complex<float>) +
+        config.bearing.channelMapping.size() * sizeof(uint32_t) +
+        config.bearing.manifoldResponses.size() * sizeof(std::complex<float>);
+      const uint64_t lineage = sizeof(ApertureInput) + sizeof(Sidecar) + sizeof(DirectPathCoherentExperiment::Pilot) +
+        20u * sizeof(resident_replay::Hash) + rates * sizeof(DirectPathCoherentExperiment::ProducerIdentity) +
+        2 * sizeof(resident_replay::Hash) + rates * 128u;
+      const uint64_t workspace = rows * rows * sizeof(std::complex<double>) + rows * columns * sizeof(std::complex<double>);
+      retentionBytes = caf + retainedMigration + sourceConfig + lineage + workspace;
+      retentionWork = channels * (rows * rows * columns + rates * rows * crop * (rows + 16));
+      require(retentionBytes <= config_.apertureRetentionMaximumBytes && retentionWork <= RangeMigrationReplay::maximumMacs &&
+        retentionBytes <= remainingApertureBytes_ && retentionWork <= remainingApertureWork_,
+        "Coherent aperture retention aggregate admission refused");
+      // Work is cumulative: even a first/bootstrap frame that never becomes a
+      // retained product has executed the transform and cannot be refunded.
+      remainingApertureWork_ -= retentionWork;
+    }
     for (const auto& map : decoded.maps)
       corrected.push_back(RangeMigrationReplay::process(map, validated.sidecar.sampleRateHz,
-        config.correlation, config_.migrationRates));
+        config.correlation, config_.migrationRates, config_.retainApertureProducts));
   }
   const auto motion = track_before_detect::decodeMotionBins(config.detector.integrationMotionBins);
   const uint64_t observedHop = previous_ ? validated.sidecar.firstSample - previous_->firstSample : 0;
@@ -586,26 +695,52 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
   const double drift = motion.fractionalDelay && observedHop ?
     track_before_detect::delayDriftPerHz(uint32_t(observedHop), config.temporalCarrierHz()) : 0;
   const bool bindHop = previous_ && !hopSamples_;
+  std::shared_ptr<CoherentApertureProduct> staged;
+  if (migration && config_.retainApertureProducts && (hopSamples_ || previous_)) {
+    // Complete the fallible copy/hash/seal transaction before any temporal
+    // engine or bootstrap history is touched. The staged copy is charged by
+    // admission and publication below is shared_ptr move/no-throw.
+    staged = std::make_shared<CoherentApertureProduct>();
+    staged->input.source = validated.sidecar; staged->input.sourceConfig = config;
+    staged->input.sequence = validated.sidecar.identity.logicalFrame;
+    staged->input.firstSample = validated.sidecar.firstSample; staged->input.endSample = validated.sidecar.endSample;
+    staged->input.correlationSamples = config.correlation; staged->input.carrierHz = config.temporalCarrierHz();
+    staged->input.referenceConditioningBandwidthHz = config.reference.bandwidthHz;
+    staged->input.caf = std::move(decoded.maps); staged->input.pilot = decoded.pilot; staged->migration = std::move(corrected);
+    for (const auto& block : validated.snapshot.blocks) { Sha256 blockHash; blockHash.update(block.bytes.data(), block.bytes.size()); staged->input.blockHashes.push_back(blockHash.finishBytes()); }
+    staged->hopSamples = hopSamples_ ? hopSamples_ : observedHop; staged->retainedBytes = retentionBytes; staged->reservedWork = retentionWork;
+    staged->delayDriftPerHz = drift; staged->heterodyneCenterHz = config.dopplerAxis.at(config.geometry.doppler / 2);
+    if (decoded.pilot && decoded.pilot->coherence >= config_.minimumPilotCoherence) { const auto amplitude = std::abs(decoded.pilot->normalizedCorrelation); staged->phaseQualified = amplitude > 0; if (staged->phaseQualified) staged->gaugeCorrection = std::conj(decoded.pilot->normalizedCorrelation) / amplitude; }
+    for (size_t rate = 0; rate < count; ++rate) {
+      const auto bound = producerBinding(config, validated.sidecar, drift, uint32_t(rate), uint32_t(count), staged->migration.front().banks[rate].delayRateBinsPerSecond);
+      DirectPathCoherentExperiment::ProducerIdentity identity;
+      identity.rateIndex = uint32_t(rate); identity.rateCount = uint32_t(count); identity.rate = bound.migrationRate;
+      identity.rateCorrectedFallback = true; identity.configurationSha256 = DirectPathCoherentExperiment::configurationSha256(bound);
+      identity.upstreamPlanSha256 = bound.upstreamPlanSha256;
+      const uint64_t motionTrials = (2u * bound.temporal.delayMotionBins + 1u) * (2u * bound.temporal.dopplerMotionBins + 1u);
+      identity.perRateTrials = uint64_t(bound.declaredSpatialTrials) * CoherentPathEvidence::totalPhaseTrials(bound.temporal) * motionTrials +
+        (bound.temporal.maximumCpis == 8 ? 3u : bound.temporal.maximumCpis == 4 ? 2u : 1u) * motionTrials * bound.declaredSpatialTrials;
+      identity.combinedTrials = uint64_t(count) * identity.perRateTrials; staged->producers.push_back(std::move(identity));
+    }
+    staged->seal = apertureProductSeal(*staged);
+  }
+  const auto& preparedMigration = staged ? staged->migration : corrected;
   if (experiments_.empty() || bindHop) {
-    auto bound = config_; bound.migrationRates.clear();
-    bound.upstreamPlanSha256 = DirectPathCoherentExperiment::planSha256(validated.sidecar.identity.configHash);
+    auto bound = producerBinding(config, validated.sidecar, drift, 0, 0, 0);
     // CPI span is not the hop when capture windows overlap. The first call
     // has no multi-CPI output; seed final immutable engines once lineage locks
     // the hop, preserving both complex and canonical nearest-cell histories.
-    bound.temporal.delayDriftPerHz = drift;
-    bound.temporal.interpolateDelay = motion.fractionalDelay;
-    // Composed migration maps below already remove the complete range ramp.
-    // Legacy maps retain it; never de-ramp the same gauge twice.
-    bound.temporal.heterodyneCenterHz = migration ? 0 : config.dopplerAxis.at(config.geometry.doppler / 2);
-    // A corrected fixed projection has no native selected-beam decisions.
-    bound.fallbackBeamCount = migration ? 0 : config.fusion.beams;
-    bound.fallbackBeamTolerance = config.detector.integrationBeamTolerance;
+    if (!migration) {
+      bound.temporal.interpolateDelay = motion.fractionalDelay;
+      bound.temporal.heterodyneCenterHz = config.dopplerAxis.at(config.geometry.doppler / 2);
+      bound.fallbackBeamCount = config.fusion.beams;
+    }
     std::vector<std::unique_ptr<DirectPathCoherentExperiment>> initialized;
     if (bindHop) require(bootstrap_.size() == count, "Replay coherent first-frame bootstrap unavailable");
     for (size_t index = 0; index < count; ++index) {
       if (migration) {
-        bound.migrationRateIndex = uint32_t(index); bound.migrationRateCount = uint32_t(count);
-        bound.migrationRate = corrected.front().banks[index].delayRateBinsPerSecond;
+        bound = producerBinding(config, validated.sidecar, drift, uint32_t(index), uint32_t(count),
+          preparedMigration.front().banks[index].delayRateBinsPerSecond);
       }
       auto engine = std::make_unique<DirectPathCoherentExperiment>(bound, true);
       if (bindHop) {
@@ -627,11 +762,11 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     item.correlationSamples = config.correlation; item.rateCorrectedFallback = migration;
     auto maps = migration ? std::vector<DirectPathCoherentExperiment::ComplexMap>{} : std::move(decoded.maps);
     if (migration) {
-      const auto& geometry = corrected.front();
+      const auto& geometry = preparedMigration.front();
       item.delayRateBinsPerSecond = geometry.banks[index].delayRateBinsPerSecond; item.firstColumn = geometry.firstColumn;
       item.heterodyneCenterHz = config.dopplerAxis.at(geometry.rows / 2);
       item.whiteNoiseGain = geometry.banks[index].whiteNoiseGain;
-      for (const auto& channel : corrected) {
+      for (const auto& channel : preparedMigration) {
         maps.emplace_back(geometry.rows, geometry.columns); auto& map = maps.back();
         map.doppler.assign(config.dopplerAxis.begin(), config.dopplerAxis.end());
         map.delay.assign(config.delayAxis.begin() + geometry.firstColumn,
@@ -665,9 +800,27 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     }
     item.declaredPerCellTrials = item.result.producer().perRateTrials;
     item.combinedPerCellTrials = item.result.producer().combinedTrials;
+    if (staged) { const auto& actual = item.result.producer(); const auto& expected = staged->producers[index]; require(
+      actual.rateIndex == expected.rateIndex && actual.rateCount == expected.rateCount && actual.rate == expected.rate &&
+      actual.rateCorrectedFallback == expected.rateCorrectedFallback && actual.perRateTrials == expected.perRateTrials &&
+      actual.combinedTrials == expected.combinedTrials && actual.configurationSha256 == expected.configurationSha256 &&
+      actual.upstreamPlanSha256 == expected.upstreamPlanSha256,
+      "Staged coherent aperture producer identity differs");
+    }
     results.push_back(std::move(item));
   }} catch (...) { experiments_.clear(); bootstrap_.clear(); throw; }
   if (bindHop) { hopSamples_ = observedHop; bootstrap_.clear(); }
+  if (staged) {
+    auto product = std::move(staged);
+    require(product->hopSamples == hopSamples_, "Staged coherent aperture hop differs before publication");
+    // Publish only after the entire replacement is sealed. Retire the old
+    // reservation atomically with replacement so a failed construction leaves
+    // both history and allowance unchanged.
+    apertureProduct_ = std::move(product);
+    remainingApertureBytes_ += publishedApertureBytes_;
+    publishedApertureBytes_ = apertureProduct_->retainedBytes; publishedApertureWork_ = apertureProduct_->reservedWork;
+    remainingApertureBytes_ -= publishedApertureBytes_;
+  }
   previous_ = validated.sidecar;
   return results;
 }
@@ -710,7 +863,13 @@ ExperimentReader::aperture(const ValidatedSnapshot& validated, uint64_t maximumW
 
 inline std::shared_ptr<const ExperimentReader::ApertureFrame>
 ExperimentReader::aperture(ApertureInput input, uint64_t maximumWork, uint64_t maximumBytes) const {
-  require(!previous_ && !input.caf.empty(), "Aperture needs pre-temporal channel products");
+  return aperturePrepared(std::move(input), nullptr, maximumWork, maximumBytes);
+}
+
+inline std::shared_ptr<const ExperimentReader::ApertureFrame>
+ExperimentReader::aperturePrepared(ApertureInput input, const std::vector<RangeMigrationReplay::Result>* prepared,
+    uint64_t maximumWork, uint64_t maximumBytes) const {
+  require((!previous_ || prepared) && !input.caf.empty(), "Aperture needs pre-temporal channel products");
   require(!config_.migrationRates.empty(), "Aperture requires explicit rates including zero");
   auto admissionConfig = config_; admissionConfig.migrationRates.clear();
   DirectPathCoherentExperiment admission(admissionConfig, true);
@@ -740,9 +899,16 @@ ExperimentReader::aperture(ApertureInput input, uint64_t maximumWork, uint64_t m
     require(input.blockHashes.empty() && sealed(input.derived->planJson, input.derived->planHash) &&
       sealed(input.derived->receiptJson, input.derived->receiptHash), "Derived aperture manifest seal differs");
   }
-  for (const auto& map : input.caf)
-    require(map.data.size() == rows && map.delay == input.caf[0].delay && map.doppler == input.caf[0].doppler,
-      "Aperture channel geometry differs");
+  for (const auto& map : input.caf) {
+    require(map.data.size() == rows && map.rows() == rows && map.cols() == columns &&
+      map.delay.size() == columns && map.doppler.size() == rows && map.delay == input.caf[0].delay &&
+      map.doppler == input.caf[0].doppler, "Aperture channel geometry differs");
+    for (const auto& row : map.data) {
+      require(row.size() == columns, "Aperture CAF row length differs");
+      for (const auto value : row) require(std::isfinite(value.real()) && std::isfinite(value.imag()),
+        "Aperture CAF sample is nonfinite");
+    }
+  }
   const uint64_t bytes = cells * channels * 16 * (2 + 2 * config_.migrationRates.size()) +
     rows * channels * config_.migrationRates.size() * sizeof(RangeMigrationReplay::Kernel) + (4u << 20);
   const uint64_t work = channels * (rows * rows * columns +
@@ -773,9 +939,92 @@ ExperimentReader::aperture(ApertureInput input, uint64_t maximumWork, uint64_t m
     frame->phaseQualified = amplitude > 0 && frame->pilot->coherence >= config_.minimumPilotCoherence;
     if (frame->phaseQualified) frame->gaugeCorrection = std::conj(z) / amplitude;
   }
-  for (const auto& map : frame->caf)
+  if (prepared) {
+    require(prepared->size() == frame->caf.size(), "Coherent aperture channel product differs");
+    const auto& common = prepared->front();
+    require(common.rows == rows && common.columns && common.firstColumn + common.columns <= columns,
+      "Coherent aperture common crop differs");
+    for (const auto& product : *prepared) {
+      require(product.rows == rows && product.columns == common.columns && product.firstColumn == common.firstColumn &&
+        product.banks.size() == config_.migrationRates.size() && product.rangeSlowTime.size() == size_t(rows) * columns,
+        "Coherent aperture migration product geometry differs");
+      for (const auto z : product.rangeSlowTime) require(std::isfinite(z.real()) && std::isfinite(z.imag()),
+        "Coherent aperture uncropped slow-time is nonfinite");
+      for (size_t rate = 0; rate < product.banks.size(); ++rate) {
+        const auto& bank = product.banks[rate];
+        require(bank.delayRateBinsPerSecond == config_.migrationRates[rate] && std::isfinite(bank.whiteNoiseGain) &&
+          bank.whiteNoiseGain > 0 && bank.cells.size() == size_t(rows) * common.columns &&
+          bank.rangeSlowTime.size() == size_t(rows) * common.columns && bank.interpolationKernels.size() == rows,
+          "Coherent aperture migration bank structure differs");
+        for (const auto z : bank.cells) require(std::isfinite(z.real()) && std::isfinite(z.imag()), "Coherent aperture bank is nonfinite");
+        for (const auto z : bank.rangeSlowTime) require(std::isfinite(z.real()) && std::isfinite(z.imag()), "Coherent aperture slow-time is nonfinite");
+        for (const auto& kernel : bank.interpolationKernels) for (const auto weight : kernel.weights)
+          require(std::isfinite(weight), "Coherent aperture interpolation kernel is nonfinite");
+      }
+    }
+    frame->migration = *prepared;
+  } else for (const auto& map : frame->caf)
     frame->migration.push_back(RangeMigrationReplay::process(map, frame->source.sampleRateHz,
       frame->correlationSamples, config_.migrationRates, true));
   return frame;
+}
+
+inline std::shared_ptr<const ExperimentReader::ApertureFrame>
+ExperimentReader::aperture(const CoherentApertureProduct& product, uint64_t maximumWork, uint64_t maximumBytes) const {
+  require(product.hopSamples && product.hopSamples == hopSamples_ && previous_ &&
+    experiment_detail::same(*previous_, product.input.source) &&
+    previous_->identity.rawIqHash == product.input.source.identity.rawIqHash &&
+    product.input.source.identity.logicalFrame == previous_->identity.logicalFrame &&
+    product.seal == apertureProductSeal(product), "Coherent aperture product hop/lineage/seal differs");
+  // P-SAR makes a deep immutable frame copy. Both producer retention and that
+  // simultaneous consumer copy must fit the caller's current offline budget.
+  require(product.retainedBytes <= maximumBytes && product.retainedBytes <= maximumBytes - product.retainedBytes &&
+    product.reservedWork <= maximumWork, "Coherent aperture producer/consumer aggregate admission refused");
+  require(product.producers.size() == config_.migrationRates.size(), "Coherent aperture producer bank count differs");
+  require(product.input.sourceConfig.has_value(), "Coherent aperture producer source configuration absent");
+  const auto plan = DirectPathCoherentExperiment::planSha256(product.input.source.identity.configHash);
+  for (size_t rate = 0; rate < product.producers.size(); ++rate) {
+    const auto expected = producerBinding(*product.input.sourceConfig, product.input.source, product.delayDriftPerHz,
+      uint32_t(rate), uint32_t(product.producers.size()), config_.migrationRates[rate]);
+    require(product.producers[rate].rateIndex == rate && product.producers[rate].rateCount == product.producers.size() &&
+      product.producers[rate].rate == config_.migrationRates[rate] && product.producers[rate].rateCorrectedFallback &&
+      product.producers[rate].upstreamPlanSha256 == plan &&
+      product.producers[rate].configurationSha256 == DirectPathCoherentExperiment::configurationSha256(expected) &&
+      product.producers[rate].perRateTrials && product.producers[rate].combinedTrials >= product.producers[rate].perRateTrials,
+      "Coherent aperture producer rate/plan identity differs");
+  }
+  auto frame = aperturePrepared(product.input, &product.migration, maximumWork,
+    maximumBytes - product.retainedBytes);
+  require(frame->phaseQualified == product.phaseQualified && frame->gaugeCorrection == product.gaugeCorrection,
+    "Coherent aperture product pilot/gauge differs");
+  return frame;
+}
+
+inline std::string ExperimentReader::apertureProductSeal(const CoherentApertureProduct& product) {
+  // Streaming, length-delimited binary wire: do not materialize a second full
+  // CAF/migration copy merely to authenticate the immutable handoff.
+  Sha256 hash; constexpr char version[] = "CoherentApertureProduct/v3";
+  hash.update(version, sizeof(version));
+  const auto atom = [&hash](const auto& value) { hash.update(&value, sizeof(value)); };
+  const auto complex = [&atom](const std::complex<double>& value) { atom(value.real()); atom(value.imag()); };
+  const auto bytes = [&hash, &atom](const auto& value) { const uint64_t n = value.size(); atom(n); if (n) hash.update(value.data(), n * sizeof(value[0])); };
+  const auto text = [&hash, &atom](const std::string& value) { const uint64_t n = value.size(); atom(n); if (n) hash.update(value.data(), n); };
+  const auto& s = product.input.source; const auto& i = s.identity;
+  atom(s.captureEpoch); atom(s.firstSample); atom(s.endSample); atom(s.tuningHz); atom(s.gainCalibrationEpoch); atom(s.sampleRateHz);
+  atom(i.epoch); atom(i.logicalFrame); atom(i.generation); atom(i.consumedSequence); atom(i.signalTimestampMs); atom(i.trackerTransaction);
+  bytes(i.configHash); bytes(i.moduleHash); bytes(i.rawIqHash); bytes(i.deviceHash); bytes(s.sourceHash); bytes(s.rfHash); bytes(s.snapshotHash);
+  for (const auto gain : s.actualGainDb) atom(gain);
+  for (const auto& hash : product.input.blockHashes) bytes(hash);
+  atom(bool(product.input.pilot)); if (product.input.pilot) { const auto& p = *product.input.pilot; atom(p.anchorChannelId); complex(p.normalizedCorrelation); atom(p.coherence); atom(p.frame.captureEpoch); atom(p.frame.sequence); atom(p.frame.firstSample); atom(p.frame.endSample); atom(p.frame.tuningHz); atom(p.frame.gainCalibrationEpoch); atom(p.frame.sampleRateHz); atom(p.frame.samplePositionAvailable); atom(p.frame.inputValid); }
+  if (product.input.sourceConfig) { const auto configHash = resident::wire::configHash(*product.input.sourceConfig); bytes(configHash); }
+  atom(product.input.sequence); atom(product.input.firstSample); atom(product.input.endSample); atom(product.input.correlationSamples); atom(product.input.carrierHz); atom(product.input.referenceConditioningBandwidthHz); atom(product.hopSamples); atom(product.delayDriftPerHz); atom(product.heterodyneCenterHz); complex(product.gaugeCorrection); atom(product.phaseQualified); atom(product.retainedBytes); atom(product.reservedWork);
+  atom(uint64_t(product.input.caf.size())); for (const auto& map : product.input.caf) {
+    atom(map.rows()); atom(map.cols()); atom(uint64_t(map.delay.size())); for (const auto value : map.delay) atom(value);
+    atom(uint64_t(map.doppler.size())); for (const auto value : map.doppler) atom(value);
+    atom(uint64_t(map.data.size())); for (const auto& row : map.data) { atom(uint64_t(row.size())); for (const auto value : row) complex(value); }
+  }
+  atom(uint64_t(product.migration.size())); for (const auto& channel : product.migration) { atom(channel.firstColumn); atom(channel.columns); atom(channel.rows); atom(channel.complexMacBound); atom(channel.evaluatedCells); atom(uint64_t(channel.rangeSlowTime.size())); for (const auto value : channel.rangeSlowTime) complex(value); atom(uint64_t(channel.banks.size())); for (const auto& bank : channel.banks) { atom(bank.delayRateBinsPerSecond); atom(bank.whiteNoiseGain); atom(uint64_t(bank.cells.size())); for (const auto value : bank.cells) complex(value); atom(uint64_t(bank.rangeSlowTime.size())); for (const auto value : bank.rangeSlowTime) complex(value); atom(uint64_t(bank.interpolationKernels.size())); for (const auto& kernel : bank.interpolationKernels) { atom(kernel.first); for (const auto value : kernel.weights) atom(value); } } }
+  atom(uint64_t(product.producers.size())); for (const auto& producer : product.producers) { atom(producer.rateIndex); atom(producer.rateCount); atom(producer.rate); atom(producer.rateCorrectedFallback); atom(producer.perRateTrials); atom(producer.combinedTrials); text(producer.configurationSha256); text(producer.upstreamPlanSha256); }
+  return hash.finish();
 }
 } // namespace blah2::integration::coherent_replay

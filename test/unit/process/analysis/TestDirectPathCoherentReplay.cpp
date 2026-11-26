@@ -1,4 +1,5 @@
 #include "process/integration/DirectPathCoherentExperiment.h"
+#include "process/integration/PassiveIsarAperture.h"
 #include "ResidentReplayFixture.h"
 #include "process/ambiguity/Ambiguity.h"
 
@@ -134,11 +135,15 @@ void composedMigration(const fs::path& directory) {
   value.fusion = {blah2::resident::FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6,{}, {}};
   rr::test::enable(value);
   auto request = experimentConfig(); request.spatialCoefficients = {0., 1.};
+  request.retainApertureProducts = true; request.apertureRetentionMaximumBytes = 8u << 20;
+  request.apertureRetentionRemainingBytes = 8u << 20;
+  request.apertureRetentionRemainingWork = blah2::integration::RangeMigrationReplay::maximumMacs;
   request.temporal.delayMotionBins = 1; request.temporal.dopplerMotionBins = 0;
   request.temporal.minimumCoherence = .8; request.migrationRates = {0., 2., -2.};
   auto mislabeled = request; mislabeled.migrationRateCount = 3; mislabeled.migrationRateIndex = 0;
   rejects([&] { cr::ExperimentReader invalid(mislabeled); }, "Reader accepted caller-bound active migration labels");
   cr::ExperimentReader reader(request);
+  cr::PassiveIsarAperture coherentAperture; uint32_t coherentApertureFrames = 0;
   std::mt19937 random(445); std::uniform_real_distribution<double> uniform(-.5,.5);
   std::array<double, 32> frequencies{}, phases{};
   for (size_t i = 0; i < frequencies.size(); ++i) { frequencies[i] = .65 * uniform(random); phases[i] = tau * uniform(random); }
@@ -188,6 +193,23 @@ void composedMigration(const fs::path& directory) {
     cr::writeSidecarExclusive(path, source);
     const auto sealed = cr::loadValidatedSnapshot(path);
     if (sequence == 1) {
+      auto disabled = request; disabled.retainApertureProducts = false; disabled.apertureRetentionMaximumBytes = 0;
+      disabled.apertureRetentionRemainingBytes = disabled.apertureRetentionRemainingWork = 0;
+      cr::ExperimentReader disabledReader(disabled); disabledReader.appendAll(sealed);
+      check(!disabledReader.apertureProduct(), "Disabled aperture retention published a product");
+      auto insufficient = request; insufficient.apertureRetentionMaximumBytes = 1;
+      insufficient.apertureRetentionRemainingBytes = 1;
+      cr::ExperimentReader refused(insufficient);
+      rejects([&] { refused.appendAll(sealed); }, "Insufficient pre-transform aperture admission accepted");
+      auto aggregate = request; aggregate.apertureRetentionRemainingBytes = 1;
+      cr::ExperimentReader aggregateRefused(aggregate);
+      rejects([&] { aggregateRefused.appendAll(sealed); }, "Upstream aggregate aperture admission accepted");
+      aggregateRefused.setApertureExecutionAllowance(request.apertureRetentionRemainingBytes,
+        request.apertureRetentionRemainingWork);
+      aggregateRefused.appendAll(sealed);
+      check(!aggregateRefused.apertureProduct(), "Admission refusal contaminated same-reader recovery state");
+    }
+    if (sequence == 1) {
       rejects([&] { reader.append(sealed); }, "Legacy append silently selected a migration rate");
       auto bad = sealed; --bad.sidecar.endSample;
       rejects([&] { reader.appendAll(bad); }, "Wrong raw span seeded rate histories");
@@ -197,6 +219,15 @@ void composedMigration(const fs::path& directory) {
       rejects([&] { reader.appendAll(bad); }, "Changed config seeded rate histories");
       bad = sealed; bad.sidecar.firstSample += 3 * samples; bad.sidecar.endSample += 3 * samples;
       rejects([&] { reader.appendAll(bad); }, "A raw-IQ gap bridged migration histories");
+    }
+    if (sequence == 3) {
+      cr::ExperimentReader ownership(request);
+      ownership.appendAll(cr::loadValidatedSnapshot(directory / "composed-1.vwrps"));
+      ownership.appendAll(cr::loadValidatedSnapshot(directory / "composed-2.vwrps"));
+      auto held = ownership.apertureProduct(); check(bool(held), "Ownership fixture did not publish product");
+      rejects([&] { ownership.appendAll(sealed); }, "Externally retained aperture product was silently replaced");
+      held.reset(); ownership.appendAll(sealed);
+      check(bool(ownership.apertureProduct()), "Released product did not permit same-reader recovery");
     }
     if (sequence == 1) {
       auto wrongPlan = request; wrongPlan.upstreamPlanSha256 = std::string(64, 'e');
@@ -215,6 +246,38 @@ void composedMigration(const fs::path& directory) {
     }
     auto result = reader.appendAll(sealed);
     check(result.size() == 3, "Composed reader spliced a winning migration rate");
+    const auto product = reader.apertureProduct();
+    if (sequence == 1) check(!product, "Aperture published before hop/bootstrap lock");
+    else {
+      check(product && product->hopSamples == hop && product->input.source.identity.rawIqHash ==
+        sealed.sidecar.identity.rawIqHash && product->migration.size() == 2,
+        "Coherent aperture product lost sealed lineage or channel products");
+      const auto aperture = reader.aperture(*product);
+      check(aperture->migration[1].banks[1].cells == migrated.banks[1].cells &&
+        aperture->migration[1].banks[1].rangeSlowTime.size() == size_t(rows) * migrated.columns,
+        "P-SAR aperture did not consume the direct corrected product verbatim");
+      if (!coherentApertureFrames) { coherentAperture.append(aperture); ++coherentApertureFrames; }
+      else rejects([&] { coherentAperture.append(aperture); },
+        "unaligned producer hop entered PassiveIsarAperture support");
+      auto stale = *product; ++stale.hopSamples;
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted a changed coherent hop");
+      stale = *product; stale.input.source.identity.configHash[0] ^= 1;
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted a changed coherent lineage");
+      stale = *product; stale.migration[1].banks[1].cells[0] += Complex(1., 0.);
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted a mutated sealed complex product");
+      stale = *product; stale.input.caf[0].data[0].pop_back();
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted changed raw CAF private geometry");
+      stale = *product; stale.migration[0].rangeSlowTime[0] += Complex(1., 0.);
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted changed uncropped slow-time support");
+      stale = *product; ++stale.retainedBytes;
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted changed retained storage ledger");
+      stale = *product; ++stale.reservedWork;
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted changed reserved work ledger");
+      stale = *product; stale.producers[1].rate += 1.;
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted a mutated producer rate identity");
+      stale = *product; ++stale.producers[1].perRateTrials;
+      rejects([&] { reader.aperture(stale); }, "P-SAR accepted mutated producer trial counts");
+    }
     for (size_t trial = 0; trial < result.size(); ++trial) {
       const auto& rate = result[trial]; const auto& experiment = rate.result;
       const auto& producer = experiment.producer();
