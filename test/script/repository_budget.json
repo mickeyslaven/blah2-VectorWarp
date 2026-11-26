@@ -9794,151 +9794,8 @@
             2883
           ]
         }
-    },
-    {
-      "owner": "Offline passive-ISAR aperture owner; parent-authorized bounded foundation",
-      "purpose": "Retain immutable pre-winner/pre-sum CAF and range-slow-time lineage through existing replay owners, share the prepared complex-delay sampler, and expose one bounded offline diagnostic CLI with native and real-CLI contracts. No live processing or defaults change.",
-      "rejected_reuse": "Reuses snapshot decoder, Ambiguity, RangeMigrationReplay and pilot owner. Temporal winner/power products cannot preserve unique raw blocks or complex phase; no second interpolator, cancellation pipeline, tracker or publisher is added.",
-      "cleanup_plan": "Remove the offline aperture diagnostic/export if superseded, keep the canonical sampler in RangeMigrationReplay, and ratchet exact file/context ceilings down with removals. Native oracle/CLI tests remain mandatory; no recorded-IQ or radar qualification is implied.",
-      "changes": {
-        "files:src": [
-          216,
-          217
-        ],
-        "files:tools": [
-          14,
-          15
-        ],
-        "lines:cmake": [
-          1277,
-          1289
-        ],
-        "lines:src": [
-          46362,
-          46658
-        ],
-        "lines:tools": [
-          2883,
-          3022
-        ],
-        "context_characters:build-integration": [
-          103128,
-          104264
-        ],
-        "context_characters:build-integration/contracts": [
-          1412051,
-          1423209
-        ],
-        "context_characters:native-integration": [
-          97051,
-          114672
-        ],
-        "context_characters:operational-tools": [
-          654328,
-          665486
-        ],
-        "context_characters:operational-tools/contracts": [
-          542434,
-          560055
-        ],
-        "context_characters:production": [
-          7181464,
-          7211379
-        ],
-        "context_contract:build-integration->tools/PassiveIsarApertureInspect.cpp": [
-          0,
-          1
-        ],
-        "context_contract:operational-tools->src/process/integration/PassiveIsarAperture.h": [
-          0,
-          1
-        ],
-        "context_dynamic:native-integration": [
-          35,
-          51
-        ],
-        "context_files:build-integration/contracts": [
-          87,
-          88
-        ],
-        "context_files:native-integration": [
-          7,
-          8
-        ],
-        "context_files:operational-tools": [
-          59,
-          60
-        ],
-        "context_files:operational-tools/contracts": [
-          23,
-          24
-        ],
-        "context_files:production": [
-          586,
-          588
-        ],
-        "context_imports:build-integration": [
-          133,
-          134
-        ],
-        "context_imports:native-integration": [
-          10,
-          11
-        ],
-        "context_imports:operational-tools": [
-          30,
-          31
-        ],
-        "context_lines:build-integration": [
-          1910,
-          1922
-        ],
-        "context_lines:build-integration/contracts": [
-          28743,
-          28882
-        ],
-        "context_lines:native-integration": [
-          1968,
-          2264
-        ],
-        "context_lines:operational-tools": [
-          12159,
-          12298
-        ],
-        "context_lines:operational-tools/contracts": [
-          9459,
-          9755
-        ],
-        "context_lines:production": [
-          132722,
-          133169
-        ],
-        "context_tokens:build-integration": [
-          16599,
-          16743
-        ],
-        "context_tokens:build-integration/contracts": [
-          347844,
-          351167
-        ],
-        "context_tokens:native-integration": [
-          23772,
-          27922
-        ],
-        "context_tokens:operational-tools": [
-          159068,
-          162391
-        ],
-        "context_tokens:operational-tools/contracts": [
-          136022,
-          140172
-        ],
-        "context_tokens:production": [
-          1798880,
-          1806497
-        ]
       }
-    },
+    ,
     {
       "owner": "2026-11-26 offline coherent phase and continuous-range review",
       "purpose": "Bound and charge depth-aware 4/8/16 phase trials, reuse the canonical prepared Lanczos sampler for coherent-only inter-CPI paths, preserve newest-coordinate phase and noise-gain lineage, and cache FFTW slow-time batches in the existing offline owner. The canonical noncoherent contract and all live entry points remain unchanged.",
@@ -10065,150 +9922,102 @@
       }
     },
     {
-      "owner": "Offline passive-ISAR aperture integration; parent-authorized typed replay boundary",
-      "purpose": "Authenticate bounded existing calibration IQ extractions with exact parent/plan/receipt/sample and byte identities; reuse Ambiguity and the immutable pre-temporal aperture factory; retain declared tails and nonuniform block support without extra exposure.",
-      "rejected_reuse": "Full original snapshots exceed the foundation admission bound and fabricated smaller snapshots would falsify provenance. The existing replay owner now validates sidecar-bound IQ ingress; no second DSP, interpolator, temporal winner or publisher was created.",
-      "cleanup_plan": "Keep the authenticated ingress in the canonical replay library and the aperture exporter offline. If a generic sealed slice contract supersedes this development format, remove this parser and ratchet these exact ceilings down; retain refusal/algebra tests. No evaluator, runtime or radar defaults change.",
+      "owner": "native-integration: offline coherent family selector, parent review 2026-11-26",
+      "purpose": "Independently normalize canonical NC/coherent families, fit disjoint marginal/joint empirical tails and enforce exact producer/plan/window identity with a matched nine-bank NC comparator.",
+      "rejected_reuse": "Reuse canonical temporal owners and EmpiricalNullCalibrator; neither existing owner provides joint family calibration, attainable-tail refusal or independent-window exposure admission. Keep this bounded offline consumer out of live processing.",
+      "cleanup_plan": "No duplicated radar math or replacement production route. Retain legacy hybrid only for frozen replay compatibility. Remove selector if the offline experiment is rejected; no permanent live shadow or knobs.",
       "changes": {
-        "context_characters:build-integration": [
-          104264,
-          104425
-        ],
-        "context_characters:build-integration/contracts": [
-          1423209,
-          1439911
+        "context_characters:native-detection/contracts": [
+          61018,
+          61104
         ],
         "context_characters:native-integration": [
-          114672,
-          133881
+          117442,
+          137448
         ],
-        "context_characters:native-runtime/contracts": [
-          288372,
-          289704
-        ],
-        "context_characters:operational-tools": [
-          665486,
-          670254
+        "context_characters:native-integration/contracts": [
+          43188,
+          46282
         ],
         "context_characters:operational-tools/contracts": [
-          560055,
-          570781
+          549308,
+          550992
         ],
         "context_characters:production": [
-          7211379,
-          7235517
+          7202529,
+          7222535
         ],
-        "context_contract:build-integration->src/process/integration/DirectPathCoherentIq.cpp": [
-          0,
-          1
-        ],
-        "context_contract:operational-tools->src/process/ambiguity/Ambiguity.h": [
+        "context_contract:native-integration->src/process/detection/EmpiricalNullCalibrator.h": [
           0,
           1
         ],
         "context_dynamic:native-integration": [
-          51,
-          96
-        ],
-        "context_files:build-integration/contracts": [
-          88,
-          89
+          38,
+          62
         ],
         "context_files:native-integration": [
-          8,
-          9
+          7,
+          8
         ],
-        "context_files:operational-tools/contracts": [
-          24,
-          25
+        "context_files:native-integration/contracts": [
+          7,
+          8
         ],
         "context_files:production": [
-          588,
-          589
-        ],
-        "context_imports:build-integration": [
-          134,
-          135
+          586,
+          587
         ],
         "context_imports:native-integration": [
-          11,
-          13
+          10,
+          12
         ],
-        "context_imports:operational-tools": [
-          31,
-          33
-        ],
-        "context_lines:build-integration": [
-          1922,
-          1924
-        ],
-        "context_lines:build-integration/contracts": [
-          28882,
-          29145
+        "context_lines:native-detection/contracts": [
+          1460,
+          1461
         ],
         "context_lines:native-integration": [
-          2264,
-          2563
+          2323,
+          2672
         ],
-        "context_lines:native-runtime/contracts": [
-          6048,
-          6071
-        ],
-        "context_lines:operational-tools": [
-          12298,
-          12370
+        "context_lines:native-integration/contracts": [
+          976,
+          1066
         ],
         "context_lines:operational-tools/contracts": [
-          9755,
-          9995
+          9582,
+          9607
         ],
         "context_lines:production": [
-          133169,
-          133542
+          133088,
+          133437
         ],
-        "context_tokens:build-integration": [
-          16743,
-          16764
-        ],
-        "context_tokens:build-integration/contracts": [
-          351167,
-          355778
+        "context_tokens:native-detection/contracts": [
+          14306,
+          14325
         ],
         "context_tokens:native-integration": [
-          27922,
-          32989
+          29031,
+          34012
         ],
-        "context_tokens:native-runtime/contracts": [
-          73043,
-          73329
-        ],
-        "context_tokens:operational-tools": [
-          162391,
-          163645
+        "context_tokens:native-integration/contracts": [
+          11441,
+          12133
         ],
         "context_tokens:operational-tools/contracts": [
-          140172,
-          142669
+          137596,
+          138060
         ],
         "context_tokens:production": [
-          1806497,
-          1812839
+          1804313,
+          1809294
         ],
         "files:src": [
-          217,
-          218
-        ],
-        "lines:cmake": [
-          1289,
-          1291
+          216,
+          217
         ],
         "lines:src": [
-          46658,
-          46957
-        ],
-        "lines:tools": [
-          3022,
-          3094
+          46717,
+          47066
         ]
       }
     }

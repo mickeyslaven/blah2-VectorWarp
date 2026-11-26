@@ -152,7 +152,8 @@ power history remains available. Move-only rate results own their fallback
 maps, so later appends do not invalidate previously returned results.
 
 The optional `temporal.sourceDomain` replay ablation applies the same minimum
-delay and absolute-Doppler exclusions to **every historical source sample**.
+delay and absolute-Doppler exclusions to every temporal tap in the
+post-migration map. It does not exclude raw-CAF support inside migration.
 For example, a newest 20 Hz cell with a +1-bin path can otherwise collect
 20, 10, 0 and -10 Hz at four CPIs despite a 15 Hz output exclusion. Fractional
 coherent sampling also requires every interpolation tap inside the delay
@@ -163,9 +164,56 @@ domain is disabled by default; no live configuration enables this ablation.
 `auditPowerPath` delegates read-only selected-path inspection to the canonical
 power owner. The retained `hybridAt` view is availability-based replacement,
 not a maximum and not a guarantee of retaining stronger noncoherent evidence.
-A future standardized family maximum needs a newly calibrated full joint
-threshold. Preserving the NC statistic cannot guarantee preserving every old
+The offline `CoherentFamilySelector` supplies a two-stage standardized family
+maximum with a newly calibrated full joint threshold. Preserving the NC statistic cannot guarantee preserving every old
 NC detection while adding new detections at unchanged false-alarm exposure.
+
+### Offline family selector contract
+
+`CoherentFamilySelector` consumes the existing per-rate owners without changing
+CAF, migration, temporal history or phase search. It supports one prescribed
+cell at the terminal eighth CPI of each independent raw window, three declared
+rates, depths 2/4/8, a 4/8/16 phase bank and a 3-by-3 motion bank. The maximum
+declared exposure remains 756 coherent plus 81 NC trials. It separately reports
+available families and their bank-trial upper bound; those are not independent
+null observations or an exact count of valid paths. Other geometry, phase or
+decision exposure requires a new contract, not reuse of these tables.
+
+Each family/rate/depth ratio uses its own row's upper median over valid
+post-migration source-domain cells. Zero/empty denominators make that family
+unavailable. Partition A fits 18 separate empirical upper tails with conservative
+`>=` ties and plus-one ranks. Partition B calibrates the whole paired maximum
+`max(1-p)` and, separately, the maximum over all nine NC strata at the same
+exposure. Ties select NC first, then declared rate order, then ascending depth.
+Unavailable evidence contributes nothing; a previously unseen availability mask
+refuses. Reference tables must exist for all 18 strata with at least 32 available
+independent fit windows each.
+
+The contract binds the producer-owned configuration identity, explicit axes,
+source domain, exact sample/hop, prescribed readout, counts, alpha, upstream plan,
+frozen generator and A/B split hashes. The generator identity must freeze seeds,
+injection/readout, motion, reset, confidence and availability policies. A and B
+content hashes are computed from actual consumed scores and raw intervals; B
+includes A's identity. Duplicate/overlapping windows across fitting, calibration
+and evaluation refuse. The replay adapter remains responsible for authenticating
+the upstream plan and input bytes; this selector reads no IQ. Winning output
+copies family, rate/index, depth, motion, phase offset, exact raw intervals,
+coordinates, power, denominator, valid count and calibration identity.
+
+Before admitting alpha, the selector evaluates the B tail at the largest
+attainable first-stage statistic. Checking only `1/(M_B+1)` is insufficient:
+with 128 A samples and 18 independent continuous families, the unconditional
+probability of at least one top rank is `1-(128/129)^18`, about 13.1%. A 5%
+request can therefore be impossible even with many B samples. The implementation
+refuses such a frozen experiment; it never drops ties or relaxes alpha.
+
+`[coherent-selector]` in `TestDirectPathCoherentExperiment.cpp` covers canonical
+2/4/8 raw gains, independent scales and missing-family behavior, strict table and
+lineage admission, conservative ties and unattainable tails. Its separate seeded
+score-vector fixture uses A=2048, B=512 and 256 untouched paired draws with five
+prescribed coherent score offsets. This tests calibration algebra, not radar Pd
+or PFA. No new recorded-IQ, full-canonical null calibration, cadence acceptance
+or operational improvement follows from this checkpoint.
 
 The composed CLI accepts `--migration-rates 0,RATE,...` immediately before the
 snapshot list. It reports rate index, delay rate, interpolation noise gain,

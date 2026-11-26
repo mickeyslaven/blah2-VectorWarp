@@ -46,8 +46,9 @@ struct EvidenceMotion
   int8_t doppler = 0;
 };
 
-// Opt-in replay ablation: every source sample, not only the newest output,
-// must lie in this immutable searchable domain. Defaults preserve live math.
+// Opt-in replay ablation: every temporal tap in the post-migration map, not
+// only the newest output, must lie in this immutable searchable domain. This
+// does not constrain raw-CAF support inside migration. Defaults preserve live math.
 struct EvidenceSourceDomain
 {
   bool enabled = false;

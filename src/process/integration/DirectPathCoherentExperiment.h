@@ -6,7 +6,9 @@
 #include "process/ambiguity/GpuResidentWire.h"
 #include "capture/Sha256.h"
 
+#include <locale>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -53,6 +55,7 @@ public:
     uint32_t sourceCount = 0;
     const ComplexMap* powerFallback = nullptr; // Borrowed real FP64 power, not amplitude.
     std::string reason;
+    std::string configurationSha256; // Produced by the immutable numerical owner.
     uint64_t declaredPerCellTrials = 0;
     // Calibration includes path/beam maxima, depths, pilot and target-coherence
     // gates, and fallback family. A trial count alone does not establish PFA.
@@ -109,8 +112,27 @@ public:
   public:
   };
 
+  // One serialization for selector admission and the producing owner. Axes
+  // and per-rate ingress identity are checked separately at the replay seam.
+  static std::string configurationSha256(const Config& c) {
+    const auto& t = c.temporal;
+    std::ostringstream s; s.imbue(std::locale::classic()); s << std::hexfloat;
+    s << "direct-path-experiment-v1 " << t.maximumCpis << ' ' << t.delayMotionBins << ' '
+      << t.dopplerMotionBins << ' ' << t.cpiHopSeconds << ' ' << t.minimumCoherence << ' '
+      << t.phaseDirection << ' ' << t.delayDriftPerHz << ' ' << t.beamCount << ' '
+      << t.refineDopplerPhase << ' ' << t.interpolateDelay << ' ' << t.heterodyneCenterHz << ' '
+      << t.measureTiming << ' ' << t.sourceDomain.enabled << ' ' << t.sourceDomain.minimumDelay << ' '
+      << t.sourceDomain.minimumAbsDopplerHz << ' ' << c.anchorChannelId << ' '
+      << c.declaredSpatialTrials << ' ' << c.maximumCells << ' ' << c.minimumPilotCoherence << ' '
+      << c.fallbackBeamCount << ' ' << c.fallbackBeamTolerance << " channels ";
+    for (auto value : c.channelIds) s << value << ' ';
+    s << "weights "; for (auto value : c.spatialCoefficients) s << value.real() << ' ' << value.imag() << ' ';
+    s << "rates "; for (double value : c.migrationRates) s << value << ' ';
+    const auto text = s.str(); Sha256 hash; hash.update(text.data(), text.size()); return hash.finish();
+  }
+
   DirectPathCoherentExperiment(Config config, bool replayInput)
-    : config_(std::move(config)), coherent_(config_.temporal),
+    : config_(std::move(config)), configurationHash_(configurationSha256(config_)), coherent_(config_.temporal),
       noncoherent_({config_.temporal.maximumCpis, config_.temporal.delayMotionBins,
         config_.temporal.dopplerMotionBins, config_.temporal.delayDriftPerHz,
         config_.fallbackBeamCount, config_.fallbackBeamTolerance, config_.temporal.sourceDomain}) {
@@ -172,6 +194,7 @@ public:
     const std::optional<Pilot>& pilot, ComplexMap& powerFallback,
     const std::vector<uint32_t>* fallbackBeams = nullptr) {
     Result result;
+    result.configurationSha256 = configurationHash_;
     for (std::size_t bank = 0; bank < result.banks.size(); ++bank)
       result.banks[bank].depth = 2u << bank;
     result.powerFallback = &powerFallback;
@@ -291,6 +314,7 @@ private:
       left.samplePositionAvailable == right.samplePositionAvailable && left.inputValid == right.inputValid;
   }
   Config config_;
+  std::string configurationHash_;
   CoherentPathEvidence coherent_;
   TemporalEvidence noncoherent_;
   std::deque<Frame> sources_;
