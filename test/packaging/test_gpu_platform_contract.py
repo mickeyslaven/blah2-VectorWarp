@@ -81,6 +81,61 @@ class GpuPlatformPolicyTest(unittest.TestCase):
 
 
 class GpuBuildContractTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("c++"), "C++ compiler required for startup policy")
+    def test_offline_cold_start_retains_only_bounded_transport_allowance(self):
+        fixture = r'''
+#include "process/ambiguity/GpuProcess.h"
+#include <cassert>
+#include <limits>
+int main() {
+  using namespace blah2;
+  for (double cpi : {20., 100., 500., 2000.}) {
+    assert(gpuStartupDeadlineMs(cpi,30000,false)==gpuCpiStartupDeadlineMs(cpi,30000));
+    assert(gpuStartupDeadlineMs(cpi,30000,true)==30000);
+    assert(gpuStartupDeadlineMs(cpi,7000,true)==7000);
+    assert(gpuStartupDeadlineMs(cpi,30000,false,true)==30000);
+    assert(gpuStartupDeadlineMs(cpi,30000,true,true)==30000);
+  }
+  for (bool offline : {false,true}) for (bool required : {false,true}) {
+    for (double cpi : {0.,-1.,std::numeric_limits<double>::infinity(),
+                       std::numeric_limits<double>::quiet_NaN()}) {
+      try { gpuStartupDeadlineMs(cpi,30000,offline,required); assert(false); }
+      catch (const std::invalid_argument&) {}
+    }
+    try { gpuStartupDeadlineMs(20,0,offline,required); assert(false); }
+    catch (const std::invalid_argument&) {}
+  }
+  assert(gpuCpiFrameDeadlineMs(20,5000)==500);
+  assert(gpuCpiFrameDeadlineMs(500,5000)==1500);
+  assert(GpuProcessOptions{}.startupMs==30000 && GpuProcessOptions{}.frameMs==5000);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="vectorwarp-startup-policy-") as directory:
+            executable = str(pathlib.Path(directory) / "test")
+            subprocess.run([shutil.which("c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-I", str(ROOT / "src"), "-x", "c++", "-", "-o", executable],
+                           input=fixture, text=True, check=True, capture_output=True, timeout=30)
+            subprocess.run([executable], check=True, capture_output=True, timeout=5)
+
+    def test_every_gpu_route_binds_startup_policy_to_explicit_replay_state(self):
+        lane = "".join((ROOT / "src/process/pipeline/CanonicalRadar.cpp").read_text().split())
+        main = "".join((ROOT / "src/blah2.cpp").read_text().split())
+        for call in (
+            "gpuStartupDeadlineMs(config.cpiSeconds*1000.0,options.startupMs,config.offlineReplay,residentRequired)",
+            "gpuStartupDeadlineMs(cpiSeconds*1000.0,options.startupMs,offline)",
+            "gpuStartupDeadlineMs(config.cpiSeconds*1000.0,options.startupMs,config.offlineReplay)",
+        ):
+            self.assertIn(call, lane)
+        self.assertIn("gpuStartupDeadlineMs(tCpi*1000.0,multiGpuOptions.startupMs,state)", main)
+        for source in (lane, main):
+            self.assertNotIn("gpuCpiStartupDeadlineMs(", source)
+            self.assertNotIn("gpuResidentStartupDeadlineMs(", source)
+        self.assertEqual(lane.count("gpuStartupDeadlineMs("), 3)
+        self.assertEqual(main.count("gpuStartupDeadlineMs("), 1)
+        self.assertIn("if(!offline)options.frameMs=gpuCpiFrameDeadlineMs(", lane)
+        self.assertEqual(lane.count("if(!config.offlineReplay)options.frameMs=gpuCpiFrameDeadlineMs("), 2)
+        self.assertIn("if(!state)multiGpuOptions.frameMs=blah2::gpuCpiFrameDeadlineMs(", main)
+
     def test_temporary_file_callers_declare_linux_and_darwin_functions_directly(self):
         callers = []
         for directory in ("src", "core", "test", "bench"):

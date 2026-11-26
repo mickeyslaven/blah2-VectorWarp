@@ -2062,8 +2062,8 @@ try
         // permanently select the slower CPU channelizer; retain the bounded
         // transport hang timeout and qualify numerical output independently.
         multiGpuOptions.offlineTransportTrace=state;
-        multiGpuOptions.startupMs=blah2::gpuCpiStartupDeadlineMs(
-          tCpi*1000.0,multiGpuOptions.startupMs);
+        multiGpuOptions.startupMs=blah2::gpuStartupDeadlineMs(
+          tCpi*1000.0,multiGpuOptions.startupMs,state);
         if(!state)multiGpuOptions.frameMs=blah2::gpuCpiFrameDeadlineMs(
           tCpi*1000.0,multiGpuOptions.frameMs);
         multiGpuDevice=gpuDevice?gpuDevice:"auto";

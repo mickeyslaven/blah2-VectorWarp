@@ -621,8 +621,11 @@ resource-limited checks are not whole-radar performance benchmarks.
 
 ## Driver recovery
 
-GPU drivers run in a separate worker process. Startup has a 30-second deadline;
-individual GPU frames have a five-second deadline. A timeout, worker crash or
+GPU drivers run in a separate worker process. Offline cold shader/FFT startup
+retains the bounded 30-second transport allowance; optional live startup keeps
+its CPI-derived deadline (20 CPIs, five-second floor, 30-second cap). Required
+residency keeps the 30-second bound. Live frame deadlines remain CPI-derived;
+offline frames retain the five-second transport bound. A timeout, worker crash or
 invalid response disables GPU use and retries the same frame on CPU. These are
 failure deadlines, not promises that a failed frame meets real-time cadence.
 Portable, resident and wideband workers bind their spawning parent's PID in a
