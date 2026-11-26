@@ -11,6 +11,9 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
   add_executable(directPathCoherentReplayInspect
     ${PROJECT_ROOT}/tools/DirectPathCoherentReplayInspect.cpp)
   target_link_libraries(directPathCoherentReplayInspect PRIVATE blah2DirectPathCoherentReplay)
+  add_executable(rangeMigrationReplayInspect
+    ${PROJECT_ROOT}/tools/RangeMigrationReplayInspect.cpp)
+  target_link_libraries(rangeMigrationReplayInspect PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
   add_executable(residentWeakEvidenceScore ${PROJECT_ROOT}/tools/ResidentWeakEvidenceScore.cpp)
   target_link_libraries(residentWeakEvidenceScore PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
   add_executable(residentSnapshotGeometry ${PROJECT_ROOT}/tools/ResidentSnapshotGeometry.cpp)
@@ -20,6 +23,11 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
   target_link_libraries(wienerHopfReplayInspect PRIVATE blah2DirectPathCoherentReplay
     blah2RadarDsp)
   if(BUILD_TESTING)
+    add_executable(testRangeMigrationReplay
+      ${PROJECT_ROOT}/test/unit/process/analysis/TestRangeMigrationReplay.cpp)
+    target_link_libraries(testRangeMigrationReplay PRIVATE blah2RadarDsp)
+    add_test(NAME rangeMigrationReplayCpuContract COMMAND testRangeMigrationReplay)
+    set_tests_properties(rangeMigrationReplayCpuContract PROPERTIES TIMEOUT 20)
     add_executable(testResidentWeakEvidenceScore
       ${PROJECT_ROOT}/test/unit/process/analysis/TestResidentWeakEvidenceScore.cpp)
     target_include_directories(testResidentWeakEvidenceScore PRIVATE
