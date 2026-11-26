@@ -507,18 +507,19 @@ class MultiIlluminatorEvidence {
     this.kioskAssociationBasisCache ||= new Map();
     const cached = kiosk ? this.kioskAssociationBasisCache.get(timing) : null;
     if (cached && Date.now() - cached.timestamp < 10000) return cached.value;
+    const bases = [];
     const channels = [...this.lanes.values()].map(lane => {
       const statistics = timing === 'provisional' ? lane.operational : lane.exact;
       const status = (compact || kiosk) && typeof statistics.associationStatus === 'function' ?
         statistics.associationStatus() : statistics.liveStatus();
+      if (compact) bases.push(statistics.measuredTrackBasis());
       if (compact || kiosk) return {...measuredCoverage.kioskAssociationChannel({
         identity: identity(lane.illuminator, statistics),
         selected_channel: lane.illuminator.id, updated_at: status.updated_at,
         association_statistics: associationStatistics(status),
         measured_track_coverage: status.current_setup_lifetime?.measured_track_coverage,
         cpi_exposure: status.current_setup_lifetime?.cpi_exposure}),
-        ...(compact ? {measured_track_basis: measuredCoverage.compactBasis(statistics.measuredTrackBasis()),
-          operational_track_window: status.operational_track_window} : {})};
+        ...(compact ? {operational_track_window: status.operational_track_window} : {})};
       const population = status.track_population || {};
       const channel = {identity: identity(lane.illuminator, statistics),
         measured_track_basis: statistics.measuredTrackBasis(),
@@ -530,7 +531,8 @@ class MultiIlluminatorEvidence {
           statistics.associationPasses() : []};
       return channel;
     });
-    const value = {schema: 'vectorwarp-association-basis-v1', timing_policy: timing, channels};
+    const value = {schema: 'vectorwarp-association-basis-v1', timing_policy: timing, channels,
+      ...(compact ? {measured_track_basis: measuredCoverage.compactBasis(measuredCoverage.unionBasis(bases))} : {})};
     if (kiosk) this.kioskAssociationBasisCache.set(timing, {timestamp: Date.now(), value});
     return value;
   }

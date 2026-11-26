@@ -296,11 +296,31 @@ test('multi-channel route projects kiosk scalars and transports exact compact co
   const kiosk = multi.associationBasis({kiosk:true});
   assert.deepEqual(kiosk.channels, full.channels.map(kioskAssociationChannel));
   assert.ok(full.channels[0].passes[0].cpi_audit);
-  const compact = multi.associationBasis({compact:true}).channels[0];
-  assert.equal(compact.passes, undefined);
-  assert.deepEqual(coverage.expandBasis(compact.measured_track_basis), basis);
-  assert.deepEqual(compact.cpi_exposure, kiosk.channels[0].cpi_exposure);
+  const compact = multi.associationBasis({compact:true});
+  assert.equal(compact.channels[0].passes, undefined);
+  assert.equal(compact.channels[0].measured_track_basis, undefined);
+  assert.deepEqual(coverage.expandBasis(compact.measured_track_basis), coverage.unionBasis([basis]));
+  assert.deepEqual(compact.channels[0].cpi_exposure, kiosk.channels[0].cpi_exposure);
   const source = require('node:fs').readFileSync(require.resolve('./server'),'utf8');
   assert.match(source,/if \(compact \|\| kiosk\) return await sendDisplayResponse[\s\S]*?kioskAssociationChannel/,
     'Single-channel receivers use the bounded projection before materializing detail');
+});
+
+test('node-wide interval union preserves overlap, disjoint, duplicate, empty and incomplete evidence', () => {
+  const basis = (aircraft, complete = true) => ({version: 1, complete, excluded_passes: 2, aircraft});
+  const row = (hex, eligible, measured = eligible) => ({hex, eligible, scored: eligible, measured});
+  const a = basis([row('abc123', [[0, 10.25], [20, 30]], [[1.5, 3], [5, 8], [21, 22]])]);
+  const b = basis([row('ABC123', [[5, 15.5]], [[7, 14.5]]), row('def456', [[40, 50]])]);
+  const c = basis([row('abc123', [[60, 70]])], false);
+  for (const sources of [[a, b, c], [c, b, a], [a, a, b], [a, basis([])],
+    [basis([])], [], [a, null], [a, basis([{hex: 'broken', eligible: []}])]]) {
+    const union = coverage.unionBasis(sources);
+    const wire = coverage.compactBasis(union);
+    assert.deepEqual(coverage.aggregate([wire]), coverage.aggregate(sources));
+    if (sources.length) assert.deepEqual(coverage.aggregate([wire, b]), coverage.aggregate([...sources, b]));
+  }
+  const merged = coverage.unionBasis([a, b]);
+  assert.deepEqual(merged.aircraft[0].eligible, [[0, 15.5], [20, 30]]);
+  assert.deepEqual(a.aircraft[0].eligible, [[0, 10.25], [20, 30]], 'Never mutate full local evidence');
+  assert.equal(coverage.aggregate([coverage.unionBasis([a, null])]).available, false);
 });

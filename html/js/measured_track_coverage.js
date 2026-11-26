@@ -104,11 +104,15 @@
 
   // Sources carry actual intervals, never additive per-channel percentages or
   // guessed timestamps reconstructed from historical CPI counts.
-  function aggregate(sources = [], {from = -Infinity, to = Infinity} = {}) {
+  // This same union is used for aggregation and compact node transport. Keep
+  // the three interval sets separate until the final aggregate: pre-clipping
+  // measured time to one channel's scored time would change cross-node unions.
+  function unionBasis(sources = [], {from = -Infinity, to = Infinity} = {}) {
     const aircraft = new Map(); let available = sources.length > 0, complete = available, excluded = 0;
     for (const input of sources) {
       const source = expandBasis(input);
       if (source?.version !== 1 || !Array.isArray(source.aircraft)) { available = complete = false; continue; }
+      if (source.available === false) available = complete = false;
       complete &&= source.complete === true;
       excluded += source.excluded_passes || 0;
       for (const row of source.aircraft) {
@@ -124,11 +128,18 @@
         aircraft.set(row.hex.toLowerCase(), value);
       }
     }
+    return {version: 1, available, complete, excluded_passes: excluded,
+      aircraft: [...aircraft].map(([hex, value]) => ({hex,
+        eligible: union(value.eligible), scored: union(value.scored), measured: union(value.measured)}))};
+  }
+  function aggregate(sources = [], options = {}) {
+    const basis = unionBasis(sources, options);
+    const {available, complete, excluded_passes: excluded} = basis;
     let eligibleMs = 0, scoredMs = 0, measuredMs = 0; const gaps = [];
-    for (const value of aircraft.values()) {
-      const eligible = union(value.eligible);
-      const scored = intersect(eligible, union(value.scored));
-      const measured = intersect(scored, union(value.measured));
+    for (const value of basis.aircraft) {
+      const eligible = value.eligible;
+      const scored = intersect(eligible, value.scored);
+      const measured = intersect(scored, value.measured);
       eligibleMs += milliseconds(eligible); scoredMs += milliseconds(scored); measuredMs += milliseconds(measured);
       // Only fully observed internal gaps count. Eligibility breaks, unscored
       // time, and left/right-censored edges cannot become continuity claims.
@@ -177,5 +188,5 @@
     measured_track_coverage: aggregate([channel.measured_track_basis]),
     cpi_exposure: cpiExposure};
   }
-  return {union, extendUnion, intersect, aggregate, compactBasis, expandBasis, kioskAssociationChannel};
+  return {union, extendUnion, intersect, unionBasis, aggregate, compactBasis, expandBasis, kioskAssociationChannel};
 });

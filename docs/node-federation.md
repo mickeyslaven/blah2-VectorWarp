@@ -61,6 +61,13 @@ Federation preserves pass IDs, evaluation policies, timing quality and detector
 run identities, including passes that span restarts. Its operational counts are
 observations, not detector/tracker regression or release acceptance evidence.
 
+The compact association-basis response retains per-channel coverage, exposure,
+policy identity and operational-window scalars, plus one node-wide interval union
+for exact cross-node measured coverage. The shared interval owner performs both
+unions without rounding, sampling or adding percentages. Full local responses
+retain all per-channel bases. Compact reads still have a 1-MiB limit and six-second
+deadline; oversized, unavailable or incomplete evidence never becomes known zero.
+
 The browser talks only to the coordinator API. The proxy accepts GET requests
 for a fixed list of read endpoints, does not follow redirects, and limits
 response size, duration and concurrency. Node and channel choice is per browser

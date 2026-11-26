@@ -5,7 +5,7 @@ const counts = [
   ['TX-A-RF27',68118,6765,4632], ['TX-B-RF25',51050,9546,7811],
   ['TX-C-RF28',63516,10226,8312], ['primary',91928,1691,1011]
 ];
-const {aggregate, compactBasis, kioskAssociationChannel} = require('../../html/js/measured_track_coverage');
+const {aggregate, compactBasis, unionBasis, kioskAssociationChannel} = require('../../html/js/measured_track_coverage');
 const {compactNodeStatistics, combineNodeStatistics} = require('../../api/node-federation');
 const measuredBasis = index => ({version: 1, complete: true, aircraft: [{hex: 'abc123',
   eligible: [[0, 100000]], scored: process.env.VECTORWARP_COVERAGE_INCOMPLETE === '1' ? [] : [[0, 100000]], measured: [
@@ -38,10 +38,14 @@ module.exports = function statisticsKioskFixture(url, config, singleChannel = fa
       {id:'hp',label:'HP',local:false}, {id:'display',label:'Display',role:'coordinator'}])]};
   if (endpoint === '/api/federation/statistics-summary') return combineNodeStatistics([
     {id:'display',role:'coordinator',available:false,channels:[],passes:[]},
-    ...[['local',counts.slice(0,3)],['hp',counts.slice(3)]].map(([id,selected]) =>
-      compactNodeStatistics({id,label:id}, {radar:'receiving',
+    ...[['local',counts.slice(0,3)],['hp',counts.slice(3)]].map(([id,selected]) => {
+      const rows = channels(selected);
+      const compact = {measured_track_basis: compactBasis(unionBasis(rows.map(row => row.measured_track_basis))),
+        channels: rows.map(({measured_track_basis, ...row}) => row)};
+      return compactNodeStatistics({id,label:id}, {radar:'receiving',
         processorFresh:!(id === 'hp' && process.env.VECTORWARP_COVERAGE_MISSING_NODE === '1'),
-        processor:{state:'live'}}, {}, {channels:channels(selected)}))]);
+        processor:{state:'live'}}, {}, compact);
+    })]);
   if (endpoint === '/api/system/status') return {serverId:'statistics-kiosk-fixture',
     radar:'receiving',processor:{state:'live'},processorFresh:!(remote && process.env.VECTORWARP_COVERAGE_MISSING_NODE === '1'),adsb:'receiving',adsbEnabled:true};
   if (endpoint === '/api/illuminators/live' && singleChannel)

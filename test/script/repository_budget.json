@@ -9539,6 +9539,41 @@
         "context_tokens:runtime-api": [120551, 120692],
         "context_imports:runtime-api": [49, 48]
       }
+    },
+    {
+      "owner": "2026-11-26 release owner canonical compact union review",
+      "purpose": "Keep three-channel federation evidence below the existing one-MiB transport cap by reusing the exact interval-union owner once per node; preserve full local bases and identical cross-node coverage.",
+      "rejected_reuse": "Scalar totals and hashes cannot reproduce overlapping cross-node intervals. Raising the cap, truncating intervals or adding percentages would obscure the actual transport defect or change coverage semantics.",
+      "cleanup_plan": "The aggregation owner now also emits the compact node union. Preserve full-local and mixed-peer parity, sparse fractional overlaps, incomplete evidence, real three-channel HTTP and unchanged oversize rejection regressions.",
+      "changes": {
+        "context_characters:build-release/contracts": [385897, 385941],
+        "context_characters:evidence-api": [311594, 311701],
+        "context_characters:evidence-api/contracts": [104354, 105056],
+        "context_characters:installation/contracts": [248876, 248920],
+        "context_characters:operational-tools/contracts": [522280, 522324],
+        "context_characters:production": [7166380, 7167654],
+        "context_characters:runtime-api": [487862, 488327],
+        "context_characters:runtime-api/contracts": [891495, 892304],
+        "context_characters:ui-presentation": [296055, 296757],
+        "context_lines:evidence-api": [5515, 5517],
+        "context_lines:evidence-api/contracts": [1796, 1807],
+        "context_lines:production": [132357, 132376],
+        "context_lines:runtime-api": [8728, 8734],
+        "context_lines:runtime-api/contracts": [15391, 15404],
+        "context_lines:ui-presentation": [3281, 3292],
+        "context_tokens:build-release/contracts": [91656, 91675],
+        "context_tokens:evidence-api": [71932, 71966],
+        "context_tokens:evidence-api/contracts": [25833, 25995],
+        "context_tokens:installation/contracts": [58793, 58812],
+        "context_tokens:operational-tools/contracts": [131266, 131285],
+        "context_tokens:production": [1794895, 1795201],
+        "context_tokens:runtime-api": [120692, 120802],
+        "context_tokens:runtime-api/contracts": [212249, 212445],
+        "context_tokens:ui-presentation": [90855, 91017],
+        "lines:api": [26826, 26834],
+        "lines:html": [14227, 14238],
+        "oversized_bytes:api/server.js": [138043, 138087]
+      }
     }
   ],
   "context_snapshot": {

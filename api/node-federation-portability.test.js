@@ -99,7 +99,7 @@ async function peer(t, id = 'research-peer') {
       return res.end(JSON.stringify({associations: [{hex: 'abc123', tracked: true,
         channels: ['primary'], tracked_cpis: 2}]}));
     }
-    if (pathname === '/api/live-scorecard/association-basis') return res.end(JSON.stringify({
+    if (pathname === '/api/live-scorecard/association-basis') return res.end(JSON.stringify(state.scorecard || {
       current_setup_lifetime: {eligible_passes: 4, tracked_passes: 2}}));
     if (pathname === '/api/association/passes') return res.end('{"passes":[]}');
     if (pathname === '/api/timing') return res.end('{"cpi":100}');
@@ -116,6 +116,57 @@ async function portal(t, filename) {
   app.get('/api/live-aircraft-associations', (_req, res) => res.json({associations: []}));
   return listener;
 }
+
+test('three-channel HTTP federation keeps exact node-wide coverage below the existing cap', async t => {
+  const coverage = require('../html/js/measured_track_coverage');
+  const {MultiIlluminatorEvidence} = require('./multi-illuminator-evidence');
+  const basis = {version: 1, complete: true, excluded_passes: 0,
+    aircraft: Array.from({length: 40}, (_, n) => ({hex: n.toString(16).padStart(6, '0'),
+      eligible: [[0, 2400000]], scored: [[0, 2400000]],
+      measured: Array.from({length: 2400}, (_, i) => [i * 1000, i * 1000 + 250])}))};
+  const policy = 'a'.repeat(64);
+  const statistics = {associationStatus: () => ({updated_at: 1,
+      evaluation_policy_hash: policy, current_setup_lifetime: {
+        measured_track_coverage: coverage.aggregate([basis]), cpi_exposure: {eligible_cpis: 4800}}}),
+    measuredTrackBasis: () => basis, liveStatus() { return this.associationStatus(); },
+    associationPasses: () => []};
+  const multi = Object.create(MultiIlluminatorEvidence.prototype);
+  multi.lanes = new Map(['one', 'two', 'three'].map(id => [id,
+    {illuminator: {id}, exact: statistics, operational: statistics}]));
+  const full = multi.associationBasis();
+  const compact = multi.associationBasis({compact: true});
+  // The producer's policy is normally supplied by the statistics owner.
+  for (const channel of compact.channels) channel.association_statistics.evaluation_policy_hash = policy;
+  assert.ok(Buffer.byteLength(JSON.stringify(full.channels.map(channel =>
+    coverage.compactBasis(channel.measured_track_basis)))) > 1024 * 1024);
+  assert.ok(Buffer.byteLength(JSON.stringify(compact)) < 1024 * 1024);
+  assert.deepEqual(full.channels.map(channel => channel.measured_track_basis), [basis, basis, basis]);
+  assert.ok(compact.channels.every(channel => !('measured_track_basis' in channel) && channel.measured_track_coverage));
+  const remote = await peer(t, 'coverage-peer'); remote.state.scorecard = compact;
+  const filename = registryFile(t, [{id: 'coverage-peer', expectedIdentity: 'coverage-peer',
+    label: 'Three-channel peer', url: remote.origin}]);
+  const previous = process.env.VECTORWARP_NODE_ROLE;
+  process.env.VECTORWARP_NODE_ROLE = 'coordinator';
+  let local;
+  try { local = await portal(t, filename); }
+  finally { if (previous === undefined) delete process.env.VECTORWARP_NODE_ROLE;
+    else process.env.VECTORWARP_NODE_ROLE = previous; }
+  const summary = (await request(local.origin, '/api/federation/statistics-summary')).value;
+  assert.equal(summary.health.nodes_available, 1);
+  assert.deepEqual(summary.measured_track_coverage,
+    coverage.aggregate(full.channels.map(channel => channel.measured_track_basis)));
+  assert.equal(JSON.stringify(summary).includes('measured_track_basis'), false);
+  remote.state.scorecard = {oversized: 'x'.repeat(1024 * 1024)};
+  // A fresh coordinator has no cached healthy evidence to hide rejection.
+  process.env.VECTORWARP_NODE_ROLE = 'coordinator';
+  let fresh;
+  try { fresh = await portal(t, filename); }
+  finally { if (previous === undefined) delete process.env.VECTORWARP_NODE_ROLE;
+    else process.env.VECTORWARP_NODE_ROLE = previous; }
+  const rejected = (await request(fresh.origin, '/api/federation/statistics-summary')).value;
+  assert.equal(rejected.health.nodes_available, 0);
+  assert.equal(rejected.measured_track_coverage.available, false);
+});
 
 test('migration evidence uses authenticated bounded read-only federation transport', async t => {
   const state = {identity: 'migration-peer', oversized: false, authorization: null};

@@ -388,6 +388,8 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
     tracking_status: tracking.status || 'unknown',
     evidence_status: evidence.status || 'unknown',
     evidence_errors: (evidence.channels || []).flatMap(channel => channel.errors || []),
+    ...(scorecard?.measured_track_basis === undefined ? {} :
+      {measured_track_basis: scorecard.measured_track_basis}),
     channels: channels.map(row => ({...row,
       node: entry.id, key: `${entry.id}:${row.id}`})), association, passes,
     timing: {cpi_ms: Number(timing?.cpi) || null,
@@ -484,7 +486,11 @@ function combineNodeStatistics(nodes, cooperative = null) {
   const channels = sourceChannels.map(({measured_track_basis, ...channel}) => channel);
   const policyCompatible = channels.length > 0 && channels.every(row => /^[0-9a-f]{64}$/.test(row.evaluation_policy_hash || '')) &&
     new Set(channels.map(row => row.evaluation_policy_hash)).size === 1;
-  let coverage = measuredCoverage.aggregate(sourceChannels.map(row => row.measured_track_basis));
+  // New compact peers send one exact node-wide union; full/older peers retain
+  // per-channel bases. Never add scalar percentages or round sparse intervals.
+  let coverage = measuredCoverage.aggregate(available.flatMap(node =>
+    node.measured_track_basis === undefined ? (node.channels || []).map(row => row.measured_track_basis) :
+      [node.measured_track_basis]));
   if (!coverage.available || !policyCompatible || radarNodes.some(node =>
     !node.available || node.stale || !node.channels?.length)) coverage = {
     ...measuredCoverage.aggregate([]),
@@ -552,7 +558,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
     cooperative_tracks: {active: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_ACTIVE').length,
       coasting: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_COASTING').length,
       candidates: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_CANDIDATE').length},
-    nodes: available.map(({passes, ...node}) => ({...node,
+    nodes: available.map(({passes, measured_track_basis, ...node}) => ({...node,
       channels: channels.filter(channel => channel.node === node.id), pass_count: passes.length})), channels};
 }
 

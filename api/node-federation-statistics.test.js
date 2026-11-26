@@ -267,6 +267,20 @@ test('compact coverage transport yields exact cross-node union and fails closed 
   assert.equal(result.channels[0].cpi_exposure.operationally_tracked_cpis, 80);
   assert.equal(result.channels[0].cpi_exposure.eligible_seconds, 100);
   assert.equal(JSON.stringify(result).includes('measured_track_basis'), false);
+  const nodeWide = structuredClone(nodes);
+  for (const entry of nodeWide) {
+    entry.measured_track_basis = coverage.compactBasis(coverage.unionBasis(
+      entry.channels.map(channel => channel.measured_track_basis)));
+    for (const channel of entry.channels) delete channel.measured_track_basis;
+  }
+  assert.deepEqual(combineNodeStatistics(nodeWide).measured_track_coverage, result.measured_track_coverage);
+  assert.deepEqual(combineNodeStatistics([nodeWide[0], nodes[1]]).measured_track_coverage,
+    result.measured_track_coverage, 'Mixed full and compact peers preserve the same interval union');
+  assert.equal(JSON.stringify(combineNodeStatistics(nodeWide)).includes('measured_track_basis'), false);
+  for (const bad of [null, {}, {...nodeWide[0].measured_track_basis, available: false}]) {
+    const changed = structuredClone(nodeWide); changed[0].measured_track_basis = bad;
+    assert.equal(combineNodeStatistics(changed).measured_track_coverage.available, false);
+  }
   const partial = structuredClone(nodes); partial[0].channels[0].measured_track_basis.complete = false;
   assert.equal(combineNodeStatistics(partial).measured_track_coverage.scored_fraction, .4);
   for (const mutate of [rows => { delete rows[1].channels[0].measured_track_basis; },
