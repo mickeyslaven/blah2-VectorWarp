@@ -9523,6 +9523,22 @@
         "context_tokens:production": [1794623, 1794754],
         "context_tokens:runtime-api": [120420, 120551]
       }
+    },
+    {
+      "owner": "2026-11-26 shared canonical cycle batch review correction",
+      "purpose": "Share exact native cycle header/record validation with the bounded operational capture reader, rejecting reordered sequences, time overlap and counter regressions before selecting retirement totals.",
+      "rejected_reuse": "A valid-looking array tail is not proof it is the newest canonical record. Reuse ledger field/capture validation instead of a separate partial federation parser; do not enable recording or require a durable research ledger.",
+      "cleanup_plan": "Preserve reordered-newest-nonzero/oldest-zero, duplicate/gapped/invalid sequences, reversed/overlapping time, clock overflow, counter reset and unavailable capture regressions, plus existing real-filesystem ledger tests. Exact import reduction is ratcheted downward.",
+      "changes": {
+        "lines:api": [26803, 26826],
+        "context_characters:production": [7165683, 7166380],
+        "context_characters:runtime-api": [487165, 487862],
+        "context_lines:production": [132334, 132357],
+        "context_lines:runtime-api": [8705, 8728],
+        "context_tokens:production": [1794754, 1794895],
+        "context_tokens:runtime-api": [120551, 120692],
+        "context_imports:runtime-api": [49, 48]
+      }
     }
   ],
   "context_snapshot": {

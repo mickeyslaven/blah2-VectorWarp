@@ -75,6 +75,9 @@ must meet the binding's reviewed cadence bound (at most600 ms). These maxima
 retain failures between polls. Backlog must remain bounded.
 Retired CPI/sample counts come from the canonical native cycle evidence's latest
 `captureAfter`, using exact available counters and a fault-free evidence schema.
+The existing cycle contract validates bounded retention, exact anchors and positive
+contiguous sequences, ordered non-overlapping times, and monotonic capture counters
+before selecting the latest record. Reordering cannot hide a newer retirement.
 Missing, faulted or inexact values remain unknown and fail acceptance; absent
 legacy flat telemetry fields are never evidence of zero retired work.
 

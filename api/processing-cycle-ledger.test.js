@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const {ProcessingCycleLedger} = require('./processing-cycle-ledger');
+const {ProcessingCycleLedger, latestCaptureEvidence} = require('./processing-cycle-ledger');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-cycle-ledger-'));
 let serial = 0;
 const capture = (accepted = '9007199254740993') => ({available: true, epoch: '7',
@@ -19,6 +19,32 @@ const record = (sequence = 1) => ({sequence: String(sequence),
   captureAfter: capture(String(9007199254740993n + BigInt(sequence)))});
 const frame = (...records) => ({cycleEvidence: {schema: 'vectorwarp-processing-cycles-v1',
   anchorMonoNs: '1000000', anchorUtcNs: '1795500000000000001', fault: '', records}});
+{
+  const older = record(), newer = record(2);
+  newer.captureAfter.retiredCpis = '1';
+  assert.equal(latestCaptureEvidence(frame(older, newer)).retiredCpis, '1');
+  assert.equal(latestCaptureEvidence(frame(newer, older)), null,
+    'a reordered batch cannot hide newest retirement behind an older zero tail');
+  const mutations = [
+    value => { value.cycleEvidence.records[1].sequence = '1'; },
+    value => { value.cycleEvidence.records[1].sequence = '3'; },
+    value => { value.cycleEvidence.records[0].sequence = '0'; },
+    value => { value.cycleEvidence.records[0].sequence = 1; },
+    value => { value.cycleEvidence.records[1].startMonoNs = '2000000'; },
+    value => { value.cycleEvidence.records[1].endMonoNs = '3000000'; },
+    value => { value.cycleEvidence.records[0].startMonoNs = '1'; },
+    value => { value.cycleEvidence.anchorUtcNs = '18446744073709551615'; },
+    value => { value.cycleEvidence.records[0].captureAfter.retiredCpis = '1'; },
+    value => { value.cycleEvidence.records[1].captureAfter.available = false; },
+    value => { value.cycleEvidence.records = []; },
+    value => { value.cycleEvidence.records = Array.from({length: 9}, (_, index) => record(index + 1)); },
+  ];
+  for (const mutate of mutations) {
+    const value = frame(record(), record(2));
+    mutate(value);
+    assert.equal(latestCaptureEvidence(value), null, String(mutate));
+  }
+}
 const create = options => new ProcessingCycleLedger({directory: path.join(root, String(++serial)),
   minimumFreeBytes: 1, ...options});
 async function rejected(change, reason, options) {

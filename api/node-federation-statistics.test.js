@@ -99,8 +99,13 @@ test('reports queued work rather than the receiver in-flight CPI', () => {
 
 test('retired work comes from canonical exact capture counters, never absent legacy fields', () => {
   const summarize = cycleEvidence => compactNodeStatistics({id: 'site'}, {}, {cycleEvidence}, {}).timing;
-  const evidence = {schema: 'vectorwarp-processing-cycles-v1', fault: '', records: [
-    {captureAfter: {available: true, retiredCpis: '2', retiredSamples: '2400000'}}]};
+  const capture = {available: true, epoch: '1', discontinuities: '0', requalifications: '0',
+    retiredCpis: '0', retiredSamples: '0',
+    lanes: [{acceptedSamples: '2400000', droppedSamples: '0', discardedSamples: '0'}]};
+  const evidence = {schema: 'vectorwarp-processing-cycles-v1', anchorMonoNs: '1', anchorUtcNs: '1',
+    fault: '', records: [{sequence: '1', startMonoNs: '2', endMonoNs: '3', drainBatches: '0',
+      outcome: 'completed', captureBefore: capture,
+      captureAfter: {...capture, retiredCpis: '2', retiredSamples: '2400000'}}]};
   assert.equal(summarize(evidence).retired_cpis, 2);
   assert.equal(summarize(evidence).retired_samples, 2400000);
   for (const bad of [undefined, {...evidence, fault: 'counter-overflow'}, {...evidence, records: []},
