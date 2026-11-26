@@ -151,6 +151,22 @@ Pilot rejection clears only the coherent history; the matching corrected
 power history remains available. Move-only rate results own their fallback
 maps, so later appends do not invalidate previously returned results.
 
+The optional `temporal.sourceDomain` replay ablation applies the same minimum
+delay and absolute-Doppler exclusions to **every historical source sample**.
+For example, a newest 20 Hz cell with a +1-bin path can otherwise collect
+20, 10, 0 and -10 Hz at four CPIs despite a 15 Hz output exclusion. Fractional
+coherent sampling also requires every interpolation tap inside the delay
+domain. Explicit finite axes and contiguous delay bins are required. The
+domain is disabled by default; no live configuration enables this ablation.
+
+`coherentAt` and `noncoherentAt` expose independent, uncalibrated families;
+`auditPowerPath` delegates read-only selected-path inspection to the canonical
+power owner. The retained `hybridAt` view is availability-based replacement,
+not a maximum and not a guarantee of retaining stronger noncoherent evidence.
+A future standardized family maximum needs a newly calibrated full joint
+threshold. Preserving the NC statistic cannot guarantee preserving every old
+NC detection while adding new detections at unchanged false-alarm exposure.
+
 The composed CLI accepts `--migration-rates 0,RATE,...` immediately before the
 snapshot list. It reports rate index, delay rate, interpolation noise gain,
 fallback kind, and per-rate and combined trial counts. These counts include

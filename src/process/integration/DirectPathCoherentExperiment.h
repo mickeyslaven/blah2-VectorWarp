@@ -67,26 +67,33 @@ public:
       bool coherent = false;
       bool valid = false;
     };
-    // A view, never a detector map: coherent and fallback selections require
-    // joint empirical-null calibration before any detection/confirmation use.
-    Cell hybridAt(std::size_t bank, uint64_t cell) const {
+    // Independent uncalibrated families. Consumers must not compare raw power
+    // or replace NC merely because a coherent path is numerically available.
+    Cell coherentAt(std::size_t bank, uint64_t cell) const {
+      if (usePowerFallback(bank, cell)) return {};
+      const auto lineage = banks[bank].lineageAt(cell);
+      if (!lineage.depth) return {};
+      const auto columns = banks[bank].map->get_nCols();
+      const auto value = banks[bank].map->data[cell / columns][cell % columns];
+      const double power = std::norm(value);
+      return std::isfinite(power) ? Cell{value, power, lineage, true, true} : Cell{};
+    }
+    Cell noncoherentAt(std::size_t bank, uint64_t cell) const {
       if (bank >= banks.size()) return {};
       const auto& fallback = noncoherent.banks[bank + 1];
-      if (!usePowerFallback(bank, cell)) {
-        const auto coherentLineage = banks[bank].lineageAt(cell);
-        if (!coherentLineage.depth) return {};
-        const auto columns = banks[bank].map->get_nCols();
-        const auto value = banks[bank].map->data[cell / columns][cell % columns];
-        const double power = std::norm(value);
-        if (std::isfinite(power))
-          return {value, power, coherentLineage, true, true};
-      }
       auto lineage = fallback.lineageAt(cell);
       if (!lineage.depth) return {};
       attachRanges(lineage);
       const auto columns = fallback.map->get_nCols();
       return {fallback.map->data[cell / columns][cell % columns],
         fallback.detectorPower[cell], lineage, false, true};
+    }
+    // Legacy availability-based view, not a maximum or a calibrated detector.
+    // Retained for exact frozen replay compatibility; new comparisons retain
+    // both families and calibrate their full joint statistic independently.
+    Cell hybridAt(std::size_t bank, uint64_t cell) const {
+      const auto coherent = coherentAt(bank, cell);
+      return coherent.valid ? coherent : noncoherentAt(bank, cell);
     }
   private:
     void attachRanges(EvidenceLineage& lineage) const {
@@ -105,7 +112,7 @@ public:
     : config_(std::move(config)), coherent_(config_.temporal),
       noncoherent_({config_.temporal.maximumCpis, config_.temporal.delayMotionBins,
         config_.temporal.dopplerMotionBins, config_.temporal.delayDriftPerHz,
-        config_.fallbackBeamCount, config_.fallbackBeamTolerance}) {
+        config_.fallbackBeamCount, config_.fallbackBeamTolerance, config_.temporal.sourceDomain}) {
     if (!replayInput || !config_.migrationRates.empty())
       throw std::invalid_argument("Direct-path coherent experiment is replay-only");
     if (config_.channelIds.empty() || config_.channelIds.size() > 8 ||
@@ -129,6 +136,9 @@ public:
     if (std::abs(norm - 1) > 1e-9)
       throw std::invalid_argument("Spatial coefficients must have unit norm");
   }
+
+  TemporalEvidence::PathAudit auditPowerPath(uint64_t cell, uint32_t depth,
+    int dr, int dc) const { return noncoherent_.auditPath(cell, depth, dr, dc, false); }
 
   // Use ONE fixed physical raw channel before cancellation. Multiplying this
   // correlation by the learned eigenvector would cancel the reference gauge

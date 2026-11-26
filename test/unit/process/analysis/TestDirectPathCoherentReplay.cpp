@@ -483,6 +483,64 @@ void fractionalComplexRange() {
     config.beamCount=2;rejects([&]{Engine refused(config);},"Fractional range mixes selected-beam identities");
   }
 }
+
+void sourceDomainPaths() {
+  using NC = blah2::integration::TemporalEvidence;
+  using Coherent = blah2::integration::CoherentPathEvidence;
+  NC::Config nc; nc.delayMotionBins=1; nc.dopplerMotionBins=1;
+  auto maskedNc=nc; maskedNc.sourceDomain={true,5,15};
+  Coherent::Config coherent; coherent.delayMotionBins=1; coherent.dopplerMotionBins=1;
+  coherent.minimumCoherence=0; coherent.refineDopplerPhase=true; coherent.cpiHopSeconds=.1;
+  auto maskedCoherent=coherent; maskedCoherent.sourceDomain=maskedNc.sourceDomain;
+  NC baseline(nc), bounded(maskedNc); Coherent original(coherent), boundedCoherent(maskedCoherent);
+  Map<std::complex<double>> map(65,32);
+  map.delay.clear(); map.doppler.clear();
+  for(int c=0;c<32;++c)map.delay.push_back(c);
+  for(int r=0;r<65;++r)map.doppler.push_back((r-32)*10.);
+  for(auto& row:map.data)std::fill(row.begin(),row.end(),std::complex<double>{});
+  map.data[32][12]=100; // Stationary clutter at excluded zero Doppler.
+  map.data[36][0]=100;  // Excluded direct-path delay, searchable Doppler.
+  map.data[40][24]=3;   // Independent in-domain stationary echo at80Hz.
+  for(uint64_t sequence=1;sequence<=8;++sequence) {
+    auto raw=baseline.process(map,1,sequence), safe=bounded.process(map,1,sequence);
+    auto c=original.process(map,1,sequence,(sequence-1)*100,1000);
+    auto s=boundedCoherent.process(map,1,sequence,(sequence-1)*100,1000);
+    if(sequence!=4&&sequence!=8)continue;
+    const size_t b=sequence==4?1:2, cell=34*32+12; // newest20Hz
+    const auto path=baseline.auditPath(cell,uint32_t(sequence),1,0,false);
+    check(path.valid&&path.mean==10000./sequence,
+      "Zero-Doppler control no longer traverses20,10,0,-10Hz");
+    check(!bounded.auditPath(cell,uint32_t(sequence),1,0,false).valid,
+      "Historical excluded Doppler entered bounded NC path");
+    check(raw.banks[b+1].detectorPower[cell]>=10000./sequence&&
+      c[b].valid[cell]&&std::norm(c[b].map->data[34][12])>=10000./sequence-1e-9,
+      "Default control unexpectedly changed canonical source-path eligibility");
+    check(safe.banks[b+1].detectorPower[cell]==0&&!s[b].valid[cell],
+      "Source-domain ablation pulled excluded clutter into a searchable output");
+    const size_t echo=40*32+24;
+    check(safe.banks[b+1].detectorPower[echo]==9&&s[b].valid[echo]&&
+      std::abs(std::norm(s[b].map->data[40][24])-9*sequence)<1e-10,
+      "Source-domain ablation removed valid stationary echo integration");
+    if(sequence==8)check(raw.banks[3].detectorPower[36*32+7]>1000&&
+      safe.banks[3].detectorPower[36*32+7]==0,
+      "Historical excluded delay entered bounded NC path");
+  }
+  // Fractional kernels must not use excluded delay taps, even when their
+  // center lies inside the domain. The opt-in domain validates explicit axes.
+  maskedCoherent.interpolateDelay=true; maskedCoherent.delayDriftPerHz=-.01;
+  maskedCoherent.delayMotionBins=maskedCoherent.dopplerMotionBins=0;
+  auto unmaskedCoherent=maskedCoherent; unmaskedCoherent.sourceDomain.enabled=false;
+  Coherent fractional(maskedCoherent), unmaskedFractional(unmaskedCoherent);
+  std::fill(map.data[40].begin(),map.data[40].end(),std::complex<double>{1,0});
+  for(uint64_t sequence=1;sequence<=2;++sequence) {
+    auto result=fractional.process(map,1,sequence,(sequence-1)*100,1000);
+    auto control=unmaskedFractional.process(map,1,sequence,(sequence-1)*100,1000);
+    if(sequence==2)check(control[0].valid[40*32+8]&&!result[0].valid[40*32+8]&&result[0].valid[40*32+16],
+      "Fractional source support crossed the excluded delay boundary");
+  }
+  auto invalid=map; invalid.delay={0,31}; NC refused(maskedNc);
+  rejects([&]{refused.process(invalid,1,1);},"Source-domain ablation accepted implicit delay axes");
+}
 }
 
 int main() {
@@ -510,7 +568,7 @@ int main() {
     fractionalMaps(directory);
     hybridReplay(directory);
     composedMigration(directory);
-    overlappingFractionalReader(directory);fractionalPhase();cachedPhaseParity();cachedPhaseParity(true);cachedPhaseParity(true,-1);phaseGridAndPowerControls();fractionalComplexRange();
+    overlappingFractionalReader(directory);fractionalPhase();cachedPhaseParity();cachedPhaseParity(true);cachedPhaseParity(true,-1);phaseGridAndPowerControls();fractionalComplexRange();sourceDomainPaths();
     const auto one=directory/"one.vwrps", two=directory/"two.vwrps", three=directory/"three.vwrps"; write(one,firstBytes); write(two,secondBytes); write(three,thirdBytes);
     rejects([&]{cr::readSidecar(one);}, "missing sidecar accepted");
     cr::writeSidecarExclusive(one,firstSidecar);

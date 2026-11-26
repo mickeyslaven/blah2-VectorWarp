@@ -9899,6 +9899,27 @@
         "context_tokens:production": [1802918, 1803560],
         "lines:src": [46619, 46664]
       }
+    },
+    {
+      "owner": "2026-11-26 offline source-domain path review",
+      "purpose": "Add one shared opt-in source-domain contract to canonical noncoherent and coherent path owners, plus independent family views and bounded read-only path audit for calibration diagnostics. Domain defaults remain unchanged; explicitly zero invalid coherent output cells as required by existing regressions. No detector promotion or new pipeline.",
+      "rejected_reuse": "Masking only the newest output admits historical zero-Doppler and direct-path samples. A second integrator, per-cell raw-power family maximum, and default live behavior changes were rejected.",
+      "cleanup_plan": "Keep the ablation disabled unless explicitly configured, require complete fractional interpolation support inside the domain, retain independent family lineage, and gate future selection changes on calibrated joint exposure and independent pass replay.",
+      "changes": {
+        "context_characters:native-detection/contracts": [59099, 61018],
+        "context_characters:native-integration": [114312, 117442],
+        "context_characters:operational-tools/contracts": [548656, 549308],
+        "context_characters:production": [7199399, 7202529],
+        "context_lines:native-detection/contracts": [1425, 1460],
+        "context_lines:native-integration": [2270, 2323],
+        "context_lines:operational-tools/contracts": [9572, 9582],
+        "context_lines:production": [133035, 133088],
+        "context_tokens:native-detection/contracts": [13837, 14306],
+        "context_tokens:native-integration": [28278, 29031],
+        "context_tokens:operational-tools/contracts": [137457, 137596],
+        "context_tokens:production": [1803560, 1804313],
+        "lines:src": [46664, 46717]
+      }
     }
   ],
   "context_snapshot": {

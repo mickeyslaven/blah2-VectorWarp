@@ -46,6 +46,33 @@ struct EvidenceMotion
   int8_t doppler = 0;
 };
 
+// Opt-in replay ablation: every source sample, not only the newest output,
+// must lie in this immutable searchable domain. Defaults preserve live math.
+struct EvidenceSourceDomain
+{
+  bool enabled = false;
+  int minimumDelay = 0;
+  double minimumAbsDopplerHz = 0;
+  bool allowsDoppler(double hz) const
+  { return !enabled || std::abs(hz) >= minimumAbsDopplerHz; }
+  bool contains(int delay, double hz) const
+  { return !enabled || (delay >= minimumDelay && allowsDoppler(hz)); }
+  void validate(const std::deque<int>& delay, const std::deque<double>& doppler,
+    uint32_t rows, uint32_t columns) const
+  {
+    if (!enabled) return;
+    if (!std::isfinite(minimumAbsDopplerHz) || minimumAbsDopplerHz < 0 ||
+        delay.size() != columns || doppler.size() != rows ||
+        std::any_of(doppler.begin(), doppler.end(), [](double hz) { return !std::isfinite(hz); }))
+      throw std::invalid_argument("Source domain requires finite explicit axes");
+    for (uint32_t column = 1; column < columns; ++column)
+      if (int64_t(delay[column]) != int64_t(delay[0]) + column)
+        throw std::invalid_argument("Source domain requires contiguous delay bins");
+  }
+  int firstColumn(const std::deque<int>& delay) const
+  { return enabled ? int(std::lower_bound(delay.begin(), delay.end(), minimumDelay) - delay.begin()) : 0; }
+};
+
 // Experimental confirmation may credit only disjoint CPI windows. This is
 // deliberately stricter than finding one new CPI in a rolling window: one old
 // impulse plus fresh background must not manufacture persistence.
@@ -145,6 +172,7 @@ public:
     uint32_t dopplerMotionBins = 4;
     double delayDriftPerHz = 0;
     uint32_t beamCount = 0, beamTolerance = UINT32_MAX;
+    EvidenceSourceDomain sourceDomain{};
   };
 
   struct BankResult
@@ -246,6 +274,7 @@ public:
       const int cc = track_before_detect::delayPathColumn(int(column), dc, age,
         baseline ? 0 : config_.delayDriftPerHz, doppler_[row], doppler_[rr]);
       if (cc < 0 || cc >= int(columns_)) return result;
+      if (config_.sourceDomain.enabled && !config_.sourceDomain.contains(delay_[cc], doppler_[rr])) return result;
       const uint64_t source = uint64_t(rr) * columns_ + uint32_t(cc);
       const auto sample = read(age, source);
       if (!std::isfinite(sample.first) || sample.first < 0) return result;
@@ -282,6 +311,7 @@ public:
          sequence != frames_.back().sequence + 1)))
       throw std::invalid_argument(
         "Temporal evidence epoch, sequence, or geometry changed");
+    config_.sourceDomain.validate(map.delay, map.doppler, rows, columns);
     rows_ = rows;
     columns_ = columns;
     delay_ = map.delay;
@@ -350,6 +380,8 @@ public:
       beamByAge[age] = frames_[frames_.size() - 1 - age].beams.data();
     }
     const auto compatible = [&](uint64_t cell, uint32_t age, uint64_t older) {
+      if (config_.sourceDomain.enabled && !config_.sourceDomain.contains(
+          delay_[older % columns], doppler_[older / columns])) return false;
       if (!beamGated) return true;
       const uint32_t left = beamByAge[0][cell], right = beamByAge[age][older];
       if (!left || !right) return true;
@@ -358,7 +390,9 @@ public:
     };
     const uint32_t readyDepth = frames_.size() >= 8 ? 8 : frames_.size() >= 4 ? 4 : 2;
     const bool stationary = !config_.delayMotionBins &&
-      !config_.dopplerMotionBins && config_.delayDriftPerHz == 0 && !beamGated;
+      !config_.dopplerMotionBins && config_.delayDriftPerHz == 0 && !beamGated &&
+      !config_.sourceDomain.enabled;
+    const int firstSourceColumn = config_.sourceDomain.firstColumn(delay_);
     if (stationary && result.banks[0].ready) {
       writeStationary(result, powerByAge, rows, columns, budget);
       return result;
@@ -412,9 +446,10 @@ public:
               if (budget) budget->check();
               const int rr = int(row) - dr * int(age);
               if (rr < 0 || rr >= int(rows)) break;
+              if (!config_.sourceDomain.allowsDoppler(doppler_[rr])) break;
               const int shift = -dc * int(age) +
                 delayOffsets[dr + int(config_.dopplerMotionBins)][age];
-              first = std::max(first, -shift);
+              first = std::max(first, firstSourceColumn - shift);
               last = std::min(last, int(columns) - shift);
               if (first >= last) break;
               const auto* source = powerByAge[age] + uint64_t(rr) * columns;

@@ -53,6 +53,7 @@ public:
     bool interpolateDelay = false;
     double heterodyneCenterHz = 0;
     bool measureTiming = false;
+    EvidenceSourceDomain sourceDomain{};
   };
 
   struct Bank
@@ -133,6 +134,7 @@ public:
       throw std::invalid_argument("Coherent temporal evidence lineage changed");
     if (!sampleRateHz)
       throw std::invalid_argument("Coherent temporal evidence sample rate invalid");
+    config_.sourceDomain.validate(map.delay, map.doppler, rows, columns);
     if (config_.interpolateDelay) {
       if (columns > 4096 || uint64_t(rows) * columns > 65536 || map.delay.size() != columns ||
           std::abs(config_.heterodyneCenterHz) > .5 * sampleRateHz)
@@ -263,6 +265,7 @@ private:
   std::unique_ptr<Map<std::complex<double>>> makeMap() const
   {
     auto result = std::make_unique<Map<std::complex<double>>>(rows_, columns_);
+    for (auto& row : result->data) std::fill(row.begin(), row.end(), std::complex<double>{});
     result->delay = delay_; result->doppler = doppler_; return result;
   }
 
@@ -328,6 +331,7 @@ private:
     RowPaths result;
     result.paths.reserve((2 * config_.dopplerMotionBins + 1) * (2 * config_.delayMotionBins + 1));
     result.samples.reserve((2 * config_.dopplerMotionBins + 1) * depth);
+    const int firstSourceColumn = config_.sourceDomain.firstColumn(delay_);
     for (int dr = -int(config_.dopplerMotionBins); dr <= int(config_.dopplerMotionBins); ++dr) {
       std::array<const std::complex<double>*, 8> values{};
       std::array<int, 8> first{}, last{};
@@ -335,7 +339,9 @@ private:
       for (uint32_t age = 0; age < depth; ++age) {
         const int older = int(row) - dr * int(age);
         if (older < 0 || older >= int(rows_)) break;
+        if (!config_.sourceDomain.allowsDoppler(dopplerHz(uint32_t(older)))) break;
         values[age] = history[age]->cells.data() + uint64_t(older) * columns_;
+        first[age] = firstSourceColumn;
         last[age] = int(columns_); gain[age] = 1;
         if (!config_.interpolateDelay) continue;
         physical[age] = -config_.delayDriftPerHz * .5 *
@@ -344,6 +350,8 @@ private:
         const auto kernel = RangeMigrationReplay::prepareProfile(physical[age],
           config_.heterodyneCenterHz, history[age]->sampleRateHz);
         first[age] = std::max(0, int(std::ceil(RangeMigrationReplay::radius - physical[age])));
+        if (config_.sourceDomain.enabled)
+          first[age] = std::max(first[age], firstSourceColumn - int(kernel.firstOffset()));
         last[age] = std::min(int(columns_), int(std::ceil(double(columns_) - RangeMigrationReplay::radius - physical[age])));
         if (first[age] + physical[age] < RangeMigrationReplay::radius) ++first[age];
         if (last[age] - 1 + physical[age] + RangeMigrationReplay::radius >= columns_) --last[age];
@@ -357,7 +365,7 @@ private:
         Path path; path.dr = dr; path.dc = dc; path.last = int(columns_); path.noiseGain = 0;
         for (uint32_t age = 0; age < depth; ++age) {
           const int older = int(row) - dr * int(age);
-          if (older < 0 || older >= int(rows_)) { path.last = 0; break; }
+          if (older < 0 || older >= int(rows_) || !values[age]) { path.last = 0; break; }
           const int shift = config_.interpolateDelay ? -dc * int(age) : track_before_detect::delayPathColumn(0, dc, age,
             config_.delayDriftPerHz, dopplerHz(row), dopplerHz(uint32_t(older)));
           path.first = std::max(path.first, first[age] - shift);
