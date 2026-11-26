@@ -30,6 +30,26 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 REGRESSION_CHECKS = ("detections", "measurement-backed-track-continuity",
                      "false-track-controls", "cpi-deadlines", "capture-health")
 REGRESSION_RECEIPT_SCHEMA = 3
+WHOLE_PASS_MODE = "frozen-baseline-prospective-operational-v1"
+FUNCTIONAL_MODE = "bounded-functional-v1"
+
+
+def acceptance_mode(binding):
+    """Default claims never silently acquire a functional-only exception."""
+    mode = binding.get("evaluationMode", WHOLE_PASS_MODE)
+    if mode not in (WHOLE_PASS_MODE, FUNCTIONAL_MODE):
+        raise ValueError("unknown release acceptance mode")
+    if mode == FUNCTIONAL_MODE:
+        if (not isinstance(binding.get("functionalAuthorizationSha256"), str) or
+                not SHA256.fullmatch(binding["functionalAuthorizationSha256"]) or
+                not isinstance(binding.get("releaseVersion"), str) or
+                not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", binding["releaseVersion"]) or
+                any(not counter(binding.get(key)) or binding[key] == 0
+                    for key in ("candidateRunId", "candidateRunAttempt"))):
+            raise ValueError("functional acceptance requires exact one-release authorization")
+    elif "functionalAuthorizationSha256" in binding:
+        raise ValueError("functional authorization cannot substitute for whole-pass acceptance")
+    return mode
 
 
 def unique_object(pairs):
@@ -49,6 +69,7 @@ def load_binding(filename: str) -> dict:
     binding = json.loads(raw, object_pairs_hook=unique_object)
     if not isinstance(binding, dict):
         raise ValueError("release binding must be an object")
+    acceptance_mode(binding)
     nodes = binding.get("nodes")
     if binding.get("schema") != 3 or not isinstance(nodes, dict) or not nodes:
         raise ValueError("release requires schema 3 reviewed node bindings; start a fresh cohort")
@@ -163,8 +184,19 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
     processor. The reviewed policy and evaluator evidence are cryptographically
     tied to every declared package/config/qualification and the observed cohort.
     """
-    valid = (isinstance(receipt, dict) and receipt.get("schema") == REGRESSION_RECEIPT_SCHEMA and
-             receipt.get("evaluationMode") == "frozen-baseline-prospective-operational-v1" and
+    try:
+        mode = acceptance_mode(binding_receipt["expected"])
+    except ValueError:
+        return ["soak:regression-evidence-invalid"]
+    functional_claim = (isinstance(receipt, dict) and not any(key in receipt for key in
+        ("functionalAuthorizationSha256", "passYieldNonRegression", "windowSeconds"))) if mode != FUNCTIONAL_MODE else (isinstance(receipt, dict) and
+        receipt.get("functionalAuthorizationSha256") == binding_receipt["expected"]["functionalAuthorizationSha256"] and
+        receipt.get("passYieldNonRegression") == "not-evaluated" and
+        receipt.get("windowSeconds") == 600 and
+        finite_number(receipt.get("evaluationStartEpoch")) and finite_number(receipt.get("evaluatedThroughEpoch")) and
+        receipt["evaluatedThroughEpoch"] - receipt["evaluationStartEpoch"] >= 600)
+    valid = (functional_claim and isinstance(receipt, dict) and receipt.get("schema") == REGRESSION_RECEIPT_SCHEMA and
+             receipt.get("evaluationMode") == mode and
              receipt.get("bindingSha256") == binding_receipt["sha256"] and
              receipt.get("policySha256") == binding_receipt["expected"]["regressionPolicySha256"] and
              isinstance(receipt.get("nodes"), dict) and

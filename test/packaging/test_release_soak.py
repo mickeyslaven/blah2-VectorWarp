@@ -163,6 +163,7 @@ class ExactCandidatePromotion(unittest.TestCase):
             envelope["summary"]["latest"]["regressionEvidence"][key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
                 gate.receipt(envelope, run, SOURCE)
+
         for key in gate.monitor.REGRESSION_CHECKS:
             envelope, run, _ = fixture()
             envelope["summary"]["latest"]["regressionEvidence"]["nodes"]["hp"]["checks"][key]["accepted"] = False
@@ -172,6 +173,22 @@ class ExactCandidatePromotion(unittest.TestCase):
             with self.subTest(inconclusive=key), self.assertRaises(ValueError):
                 gate.receipt(envelope, run, SOURCE)
 
+    def test_functional_authorization_cannot_promote_another_version(self):
+        envelope, run, binding = fixture()
+        binding.update(evaluationMode=gate.monitor.FUNCTIONAL_MODE, releaseVersion="1.2.3",
+                       candidateRunId=123, functionalAuthorizationSha256="1" * 64)
+        raw = json.dumps(binding)
+        envelope["bindingJson"] = raw
+        bound = envelope["summary"]["releaseBinding"]
+        bound.update(expected=binding, sha256=hashlib.sha256(raw.encode()).hexdigest())
+        regression = envelope["summary"]["latest"]["regressionEvidence"]
+        regression.update(evaluationMode=gate.monitor.FUNCTIONAL_MODE,
+            bindingSha256=bound["sha256"], functionalAuthorizationSha256="1" * 64,
+            passYieldNonRegression="not-evaluated", windowSeconds=600)
+        self.assertEqual(gate.receipt(envelope, run, SOURCE, "1.2.3"), binding)
+        for version in (None, "1.2.4", "v1.2.3"):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "version mismatch"):
+                gate.receipt(envelope, run, SOURCE, version)
     def test_rebuild_or_deployment_mutation_cannot_replace_soaked_package(self):
         _, _, binding = fixture()
         name = binding["nodes"]["hp"]["packageFilename"]

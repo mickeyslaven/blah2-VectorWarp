@@ -59,7 +59,7 @@ class WorkflowContracts(unittest.TestCase):
     def test_release_cycle_evidence_is_gated_in_ci_and_packages(self):
         ordinary = (WORKFLOWS / "ci.yml").read_text()
         for suite in ("test/script/test_release_regression.py", "test/script/test_export_cycles.py",
-                      "test/script/test_operational_acceptance.py"):
+                      "test/script/test_operational_acceptance.py", "test/script/test_functional_acceptance.py"):
             self.assertIn(suite, ordinary)
         release = (WORKFLOWS / "release-packages.yml").read_text()
         self.assertIn("script/verify-release-ci.py", release)
@@ -328,6 +328,7 @@ class WorkflowContracts(unittest.TestCase):
                                 ("script", "test_observer_allocation_contract"))] + [
                     "python3 test/script/test_release_regression.py -v",
                     "python3 test/script/test_operational_acceptance.py -v",
+                    "python3 test/script/test_functional_acceptance.py -v",
                     "python3 test/script/test_export_cycles.py -v"]
                 self.assertEqual(step["run"].splitlines(), expected)
                 source = "\n".join(step.get("run", "") for step in job["steps"])

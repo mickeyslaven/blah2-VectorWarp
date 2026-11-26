@@ -9631,6 +9631,38 @@
         ]
       }
     }
+    ,
+    {
+      "owner": "2026-11-26 release owner bounded functional acceptance review",
+      "purpose": "Add an explicit one-release operator-authorized functional mode with retained native measurement continuity and unchanged health/proxy gates, while preserving default whole-pass claims.",
+      "rejected_reuse": "Whole-pass yield cannot truthfully describe active native continuity. Reuse the operational evaluator, archive, monitor, signing and publication contract instead of inventing passes or a second publisher.",
+      "cleanup_plan": "Keep the mode explicit and source/package/version-bound; require adversarial mode-substitution, missing-measurement and CLI revocation tests on Linux and macOS. No API, DSP or receiver defaults change.",
+      "changes": {
+        "lines:.github": [2617, 2619],
+        "lines:script": [27907, 27909],
+        "lines:tools": [3000, 3146],
+        "context_characters:build-release/contracts": [385941, 387923],
+        "context_characters:build-release": [653748, 653946],
+        "context_characters:operational-tools": [664066, 673886],
+        "context_characters:production": [7170675, 7180819],
+        "context_characters:release-ci": [135993, 136119],
+        "context_characters:release-ci/contracts": [362831, 363029],
+        "context_dynamic:build-release": [148, 149],
+        "context_dynamic:operational-tools": [471, 486],
+        "context_lines:build-release/contracts": [7714, 7746],
+        "context_lines:build-release": [12601, 12603],
+        "context_lines:operational-tools": [12276, 12422],
+        "context_lines:production": [132417, 132567],
+        "context_lines:release-ci": [2617, 2619],
+        "context_lines:release-ci/contracts": [6907, 6909],
+        "context_tokens:build-release/contracts": [91675, 92078],
+        "context_tokens:build-release": [163121, 163160],
+        "context_tokens:operational-tools": [161088, 163258],
+        "context_tokens:production": [1796089, 1798318],
+        "context_tokens:release-ci": [30413, 30433],
+        "context_tokens:release-ci/contracts": [94667, 94706]
+      }
+    }
   ],
   "context_snapshot": {
     "policy": {

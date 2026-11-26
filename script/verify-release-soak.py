@@ -68,7 +68,7 @@ def checked_number(value, name, minimum=0):
     return value
 
 
-def receipt(envelope, run, source):
+def receipt(envelope, run, source, version=None):
     raw = envelope.get("bindingJson")
     require(isinstance(raw, str) and len(raw.encode()) <= 32768, "exact bindingJson bytes required")
     with tempfile.TemporaryDirectory(prefix="vectorwarp-binding-") as directory:
@@ -76,6 +76,8 @@ def receipt(envelope, run, source):
         path.write_bytes(raw.encode())
         binding = monitor.load_binding(str(path))
     require(binding["sourceCommit"] == source, "soak source mismatch")
+    if monitor.acceptance_mode(binding) == monitor.FUNCTIONAL_MODE:
+        require(binding["releaseVersion"] == version, "functional authorization release version mismatch")
     require(str(binding.get("candidateRunId")) == run["id"]
             and binding.get("candidateRunAttempt") == run["attempt"], "soak candidate run mismatch")
     summary = envelope.get("summary", {})
@@ -227,7 +229,7 @@ def main():
         raw = os.environ.get("VECTORWARP_SOAK_RECEIPT", "")
         require(len(raw.encode()) <= 65536, "oversized soak receipt")
         envelope = json.loads(raw)
-        binding = receipt(envelope, run, source)
+        binding = receipt(envelope, run, source, version)
         packages = inventory(args.packages, read_json(args.manifest), source, version)
         bind_packages(binding, packages)
         result = {"schema": 1, "source_commit": source, "version": version,
