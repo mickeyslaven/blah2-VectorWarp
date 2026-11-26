@@ -2,6 +2,7 @@
 
 #include "data/Map.h"
 #include <array>
+#include <limits>
 #include <utility>
 
 namespace blah2::integration {
@@ -30,6 +31,74 @@ public:
   };
   static constexpr uint32_t radius = 8, maximumTrials = 9;
   static constexpr uint64_t maximumMacs = 1u << 28;
+
+  // Prepared once per constant fractional shift, then reused across a row.
+  // Construction is closed: callers cannot supply inconsistent taps or gain.
+  class ProfileKernel {
+    friend class RangeMigrationReplay;
+    double shift_ = 0, whiteNoiseGain_ = 0;
+    int64_t first_ = 0;
+    std::array<Complex, 2 * radius> weights_{};
+    ProfileKernel() = default;
+  public:
+    double shift() const { return shift_; }
+    double whiteNoiseGain() const { return whiteNoiseGain_; }
+    int64_t firstOffset() const { return first_; }
+    int64_t lastOffset() const { return first_ + 2 * radius - 1; }
+  };
+
+  // SAME finite-support Lanczos owner as migration. centerHz is the known
+  // heterodyne range ramp, not target Doppler. Output retains the ramp at the
+  // SAMPLED coordinate (integer column + shift). To express it at the integer
+  // output column instead, the caller applies exp(-i*2*pi*centerHz*shift/fs)
+  // once per path, not once per cell. No nearest-cell selection or phase fit.
+  static ProfileKernel prepareProfile(double shift, double centerHz, uint32_t sampleRate) {
+    if (!sampleRate || !std::isfinite(shift) || !std::isfinite(centerHz) ||
+        std::abs(shift) > std::numeric_limits<uint32_t>::max())
+      throw std::invalid_argument("Complex interpolation kernel is invalid");
+    const auto scalar = interpolation(shift);
+    ProfileKernel kernel;
+    kernel.shift_ = shift;
+    kernel.first_ = scalar.first;
+    for (size_t tap = 0; tap < kernel.weights_.size(); ++tap) {
+      const double phase = -2 * std::acos(-1.) * (centerHz / sampleRate) *
+        (double(scalar.first + int64_t(tap)) - shift);
+      if (!std::isfinite(phase))
+        throw std::invalid_argument("Complex interpolation phase is not finite");
+      kernel.weights_[tap] = scalar.weights[tap] * std::polar(1., phase);
+      kernel.whiteNoiseGain_ += scalar.weights[tap] * scalar.weights[tap];
+    }
+    return kernel;
+  }
+
+  static Complex sampleProfile(const std::vector<Complex>& profiles, uint32_t columns,
+      uint32_t row, uint32_t column, const ProfileKernel& kernel) {
+    const double coordinate = double(column) + kernel.shift_;
+    if (!columns || profiles.size() % columns || row >= profiles.size() / columns ||
+        coordinate < radius || coordinate + radius >= columns)
+      throw std::invalid_argument("Complex coordinate lacks interpolation support");
+    Complex value{};
+    for (size_t tap = 0; tap < kernel.weights_.size(); ++tap) {
+      const auto source = int64_t(column) + kernel.first_ + int64_t(tap);
+      const auto z = profiles[uint64_t(row) * columns + size_t(source)];
+      if (!std::isfinite(z.real()) || !std::isfinite(z.imag()))
+        throw std::invalid_argument("Complex interpolation input is not finite");
+      value += z * kernel.weights_[tap];
+    }
+    if (!std::isfinite(value.real()) || !std::isfinite(value.imag()))
+      throw std::invalid_argument("Complex interpolation result is not finite");
+    return value;
+  }
+
+  static Complex sampleProfile(const std::vector<Complex>& profiles, uint32_t columns,
+      uint32_t row, double column, double centerHz, uint32_t sampleRate) {
+    if (!std::isfinite(column) || column < 0 ||
+        column > std::numeric_limits<uint32_t>::max())
+      throw std::invalid_argument("Complex interpolation coordinate is invalid");
+    const auto base = uint32_t(std::floor(column));
+    return sampleProfile(profiles, columns, row, base,
+      prepareProfile(column - base, centerHz, sampleRate));
+  }
 
   static Result process(const Map<Complex>& caf, uint32_t sampleRate,
       uint32_t correlationSamples, const std::vector<double>& rates) {
