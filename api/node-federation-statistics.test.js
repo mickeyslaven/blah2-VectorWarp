@@ -230,7 +230,10 @@ test('columnar node transport preserves network outcomes without returning node 
     tracked_cpis: 3, eligible: true, detected: true, tracked: true},
   {hex: 'def456', started_at: 3000, finalized_at: 4000,
     outcome: 'no_radar_return', channel: 'primary', eligible_cpis: 6,
-    eligible: true, detected: false, tracked: false}];
+    eligible: true, detected: false, tracked: false}].map((pass, index) => ({...pass,
+      pass_id: `pass-${index}`, site_epoch: 'a'.repeat(64), evaluation_contract_hash: 'b'.repeat(64),
+      evaluation_policy_hash: 'c'.repeat(64), timing_policy: 'provisional',
+      sensitivity_epoch_id: 'd'.repeat(64), sensitivity_epoch_mixed: false, decision_grade: false}));
   const compact = compactNodeStatistics({id: 'alpha'},
     {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
     {timing_policy: 'provisional', channels: [{selected_channel: 'primary',

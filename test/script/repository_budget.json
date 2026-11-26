@@ -9574,6 +9574,62 @@
         "lines:html": [14227, 14238],
         "oversized_bytes:api/server.js": [138043, 138087]
       }
+    },
+    {
+      "owner": "2026-11-26 release owner pass provenance transport review",
+      "purpose": "Preserve exact per-pass policy, timing, contract, sensitivity and pass identity through the bounded columnar federation transport so operational acceptance can validate real source evidence.",
+      "rejected_reuse": "The existing compact pass owner already contains every field but its column encoder discarded them. Do not infer pass policy from current channel state or relax acceptance; dictionary encoding reuses that owner without a second scorer.",
+      "cleanup_plan": "Keep one encoder/decoder with additive backward-readable columns, exact compact-pass round trips, bounded HTTP integration and operational evaluator rejection of legacy, mixed or changed provenance.",
+      "changes": {
+        "context_characters:evidence-api": [
+          311701,
+          314722
+        ],
+        "context_characters:production": [
+          7167654,
+          7170675
+        ],
+        "context_characters:runtime-api/contracts": [
+          892304,
+          895325
+        ],
+        "context_lines:evidence-api": [
+          5517,
+          5558
+        ],
+        "context_lines:production": [
+          132376,
+          132417
+        ],
+        "context_lines:runtime-api/contracts": [
+          15404,
+          15445
+        ],
+        "context_tokens:evidence-api": [
+          71966,
+          72854
+        ],
+        "context_tokens:production": [
+          1795201,
+          1796089
+        ],
+        "context_tokens:runtime-api/contracts": [
+          212445,
+          213333
+        ],
+        "lines:api": [
+          26834,
+          26875
+        ],
+        "oversized_bytes:api/evidence-statistics.js": [
+          143617,
+          146638
+        ],
+        "oversized_lines:api/evidence-statistics.js": [
+          2499,
+          2540
+        ]
+      }
     }
   ],
   "context_snapshot": {

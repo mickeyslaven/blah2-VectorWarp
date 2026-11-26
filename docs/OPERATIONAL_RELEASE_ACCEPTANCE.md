@@ -47,7 +47,15 @@ in the existing binding's `regressionPolicySha256`.
 ## Capture exact snapshots
 
 Retain each raw `/api/federation/statistics-summary` response without rewriting
-its fields. Wrap it in a hash-addressed JSON document containing exactly:
+its fields. The bounded federation pass transport must preserve each pass's
+actual policy, contract, timing and sensitivity provenance. Its appended v1
+columns dictionary-encode repeated identities; older readers retain scoring
+compatibility. Any malformed augmented row refuses the whole batch; it cannot
+silently disappear from the eligible denominator. Legacy display-only defaults
+never supply acceptance provenance. Older producers omit this evidence and cannot qualify acceptance:
+never fill missing pass provenance from a channel's current policy. Install the
+reviewed observational code and collect fresh eligible exposure instead.
+Wrap the response in a hash-addressed JSON document containing exactly:
 
 ```json
 {

@@ -104,6 +104,9 @@ test('federation pass transport is bounded and preserves network scoring inputs'
     finalized_at: 1500 + index * 500,
     outcome: ['no_radar_return', 'detected_not_tracked', 'tracked'][index % 3],
     channel: ['first', 'second', 'third'][index % 3], eligible_cpis: 20,
+    association_eligible_cpis: 18, timing_policy: index % 2 ? 'exact' : 'provisional',
+    sensitivity_epoch_id: index % 17 ? 'd'.repeat(64) : null,
+    decision_grade: index % 2 === 1 && index % 17 !== 0,
     detected_cpis: index % 3 ? 5 : 0, tracked_cpis: index % 3 === 2 ? 4 : 0,
     eligible: true, detected: index % 3 !== 0, tracked: index % 3 === 2,
     sensitivity_epoch_mixed: index % 17 === 0,
@@ -112,12 +115,34 @@ test('federation pass transport is bounded and preserves network scoring inputs'
   const transport = federationAssociationPassTransport(passes);
   const expanded = expandFederationAssociationPassTransport(transport);
   assert.equal(expanded.length, passes.length);
-  assert.deepEqual(expanded[17], {hex: passes[17].hex, flight: passes[17].flight,
-    started_at: passes[17].started_at, finalized_at: passes[17].finalized_at,
-    outcome: passes[17].outcome, channel: passes[17].channel, eligible_cpis: 20,
-    detected_cpis: 5, tracked_cpis: 4, eligible: true, detected: true,
-    tracked: true, sensitivity_epoch_mixed: true});
+  assert.deepEqual(expanded, passes.map(compactAssociationPass));
+  assert.equal(transport.dictionaries.provenance.length, 4);
   assert.ok(Buffer.byteLength(JSON.stringify(transport)) < 1024 * 1024);
+});
+
+test('legacy or malformed provenance remains unavailable, never borrowed from another pass', () => {
+  const valid = {pass_id: 'pass-1', hex: 'a', flight: '', started_at: 1000, finalized_at: 2000,
+    channel: 'primary', outcome: 'tracked', eligible_cpis: 6, association_eligible_cpis: 5,
+    detected_cpis: 4, tracked_cpis: 3, site_epoch: 'c'.repeat(64),
+    evaluation_contract_hash: 'd'.repeat(64), sensitivity_epoch_id: 'e'.repeat(64), timing_policy: 'exact'};
+  const transport = federationAssociationPassTransport([
+    {...valid, evaluation_policy_hash: 'a'.repeat(64), decision_grade: true},
+    {...valid, hex: 'b', evaluation_policy_hash: 'b'.repeat(64), sensitivity_epoch_mixed: true}]);
+  assert.equal(expandFederationAssociationPassTransport(transport)[1].evaluation_policy_hash, 'b'.repeat(64));
+  assert.equal(expandFederationAssociationPassTransport(transport)[1].sensitivity_epoch_mixed, true);
+  for (const index of [undefined, -1, 2, '0', 0.5]) {
+    const invalid = structuredClone(transport); invalid.rows[0][11] = index;
+    assert.throws(() => expandFederationAssociationPassTransport(invalid), /Invalid federation pass provenance batch/);
+  }
+  const legacy = structuredClone(transport);
+  legacy.rows = legacy.rows.map(row => row.slice(0, 10)); delete legacy.dictionaries.provenance;
+  legacy.fields = legacy.fields.slice(0, 10);
+  assert.equal(expandFederationAssociationPassTransport(legacy)[0].evaluation_policy_hash, null);
+  assert.equal(expandFederationAssociationPassTransport(legacy)[0].pass_id, null);
+  transport.dictionaries.provenance[0].pop();
+  assert.throws(() => expandFederationAssociationPassTransport(transport), /Invalid federation pass provenance batch/);
+  transport.dictionaries.provenance = {0: transport.dictionaries.provenance[1]};
+  assert.throws(() => expandFederationAssociationPassTransport(transport), /Invalid federation pass provenance batch/);
 });
 
 test('public statistics retain metrics without streaming durable capture and truth evidence', () => {

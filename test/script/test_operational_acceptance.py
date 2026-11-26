@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Operational acceptance fixtures are tests, never release evidence."""
 import copy
+import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -76,6 +78,99 @@ class OperationalAcceptance(unittest.TestCase):
     def test_accepts_exact_complete_600_second_operational_window(self):
         self.assertEqual(set(self.checks().values()), {"accepted"})
         self.assertEqual(self.evaluate()["evaluationMode"], O.MODE)
+
+    def test_real_http_federation_transport_preserves_acceptance_provenance(self):
+        # Synthetic observations traverse the production encoder, bounded HTTP
+        # reader, node compactor and network deduplicator before this evaluator.
+        program = r'''
+const http = require('node:http'), fs = require('node:fs');
+const {federationAssociationPassTransport} = require('./api/evidence-statistics');
+const {probeJson, compactNodeStatistics, combineNodeStatistics} = require('./api/node-federation');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+let payload;
+const server = http.createServer((req, res) => res.end(JSON.stringify(payload)));
+(async () => {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    for (const sample of input.samples) {
+      const end = sample.epoch * 1000, old = sample.statistics.nodes[0];
+      const rows = sample.statistics.system_wide_unique_passes.passes.map((row, index) => ({
+        ...row, hex: row.identity, pass_id: `pass-${index}`, channel: 'primary',
+        site_epoch: '1'.repeat(64), evaluation_contract_hash: '2'.repeat(64),
+        evaluation_policy_hash: '3'.repeat(64), timing_policy: 'provisional',
+        sensitivity_epoch_id: '5'.repeat(64), sensitivity_epoch_mixed: false,
+        decision_grade: false, eligible_cpis: 6, association_eligible_cpis: 5,
+        detected_cpis: 4, tracked_cpis: 3, outcome: 'tracked'}));
+      rows.push({...rows[0], hex: 'surplus', pass_id: 'surplus'});
+      rows.push({...rows[0], hex: 'anchor', pass_id: 'anchor',
+        started_at: end - 700000, finalized_at: end - 500000});
+      if (input.mode === 'mixed') rows[0].sensitivity_epoch_mixed = true;
+      if (input.mode === 'changed') rows[0].evaluation_policy_hash = '4'.repeat(64);
+      payload = {statistics_window: old.statistics_window,
+        transport: federationAssociationPassTransport(rows)};
+      if (input.mode === 'legacy') {
+        payload.transport.rows = payload.transport.rows.map(row => row.slice(0, 10));
+        delete payload.transport.dictionaries.provenance;
+        payload.transport.fields = payload.transport.fields.slice(0, 10);
+      }
+      const row = payload.transport.rows[0], identity = payload.transport.dictionaries.provenance?.[row[11]];
+      if (input.mode === 'null-flags') row[9] = null;
+      if (input.mode === 'missing-flags') delete row[9];
+      if (input.mode === 'fractional-flags') row[9] = 7.5;
+      if (input.mode === 'missing-contract') identity[1] = null;
+      if (input.mode === 'malformed-site') identity[0] = {};
+      if (input.mode === 'malformed-timing') identity[3] = 'guessed';
+      if (input.mode === 'missing-sensitivity') identity[4] = null;
+      if (input.mode === 'missing-association') row[12] = null;
+      if (input.mode === 'removed-column12') row.pop();
+      if (input.mode === 'wrong-column-contract') payload.transport.fields[12] = 'eligible_cpis';
+      if (input.mode === 'null-row') payload.transport.rows[0] = null;
+      if (input.mode === 'empty-row') payload.transport.rows[0] = '';
+      if (input.mode === 'whitespace-identity') { row[0] = ' '; row[1] = ''; }
+      if (input.mode === 'erased-eligible-row') { row[9] = 0; row[6] = 0; }
+      const response = await probeJson(`http://127.0.0.1:${server.address().port}`, '/passes', 2500, 1024 * 1024);
+      const capture = {available: true, epoch: '0', discontinuities: '0', requalifications: '0',
+        retiredCpis: '0', retiredSamples: '0', lanes: [{acceptedSamples: '1', droppedSamples: '0', discardedSamples: '0'}]};
+      const node = compactNodeStatistics({id: 'site'}, {radar: 'receiving', processorFresh: true,
+        processor: {state: 'live'}, configRevision: old.config_revision, loadedRevision: old.loaded_revision,
+        featureDiagnostics: {processing: {configuredCpiMs: 500}},
+        trackingPerformance: {status: 'healthy'}, evidenceHealth: {status: 'healthy'}},
+        {cpi: 400, capture_backlog_ms: 500, captureDroppedSamples: [0],
+          processingCycle: {processing: {maximumMs: 450}, completion_interval: {maximumMs: 500}},
+          cycleEvidence: {schema: 'vectorwarp-processing-cycles-v1', anchorMonoNs: '1', anchorUtcNs: '1',
+            fault: '', records: [{sequence: '1', startMonoNs: '2', endMonoNs: '3', drainBatches: '0',
+              outcome: 'completed', captureBefore: capture, captureAfter: capture}]}},
+        {channels: [{selected_channel: 'primary', operational_track_window: old.channels[0].operational_track_window,
+          association_statistics: {evaluation_policy_hash: '3'.repeat(64)}}]}, response.value);
+      Date.now = () => end;
+      sample.statistics = combineNodeStatistics([node]);
+    }
+    process.stdout.write(JSON.stringify(input.samples));
+  } finally { server.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+        original = copy.deepcopy(self.samples)
+        for mode in ('normal', 'legacy', 'mixed', 'changed', 'null-flags', 'missing-flags',
+                     'fractional-flags', 'missing-contract', 'malformed-site', 'malformed-timing',
+                     'missing-sensitivity', 'missing-association', 'removed-column12', 'wrong-column-contract',
+                     'null-row', 'empty-row', 'whitespace-identity', 'erased-eligible-row'):
+            with self.subTest(mode=mode):
+                result = subprocess.run(['node', '-e', program],
+                    cwd=Path(__file__).resolve().parents[2],
+                    input=json.dumps({'samples': original, 'mode': mode}).encode(),
+                    capture_output=True, timeout=30)
+                if mode not in ('normal', 'legacy', 'mixed', 'changed'):
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b'Invalid federation pass provenance batch', result.stderr)
+                    self.assertEqual(result.stdout, b'', 'partial good rows must not reach acceptance')
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.samples = json.loads(result.stdout)
+                if mode == 'normal':
+                    self.assertEqual(set(self.checks().values()), {'accepted'})
+                else:
+                    with self.assertRaisesRegex(ValueError, 'mixed or incompatible pass provenance'):
+                        self.evaluate()
 
     def test_no_traffic_is_inconclusive(self):
         self.samples[-1]["statistics"]["system_wide_unique_passes"]["passes"] = []
