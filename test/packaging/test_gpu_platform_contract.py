@@ -81,6 +81,51 @@ class GpuPlatformPolicyTest(unittest.TestCase):
 
 
 class GpuBuildContractTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("c++"), "C++ compiler required for fold phase contract")
+    def test_folded_channelizer_uses_exact_bounded_modular_phase(self):
+        source = (ROOT / "src/process/ambiguity/GpuWidebandModule.cpp").read_text()
+        shader = source.split('constexpr const char* foldedProductSource=R"glsl(', 1)[1].split(')glsl";', 1)[0]
+        function = re.search(r"uint foldPhaseAdvance\([^}]+}", shader).group()
+        self.assertIn("phase=foldPhaseAdvance(phase,step,p.fft)", shader)
+        self.assertIn("foldTurn=turns[p.foldRoots+phase]", shader)
+        self.assertNotRegex(shader, r"\b(?:sin|cos|inversesqrt)\(")
+        self.assertIn("channelizer::mixerTurn(index,-1,fft_)", source)
+        self.assertIn("total*8>context_.candidate.properties.limits.maxStorageBufferRange", source)
+        fixture = r'''
+#include "process/conditioning/SamplePhase.h"
+#include <cassert>
+#include <limits>
+using uint=uint32_t;
+''' + function + r'''
+int main() {
+  for(uint decimation:{2u,3u,7u,10u,96u,200u}) for(uint inverse:{1u,7u,64u}) {
+    const uint fft=decimation*inverse;
+    for(uint offset=1;offset<=decimation;++offset) for(uint k=0;k<inverse;++k) {
+      uint phase=k*offset,step=(offset%decimation)*inverse;
+      for(uint r=0;r<decimation;++r) {
+        const uint expected=uint((uint64_t(k)+uint64_t(r)*inverse)*offset%fft);
+        assert(phase==expected && phase<fft);
+        const auto turn=std::complex<float>(blah2::channelizer::mixerTurn(phase,-1,fft));
+        const auto direct=std::polar(1.,2*std::acos(-1.)*double(expected)/fft);
+        assert(std::abs(std::complex<double>(turn)-direct)<1e-7);
+        if(!phase)assert(turn==std::complex<float>(1,0));
+        phase=foldPhaseAdvance(phase,step,fft);
+      }
+    }
+  }
+  const uint maximum=std::numeric_limits<uint>::max();
+  for(uint fft:{maximum,maximum-1,maximum/2+1})
+    for(uint phase:{0u,1u,fft/2,fft-1}) for(uint step:{0u,1u,fft/2,fft-1})
+      assert(foldPhaseAdvance(phase,step,fft)==(uint64_t(phase)+step)%fft);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="vectorwarp-fold-phase-") as directory:
+            executable = str(pathlib.Path(directory) / "test")
+            subprocess.run([shutil.which("c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-I", str(ROOT / "src"), "-x", "c++", "-", "-o", executable],
+                           input=fixture, text=True, check=True, capture_output=True, timeout=30)
+            subprocess.run([executable], check=True, capture_output=True, timeout=5)
+
     @unittest.skipUnless(shutil.which("c++"), "C++ compiler required for startup policy")
     def test_offline_cold_start_retains_only_bounded_transport_allowance(self):
         fixture = r'''

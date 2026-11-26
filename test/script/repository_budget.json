@@ -9693,6 +9693,24 @@
         "context_tokens:native-runtime": [40441, 40443],
         "context_tokens:production": [1798327, 1798355]
       }
+    },
+    {
+      "owner": "2026-11-26 wideband fold-phase precision correction review",
+      "purpose": "Replace folded FP32 channelizer shader trigonometry and recurrent rotations with exact modular indexing into canonical host-generated phase roots in the existing bounded buffer.",
+      "rejected_reuse": "Reuse SamplePhase mixerTurn and the existing wideband turns buffer. Do not add a backend, alter radar math, quantize products, relax parity tolerances or substitute a CPU fallback.",
+      "cleanup_plan": "Remove superseded shader trig and recurrence. Require compiled production phase-index boundary regression, unchanged exact-artifact product parity and full physical qualification before release.",
+      "changes": {
+        "lines:src": [45834, 45845],
+        "context_characters:build-integration/contracts": [1402913, 1403370],
+        "context_characters:native-ambiguity": [704401, 704858],
+        "context_characters:production": [7180993, 7181450],
+        "context_lines:build-integration/contracts": [28556, 28567],
+        "context_lines:native-ambiguity": [12921, 12932],
+        "context_lines:production": [132567, 132578],
+        "context_tokens:build-integration/contracts": [345347, 345430],
+        "context_tokens:native-ambiguity": [192803, 192886],
+        "context_tokens:production": [1798355, 1798438]
+      }
     }
   ],
   "context_snapshot": {
