@@ -9969,6 +9969,21 @@
           3500
         ]
       }
+    },
+    {
+      "owner": "build-integration offline replay acceptance",
+      "purpose": "Register the canonical synthetic selector fixture and extended acceptance test while consolidating repeated offline test registration and redundant transitive DSP linkage. Seal the exact net reductions.",
+      "rejected_reuse": "The diagnostic inspector retains its frozen hybrid behavior. The new test executable reuses canonical Ambiguity, ExperimentReader and CoherentFamilySelector; no production math or alternate evaluator is introduced.",
+      "cleanup_plan": "Repeated test executable/include/link declarations were replaced by one loop. Existing target names, tests and public replay DSP dependencies remain; no generated fixture or receipt is retained in source.",
+      "changes": {
+        "lines:cmake": [1289, 1287],
+        "context_characters:build-integration": [104322, 104306],
+        "context_characters:production": [7332295, 7332279],
+        "context_lines:build-integration": [1922, 1920],
+        "context_lines:production": [134965, 134963],
+        "context_tokens:build-integration": [16737, 16724],
+        "context_tokens:production": [1835846, 1835833]
+      }
     }
   ],
   "context_snapshot": {

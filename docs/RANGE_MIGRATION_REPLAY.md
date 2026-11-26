@@ -248,6 +248,62 @@ including the canonical processing and offline replay CMake owners. All 86
 architecture checks and 943 repository-budget ceilings passed. This validates
 the numerical contracts, not recorded-radar benefit or live promotion.
 
+### Canonical synthetic selector acceptance driver
+
+`testCoherentFamilyAcceptance --run` is the isolated synthetic acceptance
+consumer of `CoherentFamilySelector`. It leaves the diagnostic inspector and
+its legacy `hybridAt` view unchanged. The driver generates continuous complex
+IQ, runs canonical `Ambiguity`, and supplies native-format synthetic CAF/IQ
+buffers to `ExperimentReader::appendAll`. That existing reader owns migration,
+pilot correction, fixed spatial projection, and all NC/coherent histories.
+The fixture ingress is explicitly unsealed and synthetic; it accepts no RF
+paths. A future authenticated RF adapter must feed the same selector readout
+and evaluator, not copy the calibration or radar mathematics.
+
+The frozen development contract uses 33 Doppler rows and 64 delay bins before
+the common migration crop, rates `0,-0.5,+0.5` bins/s, depths 2/4/8, phase banks
+4/8/16, a 3-by-3 motion bank, and coherence pre-gate **zero**. Source-domain
+eligibility remains enabled for every temporal sample and fractional tap.
+Each independent eight-CPI window resets the canonical reader. Its terminal
+readout is prescribed at delay 32 / -5 Hz. Every fourth window loses its last
+raw-anchor pilot, with the same availability policy in all splits and arms.
+NC retains its independent score and denominator when coherent evidence is
+missing. A second prescribed readout at the delay-18 source boundary reports
+all family availability and explicitly refuses fitting permanently absent
+coherent strata; it is not pooled with the interior population.
+
+A=512 independent null windows fit the marginal tables; B=128 disjoint null
+windows fit selector18 and matched-NC9 maxima. E=128 untouched windows supply
+the null and paired amplitude arms `0,0.025,0.05,0.1`, sharing exact noise and
+reference IQ across amplitudes. The injected fractional-delay path has a fixed
+0.5-bin/s rate and physically linked off-bin Doppler; neither labels nor a
+target-selected search enter inference. Alpha stays 0.05. Unattainable rank
+tails, unknown availability, and changed lineage refuse without seed retries,
+extra fitting windows, or threshold relaxation. This is a development-resolution
+experiment, not precise 5% or rare-tail RF false-alarm qualification.
+
+The JSONL receipt contains the frozen generator/plan/selector/binary hashes,
+A/B score hashes, ordered consumed-IQ hashes, per-family availability and
+refusal counts, paired decisions, full winning raw intervals above `2^53`,
+family/rate/depth/motion/phase coordinates, own denominators, joint p-values,
+and Wilson 95% intervals. The negative regression bound is at most 20/128
+exceedances for each matched arm. No coherent Pd improvement or monotonic gain
+is required. Current-CPI zero-rate projected power is a reported control;
+no native detector decision is fabricated. A source/compiler/dependency build
+receipt must accompany the executable hash. Timing is whole-run diagnostic
+cost, not CPI deadline acceptance.
+
+Build target `testCoherentFamilyAcceptance`. CTest
+`coherentFamilyCanonicalFixture` runs a three-window ingress, missing-pilot,
+source-support and weak-injection regression; `coherentFamilySyntheticAcceptance`
+runs the complete frozen experiment (labelled `offline;extended`, one CPU
+thread, 900-second outer timeout). Run the full experiment only under a bounded
+compute admission and retain stdout outside the source tree. The quick fixture
+does not constitute calibrated acceptance. Existing continuous-IQ phase/motion
+oracles and score-vector algebra tests remain distinct regression consumers.
+Adding this driver does not itself establish a passed experiment, recorded-IQ
+benefit, false-track improvement, runtime cadence, or promotion readiness.
+
 ## Fractional inter-CPI range and residual phase
 
 The replay experiment can refine residual slow-time phase with `--refine-phase`:
