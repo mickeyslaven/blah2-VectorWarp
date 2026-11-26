@@ -69,6 +69,7 @@ blah2::resident::Config nativeConfig() {
   c.correlation = 64; c.sampleRate = samples; c.surveillanceChannels = {0, 1};
   for (uint32_t col = 0; col < columns; ++col) c.delayAxis.push_back(int(col));
   for (int row = -16; row <= 16; ++row) c.dopplerAxis.push_back(row);
+  c.reference.mode = blah2::resident::ReferenceMode::capturedDedicated;
   c.reference.channels = {0}; c.reference.analysisSamples = samples; c.reference.centreHz = carrier;
   c.reference.bandwidthHz = 1000; c.spectrumBins = 64; c.device = "synthetic-selector-contract";
   c.detector.enabled = true; c.detector.guard = 1; c.detector.train = 4; c.detector.pfa = .05;
