@@ -63,10 +63,10 @@ std::string executableHash(const char* executable) {
   require(input.eof(), "Executable hash read failed"); return h.finish();
 }
 blah2::resident::Config nativeConfig() {
-  blah2::resident::Config c; c.inputChannels = 2; c.epoch = epoch;
+  blah2::resident::Config c; c.inputChannels = 3; c.epoch = epoch;
   c.geometry.range = 128; c.geometry.doppler = rows; c.geometry.delays = columns;
   c.geometry.channels = 2; c.geometry.clutterSamples = samples; c.geometry.clutterBins = 4;
-  c.correlation = 64; c.sampleRate = samples; c.surveillanceChannels = {0, 1};
+  c.correlation = 64; c.sampleRate = samples; c.surveillanceChannels = {1, 2};
   for (uint32_t col = 0; col < columns; ++col) c.delayAxis.push_back(int(col));
   for (int row = -16; row <= 16; ++row) c.dopplerAxis.push_back(row);
   c.reference.mode = blah2::resident::ReferenceMode::capturedDedicated;
@@ -80,7 +80,7 @@ blah2::resident::Config nativeConfig() {
 }
 Selector::Contract contract(const blah2::resident::Config& native, int readoutDelay = 32) {
   Selector::Contract c; auto& e = c.experiment; auto& t = e.temporal;
-  e.channelIds = {0, 1}; e.anchorChannelId = 0; e.spatialCoefficients = {0., 1.};
+  e.channelIds = {1, 2}; e.anchorChannelId = 1; e.spatialCoefficients = {0., 1.};
   t.maximumCpis = 8; t.delayMotionBins = t.dopplerMotionBins = 1;
   t.cpiHopSeconds = 1; t.minimumCoherence = 0; t.refineDopplerPhase = true;
   t.interpolateDelay = true; t.delayDriftPerHz = track_before_detect::delayDriftPerHz(samples, carrier);
