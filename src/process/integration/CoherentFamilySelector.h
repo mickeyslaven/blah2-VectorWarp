@@ -42,11 +42,6 @@ public:
     // NC first, then coherent; within each family: declared rate, then depth.
     std::array<Family, 18> families{};
   };
-  struct RateInput {
-    uint32_t index = 0;
-    double rate = 0;
-    const Experiment::Result* result = nullptr;
-  };
   struct Winner {
     Family family;
     double marginalP = 1, standardized = 0;
@@ -70,6 +65,7 @@ public:
     require(t.maximumCpis == 8 && t.delayMotionBins == 1 && t.dopplerMotionBins == 1 &&
       t.refineDopplerPhase && t.sourceDomain.enabled &&
       contract_.experiment.declaredSpatialTrials == 1 &&
+      !contract_.experiment.fallbackBeamCount && !contract_.experiment.migrationRateCount &&
       contract_.experiment.migrationRates.empty(), "Selector requires declared 3-rate/2-4-8/837-trial plan");
     // Validate all numerical/gating fields through their canonical owner.
     Experiment validate(contract_.experiment, true);
@@ -91,13 +87,19 @@ public:
     std::set<double> rates;
     for (double rate : contract_.rates) require(std::isfinite(rate) && rates.insert(rate).second,
       "Selector rates must be distinct finite declared trials");
+    require(rates.count(0), "Selector canonical rate bank must include zero");
     for (const auto* hash : {&contract_.planSha256, &contract_.generatorSha256,
         &contract_.fitSplitSha256, &contract_.jointSplitSha256})
       require(hash->size() == 64 && hash->find_first_not_of("0123456789abcdef") == std::string::npos,
         "Selector requires SHA256 contract identities");
     require(contract_.fitSplitSha256 != contract_.jointSplitSha256, "Selector A/B split identity overlaps");
+    require(contract_.experiment.upstreamPlanSha256 == contract_.planSha256, "Selector upstream plan identity differs");
     contractHash_ = hashText(contractText());
-    producerHash_ = Experiment::configurationSha256(contract_.experiment);
+    for (uint32_t r = 0; r < 3; ++r) {
+      auto bound = contract_.experiment;
+      bound.migrationRateIndex = r; bound.migrationRateCount = 3; bound.migrationRate = contract_.rates[r];
+      producerHashes_[r] = Experiment::configurationSha256(bound);
+    }
     fitHash_.update(contractHash_.data(), contractHash_.size());
     for (std::size_t i = 0; i < keys_.size(); ++i) keys_[i] = std::to_string(i);
   }
@@ -109,20 +111,21 @@ public:
   // No history, CAF, path or phase-bank recomputation. Each row uses ONLY its
   // own family's finite, valid post-migration source-domain cells. The upper
   // median convention is frozen, including even-length rows and invalid cells.
-  Observation readout(const std::array<RateInput, 3>& results,
+  Observation readout(const std::array<const Experiment::Result*, 3>& results,
     Window window, const std::string& observedContract) const {
     require(observedContract == contractHash_, "Selector observed plan identity changed");
     Observation observation{observedContract, window, {}};
     for (uint32_t r = 0; r < 3; ++r) {
-      require(results[r].index == r && results[r].rate == contract_.rates[r] &&
-        results[r].result && results[r].result->sourceCount == 8 &&
-        results[r].result->declaredPerCellTrials == 252 &&
-        results[r].result->configurationSha256 == producerHash_,
+      require(results[r] && results[r]->sourceCount == 8 && results[r]->declaredPerCellTrials == 252,
+        "Selector terminal eight-CPI exposure changed");
+      const auto& result = *results[r]; const auto& producer = result.producer();
+      require(producer.rateIndex == r && producer.rateCount == 3 && producer.rate == contract_.rates[r] &&
+        producer.rateCorrectedFallback && producer.perRateTrials == 279 && producer.combinedTrials == 837 &&
+        producer.upstreamPlanSha256 == contract_.planSha256 && producer.configurationSha256 == producerHashes_[r],
         "Selector rate identity or terminal eight-CPI exposure changed");
-      const auto& result = *results[r].result;
       for (uint32_t age = 0; age < 8; ++age) {
         const auto& source = result.sources[age];
-        const auto& common = results[0].result->sources[age];
+        const auto& common = results[0]->sources[age];
         require(source.captureEpoch == window.epoch && source.sampleRateHz == contract_.sampleRateHz &&
           source.inputValid && source.samplePositionAvailable && source.sequence == common.sequence &&
           source.tuningHz == common.tuningHz && source.gainCalibrationEpoch == common.gainCalibrationEpoch &&
@@ -133,7 +136,7 @@ public:
       }
       for (uint32_t c = 0; c < 2; ++c) for (uint32_t bank = 0; bank < 3; ++bank) {
         auto& family = observation.families[c * 9 + r * 3 + bank];
-        family.rateIndex = r; family.bankIndex = bank; family.rate = contract_.rates[r];
+        family.rateIndex = producer.rateIndex; family.bankIndex = bank; family.rate = producer.rate;
         family.row = contract_.row; family.column = contract_.column;
         family.delay = contract_.delay[contract_.column]; family.dopplerHz = contract_.doppler[contract_.row];
         const auto* map = c ? result.banks[bank].map.get() : result.noncoherent.banks[bank + 1].map.get();
@@ -154,6 +157,7 @@ public:
         }
         family.validCount = uint32_t(powers.size());
         if (powers.empty()) continue;
+        require(powers.size() >= 3, "Selector normalization requires at least three valid cells");
         const auto middle = powers.begin() + powers.size() / 2;
         std::nth_element(powers.begin(), middle, powers.end()); family.rowMedian = *middle;
         family.raw = get(contract_.column);
@@ -241,7 +245,7 @@ private:
   }
   std::string contractText() const {
     auto s = stream(); const auto& c = contract_;
-    s << "coherent-selector-v1 terminal8 one-cell upper-median unavailable-omit known-mask NC-first rate-depth ties "
+    s << "coherent-selector-v2 terminal8 one-cell upper-median minimum3 unavailable-omit known-mask NC-first rate-depth ties "
       << c.planSha256 << c.generatorSha256 << c.fitSplitSha256 << c.jointSplitSha256 << ' '
       << c.row << ' ' << c.column << ' ' << c.sampleRateHz << ' ' << c.cpiSamples << ' ' << c.hopSamples << ' '
       << c.fitWindows << ' ' << c.jointWindows << ' ' << c.evaluationWindows << ' ' << c.alpha << ' '
@@ -263,7 +267,7 @@ private:
       require(f.raw.valid && f.raw.coherent == (i >= 9) && f.raw.lineage.depth == (2u << (i % 3)) &&
         f.rateIndex == (i % 9) / 3 && f.bankIndex == i % 3 && f.rate == contract_.rates[f.rateIndex] &&
         f.row == contract_.row && f.column == contract_.column && f.delay == contract_.delay[f.column] &&
-        f.dopplerHz == contract_.doppler[f.row] && f.validCount && f.validCount <= contract_.delay.size() &&
+        f.dopplerHz == contract_.doppler[f.row] && f.validCount >= 3 && f.validCount <= contract_.delay.size() &&
         std::isfinite(f.rowMedian) && f.rowMedian > 0 && std::isfinite(f.raw.power) && f.raw.power >= 0 &&
         std::isfinite(f.ratio) && f.ratio == f.raw.power / f.rowMedian && std::isfinite(f.phaseOffsetHz),
         "Selector family score/lineage invalid");
@@ -312,7 +316,8 @@ private:
   detection::EmpiricalNullCalibrator fit_, joint_;
   std::array<std::string, 18> keys_;
   const std::string candidateKey_ = "joint18", ncKey_ = "jointNC9";
-  std::string contractHash_, producerHash_, fitDigest_, calibrationDigest_;
+  std::string contractHash_, fitDigest_, calibrationDigest_;
+  std::array<std::string, 3> producerHashes_;
   Sha256 fitHash_, jointHash_;
   Stage stage_ = Stage::fit;
   uint32_t fitCount_ = 0, jointCount_ = 0, evaluationCount_ = 0;

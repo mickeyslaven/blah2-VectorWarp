@@ -102,6 +102,9 @@ void hybridReplay(const fs::path& directory) {
       rates[0].declaredPerCellTrials == 1755 && rates[0].combinedPerCellTrials == 1755,
       "Legacy fallback beam trials were not charged");
     const auto& result = rates[0].result;
+    check(result.producer().rateIndex == UINT32_MAX && !result.producer().rateCount &&
+      !result.producer().rateCorrectedFallback && result.producer().perRateTrials == 1755,
+      "Legacy fallback acquired a migrated fixed-projection identity");
     const auto selected = result.hybridAt(0, 0);
     check(selected.valid == (sequence == 3), "Hybrid fallback ignored recorded beam compatibility");
     if (selected.valid) {
@@ -133,6 +136,8 @@ void composedMigration(const fs::path& directory) {
   auto request = experimentConfig(); request.spatialCoefficients = {0., 1.};
   request.temporal.delayMotionBins = 1; request.temporal.dopplerMotionBins = 0;
   request.temporal.minimumCoherence = .8; request.migrationRates = {0., 2., -2.};
+  auto mislabeled = request; mislabeled.migrationRateCount = 3; mislabeled.migrationRateIndex = 0;
+  rejects([&] { cr::ExperimentReader invalid(mislabeled); }, "Reader accepted caller-bound active migration labels");
   cr::ExperimentReader reader(request);
   std::mt19937 random(445); std::uniform_real_distribution<double> uniform(-.5,.5);
   std::array<double, 32> frequencies{}, phases{};
@@ -193,6 +198,11 @@ void composedMigration(const fs::path& directory) {
       bad = sealed; bad.sidecar.firstSample += 3 * samples; bad.sidecar.endSample += 3 * samples;
       rejects([&] { reader.appendAll(bad); }, "A raw-IQ gap bridged migration histories");
     }
+    if (sequence == 1) {
+      auto wrongPlan = request; wrongPlan.upstreamPlanSha256 = std::string(64, 'e');
+      cr::ExperimentReader invalid(wrongPlan);
+      rejects([&] { invalid.appendAll(sealed); }, "Reader accepted a mismatched upstream plan");
+    }
     const auto decoded = cr::channelMaps(sealed);
     const auto migrated = blah2::integration::RangeMigrationReplay::process(decoded[1], rateHz, 64, request.migrationRates);
     for (size_t trial = 0; trial < history.size(); ++trial) {
@@ -207,6 +217,13 @@ void composedMigration(const fs::path& directory) {
     check(result.size() == 3, "Composed reader spliced a winning migration rate");
     for (size_t trial = 0; trial < result.size(); ++trial) {
       const auto& rate = result[trial]; const auto& experiment = rate.result;
+      const auto& producer = experiment.producer();
+      check(producer.rateIndex == trial && producer.rateCount == 3 &&
+        producer.rate == migrated.banks[trial].delayRateBinsPerSecond && producer.rateCorrectedFallback &&
+        producer.perRateTrials == 18 && producer.combinedTrials == 54 &&
+        producer.upstreamPlanSha256 == Experiment::planSha256(sealed.sidecar.identity.configHash) &&
+        (!trial || producer.configurationSha256 != result[0].result.producer().configurationSha256),
+        "Canonical temporal producer lost immutable rate/plan/exposure identity");
       check(rate.rateIndex == trial && rate.delayRateBinsPerSecond == request.migrationRates[trial] &&
         rate.rateCorrectedFallback && rate.firstColumn == migrated.firstColumn &&
         rate.source.firstSample == source.firstSample && rate.source.endSample == source.endSample &&

@@ -382,6 +382,7 @@ Selector::Contract selectorContract(uint32_t fit = 128, uint32_t joint = 128, ui
   c.sampleRateHz = 80; c.cpiSamples = c.hopSamples = 8; c.rates = {0, -4, 4};
   c.fitWindows = fit; c.jointWindows = joint; c.evaluationWindows = evaluation;
   c.planSha256 = std::string(64, 'a'); c.generatorSha256 = std::string(64, 'b');
+  c.experiment.upstreamPlanSha256 = c.planSha256;
   c.fitSplitSha256 = std::string(64, 'c'); c.jointSplitSha256 = std::string(64, 'd');
   return c;
 }
@@ -418,12 +419,22 @@ TEST_CASE("selector retains independent family denominators and exact canonical 
   c.delay.clear(); for (int i = 0; i < 33; ++i) c.delay.push_back(i);
   c.doppler = {-4, -3, -2, -1, 0, 1, 2, 3, 4}; c.row = 4; c.column = 16;
   Selector selector(c);
-  std::array<Experiment::Result, 3> results;
-  std::array<Selector::RateInput, 3> inputs;
+  std::array<Experiment::Result, 8> results;
+  std::array<const Experiment::Result*, 3> inputs;
   std::mt19937_64 rng(0x248001);
-  for (uint32_t r = 0; r < 3; ++r) {
-    Experiment engine(c.experiment, true);
+  for (uint32_t r = 0; r < results.size(); ++r) {
+    auto bound = c.experiment; bound.migrationRateIndex = r < 3 ? r : 0;
+    bound.migrationRateCount = 3; bound.migrationRate = c.rates[bound.migrationRateIndex];
+    if (r == 3) bound.minimumPilotCoherence = .5;
+    if (r == 4) bound.migrationRateCount = 2;
+    if (r == 5) bound.upstreamPlanSha256 = std::string(64, 'e');
+    if (r == 6) { bound.migrationRateIndex = UINT32_MAX; bound.migrationRateCount = 0; bound.fallbackBeamCount = 6; }
+    if (r == 7) bound.migrationRate = 4;
+    const auto producerHash = Experiment::configurationSha256(bound);
+    Experiment engine(bound, true);
+    bound.migrationRate = 123; // A caller mutation cannot relabel the immutable owner.
     Experiment::ComplexMap first(9, 33), second(9, 33), fallback(9, 33);
+    const std::vector<uint32_t> beams(9 * 33, 1);
     for (auto* map : {&first, &second, &fallback}) { map->delay = c.delay; map->doppler = c.doppler; }
     for (uint64_t sequence = 1; sequence <= 8; ++sequence) {
       for (uint32_t row = 0; row < 9; ++row) for (uint32_t column = 0; column < 33; ++column) {
@@ -433,11 +444,20 @@ TEST_CASE("selector retains independent family denominators and exact canonical 
       }
       first.data[4][16] = std::sqrt(32.0); second.data[4][16] = Complex{0, 1} * std::sqrt(32.0);
       fallback.data[4][16] = 64;
-      results[r] = engine.process({&first, &second}, {7, 2}, lineage(sequence), pilot(lineage(sequence), 0), fallback);
+      results[r] = engine.process({&first, &second}, {7, 2}, lineage(sequence), pilot(lineage(sequence), 0), fallback,
+        r == 6 ? &beams : nullptr);
     }
-    inputs[r] = {r, c.rates[r], &results[r]};
+    REQUIRE(results[r].sourceCount == 8);
+    REQUIRE(results[r].producer().configurationSha256 == producerHash);
+    if (r < 3) inputs[r] = &results[r];
   }
   auto o = selector.readout(inputs, {3, 0, 64}, selector.contractSha256());
+  for (uint32_t r = 0; r < 3; ++r) {
+    REQUIRE(results[r].producer().rateIndex == r); REQUIRE(results[r].producer().rate == c.rates[r]);
+    REQUIRE(results[r].producer().rateCorrectedFallback);
+    REQUIRE(results[r].producer().perRateTrials == 279); REQUIRE(results[r].producer().combinedTrials == 837);
+    REQUIRE(o.families[r * 3].rateIndex == r); REQUIRE(o.families[r * 3].rate == c.rates[r]);
+  }
   for (uint32_t bank = 0; bank < 3; ++bank) {
     const auto& nc = o.families[bank]; const auto& coherent = o.families[9 + bank];
     REQUIRE(nc.available); REQUIRE(coherent.available);
@@ -455,18 +475,31 @@ TEST_CASE("selector retains independent family denominators and exact canonical 
     REQUIRE(missing.families[bank].ratio == o.families[bank].ratio);
     REQUIRE(missing.families[bank].rowMedian == o.families[bank].rowMedian);
   }
-  std::swap(inputs[0], inputs[2]);
+  std::swap(inputs[0], inputs[2]); // Pointer-only swap: no external labels exist.
   REQUIRE_THROWS(selector.readout(inputs, {3, 0, 64}, selector.contractSha256()));
-  std::swap(inputs[0], inputs[2]); inputs[0].rate = 4;
+  std::swap(inputs[0], inputs[2]); inputs[1] = inputs[0];
   REQUIRE_THROWS(selector.readout(inputs, {3, 0, 64}, selector.contractSha256()));
-  inputs[0].rate = 0;
-  auto changed = c.experiment; changed.minimumPilotCoherence = .5;
-  results[0].configurationSha256 = Experiment::configurationSha256(changed);
+  inputs[2] = inputs[0]; // Repeating one result under all three rates also refuses.
   REQUIRE_THROWS(selector.readout(inputs, {3, 0, 64}, selector.contractSha256()));
-  results[0].configurationSha256 = Experiment::configurationSha256(c.experiment);
+  inputs = {&results[0], &results[1], &results[2]};
+  for (uint32_t r = 3; r < results.size(); ++r) {
+    inputs[0] = &results[r];
+    REQUIRE_THROWS(selector.readout(inputs, {3, 0, 64}, selector.contractSha256()));
+  }
+  REQUIRE_FALSE(results[6].producer().rateCorrectedFallback);
+  REQUIRE(results[6].producer().perRateTrials == 414); // 252 coherent + 162 beam-max NC.
+  inputs[0] = &results[0];
   ++results[1].sources[0].gainCalibrationEpoch;
   REQUIRE_THROWS(selector.readout(inputs, {3, 0, 64}, selector.contractSha256()));
   --results[1].sources[0].gainCalibrationEpoch;
+  auto& valid = results[0].noncoherent.banks[1].validCells;
+  const auto savedValid = valid; valid.assign(9 * 33, 0);
+  for (uint32_t count = 1; count <= 2; ++count) {
+    valid[4 * 33 + 15 + count] = 1;
+    REQUIRE_THROWS_WITH(selector.readout(inputs, {3, 0, 64}, selector.contractSha256()),
+      "Selector normalization requires at least three valid cells");
+  }
+  valid = savedValid;
   std::fill(results[0].noncoherent.banks[1].detectorPower.begin(),
     results[0].noncoherent.banks[1].detectorPower.end(), 0);
   const auto zero = selector.readout(inputs, {3, 0, 64}, selector.contractSha256());
@@ -538,7 +571,14 @@ TEST_CASE("selector preserves exact argmax lineage with conservative determinist
 TEST_CASE("selector freezes split identity and rejects repeated or undersized fit exposure", "[coherent-selector]") {
   auto c = selectorContract(); c.jointSplitSha256 = c.fitSplitSha256; REQUIRE_THROWS(Selector(c));
   c = selectorContract(); c.fitWindows = 31; REQUIRE_THROWS(Selector(c));
+  c = selectorContract(); c.experiment.fallbackBeamCount = 6; REQUIRE_THROWS(Selector(c));
+  c = selectorContract(); c.rates = {1, -4, 4}; REQUIRE_THROWS(Selector(c));
+  c = selectorContract(); c.planSha256 = std::string(64, 'e'); REQUIRE_THROWS(Selector(c));
   Selector selector(selectorContract()); auto o = scoreObservation(selector, 0, constantScores(1));
+  for (uint32_t count = 1; count <= 2; ++count) {
+    o.families[0].validCount = count; REQUIRE_THROWS(selector.addFit(o));
+  }
+  o.families[0].validCount = 5;
   selector.addFit(o); REQUIRE_THROWS(selector.addFit(o)); REQUIRE_THROWS(selector.freezeFit());
   o = scoreObservation(selector, 1, constantScores(1)); o.families[0].ratio = std::numeric_limits<double>::quiet_NaN();
   REQUIRE_THROWS(selector.addFit(o));

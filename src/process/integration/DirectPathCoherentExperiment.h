@@ -32,6 +32,17 @@ public:
     double minimumPilotCoherence = .25; // Squared normalized correlation.
     uint32_t fallbackBeamCount = 0, fallbackBeamTolerance = UINT32_MAX;
     std::vector<double> migrationRates; // Reader-only immutable intra-CPI trials.
+    // Bound by the canonical migration adapter before constructing each history.
+    uint32_t migrationRateIndex = UINT32_MAX, migrationRateCount = 0;
+    double migrationRate = 0;
+    std::string upstreamPlanSha256;
+  };
+  struct ProducerIdentity {
+    uint32_t rateIndex = UINT32_MAX, rateCount = 0;
+    double rate = 0;
+    bool rateCorrectedFallback = false;
+    uint64_t perRateTrials = 0, combinedTrials = 0;
+    std::string configurationSha256, upstreamPlanSha256;
   };
   struct Frame {
     uint64_t captureEpoch = 0, sequence = 0;
@@ -55,7 +66,7 @@ public:
     uint32_t sourceCount = 0;
     const ComplexMap* powerFallback = nullptr; // Borrowed real FP64 power, not amplitude.
     std::string reason;
-    std::string configurationSha256; // Produced by the immutable numerical owner.
+    const ProducerIdentity& producer() const { return producer_; }
     uint64_t declaredPerCellTrials = 0;
     // Calibration includes path/beam maxima, depths, pilot and target-coherence
     // gates, and fallback family. A trial count alone does not establish PFA.
@@ -100,6 +111,8 @@ public:
       return coherent.valid ? coherent : noncoherentAt(bank, cell);
     }
   private:
+    friend class DirectPathCoherentExperiment;
+    ProducerIdentity producer_; // Writable only by the immutable producing owner.
     void attachRanges(EvidenceLineage& lineage) const {
       for (uint32_t index = 0; index < lineage.depth; ++index)
         for (uint32_t source = 0; source < sourceCount; ++source)
@@ -112,19 +125,25 @@ public:
   public:
   };
 
-  // One serialization for selector admission and the producing owner. Axes
-  // and per-rate ingress identity are checked separately at the replay seam.
+  static std::string planSha256(const resident_replay::Hash& bytes) {
+    constexpr char hex[] = "0123456789abcdef"; std::string text;
+    for (uint8_t byte : bytes) { text += hex[byte >> 4]; text += hex[byte & 15]; }
+    return text;
+  }
+  // One serialization for selector admission and the producing owner; the
+  // replay seam supplies the canonical upstream plan and active migration bank.
   static std::string configurationSha256(const Config& c) {
     const auto& t = c.temporal;
     std::ostringstream s; s.imbue(std::locale::classic()); s << std::hexfloat;
-    s << "direct-path-experiment-v1 " << t.maximumCpis << ' ' << t.delayMotionBins << ' '
+    s << "direct-path-experiment-v2 " << t.maximumCpis << ' ' << t.delayMotionBins << ' '
       << t.dopplerMotionBins << ' ' << t.cpiHopSeconds << ' ' << t.minimumCoherence << ' '
       << t.phaseDirection << ' ' << t.delayDriftPerHz << ' ' << t.beamCount << ' '
       << t.refineDopplerPhase << ' ' << t.interpolateDelay << ' ' << t.heterodyneCenterHz << ' '
       << t.measureTiming << ' ' << t.sourceDomain.enabled << ' ' << t.sourceDomain.minimumDelay << ' '
       << t.sourceDomain.minimumAbsDopplerHz << ' ' << c.anchorChannelId << ' '
       << c.declaredSpatialTrials << ' ' << c.maximumCells << ' ' << c.minimumPilotCoherence << ' '
-      << c.fallbackBeamCount << ' ' << c.fallbackBeamTolerance << " channels ";
+      << c.fallbackBeamCount << ' ' << c.fallbackBeamTolerance << ' ' << c.migrationRateIndex << ' '
+      << c.migrationRateCount << ' ' << c.migrationRate << ' ' << c.upstreamPlanSha256 << " channels ";
     for (auto value : c.channelIds) s << value << ' ';
     s << "weights "; for (auto value : c.spatialCoefficients) s << value.real() << ' ' << value.imag() << ' ';
     s << "rates "; for (double value : c.migrationRates) s << value << ' ';
@@ -144,7 +163,14 @@ public:
         !config_.maximumCells || config_.maximumCells > (1u << 20) ||
         !std::isfinite(config_.minimumPilotCoherence) ||
         config_.minimumPilotCoherence <= 0 || config_.minimumPilotCoherence > 1 ||
-        config_.temporal.beamCount)
+        config_.temporal.beamCount || !std::isfinite(config_.migrationRate) ||
+        (config_.migrationRateCount && config_.fallbackBeamCount) ||
+        config_.migrationRateCount > RangeMigrationReplay::maximumTrials ||
+        (config_.migrationRateCount ? config_.migrationRateIndex >= config_.migrationRateCount :
+          config_.migrationRateIndex != UINT32_MAX || config_.migrationRate != 0) ||
+        ((config_.migrationRateCount || !config_.upstreamPlanSha256.empty()) &&
+          (config_.upstreamPlanSha256.size() != 64 ||
+           config_.upstreamPlanSha256.find_first_not_of("0123456789abcdef") != std::string::npos)))
       throw std::invalid_argument("Direct-path coherent experiment configuration invalid");
     auto ids = config_.channelIds;
     std::sort(ids.begin(), ids.end());
@@ -194,7 +220,12 @@ public:
     const std::optional<Pilot>& pilot, ComplexMap& powerFallback,
     const std::vector<uint32_t>* fallbackBeams = nullptr) {
     Result result;
-    result.configurationSha256 = configurationHash_;
+    auto& producer = result.producer_;
+    producer.configurationSha256 = configurationHash_;
+    producer.upstreamPlanSha256 = config_.upstreamPlanSha256;
+    producer.rateIndex = config_.migrationRateIndex; producer.rateCount = config_.migrationRateCount;
+    producer.rate = config_.migrationRate;
+    producer.rateCorrectedFallback = config_.migrationRateCount && !config_.fallbackBeamCount;
     for (std::size_t bank = 0; bank < result.banks.size(); ++bank)
       result.banks[bank].depth = 2u << bank;
     result.powerFallback = &powerFallback;
@@ -202,6 +233,13 @@ public:
       CoherentPathEvidence::totalPhaseTrials(config_.temporal) *
       (2u * config_.temporal.delayMotionBins + 1u) *
       (2u * config_.temporal.dopplerMotionBins + 1u);
+    const uint64_t fallbackSpatialTrials = config_.migrationRateCount ?
+      config_.declaredSpatialTrials : std::max(1u, config_.fallbackBeamCount);
+    producer.perRateTrials = result.declaredPerCellTrials +
+      (config_.temporal.maximumCpis == 8 ? 3u : config_.temporal.maximumCpis == 4 ? 2u : 1u) *
+      (2u * config_.temporal.delayMotionBins + 1u) *
+      (2u * config_.temporal.dopplerMotionBins + 1u) * fallbackSpatialTrials;
+    producer.combinedTrials = std::max(1u, producer.rateCount) * producer.perRateTrials;
     const auto fail = [&](const char* reason) {
       reset(); result.reason = reason; return std::move(result);
     };
@@ -451,6 +489,8 @@ inline DirectPathCoherentExperiment::ComplexMap channelMap(const resident_replay
 }
 inline ExperimentReader::ExperimentReader(DirectPathCoherentExperiment::Config config)
   : config_(std::move(config)) {
+  require(!config_.migrationRateCount && config_.migrationRateIndex == UINT32_MAX && config_.migrationRate == 0,
+    "Reader binds active migration identity from canonical banks, not caller labels");
   if (!config_.migrationRates.empty()) {
     require(config_.migrationRates.size() <= RangeMigrationReplay::maximumTrials &&
       std::find(config_.migrationRates.begin(), config_.migrationRates.end(), 0.) != config_.migrationRates.end(),
@@ -493,6 +533,8 @@ inline ExperimentReader::DecodedFrame ExperimentReader::decode(const ValidatedSn
     sidecar.sampleRateHz == config.sampleRate &&
     sidecar.identity.configHash == resident::wire::configHash(config), "Replay raw span or configuration lineage differs");
   require(config.surveillanceChannels == config_.channelIds, "Replay spatial channel identity differs");
+  require(config_.upstreamPlanSha256.empty() || config_.upstreamPlanSha256 ==
+    DirectPathCoherentExperiment::planSha256(sidecar.identity.configHash), "Replay upstream plan identity differs");
   DecodedFrame decoded; decoded.maps = channelMaps(validated);
   decoded.power = std::make_unique<DirectPathCoherentExperiment::ComplexMap>(config.geometry.doppler, config.geometry.delays);
   decoded.power->delay.assign(config.delayAxis.begin(), config.delayAxis.end());
@@ -546,6 +588,7 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
   const bool bindHop = previous_ && !hopSamples_;
   if (experiments_.empty() || bindHop) {
     auto bound = config_; bound.migrationRates.clear();
+    bound.upstreamPlanSha256 = DirectPathCoherentExperiment::planSha256(validated.sidecar.identity.configHash);
     // CPI span is not the hop when capture windows overlap. The first call
     // has no multi-CPI output; seed final immutable engines once lineage locks
     // the hop, preserving both complex and canonical nearest-cell histories.
@@ -560,6 +603,10 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     std::vector<std::unique_ptr<DirectPathCoherentExperiment>> initialized;
     if (bindHop) require(bootstrap_.size() == count, "Replay coherent first-frame bootstrap unavailable");
     for (size_t index = 0; index < count; ++index) {
+      if (migration) {
+        bound.migrationRateIndex = uint32_t(index); bound.migrationRateCount = uint32_t(count);
+        bound.migrationRate = corrected.front().banks[index].delayRateBinsPerSecond;
+      }
       auto engine = std::make_unique<DirectPathCoherentExperiment>(bound, true);
       if (bindHop) {
         auto& first = bootstrap_[index];
@@ -581,7 +628,7 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     auto maps = migration ? std::vector<DirectPathCoherentExperiment::ComplexMap>{} : std::move(decoded.maps);
     if (migration) {
       const auto& geometry = corrected.front();
-      item.delayRateBinsPerSecond = config_.migrationRates[index]; item.firstColumn = geometry.firstColumn;
+      item.delayRateBinsPerSecond = geometry.banks[index].delayRateBinsPerSecond; item.firstColumn = geometry.firstColumn;
       item.heterodyneCenterHz = config.dopplerAxis.at(geometry.rows / 2);
       item.whiteNoiseGain = geometry.banks[index].whiteNoiseGain;
       for (const auto& channel : corrected) {
@@ -616,14 +663,8 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
       first.beams = item.recordedBeams; first.frame = decoded.frame; first.pilot = decoded.pilot;
       bootstrap_.push_back(std::move(first));
     }
-    // Native fallback may already maximize over recorded beams; corrected
-    // fallback uses the declared fixed spatial hypothesis instead.
-    const uint64_t fallbackSpatialTrials = migration ? config_.declaredSpatialTrials : std::max(1u, config.fusion.beams);
-    item.declaredPerCellTrials = item.result.declaredPerCellTrials +
-      (config_.temporal.maximumCpis == 8 ? 3u : config_.temporal.maximumCpis == 4 ? 2u : 1u) *
-      (2u * config_.temporal.delayMotionBins + 1u) *
-      (2u * config_.temporal.dopplerMotionBins + 1u) * fallbackSpatialTrials;
-    item.combinedPerCellTrials = count * item.declaredPerCellTrials;
+    item.declaredPerCellTrials = item.result.producer().perRateTrials;
+    item.combinedPerCellTrials = item.result.producer().combinedTrials;
     results.push_back(std::move(item));
   }} catch (...) { experiments_.clear(); bootstrap_.clear(); throw; }
   if (bindHop) { hopSamples_ = observedHop; bootstrap_.clear(); }

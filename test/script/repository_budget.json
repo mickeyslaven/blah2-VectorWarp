@@ -10020,6 +10020,58 @@
           47066
         ]
       }
+    },
+    {
+      "owner": "native-integration: selector producer-rate correction, parent review 2026-11-26",
+      "purpose": "Bind canonical active migration rate, upstream plan, fixed-projection fallback and complete trial counts to immutable producer results; refuse tiny normalization rows. Add pointer-only swap, duplicate-result, beam-exposure and normalization-endpoint regressions.",
+      "rejected_reuse": "Extend the existing temporal producer, canonical migration adapter and selector; remove caller-owned RateInput labels and reuse one configuration serializer and producer-owned trial accounting. No new owner, file, import or numerical path.",
+      "cleanup_plan": "Exact current ceilings only, with no spare allowance; preserve every earlier seal. Offline contract correction does not qualify RF or live behavior. Ratchet future reductions downward and remove the experiment if rejected.",
+      "changes": {
+        "context_characters:native-integration": [
+          137448,
+          140900
+        ],
+        "context_characters:operational-tools/contracts": [
+          550992,
+          553666
+        ],
+        "context_characters:production": [
+          7222535,
+          7225987
+        ],
+        "context_dynamic:native-integration": [
+          62,
+          67
+        ],
+        "context_lines:native-integration": [
+          2672,
+          2718
+        ],
+        "context_lines:operational-tools/contracts": [
+          9607,
+          9648
+        ],
+        "context_lines:production": [
+          133437,
+          133483
+        ],
+        "context_tokens:native-integration": [
+          34012,
+          34690
+        ],
+        "context_tokens:operational-tools/contracts": [
+          138060,
+          138571
+        ],
+        "context_tokens:production": [
+          1809294,
+          1809972
+        ],
+        "lines:src": [
+          47066,
+          47112
+        ]
+      }
     }
   ],
   "context_snapshot": {

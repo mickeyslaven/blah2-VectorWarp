@@ -180,7 +180,9 @@ null observations or an exact count of valid paths. Other geometry, phase or
 decision exposure requires a new contract, not reuse of these tables.
 
 Each family/rate/depth ratio uses its own row's upper median over valid
-post-migration source-domain cells. Zero/empty denominators make that family
+post-migration source-domain cells. Nonempty rows with fewer than three valid
+normalization cells refuse: their upper-median ratio cannot exceed one, so an
+unbounded-score tail endpoint would be invalid. Zero/empty denominators make that family
 unavailable. Partition A fits 18 separate empirical upper tails with conservative
 `>=` ties and plus-one ranks. Partition B calibrates the whole paired maximum
 `max(1-p)` and, separately, the maximum over all nine NC strata at the same
@@ -189,6 +191,12 @@ Unavailable evidence contributes nothing; a previously unseen availability mask
 refuses. Reference tables must exist for all 18 strata with at least 32 available
 independent fit windows each.
 
+The canonical migration adapter binds each immutable temporal history to its
+actual rate/index/count and upstream plan. Results expose that identity read-only;
+the selector accepts no caller-provided rate labels and refuses swapped or
+duplicated result pointers. Fixed-projection fallback (no beam maximum), a
+zero-inclusive rate bank, and producer counts of 279 per rate / 837 combined
+are mandatory for the declared 837/81 exposure.
 The contract binds the producer-owned configuration identity, explicit axes,
 source domain, exact sample/hop, prescribed readout, counts, alpha, upstream plan,
 frozen generator and A/B split hashes. The generator identity must freeze seeds,
