@@ -45,6 +45,10 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
     set_tests_properties(residentWeakEvidenceScoreCpuContract PROPERTIES TIMEOUT 10)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+      add_test(NAME passiveIsarApertureCliContract COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_ROOT}/test/unit/process/analysis/TestPassiveIsarApertureCli.py
+        $<TARGET_FILE:passiveIsarApertureInspect> $<TARGET_FILE:testPassiveIsarAperture>)
+      set_tests_properties(passiveIsarApertureCliContract PROPERTIES TIMEOUT 60)
       add_test(NAME residentWeakEvidenceScoreCliContract COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_ROOT}/test/unit/process/analysis/TestResidentWeakEvidenceScoreCli.py
         $<TARGET_FILE:residentWeakEvidenceScore> $<TARGET_FILE:testResidentWeakEvidenceScore>)

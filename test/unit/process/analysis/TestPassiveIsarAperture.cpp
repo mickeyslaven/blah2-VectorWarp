@@ -3,6 +3,7 @@
 #include "process/ambiguity/Ambiguity.h"
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <type_traits>
 #include <unistd.h>
@@ -123,7 +124,7 @@ void numericalCenter() {
     }
   }
 }
-void endToEnd(const std::filesystem::path& directory, bool pair) {
+void endToEnd(const std::filesystem::path& directory, bool pair, std::ostream* evidence = nullptr) {
   cr::ExperimentReader reader(request()); cr::PassiveIsarAperture aperture;
   std::vector<double> frequencies; for (int i = -16; i <= 16; ++i) frequencies.push_back(.25 * i);
   for (uint64_t seq = 1; seq <= 8; ++seq) {
@@ -141,12 +142,14 @@ void endToEnd(const std::filesystem::path& directory, bool pair) {
     rejects([&] { aperture.append(frame); }, "Repeated frame admitted");
     if (seq == 2 || seq == 4 || seq == 8) {
       const auto spectrum = aperture.spectrum(0, 0., frequencies);
+      std::vector<Complex> oracle;
       for (size_t k = 0; k < frequencies.size(); ++k) {
         Complex expected{};
         for (uint64_t b = 0; b < spectrum.uniqueBlocks; ++b) expected += bruteBlock(b * correlation, 0, pair) *
           std::polar(1., -tau * frequencies[k] * (b * correlation + .5 * (correlation - 1)) / rateHz);
         expected /= std::sqrt(double(spectrum.uniqueBlocks));
         close(spectrum.amplitude[k], expected, 3e-6, "2/4/8-CPI independent PSF/complex spectrum oracle");
+        oracle.push_back(expected);
       }
       const auto peak = std::max_element(spectrum.amplitude.begin(), spectrum.amplitude.end(),
         [](auto a, auto b) { return std::norm(a) < std::norm(b); });
@@ -155,6 +158,18 @@ void endToEnd(const std::filesystem::path& directory, bool pair) {
       rejects([&] { aperture.spectrum(0, 100., frequencies); }, "Missing interpolation support padded");
       rejects([&] { aperture.spectrum(0, 0., {0., 2., 1.}); }, "Reordered spectrum admitted");
       rejects([&] { aperture.spectrum(0, 0., {-30., 0., 30.}); }, "Aliased spectrum admitted");
+      if (evidence) {
+        *evidence << std::setprecision(17) << "{\"schema\":\"vectorwarp-synthetic-aperture-psf-v1\",\"synthetic_only\":true,\"metric_image\":false,\"scatterers\":"
+          << (pair ? 2 : 1) << ",\"frames\":" << seq << ",\"unique_blocks\":" << spectrum.uniqueBlocks
+          << ",\"sample_rate_hz\":" << rateHz << ",\"correlation_samples\":" << correlation
+          << ",\"first_sample\":\"" << startSample << "\",\"bins\":[";
+        for (size_t k = 0; k < frequencies.size(); ++k) {
+          if (k) *evidence << ',';
+          *evidence << '[' << frequencies[k] << ',' << spectrum.amplitude[k].real() << ','
+            << spectrum.amplitude[k].imag() << ',' << oracle[k].real() << ',' << oracle[k].imag() << ']';
+        }
+        *evidence << "]}\n";
+      }
     }
   }
   const auto lost = reader.aperture(fixture(directory / (std::to_string(pair) + "-lost.vwrps"), 9, pair, false));
@@ -168,14 +183,23 @@ void endToEnd(const std::filesystem::path& directory, bool pair) {
   rejects([&] { fresh.append(misaligned); }, "Partial block overlap was silently double-counted");
 }
 }
-int main() try {
+int main(int argc, char** argv) try {
   numericalCenter();
-  auto temporary = (std::filesystem::temp_directory_path() / "passive-isar-contract-XXXXXX").string();
-  std::vector<char> name(temporary.begin(), temporary.end()); name.push_back(0);
-  check(mkdtemp(name.data()) != nullptr, "Unique fixture directory");
-  const std::filesystem::path directory(name.data());
-  endToEnd(directory, false); endToEnd(directory, true);
-  std::filesystem::remove_all(directory); // Only this test's newly created fixture directory.
+  check(argc == 1 || (argc == 3 && std::string(argv[1]) == "--evidence-dir"), "Usage: testPassiveIsarAperture [--evidence-dir NEW_DIRECTORY]");
+  std::filesystem::path directory;
+  if (argc == 3) {
+    directory = argv[2]; check(std::filesystem::create_directory(directory), "Evidence directory must be new");
+  } else {
+    auto temporary = (std::filesystem::temp_directory_path() / "passive-isar-contract-XXXXXX").string();
+    std::vector<char> name(temporary.begin(), temporary.end()); name.push_back(0);
+    check(mkdtemp(name.data()) != nullptr, "Unique fixture directory"); directory = name.data();
+  }
+  std::ofstream evidence;
+  if (argc == 3) { evidence.open(directory / "synthetic-psf.jsonl"); check(bool(evidence), "Evidence file open"); }
+  endToEnd(directory, false, argc == 3 ? &evidence : nullptr);
+  endToEnd(directory, true, argc == 3 ? &evidence : nullptr);
+  if (argc == 3) { evidence.flush(); check(bool(evidence), "Evidence write"); }
+  else std::filesystem::remove_all(directory); // Only this test's newly created fixture directory.
   std::cout << "Passive ISAR aperture: immutable phase, independent IQ/PSF, overlap, center and refusal contracts passed\n";
   return 0;
 } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

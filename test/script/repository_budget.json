@@ -9794,6 +9794,149 @@
             2883
           ]
         }
+    },
+    {
+      "owner": "Offline passive-ISAR aperture owner; parent-authorized bounded foundation",
+      "purpose": "Retain immutable pre-winner/pre-sum CAF and range-slow-time lineage through existing replay owners, share the prepared complex-delay sampler, and expose one bounded offline diagnostic CLI with native and real-CLI contracts. No live processing or defaults change.",
+      "rejected_reuse": "Reuses snapshot decoder, Ambiguity, RangeMigrationReplay and pilot owner. Temporal winner/power products cannot preserve unique raw blocks or complex phase; no second interpolator, cancellation pipeline, tracker or publisher is added.",
+      "cleanup_plan": "Remove the offline aperture diagnostic/export if superseded, keep the canonical sampler in RangeMigrationReplay, and ratchet exact file/context ceilings down with removals. Native oracle/CLI tests remain mandatory; no recorded-IQ or radar qualification is implied.",
+      "changes": {
+        "files:src": [
+          216,
+          217
+        ],
+        "files:tools": [
+          14,
+          15
+        ],
+        "lines:cmake": [
+          1277,
+          1289
+        ],
+        "lines:src": [
+          46362,
+          46658
+        ],
+        "lines:tools": [
+          2883,
+          3022
+        ],
+        "context_characters:build-integration": [
+          103128,
+          104264
+        ],
+        "context_characters:build-integration/contracts": [
+          1412051,
+          1423209
+        ],
+        "context_characters:native-integration": [
+          97051,
+          114672
+        ],
+        "context_characters:operational-tools": [
+          654328,
+          665486
+        ],
+        "context_characters:operational-tools/contracts": [
+          542434,
+          560055
+        ],
+        "context_characters:production": [
+          7181464,
+          7211379
+        ],
+        "context_contract:build-integration->tools/PassiveIsarApertureInspect.cpp": [
+          0,
+          1
+        ],
+        "context_contract:operational-tools->src/process/integration/PassiveIsarAperture.h": [
+          0,
+          1
+        ],
+        "context_dynamic:native-integration": [
+          35,
+          51
+        ],
+        "context_files:build-integration/contracts": [
+          87,
+          88
+        ],
+        "context_files:native-integration": [
+          7,
+          8
+        ],
+        "context_files:operational-tools": [
+          59,
+          60
+        ],
+        "context_files:operational-tools/contracts": [
+          23,
+          24
+        ],
+        "context_files:production": [
+          586,
+          588
+        ],
+        "context_imports:build-integration": [
+          133,
+          134
+        ],
+        "context_imports:native-integration": [
+          10,
+          11
+        ],
+        "context_imports:operational-tools": [
+          30,
+          31
+        ],
+        "context_lines:build-integration": [
+          1910,
+          1922
+        ],
+        "context_lines:build-integration/contracts": [
+          28743,
+          28882
+        ],
+        "context_lines:native-integration": [
+          1968,
+          2264
+        ],
+        "context_lines:operational-tools": [
+          12159,
+          12298
+        ],
+        "context_lines:operational-tools/contracts": [
+          9459,
+          9755
+        ],
+        "context_lines:production": [
+          132722,
+          133169
+        ],
+        "context_tokens:build-integration": [
+          16599,
+          16743
+        ],
+        "context_tokens:build-integration/contracts": [
+          347844,
+          351167
+        ],
+        "context_tokens:native-integration": [
+          23772,
+          27922
+        ],
+        "context_tokens:operational-tools": [
+          159068,
+          162391
+        ],
+        "context_tokens:operational-tools/contracts": [
+          136022,
+          140172
+        ],
+        "context_tokens:production": [
+          1798880,
+          1806497
+        ]
       }
     ,
     {

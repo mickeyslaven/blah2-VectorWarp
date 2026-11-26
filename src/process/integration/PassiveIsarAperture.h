@@ -98,14 +98,14 @@ public:
       const double delay = delayAtFirstMidpoint + rate * offset;
       const double column = delay - frame.caf[0].delay[g.firstColumn];
       const double center = frame.caf[0].doppler[g.rows / 2];
+      const auto kernel = RangeMigrationReplay::prepareProfile(column, center, first.source.sampleRateHz);
       for (uint32_t b = 0; b < g.rows; ++b) if (entry.ownedRows[b]) {
         const double local = (double(b) * c.correlation + .5 * (c.correlation - 1)) / first.source.sampleRateHz;
         const double time = offset + local;
         Complex z{};
         for (size_t channel = 0; channel < frame.migration.size(); ++channel)
           z += frame.spatialCoefficients[channel] * RangeMigrationReplay::sampleProfile(
-            frame.migration[channel].banks[rateIndex].rangeSlowTime, g.columns, b, column, center,
-            first.source.sampleRateHz);
+            frame.migration[channel].banks[rateIndex].rangeSlowTime, g.columns, b, 0u, kernel);
         // Restore physical block-center phase and remove known range ramp,
         // then remove prescribed bulk Doppler. No per-scatterer phase fitting.
         z *= frame.gaugeCorrection * std::polar(1., tau * (center * (local - delay / first.source.sampleRateHz) - translation * time));
