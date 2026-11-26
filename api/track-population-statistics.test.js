@@ -19,6 +19,14 @@ const {TrackPopulationStatistics, features} = require('./track-population-statis
   assert.equal(observed.operationalWindow(605000).complete, false, 'a gap restarts coverage');
   observed.accept({timestamp: 600000, data: []});
   assert.equal(observed.observedSince, 600000, 'clock regression restarts coverage');
+  const persistent = new TrackPopulationStatistics();
+  for (let timestamp = 1000; timestamp <= 602000; timestamp += 500)
+    persistent.accept({timestamp, data: [{id: 'persistent', state: 'ACTIVE', delay: 1, doppler: 2}]});
+  assert.equal(persistent.operationalWindow(602000).complete, true);
+  assert.equal(persistent.operationalWindow(602000).unmatched_tracks, 1,
+    'a 601-second active unmatched track must not age out of the moving proxy window');
+  persistent.associate({tracker: {id: 'persistent'}}, 'abc123');
+  assert.equal(persistent.operationalWindow(602000).unmatched_tracks, 0);
 }
 const population = new TrackPopulationStatistics();
 const frame = (timestamp, state, delay, measured) => population.accept({timestamp,

@@ -9447,6 +9447,54 @@
           2441
         ]
       }
+    },
+    {
+      "owner": "2026-11-26 independent operational release review corrections",
+      "purpose": "Require per-channel retained time coverage and network common-window alignment, and keep long-lived overlapping unmatched tracks in the canonical proxy. Explicit pending alignment remains inconclusive.",
+      "rejected_reuse": "A complete100-row slice is not600seconds of retention. Birth-only filtering cannot discard active unmatched tracks. The default24-hour API completeness flag must not restore a24-hour stable release gate.",
+      "cleanup_plan": "Preserve five-second-retention, missing/inconsistent/channel-mismatched bounds, pending alignment and601-second persistent-track regressions. Adjust only exact measured owner debt; no new pipeline or runtime configuration.",
+      "changes": {
+        "context_characters:evidence-api": [
+          311570,
+          311594
+        ],
+        "context_characters:operational-tools": [
+          661982,
+          664040
+        ],
+        "context_characters:production": [
+          7163156,
+          7165238
+        ],
+        "context_dynamic:operational-tools": [
+          467,
+          471
+        ],
+        "context_lines:operational-tools": [
+          12245,
+          12276
+        ],
+        "context_lines:production": [
+          132297,
+          132328
+        ],
+        "context_tokens:evidence-api": [
+          71924,
+          71932
+        ],
+        "context_tokens:operational-tools": [
+          160588,
+          161081
+        ],
+        "context_tokens:production": [
+          1794115,
+          1794616
+        ],
+        "lines:tools": [
+          2969,
+          3000
+        ]
+      }
     }
   ],
   "context_snapshot": {

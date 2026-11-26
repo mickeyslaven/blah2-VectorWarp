@@ -47,6 +47,8 @@ class OperationalAcceptance(unittest.TestCase):
             "ended_at": end, "observed_since": end - 600000, "observed_through": end,
             "complete": True, "retained_tracks": 3, "unmatched_tracks": 0}
         node = {"id": "site", "available": True, "radar": "receiving", "processor_fresh": True,
+            "statistics_window": {"retained_since": end - 600000, "ended_at": end,
+                "requested_started_at": 0, "complete": False},
             "config_match": True, "config_revision": identity["configSha256"],
             "loaded_revision": identity["configSha256"], "evidence_status": "healthy", "tracking_status": "healthy",
             "timing": {"cpi_ms": 400, "maximum_completed_cycle_ms": 450,
@@ -56,10 +58,11 @@ class OperationalAcceptance(unittest.TestCase):
         return {"schema": "vectorwarp-operational-release-snapshot-v1", "epoch": epoch,
             "nodes": {"site": identity}, "statistics": {"schema": "vectorwarp-network-statistics-v1",
                 "updated_at": end, "nodes": [node], "evaluation": {"policy_compatible": True,
-                    "policy_hashes": ["3" * 64]}, "statistics_window": {"alignment_pending": False},
+                    "policy_hashes": ["3" * 64]}, "statistics_window": {"alignment_pending": False,
+                        "started_at": end - 600000},
                 "system_wide_unique_passes": {"scope": "all-nodes-all-channels-deduplicated",
                     "window": "common-retained-finalized-passes", "alignment_pending": False,
-                    "passes_complete": True, "passes": passes}}}
+                    "passes_complete": True, "window_started_at": end - 600000, "passes": passes}}}
 
     def evaluate(self):
         policy_sha = self.archive.result(self.policy)
@@ -78,6 +81,41 @@ class OperationalAcceptance(unittest.TestCase):
         self.samples[-1]["statistics"]["system_wide_unique_passes"]["passes"] = []
         self.assertEqual(self.checks()["detections"], "inconclusive")
         self.assertFalse(self.evaluate()["regressionDetected"])
+
+    def test_short_retention_and_late_network_alignment_cannot_pass(self):
+        stats = self.samples[-1]["statistics"]
+        stats["nodes"][0]["statistics_window"]["retained_since"] = 2595000
+        self.assertEqual(self.checks()["detections"], "inconclusive",
+                         'five seconds of retained passes cannot certify600seconds')
+        stats["nodes"][0]["statistics_window"]["retained_since"] = 2000000
+        stats["statistics_window"]["started_at"] = 2595000
+        stats["system_wide_unique_passes"]["window_started_at"] = 2595000
+        self.assertEqual(self.checks()["detections"], "inconclusive")
+
+    def test_pending_alignment_without_traffic_is_inconclusive_not_success(self):
+        stats = self.samples[-1]["statistics"]
+        stats["statistics_window"].update(alignment_pending=True, started_at=None)
+        stats["system_wide_unique_passes"].update(alignment_pending=True, window_started_at=None, passes=[])
+        self.assertEqual(self.checks()["detections"], "inconclusive")
+        self.assertFalse(self.evaluate()["regressionDetected"])
+
+    def test_missing_or_inconsistent_retention_fails_closed(self):
+        stats = self.samples[-1]["statistics"]
+        window = stats["nodes"][0]["statistics_window"]
+        window["complete"] = True
+        with self.assertRaises(ValueError): self.evaluate()
+        window["complete"] = False
+        del window["retained_since"]
+        with self.assertRaises(ValueError): self.evaluate()
+
+    def test_multi_channel_retention_must_cover_every_channel(self):
+        node = self.samples[-1]["statistics"]["nodes"][0]
+        leaf = copy.deepcopy(node["statistics_window"])
+        node["statistics_window"] = {"complete": False, "retained_since": 2000000,
+            "channels": [{**leaf, "channel": "primary"}]}
+        self.assertEqual(self.checks()["detections"], "accepted")
+        node["statistics_window"]["channels"][0]["channel"] = "unrelated"
+        with self.assertRaises(ValueError): self.evaluate()
 
     def test_partial_track_coverage_and_pass_overflow_are_inconclusive(self):
         self.samples[-1]["statistics"]["nodes"][0]["channels"][0]["operational_track_window"]["complete"] = False

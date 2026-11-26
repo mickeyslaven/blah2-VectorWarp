@@ -34,8 +34,8 @@ def snapshot(value, identities, expected_epoch=None):
     require(stats.get("evaluation", {}).get("policy_compatible") is True and
             len(stats["evaluation"].get("policy_hashes", [])) == 1 and
             digest(stats["evaluation"]["policy_hashes"][0]), "incompatible evaluation policy")
-    require(stats.get("statistics_window", {}).get("alignment_pending") is False,
-            "unaligned finalized-pass evidence")
+    require(type(stats.get("statistics_window", {}).get("alignment_pending")) is bool,
+            "missing finalized-pass alignment status")
     for node in nodes:
         expected = identities[node["id"]]["configSha256"]
         require(node.get("config_revision") == node.get("loaded_revision") == expected,
@@ -43,22 +43,53 @@ def snapshot(value, identities, expected_epoch=None):
     return stats, {node["id"]: node for node in nodes}
 
 
-def pass_metrics(stats, start, end):
+def pass_bounds(stats):
+    """The API's complete flag describes its requested24h, not our600s."""
+    bounds = []
+    for node in stats["nodes"]:
+        window = node.get("statistics_window", {})
+        leaves = window.get("channels", [window])
+        require(isinstance(leaves, list) and leaves and type(window.get("complete")) is bool and
+                number(window.get("retained_since"), 0), "missing retained pass coverage")
+        if "channels" in window:
+            require(len(leaves) == len(node["channels"]) and
+                    {row.get("channel") for row in leaves} == {row.get("id") for row in node["channels"]},
+                    "retained pass coverage omits a channel")
+        for row in leaves:
+            require(number(row.get("retained_since"), 0) and number(row.get("requested_started_at")) and
+                    number(row.get("ended_at"), row["retained_since"]) and
+                    0 <= stats["updated_at"] - row["ended_at"] <= 30000 and
+                    type(row.get("complete")) is bool and
+                    row["complete"] == (row["requested_started_at"] >= row["retained_since"]),
+                    "inconsistent retained pass coverage")
+        require(window["complete"] == all(row["complete"] for row in leaves) and
+                window["retained_since"] == max(row["retained_since"] for row in leaves),
+                "aggregate pass coverage differs from channels")
+        bounds.extend(leaves)
+    return max(row["retained_since"] for row in bounds), min(row["ended_at"] for row in bounds)
+
+
+def pass_metrics(stats, start, end, retained_since):
     system = stats.get("system_wide_unique_passes", {})
     require(system.get("scope") == "all-nodes-all-channels-deduplicated" and
             system.get("window") == "common-retained-finalized-passes" and
-            system.get("alignment_pending") is False, "wrong pass population")
+            type(system.get("alignment_pending")) is bool, "wrong pass population")
     rows = system.get("passes")
     require(isinstance(rows, list) and len(rows) <= 100 and
             type(system.get("passes_complete")) is bool, "missing pass completeness")
     require(all(number(row.get("started_at"), 1) and number(row.get("finalized_at"), row["started_at"])
-                and row["finalized_at"] <= end for row in rows), "invalid finalized pass interval")
+                and row["finalized_at"] <= stats["updated_at"] for row in rows), "invalid finalized pass interval")
     require(all(left["started_at"] >= right["started_at"] for left, right in zip(rows, rows[1:])),
             "unordered finalized population")
     # A bounded transport is sufficient only when its oldest retained row
     # precedes this window. Never silently ignore overflow inside the window.
     complete = system["passes_complete"] or bool(rows and rows[-1]["started_at"] < start)
-    eligible = [row for row in rows if row["started_at"] >= start and row.get("eligible") is True]
+    common_start = stats["statistics_window"].get("started_at")
+    complete &= (retained_since <= start and number(common_start, 0, start) and
+                 system.get("window_started_at") == common_start and
+                 not system["alignment_pending"] and not stats["statistics_window"]["alignment_pending"])
+    eligible = [row for row in rows if row["started_at"] >= start and
+                row["finalized_at"] <= end and row.get("eligible") is True]
     require(len({(row.get("identity"), row["started_at"]) for row in rows}) == len(rows),
             "duplicate system-wide pass")
     policy_hash = stats["evaluation"]["policy_hashes"][0]
@@ -126,9 +157,9 @@ def evaluate(binding, binding_sha, policy, policy_sha, inputs, archive, now):
     require(all(node.get("available") is True and node.get("processor_fresh") is True and
                 node.get("radar") == "receiving" and node.get("config_match") is True and
                 node.get("stale") is not True for node in base_nodes.values()), "baseline node is unavailable/stale")
-    base_end = base_stats["updated_at"]
-    base_metrics = pass_metrics(base_stats, base_end - 600000, base_end)
-    base_tracks, base_complete = track_windows(base_nodes, base_end)
+    base_since, base_end = pass_bounds(base_stats)
+    base_metrics = pass_metrics(base_stats, base_end - 600000, base_end, base_since)
+    base_tracks, base_complete = track_windows(base_nodes, base_stats["updated_at"])
     require(base_complete and base_metrics["complete"] and
             base_metrics["eligible"] >= policy["minimumEligiblePasses"] and
             base_metrics["detected"] > 0 and base_metrics["tracked"] > 0,
@@ -174,9 +205,9 @@ def evaluate(binding, binding_sha, policy, policy_sha, inputs, archive, now):
                 ("backlog_ms", policy["maximumBacklogMs"])))
         previous = epoch
     require(previous == through, "last snapshot differs from evaluated-through time")
-    end = stats["updated_at"]
-    metrics = pass_metrics(stats, max(start * 1000, end - 600000), end)
-    tracks, complete = track_windows(nodes, end)
+    retained_since, end = pass_bounds(stats)
+    metrics = pass_metrics(stats, max(start * 1000, end - 600000), end, retained_since)
+    tracks, complete = track_windows(nodes, stats["updated_at"])
     require(set(tracks) == set(base_tracks), "candidate channel set changed")
     complete &= all(window["started_at"] >= start * 1000 for window in tracks.values())
     exposed = complete and metrics["complete"] and metrics["eligible"] >= policy["minimumEligiblePasses"]

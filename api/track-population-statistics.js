@@ -342,7 +342,7 @@ class TrackPopulationStatistics {
   operationalWindow(now) {
     const start = now - 600000;
     const tracks = [...this.state.finalized, ...Object.values(this.state.active)]
-      .filter(track => track.started_at >= start && track.last_at <= now);
+      .filter(track => track.last_at >= start && track.started_at <= now && track.last_at <= now);
     return {schema: 'vectorwarp-operational-track-window-v1', started_at: start, ended_at: now,
       complete: this.observedSince !== null && this.observedSince <= start &&
         this.observedThrough >= now - this.gapMs && this.observedThrough <= now &&

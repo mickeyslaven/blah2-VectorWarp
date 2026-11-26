@@ -76,13 +76,21 @@ retain failures between polls. Backlog must remain bounded.
 
 Each channel exports its canonical 600-second track window, coverage and policy
 identity. The comparison uses only complete fresh candidate windows and unchanged
-channel/evaluation policy sets. It rejects any increase in unmatched tracks per
-channel relative to the equal-duration baseline. No retention overflow, reset,
+channel/evaluation policy sets. Tracks overlapping the window remain counted,
+including long-lived unmatched tracks born before its moving start. It rejects
+any increase in unmatched tracks per channel relative to the equal-duration
+baseline. No retention overflow, reset,
 missing value or unknown metric becomes zero.
 
 System-wide deduplicated pass rows must be finalized, eligible, wholly inside
 the candidate window and unmixed across scoring epochs. A bounded 100-row
 transport qualifies only if complete or its oldest row precedes the window.
+Every node/channel's retained-since and ended-at bounds must cover the evaluated
+interval, and the network common aligned start must not exclude its beginning.
+The API's `complete` flag describes its default24-hour request; an explicitly
+incomplete24-hour history may still prove the full600-second interval from
+consistent retained bounds. Pass-list slicing completeness alone proves no
+duration. Pending alignment is inconclusive.
 Detection yield and tracked-after-detection yield must be positive and not
 worse than the frozen baseline beyond the explicit tolerance. No eligible
 traffic or incomplete coverage is inconclusive, never accepted.
