@@ -1,6 +1,6 @@
 // Offline synthetic acceptance driver and CTest consumer. No RF input, live
 // worker, target-selected readout, or alternative selector mathematics.
-#include "process/integration/CoherentFamilySelector.h"
+#include "process/integration/CoherentPassiveIsarReplay.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "ResidentReplayFixture.h"
 #include <rapidjson/stringbuffer.h>
@@ -19,6 +19,7 @@ namespace cr = blah2::integration::coherent_replay;
 namespace rr = blah2::resident_replay;
 using Json = rapidjson::Writer<rapidjson::StringBuffer>;
 constexpr uint32_t rows = 33, columns = 64, samples = rows * 64, windowSamples = 8 * samples;
+constexpr uint32_t acquisitionSamples = 9 * samples; // One explicit bootstrap outside evaluated support.
 constexpr uint32_t fitWindows = 512, jointWindows = 128, evaluationWindows = 128;
 constexpr uint64_t epoch = 248, origin = 9007199254741000ULL;
 constexpr double carrier = 20000, motionRate = .5, tau = 6.283185307179586476925286766559;
@@ -26,14 +27,17 @@ constexpr std::array<double, 4> amplitudes{0, .025, .05, .1};
 // Versioned generator identity freezes every draw, readout, availability and
 // acceptance choice. Source/executable hashes remain necessary reproduction pins.
 const std::string generator =
-  "canonical-iq-selector-v2 mt19937_64 seeds=0x248a,0x248b,0x248c "
+  "canonical-iq-selector-psar-v3 mt19937_64 seeds=0x248a,0x248b,0x248c "
   "window-seed=split-seed+0x9e3779b97f4a7c15*index uniform=((rng>>11)+.5)*2^-53 "
   "reference=64-unit-random-phase-tones f=-.45+.9*(k+.5)/64 noise=complex-BoxMuller-unit-power "
-  "delay=32+.5*(n-(7*samples+(samples-1)/2))/fs doppler=-carrier*.5/fs "
+  "delay=32+.5*(n-(8*samples+(samples-1)/2))/fs doppler=-carrier*.5/fs "
   "gauge=.37*(cpi+1) last-pilot-missing=index%4==0 reset-every-window epoch=248 origin=9007199254741000 "
   "fs=2112 samples=2112 hop=2112 corr=64 rows=33 delays=0..63 rates=0,-.5,.5 "
   "depths=2,4,8 phase-trials=4,8,16 motion=1,1 source-domain=delay>=18,abs(hz)>=2 "
   "coherence-pre-gate=0 fractional-delay=true row=-5Hz readouts=32,18 "
+  "bootstrap=sequence1 evaluated=sequences2..9 retention=on max-bytes=67108864 "
+  "grid-terminal-delays=18,26,28,30,32,34,36,44,50 residual-hz=-3,-2,-1,0,1,2,3 "
+  "grid-domain=corrected-profile-taps delay>=18 abs-total-hz>=2 fixed-power-reference=1 dB=-40..80 "
   "A=512 B=128 E=128 alpha=.05 amplitudes=0,.025,.05,.1 paired-noise "
   "positive-oracle=seed0x248d,index0,window768,amplitude1,zero-noise,pilot-present "
   "oracle-terminal-CAF=(delay32,hz-5)>4x-each-control(delay48,hz-5),(delay32,hz5) "
@@ -83,6 +87,9 @@ blah2::resident::Config nativeConfig() {
 Selector::Contract contract(const blah2::resident::Config& native, int readoutDelay = 32) {
   Selector::Contract c; auto& e = c.experiment; auto& t = e.temporal;
   e.channelIds = {0, 1}; e.anchorChannelId = 0; e.spatialCoefficients = {0., 1.};
+  e.retainApertureProducts = true;
+  e.apertureRetentionMaximumBytes = e.apertureRetentionRemainingBytes = 64u << 20;
+  e.apertureRetentionRemainingWork = blah2::integration::RangeMigrationReplay::maximumMacs;
   t.maximumCpis = 8; t.delayMotionBins = t.dopplerMotionBins = 1;
   t.cpiHopSeconds = 1; t.minimumCoherence = 0; t.refineDopplerPhase = true;
   t.interpolateDelay = true; t.delayDriftPerHz = track_before_detect::delayDriftPerHz(samples, carrier);
@@ -102,22 +109,22 @@ Selector::Contract contract(const blah2::resident::Config& native, int readoutDe
 struct IqWindow {
   std::vector<Complex> reference, noise, echo;
   explicit IqWindow(uint64_t seed, uint32_t index)
-    : reference(windowSamples), noise(windowSamples), echo(windowSamples) {
+    : reference(acquisitionSamples), noise(acquisitionSamples), echo(acquisitionSamples) {
     std::mt19937_64 rng(seed + 0x9e3779b97f4a7c15ULL * index);
     const auto uniform = [&] { return (double(rng() >> 11) + .5) * 0x1p-53; };
-    const double firstDelay = 32 - motionRate * (7 * samples + .5 * (samples - 1)) / samples;
+    const double firstDelay = 32 - motionRate * (8 * samples + .5 * (samples - 1)) / samples;
     for (uint32_t tone = 0; tone < 64; ++tone) {
       const double frequency = -.45 + .9 * (tone + .5) / 64, phase = tau * uniform();
       Complex direct = std::polar(.125, phase), delayed = std::polar(.125, phase - tau * frequency * firstDelay);
       const auto step = std::polar(1., tau * frequency);
       const auto echoStep = std::polar(1., tau * frequency * (1 - motionRate / samples));
-      for (uint32_t n = 0; n < windowSamples; ++n) {
+      for (uint32_t n = 0; n < acquisitionSamples; ++n) {
         reference[n] += direct; echo[n] += delayed; direct *= step; delayed *= echoStep;
       }
     }
     const auto phaseStep = std::polar(1., -tau * carrier * motionRate / (double(samples) * samples));
     Complex phase{1, 0};
-    for (uint32_t n = 0; n < windowSamples; ++n) {
+    for (uint32_t n = 0; n < acquisitionSamples; ++n) {
       const double radius = std::sqrt(-std::log(uniform()));
       noise[n] = std::polar(radius, tau * uniform()); echo[n] *= phase; phase *= phaseStep;
     }
@@ -128,6 +135,7 @@ struct MeasuredWindow {
   std::string iqSha256;
   double currentCpiZeroRatePower = 0;
   std::array<double, 3> terminalCafPowers{}; // Fixed target, wrong range, wrong Doppler.
+  std::shared_ptr<const cr::CoherentPassiveIsarReplay> replay;
 };
 
 // Synthetic ingress only: the canonical Ambiguity owner produces the channel
@@ -149,29 +157,27 @@ public:
   }
   MeasuredWindow run(const IqWindow& iq, uint32_t id, bool missingPilot, double amplitude,
       const Selector::Contract& plan, const Selector& interior, const Selector& boundary) {
-    auto request = plan.experiment; request.migrationRates.assign(plan.rates.begin(), plan.rates.end());
-    cr::ExperimentReader reader(request); blah2::Sha256 iqHash;
-    std::vector<cr::ExperimentReader::RateResult> results;
+    auto replay = std::make_shared<cr::CoherentPassiveIsarReplay>(plan); blah2::Sha256 iqHash;
     std::array<double, 3> terminalCafPowers{};
     const auto writer = [&](rr::BlockKind kind) {
       auto& bytes = fixture_.snapshot.blocks.at(uint32_t(kind) - 1).bytes;
       return blah2::resident::wire::Writer{{bytes.data(), bytes.size()}};
     };
-    for (uint32_t cpi = 0; cpi < 8; ++cpi) {
+    for (uint32_t cpi = 0; cpi < 9; ++cpi) {
       std::deque<Complex> reference; IqData surveillance(samples);
       auto raw = writer(rr::BlockKind::rawIq), ref = writer(rr::BlockKind::referenceIq);
       const auto gauge = std::polar(1., .37 * (cpi + 1));
       for (uint32_t n = 0; n < samples; ++n) {
         const auto i = cpi * samples + n;
         const Complex x = iq.reference[i] * gauge, y = iq.noise[i] + amplitude * iq.echo[i];
-        const Complex anchor = missingPilot && cpi == 7 ? Complex{} : iq.reference[i];
+        const Complex anchor = missingPilot && cpi == 8 ? Complex{} : iq.reference[i];
         reference.push_back(x); surveillance.push_back(y);
         raw.f64(n * 16, anchor.real()); raw.f64(n * 16 + 8, anchor.imag());
         raw.f64((samples + n) * 16, y.real()); raw.f64((samples + n) * 16 + 8, y.imag());
         ref.f64(n * 16, x.real()); ref.f64(n * 16 + 8, x.imag());
       }
       const auto caf = ambiguity_.process(reference, &surveillance);
-      if (cpi == 7) terminalCafPowers = {std::norm(caf->data[11][32]),
+      if (cpi == 8) terminalCafPowers = {std::norm(caf->data[11][32]),
         std::norm(caf->data[11][48]), std::norm(caf->data[21][32])};
       auto maps = writer(rr::BlockKind::channelMaps);
       // Channel zero is pilot-only and has zero projection coefficient.
@@ -187,17 +193,16 @@ public:
       blah2::Sha256 rawHash; rawHash.update(rawBytes.data(), rawBytes.size()); identity.rawIqHash = rawHash.finishBytes();
       iqHash.update(rawBytes.data(), rawBytes.size()); iqHash.update(refBytes.data(), refBytes.size());
       fixture_.sidecar.identity = identity;
-      fixture_.sidecar.firstSample = origin + uint64_t(id) * windowSamples + cpi * samples;
+      fixture_.sidecar.firstSample = origin + uint64_t(id) * acquisitionSamples + cpi * samples;
       fixture_.sidecar.endSample = fixture_.sidecar.firstSample + samples;
-      results = reader.appendAll(fixture_);
+      replay->append(fixture_);
     }
+    const auto& results = replay->results();
     require(results.size() == 3, "Canonical reader omitted a migration family");
-    const std::array<const Experiment::Result*, 3> inputs{&results[0].result, &results[1].result, &results[2].result};
-    const Selector::Window window{epoch, origin + uint64_t(id) * windowSamples,
-      origin + uint64_t(id + 1) * windowSamples};
-    MeasuredWindow measured{interior.readout(inputs, window, interior.contractSha256()),
-      boundary.readout(inputs, window, boundary.contractSha256()), iqHash.finish(),
-      results[0].fallback->data[plan.row][plan.column].real(), terminalCafPowers};
+    const auto window = replay->window();
+    require(window.endSample - window.firstSample == windowSamples, "Bootstrap entered evaluated support");
+    MeasuredWindow measured{replay->readout(interior), replay->readout(boundary), iqHash.finish(),
+      results[0].fallback->data[plan.row][plan.column].real(), terminalCafPowers, replay};
     for (uint32_t i = 0; i < 18; ++i) {
       const auto& f = measured.interior.families[i];
       require(f.available == (i < 9 || !missingPilot), "Unexpected interior family availability");
@@ -205,7 +210,7 @@ public:
       if (!f.available) continue;
       require(f.ratio == f.raw.power / f.rowMedian, "Family borrowed a normalization denominator");
       require(f.raw.lineage.firstSamples[0] == window.firstSample + 7 * samples &&
-        f.raw.lineage.endSamples[0] == window.endSample && f.raw.lineage.newestSequence == 8,
+        f.raw.lineage.endSamples[0] == window.endSample && f.raw.lineage.newestSequence == 9,
         "Selector lost exact terminal source lineage");
     }
     return measured;
@@ -276,6 +281,94 @@ void winner(Json& json, const char* key, const Selector::Winner& winner) {
   }
   json.EndArray(); json.EndObject();
 }
+template<class F> void refused(F&& f, const char* message) {
+  bool rejected = false;
+  try { f(); } catch (const std::exception&) { rejected = true; }
+  require(rejected, message);
+}
+void apertureReceipts(const MeasuredWindow& measured, const Selector::Contract& plan,
+    const Selector& selector, const std::string& calibration = {}) {
+  const std::vector<double> terminalDelays{18, 26, 28, 30, 32, 34, 36, 44, 50};
+  const std::vector<double> frequencies{-3, -2, -1, 0, 1, 2, 3};
+  uint64_t remaining = measured.replay->remainingWork();
+  for (uint32_t depth : {2u, 4u, 8u}) {
+    const auto aperture = measured.replay->aperture(depth);
+    const auto& frames = aperture.entries();
+    require(frames.front().frame->firstSample == measured.interior.window.endSample - depth * samples &&
+      frames.back().frame->endSample == measured.interior.window.endSample,
+      "Aperture and selector do not share terminal raw support");
+    for (uint32_t rate = 0; rate < plan.rates.size(); ++rate) {
+      auto delays = terminalDelays;
+      for (auto& d : delays) d -= plan.rates[rate] * (depth - 1) * double(plan.hopSamples) / plan.sampleRateHz;
+      const auto grid = aperture.grid(rate, delays, frequencies, plan.experiment.temporal.sourceDomain, remaining);
+      remaining -= grid.complexMacBound;
+      require(!grid.valid.front() && !grid.valid.back(), "Grid padded invalid delay support");
+      if (rate == 2) {
+        const size_t target = 4 * frequencies.size() + 3, wrongRange = 7 * frequencies.size() + 3;
+        const size_t wrongDoppler = 4 * frequencies.size() + 5;
+        require(grid.valid[target] && grid.valid[wrongRange] && grid.valid[wrongDoppler] &&
+          std::norm(grid.pixels[target]) > 4 * std::norm(grid.pixels[wrongRange]) &&
+          std::norm(grid.pixels[target]) > 4 * std::norm(grid.pixels[wrongDoppler]),
+          "Prescribed moving target absent from fixed complex delay/Doppler grid");
+      }
+      if (depth == 8 && rate == 2) {
+        refused([&] { aperture.grid(rate, delays, frequencies, plan.experiment.temporal.sourceDomain, 0); },
+          "Grid ignored work refusal");
+        refused([&] { aperture.grid(rate, delays, frequencies, plan.experiment.temporal.sourceDomain,
+          blah2::integration::RangeMigrationReplay::maximumMacs, 1); }, "Grid ignored storage refusal");
+        refused([&] { aperture.grid(rate, {18}, {-3, NAN, 3}, plan.experiment.temporal.sourceDomain); },
+          "All-masked grid bypassed frequency validation");
+        refused([&] { aperture.grid(rate, {18}, {-30, 0, 30}, plan.experiment.temporal.sourceDomain); },
+          "All-masked grid bypassed Nyquist validation");
+      }
+      record([&](Json& j) {
+        text(j, "kind", "aperture_grid"); text(j, "schema", "vectorwarp-coherent-passive-isar-grid-v1");
+        text(j, "scope", "synthetic-development-only"); j.Key("metric_image"); j.Bool(false);
+        j.Key("depth"); j.Uint(depth); j.Key("rate_index"); j.Uint(rate); j.Key("rate"); j.Double(plan.rates[rate]);
+        text(j, "selector_contract_sha256", selector.contractSha256());
+        j.Key("calibration_sha256"); if (calibration.empty()) j.Null(); else j.String(calibration.c_str());
+        text(j, "iq_sha256", measured.iqSha256);
+        integer(j, "first_sample", frames.front().frame->firstSample);
+        integer(j, "end_sample", frames.back().frame->endSample);
+        integer(j, "bootstrap_first_sample", measured.replay->bootstrap().firstSample);
+        integer(j, "bootstrap_end_sample", measured.replay->bootstrap().endSample);
+        integer(j, "hop_samples", plan.hopSamples);
+        j.Key("delay_drift_per_hz"); j.Double(frames.front().frame->delayDriftPerHz);
+        integer(j, "unique_blocks", grid.uniqueBlocks); integer(j, "complex_mac_bound", grid.complexMacBound);
+        j.Key("translation_doppler_hz"); j.Double(grid.translationDopplerHz);
+        text(j, "normalization", "rectangular_sum_over_sqrt_unique_blocks");
+        j.Key("render_power_reference"); j.Double(1.); j.Key("render_db_min"); j.Double(-40.);
+        j.Key("render_db_max"); j.Double(80.);
+        j.Key("source_domain"); j.StartObject(); j.Key("enabled"); j.Bool(true);
+        j.Key("minimum_delay"); j.Int(18); j.Key("minimum_abs_doppler_hz"); j.Double(2.);
+        text(j, "stage", "rate-corrected-profile taps"); j.EndObject();
+        for (const auto& axis : {std::make_pair("delays_at_terminal_midpoint_samples", &terminalDelays),
+            std::make_pair("residual_doppler_hz", &frequencies)}) {
+          j.Key(axis.first); j.StartArray(); for (double v : *axis.second) j.Double(v); j.EndArray();
+        }
+        j.Key("valid_mask"); j.StartArray(); for (auto valid : grid.valid) j.Bool(valid); j.EndArray();
+        j.Key("pixels_delay_major"); j.StartArray();
+        for (size_t i = 0; i < grid.pixels.size(); ++i) {
+          if (!grid.valid[i]) j.Null();
+          else { j.StartArray(); j.Double(grid.pixels[i].real()); j.Double(grid.pixels[i].imag()); j.EndArray(); }
+        }
+        j.EndArray();
+        j.Key("producer_seals"); j.StartArray(); for (const auto& e : frames) j.String(e.frame->producerSeal.c_str()); j.EndArray();
+        j.Key("producer_configuration_sha256"); j.StartArray();
+        for (const auto& e : frames) { j.StartArray();
+          for (const auto& p : e.frame->producers) { j.String(p.configurationSha256.c_str()); } j.EndArray(); }
+        j.EndArray();
+        j.Key("source_intervals"); j.StartArray(); for (const auto& e : frames) {
+          j.StartObject(); integer(j, "sequence", e.frame->sequence); integer(j, "first", e.frame->firstSample);
+          integer(j, "end", e.frame->endSample); j.EndObject(); } j.EndArray();
+        j.Key("pilot_coherence"); j.StartArray(); for (const auto& e : frames) j.Double(e.frame->pilot->coherence); j.EndArray();
+        j.Key("gauge_correction"); j.StartArray(); for (const auto& e : frames) {
+          j.StartArray(); j.Double(e.frame->gaugeCorrection.real()); j.Double(e.frame->gaugeCorrection.imag()); j.EndArray(); }
+        j.EndArray();
+      });
+    }
+  }
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -312,6 +405,29 @@ int main(int argc, char** argv) {
         full.interior.families[0].raw.power != injected.interior.families[0].raw.power,
         "Paired weak injection did not reach canonical radar processing");
       const auto oracle = positiveOracle(fixture, plan, selector, boundary);
+      auto offPlan = plan, offBoundary = contract(native, 18);
+      for (auto* p : {&offPlan, &offBoundary}) {
+        p->experiment.retainApertureProducts = false;
+        p->experiment.apertureRetentionMaximumBytes = p->experiment.apertureRetentionRemainingBytes = 0;
+        p->experiment.apertureRetentionRemainingWork = 0;
+      }
+      const Selector off(offPlan), offEdge(offBoundary);
+      const auto unretained = fixture.run(iq, 0, false, 0, offPlan, off, offEdge);
+      for (uint32_t i = 0; i < 18; ++i) {
+        const auto& a = full.interior.families[i]; const auto& b = unretained.interior.families[i];
+        require(a.available == b.available && a.raw.power == b.raw.power && a.ratio == b.ratio &&
+          a.rowMedian == b.rowMedian, "Aperture retention changed matched selector/NC evidence");
+      }
+      refused([&] { loss.replay->aperture(8); }, "Pilot loss produced a coherent aperture");
+      refused([&] { unretained.replay->aperture(8); }, "Disabled retention fabricated an aperture");
+      auto altered = std::make_shared<cr::ExperimentReader::ApertureFrame>(*full.replay->frames().back());
+      altered->producers[0].configurationSha256[0] = altered->producers[0].configurationSha256[0] == '0' ? '1' : '0';
+      cr::PassiveIsarAperture tampered; tampered.append(full.replay->frames()[6]);
+      refused([&] { tampered.append(altered); }, "Changed producer lineage entered an aperture");
+      auto wrongHop = plan; ++wrongHop.hopSamples;
+      refused([&] { fixture.run(iq, 0, false, 0, wrongHop, selector, boundary); },
+        "Bootstrap accepted a mismatched raw-hop contract");
+      apertureReceipts(oracle, plan, selector);
       record([&](Json& j) { text(j, "kind", "fixture_pass"); text(j, "null_iq_sha256", full.iqSha256);
         text(j, "injected_iq_sha256", injected.iqSha256); text(j, "positive_oracle_iq_sha256", oracle.iqSha256);
         j.Key("positive_oracle_terminal_caf_power"); j.Double(oracle.terminalCafPowers[0]);
@@ -369,6 +485,7 @@ int main(int argc, char** argv) {
     });
     require(oracleDecision.candidateDetected,
       "Frozen selector did not detect the separate noiseless positive control");
+    apertureReceipts(oracle, plan, selector, oracleDecision.calibrationSha256);
     // Each amplitude gets the SAME frozen tables and exact same evaluation raw
     // intervals/noise. Copies do not pool paired arms into independent draws.
     std::array<Selector, amplitudes.size()> arms{selector, selector, selector, selector};

@@ -22,6 +22,13 @@ public:
     double delayAtFirstMidpoint = 0, translationDopplerHz = 0;
     uint32_t rateIndex = 0;
   };
+  struct Grid {
+    std::vector<double> delayAtFirstMidpoint, residualDopplerHz;
+    std::vector<Complex> pixels; // Delay-major; invalid entries are not measurements.
+    std::vector<uint8_t> valid;
+    uint64_t uniqueBlocks = 0, complexMacBound = 0;
+    double translationDopplerHz = 0;
+  };
   void append(std::shared_ptr<const Frame> frame) {
     using resident::wire::require;
     require(frame && entries_.size() < 8 && frame->phaseQualified,
@@ -62,6 +69,13 @@ public:
         frame->anchorChannelId == old.anchorChannelId && frame->minimumPilotCoherence == old.minimumPilotCoherence &&
         frame->declaredSpatialTrials == old.declaredSpatialTrials &&
         frame->migration[0].banks.size() == old.migration[0].banks.size(), "Aperture hypothesis changed");
+      require(frame->hopSamples == old.hopSamples && frame->delayDriftPerHz == old.delayDriftPerHz &&
+        frame->producers.size() == old.producers.size() &&
+        frame->producerSeal.empty() == old.producerSeal.empty(), "Aperture producer handoff changed");
+      for (size_t i = 0; i < frame->producers.size(); ++i)
+        require(frame->producers[i].configurationSha256 == old.producers[i].configurationSha256 &&
+          frame->producers[i].upstreamPlanSha256 == old.producers[i].upstreamPlanSha256,
+          "Aperture producer configuration changed");
       for (size_t i = 0; i < frame->migration[0].banks.size(); ++i)
         require(frame->migration[0].banks[i].delayRateBinsPerSecond ==
           old.migration[0].banks[i].delayRateBinsPerSecond, "Aperture rate winner splicing forbidden");
@@ -91,26 +105,63 @@ public:
   uint64_t remainingWork() const { return RangeMigrationReplay::maximumMacs - work_; }
   uint64_t remainingBytes() const { return (256u << 20) - bytes_; }
 
+  // Prescribed bounded grid, never selected from a detector winner. The domain
+  // is applied to EVERY tap of the rate-corrected profile, matching the temporal
+  // owner's post-migration domain. It is not a mask on the original raw CAF.
+  Grid grid(uint32_t rateIndex, const std::vector<double>& delays,
+      const std::vector<double>& frequencies, const EvidenceSourceDomain& domain,
+      uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 1u << 20) const {
+    using resident::wire::require;
+    require(!entries_.empty() && !delays.empty() && delays.size() <= 65 &&
+      frequencies.size() >= 3 && frequencies.size() <= 129 && domain.enabled,
+      "Invalid bounded aperture grid/domain");
+    const auto& first = *entries_.front().frame;
+    const double translation = validateFrequencies(rateIndex, frequencies);
+    domain.validate(first.caf[0].delay, first.caf[0].doppler, first.caf[0].rows(), first.caf[0].cols());
+    Grid out;
+    out.uniqueBlocks = uniqueBlocks_;
+    out.complexMacBound = work_ + delays.size() * first.migration[0].banks.size() * uniqueBlocks_ *
+      (16 * first.caf.size() + frequencies.size());
+    require(out.complexMacBound <= maximumWork && maximumWork <= RangeMigrationReplay::maximumMacs &&
+      sizeof(Grid) + sizeof(Spectrum) + (delays.size() + 4 * frequencies.size()) * sizeof(double) +
+        delays.size() * frequencies.size() * (sizeof(Complex) + 1) <= maximumBytes,
+      "Aperture grid aggregate work/storage admission refused");
+    out.delayAtFirstMidpoint = delays; out.residualDopplerHz = frequencies;
+    const double rate = first.migration[0].banks[rateIndex].delayRateBinsPerSecond;
+    out.translationDopplerHz = translation;
+    out.pixels.resize(delays.size() * frequencies.size()); out.valid.resize(out.pixels.size());
+    for (size_t d = 0; d < delays.size(); ++d) {
+      require(std::isfinite(delays[d]) && (!d || delays[d] > delays[d - 1]), "Unordered aperture delays");
+      bool supported = true;
+      for (const auto& entry : entries_) {
+        const auto& frame = *entry.frame; const auto& g = frame.migration[0];
+        const double delay = delays[d] + rate * double(frame.firstSample - first.firstSample) / first.source.sampleRateHz;
+        const double column = delay - frame.caf[0].delay[g.firstColumn];
+        const auto kernel = RangeMigrationReplay::prepareProfile(column, frame.caf[0].doppler[g.rows / 2], first.source.sampleRateHz);
+        supported &= column >= RangeMigrationReplay::radius && column + RangeMigrationReplay::radius < g.columns &&
+          double(frame.caf[0].delay[g.firstColumn]) + kernel.firstOffset() >= domain.minimumDelay;
+      }
+      if (!supported) continue;
+      const auto values = spectrum(rateIndex, delays[d], frequencies);
+      for (size_t f = 0; f < frequencies.size(); ++f) if (domain.allowsDoppler(frequencies[f] + out.translationDopplerHz)) {
+        out.valid[d * frequencies.size() + f] = 1;
+        out.pixels[d * frequencies.size() + f] = values.amplitude[f];
+      }
+    }
+    return out;
+  }
+
   // A prescribed constant-translation signature, NOT a metre-scaled image.
   // Output retains Doppler Hz because target rotation/geometry is unidentified.
   // All specified bins are emitted; neither peak selection nor autofocus runs.
   Spectrum spectrum(uint32_t rateIndex, double delayAtFirstMidpoint,
       const std::vector<double>& frequencies) const {
     using resident::wire::require;
-    require(!entries_.empty() && uniqueBlocks_ >= 3 && frequencies.size() >= 3 && frequencies.size() <= 129 &&
-      std::isfinite(delayAtFirstMidpoint), "Invalid aperture spectrum request");
+    require(std::isfinite(delayAtFirstMidpoint), "Invalid aperture spectrum delay");
+    const double translation = validateFrequencies(rateIndex, frequencies);
     const auto& first = *entries_[0].frame;
     const auto correlation = first.correlationSamples;
-    require(rateIndex < first.migration[0].banks.size(), "Unknown aperture rate");
     const double rate = first.migration[0].banks[rateIndex].delayRateBinsPerSecond;
-    const double carrier = first.carrierHz;
-    require(rate == 0 || (std::isfinite(carrier) && carrier > 0), "Unknown physical carrier; no translation phase inference");
-    const double translation = -carrier * rate / first.source.sampleRateHz;
-    const double nyquist = .5 * first.source.sampleRateHz / correlation;
-    const double centerHz = first.caf[0].doppler[first.migration[0].rows / 2];
-    for (size_t i = 0; i < frequencies.size(); ++i)
-      require(std::isfinite(frequencies[i]) && std::abs(frequencies[i] + translation - centerHz) < nyquist &&
-        (!i || frequencies[i] > frequencies[i - 1]), "Aliased/unordered aperture frequencies");
     Spectrum result; result.residualDopplerHz = frequencies; result.amplitude.resize(frequencies.size());
     result.rateIndex = rateIndex; result.delayAtFirstMidpoint = delayAtFirstMidpoint;
     result.translationDopplerHz = translation; result.uniqueBlocks = uniqueBlocks_;
@@ -144,6 +195,22 @@ public:
     return result;
   }
 private:
+  double validateFrequencies(uint32_t rateIndex, const std::vector<double>& frequencies) const {
+    using resident::wire::require;
+    require(!entries_.empty() && uniqueBlocks_ >= 3 && frequencies.size() >= 3 && frequencies.size() <= 129,
+      "Invalid aperture spectrum frequencies/support");
+    const auto& first = *entries_.front().frame;
+    require(rateIndex < first.migration[0].banks.size(), "Unknown aperture rate");
+    const double rate = first.migration[0].banks[rateIndex].delayRateBinsPerSecond, carrier = first.carrierHz;
+    require(rate == 0 || (std::isfinite(carrier) && carrier > 0), "Unknown physical carrier; no translation phase inference");
+    const double translation = -carrier * rate / first.source.sampleRateHz;
+    const double nyquist = .5 * first.source.sampleRateHz / first.correlationSamples;
+    const double center = first.caf[0].doppler[first.migration[0].rows / 2];
+    for (size_t i = 0; i < frequencies.size(); ++i)
+      require(std::isfinite(frequencies[i]) && std::abs(frequencies[i] + translation - center) < nyquist &&
+        (!i || frequencies[i] > frequencies[i - 1]), "Aliased/unordered aperture frequencies");
+    return translation;
+  }
   std::vector<Entry> entries_;
   uint64_t uniqueBlocks_ = 0, through_ = 0, bytes_ = 0, work_ = 0;
 };

@@ -407,6 +407,11 @@ public:
     uint32_t anchorChannelId = 0, declaredSpatialTrials = 0;
     uint64_t retainedBytes = 0, complexMacBound = 0;
     double minimumPilotCoherence = 0;
+    // Empty only for the explicitly unintegrated derived/legacy diagnostic.
+    std::string producerSeal;
+    std::vector<DirectPathCoherentExperiment::ProducerIdentity> producers;
+    uint64_t hopSamples = 0;
+    double delayDriftPerHz = 0;
   };
   // The sole coherent-to-P-SAR handoff.  It retains the already corrected
   // per-channel products after the raw hop is immutable; it is unavailable to
@@ -464,6 +469,7 @@ public:
   std::shared_ptr<const ApertureFrame> aperture(const CoherentApertureProduct&,
     uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 128u << 20) const;
   std::shared_ptr<const CoherentApertureProduct> apertureProduct() const { return apertureProduct_; }
+  uint64_t remainingApertureWork() const { return remainingApertureWork_; }
   // Offline scheduler supplies its currently available execution allowance;
   // this never changes the producer configuration identity or sealed math.
   void setApertureExecutionAllowance(uint64_t bytes, uint64_t work) {
@@ -495,7 +501,7 @@ private:
   // identity: it is consumed and released as products are replaced.
   uint64_t remainingApertureBytes_ = 0, remainingApertureWork_ = 0;
   uint64_t publishedApertureBytes_ = 0, publishedApertureWork_ = 0;
-  std::shared_ptr<const ApertureFrame> aperturePrepared(ApertureInput,
+  std::shared_ptr<ApertureFrame> aperturePrepared(ApertureInput,
     const std::vector<RangeMigrationReplay::Result>*, uint64_t, uint64_t) const;
   static std::string apertureProductSeal(const CoherentApertureProduct&);
   DirectPathCoherentExperiment::Config producerBinding(const resident::Config&, const Sidecar&, double,
@@ -866,7 +872,7 @@ ExperimentReader::aperture(ApertureInput input, uint64_t maximumWork, uint64_t m
   return aperturePrepared(std::move(input), nullptr, maximumWork, maximumBytes);
 }
 
-inline std::shared_ptr<const ExperimentReader::ApertureFrame>
+inline std::shared_ptr<ExperimentReader::ApertureFrame>
 ExperimentReader::aperturePrepared(ApertureInput input, const std::vector<RangeMigrationReplay::Result>* prepared,
     uint64_t maximumWork, uint64_t maximumBytes) const {
   require((!previous_ || prepared) && !input.caf.empty(), "Aperture needs pre-temporal channel products");
@@ -997,6 +1003,8 @@ ExperimentReader::aperture(const CoherentApertureProduct& product, uint64_t maxi
     maximumBytes - product.retainedBytes);
   require(frame->phaseQualified == product.phaseQualified && frame->gaugeCorrection == product.gaugeCorrection,
     "Coherent aperture product pilot/gauge differs");
+  frame->producerSeal = product.seal; frame->producers = product.producers;
+  frame->hopSamples = product.hopSamples; frame->delayDriftPerHz = product.delayDriftPerHz;
   return frame;
 }
 

@@ -9984,6 +9984,114 @@
         "context_tokens:build-integration": [16737, 16724],
         "context_tokens:production": [1835846, 1835833]
       }
+    },
+    {
+      "owner": "native-integration and operational-tools paired coherent aperture replay",
+      "purpose": "Reviewed unified synthetic selector18/NC9-to-P-SAR replay: explicit bootstrap, retained pre-winner provenance, bounded complex delay/Doppler grids, fail-closed frequency/storage admission and native producer handoff. Exact measured ceilings only; no live wiring.",
+      "rejected_reuse": "Existing ExperimentReader, CoherentFamilySelector and PassiveIsarAperture retain all radar mathematics and one shared frequency validator. CoherentPassiveIsarReplay only owns the shared nine-CPI transaction; native standalone extraction cannot preserve producer lineage.",
+      "cleanup_plan": "Replace native inspector recomputation and standalone selector orchestration with the paired owners; extend the existing renderer. Remove duplicate frequency validation, preserve only distinct derived calibration diagnostics, and keep warning-as-error builds. No generated evidence or headroom.",
+      "changes": {
+        "files:src": [
+          219,
+          220
+        ],
+        "lines:cmake": [
+          1287,
+          1291
+        ],
+        "lines:src": [
+          47856,
+          48005
+        ],
+        "lines:tools": [
+          3500,
+          3522
+        ],
+        "context_characters:build-integration": [
+          104306,
+          104611
+        ],
+        "context_characters:build-integration/contracts": [
+          1440463,
+          1442014
+        ],
+        "context_characters:native-integration": [
+          195447,
+          204378
+        ],
+        "context_characters:operational-tools": [
+          698185,
+          699736
+        ],
+        "context_characters:operational-tools/contracts": [
+          599799,
+          604611
+        ],
+        "context_characters:production": [
+          7332279,
+          7343066
+        ],
+        "context_dynamic:native-integration": [
+          150,
+          162
+        ],
+        "context_files:native-integration": [
+          10,
+          11
+        ],
+        "context_files:production": [
+          591,
+          592
+        ],
+        "context_lines:build-integration": [
+          1920,
+          1924
+        ],
+        "context_lines:build-integration/contracts": [
+          29135,
+          29157
+        ],
+        "context_lines:native-integration": [
+          3489,
+          3638
+        ],
+        "context_lines:operational-tools": [
+          12776,
+          12798
+        ],
+        "context_lines:operational-tools/contracts": [
+          10360,
+          10435
+        ],
+        "context_lines:production": [
+          134963,
+          135138
+        ],
+        "context_tokens:build-integration": [
+          16724,
+          16763
+        ],
+        "context_tokens:build-integration/contracts": [
+          355927,
+          356270
+        ],
+        "context_tokens:native-integration": [
+          47781,
+          49836
+        ],
+        "context_tokens:operational-tools": [
+          170140,
+          170483
+        ],
+        "context_tokens:operational-tools/contracts": [
+          149107,
+          150270
+        ],
+        "context_tokens:production": [
+          1835833,
+          1838270
+        ]
+      }
     }
   ],
   "context_snapshot": {

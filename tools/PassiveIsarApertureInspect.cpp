@@ -136,6 +136,10 @@ void frameRecord(Writer& w, const cr::PassiveIsarAperture::Entry& e, const std::
   complexArray(w, "fixed_spatial_coefficients_not_applied_to_export", f.spatialCoefficients);
   integer(w, "spatial_trials", f.declaredSpatialTrials); integer(w, "complex_mac_bound", f.complexMacBound);
   integer(w, "retained_byte_bound", f.retainedBytes);
+  text(w, "producer_seal", f.producerSeal); integer(w, "producer_hop_samples", f.hopSamples);
+  number(w, "producer_delay_drift_per_hz", f.delayDriftPerHz);
+  w.Key("producer_configuration_sha256"); w.StartArray();
+  for (const auto& p : f.producers) { w.String(p.configurationSha256.c_str()); } w.EndArray();
   w.Key("channels"); w.StartArray(); for (size_t ch = 0; ch < f.caf.size(); ++ch) {
     const auto& caf = f.caf[ch]; const auto& migration = f.migration[ch];
     w.StartObject(); integer(w, "physical_channel", f.channelIds[ch]);
@@ -166,10 +170,10 @@ int main(int argc, char** argv) try {
     if (!fftw_init_threads()) throw std::runtime_error("FFTW initialization failed");
     blah2::set_fftw_planner_threads(1);
   }
-  if (argc < 14 || argc > 21 || std::string(argv[1]) != "--channels" || std::string(argv[3]) != "--anchor" ||
+  if (argc < (iqPlan ? 14 : 15) || argc > (iqPlan ? 21 : 22) || std::string(argv[1]) != "--channels" || std::string(argv[3]) != "--anchor" ||
       std::string(argv[5]) != "--projection" || std::string(argv[7]) != "--rates" ||
       std::string(argv[9]) != "--delay" || std::string(argv[11]) != "--residual-hz")
-    throw std::invalid_argument("Usage: passiveIsarApertureInspect [--iq PLAN RECEIPT PLAN_SHA RECEIPT_SHA] --channels IDS --anchor ID --projection ID --rates 0,RATE,... --delay SAMPLE --residual-hz F0,F1,F2,... FRAME... (1..8 native frames or authenticated calibration IQ slices)");
+    throw std::invalid_argument("Usage: passiveIsarApertureInspect [--iq PLAN RECEIPT PLAN_SHA RECEIPT_SHA] --channels IDS --anchor ID --projection ID --rates 0,RATE,... --delay SAMPLE --residual-hz F0,F1,F2,... FRAME... (2..9 native frames: bootstrap plus 1..8 products; or 1..8 unintegrated calibration IQ slices)");
   blah2::integration::DirectPathCoherentExperiment::Config config;
   for (double channel : list(argv[2])) config.channelIds.push_back(id(channel));
   const auto anchor = list(argv[4]), projection = list(argv[6]), delay = list(argv[10]);
@@ -180,7 +184,13 @@ int main(int argc, char** argv) try {
   if (selected == config.channelIds.end()) throw std::invalid_argument("Projection channel absent");
   config.spatialCoefficients[size_t(selected - config.channelIds.begin())] = 1.;
   const auto frequencies = list(argv[12]);
+  if (!iqPlan) {
+    config.retainApertureProducts = true;
+    config.apertureRetentionMaximumBytes = config.apertureRetentionRemainingBytes = 128u << 20;
+    config.apertureRetentionRemainingWork = blah2::integration::RangeMigrationReplay::maximumMacs;
+  }
   cr::ExperimentReader reader(config); cr::PassiveIsarAperture aperture;
+  std::optional<cr::Sidecar> bootstrap;
   // Complete admission before emitting potentially large arrays.
   for (int i = 13; i < argc; ++i) {
     if (iqPlan) {
@@ -188,7 +198,17 @@ int main(int argc, char** argv) try {
       if (config.channelIds != std::vector<uint32_t>{segment.channelId} || config.anchorChannelId != segment.channelId)
         throw std::invalid_argument("Derived IQ channel/anchor differs from authenticated extraction");
       aperture.append(reader.aperture(product(std::move(segment)), aperture.remainingWork(), aperture.remainingBytes()));
-    } else aperture.append(reader.aperture(argv[i], aperture.remainingWork(), aperture.remainingBytes()));
+    } else {
+      const uint64_t bytes = config.apertureRetentionMaximumBytes - ((256u << 20) - aperture.remainingBytes());
+      reader.setApertureExecutionAllowance(bytes, reader.remainingApertureWork());
+      const auto results = reader.appendAll(argv[i]); const auto retained = reader.apertureProduct();
+      if (!bootstrap) { bootstrap = results.front().source;
+        if (retained) throw std::logic_error("Bootstrap unexpectedly published an aperture");
+      } else {
+        if (!retained) throw std::logic_error("Native producer handoff unavailable");
+        aperture.append(reader.aperture(*retained, std::min(aperture.remainingWork(), reader.remainingApertureWork()), bytes));
+      }
+    }
   }
   std::vector<cr::PassiveIsarAperture::Spectrum> spectra;
   for (uint32_t rate = 0; rate < config.migrationRates.size(); ++rate)
@@ -197,6 +217,8 @@ int main(int argc, char** argv) try {
   for (const auto& entry : aperture.entries()) { Writer writer(stream); frameRecord(writer, entry, exe); std::cout << '\n'; }
   Writer w(stream); w.StartObject(); text(w, "schema", "vectorwarp-passive-isar-aperture-v1"); text(w, "record", "complete");
   w.Key("offline_only"); w.Bool(true); w.Key("null_calibrated"); w.Bool(false); w.Key("metric_image"); w.Bool(false);
+  text(w, "handoff", iqPlan ? "unintegrated_authenticated_derived_calibration_diagnostic" : "canonical_pre_winner_coherent_producer");
+  if (bootstrap) { integer(w, "bootstrap_first_sample", bootstrap->firstSample); integer(w, "bootstrap_end_sample", bootstrap->endSample); }
   integer(w, "frames", aperture.entries().size()); integer(w, "unique_blocks", aperture.uniqueBlocks());
   integer(w, "missing_support_samples", aperture.missingSupportSamples());
   integer(w, "diagnostic_windows", 1); integer(w, "evaluated_diagnostic_cells", spectra.size() * frequencies.size());

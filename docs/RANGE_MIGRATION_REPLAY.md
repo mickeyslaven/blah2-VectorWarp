@@ -254,17 +254,21 @@ the numerical contracts, not recorded-radar benefit or live promotion.
 consumer of `CoherentFamilySelector`. It leaves the diagnostic inspector and
 its legacy `hybridAt` view unchanged. The driver generates continuous complex
 IQ, runs canonical `Ambiguity`, and supplies native-format synthetic CAF/IQ
-buffers to `ExperimentReader::appendAll`. That existing reader owns migration,
+buffers through `CoherentPassiveIsarReplay` to `ExperimentReader::appendAll`. That existing reader owns migration,
 pilot correction, fixed spatial projection, and all NC/coherent histories.
 The fixture ingress is explicitly unsealed and synthetic; it accepts no RF
-paths. A future authenticated RF adapter must feed the same selector readout
-and evaluator, not copy the calibration or radar mathematics.
+paths. A future authenticated RF adapter must feed the same paired replay
+consumer and selector evaluator, not copy calibration or radar mathematics.
 
 The frozen development contract uses 33 Doppler rows and 64 delay bins before
 the common migration crop, rates `0,-0.5,+0.5` bins/s, depths 2/4/8, phase banks
 4/8/16, a 3-by-3 motion bank, and coherence pre-gate **zero**. Source-domain
 eligibility remains enabled for every temporal sample and fractional tap.
-Each independent eight-CPI window resets the canonical reader. Its terminal
+Generator v3 acquires nine CPIs per independent transaction: sequence 1 is an
+explicit hop-lock bootstrap, and sequences 2–9 are the same eight evaluated
+CPIs for selector18, NC9, and retained aperture products. The reader resets for
+every transaction. This changed acquisition support requires fresh A/B calibration;
+v2 selector evidence is not evidence for v3. Its terminal
 readout is prescribed at delay 32 / -5 Hz. Every fourth window loses its last
 raw-anchor pilot, with the same availability policy in all splits and arms.
 NC retains its independent score and denominator when coherent evidence is
@@ -306,8 +310,9 @@ receipt must accompany the executable hash. Timing is whole-run diagnostic
 cost, not CPI deadline acceptance.
 
 Build target `testCoherentFamilyAcceptance`. CTest
-`coherentFamilyCanonicalFixture` runs a four-window ingress, missing-pilot,
-source-support, weak-injection and noiseless-CAF regression; `coherentFamilySyntheticAcceptance`
+`coherentFamilyCanonicalFixture` runs ingress, missing-pilot, source-support,
+weak-injection, retention-on/off exact score parity, producer-tamper and raw-hop
+refusal, plus the noiseless moving-target grid regression; `coherentFamilySyntheticAcceptance`
 runs the complete frozen experiment (labelled `offline;extended`, one CPU
 thread, 900-second outer timeout). Run the full experiment only under a bounded
 compute admission and retain stdout outside the source tree. The quick fixture
@@ -315,6 +320,52 @@ does not constitute calibrated acceptance. Existing continuous-IQ phase/motion
 oracles and score-vector algebra tests remain distinct regression consumers.
 Adding this driver does not itself establish a passed experiment, recorded-IQ
 benefit, false-track improvement, runtime cadence, or promotion readiness.
+
+### Joined selector-to-aperture replay candidate
+
+`CoherentPassiveIsarReplay` is the single bounded orchestration owner for the
+paired consumer. It keeps the pre-winner, per-channel/per-rate complex product
+from each of the eight evaluated CPIs, preserves its full-content producer seal,
+producer configuration hashes, measured pilot/gauge, exact hop and physical
+delay drift, and builds terminal-aligned 2/4/8-CPI aperture suffixes. Retention
+is enabled before A/B fitting and is part of the selector contract. Focused
+retention-off runs prove exact equality of all 18 powers and normalization
+denominators; they do not reuse retained-mode calibration.
+
+The separate noiseless oracle emits nine prescribed grids (three depths by
+three rates), not a selected winning image. `PassiveIsarAperture::grid` reuses
+the canonical complex spectrum calculation across bounded delay coordinates.
+Its domain is explicitly the **rate-corrected profile**: every fractional
+profile tap must satisfy delay >=18; each output's total Doppler must satisfy
+absolute frequency >=2 Hz. This is not a new mask on the original unmigrated
+CAF. Invalid delay support or excluded Doppler is a false mask/null pixel,
+never padded measured zeros. Work/storage admission precedes the grid; measured
+phase loss refuses the aperture while leaving matched NC evidence available.
+
+Grid receipts join IQ, selector/calibration and producer hashes to exact raw
+intervals, bootstrap exclusion, motion/gauge and complex pixels. Axes are
+terminal-midpoint delay **samples** and residual Doppler **Hz**. The renderer
+extends `RenderPassiveIsarPsf.py --receipt RECEIPT --sha256 SHA --output NEW.svg`
+with one fixed power reference of 1 and -40..+80 dB scale across every panel;
+it never normalizes by a panel's peak. Fixtures require the explicit
+`--allow-uncalibrated-fixture` flag and are visibly uncalibrated. A full receipt
+must end in acceptance, match frozen calibration and pass the independent
+positive selector oracle. `coherentPassiveIsarRenderContract` exercises the real
+native CLI, pinned receipt round-trip, semantic tampering and output refusal.
+
+The native `passiveIsarApertureInspect` path now consumes `appendAll`'s retained
+product: supply one bootstrap plus 1..8 evaluated native snapshots (2..9 total).
+It no longer independently recomputes a native aperture through the standalone
+extractor. Its authenticated derived-IQ calibration diagnostic remains explicitly
+unintegrated: unknown physical carrier/native plan cannot be invented to satisfy
+the selector contract. That diagnostic is not evidence for this paired candidate.
+
+Remaining RF qualification includes a sealed native physical carrier/frontend
+contract, authenticated independent A/B/E cohorts and negatives, substantial
+moving-target/phase support, occupied bandwidth and bistatic/rotation geometry,
+cadence/resource qualification and prospective replication. These unscaled
+synthetic delay–Doppler grids are not metric P-SAR/aircraft images, detection-gain
+claims or live deployment authority. No ADS-B feature enters any inference.
 
 ## Fractional inter-CPI range and residual phase
 

@@ -50,6 +50,10 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
     set_tests_properties(residentWeakEvidenceScoreCpuContract PROPERTIES TIMEOUT 10)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+      add_test(NAME coherentPassiveIsarRenderContract COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_ROOT}/test/unit/process/analysis/TestCoherentPassiveIsarRender.py
+        $<TARGET_FILE:testCoherentFamilyAcceptance>)
+      set_tests_properties(coherentPassiveIsarRenderContract PROPERTIES TIMEOUT 60)
       add_test(NAME passiveIsarApertureCliContract COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_ROOT}/test/unit/process/analysis/TestPassiveIsarApertureCli.py
         $<TARGET_FILE:passiveIsarApertureInspect> $<TARGET_FILE:testPassiveIsarAperture>)

@@ -20,7 +20,7 @@ def main():
         arguments = [str(executable), '--channels', '0,1', '--anchor', '0',
                      '--projection', '1', '--rates', '0,-.0005,.0005', '--delay', '0',
                      '--residual-hz', ','.join(str(i / 4) for i in range(-16, 17))]
-        frames = [str(evidence / f'0-{i}.vwrps') for i in range(1, 9)]
+        frames = [str(evidence / f'producer-0-{i}.vwrps') for i in range(1, 10)]
         result = subprocess.run(arguments + frames, env=environment,
                                 capture_output=True, check=True, timeout=20)
         records = [json.loads(line) for line in result.stdout.splitlines()]
@@ -29,19 +29,23 @@ def main():
         assert complete['offline_only'] and not complete['metric_image'] and not complete['null_calibrated']
         assert complete['unique_blocks'] == '73' and complete['evaluated_diagnostic_cells'] == '99'
         assert sum(block['owned'] for frame in records[:-1] for block in frame['blocks']) == 73
-        assert records[0]['first_sample'] == '9007199254741001'
+        assert records[0]['first_sample'] == '9007199254741513'
+        assert complete['bootstrap_first_sample'] == '9007199254741001'
+        assert complete['handoff'] == 'canonical_pre_winner_coherent_producer'
         digest = hashlib.sha256(executable.read_bytes()).hexdigest()
         for frame in records[:-1]:
             assert frame['executable_sha256'] == digest
             assert len(frame['source_block_sha256_in_BlockKind_order']) == 20
             assert len(frame['channels']) == 2
+            assert len(frame['producer_seal']) == 64 and len(frame['producer_configuration_sha256']) == 3
+            assert frame['producer_hop_samples'] == '512'
             assert frame['effective_occupied_bandwidth_hz'] is None
             for channel in frame['channels']:
                 assert len(channel['caf_doppler_major']) == 17 * 49
                 assert len(channel['range_slow_time_uncropped']) == 17 * 49
                 assert [rate['delay_rate_bins_per_second'] for rate in channel['rates']] == [0, -.0005, .0005]
                 assert all(len(rate['kernels_by_block']) == 17 for rate in channel['rates'])
-        oracle = next(json.loads(line) for line in (evidence / 'synthetic-psf.jsonl').read_text().splitlines()
+        oracle = next(json.loads(line) for line in (evidence / 'producer-seam-psf.jsonl').read_text().splitlines()
                       if json.loads(line)['scatterers'] == 1 and json.loads(line)['frames'] == 8)
         for actual, reference in zip(complete['spectra'][0]['amplitude_rectangular_sum_over_sqrt_unique_blocks'], oracle['bins']):
             expected = complex(reference[3], reference[4])
@@ -61,7 +65,7 @@ def authenticated_ingress(executable, evidence, native, environment):
     """Synthetic real-format extraction; never a smaller fabricated snapshot."""
     folder = evidence / 'segments'
     folder.mkdir()
-    snapshot = evidence / '0-1.vwrps'
+    snapshot = evidence / 'producer-0-2.vwrps'
     data = snapshot.read_bytes()
     sidecar = Path(str(snapshot) + '.vwrl').read_bytes()
     blocks = {str(kind): list(struct.unpack_from('<QQ', data, 512 + 24 * (kind - 1) + 8)) for kind in range(1, 21)}
