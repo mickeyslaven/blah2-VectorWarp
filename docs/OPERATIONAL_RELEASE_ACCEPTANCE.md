@@ -91,6 +91,8 @@ The API's `complete` flag describes its default24-hour request; an explicitly
 incomplete24-hour history may still prove the full600-second interval from
 consistent retained bounds. Pass-list slicing completeness alone proves no
 duration. Pending alignment is inconclusive.
+The common retained end must be at least 600 seconds after the candidate start;
+freshness allowances cannot shorten the evaluated exposure, even by one millisecond.
 Detection yield and tracked-after-detection yield must be positive and not
 worse than the frozen baseline beyond the explicit tolerance. No eligible
 traffic or incomplete coverage is inconclusive, never accepted.

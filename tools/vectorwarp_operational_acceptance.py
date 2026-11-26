@@ -85,7 +85,7 @@ def pass_metrics(stats, start, end, retained_since):
     # precedes this window. Never silently ignore overflow inside the window.
     complete = system["passes_complete"] or bool(rows and rows[-1]["started_at"] < start)
     common_start = stats["statistics_window"].get("started_at")
-    complete &= (retained_since <= start and number(common_start, 0, start) and
+    complete &= (end - start >= 600000 and retained_since <= start and number(common_start, 0, start) and
                  system.get("window_started_at") == common_start and
                  not system["alignment_pending"] and not stats["statistics_window"]["alignment_pending"])
     eligible = [row for row in rows if row["started_at"] >= start and

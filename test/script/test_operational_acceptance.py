@@ -92,6 +92,18 @@ class OperationalAcceptance(unittest.TestCase):
         stats["system_wide_unique_passes"]["window_started_at"] = 2595000
         self.assertEqual(self.checks()["detections"], "inconclusive")
 
+    def test_stale_retained_tail_cannot_shorten_required_600_second_exposure(self):
+        stats = self.samples[-1]["statistics"]
+        stats["system_wide_unique_passes"]["passes"] = self.sample(
+            2570, self.identity)["statistics"]["system_wide_unique_passes"]["passes"]
+        for stale_ms, expected in ((30000, "inconclusive"), (1, "inconclusive"), (0, "accepted")):
+            with self.subTest(stale_ms=stale_ms):
+                stats["nodes"][0]["statistics_window"]["ended_at"] = 2600000 - stale_ms
+                checks = self.checks()
+                self.assertEqual(checks["detections"], expected)
+                self.assertEqual(checks["measurement-backed-track-continuity"], expected)
+                self.assertFalse(self.evaluate()["regressionDetected"])
+
     def test_pending_alignment_without_traffic_is_inconclusive_not_success(self):
         stats = self.samples[-1]["statistics"]
         stats["statistics_window"].update(alignment_pending=True, started_at=None)

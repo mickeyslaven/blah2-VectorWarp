@@ -9495,6 +9495,18 @@
           3000
         ]
       }
+    },
+    {
+      "owner": "2026-11-26 exact operational exposure review correction",
+      "purpose": "Require all600seconds of evaluated pass exposure even when node retained end is within the allowed freshness lag.",
+      "rejected_reuse": "Snapshot freshness and retained-start coverage do not prove600seconds when the common end is stale; neither may silently shorten the required interval.",
+      "cleanup_plan": "Preserve570-second and599999-millisecond refusal plus exact600-second acceptance. This single additional predicate changes no runtime behavior or other release gate.",
+      "changes": {
+        "context_characters:operational-tools": [664040, 664066],
+        "context_characters:production": [7165238, 7165264],
+        "context_tokens:operational-tools": [161081, 161088],
+        "context_tokens:production": [1794616, 1794623]
+      }
     }
   ],
   "context_snapshot": {
