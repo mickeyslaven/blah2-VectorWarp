@@ -62,8 +62,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Require approved pre-soak policy
-        run: python3 test/gpu/pre_soak_receipt_gate.py
       - id: node-pin
         run: version=$(python3 script/artifact-plan.py pin node) && echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -100,8 +98,6 @@ jobs:
     timeout-minutes: 210
     env:
       VECTORWARP_QUALIFICATION_GPU_DEVICE: ${{ vars.VECTORWARP_QUALIFICATION_GPU_DEVICE }}
-      PRE_SOAK_PLAN_PATH: ${{ vars.VECTORWARP_PRE_SOAK_PLAN_PATH }}
-      PRE_SOAK_PLAN_SHA256: ${{ vars.VECTORWARP_PRE_SOAK_PLAN_SHA256 }}
       PYTHONDONTWRITEBYTECODE: 1
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -112,7 +108,7 @@ jobs:
         with:
           name: unified-gpu-artifact-${{ github.sha }}
           path: build/qualified-input
-      - name: Measure baseline, unified features and pre-soak evidence
+      - name: Measure physical baseline and unified feature evidence
         run: |
           set -euo pipefail
           # Refuse missing Ubuntu 24.04 runtime dependencies before replay.
@@ -133,12 +129,6 @@ jobs:
           python3 test/gpu/unified_physical_corpus.py "${common[@]}" \
             --baseline-receipt 'build/gpu-product-parity-${{ matrix.device_class }}.json' \
             --receipt 'build/gpu-unified-features-${{ matrix.device_class }}.json'
-          if [[ '${{ matrix.device_class }}' == fp64 ]]; then
-            python3 test/gpu/recorded_iq_qualification.py \
-              --plan "${PRE_SOAK_PLAN_PATH:?Authorized pre-soak plan required}" \
-              --plan-sha256 "${PRE_SOAK_PLAN_SHA256:?Approved plan SHA-256 required}" \
-              --output build/pre-soak
-          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -147,7 +137,6 @@ jobs:
             build/gpu-product-parity-${{ matrix.device_class }}.json
             build/gpu-unified-features-${{ matrix.device_class }}.json
             build/gpu-feature-evidence/
-            build/pre-soak/
           if-no-files-found: error
           retention-days: 30
   acceptance:
@@ -162,5 +151,5 @@ jobs:
         with:
           pattern: gpu-product-parity-*-${{ github.sha }}
           path: build/gpu-receipts
-      - name: Require complete exact-artifact GPU and pre-soak receipts
+      - name: Require complete exact-artifact physical GPU receipts
         run: python3 test/gpu/verify_qualification_receipts.py --receipts build/gpu-receipts --source-sha "$GITHUB_SHA"

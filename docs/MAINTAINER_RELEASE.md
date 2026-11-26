@@ -90,7 +90,7 @@ script/package-homebrew-local.sh build/homebrew-local --install-tap
 brew install --build-from-source vectorwarp/local/vectorwarp
 ```
 
-## Final candidate and 24-hour live acceptance
+## Final candidate and bounded live acceptance
 
 Complete source fixes, UI cache changes, config migrations, packaging fixes and
 release-documentation changes before freezing the candidate. Native builds
@@ -125,9 +125,17 @@ Use a fresh state directory whenever the binding or verifier changes; preserve
 failed and historical evidence.
 
 Release acceptance requires `releaseAccepted: true`: valid binding, no sticky
-startup/capture/restart/binding failure, and at least 86,400 continuous healthy
+startup/capture/restart/binding failure, and at least 600 continuous healthy
 seconds with no observation gap over 180 seconds. `latestHealthy`, a short
 diagnostic window, or unbound `steadyStateAccepted` cannot release a candidate.
+The ten-minute minimum replaces the former 24-hour requirement by explicit
+maintainer direction. It is bounded operational acceptance, not a long-duration
+reliability claim. Every completed CPI must meet its reviewed deadline; capture
+loss/discontinuity and restarts remain disqualifying. Eligible traffic must
+produce detections and measurement-backed tracks under the reviewed evaluation
+policy. Insufficient eligible traffic is explicitly inconclusive and cannot
+qualify publication; continue observation until a complete healthy window has
+sufficient positive and negative exposure.
 The monitor uses each binding's reviewed ambiguity and clutter backends rather
 than assuming a receiver- or host-specific backend. The monitor explicitly
 requires recording to be disabled; recording stress
@@ -142,7 +150,7 @@ evidence; unsigned host JSON is not independent remote attestation. Promotion
 authenticates the prior successful same-source/main workflow run, downloads its
 existing packages without rebuilding, and compares actual package SHA-256,
 installed-tree and runtime executable hashes to the accepted binding. It also
-checks the frozen monitor/probe hashes and the full 24-hour policy. Signing must
+checks the frozen monitor/probe hashes and the full bounded acceptance policy. Signing must
 preserve all payload hashes; only RPM signature/container bytes may change.
 The signed `release-soak-provenance.json` records this unsigned-to-signed chain.
 

@@ -452,7 +452,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends apt-utils createrepo-c gnupg rpm rpm2cpio cpio
-      - name: Verify 24-hour soak against exact candidate package payloads
+      - name: Verify bounded live acceptance against exact candidate package payloads
         env:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           VECTORWARP_SOAK_RECEIPT: ${{ inputs.soak_receipt }}
@@ -529,7 +529,7 @@ jobs:
           [[ $(git rev-parse 'FETCH_HEAD^{commit}') == "$GITHUB_SHA" ]] || {
             echo 'Release tag moved after validation; refusing publication.' >&2; exit 1; }
           gh release create "$TAG" --draft --verify-tag --title "VectorWarp $VERSION" \
-            --notes "Explicit promotion of soaked native packages; no rebuild. Source: ${GITHUB_SHA}. Candidate: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}. Signing: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (attempt ${GITHUB_RUN_ATTEMPT}). Signed release-soak-provenance.json binds the 24-hour host receipt and original package SHA256 to each final asset; RPM signatures may change container bytes, never payloads." \
+            --notes "Explicit promotion of accepted native packages; no rebuild. Source: ${GITHUB_SHA}. Candidate: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}. Signing: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (attempt ${GITHUB_RUN_ATTEMPT}). Signed release-soak-provenance.json binds the bounded live acceptance receipt and original package SHA256 to each final asset; RPM signatures may change container bytes, never payloads." \
             release-assets/*.deb release-assets/*.rpm release-assets/SHA256SUMS release-assets/SHA256SUMS.asc \
             release-assets/vectorwarp-archive-key.asc release-assets/signing-fingerprint.txt \
             release-assets/package-manifest.json release-assets/repository-manifest.json \

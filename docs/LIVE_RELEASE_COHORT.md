@@ -109,7 +109,7 @@ TimeoutStartSec=150
 Use a unique empty state directory after activation. Sample every 60 seconds,
 with no gap over 180 seconds; `TimeoutStartSec` must permit both bounded identity
 probes and telemetry calls for every declared node. Keep the entire first
-24-hour window. Monitor/probe
+ten-minute acceptance window and any preceding inconclusive observations. Monitor/probe
 or binding changes require another state directory. The ledger retains sticky
 restart, capture-loss, binding and regression failures even when rows rotate.
 Any unhealthy sample resets the clean clock; a sticky failure requires a new,
@@ -136,7 +136,7 @@ keys and each `qualifications` map must exactly match the reviewed binding:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "bindingSha256": "SHA256_OF_EXACT_BINDING_FILE_BYTES",
   "policySha256": "SHA256_OF_REVIEWED_EVALUATION_POLICY",
   "evidenceSha256": "SHA256_OF_RETAINED_EVALUATOR_INPUTS_AND_RESULT",
@@ -145,11 +145,11 @@ keys and each `qualifications` map must exactly match the reviewed binding:
   "nodes": {
     "site-a": {"retiredCpis": 0, "retiredSamples": 0,
       "checks": {
-        "detections": {"accepted": true, "evidenceSha256": "SHA256_OF_DETECTION_RESULT"},
-        "measurement-backed-track-continuity": {"accepted": true, "evidenceSha256": "SHA256_OF_CONTINUITY_RESULT"},
-        "false-track-controls": {"accepted": true, "evidenceSha256": "SHA256_OF_NEGATIVE_CONTROL_RESULT"},
-        "cpi-deadlines": {"accepted": true, "evidenceSha256": "SHA256_OF_COMPLETE_CPI_DEADLINE_RESULT"},
-        "capture-health": {"accepted": true, "evidenceSha256": "SHA256_OF_CAPTURE_RESULT"}
+        "detections": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_DETECTION_RESULT"},
+        "measurement-backed-track-continuity": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_CONTINUITY_RESULT"},
+        "false-track-controls": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_NEGATIVE_CONTROL_RESULT"},
+        "cpi-deadlines": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_COMPLETE_CPI_DEADLINE_RESULT"},
+        "capture-health": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_CAPTURE_RESULT"}
       },
       "qualifications": {"radar-behavior": "SHA256_OF_REVIEWED_RADAR_EVIDENCE",
         "physical-gpu": "SHA256_OF_REVIEWED_PHYSICAL_GPU_EVIDENCE"}}
@@ -167,11 +167,17 @@ retirement, or a reported regression prevents release acceptance. A policy and
 running evaluator must exist before starting the release cohort.
 Each node must explicitly pass all five checks with retained, hash-bound results.
 The reviewed policy defines their measurements, thresholds and required exposure;
-inadequate positive or negative exposure is not a pass. CPI deadline evidence must
+inadequate positive or negative exposure has `status: "inconclusive"` and
+`accepted: false`. It blocks acceptance and resets the healthy clock without
+claiming a measured regression or a permanent startup fault. Continue collecting
+eligible exposure; do not substitute frame flow, coasting, or truth-only matches
+for detections and measurement-backed continuity. An actual failed check has
+`status: "rejected"` and remains disqualifying even when traffic is inconclusive.
+CPI deadline evidence must
 cover completed cycles throughout the interval, including between sampler polls;
 sampled `cpi` percentiles or average cadence alone cannot establish that result.
-Schema-1 evaluator receipts lack this coverage contract and cannot qualify a new
-cohort. A false per-check result rejects the cohort even if the aggregate
+Schema-1/2 evaluator receipts lack the current coverage/status contract and cannot
+qualify a new cohort. A false per-check result blocks acceptance even if the aggregate
 `regressionDetected` value is false.
 
 The executable producer is `tools/vectorwarp_release_regression.py`; its
@@ -182,7 +188,7 @@ exposure, complete CPI ledger, capture counters, and atomic publication.
 unapproved template and cannot qualify any cohort. A reviewed input scorer and
 policy are prerequisites; synthetic test fixtures do not supply that review.
 
-Release approval requires the full 86,400 clean seconds, both startup and steady
+Release approval requires at least 600 consecutive clean seconds, both startup and steady
 state acceptance, the fresh regression receipt, and successful same-package
 verification by `script/verify-release-soak.py`. Signing may change the RPM
 container signature only; it may not rebuild or modify the soaked payload.

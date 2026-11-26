@@ -338,15 +338,28 @@ class SoakEvaluation(unittest.TestCase):
         self.assertFalse(summary["startupAccepted"])
         self.assertTrue(summary["steadyStateAccepted"])
 
-    def test_default_window_really_requires_24_hours_of_observations(self):
-        started, rows = self.records([(minute * 60, []) for minute in range(1440)])
+    def test_default_window_requires_ten_consecutive_minutes_of_observations(self):
+        started, rows = self.records([(minute * 60, []) for minute in range(10)])
         self.assertFalse(self.summary(started, rows)["steadyStateAccepted"])
-        last = {"epoch": 86400, "failures": [], "nodes": {}}
+        last = {"epoch": 600, "failures": [], "nodes": {}}
         SOAK.advance_acceptance(started, last)
         rows.append(last)
         summary = self.summary(started, rows)
         self.assertTrue(summary["steadyStateAccepted"])
         self.assertFalse(summary["diagnosticWindow"])
+
+    def test_inconclusive_exposure_never_accepts_but_can_start_a_fresh_clean_window(self):
+        started, rows = self.records([(minute * 60, ["soak:insufficient-exposure"])
+                                      for minute in range(12)])
+        summary = self.summary(started, rows)
+        self.assertTrue(summary["startupAccepted"])
+        self.assertFalse(summary["steadyStateAccepted"])
+        self.assertFalse(summary["releaseAccepted"])
+        for minute in range(12, 23):
+            row = {"epoch": minute * 60, "failures": [], "nodes": {}}
+            SOAK.advance_acceptance(started, row)
+            rows.append(row)
+        self.assertTrue(self.summary(started, rows)["steadyStateAccepted"])
 
     def test_unobserved_gap_or_clock_rollback_breaks_clean_window(self):
         for last_epoch in (181, -1):
@@ -452,9 +465,9 @@ class SoakEvaluation(unittest.TestCase):
 
     def test_regression_receipt_requires_exact_binding_policy_freshness_and_both_nodes(self):
         binding = {"expected": self.binding(), "sha256": "3" * 64}
-        receipt = {"schema": 2, "bindingSha256": "3" * 64, "policySha256": "1" * 64,
+        receipt = {"schema": 3, "bindingSha256": "3" * 64, "policySha256": "1" * 64,
                    "nodes": {name: {"retiredCpis": 0, "retiredSamples": 0,
-                             "checks": {key: {"accepted": True, "evidenceSha256": "4" * 64}
+                             "checks": {key: {"accepted": True, "status": "accepted", "evidenceSha256": "4" * 64}
                                         for key in SOAK.REGRESSION_CHECKS},
                              "qualifications": node["qualifications"]}
                              for name, node in binding["expected"]["nodes"].items()},
@@ -473,8 +486,15 @@ class SoakEvaluation(unittest.TestCase):
                              ["soak:regression-evidence-invalid"])
             failed = copy.deepcopy(receipt)
             failed["nodes"]["hp"]["checks"][key]["accepted"] = False
+            failed["nodes"]["hp"]["checks"][key]["status"] = "rejected"
             self.assertEqual(SOAK.verify_regression(failed, binding, 100, 2),
                              ["soak:regression-detected"])
+            failed["nodes"]["hp"]["checks"][key]["status"] = "inconclusive"
+            self.assertEqual(SOAK.verify_regression(failed, binding, 100, 2),
+                             ["soak:insufficient-exposure"])
+            failed["nodes"]["hp"]["checks"][key]["accepted"] = True
+            self.assertEqual(SOAK.verify_regression(failed, binding, 100, 2),
+                             ["soak:regression-evidence-invalid"])
         for key, value in (("bindingSha256", "5" * 64), ("policySha256", "5" * 64),
                            ("nodes", ["hp"]), ("evaluatedThroughEpoch", 101),
                            ("evaluationStartEpoch", 3), ("regressionDetected", None)):

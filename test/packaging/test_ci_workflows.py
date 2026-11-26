@@ -436,42 +436,36 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn("environment", qualification["jobs"]["qualify"])
         self.assertEqual(qualification["jobs"]["qualify"]["strategy"]["max-parallel"], "1")
 
-    def test_unapproved_pre_soak_policy_stops_before_build_and_physical_jobs(self):
+    def test_physical_qualification_does_not_depend_on_unapproved_research_bounds(self):
         jobs = workflow("gpu-qualification.yml")["jobs"]
         steps = jobs["build"]["steps"]
-        preflight = next(step for step in steps if "test/gpu/pre_soak_receipt_gate.py" in step.get("run", ""))
-        self.assertNotIn("if", preflight)
-        self.assertNotIn("continue-on-error", preflight)
         self.assertTrue(steps[0]["uses"].startswith("actions/checkout@"))
         self.assertEqual(steps[0]["with"]["ref"], "${{ github.sha }}")
         self.assertEqual(jobs["build"]["needs"], "authorize")
         self.assertIn("build", jobs["qualify"]["needs"])
-        build = next(step for step in steps if "script/build-native.sh" in step.get("run", ""))
-        self.assertLess(steps.index(preflight), steps.index(build))
-        result = subprocess.run(["bash", "-euo", "pipefail", "-c", preflight["run"]],
-                                cwd=ROOT, capture_output=True, text=True, timeout=5)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Pre-soak risk/exposure bounds have not been approved", result.stderr)
+        source = (WORKFLOWS / "gpu-qualification.yml").read_text()
+        for research in ("pre_soak_receipt_gate.py", "recorded_iq_qualification.py", "PRE_SOAK_PLAN"):
+            self.assertNotIn(research, source)
+        validator = (ROOT / "test/gpu/verify_qualification_receipts.py").read_text()
+        self.assertNotIn("pre_soak_receipt_gate", validator)
+        self.assertIn("validate_pair(", validator)
+        self.assertIn("validate_evidence_files(receipt, path)", validator)
 
-    def test_pre_soak_producer_and_complete_evidence_reach_both_receipt_gates(self):
+    def test_physical_products_and_unified_evidence_reach_both_receipt_gates(self):
         jobs = workflow("gpu-qualification.yml")["jobs"]
         steps = jobs["qualify"]["steps"]
-        producers = [step for step in steps if "test/gpu/recorded_iq_qualification.py" in step.get("run", "")]
+        producers = [step for step in steps if "test/gpu/unified_physical_corpus.py" in step.get("run", "")]
         self.assertEqual(len(producers), 1)
         producer = producers[0]
         self.assertNotIn("continue-on-error", producer)
-        self.assertIn("if [[ '${{ matrix.device_class }}' == fp64 ]]; then", producer["run"])
-        for key in ("PRE_SOAK_PLAN_PATH", "PRE_SOAK_PLAN_SHA256"):
-            self.assertEqual(jobs["qualify"]["env"][key], "${{ vars.VECTORWARP_" + key + " }}")
-            self.assertIn("${" + key + ":?", producer["run"])
-        self.assertIn('--plan-sha256 "${PRE_SOAK_PLAN_SHA256:', producer["run"])
-        self.assertIn("--output build/pre-soak", producer["run"])
+        self.assertIn("test/gpu/product_parity_test.py", producer["run"])
+        self.assertIn('--source-sha "$GITHUB_SHA"', producer["run"])
         for diagnostic_mode in ("--golden-only", "--policy-comparison", "--capture"):
             self.assertNotIn(diagnostic_mode, producer["run"])
         upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
         self.assertGreater(steps.index(upload), steps.index(producer))
         self.assertEqual(upload["if"], "always()")
-        self.assertIn("build/pre-soak/", upload["with"]["path"].splitlines())
+        self.assertIn("build/gpu-feature-evidence/", upload["with"]["path"].splitlines())
         downloads = [step["with"] for step in jobs["acceptance"]["steps"]
                      if step.get("uses", "").startswith("actions/download-artifact@")]
         fp64_artifact = upload["with"]["name"].replace("${{ matrix.device_class }}", "fp64")

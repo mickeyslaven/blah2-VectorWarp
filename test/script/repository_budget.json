@@ -9211,6 +9211,82 @@
       "purpose": "Transport exact measured-track intervals through one bounded compact contract, compute the canonical cross-node union once, and render unavailable evidence truthfully instead of manufacturing zero coverage or gaps.",
       "rejected_reuse": "Reject raw multi-megabyte ledgers, scalar percentage summation, synthetic zero evidence, display-node completeness coupling, duplicate coverage arithmetic, and reuse of any exact reductions as unrelated headroom.",
       "cleanup_plan": "Keep the one-megabyte fail-closed transport cap, strip interval bases from public summaries, retain live-sized roundtrip and kiosk regressions, and ratchet every later consolidation downward."
+    },
+    {
+      "changes": {
+        "context_characters:build-release": [
+          653717,
+          653748
+        ],
+        "context_characters:build-release/contracts": [
+          385389,
+          385733
+        ],
+        "context_characters:operational-tools": [
+          646615,
+          647601
+        ],
+        "context_characters:production": [
+          7146222,
+          7146644
+        ],
+        "context_characters:release-ci": [
+          136460,
+          135865
+        ],
+        "context_characters:release-ci/contracts": [
+          362800,
+          362831
+        ],
+        "context_lines:build-release/contracts": [
+          7708,
+          7712
+        ],
+        "context_lines:operational-tools": [
+          12027,
+          12038
+        ],
+        "context_lines:release-ci": [
+          2626,
+          2615
+        ],
+        "context_tokens:build-release": [
+          163119,
+          163121
+        ],
+        "context_tokens:build-release/contracts": [
+          91551,
+          91628
+        ],
+        "context_tokens:operational-tools": [
+          156936,
+          157135
+        ],
+        "context_tokens:production": [
+          1790166,
+          1790238
+        ],
+        "context_tokens:release-ci": [
+          30522,
+          30393
+        ],
+        "context_tokens:release-ci/contracts": [
+          94665,
+          94667
+        ],
+        "lines:.github": [
+          2626,
+          2615
+        ],
+        "lines:tools": [
+          2751,
+          2762
+        ]
+      },
+      "owner": "Stable release acceptance policy review, 2026-11-26",
+      "purpose": "Implement the user's ten-minute exact-artifact stable acceptance policy with explicit inconclusive exposure; retain physical FP32/FP64 product and unified-corpus gates while separating unapproved recorded-IQ research policy from publication.",
+      "rejected_reuse": "Reject synthetic success receipts, false acceptance from absent traffic, duplicated duration constants, prerelease waivers, package rebuild substitution, and relaxing actual capture, deadline, signature or physical product parity failures.",
+      "cleanup_plan": "Preserve canonical monitor/evaluator/signer ownership and regression tests; retain research admission independently, ratchet removed workflow context down, and require fresh frozen source/package acceptance after any source change."
     }
   ],
   "context_snapshot": {

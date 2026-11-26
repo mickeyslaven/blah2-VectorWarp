@@ -94,7 +94,7 @@ def receipt(envelope, run, source):
                 "soak monitor/probe differs from frozen source")
     window = summary.get("cleanWindow", {})
     policy = window.get("policy", {})
-    duration = checked_number(policy.get("cleanWindowSeconds"), "clean window", 86400)
+    duration = checked_number(policy.get("cleanWindowSeconds"), "clean window", monitor.DEFAULT_CLEAN_WINDOW_SECONDS)
     gap = checked_number(policy.get("maximumSampleGapSeconds"), "sample gap", 1)
     require(gap <= 180, "soak observation gaps exceed release policy")
     clean = checked_number(window.get("cleanSeconds"), "clean duration", duration)

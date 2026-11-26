@@ -104,14 +104,35 @@ class ReleaseRegression(unittest.TestCase):
     def test_missing_negative_exposure_cannot_pass(self):
         self.passes = [item for item in self.passes if item["split"] != "prospective" or item["kind"] != "negative"]
         receipt = self.evaluate()
-        self.assertTrue(receipt["regressionDetected"])
+        self.assertFalse(receipt["regressionDetected"])
         self.assertFalse(receipt["nodes"]["node"]["checks"]["false-track-controls"]["accepted"])
+        self.assertEqual(receipt["nodes"]["node"]["checks"]["false-track-controls"]["status"], "inconclusive")
 
     def test_no_empty_positive_exposure_pass(self):
         self.passes = [item for item in self.passes if item["kind"] == "negative"]
         checks = self.evaluate()["nodes"]["node"]["checks"]
         self.assertFalse(checks["detections"]["accepted"])
         self.assertFalse(checks["measurement-backed-track-continuity"]["accepted"])
+        self.assertEqual(checks["detections"]["status"], "inconclusive")
+        self.assertEqual(checks["measurement-backed-track-continuity"]["status"], "inconclusive")
+
+    def test_no_eligible_traffic_publishes_inconclusive_receipt_and_nonzero_exit(self):
+        import vectorwarp_two_node_soak as soak
+        self.passes = [item for item in self.passes if item["kind"] == "negative"]
+        args = self.args()
+        with patch.object(E.time, "time", return_value=1002):
+            self.assertEqual(E.run(args), 1)
+        receipt = json.loads(Path(args.output).read_text())
+        self.assertFalse(receipt["regressionDetected"])
+        self.assertEqual(soak.verify_regression(receipt, {"sha256": self.binding_sha,
+            "expected": self.binding}, 1002, 1000), ["soak:insufficient-exposure"])
+
+    def test_capture_failure_takes_precedence_over_inconclusive_traffic(self):
+        self.passes = []
+        self.runtime["captureEnd"]["droppedSamples"] = 1
+        receipt = self.evaluate()
+        self.assertTrue(receipt["regressionDetected"])
+        self.assertEqual(receipt["nodes"]["node"]["checks"]["capture-health"]["status"], "rejected")
 
     def test_outcome_regressions_rejected_by_stratum(self):
         for field, value, check in (("detectedOpportunities", 0, "detections"),

@@ -23,12 +23,13 @@ DEFAULT_STATE = Path("/var/lib/home-portal/vectorwarp-two-node-soak")
 MAX_SAMPLES = 1600
 MAX_FRAME_AGE_MS = 3000
 MAX_BACKLOG_MS = 1000
-DEFAULT_CLEAN_WINDOW_SECONDS = 24 * 60 * 60
+DEFAULT_CLEAN_WINDOW_SECONDS = 10 * 60
 DEFAULT_MAX_SAMPLE_GAP_SECONDS = 180
 IDENTITY_PROBE = Path(__file__).with_name("vectorwarp_soak_identity.py")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 REGRESSION_CHECKS = ("detections", "measurement-backed-track-continuity",
                      "false-track-controls", "cpi-deadlines", "capture-health")
+REGRESSION_RECEIPT_SCHEMA = 3
 
 
 def unique_object(pairs):
@@ -162,7 +163,7 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
     processor. The reviewed policy and evaluator evidence are cryptographically
     tied to every declared package/config/qualification and the observed cohort.
     """
-    valid = (isinstance(receipt, dict) and receipt.get("schema") == 2 and
+    valid = (isinstance(receipt, dict) and receipt.get("schema") == REGRESSION_RECEIPT_SCHEMA and
              receipt.get("bindingSha256") == binding_receipt["sha256"] and
              receipt.get("policySha256") == binding_receipt["expected"]["regressionPolicySha256"] and
              isinstance(receipt.get("nodes"), dict) and
@@ -175,6 +176,8 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
              all(isinstance(node.get("checks"), dict) and
                  set(node["checks"]) == set(REGRESSION_CHECKS) and
                  all(isinstance(check, dict) and type(check.get("accepted")) is bool and
+                     check.get("status") in ("accepted", "rejected", "inconclusive") and
+                     check["accepted"] == (check["status"] == "accepted") and
                      isinstance(check.get("evidenceSha256"), str) and
                      SHA256.fullmatch(check["evidenceSha256"])
                      for check in node["checks"].values())
@@ -191,10 +194,10 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
         return ["soak:regression-evidence-invalid"]
     if any(node[key] for node in receipt["nodes"].values() for key in ("retiredCpis", "retiredSamples")):
         return ["soak:regression-retired-work"]
-    rejected = receipt["regressionDetected"] or any(
-        not check["accepted"] for node in receipt["nodes"].values()
-        for check in node["checks"].values())
-    return ["soak:regression-detected"] if rejected else []
+    statuses = [check["status"] for node in receipt["nodes"].values() for check in node["checks"].values()]
+    if receipt["regressionDetected"] or "rejected" in statuses:
+        return ["soak:regression-detected"]
+    return ["soak:insufficient-exposure"] if "inconclusive" in statuses else []
 
 
 def fetch(url: str) -> dict:
@@ -520,7 +523,8 @@ def advance_acceptance(started: dict, sample: dict,
                   epoch - prior["lastSampleEpoch"] > max_sample_gap_seconds):
         failures.append("soak:observation-gap")
     sample["healthy"] = not failures
-    startup_failures = set(prior.get("startupFailures", [])) if prior else set(failures)
+    startup_failures = (set(prior.get("startupFailures", [])) if prior else
+                        set(failures) - {"soak:insufficient-exposure"})
     # A restart/loss/counter discontinuity anywhere in the cohort invalidates
     # its zero-loss startup claim, even after that row leaves the bounded log.
     startup_failures.update(failure for failure in failures if
