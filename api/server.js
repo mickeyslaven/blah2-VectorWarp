@@ -52,7 +52,7 @@ const {createEvidenceStatisticsLanes, provisionalTimingFrame,
   require('./evidence-statistics.js');
 const {MultiIlluminatorEvidence, primaryRadarContext, associationStatistics} =
   require('./multi-illuminator-evidence.js');
-const {kioskAssociationChannel} = require('../html/js/measured_track_coverage');
+const {kioskAssociationChannel, compactBasis} = require('../html/js/measured_track_coverage');
 const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
@@ -984,18 +984,14 @@ app.get('/api/live-scorecard/association-basis', async (req, res, next) => {
         multiIlluminatorEvidence.associationBasis({timing, compact, kiosk}));
     const statistics = timing === 'exact' ? evidenceStatistics :
       provisionalEvidenceStatistics;
-    const status = statistics.liveStatus();
-    if (compact)
-      return await sendDisplayResponse(req, res, {
-        schema: 'vectorwarp-association-basis-v1', timing_policy: timing,
-        channels: [{selected_channel: 'primary', updated_at: status.updated_at,
-          association_statistics: associationStatistics(status)}]});
-    if (kiosk) return await sendDisplayResponse(req, res, {
+    const status = compact || kiosk ? statistics.associationStatus() : statistics.liveStatus();
+    if (compact || kiosk) return await sendDisplayResponse(req, res, {
       schema: 'vectorwarp-association-basis-v1', timing_policy: timing,
-      channels: [kioskAssociationChannel({selected_channel: 'primary',
+      channels: [{...kioskAssociationChannel({selected_channel: 'primary',
         updated_at: status.updated_at, association_statistics: associationStatistics(status),
         measured_track_coverage: status.current_setup_lifetime?.measured_track_coverage,
-        cpi_exposure: status.current_setup_lifetime?.cpi_exposure})]});
+        cpi_exposure: status.current_setup_lifetime?.cpi_exposure}),
+        ...(compact ? {measured_track_basis: compactBasis(statistics.measuredTrackBasis())} : {})}]});
     const population = status.track_population || {};
     const channel = {selected_channel: 'primary',
         measured_track_basis: statistics.measuredTrackBasis(),

@@ -8887,7 +8887,331 @@
           "context_tokens:production": [1790348, 1790360],
           "context_tokens:release-ci": [30631, 30643]
         }
-      }
+      },
+    {
+      "changes": {
+        "context_characters:build-integration": [
+          102543,
+          102426
+        ],
+        "context_characters:build-integration/contracts": [
+          1403021,
+          1402872
+        ],
+        "context_characters:evidence-api": [
+          310318,
+          310307
+        ],
+        "context_characters:native-ambiguity": [
+          704479,
+          704330
+        ],
+        "context_characters:native-ambiguity/contracts": [
+          195569,
+          194486
+        ],
+        "context_characters:native-analysis": [
+          121549,
+          121474
+        ],
+        "context_characters:native-analysis/contracts": [
+          114035,
+          112955
+        ],
+        "context_characters:native-detection": [
+          69874,
+          69607
+        ],
+        "context_characters:native-detection/contracts": [
+          57476,
+          57372
+        ],
+        "context_characters:native-integration": [
+          72661,
+          72595
+        ],
+        "context_characters:native-integration/contracts": [
+          43188,
+          42108
+        ],
+        "context_characters:native-pipeline": [
+          155199,
+          155037
+        ],
+        "context_characters:native-pipeline/contracts": [
+          306461,
+          306136
+        ],
+        "context_characters:native-runtime/contracts": [
+          287636,
+          286937
+        ],
+        "context_characters:native-tracker": [
+          77945,
+          77728
+        ],
+        "context_characters:production": [
+          7146723,
+          7145539
+        ],
+        "context_characters:qualified-private-gpu": [
+          356705,
+          356690
+        ],
+        "context_characters:qualified-private-gpu/contracts": [
+          101000,
+          100804
+        ],
+        "context_characters:release-ci": [
+          136823,
+          136718
+        ],
+        "context_characters:runtime-api/contracts": [
+          892720,
+          892709
+        ],
+        "context_lines:build-integration": [
+          1902,
+          1900
+        ],
+        "context_lines:build-integration/contracts": [
+          28577,
+          28556
+        ],
+        "context_lines:evidence-api": [
+          5498,
+          5497
+        ],
+        "context_lines:native-ambiguity": [
+          12929,
+          12921
+        ],
+        "context_lines:native-ambiguity/contracts": [
+          4163,
+          4145
+        ],
+        "context_lines:native-analysis/contracts": [
+          2547,
+          2533
+        ],
+        "context_lines:native-detection": [
+          1634,
+          1615
+        ],
+        "context_lines:native-detection/contracts": [
+          1395,
+          1392
+        ],
+        "context_lines:native-integration": [
+          1521,
+          1518
+        ],
+        "context_lines:native-integration/contracts": [
+          976,
+          962
+        ],
+        "context_lines:native-pipeline": [
+          3105,
+          3103
+        ],
+        "context_lines:native-pipeline/contracts": [
+          5867,
+          5858
+        ],
+        "context_lines:native-runtime/contracts": [
+          6036,
+          6026
+        ],
+        "context_lines:native-tracker": [
+          1603,
+          1600
+        ],
+        "context_lines:production": [
+          132089,
+          132051
+        ],
+        "context_lines:runtime-api/contracts": [
+          15410,
+          15409
+        ],
+        "context_tokens:build-integration": [
+          16537,
+          16509
+        ],
+        "context_tokens:build-integration/contracts": [
+          345371,
+          345335
+        ],
+        "context_tokens:evidence-api": [
+          71687,
+          71629
+        ],
+        "context_tokens:native-ambiguity": [
+          192795,
+          192787
+        ],
+        "context_tokens:native-ambiguity/contracts": [
+          46963,
+          46619
+        ],
+        "context_tokens:native-analysis": [
+          33333,
+          33306
+        ],
+        "context_tokens:native-analysis/contracts": [
+          29154,
+          28930
+        ],
+        "context_tokens:native-detection": [
+          16832,
+          16703
+        ],
+        "context_tokens:native-detection/contracts": [
+          13446,
+          13441
+        ],
+        "context_tokens:native-integration": [
+          17970,
+          17968
+        ],
+        "context_tokens:native-integration/contracts": [
+          11441,
+          11217
+        ],
+        "context_tokens:native-pipeline": [
+          31623,
+          31606
+        ],
+        "context_tokens:native-pipeline/contracts": [
+          82393,
+          82238
+        ],
+        "context_tokens:native-runtime/contracts": [
+          72860,
+          72720
+        ],
+        "context_tokens:native-tracker": [
+          19480,
+          19446
+        ],
+        "context_tokens:production": [
+          1790360,
+          1790052
+        ],
+        "context_tokens:qualified-private-gpu": [
+          103949,
+          103946
+        ],
+        "context_tokens:qualified-private-gpu/contracts": [
+          25632,
+          25628
+        ],
+        "context_tokens:release-ci": [
+          30643,
+          30641
+        ],
+        "context_tokens:runtime-api/contracts": [
+          212518,
+          212460
+        ],
+        "lines:api": [
+          26766,
+          26765
+        ],
+        "lines:cmake": [
+          1269,
+          1267
+        ],
+        "lines:src": [
+          45869,
+          45834
+        ]
+      },
+      "owner": "Failed-soak source consolidation review, 2026-11-25",
+      "purpose": "Seal exact reductions after canonical CPU/GLSL candidate ranking, one grid locator and candidate map, shared resident detector configuration, direct canonical CFAR calls, and consolidated qualification workflow; preserve native math, ABI refusal, evidence and behavioral tests.",
+      "rejected_reuse": "Reject new detection-to-private-GPU imports, duplicate detector configuration/storage, private CFAR forwarding wrappers, and ceiling increases; extend existing numerical and build owners.",
+      "cleanup_plan": "Architecture CI enforces every exact reduction. Preserve the original snapshots and all prior review history; subsequent changes must consolidate or receive separate explicit review."
+    },
+    {
+      "changes": {
+        "context_characters:configuration-policy/contracts": [159018, 158399],
+        "context_characters:evidence-api": [310307, 310163],
+        "context_characters:evidence-api/contracts": [103290, 104065],
+        "context_characters:geolocation-api": [251491, 251472],
+        "context_characters:production": [7145539, 7145376],
+        "context_characters:runtime-api/contracts": [892709, 891171],
+        "context_lines:configuration-policy/contracts": [2763, 2756],
+        "context_lines:evidence-api": [5497, 5495],
+        "context_lines:evidence-api/contracts": [1780, 1792],
+        "context_lines:production": [132051, 132049],
+        "context_lines:runtime-api/contracts": [15409, 15388],
+        "context_tokens:configuration-policy/contracts": [39913, 39837],
+        "context_tokens:evidence-api": [71629, 71600],
+        "context_tokens:evidence-api/contracts": [25591, 25770],
+        "context_tokens:geolocation-api": [62629, 62607],
+        "context_tokens:production": [1790052, 1790001],
+        "context_tokens:runtime-api/contracts": [212460, 212176],
+        "lines:api": [26765, 26763],
+        "oversized_bytes:api/evidence-statistics.js": [143708, 143564],
+        "oversized_lines:api/evidence-statistics.js": [2501, 2499]
+      },
+      "owner": "HomePortal association scoring integrity review, 2026-11-25",
+      "purpose": "Retain one shared directional truth-projection policy so an intentional association hold may use bounded newer observations without admitting older truth; version the evaluation contract and permanently ratchet all measured source reductions.",
+      "rejected_reuse": "Reject symmetric freshness widening, duplicate source/statistics gates, hidden denominator mixing, and reusable deleted headroom; the existing truth-uncertainty owner is the canonical policy boundary.",
+      "cleanup_plan": "Preserve the latency, old-truth, uncertainty, relay-lineage, detection-credit and migration regressions. The exact contract increase has no reserve; ratchet every future simplification downward."
+    },
+    {
+      "changes": {
+        "lines:api": [26763, 26767],
+        "lines:html": [14222, 14227],
+        "oversized_bytes:html/js/insights.js": [177388, 177557],
+        "oversized_lines:html/js/insights.js": [2320, 2321],
+        "context_characters:evidence-api/contracts": [104065, 104354],
+        "context_characters:production": [7145376, 7146222],
+        "context_characters:runtime-api": [485504, 486267],
+        "context_characters:runtime-api/contracts": [891171, 891343],
+        "context_characters:ui-insights": [206831, 207000],
+        "context_characters:ui-presentation": [295766, 296055],
+        "context_characters:ui-presentation/contracts": [675120, 675289],
+        "context_imports:runtime-api": [47, 48],
+        "context_lines:evidence-api/contracts": [1792, 1796],
+        "context_lines:production": [132049, 132058],
+        "context_lines:runtime-api": [8685, 8692],
+        "context_lines:runtime-api/contracts": [15388, 15389],
+        "context_lines:ui-insights": [2846, 2847],
+        "context_lines:ui-presentation": [3277, 3281],
+        "context_lines:ui-presentation/contracts": [10945, 10946],
+        "context_tokens:evidence-api/contracts": [25770, 25833],
+        "context_tokens:production": [1790001, 1790166],
+        "context_tokens:runtime-api": [120158, 120347],
+        "context_tokens:runtime-api/contracts": [212176, 212232],
+        "context_tokens:ui-insights": [57695, 57734],
+        "context_tokens:ui-presentation": [90792, 90855],
+        "context_tokens:ui-presentation/contracts": [177735, 177774],
+        "oversized_bytes:api/server.js": [138084, 137974],
+        "oversized_lines:api/evidence-statistics.js": [2499, 2498],
+        "oversized_lines:api/server.js": [2444, 2440],
+        "context_characters:build-release/contracts": [385499, 385389],
+        "context_characters:evidence-api": [310163, 310046],
+        "context_characters:installation/contracts": [248917, 248807],
+        "context_characters:operational-tools/contracts": [522321, 522211],
+        "context_characters:release-ci": [136718, 136460],
+        "context_lines:build-release/contracts": [7712, 7708],
+        "context_lines:evidence-api": [5495, 5492],
+        "context_lines:installation/contracts": [4206, 4202],
+        "context_lines:operational-tools/contracts": [9089, 9085],
+        "context_tokens:build-release/contracts": [91563, 91551],
+        "context_tokens:evidence-api": [71600, 71593],
+        "context_tokens:installation/contracts": [58799, 58787],
+        "context_tokens:operational-tools/contracts": [131272, 131260],
+        "context_tokens:release-ci": [30641, 30522],
+        "oversized_bytes:api/evidence-statistics.js": [143564, 143534]
+      },
+      "owner": "Bounded exact federation coverage repair, 2026-11-26",
+      "purpose": "Transport exact measured-track intervals through one bounded compact contract, compute the canonical cross-node union once, and render unavailable evidence truthfully instead of manufacturing zero coverage or gaps.",
+      "rejected_reuse": "Reject raw multi-megabyte ledgers, scalar percentage summation, synthetic zero evidence, display-node completeness coupling, duplicate coverage arithmetic, and reuse of any exact reductions as unrelated headroom.",
+      "cleanup_plan": "Keep the one-megabyte fail-closed transport cap, strip interval bases from public summaries, retain live-sized roundtrip and kiosk regressions, and ratchet every later consolidation downward."
+    }
   ],
   "context_snapshot": {
     "policy": {

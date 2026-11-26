@@ -156,10 +156,10 @@ public:
   struct Result
   {
     std::unique_ptr<Map<std::complex<double>>> map;
+    std::shared_ptr<Map<std::complex<double>>> currentMap;
     // 0=current, 1=baseline2, 2=motion2, 3=motion4, 4=motion8.
     std::vector<uint8_t> selectedBank;
-    // baseline2, motion2, motion4 and motion8 remain separate for the
-    // production engine's depth-specific CFAR calibration.
+    // Separate baseline2/motion2/4/8 banks retain depth-specific CFAR calibration.
     std::array<BankResult, 4> banks;
     uint64_t epoch = 0;
     uint64_t sequence = 0;
@@ -170,10 +170,7 @@ public:
       const auto selected = selectedBank[cell];
       if (selected > 0 && selected <= banks.size())
         return banks[selected - 1].lineageAt(cell);
-      EvidenceLineage result;
-      result.epoch = epoch; result.newestSequence = sequence; result.depth = 1;
-      result.sequences[0] = sequence;
-      return result;
+      return {epoch, sequence, 1, 0, 0, {sequence}};
     }
   };
 

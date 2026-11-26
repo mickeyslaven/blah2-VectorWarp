@@ -235,6 +235,7 @@ async function connect(endpoint) {
         const single=process.env.VECTORWARP_LAYOUT_FIXTURE==='statistics-single-kiosk';
         const incomplete=process.env.VECTORWARP_COVERAGE_INCOMPLETE==='1';
         const missingNode=process.env.VECTORWARP_COVERAGE_MISSING_NODE==='1';
+        const unavailable=!single&&(missingNode||process.env.VECTORWARP_COVERAGE_MISSING_BASIS==='1');
         const kiosk=await evaluate(`(()=>{const view=document.querySelector('.statistics-kiosk-visuals');
           const shown=!!view&&getComputedStyle(view).display!=='none';
           const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom};};
@@ -249,6 +250,8 @@ async function connect(endpoint) {
             horizontalScroll:shown?[...view.querySelectorAll('[class*="cpi-kiosk-"]')].filter(e=>e.scrollWidth>e.clientWidth).map(e=>({className:e.className,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth})):[],
             measuredLabels:[...(view?.querySelectorAll('.cpi-kiosk-bar.tracked b')||[])].map(e=>e.textContent),
             gapLabels:[...(view?.querySelectorAll('.cpi-kiosk-continuity dd')||[])].map(e=>e.textContent),
+            coverageState:view?.querySelector('.cpi-kiosk-ring span')?.textContent,
+            coverageSeconds:[...(view?.querySelectorAll('.cpi-kiosk-gauge.tracked footer strong')||[])].map(e=>e.textContent),
             gauges:[...document.querySelectorAll('.cpi-kiosk-ring')].map(e=>e.getAttribute('aria-label')),
             channels:document.querySelectorAll('.cpi-kiosk-channel').length,
             comparison:document.querySelector('.cpi-kiosk-comparison')?rect(document.querySelector('.cpi-kiosk-comparison')):null,
@@ -260,10 +263,12 @@ async function connect(endpoint) {
         if(!single||kiosk.shown){
           assert.deepEqual(kiosk.headlines,['239','65.3%',single?'54.4%':'83.3%'],'Existing pass headline semantics');
           assert.equal(kiosk.channels,single?1:missingNode?3:4,'Every available channel is charted');
-          assert.match(kiosk.gauges[0],incomplete||missingNode?/Measured track coverage: — of eligible aircraft time/:single?/Measured track coverage: 60.0% of eligible aircraft time/:/Measured track coverage: 80.0% of eligible aircraft time/);
+          assert.match(kiosk.gauges[0],incomplete||unavailable?/Measured track coverage: — of scored aircraft time/:single?/Measured track coverage: 60.0% of eligible aircraft time/:/Measured track coverage: 80.0% of eligible aircraft time/);
           assert.equal(kiosk.gauges.length,1,'Primary metric is measured aircraft-time coverage');
-          assert.deepEqual(kiosk.measuredLabels,incomplete?Array(single?1:4).fill('—'):single?['60.0%']:missingNode?['40.0%','60.0%','70.0%']:['40.0%','60.0%','70.0%','20.0%']);
-          assert.deepEqual(kiosk.gapLabels,single&&!incomplete?['10.0 s','10.0 s','10.0 s']:['—','—','—']);
+          assert.equal(kiosk.coverageState,unavailable?'Unavailable':incomplete?'Partial':'Measured');
+          assert.deepEqual(kiosk.coverageSeconds,unavailable?['—','—']:incomplete?['0.0 s','0.0 s']:single?['1.0 min','1.7 min']:['1.3 min','1.7 min']);
+          assert.deepEqual(kiosk.measuredLabels,incomplete?Array(kiosk.channels).fill('—'):single?['60.0%']:missingNode?['40.0%','60.0%','70.0%']:['40.0%','60.0%','70.0%','20.0%']);
+          assert.deepEqual(kiosk.gapLabels,unavailable?['— gaps','—','—']:incomplete?['0 gaps','0.0%','1.7 min']:single?['10.0 s','10.0 s','10.0 s']:['—','—','—']);
           if(single)assert.equal(kiosk.legacyPresenceCards,0,'Single kiosk replaces legacy stretched text cards');
         }else{
           assert.deepEqual(kiosk.normalHeadlines,['300','65.3%','54.4%','0'],'Normal single-channel presence headline and comparable pass yields remain unchanged');

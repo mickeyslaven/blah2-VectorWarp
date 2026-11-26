@@ -426,7 +426,8 @@ int main(int argc,char**argv)try{
   class TemporalDouble final:public blah2::temporal_gpu::Backend {
    uint32_t count_,depth_,available_=0;
   public:
-   explicit TemporalDouble(const blah2::temporal_gpu::Config& c):count_(uint32_t(c.delayAxis.size()*c.dopplerAxis.size())),depth_(c.detector.integrationCpis){}
+   explicit TemporalDouble(const blah2::temporal_gpu::Config& c):count_(uint32_t(c.delayAxis.size()*c.dopplerAxis.size())),depth_(c.detector.integrationCpis){
+    check(c.detector.currentCpiPreferenceSnr==9.1,"Temporal map transport lost exact merge threshold");}
    void reset()override{available_=0;}
    void process(const std::complex<double>* input,blah2::temporal_gpu::Output& output)override{
     if(input[0].real()<0)throw std::runtime_error("injected temporal rejection");
@@ -443,6 +444,8 @@ int main(int argc,char**argv)try{
   blah2::temporal_gpu::Config config;config.sampleRate=6144000;config.device="cpu-test-double";
   config.detector.enabled=true;config.detector.guard=2;config.detector.train=6;config.detector.pfa=1e-6;
   config.detector.centroidDopplerResolution=2;config.detector.integrationCpis=8;
+  config.detector.currentCpiPreferenceSnr=9.1;
+  static_assert(blah2::temporal_gpu::moduleAbi==2&&blah2::temporal_gpu::protocol==0x42545002);
   for(int i=0;i<1261;++i)config.delayAxis.push_back(i-31);
   config.dopplerAxis={-2,0,2};
   blah2::GpuProcessOptions options;options.executable=exe;options.startupMs=2000;options.frameMs=150;

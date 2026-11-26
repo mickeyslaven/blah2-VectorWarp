@@ -1,4 +1,4 @@
-// Adjacent resident ABI18 module. Older cohorts are rejected at admission.
+// Adjacent resident ABI19 module. Older cohorts are rejected at admission.
 #include "GpuResidentWire.h"
 #include "GpuResidentBackend.h"
 #include "capture/Sha256.h"
@@ -29,6 +29,17 @@ static resident::Hash moduleImageHash(){
  sha.update(buffer.data(),size_t(n));}if(!file.eof()||!bytes)throw std::runtime_error("Resident module image identity read failed");
  return sha.finishBytes();
 }
+PostprocessConfig detectorConfig(const resident::DetectorConfig& d){
+ PostprocessConfig p;p.enabled=true;p.detection=d.enabled;
+ p.pfa=d.pfa;p.minDoppler=d.minDoppler;p.centroidDopplerResolution=d.centroidDopplerResolution;
+ p.currentCpiPreferenceSnr=d.currentCpiPreferenceSnr;
+ p.guard=d.guard;p.train=d.train;p.minDelay=d.minDelay;
+ p.centroidDelay=uint16_t(d.centroidDelay);p.centroidDoppler=uint16_t(d.centroidDoppler);
+ p.interpolateDelay=d.interpolateDelay;p.interpolateDoppler=d.interpolateDoppler;
+ p.integrationCpis=d.integrationCpis;const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
+ p.integrationDelayMotionBins=motion.delay;p.integrationDopplerMotionBins=motion.doppler;
+ p.integrationBeamTolerance=d.integrationBeamTolerance;return p;
+}
 static ResidentFrameConfig privateConfig(const resident::Config& c){
  ResidentFrameConfig v;
  v.geometry=c.geometry;
@@ -47,26 +58,11 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  v.reference={ReferenceMode(uint32_t(r.mode)),r.channels,r.analysisSamples,r.analysisInterval,r.powerIterations,r.covarianceSmoothing,r.diagonalLoading,r.bandwidthHz,r.centreHz,c.epoch};
  const auto& d=c.detector;
  auto& p=v.postprocess;
- p.enabled=true;
+ p=detectorConfig(d);
  p.replaySnapshot=bool(c.replay.maxBytes);
- p.detection=d.enabled;
- p.pfa=d.pfa;
- p.minDoppler=d.minDoppler;
- p.centroidDopplerResolution=d.centroidDopplerResolution;
- p.guard=d.guard;
- p.train=d.train;
- p.minDelay=d.minDelay;
- p.centroidDelay=uint16_t(d.centroidDelay);
- p.centroidDoppler=uint16_t(d.centroidDoppler);
- p.interpolateDelay=d.interpolateDelay;
- p.interpolateDoppler=d.interpolateDoppler;
- p.integrationCpis=d.integrationCpis;
  const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
- p.integrationDelayMotionBins=motion.delay;
- p.integrationDopplerMotionBins=motion.doppler;
  if(motion.fractionalDelay)p.integrationDelayDriftPerHz=
   track_before_detect::delayDriftPerHz(c.geometry.clutterSamples,c.temporalCarrierHz());
- p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
  if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);
   p.bearingReferenceAnchor=uint32_t(c.bearing.referenceAnchor);p.bearingScanBeams=c.bearing.scanBeams;
@@ -544,7 +540,7 @@ public:
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
  blah2::resident::validateModuleAbi(abi);
- if(!config||!map){throw std::runtime_error("Resident module ABI18 configuration/mapping absent");}
+ if(!config||!map){throw std::runtime_error("Resident module ABI19 configuration/mapping absent");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);
@@ -553,14 +549,7 @@ extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,cons
 
 namespace blah2 { namespace {
 PostprocessConfig temporalConfig(const temporal_gpu::Config& c){
- PostprocessConfig p;const auto& d=c.detector;p.enabled=true;p.detection=d.enabled;
- p.pfa=d.pfa;p.minDoppler=d.minDoppler;p.centroidDopplerResolution=d.centroidDopplerResolution;
- p.guard=d.guard;p.train=d.train;p.minDelay=d.minDelay;
- p.centroidDelay=uint16_t(d.centroidDelay);p.centroidDoppler=uint16_t(d.centroidDoppler);
- p.interpolateDelay=d.interpolateDelay;p.interpolateDoppler=d.interpolateDoppler;
- p.integrationCpis=d.integrationCpis;const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
- p.integrationDelayMotionBins=motion.delay;p.integrationDopplerMotionBins=motion.doppler;
- p.integrationDelayDriftPerHz=c.delayDriftPerHz;p.integrationBeamTolerance=d.integrationBeamTolerance;
+ auto p=detectorConfig(c.detector);p.integrationDelayDriftPerHz=c.delayDriftPerHz;
  p.delayAxis=c.delayAxis;p.dopplerAxis=c.dopplerAxis;p.epoch=1;p.amplitudeOutput=true;return p;
 }
 class TemporalModule final:public temporal_gpu::Backend {
@@ -589,7 +578,7 @@ public:
 };
 } }
 extern "C" blah2::temporal_gpu::Backend* blah2_gpu_create_temporal(unsigned abi,const blah2::temporal_gpu::Config* config){
- if(abi!=blah2::temporal_gpu::moduleAbi||!config)throw std::runtime_error("Temporal module ABI1 required");
+ if(abi!=blah2::temporal_gpu::moduleAbi||!config)throw std::runtime_error("Temporal module ABI2 required");
  blah2::temporal_gpu::validate(*config);auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)
   return new blah2::TemporalModule(instance,std::move(candidate),*config);

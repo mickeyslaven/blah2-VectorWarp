@@ -38,7 +38,7 @@ public:
   /// @brief Implement the 1D CFAR detector.
   /// @param x Detections from the 1D CFAR detector.
   /// @return Centroided detections.
-  std::unique_ptr<Detection> process(Detection *x);
+  std::unique_ptr<Detection> process(Detection *x, double currentCpiPreferenceSnr = 0);
 };
 
 #endif

@@ -20,8 +20,8 @@ uint32_t passes(const Config& c){return c.detector.integrationCpis>2?
 uint32_t refinement(const Config& c){return c.detector.integrationCpis>2?
  (c.bearing.scanBeams?c.bearing.scanBeams:c.fusion.beams*4):0;}
 uint64_t metadataPrefixWords(const Config& c){const uint64_t rows=c.geometry.doppler,cols=c.geometry.delays;
- const uint64_t windows=(96+2*rows+cols+1)&~uint64_t(1);
- return windows+(c.detector.integrationCpis>2?14:8)*cols+2*rows+2*cols;}
+ const uint64_t windows=(track_before_detect::postprocessAxesWord+2*rows+cols+1)&~uint64_t(1);
+ return windows+(c.detector.integrationCpis>2?16:8)*cols+2*rows+2*cols;}
 uint32_t fractionalOffsetWords(const Config& c){
  if(c.detector.integrationCpis<=2)return 0;
  const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
@@ -30,8 +30,7 @@ uint32_t fractionalOffsetWords(const Config& c){
  return track_before_detect::fractionalDelayTableWords(c.geometry.doppler,
   c.detector.integrationCpis,motion.doppler,scale);}
 uint64_t metadataBytes(const Config& c){
- // Stage appends its device-generated signed offset table to this buffer.
- // Export it verbatim and include it in the allocation, descriptor and hash.
+ // Include verbatim device offsets in allocation, descriptor and hash.
  const uint64_t alphaWords=c.detector.integrationCpis>2?
   uint64_t(passes(c))*(2*c.detector.train+2)*2:0;
  return mul(add(add(metadataPrefixWords(c),fractionalOffsetWords(c)),alphaWords),4);}
@@ -40,7 +39,7 @@ std::array<uint64_t,blocks> sizes(const Config& c){const auto& g=c.geometry;
  const auto depth=c.detector.integrationCpis>2?c.detector.integrationCpis:1;
  return {256,1024,mul(mul(c.fusion.beams,ch),8),mul(mul(refinement(c),ch),8),
   metadataBytes(c),mul(mul(cells,depth),8),c.detector.integrationCpis<=2||c.detector.integrationBeamTolerance==UINT32_MAX?0:mul(mul(cells,depth),4),
-  mul(cells,8),c.detector.integrationCpis>2?mul(mul(cells,passes(c)),8):0,
+  mul(cells,8),c.detector.integrationCpis>2?mul(mul(cells,passes(c)-1),8):0,
   mul(mul(cells,std::max(1u,c.fusion.beams)),8),mul(mul(cells,passes(c)),40),
   mul(cells,16),mul(mul(cells,ch),8),mul(mul(n,ch),16),mul(n,16),mul(mul(n,ch),16),
   mul(cells,4),mul(cells,32),c.tracker.enabled?mul(trackerHeaderWords+mul(c.tracker.capacity,trackerRecordWords(c.tracker)),4):0,
@@ -75,6 +74,7 @@ void validateExportConfig(const resident::Config& c){const auto& x=c.replay;
 
 void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
  validateExportConfig(c);require(c.replay.maxBytes,"Replay export disabled");
+ const auto& d=c.detector;
  const auto& id=s.identity;
  require(id.epoch==c.epoch&&id.logicalFrame&&id.generation&&id.consumedSequence&&
   id.configHash==resident::wire::configHash(c)&&nonzero(id.moduleHash)&&nonzero(id.rawIqHash)&&nonzero(id.deviceHash)&&
@@ -96,8 +96,7 @@ void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
  cp.zeros(216,40);
  for(size_t i=c.reference.channels.size();i<8;++i)require(cp.f64(64+16*i)==0&&cp.f64(72+16*i)==0,"Replay unused reference weight nonzero");
  require(cp.f64(192)>=0&&cp.f64(192)<=1&&cp.f64(208)>0,"Replay reference scaling invalid");
- for(auto kind:{BlockKind::referenceCheckpoint}){const auto r=reader(block(s,kind));
-  for(size_t at=64;at<216;at+=8)require(std::isfinite(r.f64(at)),"Replay reference numeric state invalid");}
+ for(size_t at=64;at<216;at+=8)require(std::isfinite(cp.f64(at)),"Replay reference numeric state invalid");
  for(auto kind:{BlockKind::covariance,BlockKind::rawIq,BlockKind::referenceIq,BlockKind::filteredIq,
    BlockKind::fused})finite(block(s,kind),8);
  for(auto kind:{BlockKind::fusionWeights,BlockKind::refinementWeights,BlockKind::channelMaps})finite(block(s,kind),4);
@@ -107,32 +106,33 @@ void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
   require(fused.f64(at)>=0&&beam>=0&&beam<std::max(1u,c.fusion.beams)&&beam==std::floor(beam),"Replay fused beam identity invalid");}
  const auto m=reader(block(s,BlockKind::postprocessMetadata));
  const auto cells=uint64_t(c.geometry.doppler)*c.geometry.delays;
- const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
+ const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
  require(!m.u32(0)&&m.u32(32*4)==c.geometry.doppler&&m.u32(33*4)==c.geometry.delays&&
   m.u32(34*4)==cells&&m.u32(72*4)==uint32_t(c.epoch)&&m.u32(73*4)==uint32_t(c.epoch>>32)&&
-  m.u32(74*4)==c.detector.integrationCpis&&m.u32(75*4)==c.fusion.beams&&
+  m.u32(74*4)==d.integrationCpis&&m.u32(75*4)==c.fusion.beams&&
   m.u32(76*4)==motion.delay&&m.u32(93*4)==motion.doppler&&
-  m.u32(77*4)==c.detector.integrationBeamTolerance&&m.u32(11*4)<=cells,
+  m.u32(77*4)==d.integrationBeamTolerance&&m.u32(11*4)<=cells,
  "Replay snapshot temporal/detector metadata differs");
  const double delayScale=motion.fractionalDelay?track_before_detect::delayDriftPerHz(
   c.geometry.clutterSamples,c.temporalCarrierHz()):0;
- require(m.f64(94*4)==delayScale,"Replay snapshot fractional delay geometry differs");
+ require(m.f64(94*4)==delayScale&&m.f64(96*4)==d.currentCpiPreferenceSnr,
+  "Replay snapshot delay geometry/current-CPI threshold differs");
  require(m.u32(35*4)==(fractionalOffsetWords(c)?metadataPrefixWords(c):0),
   "Replay snapshot fractional delay table layout differs");
- const bool tbd=c.detector.integrationCpis>2;
+ const bool tbd=d.integrationCpis>2;
  const uint32_t alphaBase=uint32_t(metadataPrefixWords(c)+fractionalOffsetWords(c)),
-  alphaStride=2*c.detector.train+1;
+  alphaStride=2*d.train+1;
  require(tbd?(m.u32(54*4)==alphaBase&&m.u32(55*4)==alphaStride&&
    m.u32(56*4)==alphaBase+2*passes(c)*alphaStride):
   (!m.u32(54*4)&&!m.u32(55*4)),"Replay valid-population alpha layout differs");
  if(tbd)for(uint32_t pass=0;pass<passes(c);++pass){
-  const uint32_t cpis=pass?track_before_detect::bankLength(pass-1):2;
-  const double pfa=track_before_detect::passPfa(c.detector.pfa,c.detector.integrationCpis,motion.delay,motion.doppler,pass);
+  const uint32_t cpis=track_before_detect::passDepth(d.integrationCpis,pass);
+  const double pfa=track_before_detect::passPfa(d.pfa,d.integrationCpis,motion.delay,motion.doppler,pass);
   for(uint32_t count=0;count<alphaStride;++count)require(
-   m.f64((alphaBase+2*(pass*alphaStride+count))*4)==(count?track_before_detect::cfarAlpha(pfa,count,cpis):0),
+   m.f64((alphaBase+2*(pass*alphaStride+count))*4)==(count?detection::integrated_cfar::alpha(pfa,count,cpis):0),
    "Replay valid-population CFAR alpha differs");
   require(std::isfinite(m.f64((m.u32(56*4)+2*pass)*4)),"Replay bank noise invalid");}
- const uint32_t available=m.u32(79*4),depth=tbd?c.detector.integrationCpis:1;
+ const uint32_t available=m.u32(79*4),depth=tbd?d.integrationCpis:1;
  require(tbd?(available>0):available==0,"Replay snapshot temporal advance invalid");
  const auto history=reader(block(s,BlockKind::powerHistory));
  for(uint64_t i=0;i<cells*depth;++i){const double v=history.f64(i*8);
@@ -146,19 +146,20 @@ void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
   const uint32_t length=pass?track_before_detect::bankLength(pass-1):2;
   const double v=temporal.f64(at);require(available<length?std::isnan(v):
    (std::isfinite(v)&&v>=-1),"Replay snapshot temporal bank invalid");}
- const auto windows=(96+2*c.geometry.doppler+c.geometry.delays+1)&~1u;
- require(m.u32(46*4)==windows&&m.u32(84*4)==(tbd?14u:8u),"Replay snapshot CFAR layout differs");
- for(uint32_t row=0;row<c.geometry.doppler;++row)require(m.f64((96+2*row)*4)==c.dopplerAxis[row],"Replay Doppler axis differs");
- for(uint32_t j=0;j<c.geometry.delays;++j){const int column=int(j),n=int(c.geometry.delays),g=c.detector.guard,t=c.detector.train;
-  require(m.u32((96+2*c.geometry.doppler+j)*4)==uint32_t(c.delayAxis[j]),"Replay delay axis differs");
+ const auto axes=track_before_detect::postprocessAxesWord,
+  windows=(axes+2*c.geometry.doppler+c.geometry.delays+1)&~1u;
+ require(m.u32(46*4)==windows&&m.u32(84*4)==(tbd?16u:8u),"Replay snapshot CFAR layout differs");
+ for(uint32_t row=0;row<c.geometry.doppler;++row)require(m.f64((axes+2*row)*4)==c.dopplerAxis[row],"Replay Doppler axis differs");
+ for(uint32_t j=0;j<c.geometry.delays;++j){const int column=int(j),n=int(c.geometry.delays),g=d.guard,t=d.train;
+  require(m.u32((axes+2*c.geometry.doppler+j)*4)==uint32_t(c.delayAxis[j]),"Replay delay axis differs");
   const uint32_t bounds[]={uint32_t(std::max(0,column-g-t)),uint32_t(std::max(0,column-g)),
    uint32_t(std::min(n,column+g+1)),uint32_t(std::min(n,column+g+t+1))};
-  const auto at=windows+(tbd?14u:8u)*j,count=bounds[1]-bounds[0]+bounds[3]-bounds[2];
+  const auto at=windows+(tbd?16u:8u)*j,count=bounds[1]-bounds[0]+bounds[3]-bounds[2];
   for(uint32_t i=0;i<4;++i)require(m.u32((at+i)*4)==bounds[i],"Replay snapshot training membership differs");
   require(m.u32((at+4)*4)==count,"Replay snapshot training count differs");
-  for(uint32_t pass=0;pass<passes(c);++pass){const auto cpis=tbd?(pass?track_before_detect::bankLength(pass-1):2):c.detector.integrationCpis;
-   const double pfa=tbd?track_before_detect::passPfa(c.detector.pfa,c.detector.integrationCpis,motion.delay,motion.doppler,pass):c.detector.pfa;
-   const double alpha=count?(cpis==1?count*(std::pow(pfa,-1.0/count)-1):track_before_detect::cfarAlpha(pfa,count,cpis)):0;
+  for(uint32_t pass=0;pass<passes(c);++pass){const auto cpis=tbd?track_before_detect::passDepth(d.integrationCpis,pass):d.integrationCpis;
+   const double pfa=tbd?track_before_detect::passPfa(d.pfa,d.integrationCpis,motion.delay,motion.doppler,pass):d.pfa;
+   const double alpha=count?(cpis==1?count*(std::pow(pfa,-1.0/count)-1):detection::integrated_cfar::alpha(pfa,count,cpis)):0;
    require(m.f64((at+6+2*pass)*4)==alpha,"Replay snapshot CFAR alpha differs");}}
  const auto stats=reader(block(s,BlockKind::cfarStatistics));
  for(size_t at=0;at<stats.b.size;at+=40){const auto flags=stats.f64(at+32);
@@ -170,8 +171,7 @@ void validate(const ResidentReplaySnapshot& s,const resident::Config& c){
  detections.zeros(size_t(detectionCount)*32,detections.b.size-size_t(detectionCount)*32);
  if(c.tracker.enabled){const auto tracker=reader(block(s,BlockKind::trackerCheckpoint));
   const auto count=tracker.u64(16),used=trackerHeaderWords+count*trackerRecordWords(c.tracker);
-  const auto schema=tracker.u32(0);
-  require(schema==5&&tracker.u32(108)==uint32_t(c.detector.integrationCpis>1)&&
+  require(tracker.u32(0)==5&&tracker.u32(108)==uint32_t(d.integrationCpis>1)&&
    tracker.u32(4)==trackerRecordWords(c.tracker)*4&&
    tracker.u32(8)==c.tracker.capacity&&tracker.u32(12)==trackerHistoryCapacity(c.tracker)&&
    count<=c.tracker.capacity&&tracker.u64(40)==c.epoch&&tracker.u64(48)==id.generation&&
@@ -192,7 +192,7 @@ std::vector<uint8_t> encode(const ResidentReplaySnapshot& s,const resident::Conf
  const uint32_t counts[]={c.fusion.beams,refinement(c),c.detector.integrationCpis,motion.delay,motion.doppler,c.detector.integrationBeamTolerance,std::max(1u,c.fusion.beams),passes(c)};
  for(size_t i=0;i<8;++i)w.u32(288+4*i,counts[i]);
  w.f64(320,c.replay.frequencyHz);w.f64(328,c.sampleRate);w.f64(336,c.replay.configuredPfa);w.f64(344,c.detector.pfa);
- for(uint32_t pass=0;pass<passes(c);++pass)w.f64(352+8*pass,c.detector.integrationCpis>2?
+ for(uint32_t pass=0;pass<passes(c);++pass)w.f64(pass<4?352+8*pass:392,c.detector.integrationCpis>2?
   track_before_detect::passPfa(c.detector.pfa,c.detector.integrationCpis,motion.delay,motion.doppler,pass):c.detector.pfa);
  w.f64(384,c.detector.integrationCpis>2?track_before_detect::trialCount(c.detector.integrationCpis,motion.delay,motion.doppler):1);
  for(size_t i=0;i<c.replay.actualGainDb.size();++i)w.f64(400+8*i,c.replay.actualGainDb[i]);

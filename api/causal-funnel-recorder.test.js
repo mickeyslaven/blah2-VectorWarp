@@ -9,9 +9,14 @@ const {CausalFunnelRecorder, validateFrame} = require('./causal-funnel-recorder'
 const {createCausalFunnelProducer, createMultiIlluminatorCausalFrame} =
   require('./causal-funnel-producer');
 const {validateConfig} = require('./config-manager');
-const {birthRejectionLabels} = require('./causal-funnel-contract');
+const {birthRejectionLabels, trackerDiagnosticKeys} = require('./causal-funnel-contract');
 
 const nativeTracker = fs.readFileSync(path.join(__dirname, '../src/process/tracker/Tracker.h'), 'utf8');
+const nativeDiagnostics = [...nativeTracker.matchAll(/TRACKER_DIAGNOSTIC\([^,]+,"([^"]+)"\)/g)]
+  .map(match => match[1]);
+assert.deepStrictEqual([...trackerDiagnosticKeys].filter(field => field !== 'no_op').sort(),
+  nativeDiagnostics.sort(),
+  'Causal evidence must preserve every canonical native tracker diagnostic');
 const nativeRejections = [...nativeTracker.matchAll(/TRACKER_DIAGNOSTIC\([^,]+,"([^"]+)"\)/g)]
   .map(match => match[1]).filter(field => /^(birth_|stationary_birth).*_rejected$/.test(field));
 assert.deepStrictEqual(Object.keys(birthRejectionLabels).sort(), nativeRejections.sort(),
@@ -95,9 +100,28 @@ const rejectedFrame = createMultiIlluminatorCausalFrame({...multiInput,
   trackerDiagnostics: {...multiInput.trackerDiagnostics, ...rejectionCounters}}, 2);
 assert.deepStrictEqual(validateFrame(JSON.parse(JSON.stringify(rejectedFrame))).tracker_diagnostics,
   {...multiInput.trackerDiagnostics, ...rejectionCounters});
+const completeDiagnostics = Object.fromEntries(trackerDiagnosticKeys.map((field, index) =>
+  [field, field === 'no_op' ? false : index + 1]));
+const completeDiagnosticsFrame = createMultiIlluminatorCausalFrame({...multiInput,
+  trackerDiagnostics: completeDiagnostics}, 2);
+assert.deepStrictEqual(validateFrame(JSON.parse(JSON.stringify(completeDiagnosticsFrame)))
+  .tracker_diagnostics, completeDiagnostics,
+'Every native tracker diagnostic survives the API causal adapter');
 for (const field of Object.keys(rejectionCounters)) {
   assert.equal(Object.hasOwn(multiFrame.tracker_diagnostics, field), false,
     'Older producers must retain missing counters rather than manufacture zero');
+  for (const value of [-1, .5, null, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => createMultiIlluminatorCausalFrame({...multiInput,
+      trackerDiagnostics: {[field]: value}}), /Invalid causal tracker diagnostic/);
+    assert.throws(() => validateFrame({...multiFrame,
+      tracker_diagnostics: {[field]: value}}), /Invalid causal tracker diagnostic/);
+  }
+}
+for (const field of ['pair_spatial_rejected', 'pair_lineage_rejected', 'lineage_resets',
+  'independent_credits', 'credited_source_cpis', 'stationary_quarantined',
+  'stationary_cells', 'stationary_cell_capacity_rejected']) {
+  assert.equal(Object.hasOwn(multiFrame.tracker_diagnostics, field), false,
+    'Sparse historical diagnostics remain valid without manufactured zeroes');
   for (const value of [-1, .5, null, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => createMultiIlluminatorCausalFrame({...multiInput,
       trackerDiagnostics: {[field]: value}}), /Invalid causal tracker diagnostic/);
@@ -161,11 +185,11 @@ assert.throws(() => validateFrame({...multiFrame,
   const rejectionConfig = JSON.parse(JSON.stringify(config));
   rejectionConfig.process.evidence.causal_funnel.path = path.join(directory, 'birth-rejections');
   const rejectionRecorder = new CausalFunnelRecorder(rejectionConfig);
-  assert.equal(rejectionRecorder.accept(rejectedFrame, {nativeTransport: true}), true);
+  assert.equal(rejectionRecorder.accept(completeDiagnosticsFrame, {nativeTransport: true}), true);
   await rejectionRecorder.flush();
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(rejectionRecorder.segmentFile(), 'utf8'))
-    .frame.tracker_diagnostics, rejectedFrame.tracker_diagnostics,
-  'Durable evidence preserves the exact complete rejection counters');
+    .frame.tracker_diagnostics, completeDiagnostics,
+  'Durable evidence preserves the exact complete native tracker diagnostics');
   const overlapConfig = JSON.parse(JSON.stringify(config));
   overlapConfig.process.evidence.causal_funnel.path = path.join(directory, 'lineage-overlap');
   const overlapRecorder = new CausalFunnelRecorder(overlapConfig);

@@ -133,7 +133,7 @@ public:
    // Baseline2 remains separately thresholded in every TBD family. Calibration
    // uses its independent negative map, not target-contaminated motion paths.
    const uint32_t controlDepth=std::min(2u,d.integrationCpis);
-   const double alpha=detection::integrated_cfar::alpha(d.pfa/(controlDepth==2?2:1),training,controlDepth);
+   const double alpha=detection::integrated_cfar::alpha(d.pfa/(d.integrationCpis>2?4:controlDepth==2?2:1),training,controlDepth);
    // Published legacy SNR uses 10*log10(amplitude), hence /5 for power.
    const double snr=c.tracker.enabled?std::pow(10.0,c.tracker.minInitiationSnrDb/5.0):0;
    startupGate_=std::max({1.0,alpha,snr});target.amplitude=1;
@@ -328,7 +328,7 @@ public:
  Publication result;
  result.trackerDiagnostics=v.trackerDiagnostics;
  result.availableCpis=v.availableCpis;
- result.detectorReady=config().detector.integrationCpis==1||v.availableCpis>=2;
+ result.detectorReady=config().detector.integrationCpis!=2||v.availableCpis>=2;
  result.temporalEpoch=temporalEpoch_;
  result.newestSequence=temporalSequences_.empty()?0:temporalSequences_.back();
  for(size_t age=0;age<temporalSequences_.size();++age)
@@ -481,7 +481,7 @@ public:
       <<" gpu_raw_doppler="<<record.doppler<<" gpu_raw_snr="<<record.snr;
      if(cpuIntegration&&cpuIntegration->evidence&&index<prepared_.detectionCells.size){
       const uint32_t cell=prepared_.detectionCells.data[index];
-      if(cell<prepared_.flags.size){const uint32_t flag=prepared_.flags.data[cell],qualified=(flag>>3)&15u;
+      if(cell<prepared_.flags.size&&!(prepared_.flags.data[cell]&128u)){const uint32_t flag=prepared_.flags.data[cell],qualified=(flag>>3)&15u;
        const uint32_t bank=(qualified&8)?3:(qualified&4)?2:(qualified&2)?1:0;
        const uint32_t source=temporal_candidate::sourceCell(cell,flag,config().geometry.doppler,
         config().geometry.delays,config().detector.integrationCpis);

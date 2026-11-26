@@ -73,14 +73,8 @@ const MAX_TOTAL_COVERAGE_INTERVALS = 1024 * 1024;
 const TIMING_RETENTION_MS = 10 * 60 * 1000;
 const PASS_GAP_MS = 120000;
 const DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S = 1;
-// Version the eligibility semantics separately from receiver configuration so
-// previously finalized exposure is never reinterpreted under a new detector
-// mask, truth Doppler estimator, or observation-freshness policy.
-// v6 separates scorecards collected while public truth providers shared one
-// round-robin cadence from scorecards collected with per-provider cadence.
-// The older denominator can contain source-age gaps and must remain preserved
-// but must never be blended into current evaluation percentages.
-const DETECTOR_ELIGIBILITY_VERSION = 6;
+// v7 separates directional catch-up projection from historical symmetric gates.
+const DETECTOR_ELIGIBILITY_VERSION = 7;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
 const SLANT_RANGE_EDGES_KM = Object.freeze([0, 10, 20, 30, 40, 50, 75, 100, 150, 250, 500]);
@@ -493,7 +487,8 @@ function limits(config, frames = []) {
     trackerInitiateMinSnrDb: finite(trackerInitiate.min_snr_db) ?
       trackerInitiate.min_snr_db : -Infinity,
     provisionalTimeUncertaintyS,
-    truthUncertaintyPolicy: truthUncertainty.policy(config.truth?.adsb?.uncertainty_association)};
+    truthUncertaintyPolicy: truthUncertainty.policy(config.truth?.adsb?.uncertainty_association),
+    truthProjectionPolicy: truthUncertainty.scoringProjectionPolicy(config)};
 }
 
 function siteCoordinates(site = {}) {
@@ -558,7 +553,9 @@ function evaluationContract(span, timingPolicy = 'exact') {
     delay_max: span?.delayMaxBin, doppler_min: span?.dopplerMinHz,
     doppler_max: span?.dopplerMaxHz, timing_trigger: 'native-only-v2',
     exact_timing_required: timingPolicy === 'exact', timing_policy: timingPolicy,
-    timing_skew_ms: 100, truth_offset_s: span?.truthUncertaintyPolicy?.maxProjectionS ?? 1,
+    timing_skew_ms: 100, truth_offset_s: Math.max(span?.truthProjectionPolicy?.past_s ?? 1,
+      span?.truthProjectionPolicy?.future_s ?? 1),
+    truth_projection_policy: span?.truthProjectionPolicy,
     ...(span?.truthUncertaintyPolicy ? {association_family: 'uncertainty-ellipse-v1',
       uncertainty_policy: span.truthUncertaintyPolicy, null_calibrated: false} : {}),
     provisional_event_time_uncertainty_s: timingPolicy === 'provisional' ?
@@ -1111,16 +1108,16 @@ function truthSnapshot(prediction, timestamp) {
       {...prediction.provenance} : null};
 }
 
-function truthIntegrity(prediction, uncertaintyPolicy = null, timestamp = null) {
+function truthIntegrity(prediction, uncertaintyPolicy = null, timestamp = null, projectionPolicy = null) {
   const provenance = prediction?.provenance;
   if (!provenance || typeof provenance !== 'object') return {valid: false, reason: 'missing-provenance'};
-  // A cached prediction's original observation continues to age even when its
-  // stored projection offset does not. It cannot extend the presence horizon.
+  // Age the original observation even when reusing a cached projection.
   const predictionAge = finite(timestamp) && finite(prediction.timestamp) ?
     timestamp / 1000 - prediction.timestamp : 0;
   const offset = finite(provenance.observation_time_offset_s) ?
     provenance.observation_time_offset_s + predictionAge : NaN;
-  if (!finite(offset) || Math.abs(offset) > (uncertaintyPolicy?.maxProjectionS ?? 1))
+  if (!finite(offset) || offset > (projectionPolicy?.past_s ?? uncertaintyPolicy?.maxProjectionS ?? 1) ||
+      -offset > (projectionPolicy?.future_s ?? uncertaintyPolicy?.maxProjectionS ?? 1))
     return {valid: false, reason: 'stale-observation'};
   if (uncertaintyPolicy && provenance.disagreement === true)
     return {valid: false, reason: 'source-disagreement'};
@@ -1350,13 +1347,12 @@ class EvidenceStatistics {
       for (const event of this.state.eligibilityEvents) compactEligibilityEvent(event);
       this.trimEligibilityEvents();
       if (this.state.rollup?.siteKey !== this.key) {
-        // A contract/configuration rollover starts a new cohort, not a rewrite
-        // of archived pass counts (including those already compacted to rollup).
-        if (this.state.rollup?.siteKey) {
-          const previous = this.state.sites[this.state.rollup.siteKey] ||= {};
-          previous.finalized_rollup = this.state.rollup;
-        }
+        // Archive prior counts and coverage.
+        const {rollup, radarCoverage} = this.state;
+        if (rollup?.siteKey) Object.assign(this.state.sites[rollup.siteKey] ||= {},
+          {finalized_rollup: rollup, radar_coverage: radarCoverage});
         this.state.rollup = emptyRollup(this.key);
+        this.state.radarCoverage = {...radarCoverage, buckets: {}};
       }
       this.state.rollup.trackingFailureClasses ||= {};
       const hasArchivedCpiExposure = ['eligibleCpis', 'detectedCpis', 'trackedCpis']
@@ -1506,7 +1502,7 @@ class EvidenceStatistics {
       const timingUncertaintyS = this.timingPolicy === 'provisional' &&
         timing?.exact_event_time === false ? timing.event_time_uncertainty_s : 0;
       const eligiblePredictions = uncertaintyPolicy ? valid.filter(([, prediction]) =>
-        truthIntegrity(prediction, uncertaintyPolicy, timestamp).valid) : valid;
+        truthIntegrity(prediction, uncertaintyPolicy, timestamp, span.truthProjectionPolicy).valid) : valid;
       // Preserve the existing operational/provisional frame-alignment contract
       // for every SDR without introducing a new receiver prerequisite.
       const timingContext = frameTimestamp => ({declared: finite(timingUncertaintyS),
@@ -1676,7 +1672,8 @@ class EvidenceStatistics {
     if (span.clutterMaxBin !== null && delayBin <= span.clutterMaxBin)
       pass.clutterCancelledFrames += 1;
     else if (physical) pass.outsideClutterFrames += 1;
-    const integrity = truthIntegrity(prediction, span.truthUncertaintyPolicy, timestamp);
+    const integrity = truthIntegrity(prediction, span.truthUncertaintyPolicy, timestamp,
+      span.truthProjectionPolicy);
     // Presence establishes exposure; covariance and alignment establish whether
     // a radar association can be credited. Abstention must not erase exposure.
     const associationValid = integrity.valid && (!span.truthUncertaintyPolicy ||

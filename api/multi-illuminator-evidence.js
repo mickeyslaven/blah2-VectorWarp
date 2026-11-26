@@ -511,15 +511,13 @@ class MultiIlluminatorEvidence {
       const statistics = timing === 'provisional' ? lane.operational : lane.exact;
       const status = (compact || kiosk) && typeof statistics.associationStatus === 'function' ?
         statistics.associationStatus() : statistics.liveStatus();
-      if (compact) return {identity: identity(lane.illuminator, statistics),
-        selected_channel: lane.illuminator.id, updated_at: status.updated_at,
-        association_statistics: associationStatistics(status)};
-      if (kiosk) return measuredCoverage.kioskAssociationChannel({
+      if (compact || kiosk) return {...measuredCoverage.kioskAssociationChannel({
         identity: identity(lane.illuminator, statistics),
         selected_channel: lane.illuminator.id, updated_at: status.updated_at,
         association_statistics: associationStatistics(status),
         measured_track_coverage: status.current_setup_lifetime?.measured_track_coverage,
-        cpi_exposure: status.current_setup_lifetime?.cpi_exposure});
+        cpi_exposure: status.current_setup_lifetime?.cpi_exposure}),
+        ...(compact ? {measured_track_basis: measuredCoverage.compactBasis(statistics.measuredTrackBasis())} : {})};
       const population = status.track_population || {};
       const channel = {identity: identity(lane.illuminator, statistics),
         measured_track_basis: statistics.measuredTrackBasis(),

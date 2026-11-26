@@ -212,13 +212,11 @@ set_tests_properties(gpuDriverDiagnostics PROPERTIES TIMEOUT 30)
 
 
 # CPU-only resident wire and result-publication regressions; no device/module is loaded.
-add_executable(testGpuResidentWire ${PROJECT_ROOT}/test/gpu/TestGpuResidentWire.cpp
-  ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp
-  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
+add_executable(testGpuResidentWire ${PROJECT_ROOT}/test/gpu/TestGpuResidentWire.cpp)
 target_compile_features(testGpuResidentWire PRIVATE cxx_std_17)
 target_include_directories(testGpuResidentWire PRIVATE
   ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
-target_link_libraries(testGpuResidentWire PRIVATE blah2RapidJson)
+target_link_libraries(testGpuResidentWire PRIVATE blah2GpuResidentProcess)
 add_test(NAME residentWireCpuBoundary COMMAND testGpuResidentWire)
 set_tests_properties(residentWireCpuBoundary PROPERTIES TIMEOUT 10)
 

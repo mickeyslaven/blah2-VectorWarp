@@ -5,6 +5,7 @@ const http = require('node:http');
 const {compactNodeStatistics, combineNodeStatistics, probeJson} = require(
   process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation');
 const {federationAssociationPassTransport} = require('./evidence-statistics');
+const coverage = require('../html/js/measured_track_coverage');
 
 test('large association reads require an explicit bounded allowance', async t => {
   const body = JSON.stringify({passes: ['x'.repeat(2 * 1024 * 1024)]});
@@ -17,6 +18,7 @@ test('large association reads require an explicit bounded allowance', async t =>
   const origin = `http://127.0.0.1:${server.address().port}`;
   await assert.rejects(probeJson(origin, '/association', 2500),
     /response is too large/);
+  await assert.rejects(probeJson(origin, '/association', 2500, 1024 * 1024), /response is too large/);
   const accepted = await probeJson(origin, '/association', 2500, 8 * 1024 * 1024);
   assert.equal(accepted.value.passes[0].length, 2 * 1024 * 1024);
   await assert.rejects(probeJson(origin, '/association', 2500, 17 * 1024 * 1024),
@@ -28,7 +30,7 @@ test('network summary uses the bounded association basis contract', () => {
     require.resolve(process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation'),
     'utf8');
   assert.match(source,
-    /association-basis\?timing=provisional&compact=true'[\s\S]*?timeoutMs, 512 \* 1024/,
+    /association-basis\?timing=provisional&compact=true'[\s\S]*?timeoutMs, 1024 \* 1024/,
     'network polling must not transfer the full measured-track evidence ledger');
   assert.match(source,
     /association\/passes\?timing=provisional&transport=federation-v1'[\s\S]*?timeoutMs,\s*1024 \* 1024/,
@@ -153,18 +155,18 @@ test('cached statistics remain visible without certifying stale node health', ()
 test('compact and deduplicated network statistics preserve scoring and restart provenance', () => {
   const pass = {pass_id: 'pass-1', hex: 'abc123', started_at: 1000, finalized_at: 2000,
     channel: 'primary', eligible_cpis: 6, detected_cpis: 3, detected: true,
-    site_epoch: 'site', evaluation_contract_hash: 'contract', evaluation_policy_hash: 'policy',
+    site_epoch: 'site', evaluation_contract_hash: 'contract', evaluation_policy_hash: 'a'.repeat(64),
     timing_policy: 'provisional', decision_grade: false,
     sensitivity_epoch_id: null, sensitivity_epoch_mixed: true};
   const compact = compactNodeStatistics({id: 'alpha'},
     {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
     {timing_policy: 'provisional', channels: [{selected_channel: 'primary', association_statistics: {
-      evaluation_contract_hash: 'contract', evaluation_policy_hash: 'policy',
+      evaluation_contract_hash: 'contract', evaluation_policy_hash: 'a'.repeat(64),
       timing_policy: 'provisional', decision_grade: false, sensitivity_epoch: {id: 'new-run'}}}]},
     {timing_policy: 'provisional', statistics_window: {complete: false}, passes: [pass]});
   const combined = combineNodeStatistics([compact]);
   assert.equal(combined.nodes[0].pass_count, 1);
-  assert.equal(combined.channels[0].evaluation_policy_hash, 'policy');
+  assert.equal(combined.channels[0].evaluation_policy_hash, 'a'.repeat(64));
   const provenance = combined.unique_recent_passes.passes[0].provenance[0];
   assert.equal(provenance.node, 'alpha');
   assert.equal(provenance.sensitivity_epoch_mixed, true);
@@ -197,4 +199,41 @@ test('columnar node transport preserves network outcomes without returning node 
   assert.equal(combined.system_wide_unique_passes.tracking.associated_passes, 1);
   assert.equal(combined.nodes[0].pass_count, 2);
   assert.equal(combined.nodes[0].passes, undefined);
+});
+
+test('compact coverage transport yields exact cross-node union and fails closed without its basis', () => {
+  const nodes = [[[0, 10000], [30000, 40000]], [[5000, 20000], [35000, 50000]]].map((measured, index) => {
+    const basis = {version: 1, complete: true, aircraft: [{hex: index ? 'ABC123' : 'abc123',
+      eligible: [[0, 100000]], scored: [[0, 100000]], measured}]};
+    return compactNodeStatistics({id: `radar-${index}`},
+      {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
+      {channels: [{selected_channel: 'primary', association_statistics: {evaluation_policy_hash: 'a'.repeat(64)},
+        measured_track_basis: coverage.compactBasis(basis), measured_track_coverage: coverage.aggregate([basis]),
+        cpi_exposure: {eligible_cpis: 200, operationally_tracked_cpis: 80, eligible_seconds: 100}}]},
+      {passes: [{hex: 'abc123', started_at: 1, finalized_at: 100000, eligible_cpis: 200}]});
+  });
+  const result = combineNodeStatistics([...nodes, {id: 'display', role: 'coordinator', available: false}]);
+  assert.equal(result.measured_track_coverage.available, true);
+  assert.equal(result.measured_track_coverage.fraction, .4, 'Overlapping support is unioned, not added');
+  assert.equal(result.measured_track_coverage.eligible_seconds, 100);
+  assert.equal(result.measured_track_coverage.measured_seconds, 40);
+  assert.equal(result.measured_track_coverage.gap_count, 1);
+  assert.equal(result.measured_track_coverage.gap_max_seconds, 10);
+  assert.equal(result.channels[0].measured_track_coverage.measured_seconds, 20);
+  assert.equal(result.channels[0].cpi_exposure.operationally_tracked_cpis, 80);
+  assert.equal(result.channels[0].cpi_exposure.eligible_seconds, 100);
+  assert.equal(JSON.stringify(result).includes('measured_track_basis'), false);
+  const partial = structuredClone(nodes); partial[0].channels[0].measured_track_basis.complete = false;
+  assert.equal(combineNodeStatistics(partial).measured_track_coverage.scored_fraction, .4);
+  for (const mutate of [rows => { delete rows[1].channels[0].measured_track_basis; },
+    rows => { rows[1].channels[0].measured_track_basis.aircraft[0].measured = [0, -1]; },
+    rows => { rows[1].available = false; }, rows => { rows[1].stale = true; },
+    rows => { rows[1].channels[0].evaluation_policy_hash = 'b'.repeat(64); },
+    rows => { rows.forEach(node => { node.channels[0].evaluation_policy_hash = 'unidentified'; }); }]) {
+    const changed = structuredClone(nodes); mutate(changed);
+    const unavailable = combineNodeStatistics(changed).measured_track_coverage;
+    assert.equal(unavailable.available, false);
+    for (const field of ['fraction', 'scored_fraction', 'measured_seconds', 'scored_seconds', 'gap_count', 'observed_internal_gap_count'])
+      assert.equal(unavailable[field], null, `${field} must not fabricate zero or partial coverage`);
+  }
 });

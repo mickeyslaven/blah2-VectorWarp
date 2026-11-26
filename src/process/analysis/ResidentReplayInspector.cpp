@@ -100,7 +100,7 @@ InspectedFrame SequenceInspector::append(const uint8_t* data,size_t bytes){
   const resident::wire::Reader m{metadata};
   const auto rows=r.u32(76),cols=r.u32(80);
   require(rows<=65535&&cols<=65535,"Snapshot axes outside bound");
-  const size_t dopplerOffset=96*4,delayOffset=dopplerOffset+size_t(rows)*8;
+  const size_t dopplerOffset=track_before_detect::postprocessAxesWord*4,delayOffset=dopplerOffset+size_t(rows)*8;
   m.range(dopplerOffset,size_t(rows)*8);m.range(delayOffset,size_t(cols)*4);
   const auto config=resident::decodeConfig(configBytes,{metadata.data+delayOffset,size_t(cols)*4},
     {metadata.data+dopplerOffset,size_t(rows)*8});

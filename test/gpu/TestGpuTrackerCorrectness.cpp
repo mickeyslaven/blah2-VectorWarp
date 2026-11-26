@@ -471,7 +471,7 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
   if(!duplicate){++frame;stamp+=spatialMotion?(frame%2?200:800):500;}
   auto* s=words(scratch);p[11]=hit;p[79]=depth>2?uint32_t(frame):0;
   ::Detection detected(std::vector<double>{},std::vector<double>{},std::vector<double>{});
-  if(hit){s[layout.indices]=cell;s[layout.flags+cell]=1u|(support==8?64u:support==4?32u:support==2?8u:0u);
+  if(hit){s[layout.indices]=cell;s[layout.flags+cell]=1u|(support==8?64u:support==4?32u:support==2?8u:depth>2?128u:0u);
    if(!seedStamp)seedStamp=stamp;
    const double t=spatialMotion?double(stamp-seedStamp)/1000:0.,dv=4*t;
    const double delay=6-config.lambda*.5*4*t*t/config.rangeRes;
@@ -544,6 +544,15 @@ void temporalBackendParity(Context& context,uint32_t depth,bool spatialMotion=fa
  require(tracks->get_n()==0,"unconfirmed impulse escaped its bounded lifetime");
  reset();for(uint32_t i=0;i<config.n+depth;++i){advance(true,depth,4.99);require(tracks->get_n()==0,"subthreshold temporal evidence created a false track");}
  if(depth>=4){
+  stage.resetInput();portable.reset();frame=0;stamp=1000;seedStamp=0;
+  for(uint32_t i=0;i<config.m;++i){advance(true,1);
+   require(tracks->get_n()==1&&portable.frame_diagnostics().independentCredits==1&&
+    portable.frame_diagnostics().creditedCpis==1,"Current-CPI support did not earn exactly one credit");
+   require((tracks->get_state(0)=="ACTIVE")== (i+1==config.m),
+    "Deep maximum delayed current-CPI confirmation");}
+  advance(false,1);require(tracks->get_state(0)=="COASTING"&&
+   portable.frame_diagnostics().independentCredits==0&&portable.frame_diagnostics().creditedCpis==0,
+   "Current-CPI coast earned measurement credit");
   reset();advance(true,2,6);require(tracks->get_n()==0&&portable.frame_diagnostics().birthSnrRejected==1,
    "shallow weak evidence initiated a deep temporal track");
   reset();advance(true,4,6);require(tracks->get_n()==1,

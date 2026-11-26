@@ -240,7 +240,7 @@ int main(int argc, char** argv) try {
   std::vector<int> offsets;
   for (int value = -int(guard + side); value < -int(guard); ++value) offsets.push_back(value);
   for (int value = int(guard) + 1; value <= int(guard + side); ++value) offsets.push_back(value);
-  const double alpha = track_before_detect::cfarAlpha(detectorPfa,
+  const double alpha = blah2::detection::integrated_cfar::alpha(detectorPfa,
     uint32_t(offsets.size()), integration);
 
   const auto& cuts = member(document, "cuts");

@@ -128,7 +128,7 @@ void validateConfig(const Config& c){
   "Disabled resident bearing has configuration");
  require(uint64_t(f.manifoldResponses.size())+uint64_t(b.manifoldResponses.size())+
    uint64_t(f.directResponse.size())<=
-  (configBytes-640-(c.replay.maxBytes?152:0))/sizeof(std::complex<float>),
+  (configBytes-648-(c.replay.maxBytes?152:0))/sizeof(std::complex<float>),
   "Resident measured manifolds exceed config capacity");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
@@ -137,10 +137,14 @@ void validateConfig(const Config& c){
  if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&
   (d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
+ track_before_detect::validateCurrentPreference(d.currentCpiPreferenceSnr);
  require(t.reservedPolicy==std::array<uint8_t,3>{}&&!t.reservedLimit,
   "Resident reserved tracker configuration must be zero");
  track_before_detect::validateBeamHistory(d.integrationCpis,d.integrationBeamTolerance);
  if(t.enabled){const uint32_t recordWords=trackerRecordWords(t);
+ if(d.currentCpiPreferenceSnr)require(d.currentCpiPreferenceSnr==
+  std::max(tracker_weak_birth::strongBirthSnr(),t.minInitiationSnrDb),
+  "Resident current-CPI preference differs from tracker birth threshold");
  tracker_confirmation::validate(t.m,t.n,t.nDelete,d.integrationCpis);
  require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0&&std::isfinite(t.minInitiationSnrDb)&&t.minInitiationSnrDb>=-100&&t.minInitiationSnrDb<=100&&std::isfinite(t.stationaryMaxDopplerHz)&&t.stationaryMaxDopplerHz>=0&&(t.stationaryClutter?(t.stationaryPersistenceCpis>=2&&t.stationaryPersistenceCpis<=65535):(!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0)),"Resident tracker configuration invalid");
  double actual=(double(c.correlation)*g.doppler)/c.sampleRate;
@@ -270,7 +274,7 @@ const auto&g=c.geometry;
 const auto&r=c.reference;
 const auto&d=c.detector;
 const auto&t=c.tracker;
- w.u32(0,7);
+ w.u32(0,8);
  w.u32(4,configBytes);
  w.u64(8,c.epoch);
  w.u32(16,c.stages());
@@ -323,7 +327,8 @@ const auto&t=c.tracker;
  w.u32(584,t.stationaryClutter);
  w.u32(588,t.stationaryPersistenceCpis);
  w.f64(592,t.stationaryMaxDopplerHz);
- // 604..611 and policy bits 0..1 remain reserved zero.
+ w.f64(604,d.currentCpiPreferenceSnr);
+ // Policy bits 0..1 remain reserved zero.
  w.u32(612,t.normalizedInnovationGate?4u:0u);
  w.u64(344,c.spectrumBins);
  w.u64(352,c.presence);
@@ -352,8 +357,8 @@ const auto&t=c.tracker;
  w.u32(620,uint32_t(c.fusion.directResponse.size()));
  w.u64(624,c.replay.maxBytes);
  w.u32(632,c.replay.maxFrames);
- w.f32(636,float(t.minInitiationSnrDb));
- size_t at=640;
+ w.f64(640,t.minInitiationSnrDb);
+ size_t at=648;
  for(const auto value:c.fusion.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  for(const auto value:c.bearing.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  for(const auto value:c.fusion.directResponse){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
@@ -368,7 +373,7 @@ const auto&t=c.tracker;
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
 Reader r{b};
-require(r.u32(0)==7&&r.u32(4)==configBytes,"Resident config schema differs");
+require(r.u32(0)==8&&r.u32(4)==configBytes,"Resident config schema differs");
 Config c;
 c.reference.mode=ReferenceMode(r.u32(112));
 c.epoch=r.u64(8);
@@ -400,9 +405,9 @@ for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(54
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
 const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
  c.replay.maxBytes=r.u64(624);c.replay.maxFrames=r.u32(632);
-require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-640-(c.replay.maxBytes?152:0))/8,
+require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-648-(c.replay.maxBytes?152:0))/8,
  "Resident measured manifold counts exceed config capacity");
-size_t at=640;c.fusion.manifoldResponses.reserve(fusionManifoldCount);
+size_t at=648;c.fusion.manifoldResponses.reserve(fusionManifoldCount);
 for(uint32_t i=0;i<fusionManifoldCount;++i){c.fusion.manifoldResponses.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
 bearing.manifoldResponses.reserve(manifoldCount);
 for(uint32_t i=0;i<manifoldCount;++i){bearing.manifoldResponses.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
@@ -475,11 +480,11 @@ ref.centreHz=r.f64(160);
  t.maxAccInit=r.f64(320);
  t.rangeRes=r.f64(328);
  t.lambda=r.f64(336);
- t.minInitiationSnrDb=r.f32(636);
+ r.zeros(636,4);t.minInitiationSnrDb=r.f64(640);
  t.stationaryClutter=boolean(584);
  t.stationaryPersistenceCpis=r.u32(588);
  t.stationaryMaxDopplerHz=r.f64(592);
- r.zeros(604,8);
+ d.currentCpiPreferenceSnr=r.f64(604);
  const uint32_t trackerPolicy=r.u32(612);
  require(!(trackerPolicy&~4u),"Resident tracker policy flags invalid");
  t.normalizedInnovationGate=(trackerPolicy&4u)!=0;
@@ -589,7 +594,7 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  require(v.cfarCount<=m*detectorPasses&&v.centroidCount<=v.cfarCount&&v.detectionCount<=v.centroidCount&&v.detectionCount<=m&&
   cfarDiagnosticCount<=m&&cfarDiagnosticCount<=v.cfarCount&&centroidDiagnosticCount<=cfarDiagnosticCount&&centroidDiagnosticCount<=v.centroidCount,
   "Resident detection counts invalid");
- require(c.detector.integrationCpis==1||v.availableCpis>=2||!v.detectionCount,"Resident warmup produced detections");
+ require(c.detector.integrationCpis!=2||v.availableCpis>=2||!v.detectionCount,"Resident warmup produced detections");
  if(!c.detector.enabled)require(!v.cfarCount&&!v.centroidCount&&!v.detectionCount,"Disabled detector produced records");
  v.maps=sectionView<std::complex<float>>(map,visible,Section::maps);
  v.fused=sectionView<std::complex<double>>(map,visible,Section::fused);
@@ -610,14 +615,16 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  if(c.detector.enabled&&c.detector.integrationCpis>1){
   require(v.flags.size==m&&v.detectionCells.size==v.detectionCount,"Resident temporal candidate lineage missing");
   for(size_t i=0;i<v.detectionCells.size;++i){const uint32_t cell=v.detectionCells.data[i];
-   require(cell<m,"Resident temporal candidate cell invalid");const uint32_t flags=v.flags.data[cell],bank=(flags>>3)&15;
+   require(cell<m,"Resident temporal candidate cell invalid");const uint32_t flags=v.flags.data[cell],bank=(flags>>3)&31;
    require((flags&4)&&bank&&!(bank&(bank-1)),"Resident temporal originating bank ambiguous");
    (void)temporal_candidate::sourceCell(cell,flags,c.geometry.doppler,c.geometry.delays,c.detector.integrationCpis);
-   const uint32_t depth=(bank&8)?8:(bank&4)?4:2;
+   const uint32_t depth=(bank&16)?1:(bank&8)?8:(bank&4)?4:2;
    const int delay=int((flags>>17)&7)-2,doppler=int((flags>>20)&63)-16;
    const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
-   require(depth<=v.availableCpis&&std::abs(delay)<=int(motion.delay)&&std::abs(doppler)<=int(motion.doppler)&&
-    (bank!=1u||(!delay&&!doppler)),"Resident temporal support invalid");
+   require(depth<=v.availableCpis&&depth<=c.detector.integrationCpis&&
+    (depth!=1||c.detector.integrationCpis>2)&&
+    std::abs(delay)<=int(motion.delay)&&std::abs(doppler)<=int(motion.doppler)&&
+    ((bank!=1u&&bank!=16u)||(!delay&&!doppler)),"Resident temporal support invalid");
   }}
  v.preparedEvidence=map.read(Section::preparedEvidence);
  v.trackerSlot=r.u32(72);

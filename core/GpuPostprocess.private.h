@@ -3,7 +3,7 @@
 // Private stateless real-fused-map seam. Host work is setup/control/byte copies.
 struct PostprocessConfig {
  bool enabled=false,detection=false,tracker=false;
- double pfa=0,minDoppler=0,centroidDopplerResolution=0;
+ double pfa=0,minDoppler=0,centroidDopplerResolution=0,currentCpiPreferenceSnr=0;
  int32_t guard=0,train=0,minDelay=0;
  uint16_t centroidDelay=0,centroidDoppler=0;
  bool interpolateDelay=true,interpolateDoppler=true;
@@ -78,9 +78,9 @@ inline void appendTemporalAlphas(std::vector<uint32_t>& words,double pfa,
  const uint32_t passes=track_before_detect::detectorPassCount(maximum),stride=2*training+1;
  const uint32_t base=uint32_t(words.size());words[54]=base;words[55]=stride;
  words.resize(words.size()+uint64_t(passes)*stride*2,0);
- for(uint32_t pass=0;pass<passes;++pass){const uint32_t depth=pass?track_before_detect::bankLength(pass-1):2;
+ for(uint32_t pass=0;pass<passes;++pass){const uint32_t depth=track_before_detect::passDepth(maximum,pass);
   const double probability=track_before_detect::passPfa(pfa,maximum,delayMotion,dopplerMotion,pass);
-  for(uint32_t count=1;count<stride;++count){const double alpha=track_before_detect::cfarAlpha(probability,count,depth);
+  for(uint32_t count=1;count<stride;++count){const double alpha=detection::integrated_cfar::alpha(probability,count,depth);
    std::memcpy(words.data()+base+2*(pass*stride+count),&alpha,8);}}
  words[56]=uint32_t(words.size());words.resize(words.size()+2*passes,0);
 }
@@ -116,6 +116,7 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
+ track_before_detect::validateCurrentPreference(c.currentCpiPreferenceSnr);
  track_before_detect::validateBeamHistory(c.integrationCpis,c.integrationBeamTolerance);
  if(c.beamCount)track_before_detect::validateRefinementGrid(c.integrationCpis,c.beamCount,c.bearingScanBeams);
  track_before_detect::validateDelayDrift(c.integrationDelayDriftPerHz,c.dopplerAxis);
@@ -165,10 +166,14 @@ double readS(uint at){return packDouble2x32(uvec2(s[at],s[at+1]));}
 void writeS(uint at,double value){uvec2 bits=unpackDouble2x32(value);s[at]=bits.x;s[at+1]=bits.y;}
 double dopplerAt(uint row){return readD(m[44]+2u*row);}
 double delayAt(uint column){return double(int(m[m[45]+column]));}
-uint bankFlags(uint pass,uint cell){return pass==0u?m[39]+cell:m[57]+8u*(pass-1u)*m[34]+cell;}
-uint bankKeep(uint pass,uint cell){return pass==0u?m[40]+cell:m[57]+(8u*(pass-1u)+1u)*m[34]+cell;}
-uint bankRecord(uint pass,uint cell){return pass==0u?m[42]+6u*cell:m[57]+(8u*(pass-1u)+2u)*m[34]+6u*cell;}
-// Exact accepted FP64 logarithm; no float conversion or host callback.
+bool currentPass(uint pass){return m[78]!=0u&&pass==m[80]+2u;}
+uint bankFlags(uint pass,uint cell){return pass==0u||currentPass(pass)?m[39]+cell:m[57]+8u*(pass-1u)*m[34]+cell;}
+uint bankKeep(uint pass,uint cell){return pass==0u||currentPass(pass)?m[40]+cell:m[57]+(8u*(pass-1u)+1u)*m[34]+cell;}
+// Current source records cannot alias merged keys after interpolation.
+uint bankRecord(uint pass,uint cell){return currentPass(pass)?m[43]+8u*cell:(pass==0u?m[42]+6u*cell:m[57]+(8u*(pass-1u)+2u)*m[34]+6u*cell);}
+double bankPower(uint pass,uint cell){return currentPass(pass)?currentPower[cell]:tbdBanks[(pass-1u)*m[34]+cell];}
+uint bankFlag(uint pass){return currentPass(pass)?128u:1u<<(pass+2u);}
+// FP64 logarithm without host callbacks.
 double positiveLog10(double x){
  if(!finiteD(x)||!(x>0.0LF)){reject(101u);return 0.0LF;}
  uvec2 bits=unpackDouble2x32(x);int adjust=0;
@@ -184,7 +189,7 @@ double positiveLog10(double x){
  return value;
 }
 double bankSnr(uint pass,uint cell){if(pass==0u)return readS(m[38]+2u*cell);
- double power=tbdBanks[(pass-1u)*m[34]+cell];
+ double power=bankPower(pass,cell);
  if(!finiteD(power)||power<0.0LF)return packDouble2x32(uvec2(0u,0x7ff80000u));
  double amplitude=sqrt(power),level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  return level-readD(m[56]+2u*(pass-1u));}
@@ -310,7 +315,7 @@ void main(){
  // combines only ceil(cells/128) partials instead of serializing the full map.
  if(m[0]!=0u)return;uint lane=gl_LocalInvocationID.x,first=indexOf()-lane,tile=first/128u;
  uint count=first>=m[34]?0u:min(128u,m[34]-first);
- double value=lane<count?(p.a==0u?readS(m[36]+2u*(first+lane)):tbdBanks[(p.a-1u)*m[34]+first+lane]):0.0LF;
+ double value=lane<count?(p.a==0u?readS(m[36]+2u*(first+lane)):bankPower(p.a,first+lane)):0.0LF;
  bool valid=lane<count&&(p.a==0u||(finiteD(value)&&value>=0.0LF));
  metricValid[lane]=valid?1u:0u;
  if(p.a!=0u&&valid){double amplitude=sqrt(value);value=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);}
@@ -348,7 +353,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
 }
 )glsl";
 const char* cfarBody=R"glsl(
-double detectorPower(uint i){return p.a==0u?readS(m[37]+2u*i):tbdBanks[(p.a-1u)*m[34]+i];}
+double detectorPower(uint i){return p.a==0u?readS(m[37]+2u*i):bankPower(p.a,i);}
 void cfarCell(inout uvec4 counts){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;uint pass=p.c!=0u?p.a:0u;
  if(p.b!=0u){s[bankFlags(pass,i)]=pass==0u?s[m[39]+i]&0xffffff00u:0u;s[bankKeep(pass,i)]=0u;}
  uint row=i/m[33],column=i%m[33];counts.x=1u;
@@ -364,7 +369,7 @@ void cfarCell(inout uvec4 counts){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
  if(p.a==0u&&m[74]==2u&&m[28]==0u)return;
  if(m[59]!=0u)counts.z=1u;
- if(cut>threshold){uint previous=atomicOr(s[bankFlags(pass,i)],1u|(p.a==0u?(m[74]==2u?(m[76]!=0u||m[93]!=0u?16u:8u):0u):(1u<<(p.a+2u))));if((previous&1u)==0u)counts.w=1u;
+ if(cut>threshold){uint previous=atomicOr(s[bankFlags(pass,i)],1u|(p.a==0u?(m[74]==2u?(m[76]!=0u||m[93]!=0u?16u:8u):0u):bankFlag(p.a)));if((previous&1u)==0u)counts.w=1u;
   uint record=bankRecord(pass,i);writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,bankSnr(pass,i));}
 }
 // Integer-only coverage reduction: every invocation reaches every barrier,
@@ -462,7 +467,7 @@ void main(){uint i=indexOf();if(i>=p.count||m[0]!=0u)return;
 )glsl";
 const char* interpolationBody=R"glsl(
 bool usable(uint i){return p.b==0u?((m[74]==2u?readS(m[37]+2u*i)>0.0LF:fused[i].x>0.0LF)&&finiteD(fused[i].x)&&finiteD(fused[i].y)&&finiteD(bankSnr(0u,i))):
- (tbdBanks[(p.b-1u)*m[34]+i]>0.0LF&&finiteD(bankSnr(p.b,i)));}
+ (bankPower(p.b,i)>0.0LF&&finiteD(bankSnr(p.b,i)));}
 bool fit(double left,double centre,double right,out double offset,out double peak){
  precise double denominator=2.0LF*(left-2.0LF*centre+right);
  if(!finiteD(denominator)||abs(denominator)<1e-12LF)return false;
@@ -503,21 +508,22 @@ uint candidateKey(uint record){double delay=readS(record),doppler=readS(record+2
  return row*m[33]+uint(column);}
 uint encodedRecord(uint code){uint at=code-1u;return bankRecord(at/m[34]+1u,at%m[34]);}
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;
- if(p.a==0u){uint flags=0u;for(uint pass=1u;pass<=m[80]+1u;++pass)flags|=s[bankFlags(pass,i)]&3u;
-  s[m[39]+i]=(s[m[39]+i]&0xff00u)|flags;s[m[40]+i]=0u;s[m[41]+i]=0u;
+ if(p.a==0u){uint flags=0u;for(uint pass=1u;pass<=m[80]+2u;++pass)flags|=s[bankFlags(pass,i)]&3u;
+  s[m[39]+i]=(s[m[39]+i]&0xff00u)|flags;s[m[41]+i]=0u;
   if((flags&1u)!=0u)atomicAdd(m[61],1u);if((flags&2u)!=0u)atomicAdd(m[62],1u);return;}
  if(p.a==1u){if(s[bankKeep(p.b,i)]==0u)return;uint record=bankRecord(p.b,i),key=candidateKey(record);
   if(key==0xffffffffu){reject(211u);return;}uint code=(p.b-1u)*m[34]+i+1u,prior=atomicAdd(s[m[41]+key],0u);
   for(;;){if(prior!=0u){double other=readS(encodedRecord(prior)+4u),value=readS(record+4u);
-    if(value<other||(value==other&&code>prior))return;}
+    if(!temporalCandidateBetter(currentPass(p.b),value,currentPass((prior-1u)/m[34]+1u),
+      other,readD(96u),code<prior))return;}
    uint observed=atomicCompSwap(s[m[41]+key],prior,code);if(observed==prior)return;prior=observed;}}
- if(p.a==2u){uint code=s[m[41]+i];if(code==0u)return;uint pass=(code-1u)/m[34]+1u,source=(code-1u)%m[34],record=bankRecord(pass,source);
+ if(p.a==2u){s[m[40]+i]=0u;uint code=s[m[41]+i];if(code==0u)return;uint pass=(code-1u)/m[34]+1u,source=(code-1u)%m[34],record=bankRecord(pass,source);
   for(uint k=0u;k<6u;++k)s[m[42]+6u*i+k]=s[record+k];
-  uint motion=s[m[58]+(pass-1u)*m[34]+source];int dc=int(motion<<24u)>>24,dr=int(motion<<16u)>>24;
+  uint motion=currentPass(pass)?0u:s[m[58]+(pass-1u)*m[34]+source];int dc=int(motion<<24u)>>24,dr=int(motion<<16u)>>24;
   int sourceDc=int(source%m[33])-int(i%m[33]),sourceDr=int(source/m[33])-int(i/m[33]);
   if(abs(sourceDc)>1||abs(sourceDr)>1){reject(211u);return;}
   uint sourceCode=1u+uint(sourceDc+1)+3u*uint(sourceDr+1);
-  s[m[39]+i]=(s[m[39]+i]&3u)|4u|(1u<<(pass+2u))|(m[75]==0u?0u:(uint(fused[source].y)+1u)<<8u)|((uint(dc+2)|(uint(dr+16)<<3u))<<17u)|(sourceCode<<26u);
+  s[m[39]+i]=(s[m[39]+i]&3u)|4u|bankFlag(pass)|(m[75]==0u?0u:(uint(fused[source].y)+1u)<<8u)|((uint(dc+2)|(uint(dr+16)<<3u))<<17u)|(sourceCode<<26u);
   s[m[40]+i]=1u;return;}
  if(p.a==4u){if(s[m[40]+i]==0u)s[m[39]+i]&=~4u;return;}
  if((s[m[39]+i]&4u)==0u)return;uint record=m[42]+6u*i;
@@ -526,7 +532,9 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;
  int firstCol=max(0,int(floor(delay-dd-delayAt(0u)))-1),lastCol=min(int(m[33]),int(ceil(delay+dd-delayAt(0u)))+2);
  for(uint r=first;r<last;++r)for(int c=firstCol;c<lastCol;++c){uint j=r*m[33]+uint(c);if(j==i||(s[m[39]+j]&4u)==0u)continue;
   uint other=m[42]+6u*j;double d=readS(other),v=readS(other+2u);
-  if(d>delay-dd&&d<delay+dd&&v>doppler-dv&&v<doppler+dv&&snr<readS(other+4u)){s[m[40]+i]=0u;return;}}
+  if(d>delay-dd&&d<delay+dd&&v>doppler-dv&&v<doppler+dv&&
+    temporalCandidateBetter((s[m[39]+j]&128u)!=0u,readS(other+4u),
+      (s[m[39]+i]&128u)!=0u,snr,readD(96u),false)){s[m[40]+i]=0u;return;}}
 }
 )glsl";
 // Integer-only stable compaction. The record region is dead until recordsBody;
@@ -703,7 +711,7 @@ public:
   if(fused.bytes<uint64_t(layout_.cells)*16||scratch.bytes<layout_.bytes||staging.bytes<8||!staging.mapped||staging.bytes%8||
      fused.handle==scratch.handle||fused.handle==staging.handle||scratch.handle==staging.handle)
    throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED scratch/staging binding");
-  const uint32_t doppler=96,delay=doppler+2*rows,windows=(delay+columns+1)&~1u,windowWords=tbd?14u:8u,
+  const uint32_t doppler=track_before_detect::postprocessAxesWord,delay=doppler+2*rows,windows=(delay+columns+1)&~1u,windowWords=tbd?16u:8u,
    rowBounds=windows+windowWords*columns,colBounds=rowBounds+2*rows;
   const uint32_t offsetWords=tbd?track_before_detect::fractionalDelayTableWords(rows,
    config.integrationCpis,config.integrationDopplerMotionBins,config.integrationDelayDriftPerHz):0;
@@ -757,6 +765,7 @@ public:
   words[92]=layout_.metricPartialCount;
   words[93]=config.integrationDopplerMotionBins;
   putD(words.data(),94,config.integrationDelayDriftPerHz);
+  putD(words.data(),96,config.currentCpiPreferenceSnr);
   std::memcpy(words.data()+90,&config.bearingDiagonalLoading,4);
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
@@ -771,11 +780,11 @@ public:
     words[at+2]=uint32_t(rb);
     words[at+3]=uint32_t(re);
     words[at+4]=uint32_t(count);
-    for(uint32_t pass=0;pass<detectorPasses;++pass){const uint32_t cpis=tbd?(pass?track_before_detect::bankLength(pass-1u):2u):config.integrationCpis;
+    for(uint32_t pass=0;pass<detectorPasses;++pass){const uint32_t cpis=tbd?track_before_detect::passDepth(config.integrationCpis,pass):config.integrationCpis;
      const double pfaForPass=tbd?track_before_detect::passPfa(config.pfa,config.integrationCpis,
       config.integrationDelayMotionBins,config.integrationDopplerMotionBins,pass):config.pfa;
      const double alpha=count?(cpis==1?count*(std::pow(pfaForPass,-1.0/count)-1):
-      track_before_detect::cfarAlpha(pfaForPass,uint32_t(count),cpis)):0;
+      detection::integrated_cfar::alpha(pfaForPass,uint32_t(count),cpis)):0;
      if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
      putD(words.data(),at+6+2*pass,alpha);
     }
@@ -905,19 +914,19 @@ public:
   barrier(command);}timestamps_->end(command,0);
   if(config_.detection){
    timestamps_->begin(command,1);
-   if(tbd)for(uint32_t pass=1;pass<=banks+1u;++pass){
+   if(tbd)for(uint32_t pass=1;pass<=banks+2u;++pass){
     kernels_[1]->append(command,{layout_.cells,pass,0,0,0});barrier(command);
     kernels_[13]->append(command,{1,pass,0,0,0});barrier(command);
     kernels_[3]->append(command,{layout_.cells,pass,1,1,0});barrier(command);}
    else {kernels_[3]->append(command,{layout_.cells,0,1,0,0});barrier(command);}
    timestamps_->end(command,1);
    for(uint32_t stage=2;stage<=3;++stage){timestamps_->begin(command,stage);
-    if(tbd)for(uint32_t pass=1;pass<=banks+1u;++pass){kernels_[stage+2]->append(command,{layout_.cells,0,pass,0,0});barrier(command);}
+    if(tbd)for(uint32_t pass=1;pass<=banks+2u;++pass){kernels_[stage+2]->append(command,{layout_.cells,0,pass,0,0});barrier(command);}
     else {kernels_[stage+2]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
     timestamps_->end(command,stage);}
    timestamps_->begin(command,4);
    if(tbd){kernels_[14]->append(command,{layout_.cells,0,0,0,0});barrier(command);
-    for(uint32_t pass=1;pass<=banks+1u;++pass){kernels_[14]->append(command,{layout_.cells,1,pass,0,0});barrier(command);}
+    for(uint32_t pass=1;pass<=banks+2u;++pass){kernels_[14]->append(command,{layout_.cells,1,pass,0,0});barrier(command);}
     kernels_[14]->append(command,{layout_.cells,2,0,0,0});barrier(command);
     kernels_[14]->append(command,{layout_.cells,3,0,0,0});barrier(command);
     kernels_[14]->append(command,{layout_.cells,4,0,0,0});barrier(command);

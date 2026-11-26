@@ -38,7 +38,7 @@ resident::Config snapshotConfig(const std::vector<uint8_t>& bytes) {
   const Reader m{metadata};
   const auto rows = r.u32(76), columns = r.u32(80);
   require(rows && columns && rows <= 65535 && columns <= 65535, "Replay snapshot geometry invalid");
-  const size_t doppler = 96 * 4, delays = doppler + size_t(rows) * 8;
+  const size_t doppler = track_before_detect::postprocessAxesWord * 4, delays = doppler + size_t(rows) * 8;
   m.range(doppler, size_t(rows) * 8); m.range(delays, size_t(columns) * 4);
   return resident::decodeConfig(block(r, uint32_t(resident_replay::BlockKind::configuration)),
     {metadata.data + delays, size_t(columns) * 4}, {metadata.data + doppler, size_t(rows) * 8});

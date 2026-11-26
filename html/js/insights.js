@@ -170,7 +170,7 @@
         identity: {...(source.identity || {}), illuminator: display}});
     }
     const coverageSources = channels.map(channel => channel.measured_track_basis);
-    if (array(fleet?.nodes).some(node => !channels.some(channel => channel.node_id === node.id)) ||
+    if (array(fleet?.nodes).some(node => node.role !== 'coordinator' && !channels.some(channel => channel.node_id === node.id)) ||
         array(fleet?.channels).some(expected => !channels.some(channel => channel.channel_key ===
           `${expected.nodeId}:${expected.item?.id === 'primary' ? 'Primary' : expected.item?.id}`))) coverageSources.push(null);
     const sum = getter => channels.reduce((total, channel) =>
@@ -337,7 +337,8 @@
         timing: {exact_timed_aircraft_cpis: exact, audited_aircraft_cpis: audited,
           exact_fraction: audited ? exact / audited : null},
         cpi_exposure: exposure,
-        measured_track_coverage: window.VectorWarpMeasuredCoverage?.aggregate(coverageSources),
+        measured_track_coverage: networkSummary?.measured_track_coverage ||
+          window.VectorWarpMeasuredCoverage?.aggregate(coverageSources),
         track_population: population, unique_aircraft_passes: unique}};
   }
 
@@ -2071,12 +2072,12 @@
         [['p50', coverage.gap_p50_seconds], ['p95', coverage.gap_p95_seconds],
           ['Maximum', coverage.gap_max_seconds]].map(([label, value]) =>
           `<div><dt>${label}</dt><dd>${presenceTime(value)}</dd></div>`).join('') :
-        `<div><dt>Observed</dt><dd>${integer(coverage.observed_internal_gap_count)} gaps</dd></div><div><dt>Scored exposure</dt><dd>${percent((finite(coverage.scored_seconds) ?? 0) / Math.max(finite(coverage.eligible_seconds) ?? 0, 1), 1)}</dd></div><div><dt>Unscored</dt><dd>${presenceTime(coverage.unscored_seconds)}</dd></div>`;
+        `<div><dt>Observed</dt><dd>${integer(coverage.observed_internal_gap_count)} gaps</dd></div><div><dt>Scored exposure</dt><dd>${percent(coverage.available === false ? null : (finite(coverage.scored_seconds) ?? 0) / Math.max(finite(coverage.eligible_seconds) ?? 0, 1), 1)}</dd></div><div><dt>Unscored</dt><dd>${presenceTime(coverage.unscored_seconds)}</dd></div>`;
       return `<div class="statistics-kiosk-visuals${singleChannel ? ' statistics-single-kiosk-visuals' : ''}"><section class="cpi-kiosk-coverage" aria-labelledby="cpi-kiosk-title"><header><h2 id="cpi-kiosk-title">${freshness || (singleChannel ? 'Selected channel' : 'All channels &amp; nodes')}</h2><div class="cpi-kiosk-exposure"><div><strong>${nodeCount}</strong><span>Radar nodes</span></div><div><strong>${channels.length}</strong><span>Channels</span></div></div></header>
         <div class="cpi-kiosk-gauges"><article class="cpi-kiosk-gauge tracked"><h3>Measured track coverage</h3>
           <div class="cpi-kiosk-ring" role="img" aria-label="Measured track coverage: ${percent(coverageFraction, 1)} of ${coverage.complete ? 'eligible' : 'scored'} aircraft time">
             <svg viewBox="0 0 240 240" aria-hidden="true"><circle class="cpi-ring-track" cx="120" cy="120" r="98"/><circle class="cpi-ring-value" cx="120" cy="120" r="98" pathLength="100" stroke-dasharray="${fraction(coverageFraction) * 100} 100" transform="rotate(-90 120 120)"/></svg>
-            <div><strong>${percent(coverageFraction, 1)}</strong><span>${coverage.complete ? coverage.eligible_seconds > 0 ? 'Measured' : 'No exposure' : 'Partial'}</span></div></div>
+            <div><strong>${percent(coverageFraction, 1)}</strong><span>${coverage.available === false ? 'Unavailable' : coverage.complete ? coverage.eligible_seconds > 0 ? 'Measured' : 'No exposure' : 'Partial'}</span></div></div>
           <footer><div><strong>${presenceTime(coverage.measured_seconds)}</strong><span>Measured</span></div><div><strong>${presenceTime(denominator)}</strong><span>${coverage.complete ? 'Eligible' : 'Scored'} aircraft time</span></div></footer></article>
           <article class="cpi-kiosk-gauge cpi-kiosk-continuity"><h3>Track gaps</h3><dl>${gapDetails}</dl><footer><span>${coverage.continuity_complete ? `${integer(coverage.gap_count)} internal ${coverage.gap_count === 1 ? 'gap' : 'gaps'}` : 'Partial evidence'}</span><span>${coverage.unscored_seconds > 0 ? `${presenceTime(coverage.unscored_seconds)} unscored` : coverage.complete ? 'Retained evidence' : 'Incomplete evidence'}</span></footer></article></div></section>
         <section class="cpi-kiosk-comparison" aria-labelledby="cpi-kiosk-channel-title"><header><h2 id="cpi-kiosk-channel-title">Measured coverage by channel</h2></header>

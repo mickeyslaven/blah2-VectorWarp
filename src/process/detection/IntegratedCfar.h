@@ -11,9 +11,16 @@
 
 namespace blah2::detection::integrated_cfar {
 
-// Interleave independent CUTs, not the additions within a CUT. Contiguous
-// row updates allow native vectorization while preserving the exact legacy
-// left-then-right sum, including edges. No prefix subtraction or reassociation.
+// CPU/GLSL share fresh-evidence preference.
+#define BLAH2_CANDIDATE_RANKING(Q) \
+ Q int temporalCandidateRank(bool current,double snr,double minimum) { \
+  return !current||minimum==0.0?1:(snr>=minimum?2:0); } \
+ Q bool temporalCandidateBetter(bool current,double snr,bool priorCurrent,double priorSnr,double minimum,bool earlier) { \
+  int rank=temporalCandidateRank(current,snr,minimum),priorRank=temporalCandidateRank(priorCurrent,priorSnr,minimum); \
+  return rank>priorRank||(rank==priorRank&&(snr>priorSnr||(snr==priorSnr&&earlier))); }
+BLAH2_CANDIDATE_RANKING(inline)
+
+// Vectorize CUTs; preserve left-then-right sums.
 inline void orderedTrainingSums(const std::vector<double>& power,
     uint32_t guard, uint32_t training, std::vector<double>& sums,
     const integration::EvidenceWorkBudget* budget = nullptr) {
@@ -34,10 +41,7 @@ inline void orderedTrainingSums(const std::vector<double>& power,
   accumulate(int(guard) + 1, int(guard + training) + 1);
 }
 
-// CA-CFAR survival for an L-sample noncoherent mean-power CUT against the
-// mean of N independent L-sample training cells.  L is deliberately bounded
-// to the production 2/4/8-CPI banks, so the integer beta tail is stable and
-// does not require a special-functions dependency.
+// Integer-beta CA-CFAR survival.
 inline double survival(double alpha, uint32_t trainingCells, uint32_t cpis) {
   if (!trainingCells || !cpis || cpis > 8 || !std::isfinite(alpha) || alpha < 0)
     throw std::invalid_argument("Integrated CFAR parameters invalid");
@@ -47,8 +51,7 @@ inline double survival(double alpha, uint32_t trainingCells, uint32_t cpis) {
   double term = std::pow(x, double(total));
   double result = term;
   const double ratio = (1.0 - x) / x;
-  // The first beta-tail term can underflow while a later term is representable.
-  // Retain the ordinary operation order, using logs only in that extreme tail.
+  // Underflow/overflow fallback.
   if (term < std::numeric_limits<double>::min() || !std::isfinite(ratio)) {
     double logTerm = double(total) * std::log(x);
     const double logRatio = std::log1p(-x) - std::log(x);

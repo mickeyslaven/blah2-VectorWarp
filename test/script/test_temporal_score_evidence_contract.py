@@ -28,7 +28,14 @@ class TemporalScoreEvidenceContract(unittest.TestCase):
         self.assertIn("Qualification temporal-score observation has no exact completed lineage", observer)
         self.assertIn("config_.maxBytes-bytes_", observer)
         self.assertIn("O_EXCL|O_NOFOLLOW|O_CLOEXEC", observer)
-        self.assertIn("qualificationObserver->temporalScores(qualificationFrame(first),*processed.detections)", radar)
+        staged, completion = radar.split("RadarFrame complete_processed_cpi(StagedCpi staged)", 1)
+        completion = completion.split("void queue_processed_cpi", 1)[0]
+        self.assertIn("staged.qualification = qualificationFrame(first);", staged)
+        self.assertIn("if (staged.qualification)", completion)
+        self.assertIn("const auto& identity = *staged.qualification;", completion)
+        self.assertIn("qualificationObserver->temporalScores(identity,*processed.detections)", completion)
+        self.assertNotIn("qualificationFrame(", completion,
+                         "Async completion must retain the captured CPI identity")
 
 
 if __name__ == "__main__":

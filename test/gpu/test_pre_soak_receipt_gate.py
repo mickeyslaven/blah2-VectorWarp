@@ -130,6 +130,27 @@ class PreSoakGateTest(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "digest differs"):
                     gate.validate_directory(root, "a" * 40, {"blah2": "b" * 64})
 
+    def test_downloaded_fp64_subtree_requires_all_retained_measurements(self):
+        receipt, policy, values = fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy_path = root / "policy.json"
+            policy_bytes = json.dumps(policy).encode(); policy_path.write_bytes(policy_bytes)
+            receipt["policySha256"] = hashlib.sha256(policy_bytes).hexdigest()
+            downloaded = root / "gpu-receipts"
+            subtree = downloaded / "fp64" / "pre-soak"
+            evidence = subtree / "pre-soak-evidence"
+            evidence.mkdir(parents=True)
+            (subtree / "pre-soak-radar-evidence.json").write_text(json.dumps(receipt))
+            for digest, value in values.items():
+                (evidence / f"{digest}.json").write_text(json.dumps(value, sort_keys=True))
+            with mock.patch.object(gate, "POLICY_PATH", policy_path):
+                gate.validate_directory(downloaded, "a" * 40, {"blah2": "b" * 64})
+                shared = values[receipt["echoMeasurements"][0]]["executionSha256"]
+                (evidence / f"{shared}.json").unlink()
+                with self.assertRaisesRegex(AssertionError, "Missing retained"):
+                    gate.validate_directory(downloaded, "a" * 40, {"blah2": "b" * 64})
+
 
 if __name__ == "__main__":
     unittest.main()

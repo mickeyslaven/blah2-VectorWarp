@@ -10,6 +10,7 @@ const {geometryCatalog, CooperativeDetectionTracker} = require('./cooperative-de
 const {FederatedGeographicFusion} = require('./federated-geographic-fusion');
 const {compactAssociationPass, expandFederationAssociationPassTransport} =
   require('./evidence-statistics');
+const measuredCoverage = require('../html/js/measured_track_coverage');
 
 const HTTP_AGENT = new http.Agent({keepAlive: true, maxSockets: 16, maxFreeSockets: 8,
   timeout: 5000});
@@ -340,6 +341,8 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
       timing_policy: value.timing_policy || scorecard?.timing_policy || null,
       decision_grade: value.decision_grade === true,
       warning: value.warning || null, sensitivity_epoch: value.sensitivity_epoch || null,
+      measured_track_basis: row.measured_track_basis,
+      measured_track_coverage: row.measured_track_coverage, cpi_exposure: row.cpi_exposure,
       eligible: Number(value.eligible_adsb_passes) || 0,
       detected: Number(value.detection?.associated_passes) || 0,
       tracked: Number(value.tracking?.associated_passes) || 0};
@@ -468,7 +471,15 @@ function combineNodeStatistics(nodes, cooperative = null) {
   const rawAvailable = radarNodes.filter(node => node?.available);
   const alignment = alignNodeStatistics(rawAvailable);
   const available = alignment.nodes;
-  const channels = available.flatMap(node => node.channels || []);
+  const sourceChannels = available.flatMap(node => node.channels || []);
+  const channels = sourceChannels.map(({measured_track_basis, ...channel}) => channel);
+  const policyCompatible = channels.length > 0 && channels.every(row => /^[0-9a-f]{64}$/.test(row.evaluation_policy_hash || '')) &&
+    new Set(channels.map(row => row.evaluation_policy_hash)).size === 1;
+  let coverage = measuredCoverage.aggregate(sourceChannels.map(row => row.measured_track_basis));
+  if (!coverage.available || !policyCompatible || radarNodes.some(node =>
+    !node.available || node.stale || !node.channels?.length)) coverage = {
+    ...measuredCoverage.aggregate([]),
+    reason: 'Exact coverage unavailable: missing, stale, invalid or incompatible node evidence.'};
   const association = channels.reduce((sum, row) => ({eligible: sum.eligible + row.eligible,
     detected: sum.detected + row.detected, tracked: sum.tracked + row.tracked}),
   {eligible: 0, detected: 0, tracked: 0});
@@ -504,8 +515,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
     evaluation: {decision_grade: false,
       warning: 'Operational retained-pass observations are not a soak regression acceptance decision.',
       policy_hashes: [...new Set(channels.map(row => row.evaluation_policy_hash).filter(Boolean))],
-      policy_compatible: channels.length > 0 && channels.every(row => row.evaluation_policy_hash) &&
-        new Set(channels.map(row => row.evaluation_policy_hash)).size === 1,
+      policy_compatible: policyCompatible,
       complete_24h_window: available.length > 0 && available.every(node => node.statistics_window?.complete === true),
       mixed_epoch_pass_rows: available.reduce((sum, node) => sum +
         node.passes.filter(pass => pass.sensitivity_epoch_mixed).length, 0)},
@@ -522,7 +532,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
       detection_yield: association.eligible ? association.detected / association.eligible : null,
       tracking_yield: association.detected ? association.tracked / association.detected : null,
       tracked_of_eligible_yield: association.eligible ? association.tracked / association.eligible : null},
-    system_wide_unique_passes: systemWide,
+    system_wide_unique_passes: systemWide, measured_track_coverage: coverage,
     unique_recent_passes: {eligible: systemWide.eligible_adsb_passes,
       detected: systemWide.detection.associated_passes,
       tracked: systemWide.tracking.associated_passes,
@@ -532,7 +542,8 @@ function combineNodeStatistics(nodes, cooperative = null) {
     cooperative_tracks: {active: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_ACTIVE').length,
       coasting: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_COASTING').length,
       candidates: cooperativeTracks.filter(track => track.state === 'COOPERATIVE_CANDIDATE').length},
-    nodes: available.map(({passes, ...node}) => ({...node, pass_count: passes.length})), channels};
+    nodes: available.map(({passes, ...node}) => ({...node,
+      channels: channels.filter(channel => channel.node === node.id), pass_count: passes.length})), channels};
 }
 
 function installNodeFederation(app, filename = defaultRegistryPath(),
@@ -732,7 +743,7 @@ function installNodeFederation(app, filename = defaultRegistryPath(),
               cooperativeRead(entry, '/api/timing', timeoutMs),
               cooperativeRead(entry,
                 '/api/live-scorecard/association-basis?timing=provisional&compact=true',
-                timeoutMs, 512 * 1024),
+                timeoutMs, 1024 * 1024),
               cooperativeRead(entry,
                 '/api/association/passes?timing=provisional&transport=federation-v1', timeoutMs,
                 1024 * 1024)]);

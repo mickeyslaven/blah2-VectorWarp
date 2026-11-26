@@ -162,7 +162,8 @@ function retainedMetadata(hex, winner, observations, cache, nowSeconds) {
   return result;
 }
 
-function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservationOffsetSeconds) {
+function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservationOffsetSeconds,
+  maxPastObservationOffsetSeconds, maxFutureObservationOffsetSeconds) {
   const output = [];
   snapshots.forEach((snapshot, index) => {
     const data = snapshot?.data;
@@ -183,16 +184,20 @@ function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservation
       const eventTime = relay?.positionTime ?? rawEventTime;
       const observationEventTime = relay?.observationTime ?? eventTime;
       const age = nowSeconds - eventTime;
-      const allowedObservationOffset = relay ? maxPositionAgeSeconds :
-        maxObservationOffsetSeconds;
+      const allowedObservationOffset = relay ? maxPositionAgeSeconds : age < 0 ?
+        maxFutureObservationOffsetSeconds ?? maxObservationOffsetSeconds :
+        maxPastObservationOffsetSeconds ?? maxObservationOffsetSeconds;
       if (!finite(eventTime) || Math.abs(age) > allowedObservationOffset ||
           age < -maxPositionAgeSeconds || age > maxPositionAgeSeconds) continue;
-      // New relays carry the immutable original observation. Project from it
-      // exactly once; old relays retain incremental CV behavior, explicitly
-      // without the raw-lineage eligibility needed by uncertainty scoring.
+      // Project originals once; legacy relays lack uncertainty-eligible lineage.
       const observation = relay ? relay.observation : observationRecord(aircraft, eventTime);
       const projectionAge = observation ? nowSeconds - observationEventTime : age;
       if (Math.abs(nowSeconds - observationEventTime) > maxPositionAgeSeconds) continue;
+      // Apply directional scoring bounds to original observations, including
+      // relays; a projected relay timestamp cannot renew truth eligibility.
+      const observationOffset = nowSeconds - observationEventTime;
+      if (observationOffset > (maxPastObservationOffsetSeconds ?? maxPositionAgeSeconds) ||
+          -observationOffset > (maxFutureObservationOffsetSeconds ?? maxPositionAgeSeconds)) continue;
       const {schema: _observationSchema, timestamp_s: _observationTime, ...observationFields} = observation || {};
       const projection = projectAircraft(observation ? {...aircraft, ...observationFields} : aircraft, projectionAge);
       if (!projection.projected && Math.abs(projectionAge) >= 1e-6) continue;
@@ -230,12 +235,14 @@ function cluster(rows, disagreementKm) {
  */
 function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds = 30,
   maxObservationOffsetSeconds = 1, disagreementKm = .5, metadataCache = null,
-  metadataRetentionSeconds = 86400} = {}) {
+  metadataRetentionSeconds = 86400, maxPastObservationOffsetSeconds,
+  maxFutureObservationOffsetSeconds} = {}) {
   const nowSeconds = nowMs / 1000;
   pruneMetadataCache(metadataCache, nowSeconds, metadataRetentionSeconds);
   const metadataByHex = metadataObservations(snapshots);
   const rows = candidates(snapshots, nowSeconds, maxPositionAgeSeconds,
-    maxObservationOffsetSeconds);
+    maxObservationOffsetSeconds, maxPastObservationOffsetSeconds,
+    maxFutureObservationOffsetSeconds);
   const contributions = new Map();
   snapshots.forEach((snapshot, index) => {
     const id = sourceId(snapshot?.source || {}, index);

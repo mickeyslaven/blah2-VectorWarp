@@ -106,9 +106,9 @@ assert.ok(evidence.associationBasis().channels.every(channel =>
   'Federated association bases preserve the evaluator identity for each illuminator');
 const compactBasis = evidence.associationBasis({timing: 'provisional', compact: true});
 assert.ok(compactBasis.channels.every(channel =>
-  channel.measured_track_basis === undefined && channel.track_population === undefined &&
+  channel.measured_track_basis?.version === 2 && channel.track_population === undefined &&
   channel.passes === undefined),
-  'Federation summary basis excludes detailed evidence that has a separate endpoint');
+  'Federation transports delta intervals but excludes detailed pass evidence');
 assert.ok(compactBasis.channels.every(channel =>
   Object.entries(policyIdentity).every(([field, value]) =>
     channel.association_statistics[field] === value)),

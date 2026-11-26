@@ -85,6 +85,57 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.deepEqual(associationOrder, ['wait', 'fetch'],
     'The catch-up wait must precede acquisition of the newest ADS-B snapshot');
 
+  let projectionClock = 100000;
+  const delayedProjection = createAdsbSource(delayedStatusConfig, {
+    now: () => projectionClock,
+    setTimeoutFn: (callback, delay) => { projectionClock += delay; callback(); },
+    fetchJson: async () => ({now: projectionClock / 1000,
+      aircraft: [{hex: 'abc123', type: 'adsb_icao', lat: 1, lon: 2,
+        alt_geom: 1000, gs: 360, track: 90, seen_pos: 0}]})});
+  const projectedBack = await delayedProjection.getAt('aircraft', 100000);
+  assert.equal(projectedBack.aircraft.length, 1,
+    'The intentional association hold must not discard a healthy local position newer than the scored CPI');
+  assert.ok(Math.abs(projectedBack.aircraft[0].vectorwarp.projected_seconds + 2) < 1e-9,
+    'A post-hold local observation is projected back to the requested CPI');
+  assert.deepEqual((await delayedProjection.status()).association_projection, {
+    schema: 'vectorwarp-adsb-scoring-projection-v1', past_s: 1, future_s: 30,
+    future_bound: 'elapsed-target-to-fetch'},
+  'Catch-up projection preserves the old-truth limit and declares its future cap');
+  delayedProjection.clear(); projectionClock = 100000;
+  assert.equal((await delayedProjection.get('aircraft')).aircraft[0].vectorwarp.projected_seconds, -2,
+    'Cached-kind scoring uses the same directional catch-up policy as exact-CPI scoring');
+
+  for (const fixture of [
+    {name: 'delivery and fetch latency', arrival: .4, fetch: .35, offset: -2.75, accepted: true},
+    {name: 'old 1.5-second truth', offset: 1.5, accepted: false},
+    {name: 'old 2-second truth', offset: 2, accepted: false},
+    {name: 'future clock skew beyond completed fetch', offset: -2.2, accepted: false},
+    {name: 'position-age cap', arrival: 3.1, offset: -5.1, accepted: false},
+    {name: 'explicit uncertainty horizon', offset: -2, horizon: 1, accepted: false},
+    {name: 'no-hold polling cannot widen freshness', lag: 0, poll: 2, offset: 1.5, accepted: false},
+    {name: 'no-hold future limit', lag: 0, offset: -1.1, accepted: false}
+  ]) {
+    let at = 100000 + (fixture.arrival || 0) * 1000;
+    const boundedConfig = {...delayedStatusConfig, truth: {adsb: {
+      ...delayedStatusConfig.truth.adsb, max_position_age: 5,
+      poll_interval: fixture.poll ?? .25, association_lag_cpis: fixture.lag ?? 4,
+      ...(fixture.horizon ? {uncertainty_association: {
+        enable: true, max_projection_s: fixture.horizon}} : {})}}};
+    const boundedSource = createAdsbSource(boundedConfig, {now: () => at,
+      setTimeoutFn: (callback, delay) => { at += delay; callback(); },
+      fetchJson: async () => {
+        at += (fixture.fetch || 0) * 1000;
+        const observationAt = 100 - fixture.offset;
+        return {now: Math.max(at / 1000, observationAt), aircraft: [{hex: 'abc123',
+          type: 'adsb_icao', lat: 1, lon: 2, alt_geom: 1000, gs: 360, track: 90,
+          seen_pos: Math.max(0, at / 1000 - observationAt)}]};
+      }});
+    const result = await boundedSource.getAt('aircraft', 100000);
+    assert.equal(result.aircraft.length, Number(fixture.accepted), fixture.name);
+    if (fixture.accepted) assert.ok(Math.abs(result.aircraft[0].vectorwarp.projected_seconds -
+      fixture.offset) < 1e-9, fixture.name);
+  }
+
   let displayClock = 102000;
   const displaySource = createAdsbSource(delayedStatusConfig, {now: () => displayClock,
     fetchJson: async () => {

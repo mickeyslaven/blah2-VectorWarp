@@ -1,5 +1,4 @@
 #include "GpuResidentProof.h"
-#include "../../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 namespace blah2::resident {
 using wire::require;
@@ -190,7 +189,7 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(next==g.channels&&!b.residentStatus[0]&&b.residentStatus[6]==cells*g.channels&&b.residentStatus[7]==cells,"Resident map coverage differs");
  const auto& post=b.postprocessStatus;
  require(!post[0]&&post[1]==cells&&post[2]==cells&&post[3]==cells&&post[18]==uint32_t(c.epoch)&&post[19]==uint32_t(c.epoch>>32)&&post[20]==uint32_t(c.detector.enabled)&&post[21]==g.doppler&&post[22]==g.delays&&post[27]==c.detector.integrationCpis,"Resident postprocess coverage differs");
- if(c.detector.enabled){const uint32_t detectorPasses=c.detector.integrationCpis>2?(c.detector.integrationCpis==8?4u:3u):1u;
+ if(c.detector.enabled){const uint32_t detectorPasses=c.detector.integrationCpis>2?track_before_detect::detectorPassCount(c.detector.integrationCpis):1u;
  const bool temporal=c.detector.integrationCpis>2;
  require(post[4]==cells*detectorPasses&&post[6]<=cells*detectorPasses&&post[7]==post[6]&&post[8]<=post[7]&&post[9]==post[8]&&post[10]<=post[9]&&post[11]<=post[9]-post[10]&&
   (temporal||post[11]==post[9]-post[10])&&post[11]<=cells&&post[12]==cells&&post[13]==post[11]&&post[15]==(temporal?post[11]:0),"Resident postprocess decision coverage differs");

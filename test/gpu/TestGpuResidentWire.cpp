@@ -13,7 +13,7 @@
 
 using namespace blah2::resident;
 namespace {
-// ABI18 retains configuration padding; retired experimental slots stay zero.
+// ABI19 binds current-CPI preference and lossless tracker initiation SNR.
 static_assert(offsetof(TrackerConfig,reservedPolicy)==80&&
  offsetof(TrackerConfig,normalizedInnovationGate)==83&&
  offsetof(TrackerConfig,reservedLimit)==84&&sizeof(TrackerConfig)==88,
@@ -44,9 +44,9 @@ Config config(){
  return c;
 }
 void packetCases(){
- static_assert(moduleAbi==18&&protocol==0x42475212,"Tracker diagnostics ABI/protocol changed without test review");
- validateModuleAbi(18);
- for(unsigned abi:{0u,14u,15u,16u,17u,19u})reject([&]{validateModuleAbi(abi);},"Legacy/unknown module ABI accepted tracker diagnostics");
+ static_assert(moduleAbi==19&&protocol==0x42475213,"Current-CPI ABI/protocol changed without test review");
+ validateModuleAbi(19);
+ for(unsigned abi:{0u,14u,15u,16u,17u,18u,20u})reject([&]{validateModuleAbi(abi);},"Legacy/unknown module ABI accepted current-CPI configuration");
  for(uint32_t depth:{1u,2u,4u,8u}){
   track_before_detect::validateBeamHistory(depth,UINT32_MAX);
   if(depth==2)reject([&]{track_before_detect::validateBeamHistory(depth,0);},"Two-CPI beam history silently disabled");
@@ -100,6 +100,29 @@ void trackerDiagnosticsCases(){
  reject([&]{preparedProof({raw.data,raw.size});},"Absent diagnostics accepted as all-zero measurements");
  writer.u32(evidence::prepared::trackerDiagnostics,1);writer.u32(evidence::prepared::trackerDiagnostics+4,2);
  reject([&]{preparedProof({raw.data,raw.size});},"Malformed no-op flag accepted");
+}
+void temporalProofCases(){
+ for(uint32_t maximum:{4u,8u}){
+  auto c=config();c.detector.integrationCpis=maximum;c.tracker.n=maximum+1;
+  c.tracker.nDelete=maximum-1;
+  c.fusion={FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
+  c.presence|=wire::mandatoryPresence(c);validateConfig(c);
+  const auto layout=makeLayout(c,4096);std::vector<uint8_t> storage(layout.bytes);
+  Mapping map{storage.data(),storage.size(),layout};CpuEvidenceDouble fixture{c,map};fixture.device();
+  Packet packet;packet.phase=Phase::prepared;packet.session={7,8};packet.epoch=c.epoch;
+  packet.presence=c.presence;packet.mappedBytes=layout.bytes;
+  for(uint32_t available:{1u,maximum,1u}){
+   ++packet.frame.logicalId;++packet.frame.consumedSequence;packet.frame.signalTimestampMs+=1000;
+   packet.tracker={c.epoch,17,packet.frame.logicalId,packet.frame.consumedSequence};
+   fixture.ready(packet);fixture.prepared(packet);
+   wire::Writer writer{map.bytes(Section::preparedEvidence)};
+   writer.u32(evidence::prepared::postprocessStatus+28*4,available==maximum);
+   validateEvidence(c,packet,map.read(Section::readyEvidence),map.read(Section::preparedEvidence),map.read(Section::device));
+   writer.u32(evidence::prepared::postprocessStatus+4*4,21*(track_before_detect::detectorPassCount(maximum)-1));
+   reject([&]{validateEvidence(c,packet,map.read(Section::readyEvidence),map.read(Section::preparedEvidence),map.read(Section::device));},
+    "Resident proof accepted omitted current-CPI detector work");
+  }
+ }
 }
 void configCases(){
  const auto c=config();validateConfig(c);const auto canonical=encodeConfig(c);
@@ -249,7 +272,17 @@ void configCases(){
  check(conservativeDecoded.tracker.minInitiationSnrDb==7&&
   encodeConfig(conservativeDecoded)==conservativeBytes&&
   wire::configHash(conservative)!=wire::configHash(adaptive),
-  "Tracker initiation SNR did not round trip or bind config identity");
+ "Tracker initiation SNR did not round trip or bind config identity");
+ auto exact=tbd;exact.tracker.minInitiationSnrDb=9.1;exact.detector.currentCpiPreferenceSnr=9.1;
+ const auto exactBytes=encodeConfig(exact);
+ const auto exactDecoded=decodeConfig(bytes(exactBytes),bytes(d),bytes(f));
+ check(exactDecoded.tracker.minInitiationSnrDb==9.1&&exactDecoded.detector.currentCpiPreferenceSnr==9.1&&
+  encodeConfig(exactDecoded)==exactBytes&&wire::configHash(exact)!=wire::configHash(tbd),
+  "Noninteger tracker/merge threshold lost precision or config binding");
+ auto mismatch=exact;mismatch.detector.currentCpiPreferenceSnr=9;
+ reject([&]{encodeConfig(mismatch);},"Mismatched tracker/merge threshold admitted");
+ auto oldConfig=exactBytes;wire::Writer{{oldConfig.data(),oldConfig.size()}}.u32(0,7);
+ reject([&]{decodeConfig(bytes(oldConfig),bytes(d),bytes(f));},"Old config schema admitted new merge threshold");
  auto clutterAware=adaptive;clutterAware.tracker.stationaryClutter=true;
  clutterAware.tracker.stationaryPersistenceCpis=8;clutterAware.tracker.stationaryMaxDopplerHz=15;
  const auto clutterBytes=encodeConfig(clutterAware);
@@ -268,13 +301,13 @@ void configCases(){
   encodeConfig(normalizedDecoded)==normalizedBytes,
   "Normalized tracker gate did not preserve its configuration encoding");
  const wire::Reader normalizedWire{bytes(normalizedBytes)};
- check(moduleAbi==18&&protocol==0x42475212&&normalizedWire.u32(604)==0&&
+ check(moduleAbi==19&&protocol==0x42475213&&normalizedWire.u32(604)==0&&
   normalizedWire.u32(608)==0&&normalizedWire.u32(612)==4,
-  "Retired tracker wire slots or supported policy offset changed");
+  "Default merge policy or supported tracker policy offset changed");
  for(const auto offset:{604u,608u,612u})for(const auto flag:{1u,2u}){
   auto retired=normalizedBytes;wire::Writer{{retired.data(),retired.size()}}.u32(offset,flag);
   reject([&]{decodeConfig(bytes(retired),bytes(d),bytes(f));},
-   "Retired guided tracker wire flag accepted");}
+   "Invalid current-CPI threshold or retired guided tracker wire flag accepted");}
  auto impossible=tbd;impossible.tracker.m=4;impossible.tracker.n=6;
  reject([&]{encodeConfig(impossible);},"detector-only disjoint 4-of-6 accepted");
  impossible.tracker.n=25;encodeConfig(impossible);impossible.tracker.nDelete=6;
@@ -499,6 +532,16 @@ void outputCases(){
  check(sourceView.flags.data[0]==(7u|8u|(130u<<17)|(6u<<26))&&
   blah2::temporal_candidate::sourceCell(sourceView.detectionCells.data[0],sourceView.flags.data[0],7,3,4)==1,
   "ABI16 source-cell offset did not survive wire publication");
+ for(uint32_t maximum:{4u,8u})for(uint32_t available:{1u,maximum,1u}){
+  merged.detector.integrationCpis=maximum;m.u32(104,available);
+  flags.u32(0,7u|128u|(130u<<17)|(6u<<26));
+  const auto fresh=views(map,merged,p);
+  check(fresh.detectionCount==1&&fresh.availableCpis==available&&fresh.flags.data[0]&128u,
+   "Current-CPI resident startup/steady/reset detection was rejected");
+  flags.u32(0,7u|136u|(130u<<17)|(6u<<26));
+  reject([&]{views(map,merged,p);},"Mixed current/temporal source flags admitted");
+ }
+ merged.detector.integrationCpis=4;m.u32(104,2);
  flags.u32(0,7u|8u|(130u<<17)|(4u<<26));reject([&]{views(map,merged,p);},"Source-cell offset outside grid accepted");
  flags.u32(0,7u|8u|(130u<<17)|(10u<<26));reject([&]{views(map,merged,p);},"Unknown source-cell offset accepted");
  flags.u32(0,7u|8u|(130u<<17));
@@ -508,4 +551,4 @@ void outputCases(){
  auto wrong=p;wrong.tracker.generation--;reject([&]{views(map,c,wrong);},"Stale prepared token accepted");wrong=p;wrong.phase=Phase::idle;reject([&]{views(map,c,wrong);},"Idle exposed outputs");wrong=p;wrong.presence^=bit(Section::canonical);reject([&]{views(map,c,wrong);},"Output presence substitution accepted");
 }
 }
-int main()try{packetCases();trackerDiagnosticsCases();configCases();mappingCases();topologyCases();outputCases();std::cout<<"COMPLETE resident-wire CPU-only checks="<<checked<<" rejected="<<rejected<<" gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL resident-wire: "<<e.what()<<'\n';return 1;}
+int main()try{packetCases();trackerDiagnosticsCases();temporalProofCases();configCases();mappingCases();topologyCases();outputCases();std::cout<<"COMPLETE resident-wire CPU-only checks="<<checked<<" rejected="<<rejected<<" gpu_execution=0\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL resident-wire: "<<e.what()<<'\n';return 1;}

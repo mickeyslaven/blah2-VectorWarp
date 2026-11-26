@@ -105,13 +105,11 @@ inline constexpr const char* shaderSource=BLAH2_QUARANTINE_STRINGIFY(BLAH2_QUARA
 }
 #undef BLAH2_QUARANTINE_FUNCTIONS
 
-// Deep temporal processing may lower the numerical birth threshold, but a
-// weak candidate must actually carry the accumulated evidence that justified
-// doing so. Strong detections and non-temporal pipelines retain their ordinary
-// admission behavior; existing-track association never calls this predicate.
+// Weak births require deep support.
 #define BLAH2_WEAK_BIRTH_FUNCTIONS(Q) \
+ Q double strongBirthSnr() { return 7.0; } \
  Q bool weakBirthSupportEligible(double snr,uint maximumDepth,uint supportDepth) { \
-   return maximumDepth<4u||snr>=7.0||supportDepth>=4u; }
+   return maximumDepth<4u||snr>=strongBirthSnr()||supportDepth>=4u; }
 namespace tracker_weak_birth {
 using uint=uint32_t;
 BLAH2_WEAK_BIRTH_FUNCTIONS(inline)
@@ -123,7 +121,6 @@ inline constexpr const char* shaderSource=
 #undef BLAH2_WEAK_BIRTH_STRINGIFY_IMPL
 }
 #undef BLAH2_WEAK_BIRTH_FUNCTIONS
-
 // Canonical admission policy. Adapters expose the ordered detector population
 // and surviving *predictions*; decisions and ties are compiled identically for
 // C++ and GLSL. Claimed measurements cannot suppress new births. Every valid

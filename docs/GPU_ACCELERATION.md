@@ -163,6 +163,19 @@ recording inspector's `acquisition` result and exact source/artifact/device
 identities. `pfaAnalyses` must retain a reviewed statistical method and separately
 pinned `independenceEvidence`; raw cell counts never imply independent trials.
 Invoke with `--plan PATH --plan-sha256 SHA256 --output NEW_DIRECTORY`.
+
+The trusted workflow checks the committed policy before building or scheduling
+physical runners. In the protected `vectorwarp-gpu-fp64` environment,
+administrators configure `VECTORWARP_PRE_SOAK_PLAN_PATH` and
+`VECTORWARP_PRE_SOAK_PLAN_SHA256` for an independently authorized plan and its
+retained inputs staged on that runner. The plan must cover both physical device
+classes and the exact source, policy and unified artifact being qualified.
+The workflow invokes the existing postprocessor once, without launching replay
+or approving bounds, and retains its receipt, measurements and diagnostic report
+under `pre-soak/` in the FP64 artifact. Both workflow acceptance and the release
+receipt gate download that artifact and validate the retained measurements.
+Missing inputs, unapproved bounds or incomplete physical coverage still refuse
+qualification; a diagnostic report alone never supplies a passing receipt.
 The producer writes a measured report and retained evidence, and writes the
 release receipt only if the existing full admission gate passes. Current
 fixed-weight replay remains unsupported and fails closed, so refit observations

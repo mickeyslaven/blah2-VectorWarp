@@ -118,9 +118,9 @@ inline std::string oracleLineageDiagnostic(const rapidjson::Value& expected,
  if(index==SIZE_MAX)return {};
  std::ostringstream out;out<<std::setprecision(17)<<" lineage_index="<<index;
  if(cells.data&&index<cells.count){const uint32_t cell=cells.data[index];out<<" gpu_cell="<<cell;
-  if(flags.data&&cell<flags.count){const uint32_t flag=flags.data[cell],bank=(flag>>3)&15u;
+  if(flags.data&&cell<flags.count){const uint32_t flag=flags.data[cell],bank=(flag>>3)&31u;
    out<<" raw_flags=0x"<<std::hex<<flag<<std::dec<<" decoded_bank="
-    <<((bank&8)?4:(bank&4)?3:(bank&2)?2:(bank&1)?1:0)
+    <<((bank&16)?0:(bank&8)?4:(bank&4)?3:(bank&2)?2:(bank&1)?1:0)
     <<" decoded_delay_motion="<<(int((flag>>17)&7)-2)<<" decoded_doppler_motion="<<(int((flag>>20)&63)-16);
    try{out<<" gpu_source_cell="<<temporal_candidate::sourceCell(cell,flag,rows,columns,maximum);}
    catch(const std::invalid_argument&){out<<"invalid";}
@@ -350,12 +350,13 @@ inline std::vector<Detection::Evidence> temporalCandidates(View<uint32_t> flags,
   sequences.count<=maximum,"Invalid resident temporal publication history");
  std::vector<Detection::Evidence> evidence; evidence.reserve(cells.count);
  for(size_t i=0;i<cells.count;++i){require(cells.data[i]<flags.count,"Resident temporal publication cell invalid");
-  const uint32_t value=flags.data[cells.data[i]],qualified=(value>>3)&15;
+  const uint32_t value=flags.data[cells.data[i]],qualified=(value>>3)&31;
   require((value&4)&&qualified&&!(qualified&(qualified-1)),"Resident originating bank ambiguous");
-  const uint32_t bank=(qualified&8)?4:(qualified&4)?3:(qualified&2)?2:1,
-   depth=bank>2?1u<<(bank-1):2;
-  require(depth<=maximum&&depth<=sequences.count,"Resident temporal publication support incomplete");
-  require(bank!=1||(((value>>17)&7)==2&&((value>>20)&63)==16),"Resident baseline contains motion lineage");
+  const uint32_t bank=(qualified&16)?0:(qualified&8)?4:(qualified&4)?3:(qualified&2)?2:1,
+   depth=bank==0?1:bank>2?1u<<(bank-1):2;
+  require((bank!=0||maximum>2)&&depth<=maximum&&depth<=sequences.count,
+   "Resident temporal publication support incomplete or outside configured family");
+  require(bank>1||(((value>>17)&7)==2&&((value>>20)&63)==16),"Resident fixed-cell evidence contains motion lineage");
   Detection::Evidence item{epoch,sequences.data[sequences.count-1],uint8_t(depth),uint8_t(bank),
    int8_t(int((value>>17)&7)-2),int8_t(int((value>>20)&63)-16),{}};
   for(size_t age=0;age<depth;++age){const size_t j=sequences.count-1-age;
