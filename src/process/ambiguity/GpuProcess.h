@@ -40,13 +40,13 @@ inline unsigned gpuCpiStartupDeadlineMs(double cpiMilliseconds,
   return static_cast<unsigned>(std::min(double(transportMaximumMs), available));
 }
 
-// Required residency has no fallback; retain the transport bound for smaller
-// clutter-batch retries. Optional routes keep the CPI-derived deadline.
-inline unsigned gpuResidentStartupDeadlineMs(double cpiMilliseconds,
-  unsigned transportMaximumMs, bool required)
+// Offline cold shader/FFT setup has no live capture deadline. Required residency
+// also retains the transport bound; optional live routes keep the CPI deadline.
+inline unsigned gpuStartupDeadlineMs(double cpiMilliseconds,
+  unsigned transportMaximumMs, bool offlineReplay, bool required = false)
 {
-  return required ? transportMaximumMs :
-    gpuCpiStartupDeadlineMs(cpiMilliseconds, transportMaximumMs);
+  const auto live = gpuCpiStartupDeadlineMs(cpiMilliseconds, transportMaximumMs);
+  return offlineReplay || required ? transportMaximumMs : live;
 }
 
 // Three CPIs with a scheduling floor leave recovery room in a seven-CPI queue;

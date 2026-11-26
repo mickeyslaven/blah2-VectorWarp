@@ -9674,6 +9674,25 @@
         "context_tokens:production": [1798318, 1798327],
         "context_tokens:replay-evidence-tools": [67257, 67266]
       }
+    },
+    {
+      "owner": "2026-11-26 offline GPU cold-start release correction review",
+      "purpose": "Retain the existing bounded transport startup allowance for explicit offline replay cold shader/FFT initialization. All four startup routes share the canonical helper; live optional startup and every frame deadline remain unchanged.",
+      "rejected_reuse": "Extend and rename the existing required-resident startup selector rather than adding another owner, prewarming caches, weakening GPU execution assertions, or changing radar math or live timing limits.",
+      "cleanup_plan": "Preserve all earlier ceilings. Require compiled policy and invalid-input tests, all-route source bindings, cold-cache physical proof and exact-source qualification before release; no cached diagnostic is acceptance.",
+      "changes": {
+        "oversized_bytes:src/blah2.cpp": [200383, 200386],
+        "context_characters:build-integration/contracts": [1402872, 1402913],
+        "context_characters:native-ambiguity": [704330, 704401],
+        "context_characters:native-pipeline": [155037, 155075],
+        "context_characters:native-runtime": [200383, 200386],
+        "context_characters:production": [7180881, 7180993],
+        "context_tokens:build-integration/contracts": [345335, 345347],
+        "context_tokens:native-ambiguity": [192787, 192803],
+        "context_tokens:native-pipeline": [31606, 31616],
+        "context_tokens:native-runtime": [40441, 40443],
+        "context_tokens:production": [1798327, 1798355]
+      }
     }
   ],
   "context_snapshot": {

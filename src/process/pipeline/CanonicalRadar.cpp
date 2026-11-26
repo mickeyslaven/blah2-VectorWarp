@@ -558,8 +558,8 @@ struct RadarBank::Context
         options.offlineTransportTrace = config.offlineReplay;
         options.qualificationLane = laneIndex;
         options.allocationLimitBytes = residentAllocationLimit;
-        options.startupMs = gpuResidentStartupDeadlineMs(
-          config.cpiSeconds * 1000.0, options.startupMs, residentRequired);
+        options.startupMs = gpuStartupDeadlineMs(config.cpiSeconds * 1000.0,
+          options.startupMs, config.offlineReplay, residentRequired);
         if (!config.offlineReplay)
           options.frameMs = gpuCpiFrameDeadlineMs(
             config.cpiSeconds * 1000.0, options.frameMs);
@@ -680,8 +680,8 @@ struct RadarBank::Context
           options.qualificationLane = laneIndex;
           options.allocationLimitBytes = budget->allocationLimit(laneIndex,
             gpuProcessMappingBytes(geometry), temporalReservation);
-          options.startupMs = gpuCpiStartupDeadlineMs(
-            cpiSeconds * 1000.0, options.startupMs);
+          options.startupMs = gpuStartupDeadlineMs(
+            cpiSeconds * 1000.0, options.startupMs, offline);
           if (!offline)
             options.frameMs = gpuCpiFrameDeadlineMs(
               cpiSeconds * 1000.0, options.frameMs);
@@ -1298,7 +1298,7 @@ struct RadarBank::Context
           GpuProcessOptions options;
           options.allocationLimitBytes = residentBudget->allocationLimit(qualificationLaneIndex,
             temporalMappingBytes, residentBudget->bytesPerSession - temporalReservationBytes);
-          options.startupMs = gpuCpiStartupDeadlineMs(config.cpiSeconds * 1000.0, options.startupMs);
+          options.startupMs = gpuStartupDeadlineMs(config.cpiSeconds * 1000.0, options.startupMs, config.offlineReplay);
           if (!config.offlineReplay) options.frameMs = gpuCpiFrameDeadlineMs(config.cpiSeconds * 1000.0, options.frameMs);
           options.offlineTransportTrace = config.offlineReplay; options.qualificationLane = qualificationLaneIndex;
           std::lock_guard<std::mutex> lease(residentBudget->execution);
