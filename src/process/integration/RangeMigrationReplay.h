@@ -17,17 +17,23 @@ namespace blah2::integration {
 class RangeMigrationReplay {
 public:
   using Complex = std::complex<double>;
+  struct Kernel { int64_t first; std::array<double, 16> weights{}; };
   struct Bank {
     double delayRateBinsPerSecond = 0;
     // Fixed-cell white range-noise variance relative to the zero-rate CAF.
     // Keep raw canonical amplitudes; compare |z|^2 / whiteNoiseGain.
     double whiteNoiseGain = 1;
     std::vector<Complex> cells; // Centered Doppler, then valid delay column.
+    // Opt-in aperture export, BEFORE any path winner or temporal integration.
+    // Same canonical heterodyne gauge as cells. Time-major, common delay crop.
+    std::vector<Complex> rangeSlowTime;
+    std::vector<Kernel> interpolationKernels;
   };
   struct Result {
     uint32_t firstColumn = 0, columns = 0, rows = 0;
     uint64_t complexMacBound = 0, evaluatedCells = 0;
     std::vector<Bank> banks; // All trials; no target-selected winner.
+    std::vector<Complex> rangeSlowTime; // Uncropped inverse CAF, time-major.
   };
   static constexpr uint32_t radius = 8, maximumTrials = 9;
   static constexpr uint64_t maximumMacs = 1u << 28;
@@ -101,7 +107,8 @@ public:
   }
 
   static Result process(const Map<Complex>& caf, uint32_t sampleRate,
-      uint32_t correlationSamples, const std::vector<double>& rates) {
+      uint32_t correlationSamples, const std::vector<double>& rates,
+      bool retainAperture = false) {
     const auto rows = caf.data.size(), columns = caf.delay.size();
     if (!sampleRate || !correlationSamples || rows < 3 || rows > 511 ||
         rows % 2 != 1 || columns <= 2 * radius || columns > 4096 ||
@@ -165,15 +172,25 @@ public:
       Bank bank;
       bank.delayRateBinsPerSecond = rate;
       bank.cells.resize(rows * result.columns);
+      if (retainAperture) {
+        bank.rangeSlowTime.resize(rows * result.columns);
+        bank.interpolationKernels.reserve(rows);
+      }
       if (rate == 0) {
         for (size_t row = 0; row < rows; ++row)
           std::copy_n(caf.data[row].begin() + result.firstColumn, result.columns,
             bank.cells.begin() + row * result.columns);
+        if (retainAperture) for (size_t time = 0; time < rows; ++time) {
+          bank.interpolationKernels.push_back(interpolation(0));
+          std::copy_n(profiles.begin() + time * columns + result.firstColumn,
+            result.columns, bank.rangeSlowTime.begin() + time * result.columns);
+        }
       } else {
         bank.whiteNoiseGain = 0;
         for (size_t time = 0; time < rows; ++time) {
           const double shift = rate * dt * (double(time) - double(rows - 1) / 2);
           const auto kernel = interpolation(shift);
+          if (retainAperture) bank.interpolationKernels.push_back(kernel);
           std::array<Complex, 2 * radius> weights;
           double norm = 0;
           for (size_t tap = 0; tap < weights.size(); ++tap) {
@@ -191,6 +208,7 @@ public:
               const auto source = int64_t(column + result.firstColumn) + kernel.first + int64_t(tap);
               aligned += weights[tap] * profiles[time * columns + size_t(source)];
             }
+            if (retainAperture) bank.rangeSlowTime[time * result.columns + column] = aligned;
             for (size_t frequency = 0; frequency < rows; ++frequency)
               bank.cells[frequency * result.columns + column] += aligned *
                 std::conj(inverse[time * rows + frequency]);
@@ -199,11 +217,11 @@ public:
       }
       result.banks.push_back(std::move(bank));
     }
+    if (retainAperture) result.rangeSlowTime = std::move(profiles);
     return result;
   }
 
 private:
-  struct Kernel { int64_t first; std::array<double, 2 * radius> weights{}; };
   static Kernel interpolation(double shift) {
     Kernel result{int64_t(std::floor(shift)) - int64_t(radius) + 1, {}};
     if (shift == std::round(shift)) {

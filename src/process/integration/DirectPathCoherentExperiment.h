@@ -4,6 +4,7 @@
 #include "process/integration/DirectPathCoherentReplay.h"
 #include "process/integration/RangeMigrationReplay.h"
 #include "process/ambiguity/GpuResidentWire.h"
+#include "capture/Sha256.h"
 
 #include <optional>
 #include <string>
@@ -308,6 +309,22 @@ inline std::vector<DirectPathCoherentExperiment::ComplexMap> channelMaps(const V
 // CPU-only parser and adapter.  No detector/PFA state is accepted or emitted.
 class ExperimentReader {
 public:
+  // An immutable, pre-winner/pre-sum linear data product. Raw CAF and the
+  // optional range/slow-time representation share the canonical transform.
+  struct ApertureFrame {
+    Sidecar source;
+    resident::Config config;
+    std::vector<DirectPathCoherentExperiment::ComplexMap> caf;
+    std::vector<RangeMigrationReplay::Result> migration;
+    std::vector<resident_replay::Hash> blockHashes; // Ordered BlockKind 1..20.
+    std::vector<std::complex<double>> spatialCoefficients;
+    std::optional<DirectPathCoherentExperiment::Pilot> pilot;
+    std::complex<double> gaugeCorrection{};
+    bool phaseQualified = false;
+    uint32_t anchorChannelId = 0, declaredSpatialTrials = 0;
+    uint64_t retainedBytes = 0, complexMacBound = 0;
+    double minimumPilotCoherence = 0;
+  };
   struct RateResult {
     uint32_t rateIndex = 0, firstColumn = 0;
     double delayRateBinsPerSecond = 0, heterodyneCenterHz = 0, whiteNoiseGain = 1;
@@ -334,6 +351,15 @@ public:
   DirectPathCoherentExperiment::Result append(const ValidatedSnapshot& snapshot);
   std::vector<RateResult> appendAll(const std::filesystem::path& snapshot);
   std::vector<RateResult> appendAll(const ValidatedSnapshot& snapshot);
+  // Stateless extraction; imaging aperture ownership is separate from the
+  // detector's rolling evidence histories. No detector state is advanced.
+  std::shared_ptr<const ApertureFrame> aperture(const ValidatedSnapshot&,
+    uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 128u << 20) const;
+  std::shared_ptr<const ApertureFrame> aperture(const std::filesystem::path& path,
+      uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 128u << 20) const {
+    resident::wire::require(std::filesystem::file_size(path) <= (128u << 20), "Aperture snapshot exceeds 128 MiB");
+    return aperture(loadValidatedSnapshot(path), maximumWork, maximumBytes);
+  }
 private:
   struct DecodedFrame {
     std::vector<DirectPathCoherentExperiment::ComplexMap> maps;
@@ -568,5 +594,65 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
   if (bindHop) { hopSamples_ = observedHop; bootstrap_.clear(); }
   previous_ = validated.sidecar;
   return results;
+}
+
+inline std::shared_ptr<const ExperimentReader::ApertureFrame>
+ExperimentReader::aperture(const ValidatedSnapshot& validated, uint64_t maximumWork, uint64_t maximumBytes) const {
+  require(!previous_, "Aperture extraction cannot reuse temporal reader state");
+  require(!config_.migrationRates.empty(), "Aperture requires explicit rates including zero");
+  auto admissionConfig = config_; admissionConfig.migrationRates.clear();
+  DirectPathCoherentExperiment admission(admissionConfig, true);
+  const auto& c = validated.config;
+  const uint64_t rows = c.geometry.doppler, columns = c.geometry.delays;
+  const uint64_t cells = rows * columns, channels = c.geometry.channels;
+  require(channels > 0 && channels <= 5 && rows >= 3 && rows <= 511 &&
+    columns <= 4096 && cells <= 65536, "Aperture frame dimensions exceed bounds");
+  const uint64_t bytes = cells * channels * 16 * (2 + 2 * config_.migrationRates.size()) +
+    rows * channels * config_.migrationRates.size() * sizeof(RangeMigrationReplay::Kernel) + (2u << 20);
+  const uint64_t work = channels * (rows * rows * columns +
+    config_.migrationRates.size() * rows * columns * (rows + 16));
+  require(bytes <= (128u << 20) &&
+    work <= RangeMigrationReplay::maximumMacs && work <= maximumWork && bytes <= maximumBytes,
+    "Aperture exceeds frame/remaining work/storage bounds");
+  require(rows * c.correlation <= c.geometry.clutterSamples && c.correlation > 0 &&
+    c.geometry.clutterSamples - rows * c.correlation < rows,
+    "Aperture raw support differs from correlation blocks");
+  uint64_t snapshotBytes = resident_replay::headerBytes;
+  for (const auto& block : validated.snapshot.blocks) {
+    require(block.bytes.size() <= (128u << 20) - snapshotBytes, "Aperture snapshot exceeds byte bound");
+    snapshotBytes += block.bytes.size();
+  }
+  resident_replay::validate(validated.snapshot, c);
+  const auto& a = validated.sidecar.identity; const auto& b = validated.snapshot.identity;
+  require(a.epoch == b.epoch && a.logicalFrame == b.logicalFrame && a.generation == b.generation &&
+    a.consumedSequence == b.consumedSequence && a.signalTimestampMs == b.signalTimestampMs &&
+    a.trackerTransaction == b.trackerTransaction && a.rawIqHash == b.rawIqHash &&
+    a.configHash == b.configHash && a.moduleHash == b.moduleHash && a.deviceHash == b.deviceHash &&
+    validated.sidecar.sourceHash == c.replay.sourceHash && validated.sidecar.rfHash == c.replay.rfHash &&
+    validated.sidecar.actualGainDb == c.replay.actualGainDb,
+    "Aperture snapshot identity differs from sidecar");
+  auto decoded = decode(validated);
+  auto frame = std::make_shared<ApertureFrame>();
+  frame->source = validated.sidecar; frame->config = c;
+  frame->caf = std::move(decoded.maps); frame->pilot = decoded.pilot;
+  frame->spatialCoefficients = config_.spatialCoefficients;
+  frame->anchorChannelId = config_.anchorChannelId;
+  frame->declaredSpatialTrials = config_.declaredSpatialTrials;
+  frame->minimumPilotCoherence = config_.minimumPilotCoherence;
+  frame->retainedBytes = bytes; frame->complexMacBound = work;
+  if (frame->pilot && frame->pilot->coherence >= config_.minimumPilotCoherence) {
+    const auto z = frame->pilot->normalizedCorrelation;
+    const double amplitude = std::abs(z);
+    frame->phaseQualified = std::isfinite(amplitude) && amplitude > 0;
+    if (frame->phaseQualified) frame->gaugeCorrection = std::conj(z) / amplitude;
+  }
+  for (const auto& block : validated.snapshot.blocks) {
+    Sha256 hash; hash.update(block.bytes.data(), block.bytes.size());
+    frame->blockHashes.push_back(hash.finishBytes());
+  }
+  for (const auto& map : frame->caf)
+    frame->migration.push_back(RangeMigrationReplay::process(map, frame->source.sampleRateHz,
+      c.correlation, config_.migrationRates, true));
+  return frame;
 }
 } // namespace blah2::integration::coherent_replay

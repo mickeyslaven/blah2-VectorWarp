@@ -14,6 +14,8 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
   add_executable(rangeMigrationReplayInspect
     ${PROJECT_ROOT}/tools/RangeMigrationReplayInspect.cpp)
   target_link_libraries(rangeMigrationReplayInspect PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
+  add_executable(passiveIsarApertureInspect ${PROJECT_ROOT}/tools/PassiveIsarApertureInspect.cpp)
+  target_link_libraries(passiveIsarApertureInspect PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
   add_executable(residentWeakEvidenceScore ${PROJECT_ROOT}/tools/ResidentWeakEvidenceScore.cpp)
   target_link_libraries(residentWeakEvidenceScore PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
   add_executable(residentSnapshotGeometry ${PROJECT_ROOT}/tools/ResidentSnapshotGeometry.cpp)
@@ -23,6 +25,12 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
   target_link_libraries(wienerHopfReplayInspect PRIVATE blah2DirectPathCoherentReplay
     blah2RadarDsp)
   if(BUILD_TESTING)
+    add_executable(testPassiveIsarAperture ${PROJECT_ROOT}/test/unit/process/analysis/TestPassiveIsarAperture.cpp)
+    target_include_directories(testPassiveIsarAperture PRIVATE ${PROJECT_ROOT}/test/gpu ${PROJECT_ROOT}/src/process/ambiguity)
+    target_link_libraries(testPassiveIsarAperture PRIVATE blah2DirectPathCoherentReplay blah2RadarDsp)
+    add_test(NAME passiveIsarApertureCpuContract COMMAND testPassiveIsarAperture)
+    set_tests_properties(passiveIsarApertureCpuContract PROPERTIES TIMEOUT 20
+      ENVIRONMENT "VECTORWARP_BENCH_RANGE_WORKERS=0;OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
     add_executable(testRangeMigrationReplay
       ${PROJECT_ROOT}/test/unit/process/analysis/TestRangeMigrationReplay.cpp)
     target_link_libraries(testRangeMigrationReplay PRIVATE blah2RadarDsp)
