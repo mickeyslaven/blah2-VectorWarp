@@ -405,10 +405,14 @@ def run(args):
         require(count(reserve) and reserve > 0, "policy requires evidence reserve")
         archive = Evidence(evidence_directory, reserve)
         binding_sha, policy_sha, inputs_sha = (archive.retain(raw) for raw in (binding_raw, policy_raw, inputs_raw))
-        receipt, results = evaluate(binding, binding_sha, policy, policy_sha, inputs, archive, time.time())
+        evaluator = evaluate
+        if policy.get("schema") == "vectorwarp-operational-release-policy-v1":
+            from vectorwarp_operational_acceptance import evaluate as evaluator
+        receipt, results = evaluator(binding, binding_sha, policy, policy_sha, inputs, archive, time.time())
         report = {"schema": "vectorwarp-release-regression-report-v1", "bindingSha256": binding_sha,
                   "policySha256": policy_sha, "inputsSha256": inputs_sha,
                   "evaluatorSha256": archive.retain(Path(__file__).read_bytes()),
+                  "operationalEvaluatorSha256": archive.retain(Path(__file__).with_name("vectorwarp_operational_acceptance.py").read_bytes()),
                   "soakContractSha256": archive.retain(Path(__file__).with_name("vectorwarp_two_node_soak.py").read_bytes()),
                   "results": results, "receipt": receipt, "retainedEvidence": sorted(archive.references)}
         receipt["evidenceSha256"] = archive.result(report)

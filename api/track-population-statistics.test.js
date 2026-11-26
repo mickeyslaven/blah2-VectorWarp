@@ -1,6 +1,25 @@
 'use strict';
 const assert = require('node:assert/strict');
 const {TrackPopulationStatistics, features} = require('./track-population-statistics');
+{
+  const observed = new TrackPopulationStatistics();
+  for (let timestamp = 1000; timestamp <= 601000; timestamp += 500)
+    observed.accept({timestamp, data: timestamp === 1000 ?
+      [{id: 'unmatched', state: 'ACTIVE', delay: 1, doppler: 2}] : []});
+  const window = observed.operationalWindow(601000);
+  assert.equal(window.complete, true);
+  assert.equal(window.unmatched_tracks, 1);
+  assert.equal(new TrackPopulationStatistics(observed.state).operationalWindow(601000).complete,
+    false, 'persisted population cannot manufacture post-restart coverage');
+  observed.evictedThrough = 1000;
+  assert.equal(observed.operationalWindow(601000).complete, false, 'eviction inside window is incomplete');
+  observed.evictedThrough = null;
+  assert.equal(observed.operationalWindow(605000).complete, false, 'stale population is incomplete');
+  observed.accept({timestamp: 605000, data: []});
+  assert.equal(observed.operationalWindow(605000).complete, false, 'a gap restarts coverage');
+  observed.accept({timestamp: 600000, data: []});
+  assert.equal(observed.observedSince, 600000, 'clock regression restarts coverage');
+}
 const population = new TrackPopulationStatistics();
 const frame = (timestamp, state, delay, measured) => population.accept({timestamp,
   data: [{id: 'native', state, delay, doppler: -200,

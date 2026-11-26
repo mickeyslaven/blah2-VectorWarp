@@ -130,6 +130,7 @@ jobs:
           python3 -m unittest discover -s test/script -p test_run_isolated_iq_replay.py
           python3 -m unittest discover -s test/script -p test_observer_allocation_contract.py
           python3 test/script/test_release_regression.py -v
+          python3 test/script/test_operational_acceptance.py -v
           python3 test/script/test_export_cycles.py -v
       - name: Run offline processor replay
         run: |

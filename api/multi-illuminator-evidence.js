@@ -517,7 +517,8 @@ class MultiIlluminatorEvidence {
         association_statistics: associationStatistics(status),
         measured_track_coverage: status.current_setup_lifetime?.measured_track_coverage,
         cpi_exposure: status.current_setup_lifetime?.cpi_exposure}),
-        ...(compact ? {measured_track_basis: measuredCoverage.compactBasis(statistics.measuredTrackBasis())} : {})};
+        ...(compact ? {measured_track_basis: measuredCoverage.compactBasis(statistics.measuredTrackBasis()),
+          operational_track_window: status.operational_track_window} : {})};
       const population = status.track_population || {};
       const channel = {identity: identity(lane.illuminator, statistics),
         measured_track_basis: statistics.measuredTrackBasis(),

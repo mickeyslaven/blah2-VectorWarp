@@ -465,7 +465,8 @@ class SoakEvaluation(unittest.TestCase):
 
     def test_regression_receipt_requires_exact_binding_policy_freshness_and_both_nodes(self):
         binding = {"expected": self.binding(), "sha256": "3" * 64}
-        receipt = {"schema": 3, "bindingSha256": "3" * 64, "policySha256": "1" * 64,
+        receipt = {"schema": 3, "evaluationMode": "frozen-baseline-prospective-operational-v1",
+                   "bindingSha256": "3" * 64, "policySha256": "1" * 64,
                    "nodes": {name: {"retiredCpis": 0, "retiredSamples": 0,
                              "checks": {key: {"accepted": True, "status": "accepted", "evidenceSha256": "4" * 64}
                                         for key in SOAK.REGRESSION_CHECKS},

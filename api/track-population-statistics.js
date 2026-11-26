@@ -155,6 +155,8 @@ class TrackPopulationStatistics {
       track.seeded_reference !== true && !String(track.key || '').startsWith('associated:'));
     for (const track of seeded) this.addReference(track);
     this.gapMs = gapMs;
+    // Deliberately not restored from disk: a restart cannot certify coverage.
+    this.observedSince = null; this.observedThrough = null; this.evictedThrough = null;
   }
 
   addReference(track) {
@@ -167,6 +169,9 @@ class TrackPopulationStatistics {
 
   accept(frame, delayScale = 1) {
     if (!frame || !finite(frame.timestamp) || !Array.isArray(frame.data)) return;
+    if (this.observedThrough === null || frame.timestamp < this.observedThrough ||
+        frame.timestamp - this.observedThrough > this.gapMs) this.observedSince = frame.timestamp;
+    this.observedThrough = frame.timestamp;
     const seen = new Set();
     for (const item of frame.data) {
       if (!item || !OPERATIONAL_STATES.has(String(item.state).toUpperCase()) ||
@@ -328,8 +333,24 @@ class TrackPopulationStatistics {
     this.state.finalized.push(track);
     if (track.associated_aircraft?.length) this.addReference({...track,
       key: `live-reference:${track.key}`});
-    if (this.state.finalized.length > MAX_FINALIZED_TRACKS)
-      this.state.finalized.splice(0, this.state.finalized.length - MAX_FINALIZED_TRACKS);
+    if (this.state.finalized.length > MAX_FINALIZED_TRACKS) {
+      const removed = this.state.finalized.splice(0, this.state.finalized.length - MAX_FINALIZED_TRACKS);
+      this.evictedThrough = Math.max(this.evictedThrough || 0, ...removed.map(row => row.last_at));
+    }
+  }
+
+  operationalWindow(now) {
+    const start = now - 600000;
+    const tracks = [...this.state.finalized, ...Object.values(this.state.active)]
+      .filter(track => track.started_at >= start && track.last_at <= now);
+    return {schema: 'vectorwarp-operational-track-window-v1', started_at: start, ended_at: now,
+      complete: this.observedSince !== null && this.observedSince <= start &&
+        this.observedThrough >= now - this.gapMs && this.observedThrough <= now &&
+        (this.evictedThrough === null || this.evictedThrough < start),
+      observed_since: this.observedSince, observed_through: this.observedThrough,
+      retained_tracks: tracks.length,
+      unmatched_tracks: tracks.filter(track => !track.associated_aircraft?.length).length,
+      meaning: 'unmatched/independent-track nonincrease proxy; not adjudicated false tracks'};
   }
 
   snapshot({since = -Infinity, includeCaptureCandidates = false} = {}) {

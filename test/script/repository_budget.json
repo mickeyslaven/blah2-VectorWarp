@@ -9287,6 +9287,166 @@
       "purpose": "Implement the user's ten-minute exact-artifact stable acceptance policy with explicit inconclusive exposure; retain physical FP32/FP64 product and unified-corpus gates while separating unapproved recorded-IQ research policy from publication.",
       "rejected_reuse": "Reject synthetic success receipts, false acceptance from absent traffic, duplicated duration constants, prerelease waivers, package rebuild substitution, and relaxing actual capture, deadline, signature or physical product parity failures.",
       "cleanup_plan": "Preserve canonical monitor/evaluator/signer ownership and regression tests; retain research admission independently, ratchet removed workflow context down, and require fresh frozen source/package acceptance after any source change."
+    },
+    {
+      "owner": "2026-11-26 user-authorized operational release acceptance review",
+      "purpose": "Reuse the canonical track population, compact federation transport, retained evidence CLI and immutable monitor for frozen-baseline/prospective acceptance; preserve research evaluation separately and every CI/physical GPU/package/signature gate.",
+      "rejected_reuse": "Rolling historical totals and absent false-track data cannot qualify a fresh artifact. No duplicate radar pipeline, synthetic controls, counter rebasing, inference truth input, UI behavior or live configuration changes are introduced.",
+      "cleanup_plan": "Keep bounded-window gap/restart/eviction, missing-evidence, identity/policy, inconclusive exposure, strict nonincrease, early-fault and atomic revocation regressions. Preserve original snapshots and exact downward ratchets; no reusable headroom.",
+      "changes": {
+        "context_characters:build-release/contracts": [
+          385733,
+          385897
+        ],
+        "context_characters:evidence-api": [
+          310046,
+          311570
+        ],
+        "context_characters:installation/contracts": [
+          248807,
+          248876
+        ],
+        "context_characters:operational-tools": [
+          647601,
+          661982
+        ],
+        "context_characters:operational-tools/contracts": [
+          522211,
+          522280
+        ],
+        "context_characters:production": [
+          7146644,
+          7163156
+        ],
+        "context_characters:release-ci": [
+          135865,
+          135993
+        ],
+        "context_characters:runtime-api": [
+          486267,
+          486746
+        ],
+        "context_characters:runtime-api/contracts": [
+          891343,
+          891495
+        ],
+        "context_dynamic:operational-tools": [
+          435,
+          467
+        ],
+        "context_files:operational-tools": [
+          58,
+          59
+        ],
+        "context_files:production": [
+          584,
+          585
+        ],
+        "context_lines:build-release/contracts": [
+          7712,
+          7714
+        ],
+        "context_lines:evidence-api": [
+          5492,
+          5515
+        ],
+        "context_lines:installation/contracts": [
+          4202,
+          4203
+        ],
+        "context_lines:operational-tools": [
+          12038,
+          12245
+        ],
+        "context_lines:operational-tools/contracts": [
+          9085,
+          9086
+        ],
+        "context_lines:production": [
+          132058,
+          132297
+        ],
+        "context_lines:release-ci": [
+          2615,
+          2617
+        ],
+        "context_lines:runtime-api": [
+          8692,
+          8699
+        ],
+        "context_lines:runtime-api/contracts": [
+          15389,
+          15391
+        ],
+        "context_tokens:build-release/contracts": [
+          91628,
+          91656
+        ],
+        "context_tokens:evidence-api": [
+          71593,
+          71924
+        ],
+        "context_tokens:installation/contracts": [
+          58787,
+          58793
+        ],
+        "context_tokens:operational-tools": [
+          157135,
+          160588
+        ],
+        "context_tokens:operational-tools/contracts": [
+          131260,
+          131266
+        ],
+        "context_tokens:production": [
+          1790238,
+          1794115
+        ],
+        "context_tokens:release-ci": [
+          30393,
+          30413
+        ],
+        "context_tokens:runtime-api": [
+          120347,
+          120420
+        ],
+        "context_tokens:runtime-api/contracts": [
+          212232,
+          212249
+        ],
+        "files:tools": [
+          13,
+          14
+        ],
+        "lines:.github": [
+          2615,
+          2617
+        ],
+        "lines:api": [
+          26767,
+          26797
+        ],
+        "lines:tools": [
+          2762,
+          2969
+        ],
+        "oversized_bytes:api/evidence-statistics.js": [
+          143534,
+          143617
+        ],
+        "oversized_bytes:api/server.js": [
+          137974,
+          138043
+        ],
+        "oversized_lines:api/evidence-statistics.js": [
+          2498,
+          2499
+        ],
+        "oversized_lines:api/server.js": [
+          2440,
+          2441
+        ]
+      }
     }
   ],
   "context_snapshot": {

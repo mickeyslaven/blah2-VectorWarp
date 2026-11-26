@@ -123,13 +123,13 @@ release and never choose its node topology or backend requirements.
 
 ## Regression evaluator receipt
 
-The soak does not invent statistical thresholds or equate aggregate counts with
-an approved detector/tracker comparison. The external evaluator owns whole-pass
-selection, baseline, minimum exposure, regression decision and measurement of
-retired CPIs/samples. The reviewed policy bytes are pinned in the binding.
-HomePortal's `/api/federation/statistics-summary` can supply observations, but
-its raw response is not itself an acceptance decision. ADS-B information stays
-evaluation-only and never enters processor inference.
+The operational evaluator compares a frozen pre-install baseline with a fresh
+post-install prospective window using retained `/api/federation/statistics-summary`
+snapshots and independently measured package/source/config identities. The
+[operational policy](OPERATIONAL_RELEASE_ACCEPTANCE.md) pins explicit tolerance,
+eligible finalized-pass exposure and the unmatched/independent-track nonincrease
+proxy. This is bounded operational acceptance, not an adjudicated false-alarm
+rate or causal paired replay study. ADS-B stays evaluation-only.
 
 The evaluator atomically publishes this schema on the monitor host. Its node
 keys and each `qualifications` map must exactly match the reviewed binding:
@@ -137,6 +137,7 @@ keys and each `qualifications` map must exactly match the reviewed binding:
 ```json
 {
   "schema": 3,
+  "evaluationMode": "frozen-baseline-prospective-operational-v1",
   "bindingSha256": "SHA256_OF_EXACT_BINDING_FILE_BYTES",
   "policySha256": "SHA256_OF_REVIEWED_EVALUATION_POLICY",
   "evidenceSha256": "SHA256_OF_RETAINED_EVALUATOR_INPUTS_AND_RESULT",
@@ -147,7 +148,7 @@ keys and each `qualifications` map must exactly match the reviewed binding:
       "checks": {
         "detections": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_DETECTION_RESULT"},
         "measurement-backed-track-continuity": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_CONTINUITY_RESULT"},
-        "false-track-controls": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_NEGATIVE_CONTROL_RESULT"},
+        "false-track-controls": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_UNMATCHED_TRACK_NONINCREASE_PROXY"},
         "cpi-deadlines": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_COMPLETE_CPI_DEADLINE_RESULT"},
         "capture-health": {"accepted": true, "status": "accepted", "evidenceSha256": "SHA256_OF_CAPTURE_RESULT"}
       },
@@ -167,26 +168,27 @@ retirement, or a reported regression prevents release acceptance. A policy and
 running evaluator must exist before starting the release cohort.
 Each node must explicitly pass all five checks with retained, hash-bound results.
 The reviewed policy defines their measurements, thresholds and required exposure;
-inadequate positive or negative exposure has `status: "inconclusive"` and
+inadequate eligible finalized-pass exposure or incomplete track coverage has `status: "inconclusive"` and
 `accepted: false`. It blocks acceptance and resets the healthy clock without
 claiming a measured regression or a permanent startup fault. Continue collecting
 eligible exposure; do not substitute frame flow, coasting, or truth-only matches
 for detections and measurement-backed continuity. An actual failed check has
 `status: "rejected"` and remains disqualifying even when traffic is inconclusive.
 CPI deadline evidence must
-cover completed cycles throughout the interval, including between sampler polls;
-sampled `cpi` percentiles or average cadence alone cannot establish that result.
+include native cumulative completed-cycle and completion-interval maxima, not
+sampled `cpi` percentiles or average cadence alone. Processing must remain at or
+below 500 ms; completion intervals must meet the reviewed binding's cadence bound
+(at most 600 ms), including failures between sampler polls.
 Schema-1/2 evaluator receipts lack the current coverage/status contract and cannot
 qualify a new cohort. A false per-check result blocks acceptance even if the aggregate
 `regressionDetected` value is false.
 
-The executable producer is `tools/vectorwarp_release_regression.py`; its
-[policy and retained-input contract](RELEASE_REGRESSION_EVALUATOR.md) describes
-the reviewed baseline, separate positive/negative retrospective/prospective
-exposure, complete CPI ledger, capture counters, and atomic publication.
-`config/release-regression-policy.unapproved.json` is an intentionally
-unapproved template and cannot qualify any cohort. A reviewed input scorer and
-policy are prerequisites; synthetic test fixtures do not supply that review.
+The executable producer remains `tools/vectorwarp_release_regression.py`, which
+dispatches the [operational policy](OPERATIONAL_RELEASE_ACCEPTANCE.md) to its
+small canonical evaluator. The separately retained
+[recorded-IQ research mode](RELEASE_REGRESSION_EVALUATOR.md) and its unapproved
+scientific policy are not stable-publication gates. They remain mandatory for
+claims of causal RF improvement; no such claim follows from operational acceptance.
 
 Release approval requires at least 600 consecutive clean seconds, both startup and steady
 state acceptance, the fresh regression receipt, and successful same-package

@@ -342,6 +342,7 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
       decision_grade: value.decision_grade === true,
       warning: value.warning || null, sensitivity_epoch: value.sensitivity_epoch || null,
       measured_track_basis: row.measured_track_basis,
+      operational_track_window: row.operational_track_window,
       measured_track_coverage: row.measured_track_coverage, cpi_exposure: row.cpi_exposure,
       eligible: Number(value.eligible_adsb_passes) || 0,
       detected: Number(value.detection?.associated_passes) || 0,
@@ -376,6 +377,8 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
     available: radarAvailable, radar: status?.radar || 'unknown', processor_fresh: status?.processorFresh === true,
     config_match: status?.configRevision && status?.loadedRevision ?
       status.configRevision === status.loadedRevision : true,
+    config_revision: status?.configRevision || null,
+    loaded_revision: status?.loadedRevision || null,
     statistics_window: associationPasses?.statistics_window || null,
     timing_policy: associationPasses?.timing_policy || scorecard?.timing_policy || null,
     tracking_status: tracking.status || 'unknown',
@@ -384,6 +387,8 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
     channels: channels.map(row => ({...row,
       node: entry.id, key: `${entry.id}:${row.id}`})), association, passes,
     timing: {cpi_ms: Number(timing?.cpi) || null,
+      maximum_completed_cycle_ms: timing?.processingCycle?.processing?.maximumMs ?? null,
+      maximum_completion_interval_ms: timing?.processingCycle?.completion_interval?.maximumMs ?? null,
       cadence_ms: cadenceMs,
       backlog_ms: queuedBacklogMs,
       raw_capture_backlog_ms: Number.isFinite(rawBacklogMs) ? rawBacklogMs : null,
@@ -502,6 +507,7 @@ function combineNodeStatistics(nodes, cooperative = null) {
         trackedUnique.length / eligibleUnique.length : null},
     missed_detections: eligibleUnique.length - detectedUnique.length,
     detected_not_tracked: detectedUnique.length - trackedUnique.length,
+    passes_complete: uniquePasses.length <= 100,
     passes: uniquePasses.sort((a, b) => b.started_at - a.started_at).slice(0, 100)};
   const cooperativeTracks = cooperative?.available ? cooperative.tracks || [] : [];
   const unhealthy = radarNodes.filter(node => !node?.available || node.stale === true || node.radar !== 'receiving' ||

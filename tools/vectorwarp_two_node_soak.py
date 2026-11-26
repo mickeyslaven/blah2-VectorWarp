@@ -164,6 +164,7 @@ def verify_regression(receipt: dict, binding_receipt: dict, now: float,
     tied to every declared package/config/qualification and the observed cohort.
     """
     valid = (isinstance(receipt, dict) and receipt.get("schema") == REGRESSION_RECEIPT_SCHEMA and
+             receipt.get("evaluationMode") == "frozen-baseline-prospective-operational-v1" and
              receipt.get("bindingSha256") == binding_receipt["sha256"] and
              receipt.get("policySha256") == binding_receipt["expected"]["regressionPolicySha256"] and
              isinstance(receipt.get("nodes"), dict) and

@@ -991,7 +991,8 @@ app.get('/api/live-scorecard/association-basis', async (req, res, next) => {
         updated_at: status.updated_at, association_statistics: associationStatistics(status),
         measured_track_coverage: status.current_setup_lifetime?.measured_track_coverage,
         cpi_exposure: status.current_setup_lifetime?.cpi_exposure}),
-        ...(compact ? {measured_track_basis: compactBasis(statistics.measuredTrackBasis())} : {})}]});
+        ...(compact ? {measured_track_basis: compactBasis(statistics.measuredTrackBasis()),
+          operational_track_window: status.operational_track_window} : {})}]});
     const population = status.track_population || {};
     const channel = {selected_channel: 'primary',
         measured_track_basis: statistics.measuredTrackBasis(),

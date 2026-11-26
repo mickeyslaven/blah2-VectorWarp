@@ -49,7 +49,9 @@ def fixture():
                    "steadyStateAccepted": True},
                "latest": {"epoch": 100000, "healthy": True, "failures": [], "nodes": {},
                    "monitorFreeBytes": 300_000_000_000,
-                   "regressionEvidence": {"schema": 3, "bindingSha256": hashlib.sha256(raw.encode()).hexdigest(),
+                   "regressionEvidence": {"schema": 3,
+                       "evaluationMode": "frozen-baseline-prospective-operational-v1",
+                       "bindingSha256": hashlib.sha256(raw.encode()).hexdigest(),
                        "policySha256": "d" * 64,
                        "nodes": {name: {"retiredCpis": 0, "retiredSamples": 0,
                            "checks": {key: {"accepted": True, "status": "accepted", "evidenceSha256": "f" * 64}

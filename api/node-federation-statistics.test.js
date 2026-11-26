@@ -57,11 +57,31 @@ test('compacts single-node scorecard with provenance', () => {
       recent_scored_passes: []});
   assert.deepEqual(value.association, {eligible: 10, detected: 4, tracked: 3});
   assert.equal(value.channels[0].key, 'beta:primary');
+  assert.equal(value.config_revision, 'a');
+  assert.equal(value.loaded_revision, 'a');
+  assert.equal(value.timing.maximum_completed_cycle_ms, null);
   assert.equal(value.timing.backlog_ms, 500);
   assert.equal(value.timing.raw_capture_backlog_ms, 500);
   assert.equal(value.evidence_status, 'degraded');
   assert.deepEqual(value.evidence_errors, ['ledger unwritable']);
   assert.equal(combineNodeStatistics([{...value, passes: []}]).health.status, 'degraded');
+});
+
+test('operational release evidence preserves canonical population windows and cycle maxima', () => {
+  const window = {schema: 'vectorwarp-operational-track-window-v1', complete: false,
+    unmatched_tracks: 0};
+  const value = compactNodeStatistics({id: 'site'},
+    {configRevision: 'digest', loadedRevision: 'digest'},
+    {processingCycle: {processing: {maximumMs: 501}, completion_interval: {maximumMs: 550}}},
+    {channels: [{identity: {illuminator: 'a'}, operational_track_window: window}]});
+  assert.deepEqual(value.channels[0].operational_track_window, window);
+  assert.equal(value.timing.maximum_completed_cycle_ms, 501);
+  assert.equal(value.timing.maximum_completion_interval_ms, 550);
+  const many = Array.from({length: 101}, (_, index) => ({hex: `id${index}`, started_at: index,
+    finalized_at: index + 1, eligible: true, detected: true, tracked: true}));
+  const summary = combineNodeStatistics([{...node('site', 101, 101, 101, many[0]), passes: many}]);
+  assert.equal(summary.system_wide_unique_passes.passes_complete, false);
+  assert.equal(summary.system_wide_unique_passes.passes.length, 100);
 });
 
 test('reports queued work rather than the receiver in-flight CPI', () => {

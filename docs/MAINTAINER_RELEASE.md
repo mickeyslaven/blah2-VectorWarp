@@ -133,9 +133,12 @@ maintainer direction. It is bounded operational acceptance, not a long-duration
 reliability claim. Every completed CPI must meet its reviewed deadline; capture
 loss/discontinuity and restarts remain disqualifying. Eligible traffic must
 produce detections and measurement-backed tracks under the reviewed evaluation
-policy. Insufficient eligible traffic is explicitly inconclusive and cannot
-qualify publication; continue observation until a complete healthy window has
-sufficient positive and negative exposure.
+policy. Insufficient eligible finalized traffic is explicitly inconclusive and
+cannot qualify publication. Freeze a complete pre-install operational baseline,
+then compare only fresh post-install passes using the
+[operational acceptance procedure](OPERATIONAL_RELEASE_ACCEPTANCE.md).
+The unmatched/independent-track nonincrease proxy is not a false-alarm-rate claim.
+Paired recorded-IQ research evidence remains separate from stable publication.
 The monitor uses each binding's reviewed ambiguity and clutter backends rather
 than assuming a receiver- or host-specific backend. The monitor explicitly
 requires recording to be disabled; recording stress

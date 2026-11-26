@@ -1,7 +1,9 @@
-# External release regression evaluator
+# Paired recorded-IQ research evaluator
 
-`tools/vectorwarp_release_regression.py` produces the schema-3 receipt consumed
-by [the live release cohort](LIVE_RELEASE_COHORT.md). It is an offline evaluator,
+The recorded-IQ mode of `tools/vectorwarp_release_regression.py` produces a
+schema-3 research receipt. Stable publication instead requires the explicit
+[operational baseline/prospective mode](OPERATIONAL_RELEASE_ACCEPTANCE.md);
+research receipts cannot substitute for its live acceptance. The paired mode is an offline evaluator,
 not an installed radar service or a second processor. It never activates a
 release, starts capture, calls a live API, or feeds ADS-B into inference. Its
 decisions use retained paired whole-pass measurements and a complete runtime

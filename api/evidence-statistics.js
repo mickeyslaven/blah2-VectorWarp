@@ -2244,6 +2244,7 @@ class EvidenceStatistics {
     const timestamp = this.now();
     const quality = this.associationQuality(timestamp);
     return {updated_at: this.state.updatedAt, timing_policy: this.timingPolicy,
+      operational_track_window: this.trackPopulation.operationalWindow(timestamp),
       decision_grade: quality.decisionGrade, warning: quality.warning,
       evaluation_contract_hash: this.scoreContractHash,
       evaluation_policy_hash: this.scorePolicyHash,
