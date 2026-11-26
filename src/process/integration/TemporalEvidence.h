@@ -29,6 +29,10 @@ struct EvidenceLineage
   int8_t delayMotion = 0;
   int8_t dopplerMotion = 0;
   std::array<uint64_t, 8> sequences{};
+  // Exact raw-capture intervals when the producer has them.  Generic
+  // temporal evidence may leave these zero, but a replay adapter must carry
+  // them so confirmation cannot treat overlapping raw IQ as independent CPIs.
+  std::array<uint64_t, 8> firstSamples{}, endSamples{};
 
   std::vector<uint64_t> supportSequences() const
   {
@@ -40,6 +44,34 @@ struct EvidenceMotion
 {
   int8_t delay = 0;
   int8_t doppler = 0;
+};
+
+// Opt-in replay ablation: every temporal tap in the post-migration map, not
+// only the newest output, must lie in this immutable searchable domain. This
+// does not constrain raw-CAF support inside migration. Defaults preserve live math.
+struct EvidenceSourceDomain
+{
+  bool enabled = false;
+  int minimumDelay = 0;
+  double minimumAbsDopplerHz = 0;
+  bool allowsDoppler(double hz) const
+  { return !enabled || std::abs(hz) >= minimumAbsDopplerHz; }
+  bool contains(int delay, double hz) const
+  { return !enabled || (delay >= minimumDelay && allowsDoppler(hz)); }
+  void validate(const std::deque<int>& delay, const std::deque<double>& doppler,
+    uint32_t rows, uint32_t columns) const
+  {
+    if (!enabled) return;
+    if (!std::isfinite(minimumAbsDopplerHz) || minimumAbsDopplerHz < 0 ||
+        delay.size() != columns || doppler.size() != rows ||
+        std::any_of(doppler.begin(), doppler.end(), [](double hz) { return !std::isfinite(hz); }))
+      throw std::invalid_argument("Source domain requires finite explicit axes");
+    for (uint32_t column = 1; column < columns; ++column)
+      if (int64_t(delay[column]) != int64_t(delay[0]) + column)
+        throw std::invalid_argument("Source domain requires contiguous delay bins");
+  }
+  int firstColumn(const std::deque<int>& delay) const
+  { return enabled ? int(std::lower_bound(delay.begin(), delay.end(), minimumDelay) - delay.begin()) : 0; }
 };
 
 // Experimental confirmation may credit only disjoint CPI windows. This is
@@ -90,7 +122,24 @@ public:
           return state.credited.count(sequence) != 0;
         }))
       return false;
+    const bool hasRanges = lineage.firstSamples[0] || lineage.endSamples[0];
+    if (hasRanges)
+    {
+      for (uint32_t index = 0; index < lineage.depth; ++index)
+      {
+        const auto first = lineage.firstSamples[index];
+        const auto end = lineage.endSamples[index];
+        if (end <= first) return false;
+        for (const auto& prior : state.ranges)
+          if (first < prior.end && prior.first < end) return false;
+      }
+    }
     state.credited.insert(support.begin(), support.end());
+    if (hasRanges)
+      for (uint32_t index = 0; index < lineage.depth; ++index)
+        state.ranges.push_back({lineage.sequences[index], lineage.firstSamples[index], lineage.endSamples[index]});
+    state.ranges.erase(std::remove_if(state.ranges.begin(), state.ranges.end(),
+      [&](const State::Range& range) { return range.sequence < floor; }), state.ranges.end());
     state.highWaterSequence = lineage.newestSequence;
     return true;
   }
@@ -105,6 +154,8 @@ private:
     uint64_t highWaterSequence = 0;
     bool initialized = false;
     std::unordered_set<uint64_t> credited;
+    struct Range { uint64_t sequence, first, end; };
+    std::vector<Range> ranges;
   };
   std::size_t maximumTracks_;
   uint64_t historyCpis_;
@@ -114,6 +165,7 @@ private:
 class TemporalEvidence
 {
 public:
+  enum class Input { complexAmplitude, realPower };
   struct Config
   {
     uint32_t maximumCpis = 8;
@@ -121,6 +173,7 @@ public:
     uint32_t dopplerMotionBins = 4;
     double delayDriftPerHz = 0;
     uint32_t beamCount = 0, beamTolerance = UINT32_MAX;
+    EvidenceSourceDomain sourceDomain{};
   };
 
   struct BankResult
@@ -183,7 +236,7 @@ public:
         config_.delayMotionBins > 2 || config_.dopplerMotionBins > 16 ||
         !std::isfinite(config_.delayDriftPerHz) || config_.delayDriftPerHz > 0 ||
         (config_.beamTolerance != UINT32_MAX && (!config_.beamCount ||
-          config_.beamTolerance > config_.beamCount / 2 || config_.maximumCpis == 2)))
+          config_.beamTolerance > config_.beamCount / 2)))
       throw std::invalid_argument("Temporal evidence configuration invalid");
   }
 
@@ -222,6 +275,7 @@ public:
       const int cc = track_before_detect::delayPathColumn(int(column), dc, age,
         baseline ? 0 : config_.delayDriftPerHz, doppler_[row], doppler_[rr]);
       if (cc < 0 || cc >= int(columns_)) return result;
+      if (config_.sourceDomain.enabled && !config_.sourceDomain.contains(delay_[cc], doppler_[rr])) return result;
       const uint64_t source = uint64_t(rr) * columns_ + uint32_t(cc);
       const auto sample = read(age, source);
       if (!std::isfinite(sample.first) || sample.first < 0) return result;
@@ -248,7 +302,8 @@ public:
 
   Result process(Map<std::complex<double>>& map, uint64_t epoch,
     uint64_t sequence, const EvidenceWorkBudget* budget = nullptr,
-    const std::vector<uint32_t>* beams = nullptr)
+    const std::vector<uint32_t>* beams = nullptr,
+    Input input = Input::complexAmplitude)
   {
     const uint32_t rows = map.get_nRows(), columns = map.get_nCols();
     if (!rows || !columns || (!frames_.empty() &&
@@ -257,6 +312,7 @@ public:
          sequence != frames_.back().sequence + 1)))
       throw std::invalid_argument(
         "Temporal evidence epoch, sequence, or geometry changed");
+    config_.sourceDomain.validate(map.delay, map.doppler, rows, columns);
     rows_ = rows;
     columns_ = columns;
     delay_ = map.delay;
@@ -276,7 +332,12 @@ public:
       for (uint32_t column = 0; column < columns; ++column)
       {
         if (budget && column % 32 == 0) budget->check();
-        const double power = std::norm(map.data[row][column]);
+        // Sealed replay exports already hold FP64 power. Avoid a sqrt/norm
+        // round trip, which can change strict detector decisions by one ULP.
+        const auto value = map.data[row][column];
+        if (input == Input::realPower && value.imag() != 0)
+          throw std::invalid_argument("Temporal power input must be real");
+        const double power = input == Input::realPower ? value.real() : std::norm(value);
         if (!(power >= 0) || !std::isfinite(power))
           throw std::invalid_argument("Temporal evidence input is not finite");
         current.power[uint64_t(row) * columns + column] = power;
@@ -320,6 +381,8 @@ public:
       beamByAge[age] = frames_[frames_.size() - 1 - age].beams.data();
     }
     const auto compatible = [&](uint64_t cell, uint32_t age, uint64_t older) {
+      if (config_.sourceDomain.enabled && !config_.sourceDomain.contains(
+          delay_[older % columns], doppler_[older / columns])) return false;
       if (!beamGated) return true;
       const uint32_t left = beamByAge[0][cell], right = beamByAge[age][older];
       if (!left || !right) return true;
@@ -328,7 +391,9 @@ public:
     };
     const uint32_t readyDepth = frames_.size() >= 8 ? 8 : frames_.size() >= 4 ? 4 : 2;
     const bool stationary = !config_.delayMotionBins &&
-      !config_.dopplerMotionBins && config_.delayDriftPerHz == 0 && !beamGated;
+      !config_.dopplerMotionBins && config_.delayDriftPerHz == 0 && !beamGated &&
+      !config_.sourceDomain.enabled;
+    const int firstSourceColumn = config_.sourceDomain.firstColumn(delay_);
     if (stationary && result.banks[0].ready) {
       writeStationary(result, powerByAge, rows, columns, budget);
       return result;
@@ -382,9 +447,10 @@ public:
               if (budget) budget->check();
               const int rr = int(row) - dr * int(age);
               if (rr < 0 || rr >= int(rows)) break;
+              if (!config_.sourceDomain.allowsDoppler(doppler_[rr])) break;
               const int shift = -dc * int(age) +
                 delayOffsets[dr + int(config_.dopplerMotionBins)][age];
-              first = std::max(first, -shift);
+              first = std::max(first, firstSourceColumn - shift);
               last = std::min(last, int(columns) - shift);
               if (first >= last) break;
               const auto* source = powerByAge[age] + uint64_t(rr) * columns;

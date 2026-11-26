@@ -9693,6 +9693,405 @@
         "context_tokens:native-runtime": [40441, 40443],
         "context_tokens:production": [1798327, 1798355]
       }
+    },
+    {
+      "owner": "native-integration: rebased coherent 2/4/8 and P-SAR experiment reconciliation, parent review 2026-11-26",
+      "purpose": "Reconcile the complete offline coherent motion/range/phase bank, fail-closed family selector and sealed passive-ISAR aperture seam onto exact stable main 25470a47. The one canonical replay producer supplies complex 2/4/8 products to the bounded consumer; no live detector, tracker, receiver or publication default changes.",
+      "rejected_reuse": "Reuse canonical temporal evidence, prepared range migration, sealed replay decoding, empirical null calibration and one passive-aperture owner. Parallel live math, consumer-side migration, unsealed products, duplicate inference routes and spare budget were rejected.",
+      "cleanup_plan": "Every ceiling equals the rebased measured tree exactly. Keep the experiment offline until native execution, independent recorded-IQ improvement, cadence/false-track qualification and explicit promotion. Remove the experiment and ratchet all ceilings down if rejected.",
+      "changes": {
+        "context_characters:build-integration": [
+          102426,
+          104322
+        ],
+        "context_characters:build-integration/contracts": [
+          1402913,
+          1440463
+        ],
+        "context_characters:canonical-data": [
+          161628,
+          161830
+        ],
+        "context_characters:native-ambiguity/contracts": [
+          194486,
+          194688
+        ],
+        "context_characters:native-analysis/contracts": [
+          112955,
+          113893
+        ],
+        "context_characters:native-detection/contracts": [
+          57372,
+          61202
+        ],
+        "context_characters:native-fusion": [
+          30144,
+          32197
+        ],
+        "context_characters:native-fusion/contracts": [
+          14436,
+          14638
+        ],
+        "context_characters:native-integration": [
+          72595,
+          195447
+        ],
+        "context_characters:native-integration/contracts": [
+          42108,
+          45404
+        ],
+        "context_characters:native-pipeline/contracts": [
+          306136,
+          306872
+        ],
+        "context_characters:native-runtime/contracts": [
+          286937,
+          289207
+        ],
+        "context_characters:operational-tools": [
+          673886,
+          698185
+        ],
+        "context_characters:operational-tools/contracts": [
+          522324,
+          599799
+        ],
+        "context_characters:production": [
+          7180993,
+          7332295
+        ],
+        "context_contract:build-integration->src/process/integration/DirectPathCoherentIq.cpp": [
+          0,
+          1
+        ],
+        "context_contract:build-integration->tools/PassiveIsarApertureInspect.cpp": [
+          0,
+          1
+        ],
+        "context_contract:build-integration->tools/RangeMigrationReplayInspect.cpp": [
+          0,
+          1
+        ],
+        "context_contract:native-integration->src/process/detection/EmpiricalNullCalibrator.h": [
+          0,
+          1
+        ],
+        "context_contract:operational-tools->src/process/ambiguity/Ambiguity.h": [
+          0,
+          1
+        ],
+        "context_contract:operational-tools->src/process/integration/PassiveIsarAperture.h": [
+          0,
+          1
+        ],
+        "context_contract:operational-tools->src/process/integration/RangeMigrationReplay.h": [
+          0,
+          1
+        ],
+        "context_dynamic:native-integration": [
+          28,
+          150
+        ],
+        "context_files:build-integration/contracts": [
+          86,
+          89
+        ],
+        "context_files:native-integration": [
+          6,
+          10
+        ],
+        "context_files:native-integration/contracts": [
+          7,
+          8
+        ],
+        "context_files:operational-tools": [
+          59,
+          61
+        ],
+        "context_files:operational-tools/contracts": [
+          22,
+          25
+        ],
+        "context_files:production": [
+          585,
+          591
+        ],
+        "context_imports:build-integration": [
+          132,
+          135
+        ],
+        "context_imports:native-integration": [
+          9,
+          14
+        ],
+        "context_imports:operational-tools": [
+          29,
+          33
+        ],
+        "context_lines:build-integration": [
+          1900,
+          1922
+        ],
+        "context_lines:build-integration/contracts": [
+          28556,
+          29135
+        ],
+        "context_lines:canonical-data": [
+          4311,
+          4316
+        ],
+        "context_lines:native-ambiguity/contracts": [
+          4145,
+          4150
+        ],
+        "context_lines:native-analysis/contracts": [
+          2533,
+          2550
+        ],
+        "context_lines:native-detection/contracts": [
+          1392,
+          1463
+        ],
+        "context_lines:native-fusion": [
+          651,
+          697
+        ],
+        "context_lines:native-fusion/contracts": [
+          363,
+          368
+        ],
+        "context_lines:native-integration": [
+          1518,
+          3489
+        ],
+        "context_lines:native-integration/contracts": [
+          962,
+          1057
+        ],
+        "context_lines:native-pipeline/contracts": [
+          5858,
+          5870
+        ],
+        "context_lines:native-runtime/contracts": [
+          6026,
+          6066
+        ],
+        "context_lines:operational-tools": [
+          12422,
+          12776
+        ],
+        "context_lines:operational-tools/contracts": [
+          9086,
+          10360
+        ],
+        "context_lines:production": [
+          132567,
+          134965
+        ],
+        "context_tokens:build-integration": [
+          16509,
+          16737
+        ],
+        "context_tokens:build-integration/contracts": [
+          345347,
+          355927
+        ],
+        "context_tokens:canonical-data": [
+          39652,
+          39696
+        ],
+        "context_tokens:native-ambiguity/contracts": [
+          46619,
+          46663
+        ],
+        "context_tokens:native-analysis/contracts": [
+          28930,
+          29157
+        ],
+        "context_tokens:native-detection/contracts": [
+          13441,
+          14364
+        ],
+        "context_tokens:native-fusion": [
+          8068,
+          8592
+        ],
+        "context_tokens:native-fusion/contracts": [
+          3892,
+          3936
+        ],
+        "context_tokens:native-integration": [
+          17968,
+          47781
+        ],
+        "context_tokens:native-integration/contracts": [
+          11217,
+          11953
+        ],
+        "context_tokens:native-pipeline/contracts": [
+          82238,
+          82421
+        ],
+        "context_tokens:native-runtime/contracts": [
+          72720,
+          73233
+        ],
+        "context_tokens:operational-tools": [
+          163258,
+          170140
+        ],
+        "context_tokens:operational-tools/contracts": [
+          131285,
+          149107
+        ],
+        "context_tokens:production": [
+          1798355,
+          1835846
+        ],
+        "files:src": [
+          215,
+          219
+        ],
+        "files:tools": [
+          14,
+          16
+        ],
+        "lines:cmake": [
+          1267,
+          1289
+        ],
+        "lines:src": [
+          45834,
+          47856
+        ],
+        "lines:tools": [
+          3146,
+          3500
+        ]
+      }
+    },
+    {
+      "owner": "build-integration offline replay acceptance",
+      "purpose": "Register the canonical synthetic selector fixture and extended acceptance test while consolidating repeated offline test registration and redundant transitive DSP linkage. Seal the exact net reductions.",
+      "rejected_reuse": "The diagnostic inspector retains its frozen hybrid behavior. The new test executable reuses canonical Ambiguity, ExperimentReader and CoherentFamilySelector; no production math or alternate evaluator is introduced.",
+      "cleanup_plan": "Repeated test executable/include/link declarations were replaced by one loop. Existing target names, tests and public replay DSP dependencies remain; no generated fixture or receipt is retained in source.",
+      "changes": {
+        "lines:cmake": [1289, 1287],
+        "context_characters:build-integration": [104322, 104306],
+        "context_characters:production": [7332295, 7332279],
+        "context_lines:build-integration": [1922, 1920],
+        "context_lines:production": [134965, 134963],
+        "context_tokens:build-integration": [16737, 16724],
+        "context_tokens:production": [1835846, 1835833]
+      }
+    },
+    {
+      "owner": "native-integration and operational-tools paired coherent aperture replay",
+      "purpose": "Reviewed unified synthetic selector18/NC9-to-P-SAR replay: explicit bootstrap, retained pre-winner provenance, bounded complex delay/Doppler grids, fail-closed frequency/storage admission and native producer handoff. Exact measured ceilings only; no live wiring.",
+      "rejected_reuse": "Existing ExperimentReader, CoherentFamilySelector and PassiveIsarAperture retain all radar mathematics and one shared frequency validator. CoherentPassiveIsarReplay only owns the shared nine-CPI transaction; native standalone extraction cannot preserve producer lineage.",
+      "cleanup_plan": "Replace native inspector recomputation and standalone selector orchestration with the paired owners; extend the existing renderer. Remove duplicate frequency validation, preserve only distinct derived calibration diagnostics, and keep warning-as-error builds. No generated evidence or headroom.",
+      "changes": {
+        "files:src": [
+          219,
+          220
+        ],
+        "lines:cmake": [
+          1287,
+          1291
+        ],
+        "lines:src": [
+          47856,
+          48005
+        ],
+        "lines:tools": [
+          3500,
+          3522
+        ],
+        "context_characters:build-integration": [
+          104306,
+          104611
+        ],
+        "context_characters:build-integration/contracts": [
+          1440463,
+          1442014
+        ],
+        "context_characters:native-integration": [
+          195447,
+          204378
+        ],
+        "context_characters:operational-tools": [
+          698185,
+          699736
+        ],
+        "context_characters:operational-tools/contracts": [
+          599799,
+          604611
+        ],
+        "context_characters:production": [
+          7332279,
+          7343066
+        ],
+        "context_dynamic:native-integration": [
+          150,
+          162
+        ],
+        "context_files:native-integration": [
+          10,
+          11
+        ],
+        "context_files:production": [
+          591,
+          592
+        ],
+        "context_lines:build-integration": [
+          1920,
+          1924
+        ],
+        "context_lines:build-integration/contracts": [
+          29135,
+          29157
+        ],
+        "context_lines:native-integration": [
+          3489,
+          3638
+        ],
+        "context_lines:operational-tools": [
+          12776,
+          12798
+        ],
+        "context_lines:operational-tools/contracts": [
+          10360,
+          10435
+        ],
+        "context_lines:production": [
+          134963,
+          135138
+        ],
+        "context_tokens:build-integration": [
+          16724,
+          16763
+        ],
+        "context_tokens:build-integration/contracts": [
+          355927,
+          356270
+        ],
+        "context_tokens:native-integration": [
+          47781,
+          49836
+        ],
+        "context_tokens:operational-tools": [
+          170140,
+          170483
+        ],
+        "context_tokens:operational-tools/contracts": [
+          149107,
+          150270
+        ],
+        "context_tokens:production": [
+          1835833,
+          1838270
+        ]
+      }
     }
   ],
   "context_snapshot": {

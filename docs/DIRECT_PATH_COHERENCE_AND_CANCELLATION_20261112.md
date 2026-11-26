@@ -10,6 +10,45 @@ build tests) to build the replay consumers.
 The next acceptance step is exact-IQ replay with recorded sample lineage and
 pre-cancellation anchor IQ; old selected v1 cutouts are insufficient.
 
+## Phase-preserving hybrid replay contract
+
+The existing experiment also exposes `Result::hybridAt(depthIndex, cell)` for
+2/4/8-CPI comparisons. A complete path passing the pilot and target coherence
+gates retains its complex sum, normalized by `sqrt(depth)` and referenced to
+the newest CPI. Otherwise the view selects the corresponding canonical
+`TemporalEvidence` motion bank, retaining its exact FP64 mean power. Recorded
+`currentPower` is admitted as power; it is neither squared again nor sent
+through a square-root/norm round trip. No new detector or publication path is
+created. `directPathCoherentReplayInspect` reports each family's selected-cell
+counts, with `null_calibrated=0` and `detector_mutation=0`.
+
+Both families use the canonical fractional-delay coordinate rule. Doppler phase
+is compensated segment by segment using exact capture-sample hops, including
+nonuniform Doppler axes. The sealed reader binds fallback beam tolerance and
+physical delay drift from the recorded radar plan. One experiment instance
+uses one immutable spatial coefficient vector. The optional selected-beam mode
+of `CoherentPathEvidence` requires the same known beam on every contributing
+CPI; an adjacent or unknown beam cannot establish phase continuity.
+`CoherentBeamBank::process_coherent_into` supplies complex projected values and
+selected beam identities; its accepted `process_into` projection remains real
+amplitude with identical beam ranking.
+
+Results retain newest-first source sequences, exact sample ranges, capture and
+calibration epochs, rate and tuning, as well as the selected path's motion.
+Pilot loss clears coherent history while valid power history continues. Capture
+identity/hop changes restart both histories, and repeated or reordered source
+CPIs are refused. The existing `ConfirmationLedger` rejects shared source CPIs
+across depths, overlapping windows, and coherent/fallback selections. Scores
+are not confirmations: neither this ledger nor hybrid scores enter tracking.
+
+This is an uncalibrated offline experiment. Promotion still needs independent
+null calibration of the joint pilot/phase gates, path and spatial searches,
+depth selection and fallback mixture, plus disjoint whole-pass and prospective
+evaluation of detections, measurement-backed continuity, false tracks, cadence
+and capture health. Existing Gamma(L) thresholds cannot calibrate the coherent
+or hybrid score. The regression suite checks mechanics and fallback parity;
+it does not establish radar gain or false-alarm performance.
+
 ## Cancellation is the first experiment
 
 The CPU implementation in `WienerHopf.cpp` forms reference autocorrelation and

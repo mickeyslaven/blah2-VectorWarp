@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -43,6 +44,9 @@ TEST_CASE("coherent beam bank recovers array gain in a steered direction")
       -waveNumber * position[0]));
   fusion.calibrate(direct);
   const auto result = fusion.process(maps);
+  Map<std::complex<double>> coherent(1, 1);
+  std::vector<uint32_t> selected;
+  fusion.process_coherent_into(maps, coherent, &selected);
   const auto bank = fusion.powerBankAt(maps, 0, 0);
   REQUIRE(bank.size() == config.beams);
   REQUIRE(*std::max_element(bank.begin(), bank.end()) ==
@@ -52,6 +56,31 @@ TEST_CASE("coherent beam bank recovers array gain in a steered direction")
   REQUIRE(fusion.powerBank(sameIq) == bank);
   REQUIRE(std::abs(result->data[0][0]) == Catch::Approx(std::sqrt(5.0)).epsilon(1e-12));
   REQUIRE(result->data[0][0].imag() == 0.0);
+  REQUIRE(selected == std::vector<uint32_t>{4});
+  REQUIRE(std::norm(coherent.data[0][0]) ==
+    Catch::Approx(std::norm(result->data[0][0])).epsilon(1e-12));
+  REQUIRE(std::arg(coherent.data[0][0]) == Catch::Approx(0).margin(1e-12));
+}
+
+TEST_CASE("coherent beam projection retains common phase without changing power")
+{
+  CoherentBeamBank::Config config{100000000, 4, {{0, 0, 0}}};
+  CoherentBeamBank fusion(config);
+  fusion.calibrate({{1, 0}});
+  Map<std::complex<double>> input(1, 1), power(1, 1), coherent(1, 1);
+  input.data[0][0] = std::polar(3.0, .73);
+  std::vector<uint32_t> powerBeam, coherentBeam;
+  REQUIRE_THROWS_AS(fusion.process_coherent_into({&input}, coherent, nullptr),
+    std::invalid_argument);
+  fusion.process_into({&input}, power, &powerBeam);
+  fusion.process_coherent_into({&input}, coherent, &coherentBeam);
+  REQUIRE(powerBeam == coherentBeam);
+  REQUIRE(std::norm(coherent.data[0][0]) ==
+    Catch::Approx(std::norm(power.data[0][0])).epsilon(1e-12));
+  REQUIRE(std::arg(coherent.data[0][0]) == Catch::Approx(.73).margin(1e-12));
+  const auto values = fusion.complexBank({input.data[0][0]});
+  REQUIRE(values.size() == 4);
+  REQUIRE(std::arg(values.front()) == Catch::Approx(.73).margin(1e-12));
 }
 
 TEST_CASE("coherent beam bank rejects mismatched map geometry")
@@ -65,6 +94,15 @@ TEST_CASE("coherent beam bank rejects mismatched map geometry")
   REQUIRE_THROWS_AS(fusion.process_into({&only, &wrong}, only), std::invalid_argument);
   REQUIRE_THROWS_AS(fusion.process_into({&only, nullptr}, only), std::invalid_argument);
   REQUIRE_THROWS_AS(fusion.process_into({}, only), std::invalid_argument);
+  Map<std::complex<double>> other(1, 1);
+  only.doppler = {1}; other.doppler = {2};
+  std::vector<uint32_t> selected;
+  REQUIRE_THROWS_AS(fusion.process_coherent_into({&only, &other}, only, &selected),
+    std::invalid_argument);
+  other.doppler = only.doppler;
+  other.data[0][0] = {std::numeric_limits<double>::quiet_NaN(), 0};
+  REQUIRE_THROWS_AS(fusion.process_coherent_into({&only, &other}, only, &selected),
+    std::runtime_error);
 }
 
 TEST_CASE("coherent beam bank rejects geometry beyond the resident channel bound")

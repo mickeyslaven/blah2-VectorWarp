@@ -72,8 +72,8 @@ std::vector<uint8_t> encodeSidecar(const Sidecar& sidecar, const uint8_t* snapsh
   const auto recordDigest = digest(result.data(), digestOffset); w.copy(digestOffset, recordDigest.data(), 32); return result;
 }
 
-Sidecar decodeSidecar(const uint8_t* data, size_t bytes, const uint8_t* snapshot, size_t snapshotSize) {
-  require(data && bytes == sidecarBytes && snapshot && snapshotSize >= resident_replay::headerBytes && snapshotSize <= resident_replay::byteLimit,
+Sidecar decodeBoundSidecar(const uint8_t* data, size_t bytes, const Hash& parentHash) {
+  require(data && bytes == sidecarBytes && nonzero(parentHash),
     "Replay sidecar input bound differs");
   const Reader r{{data, bytes}}; require(r.u32(0) == magic && r.u32(4) == sidecarVersion && r.u32(8) == sidecarBytes && r.u32(12) > 0 && r.u32(12) <= 8,
     "Replay sidecar envelope invalid");
@@ -87,8 +87,20 @@ Sidecar decodeSidecar(const uint8_t* data, size_t bytes, const uint8_t* snapshot
   std::memcpy(result.identity.rawIqHash.data(), data + 176, 32); std::memcpy(result.identity.deviceHash.data(), data + 208, 32);
   std::memcpy(result.sourceHash.data(), data + 240, 32); std::memcpy(result.rfHash.data(), data + 272, 32); std::memcpy(result.snapshotHash.data(), data + hashOffset, 32);
   for (uint32_t i = 0; i < r.u32(12); ++i) result.actualGainDb.push_back(r.f64(304 + 8 * i));
-  require(result.snapshotHash == digest(snapshot, snapshotSize), "Replay sidecar snapshot binding differs");
-  (void)encodeSidecar(result, snapshot, snapshotSize); return result;
+  require(result.snapshotHash == parentHash, "Replay sidecar snapshot binding differs");
+  const auto& id = result.identity;
+  require(id.epoch && id.logicalFrame && id.generation && id.consumedSequence &&
+    nonzero(id.configHash) && nonzero(id.moduleHash) && nonzero(id.rawIqHash) &&
+    nonzero(id.deviceHash) && nonzero(result.sourceHash) && nonzero(result.rfHash) &&
+    result.firstSample < result.endSample && result.tuningHz && result.gainCalibrationEpoch &&
+    result.sampleRateHz, "Replay sidecar lineage incomplete");
+  for (double gain : result.actualGainDb) require(std::isfinite(gain), "Replay sidecar gain invalid");
+  return result;
+}
+Sidecar decodeSidecar(const uint8_t* data, size_t bytes, const uint8_t* snapshot, size_t snapshotSize) {
+  require(snapshot && snapshotSize >= resident_replay::headerBytes && snapshotSize <= resident_replay::byteLimit,
+    "Replay sidecar input bound differs");
+  return decodeBoundSidecar(data, bytes, digest(snapshot, snapshotSize));
 }
 
 void writeSidecarExclusive(const std::filesystem::path& snapshot, const Sidecar& sidecar) {

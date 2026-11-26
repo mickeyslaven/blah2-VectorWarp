@@ -105,6 +105,11 @@ public:
   /// @return Number of columns.
   uint32_t get_nCols();
 
+  // Read-only geometry for sealed offline products; unlike legacy getters it
+  // cannot materialize or copy a row.
+  uint32_t rows() const { return nRows; }
+  uint32_t cols() const { return nCols; }
+
   /// @brief Get a row from the 2D map.
   /// @param row Index of row to get.
   /// @return Vector of data.

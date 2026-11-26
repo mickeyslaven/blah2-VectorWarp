@@ -38,6 +38,13 @@ public:
   void process_into(const std::vector<Map<std::complex<double>> *>& maps,
     Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams = nullptr) const;
 
+  // Preserve the selected beam's complex CAF value for phase-history
+  // experiments.  The accepted production projection above remains a real
+  // amplitude, so adding coherent qualification cannot silently change the
+  // detector statistic or its calibrated threshold.
+  void process_coherent_into(const std::vector<Map<std::complex<double>> *>& maps,
+    Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams) const;
+
   // Offline diagnostics may retain the complete bank, while the production
   // map path below continues to expose only the maximum. Both paths use the
   // exact calibrated weights held by this object.
@@ -46,8 +53,13 @@ public:
     uint32_t row, uint32_t column) const;
   std::vector<double> powerBank(
     const std::vector<std::complex<double>>& channels) const;
+  std::vector<std::complex<double>> complexBank(
+    const std::vector<std::complex<double>>& channels) const;
 
 private:
+  void processSelected(const std::vector<Map<std::complex<double>> *>& maps,
+    Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams,
+    bool preservePhase) const;
   double waveNumber_ = 0;
   double directPathAzimuthRad_ = 0;
   double directPathNullDb_ = 0;
