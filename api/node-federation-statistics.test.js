@@ -97,6 +97,25 @@ test('reports queued work rather than the receiver in-flight CPI', () => {
   assert.equal(explicit.timing.backlog_ms, 500);
 });
 
+test('retired work comes from canonical exact capture counters, never absent legacy fields', () => {
+  const summarize = cycleEvidence => compactNodeStatistics({id: 'site'}, {}, {cycleEvidence}, {}).timing;
+  const evidence = {schema: 'vectorwarp-processing-cycles-v1', fault: '', records: [
+    {captureAfter: {available: true, retiredCpis: '2', retiredSamples: '2400000'}}]};
+  assert.equal(summarize(evidence).retired_cpis, 2);
+  assert.equal(summarize(evidence).retired_samples, 2400000);
+  for (const bad of [undefined, {...evidence, fault: 'counter-overflow'}, {...evidence, records: []},
+    {...evidence, records: [{captureAfter: {available: false, retiredCpis: '0', retiredSamples: '0'}}]}]) {
+    assert.equal(summarize(bad).retired_cpis, null);
+    assert.equal(summarize(bad).retired_samples, null);
+  }
+  for (const bad of [undefined, null, 0, '-1', '9007199254740992']) {
+    evidence.records[0].captureAfter.retiredCpis = bad;
+    assert.equal(summarize(evidence).retired_cpis, null);
+  }
+  evidence.records[0].captureAfter.retiredCpis = '0';
+  assert.equal(summarize(evidence).retired_cpis, 0);
+});
+
 test('display-only coordinators are not counted as radar nodes', () => {
   const value = compactNodeStatistics({id: 'display', label: 'Display', local: true, role: 'coordinator'},
     {radar: 'no-data', processorFresh: false, processor: null}, {},

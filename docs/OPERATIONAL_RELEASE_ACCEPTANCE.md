@@ -73,6 +73,10 @@ discard counters and immutable process identity. Native cumulative maximum
 completed-cycle duration must stay <=500 ms, and maximum completion interval
 must meet the binding's reviewed cadence bound (at most600 ms). These maxima
 retain failures between polls. Backlog must remain bounded.
+Retired CPI/sample counts come from the canonical native cycle evidence's latest
+`captureAfter`, using exact available counters and a fault-free evidence schema.
+Missing, faulted or inexact values remain unknown and fail acceptance; absent
+legacy flat telemetry fields are never evidence of zero retired work.
 
 Each channel exports its canonical 600-second track window, coverage and policy
 identity. The comparison uses only complete fresh candidate windows and unchanged

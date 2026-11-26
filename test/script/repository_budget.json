@@ -9507,6 +9507,22 @@
         "context_tokens:operational-tools": [161081, 161088],
         "context_tokens:production": [1794616, 1794623]
       }
+    },
+    {
+      "owner": "2026-11-26 canonical retirement telemetry release correction",
+      "purpose": "Map retirement counters from exact canonical native captureAfter evidence instead of absent legacy keys, preserving unknown values as null for fail-closed operational acceptance.",
+      "rejected_reuse": "Legacy capture_retired fields are not emitted by Timing.cpp; defaulting them to zero concealed missing evidence. Reuse exactUint64 instead of introducing another integer parser.",
+      "cleanup_plan": "Preserve nonzero, missing, faulted, unavailable, malformed and unsafe-number regressions. No native processing, configuration, timing or capture behavior changes.",
+      "changes": {
+        "lines:api": [26797, 26803],
+        "context_characters:production": [7165264, 7165683],
+        "context_characters:runtime-api": [486746, 487165],
+        "context_imports:runtime-api": [48, 49],
+        "context_lines:production": [132328, 132334],
+        "context_lines:runtime-api": [8699, 8705],
+        "context_tokens:production": [1794623, 1794754],
+        "context_tokens:runtime-api": [120420, 120551]
+      }
     }
   ],
   "context_snapshot": {

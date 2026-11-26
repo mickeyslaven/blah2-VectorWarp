@@ -158,6 +158,7 @@ class OperationalAcceptance(unittest.TestCase):
         for mutate in (lambda row: row["nodes"]["site"].update(artifactSha256="0" * 64),
                        lambda row: row["statistics"]["nodes"][0].update(loaded_revision="0" * 64),
                        lambda row: row["statistics"]["evaluation"].update(policy_hashes=["0" * 64]),
+                       lambda row: row["statistics"]["nodes"][0]["timing"].update(retired_cpis=None),
                        lambda row: row["statistics"]["nodes"][0]["timing"].pop("drops")):
             self.samples = copy.deepcopy(original)
             mutate(self.samples[-1])

@@ -11,6 +11,7 @@ const {FederatedGeographicFusion} = require('./federated-geographic-fusion');
 const {compactAssociationPass, expandFederationAssociationPassTransport} =
   require('./evidence-statistics');
 const measuredCoverage = require('../html/js/measured_track_coverage');
+const {exactUint64} = require('./causal-funnel-contract');
 
 const HTTP_AGENT = new http.Agent({keepAlive: true, maxSockets: 16, maxFreeSockets: 8,
   timeout: 5000});
@@ -372,6 +373,11 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
     readyCpis * cadenceMs : Number.isFinite(rawBacklogMs) && cadenceMs > 0 ?
       Math.max(0, rawBacklogMs - cadenceMs) : Number.isFinite(rawBacklogMs) ? rawBacklogMs : null;
   const radarAvailable = status?.processorFresh === true && status?.processor?.state === 'live';
+  const cycles = timing?.cycleEvidence;
+  const capture = cycles?.schema === 'vectorwarp-processing-cycles-v1' && cycles.fault === '' &&
+    Array.isArray(cycles.records) && cycles.records.length <= 8 ? cycles.records.at(-1)?.captureAfter : null;
+  const retired = key => capture?.available === true && exactUint64(capture[key]) &&
+    Number.isSafeInteger(Number(capture[key])) ? Number(capture[key]) : null;
   return {id: entry.id, label: entry.label || entry.id, local: entry.local === true,
     role: entry.role === 'coordinator' || status?.node_role === 'coordinator' ? 'coordinator' : 'radar',
     available: radarAvailable, radar: status?.radar || 'unknown', processor_fresh: status?.processorFresh === true,
@@ -393,8 +399,8 @@ function compactNodeStatistics(entry, status, timing, scorecard, associationPass
       backlog_ms: queuedBacklogMs,
       raw_capture_backlog_ms: Number.isFinite(rawBacklogMs) ? rawBacklogMs : null,
       drops: Array.isArray(timing?.captureDroppedSamples) ? timing.captureDroppedSamples : [],
-      retired_cpis: Number(timing?.capture_retired_cpis_total) || 0,
-      retired_samples: Number(timing?.capture_retired_samples_total) || 0,
+      retired_cpis: retired('retiredCpis'),
+      retired_samples: retired('retiredSamples'),
       acceleration: timing?.acceleration?.active || null}};
 }
 
