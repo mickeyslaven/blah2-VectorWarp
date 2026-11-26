@@ -253,6 +253,80 @@ void composedMigration(const fs::path& directory) {
     rejects([&] { reader.appendAll(sealed); }, "Duplicate source frame bridged rate histories");
   }
 }
+void overlappingFractionalReader(const fs::path& directory) {
+  using Experiment = blah2::integration::DirectPathCoherentExperiment;
+  constexpr uint32_t samples=1088, hop=544, fsHz=1088, rows=17, columns=49;
+  constexpr double carrier=16320, tau=6.283185307179586476925286766559;
+  auto value=config(); auto& g=value.geometry;
+  g.range=90;g.doppler=rows;g.delays=columns;g.channels=2;g.delayMin=-24;
+  g.clutterSamples=samples;value.correlation=64;value.sampleRate=fsHz;
+  value.delayAxis.clear();value.dopplerAxis.clear();
+  for(int c=-24;c<=24;++c)value.delayAxis.push_back(c);
+  for(int r=-8;r<=8;++r)value.dopplerAxis.push_back(r);
+  value.reference.analysisSamples=samples;value.reference.bandwidthHz=64;value.spectrumBins=17;
+  value.detector.integrationCpis=8;
+  value.detector.integrationMotionBins=track_before_detect::encodeMotionBins(0,0,true);
+  value.fusion={blah2::resident::FusionMode::coherentRegularPolygon,12,carrier,.2,0,-1.2566370614359172,-.75,6,{}, {}};
+  rr::test::enable(value);value.replay.frequencyHz=carrier;
+  auto request=experimentConfig();request.spatialCoefficients={1.,0.};request.migrationRates={0.};
+  request.temporal.delayMotionBins=0;request.temporal.dopplerMotionBins=0;
+  request.temporal.minimumCoherence=.99;
+  cr::ExperimentReader reader(request);
+  auto directConfig=request;directConfig.migrationRates.clear();
+  directConfig.temporal.interpolateDelay=true;
+  directConfig.temporal.delayDriftPerHz=track_before_detect::delayDriftPerHz(hop,carrier);
+  Experiment direct(directConfig,true);
+  for(uint64_t sequence=1;sequence<=8;++sequence) {
+    auto snapshot=rr::test::fixture(value,1,{sequence,sequence,1000+sequence});populatePilot(snapshot);
+    auto& bytes=snapshot.blocks.at(uint32_t(rr::BlockKind::channelMaps)-1).bytes;
+    blah2::resident::wire::Writer writer{{bytes.data(),bytes.size()}};
+    for(uint32_t r=0;r<rows;++r)for(uint32_t c=0;c<columns;++c) {
+      const double hz=value.dopplerAxis[r], walk=hz*hop/carrier;
+      const auto z=std::polar(1.,tau*(.125*(value.delayAxis[c]+walk*(sequence-1))+hz*hop*(sequence-1)/fsHz));
+      const auto native=size_t(c)*rows+(r+rows/2+1)%rows;
+      writer.f32(native*8,float(z.real()));writer.f32(native*8+4,float(z.imag()));
+    }
+    const auto path=directory/("fractional-overlap-"+std::to_string(sequence)+".vwrps");
+    write(path,rr::encode(snapshot,value));
+    auto source=sidecar(snapshot,value,9007199254741000ULL+(sequence-1)*hop);
+    source.endSample=source.firstSample+samples;source.sampleRateHz=fsHz;source.tuningHz=uint64_t(carrier);
+    cr::writeSidecarExclusive(path,source);const auto sealed=cr::loadValidatedSnapshot(path);
+    const auto decoded=cr::channelMaps(sealed);
+    const auto migrated=blah2::integration::RangeMigrationReplay::process(decoded[0],fsHz,64,{0.});
+    Experiment::ComplexMap map(rows,migrated.columns),zero(rows,migrated.columns),power(rows,migrated.columns);
+    map.delay.assign(value.delayAxis.begin()+migrated.firstColumn,value.delayAxis.begin()+migrated.firstColumn+migrated.columns);
+    map.doppler.assign(value.dopplerAxis.begin(),value.dopplerAxis.end());
+    zero.delay=power.delay=map.delay;zero.doppler=power.doppler=map.doppler;
+    for(uint32_t r=0;r<rows;++r)for(uint32_t c=0;c<migrated.columns;++c) {
+      map.data[r][c]=migrated.banks[0].cells[size_t(r)*migrated.columns+c];
+      power.data[r][c]={std::norm(map.data[r][c]),0};
+    }
+    Experiment::Frame frame{source.captureEpoch,sequence,source.firstSample,source.endSample,
+      source.tuningHz,source.gainCalibrationEpoch,fsHz,true,true};
+    Experiment::Pilot pilot{frame,0,1.,1.};
+    auto expected=direct.process({&map,&zero},{0,1},frame,pilot,power);
+    const auto actual=reader.appendAll(sealed);const auto& rate=actual[0];
+    check(rate.hopSamples==(sequence==1?0:hop)&&
+      rate.delayDriftPerHz==(sequence==1?0:directConfig.temporal.delayDriftPerHz),
+      "Fractional replay bound CPI span instead of raw hop");
+    const auto cell=size_t(11)*migrated.columns+24-migrated.firstColumn;
+    for(size_t b=0;b<3;++b)if(sequence>=(2u<<b)) {
+      const auto a=rate.result.hybridAt(b,cell),e=expected.hybridAt(b,cell);
+      check(a.coherent&&e.coherent&&std::abs(a.amplitude-e.amplitude)<1e-12,
+        "Overlapping fractional CPU/replay complex paths differ");
+      check(rate.result.banks[b].coherence[cell]>.9999&&
+        std::abs(a.amplitude-std::sqrt(double(2u<<b))*map.data[11][cell%migrated.columns])<.005,
+        "Fractional overlap did not follow .1 bin per hop rather than .2 per span");
+      check(rate.result.noncoherent.banks[b+1].detectorPower[cell]==expected.noncoherent.banks[b+1].detectorPower[cell],
+        "Overlap binding changed canonical nearest-cell power fallback");
+    }
+    if(sequence==8) {
+      auto bad=sealed;bad.sidecar.identity.logicalFrame++;bad.sidecar.identity.generation++;
+      bad.sidecar.identity.consumedSequence++;bad.sidecar.firstSample+=hop+1;bad.sidecar.endSample+=hop+1;
+      rejects([&]{reader.appendAll(bad);},"Changed overlap hop entered immutable rate history");
+    }
+  }
+}
 void fractionalPhase() {
   using Experiment = blah2::integration::DirectPathCoherentExperiment;
   using Complex = Experiment::Complex;
@@ -436,7 +510,7 @@ int main() {
     fractionalMaps(directory);
     hybridReplay(directory);
     composedMigration(directory);
-    fractionalPhase();cachedPhaseParity();cachedPhaseParity(true);cachedPhaseParity(true,-1);phaseGridAndPowerControls();fractionalComplexRange();
+    overlappingFractionalReader(directory);fractionalPhase();cachedPhaseParity();cachedPhaseParity(true);cachedPhaseParity(true,-1);phaseGridAndPowerControls();fractionalComplexRange();
     const auto one=directory/"one.vwrps", two=directory/"two.vwrps", three=directory/"three.vwrps"; write(one,firstBytes); write(two,secondBytes); write(three,thirdBytes);
     rejects([&]{cr::readSidecar(one);}, "missing sidecar accepted");
     cr::writeSidecarExclusive(one,firstSidecar);
@@ -463,7 +537,9 @@ int main() {
       paired.hybridAt(0,0).power == 4.625,
       "Hybrid fallback squared the recorded current-power map");
     auto changedHop=sidecar(third,value,356); cr::writeSidecarExclusive(three,changedHop);
-    const auto hopFallback=reader.append(three); check(hopFallback.powerFallback != nullptr && hopFallback.reason == "lineage_reset", "changed hop did not fall back");
+    rejects([&]{reader.append(three);}, "Changed hop silently rebound immutable replay drift");
+    fs::remove(cr::sidecarPath(three));cr::writeSidecarExclusive(three,sidecar(third,value,228));
+    check(reader.append(three).hybridAt(0,0).valid,"Rejected hop poisoned the retained valid history");
     // A reordered logical frame is also rejected, independently of filenames.
     fs::remove(cr::sidecarPath(two)); auto reordered=sidecar(second,value,164); reordered.identity.logicalFrame=1; cr::writeSidecarExclusive(two,reordered);
     rejects([&]{reader.append(two);}, "reordered sidecar accepted");

@@ -9880,6 +9880,26 @@
         ]
       }
     }
+    ,
+    {
+      "owner": "2026-11-26 offline coherent raw-hop binding review",
+      "purpose": "Bind immutable coherent and canonical power rate histories to the observed raw-sample hop, including overlapping CPI windows, with bounded first-prepared-frame bootstrap storage and explicit hop/drift lineage. Add opt-in stage timing for measured replay optimization; no live owner changes.",
+      "rejected_reuse": "CPI span is not a valid substitute for overlapping-window hop. Mutable mature histories or duplicate fractional math were rejected; the existing engines are seeded once after the second sealed frame establishes the immutable hop.",
+      "cleanup_plan": "Release first-frame bootstrap storage immediately after hop binding, refuse later hop changes, retain overlap fractional-on CPU/replay complex and canonical fallback parity. Timing is disabled by default and is not detector evidence.",
+      "changes": {
+        "context_characters:native-integration": [111481, 114312],
+        "context_characters:operational-tools/contracts": [546465, 548656],
+        "context_characters:production": [7196568, 7199399],
+        "context_dynamic:native-integration": [35, 38],
+        "context_lines:native-integration": [2225, 2270],
+        "context_lines:operational-tools/contracts": [9536, 9572],
+        "context_lines:production": [132990, 133035],
+        "context_tokens:native-integration": [27636, 28278],
+        "context_tokens:operational-tools/contracts": [136970, 137457],
+        "context_tokens:production": [1802918, 1803560],
+        "lines:src": [46619, 46664]
+      }
+    }
   ],
   "context_snapshot": {
     "policy": {

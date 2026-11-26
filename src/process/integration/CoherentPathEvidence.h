@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <complex>
 #include <cstdint>
 #include <deque>
@@ -51,6 +52,7 @@ public:
     // center is the CAF heterodyne range ramp, not a target frequency.
     bool interpolateDelay = false;
     double heterodyneCenterHz = 0;
+    bool measureTiming = false;
   };
 
   struct Bank
@@ -67,6 +69,7 @@ public:
     std::array<uint64_t, 8> firstSamples{};
     uint32_t sampleRateHz = 0;
     uint32_t phaseTrials = 1;
+    double preparationMilliseconds = 0, reductionMilliseconds = 0;
 
     EvidenceLineage lineageAt(uint64_t cell) const
     {
@@ -201,11 +204,17 @@ public:
       }
       for (uint32_t row = 0; row < rows; ++row)
       {
+        const auto started = config_.measureTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         // Phase depends on row/path/age, never on delay column. Cache the
         // rotations once per row rather than calling sin/cos in every cell.
         const auto rotations = phaseRotations(row, bank.depth, history);
         const auto paths = rowPaths(row, bank.depth, history);
+        const auto prepared = config_.measureTiming ? std::chrono::steady_clock::now() : started;
         accumulate(bank, row, paths.paths, rotations);
+        if (config_.measureTiming) {
+          bank.preparationMilliseconds += std::chrono::duration<double, std::milli>(prepared - started).count();
+          bank.reductionMilliseconds += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - prepared).count();
+        }
       }
       bank.map->set_metrics();
     }

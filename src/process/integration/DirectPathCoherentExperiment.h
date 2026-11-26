@@ -303,6 +303,8 @@ public:
     double delayRateBinsPerSecond = 0, heterodyneCenterHz = 0, whiteNoiseGain = 1;
     uint64_t declaredPerCellTrials = 0, combinedPerCellTrials = 0;
     uint32_t correlationSamples = 0;
+    uint64_t hopSamples = 0; // Zero until the second sealed frame locks the hop.
+    double delayDriftPerHz = 0;
     Sidecar source; // Original, uncropped raw sample span and sealed config hash.
     std::optional<DirectPathCoherentExperiment::Pilot> measuredPilot;
     bool rateCorrectedFallback = false;
@@ -333,6 +335,10 @@ private:
   DecodedFrame decode(const ValidatedSnapshot&) const;
   DirectPathCoherentExperiment::Config config_;
   std::vector<std::unique_ptr<DirectPathCoherentExperiment>> experiments_;
+  // First-frame prepared inputs only, released as soon as the immutable raw
+  // hop is known. No raw IQ or upstream rate winner is retained here.
+  std::vector<DecodedFrame> bootstrap_;
+  uint64_t hopSamples_ = 0;
   std::unique_ptr<DirectPathCoherentExperiment::ComplexMap> fallback_;
   std::optional<Sidecar> previous_;
 };
@@ -409,6 +415,8 @@ inline ExperimentReader::DecodedFrame ExperimentReader::decode(const ValidatedSn
   if (previous_) { require(experiment_detail::same(*previous_, sidecar), "Replay coherent lineage identity changed"); require(sidecar.identity.logicalFrame == previous_->identity.logicalFrame + 1 && sidecar.identity.generation == previous_->identity.generation + 1 && sidecar.identity.consumedSequence > previous_->identity.consumedSequence && sidecar.firstSample > previous_->firstSample, "Replay coherent sidecars reordered or discontinuous"); }
   require(config_.migrationRates.empty() || !previous_ || sidecar.firstSample <= previous_->endSample,
     "Migration history cannot cross a raw-IQ gap");
+  require(!previous_ || !hopSamples_ || sidecar.firstSample - previous_->firstSample == hopSamples_,
+    "Replay coherent raw-sample hop changed");
   require(sidecar.endSample > sidecar.firstSample &&
     sidecar.endSample - sidecar.firstSample == config.geometry.clutterSamples &&
     sidecar.sampleRateHz == config.sampleRate &&
@@ -459,11 +467,18 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
       corrected.push_back(RangeMigrationReplay::process(map, validated.sidecar.sampleRateHz,
         config.correlation, config_.migrationRates));
   }
-  if (experiments_.empty()) {
+  const auto motion = track_before_detect::decodeMotionBins(config.detector.integrationMotionBins);
+  const uint64_t observedHop = previous_ ? validated.sidecar.firstSample - previous_->firstSample : 0;
+  require(observedHop <= UINT32_MAX, "Replay coherent sample hop exceeds drift bounds");
+  const double drift = motion.fractionalDelay && observedHop ?
+    track_before_detect::delayDriftPerHz(uint32_t(observedHop), config.temporalCarrierHz()) : 0;
+  const bool bindHop = previous_ && !hopSamples_;
+  if (experiments_.empty() || bindHop) {
     auto bound = config_; bound.migrationRates.clear();
-    const auto motion = track_before_detect::decodeMotionBins(config.detector.integrationMotionBins);
-    bound.temporal.delayDriftPerHz = motion.fractionalDelay ?
-      track_before_detect::delayDriftPerHz(config.geometry.clutterSamples, config.temporalCarrierHz()) : 0;
+    // CPI span is not the hop when capture windows overlap. The first call
+    // has no multi-CPI output; seed final immutable engines once lineage locks
+    // the hop, preserving both complex and canonical nearest-cell histories.
+    bound.temporal.delayDriftPerHz = drift;
     bound.temporal.interpolateDelay = motion.fractionalDelay;
     // Composed migration maps below already remove the complete range ramp.
     // Legacy maps retain it; never de-ramp the same gauge twice.
@@ -471,13 +486,26 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     // A corrected fixed projection has no native selected-beam decisions.
     bound.fallbackBeamCount = migration ? 0 : config.fusion.beams;
     bound.fallbackBeamTolerance = config.detector.integrationBeamTolerance;
-    for (size_t index = 0; index < count; ++index)
-      experiments_.push_back(std::make_unique<DirectPathCoherentExperiment>(bound, true));
+    std::vector<std::unique_ptr<DirectPathCoherentExperiment>> initialized;
+    if (bindHop) require(bootstrap_.size() == count, "Replay coherent first-frame bootstrap unavailable");
+    for (size_t index = 0; index < count; ++index) {
+      auto engine = std::make_unique<DirectPathCoherentExperiment>(bound, true);
+      if (bindHop) {
+        auto& first = bootstrap_[index];
+        std::vector<DirectPathCoherentExperiment::ComplexMap*> pointers;
+        for (auto& map : first.maps) pointers.push_back(&map);
+        engine->process(pointers, config.surveillanceChannels, first.frame, first.pilot,
+          *first.power, migration ? nullptr : &first.beams);
+      }
+      initialized.push_back(std::move(engine));
+    }
+    experiments_ = std::move(initialized);
   }
   std::vector<RateResult> results;
   try { for (size_t index = 0; index < count; ++index) {
     RateResult item; item.rateIndex = uint32_t(index); item.source = validated.sidecar;
     item.measuredPilot = decoded.pilot;
+    item.hopSamples = observedHop; item.delayDriftPerHz = drift;
     item.correlationSamples = config.correlation; item.rateCorrectedFallback = migration;
     auto maps = migration ? std::vector<DirectPathCoherentExperiment::ComplexMap>{} : std::move(decoded.maps);
     if (migration) {
@@ -510,6 +538,13 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
     for (auto& map : maps) pointers.push_back(&map);
     item.result = experiments_[index]->process(pointers, config.surveillanceChannels, decoded.frame,
       decoded.pilot, *item.fallback, migration ? nullptr : &item.recordedBeams);
+    if (!previous_) {
+      require(item.result.sourceCount == 1, "Replay coherent first-frame input rejected");
+      DecodedFrame first; first.maps = std::move(maps);
+      first.power = std::make_unique<DirectPathCoherentExperiment::ComplexMap>(*item.fallback);
+      first.beams = item.recordedBeams; first.frame = decoded.frame; first.pilot = decoded.pilot;
+      bootstrap_.push_back(std::move(first));
+    }
     // Native fallback may already maximize over recorded beams; corrected
     // fallback uses the declared fixed spatial hypothesis instead.
     const uint64_t fallbackSpatialTrials = migration ? config_.declaredSpatialTrials : std::max(1u, config.fusion.beams);
@@ -519,7 +554,8 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
       (2u * config_.temporal.dopplerMotionBins + 1u) * fallbackSpatialTrials;
     item.combinedPerCellTrials = count * item.declaredPerCellTrials;
     results.push_back(std::move(item));
-  }} catch (...) { experiments_.clear(); throw; }
+  }} catch (...) { experiments_.clear(); bootstrap_.clear(); throw; }
+  if (bindHop) { hopSamples_ = observedHop; bootstrap_.clear(); }
   previous_ = validated.sidecar;
   return results;
 }

@@ -198,6 +198,15 @@ nearest-cell contract is unchanged. Direct complex inputs specify their
 remaining heterodyne range ramp; the composed reader supplies zero after its
 existing complete de-ramp, preventing a double correction.
 
+The reader derives inter-CPI drift from the locked raw-sample **hop**, not the
+CPI span. Until the second sealed frame establishes that hop, it retains only
+the first prepared maps, fallback and pilot. It then seeds the immutable rate
+engines and releases this bounded bootstrap storage. The first call remains
+warm-up; a later hop change is refused. Rate results expose both the hop and
+the bound drift coefficient. Fractional-on overlapping-window regressions
+compare complex 2/4/8-CPI output and canonical nearest-cell fallback against
+the direct CPU owner, including sample counters above `2^53`.
+
 Calibration-only continuous-IQ injections localized three distinct failures:
 missing temporal drift in the development harness, under-resolved residual
 phase trials, and nearest-cell discontinuities on a moving complex path.
