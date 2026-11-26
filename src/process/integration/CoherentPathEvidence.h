@@ -87,7 +87,7 @@ public:
 
   std::array<Bank, 3> process(Map<std::complex<double>>& map, uint64_t epoch,
     uint64_t sequence, uint64_t firstSample, uint32_t sampleRateHz,
-    const std::vector<uint32_t>* beams = nullptr)
+    const std::vector<uint32_t>* beams = nullptr, uint64_t endSample = 0)
   {
     const uint32_t rows = map.get_nRows(), columns = map.get_nCols();
     if (!rows || !columns || map.data.size() != rows ||
@@ -118,7 +118,9 @@ public:
       track_before_detect::validateDelayDrift(config_.delayDriftPerHz,
         std::vector<double>(map.doppler.begin(), map.doppler.end()));
     }
-    Frame frame{epoch, sequence, firstSample, sampleRateHz,
+    if (endSample && endSample <= firstSample)
+      throw std::invalid_argument("Coherent temporal evidence sample range invalid");
+    Frame frame{epoch, sequence, firstSample, endSample, sampleRateHz,
       std::vector<std::complex<double>>(uint64_t(rows) * columns),
       config_.beamCount ? *beams : std::vector<uint32_t>{}};
     for (uint32_t row = 0; row < rows; ++row)
@@ -174,7 +176,7 @@ public:
   }
 
 private:
-  struct Frame { uint64_t epoch, sequence, firstSample; uint32_t sampleRateHz;
+  struct Frame { uint64_t epoch, sequence, firstSample, endSample; uint32_t sampleRateHz;
     std::vector<std::complex<double>> cells; std::vector<uint32_t> beams; };
 
   bool validHop(uint64_t hop, uint32_t sampleRateHz) const
@@ -219,7 +221,12 @@ private:
     result.newestSequence = frames_.back().sequence; result.depth = uint8_t(depth);
     result.delayMotion = int8_t(delay); result.dopplerMotion = int8_t(doppler);
     for (uint32_t age = 0; age < depth; ++age)
-      result.sequences[age] = frames_[frames_.size() - 1 - age].sequence;
+    {
+      const auto& frame = frames_[frames_.size() - 1 - age];
+      result.sequences[age] = frame.sequence;
+      result.firstSamples[age] = frame.firstSample;
+      result.endSamples[age] = frame.endSample;
+    }
     return result;
   }
 

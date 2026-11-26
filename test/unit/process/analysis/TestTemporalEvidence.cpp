@@ -393,6 +393,24 @@ TEST_CASE("confirmation ledger rejects replayed and malformed lineage")
   REQUIRE_FALSE(ledger.credit("other", malformed));
 }
 
+TEST_CASE("confirmation ledger rejects overlapping raw sample lineage")
+{
+  blah2::integration::ConfirmationLedger ledger;
+  blah2::integration::EvidenceLineage first;
+  first.epoch = 1; first.newestSequence = 2; first.depth = 2;
+  first.sequences[0] = 2; first.sequences[1] = 1;
+  first.firstSamples[0] = 80; first.endSamples[0] = 160;
+  first.firstSamples[1] = 0; first.endSamples[1] = 80;
+  REQUIRE(ledger.credit("track", first));
+  auto overlapping = first;
+  overlapping.newestSequence = 4; overlapping.sequences[0] = 4; overlapping.sequences[1] = 3;
+  overlapping.firstSamples[0] = 200; overlapping.endSamples[0] = 280;
+  overlapping.firstSamples[1] = 140; overlapping.endSamples[1] = 220;
+  REQUIRE_FALSE(ledger.credit("track", overlapping));
+  overlapping.firstSamples[1] = 160; overlapping.endSamples[1] = 200;
+  REQUIRE(ledger.credit("track", overlapping));
+}
+
 TEST_CASE("temporal evidence matches mature GPU bank selection")
 {
   blah2::integration::TemporalEvidence engine;

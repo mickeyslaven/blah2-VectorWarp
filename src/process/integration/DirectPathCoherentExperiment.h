@@ -70,20 +70,33 @@ public:
     Cell hybridAt(std::size_t bank, uint64_t cell) const {
       if (bank >= banks.size()) return {};
       const auto& fallback = noncoherent.banks[bank + 1];
-      const auto lineage = fallback.lineageAt(cell);
-      if (!lineage.depth) return {};
-      const auto columns = fallback.map->get_nCols();
       if (!usePowerFallback(bank, cell)) {
         const auto coherentLineage = banks[bank].lineageAt(cell);
+        if (!coherentLineage.depth) return {};
+        const auto columns = banks[bank].map->get_nCols();
         const auto value = banks[bank].map->data[cell / columns][cell % columns];
         const double power = std::norm(value);
-        if (coherentLineage.epoch == lineage.epoch &&
-            coherentLineage.sequences == lineage.sequences && std::isfinite(power))
+        if (std::isfinite(power))
           return {value, power, coherentLineage, true, true};
       }
+      auto lineage = fallback.lineageAt(cell);
+      if (!lineage.depth) return {};
+      attachRanges(lineage);
+      const auto columns = fallback.map->get_nCols();
       return {fallback.map->data[cell / columns][cell % columns],
         fallback.detectorPower[cell], lineage, false, true};
     }
+  private:
+    void attachRanges(EvidenceLineage& lineage) const {
+      for (uint32_t index = 0; index < lineage.depth; ++index)
+        for (uint32_t source = 0; source < sourceCount; ++source)
+          if (sources[source].sequence == lineage.sequences[index]) {
+            lineage.firstSamples[index] = sources[source].firstSample;
+            lineage.endSamples[index] = sources[source].endSample;
+            break;
+          }
+    }
+  public:
   };
 
   DirectPathCoherentExperiment(Config config, bool replayInput)
@@ -236,7 +249,7 @@ public:
       }
     try {
       result.banks = coherent_.process(spatial, frame.captureEpoch, frame.sequence,
-        frame.firstSample, frame.sampleRateHz);
+        frame.firstSample, frame.sampleRateHz, nullptr, frame.endSample);
     } catch (const std::invalid_argument&) {
       return phaseFail("coherent_lineage_or_numeric_rejection");
     }

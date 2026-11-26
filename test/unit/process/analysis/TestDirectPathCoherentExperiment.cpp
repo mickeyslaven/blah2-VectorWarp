@@ -313,6 +313,34 @@ TEST_CASE("hybrid fallback obeys canonical beam compatibility and phase loss",
   }
 }
 
+TEST_CASE("hybrid prefers a valid fixed-spatial coherent path over an incompatible fallback beam",
+  "[direct-path-experiment]") {
+  auto config = experimentConfig(); config.temporal.maximumCpis = 2;
+  config.fallbackBeamCount = 4; config.fallbackBeamTolerance = 0;
+  Experiment engine(config, true);
+  auto first = oneCell(), second = oneCell(), fallback = oneCell();
+  Experiment::Result result;
+  for (uint64_t sequence = 1; sequence <= 2; ++sequence) {
+    first.data[0][0] = 1; second.data[0][0] = Complex{0, 1}; fallback.data[0][0] = 3;
+    // The canonical power bank must reject this beam switch, while the fixed
+    // spatial phasor remains a complete coherent path.
+    std::vector<uint32_t> beams{uint32_t(sequence)};
+    result = engine.process({&first, &second}, {7, 2}, lineage(sequence),
+      pilot(lineage(sequence), 0), fallback, &beams);
+  }
+  const auto cell = result.hybridAt(0, 0);
+  REQUIRE(cell.valid); REQUIRE(cell.coherent);
+  REQUIRE(cell.lineage.firstSamples == std::array<uint64_t, 8>{8, 0, 0, 0, 0, 0, 0, 0});
+  REQUIRE(cell.lineage.endSamples == std::array<uint64_t, 8>{16, 8, 0, 0, 0, 0, 0, 0});
+}
+
+TEST_CASE("two-CPI beam-gated fallback remains a valid declared replay plan",
+  "[direct-path-experiment]") {
+  auto config = experimentConfig(); config.temporal.maximumCpis = 2;
+  config.fallbackBeamCount = 4; config.fallbackBeamTolerance = 0;
+  REQUIRE_NOTHROW(Experiment(config, true));
+}
+
 TEST_CASE("hybrid fractional delay motion shares canonical path geometry",
   "[direct-path-experiment]") {
   auto config = experimentConfig(); config.temporal.delayDriftPerHz = -.5;

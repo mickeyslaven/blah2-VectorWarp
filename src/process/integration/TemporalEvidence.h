@@ -29,6 +29,10 @@ struct EvidenceLineage
   int8_t delayMotion = 0;
   int8_t dopplerMotion = 0;
   std::array<uint64_t, 8> sequences{};
+  // Exact raw-capture intervals when the producer has them.  Generic
+  // temporal evidence may leave these zero, but a replay adapter must carry
+  // them so confirmation cannot treat overlapping raw IQ as independent CPIs.
+  std::array<uint64_t, 8> firstSamples{}, endSamples{};
 
   std::vector<uint64_t> supportSequences() const
   {
@@ -90,7 +94,24 @@ public:
           return state.credited.count(sequence) != 0;
         }))
       return false;
+    const bool hasRanges = lineage.firstSamples[0] || lineage.endSamples[0];
+    if (hasRanges)
+    {
+      for (uint32_t index = 0; index < lineage.depth; ++index)
+      {
+        const auto first = lineage.firstSamples[index];
+        const auto end = lineage.endSamples[index];
+        if (end <= first) return false;
+        for (const auto& prior : state.ranges)
+          if (first < prior.end && prior.first < end) return false;
+      }
+    }
     state.credited.insert(support.begin(), support.end());
+    if (hasRanges)
+      for (uint32_t index = 0; index < lineage.depth; ++index)
+        state.ranges.push_back({lineage.sequences[index], lineage.firstSamples[index], lineage.endSamples[index]});
+    state.ranges.erase(std::remove_if(state.ranges.begin(), state.ranges.end(),
+      [&](const State::Range& range) { return range.sequence < floor; }), state.ranges.end());
     state.highWaterSequence = lineage.newestSequence;
     return true;
   }
@@ -105,6 +126,8 @@ private:
     uint64_t highWaterSequence = 0;
     bool initialized = false;
     std::unordered_set<uint64_t> credited;
+    struct Range { uint64_t sequence, first, end; };
+    std::vector<Range> ranges;
   };
   std::size_t maximumTracks_;
   uint64_t historyCpis_;
@@ -184,7 +207,7 @@ public:
         config_.delayMotionBins > 2 || config_.dopplerMotionBins > 16 ||
         !std::isfinite(config_.delayDriftPerHz) || config_.delayDriftPerHz > 0 ||
         (config_.beamTolerance != UINT32_MAX && (!config_.beamCount ||
-          config_.beamTolerance > config_.beamCount / 2 || config_.maximumCpis == 2)))
+          config_.beamTolerance > config_.beamCount / 2)))
       throw std::invalid_argument("Temporal evidence configuration invalid");
   }
 
