@@ -282,6 +282,18 @@ tails, unknown availability, and changed lineage refuse without seed retries,
 extra fitting windows, or threshold relaxation. This is a development-resolution
 experiment, not precise 5% or rare-tail RF false-alarm qualification.
 
+A separate frozen positive oracle uses seed `0x248d`, unit echo amplitude,
+zero surveillance noise, an available pilot, and a disjoint raw window after
+E's reserved intervals. Its signal follows the same prescribed delay trajectory
+and physical off-bin Doppler. The terminal canonical CAF power at the fixed
+delay-32 / -5-Hz readout must exceed each fixed wrong-range (delay 48) and
+wrong-Doppler (+5 Hz) control by a factor of four. After A/B freeze, a copy of
+the calibrated selector must detect this oracle at the unchanged alpha. It
+consumes no E exposure and changes neither tables nor weak-arm observations.
+The receipt records the oracle's IQ hash, controls, decision and winning lineage.
+This prevents a silent no-response pipeline from passing on low null counts;
+it is a positive mechanism check, not evidence of improved weak-signal Pd.
+
 The JSONL receipt contains the frozen generator/plan/selector/binary hashes,
 A/B score hashes, ordered consumed-IQ hashes, per-family availability and
 refusal counts, paired decisions, full winning raw intervals above `2^53`,
@@ -294,8 +306,8 @@ receipt must accompany the executable hash. Timing is whole-run diagnostic
 cost, not CPI deadline acceptance.
 
 Build target `testCoherentFamilyAcceptance`. CTest
-`coherentFamilyCanonicalFixture` runs a three-window ingress, missing-pilot,
-source-support and weak-injection regression; `coherentFamilySyntheticAcceptance`
+`coherentFamilyCanonicalFixture` runs a four-window ingress, missing-pilot,
+source-support, weak-injection and noiseless-CAF regression; `coherentFamilySyntheticAcceptance`
 runs the complete frozen experiment (labelled `offline;extended`, one CPU
 thread, 900-second outer timeout). Run the full experiment only under a bounded
 compute admission and retain stdout outside the source tree. The quick fixture

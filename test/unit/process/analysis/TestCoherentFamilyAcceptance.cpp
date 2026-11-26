@@ -26,7 +26,7 @@ constexpr std::array<double, 4> amplitudes{0, .025, .05, .1};
 // Versioned generator identity freezes every draw, readout, availability and
 // acceptance choice. Source/executable hashes remain necessary reproduction pins.
 const std::string generator =
-  "canonical-iq-selector-v1 mt19937_64 seeds=0x248a,0x248b,0x248c "
+  "canonical-iq-selector-v2 mt19937_64 seeds=0x248a,0x248b,0x248c "
   "window-seed=split-seed+0x9e3779b97f4a7c15*index uniform=((rng>>11)+.5)*2^-53 "
   "reference=64-unit-random-phase-tones f=-.45+.9*(k+.5)/64 noise=complex-BoxMuller-unit-power "
   "delay=32+.5*(n-(7*samples+(samples-1)/2))/fs doppler=-carrier*.5/fs "
@@ -35,6 +35,9 @@ const std::string generator =
   "depths=2,4,8 phase-trials=4,8,16 motion=1,1 source-domain=delay>=18,abs(hz)>=2 "
   "coherence-pre-gate=0 fractional-delay=true row=-5Hz readouts=32,18 "
   "A=512 B=128 E=128 alpha=.05 amplitudes=0,.025,.05,.1 paired-noise "
+  "positive-oracle=seed0x248d,index0,window768,amplitude1,zero-noise,pilot-present "
+  "oracle-terminal-CAF=(delay32,hz-5)>4x-each-control(delay48,hz-5),(delay32,hz5) "
+  "oracle-requires-selector18-response-after-frozen-A/B separate-from-E "
   "null-exceedance-limit=20/128 Wilson95 per-readout-per-window no-cell-search "
   "unavailable=omit-known-mask boundary-missing-stratum=refuse no-seed-retries";
 
@@ -124,6 +127,7 @@ struct MeasuredWindow {
   Selector::Observation interior, boundary;
   std::string iqSha256;
   double currentCpiZeroRatePower = 0;
+  std::array<double, 3> terminalCafPowers{}; // Fixed target, wrong range, wrong Doppler.
 };
 
 // Synthetic ingress only: the canonical Ambiguity owner produces the channel
@@ -148,6 +152,7 @@ public:
     auto request = plan.experiment; request.migrationRates.assign(plan.rates.begin(), plan.rates.end());
     cr::ExperimentReader reader(request); blah2::Sha256 iqHash;
     std::vector<cr::ExperimentReader::RateResult> results;
+    std::array<double, 3> terminalCafPowers{};
     const auto writer = [&](rr::BlockKind kind) {
       auto& bytes = fixture_.snapshot.blocks.at(uint32_t(kind) - 1).bytes;
       return blah2::resident::wire::Writer{{bytes.data(), bytes.size()}};
@@ -166,6 +171,8 @@ public:
         ref.f64(n * 16, x.real()); ref.f64(n * 16 + 8, x.imag());
       }
       const auto caf = ambiguity_.process(reference, &surveillance);
+      if (cpi == 7) terminalCafPowers = {std::norm(caf->data[11][32]),
+        std::norm(caf->data[11][48]), std::norm(caf->data[21][32])};
       auto maps = writer(rr::BlockKind::channelMaps);
       // Channel zero is pilot-only and has zero projection coefficient.
       for (uint32_t row = 0; row < rows; ++row) for (uint32_t col = 0; col < columns; ++col) {
@@ -190,7 +197,7 @@ public:
       origin + uint64_t(id + 1) * windowSamples};
     MeasuredWindow measured{interior.readout(inputs, window, interior.contractSha256()),
       boundary.readout(inputs, window, boundary.contractSha256()), iqHash.finish(),
-      results[0].fallback->data[plan.row][plan.column].real()};
+      results[0].fallback->data[plan.row][plan.column].real(), terminalCafPowers};
     for (uint32_t i = 0; i < 18; ++i) {
       const auto& f = measured.interior.families[i];
       require(f.available == (i < 9 || !missingPilot), "Unexpected interior family availability");
@@ -204,6 +211,20 @@ public:
     return measured;
   }
 };
+MeasuredWindow positiveOracle(CanonicalFixture& fixture, const Selector::Contract& plan,
+    const Selector& selector, const Selector& boundary) {
+  // A prescribed positive control, never a fitted/calibration/E observation.
+  // Its delay trajectory and physical Doppler are the same frozen signal model;
+  // only the independent reference seed, unit amplitude and zero noise differ.
+  IqWindow iq(0x248d, 0); std::fill(iq.noise.begin(), iq.noise.end(), Complex{});
+  auto measured = fixture.run(iq, fitWindows + jointWindows + evaluationWindows,
+    false, 1., plan, selector, boundary);
+  require(measured.terminalCafPowers[0] > 0 &&
+    measured.terminalCafPowers[0] > 4 * measured.terminalCafPowers[1] &&
+    measured.terminalCafPowers[0] > 4 * measured.terminalCafPowers[2],
+    "Noiseless prescribed target did not reach its fixed canonical CAF readout");
+  return measured;
+}
 struct Counts {
   uint32_t windows = 0, candidate = 0, nc = 0, candidateOnly = 0, ncOnly = 0;
   std::array<uint32_t, 18> available{}, unavailable{};
@@ -290,8 +311,11 @@ int main(int argc, char** argv) {
       require(full.iqSha256 != injected.iqSha256 &&
         full.interior.families[0].raw.power != injected.interior.families[0].raw.power,
         "Paired weak injection did not reach canonical radar processing");
+      const auto oracle = positiveOracle(fixture, plan, selector, boundary);
       record([&](Json& j) { text(j, "kind", "fixture_pass"); text(j, "null_iq_sha256", full.iqSha256);
-        text(j, "injected_iq_sha256", injected.iqSha256); j.Key("unexpected_refusals"); j.Uint(0); });
+        text(j, "injected_iq_sha256", injected.iqSha256); text(j, "positive_oracle_iq_sha256", oracle.iqSha256);
+        j.Key("positive_oracle_terminal_caf_power"); j.Double(oracle.terminalCafPowers[0]);
+        j.Key("unexpected_refusals"); j.Uint(0); });
       return 0;
     }
     Counts fitCounts, jointCounts, boundaryCounts; blah2::Sha256 fitIq, jointIq;
@@ -323,6 +347,28 @@ int main(int argc, char** argv) {
     selector.freezeJoint();
     record([&](Json& j) { text(j, "kind", "joint"); text(j, "calibration_sha256", selector.calibrationSha256());
       text(j, "ordered_iq_hashes_sha256", jointIq.finish()); counts(j, jointCounts); });
+    stage = "positive_oracle";
+    // Evaluate on a copy so this separate control consumes no E exposure and
+    // cannot change either frozen table or the paired weak-arm state.
+    auto oracleSelector = selector;
+    const auto oracle = positiveOracle(fixture, plan, oracleSelector, boundary);
+    const auto oracleDecision = oracleSelector.evaluate(oracle.interior);
+    record([&](Json& j) {
+      text(j, "kind", "positive_oracle"); text(j, "iq_sha256", oracle.iqSha256);
+      text(j, "calibration_sha256", oracleDecision.calibrationSha256);
+      integer(j, "first_sample", oracleDecision.window.firstSample); integer(j, "end_sample", oracleDecision.window.endSample);
+      j.Key("amplitude"); j.Double(1.); j.Key("noise_power"); j.Double(0.);
+      j.Key("terminal_caf_powers_target_wrong_range_wrong_doppler"); j.StartArray();
+      for (double power : oracle.terminalCafPowers) j.Double(power);
+      j.EndArray();
+      j.Key("selector18_p"); j.Double(oracleDecision.candidateP);
+      j.Key("selector18_detected"); j.Bool(oracleDecision.candidateDetected);
+      j.Key("nc9_p"); j.Double(oracleDecision.noncoherentP);
+      j.Key("nc9_detected"); j.Bool(oracleDecision.noncoherentDetected);
+      winner(j, "selector18_winner", oracleDecision.candidate); winner(j, "nc9_winner", oracleDecision.noncoherent);
+    });
+    require(oracleDecision.candidateDetected,
+      "Frozen selector did not detect the separate noiseless positive control");
     // Each amplitude gets the SAME frozen tables and exact same evaluation raw
     // intervals/noise. Copies do not pool paired arms into independent draws.
     std::array<Selector, amplitudes.size()> arms{selector, selector, selector, selector};
