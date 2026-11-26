@@ -125,7 +125,7 @@ TEST_CASE("mixed temporal suppression preserves strong fresh evidence and weak d
       REQUIRE(tracks->get_n() == 1);
       REQUIRE(tracks->get_current(0).get_evidence().front().depth == (test.fresh ? 1 : 4));
     }
-  Detection weak({16}, {0}, {6}); weak.set_evidence({{29,8,1,0,0,0,{8}}});
+  Detection weak(16, 0, 6); weak.set_evidence({{29,8,1,0,0,0,{8}}});
   Tracker tracker(2,9,20,1,0,100,2,5); tracker.configureMaximumEvidenceDepth(4);
   REQUIRE(tracker.process(&weak,8000)->get_n() == 0); // Gate is not relaxed.
 }
