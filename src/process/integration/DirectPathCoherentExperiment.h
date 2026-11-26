@@ -2,6 +2,7 @@
 
 #include "process/integration/CoherentPathEvidence.h"
 #include "process/integration/DirectPathCoherentReplay.h"
+#include "process/integration/RangeMigrationReplay.h"
 #include "process/ambiguity/GpuResidentWire.h"
 
 #include <optional>
@@ -27,6 +28,7 @@ public:
     uint64_t maximumCells = 65536;
     double minimumPilotCoherence = .25; // Squared normalized correlation.
     uint32_t fallbackBeamCount = 0, fallbackBeamTolerance = UINT32_MAX;
+    std::vector<double> migrationRates; // Reader-only immutable intra-CPI trials.
   };
   struct Frame {
     uint64_t captureEpoch = 0, sequence = 0;
@@ -104,7 +106,7 @@ public:
       noncoherent_({config_.temporal.maximumCpis, config_.temporal.delayMotionBins,
         config_.temporal.dopplerMotionBins, config_.temporal.delayDriftPerHz,
         config_.fallbackBeamCount, config_.fallbackBeamTolerance}) {
-    if (!replayInput)
+    if (!replayInput || !config_.migrationRates.empty())
       throw std::invalid_argument("Direct-path coherent experiment is replay-only");
     if (config_.channelIds.empty() || config_.channelIds.size() > 8 ||
         config_.spatialCoefficients.size() != config_.channelIds.size() ||
@@ -296,12 +298,40 @@ inline std::vector<DirectPathCoherentExperiment::ComplexMap> channelMaps(const V
 // CPU-only parser and adapter.  No detector/PFA state is accepted or emitted.
 class ExperimentReader {
 public:
+  struct RateResult {
+    uint32_t rateIndex = 0, firstColumn = 0;
+    double delayRateBinsPerSecond = 0, heterodyneCenterHz = 0, whiteNoiseGain = 1;
+    uint64_t declaredPerCellTrials = 0, combinedPerCellTrials = 0;
+    uint32_t correlationSamples = 0;
+    Sidecar source; // Original, uncropped raw sample span and sealed config hash.
+    bool rateCorrectedFallback = false;
+    // Recorded native beam choices on the common crop, retained as provenance.
+    // Migration fallback is one fixed spatial projection, not these choices.
+    std::vector<uint32_t> recordedBeams;
+    std::unique_ptr<DirectPathCoherentExperiment::ComplexMap> fallback;
+    DirectPathCoherentExperiment::Result result;
+    RateResult() = default;
+    RateResult(RateResult&&) = default;
+    RateResult& operator=(RateResult&&) = default;
+    RateResult(const RateResult&) = delete;
+    RateResult& operator=(const RateResult&) = delete;
+  };
   explicit ExperimentReader(DirectPathCoherentExperiment::Config);
   DirectPathCoherentExperiment::Result append(const std::filesystem::path& snapshot);
   DirectPathCoherentExperiment::Result append(const ValidatedSnapshot& snapshot);
+  std::vector<RateResult> appendAll(const std::filesystem::path& snapshot);
+  std::vector<RateResult> appendAll(const ValidatedSnapshot& snapshot);
 private:
+  struct DecodedFrame {
+    std::vector<DirectPathCoherentExperiment::ComplexMap> maps;
+    std::unique_ptr<DirectPathCoherentExperiment::ComplexMap> power;
+    std::vector<uint32_t> beams;
+    DirectPathCoherentExperiment::Frame frame;
+    std::optional<DirectPathCoherentExperiment::Pilot> pilot;
+  };
+  DecodedFrame decode(const ValidatedSnapshot&) const;
   DirectPathCoherentExperiment::Config config_;
-  std::unique_ptr<DirectPathCoherentExperiment> experiment_;
+  std::vector<std::unique_ptr<DirectPathCoherentExperiment>> experiments_;
   std::unique_ptr<DirectPathCoherentExperiment::ComplexMap> fallback_;
   std::optional<Sidecar> previous_;
 };
@@ -342,7 +372,17 @@ inline DirectPathCoherentExperiment::ComplexMap channelMap(const resident_replay
 }
 }
 inline ExperimentReader::ExperimentReader(DirectPathCoherentExperiment::Config config)
-  : config_(std::move(config)) {}
+  : config_(std::move(config)) {
+  if (!config_.migrationRates.empty()) {
+    require(config_.migrationRates.size() <= RangeMigrationReplay::maximumTrials &&
+      std::find(config_.migrationRates.begin(), config_.migrationRates.end(), 0.) != config_.migrationRates.end(),
+      "Migration rates require a bounded bank including zero");
+    for (size_t i = 0; i < config_.migrationRates.size(); ++i)
+      require(std::isfinite(config_.migrationRates[i]) &&
+        std::find(config_.migrationRates.begin(), config_.migrationRates.begin() + i, config_.migrationRates[i]) == config_.migrationRates.begin() + i,
+        "Migration rates must be finite and unique");
+  }
+}
 inline DirectPathCoherentExperiment::Result ExperimentReader::append(const std::filesystem::path& path) {
   return append(loadValidatedSnapshot(path));
 }
@@ -354,39 +394,43 @@ inline std::vector<DirectPathCoherentExperiment::ComplexMap> channelMaps(const V
   return result;
 }
 inline DirectPathCoherentExperiment::Result ExperimentReader::append(const ValidatedSnapshot& validated) {
+  require(config_.migrationRates.empty(), "Migration requires appendAll; upstream rate winners are forbidden");
+  auto all = appendAll(validated);
+  fallback_ = std::move(all.front().fallback);
+  return std::move(all.front().result);
+}
+inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(const std::filesystem::path& path) {
+  return appendAll(loadValidatedSnapshot(path));
+}
+inline ExperimentReader::DecodedFrame ExperimentReader::decode(const ValidatedSnapshot& validated) const {
   const auto& sidecar = validated.sidecar; const auto& config = validated.config;
   const auto& snapshot = validated.snapshot;
   if (previous_) { require(experiment_detail::same(*previous_, sidecar), "Replay coherent lineage identity changed"); require(sidecar.identity.logicalFrame == previous_->identity.logicalFrame + 1 && sidecar.identity.generation == previous_->identity.generation + 1 && sidecar.identity.consumedSequence > previous_->identity.consumedSequence && sidecar.firstSample > previous_->firstSample, "Replay coherent sidecars reordered or discontinuous"); }
-  if (!experiment_) {
-    // Physical motion geometry and fallback beam compatibility come from the
-    // sealed radar plan. The experiment declares only its depth/search bounds.
-    auto bound = config_;
-    const auto motion = track_before_detect::decodeMotionBins(config.detector.integrationMotionBins);
-    bound.temporal.delayDriftPerHz = motion.fractionalDelay ?
-      track_before_detect::delayDriftPerHz(config.geometry.clutterSamples, config.temporalCarrierHz()) : 0;
-    bound.fallbackBeamCount = config.fusion.beams;
-    bound.fallbackBeamTolerance = config.detector.integrationBeamTolerance;
-    experiment_ = std::make_unique<DirectPathCoherentExperiment>(std::move(bound), true);
-  }
-  auto maps = channelMaps(validated); std::vector<DirectPathCoherentExperiment::ComplexMap*> mapPointers;
-  mapPointers.reserve(maps.size()); for (auto& map : maps) mapPointers.push_back(&map);
-  fallback_ = std::make_unique<DirectPathCoherentExperiment::ComplexMap>(config.geometry.doppler, config.geometry.delays);
-  fallback_->delay.assign(config.delayAxis.begin(), config.delayAxis.end());
-  fallback_->doppler.assign(config.dopplerAxis.begin(), config.dopplerAxis.end());
+  require(config_.migrationRates.empty() || !previous_ || sidecar.firstSample <= previous_->endSample,
+    "Migration history cannot cross a raw-IQ gap");
+  require(sidecar.endSample > sidecar.firstSample &&
+    sidecar.endSample - sidecar.firstSample == config.geometry.clutterSamples &&
+    sidecar.sampleRateHz == config.sampleRate &&
+    sidecar.identity.configHash == resident::wire::configHash(config), "Replay raw span or configuration lineage differs");
+  require(config.surveillanceChannels == config_.channelIds, "Replay spatial channel identity differs");
+  DecodedFrame decoded; decoded.maps = channelMaps(validated);
+  decoded.power = std::make_unique<DirectPathCoherentExperiment::ComplexMap>(config.geometry.doppler, config.geometry.delays);
+  decoded.power->delay.assign(config.delayAxis.begin(), config.delayAxis.end());
+  decoded.power->doppler.assign(config.dopplerAxis.begin(), config.dopplerAxis.end());
   const auto& currentPower = snapshot.blocks.at(
     uint32_t(resident_replay::BlockKind::currentPower) - 1).bytes;
   const Reader powerReader{{currentPower.data(), currentPower.size()}};
   const auto& fused = snapshot.blocks.at(uint32_t(resident_replay::BlockKind::fused) - 1).bytes;
   const Reader fusedReader{{fused.data(), fused.size()}};
-  std::vector<uint32_t> beams(size_t(config.geometry.doppler) * config.geometry.delays);
+  decoded.beams.resize(size_t(config.geometry.doppler) * config.geometry.delays);
   for (uint32_t row = 0; row < config.geometry.doppler; ++row)
     for (uint32_t column = 0; column < config.geometry.delays; ++column) {
       const size_t cell = size_t(row) * config.geometry.delays + column;
-      fallback_->data[row][column] = DirectPathCoherentExperiment::Complex(
+      decoded.power->data[row][column] = DirectPathCoherentExperiment::Complex(
         powerReader.f64(cell * 8), 0);
-      beams[cell] = config.fusion.beams ? uint32_t(fusedReader.f64(cell * 16 + 8)) + 1 : 0;
+      decoded.beams[cell] = config.fusion.beams ? uint32_t(fusedReader.f64(cell * 16 + 8)) + 1 : 0;
     }
-  const DirectPathCoherentExperiment::Frame frame{sidecar.captureEpoch,sidecar.identity.logicalFrame,sidecar.firstSample,sidecar.endSample,sidecar.tuningHz,sidecar.gainCalibrationEpoch,sidecar.sampleRateHz,true,true};
+  decoded.frame = {sidecar.captureEpoch,sidecar.identity.logicalFrame,sidecar.firstSample,sidecar.endSample,sidecar.tuningHz,sidecar.gainCalibrationEpoch,sidecar.sampleRateHz,true,true};
   const auto anchor = std::find(config.surveillanceChannels.begin(), config.surveillanceChannels.end(), config_.anchorChannelId);
   require(anchor != config.surveillanceChannels.end(), "Replay experiment anchor channel unavailable");
   const auto anchorIndex = size_t(std::distance(config.surveillanceChannels.begin(), anchor));
@@ -395,9 +439,80 @@ inline DirectPathCoherentExperiment::Result ExperimentReader::append(const Valid
   const auto samples = config.geometry.clutterSamples; require(raw.size() == size_t(samples) * config.geometry.channels * 16 && reference.size() == size_t(samples) * 16, "Replay IQ pilot layout differs");
   const Reader rawReader{{raw.data(), raw.size()}}, referenceReader{{reference.data(), reference.size()}}; std::vector<DirectPathCoherentExperiment::Complex> pilotReference(samples), pilotAnchor(samples);
   for (uint32_t sample = 0; sample < samples; ++sample) { pilotReference[sample] = {referenceReader.f64(size_t(sample) * 16), referenceReader.f64(size_t(sample) * 16 + 8)}; const size_t offset = (anchorIndex * size_t(samples) + sample) * 16; pilotAnchor[sample] = {rawReader.f64(offset), rawReader.f64(offset + 8)}; }
-  auto result = experiment_->process(mapPointers, config.surveillanceChannels, frame,
-    DirectPathCoherentExperiment::estimatePilot(pilotReference.data(), pilotAnchor.data(), samples,
-      frame, config_.anchorChannelId), *fallback_, &beams);
-  previous_ = sidecar; return result;
+  decoded.pilot = DirectPathCoherentExperiment::estimatePilot(pilotReference.data(), pilotAnchor.data(), samples,
+    decoded.frame, config_.anchorChannelId);
+  return decoded;
+}
+inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(const ValidatedSnapshot& validated) {
+  auto decoded = decode(validated);
+  const auto& config = validated.config;
+  const bool migration = !config_.migrationRates.empty();
+  const size_t count = migration ? config_.migrationRates.size() : 1;
+  std::vector<RangeMigrationReplay::Result> corrected;
+  if (migration) {
+    const uint64_t processed = uint64_t(config.geometry.doppler) * config.correlation;
+    require(processed && processed <= config.geometry.clutterSamples &&
+      config.geometry.clutterSamples - processed < config.geometry.doppler,
+      "Migration raw sample span is incompatible with correlation blocks");
+    for (const auto& map : decoded.maps)
+      corrected.push_back(RangeMigrationReplay::process(map, validated.sidecar.sampleRateHz,
+        config.correlation, config_.migrationRates));
+  }
+  if (experiments_.empty()) {
+    auto bound = config_; bound.migrationRates.clear();
+    const auto motion = track_before_detect::decodeMotionBins(config.detector.integrationMotionBins);
+    bound.temporal.delayDriftPerHz = motion.fractionalDelay ?
+      track_before_detect::delayDriftPerHz(config.geometry.clutterSamples, config.temporalCarrierHz()) : 0;
+    // A corrected fixed projection has no native selected-beam decisions.
+    bound.fallbackBeamCount = migration ? 0 : config.fusion.beams;
+    bound.fallbackBeamTolerance = config.detector.integrationBeamTolerance;
+    for (size_t index = 0; index < count; ++index)
+      experiments_.push_back(std::make_unique<DirectPathCoherentExperiment>(bound, true));
+  }
+  std::vector<RateResult> results;
+  try { for (size_t index = 0; index < count; ++index) {
+    RateResult item; item.rateIndex = uint32_t(index); item.source = validated.sidecar;
+    item.correlationSamples = config.correlation; item.rateCorrectedFallback = migration;
+    auto maps = migration ? std::vector<DirectPathCoherentExperiment::ComplexMap>{} : std::move(decoded.maps);
+    if (migration) {
+      const auto& geometry = corrected.front();
+      item.delayRateBinsPerSecond = config_.migrationRates[index]; item.firstColumn = geometry.firstColumn;
+      item.heterodyneCenterHz = config.dopplerAxis.at(geometry.rows / 2);
+      item.whiteNoiseGain = geometry.banks[index].whiteNoiseGain;
+      for (const auto& channel : corrected) {
+        maps.emplace_back(geometry.rows, geometry.columns); auto& map = maps.back();
+        map.doppler.assign(config.dopplerAxis.begin(), config.dopplerAxis.end());
+        map.delay.assign(config.delayAxis.begin() + geometry.firstColumn,
+          config.delayAxis.begin() + geometry.firstColumn + geometry.columns);
+        for (uint32_t row = 0; row < geometry.rows; ++row)
+          for (uint32_t col = 0; col < geometry.columns; ++col)
+            map.data[row][col] = channel.banks[index].cells[uint64_t(row) * geometry.columns + col] *
+              std::polar(1., -2 * std::acos(-1.) * item.heterodyneCenterHz * map.delay[col] / validated.sidecar.sampleRateHz);
+      }
+      item.fallback = std::make_unique<DirectPathCoherentExperiment::ComplexMap>(geometry.rows, geometry.columns);
+      item.fallback->delay = maps.front().delay; item.fallback->doppler = maps.front().doppler;
+      for (uint32_t row = 0; row < geometry.rows; ++row)
+        for (uint32_t col = 0; col < geometry.columns; ++col) {
+          DirectPathCoherentExperiment::Complex spatial{};
+          for (size_t channel = 0; channel < maps.size(); ++channel)
+            spatial += config_.spatialCoefficients[channel] * maps[channel].data[row][col];
+          item.fallback->data[row][col] = {std::norm(spatial), 0};
+          item.recordedBeams.push_back(decoded.beams[size_t(row) * config.geometry.delays + geometry.firstColumn + col]);
+        }
+    } else { item.fallback = std::move(decoded.power); item.recordedBeams = std::move(decoded.beams); }
+    std::vector<DirectPathCoherentExperiment::ComplexMap*> pointers;
+    for (auto& map : maps) pointers.push_back(&map);
+    item.result = experiments_[index]->process(pointers, config.surveillanceChannels, decoded.frame,
+      decoded.pilot, *item.fallback, migration ? nullptr : &item.recordedBeams);
+    // Native fallback may already maximize over recorded beams; corrected
+    // fallback uses the declared fixed spatial hypothesis instead.
+    const uint64_t fallbackSpatialTrials = migration ? config_.declaredSpatialTrials : std::max(1u, config.fusion.beams);
+    item.declaredPerCellTrials = item.result.declaredPerCellTrials +
+      (item.result.declaredPerCellTrials / config_.declaredSpatialTrials) * fallbackSpatialTrials;
+    item.combinedPerCellTrials = count * item.declaredPerCellTrials;
+    results.push_back(std::move(item));
+  }} catch (...) { experiments_.clear(); throw; }
+  previous_ = validated.sidecar;
+  return results;
 }
 } // namespace blah2::integration::coherent_replay

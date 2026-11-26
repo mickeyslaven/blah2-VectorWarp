@@ -125,14 +125,53 @@ cost, capture health, and applicable receiver/backend/OS parity. Then require
 an untouched prospective holdout and explicit promotion approval. The test
 suite alone cannot establish operational gain or justify a new live lane.
 
-## Implementation handoff
+## Composed coherent and fallback histories
 
-The initial source work passed strict C++17 syntax-only checks for the numerical
-test and inspector. A separate single-threaded NumPy analytic check found
-37.64–45.53 times the uncompensated peak power on the declared off-bin examples,
-and 1.043 times stationary peak power after interpolation white-noise
-normalization. These are mechanism checks, not measured radar outcomes.
-Native target compilation and `rangeMigrationReplayCpuContract` execution are
-pending: release work had priority and inspected local available memory was
-below the 48 GiB material-compute requirement. Do not interpret the committed test cases
-as passed until their executable runs successfully on an admitted build host.
+`ExperimentReader::appendAll` composes migration with the canonical
+`DirectPathCoherentExperiment` through one shared sealed-frame decoder.
+`Config::migrationRates` is immutable after construction. Each rate owns a
+separate coherent and noncoherent history and receives the same measured raw-IQ
+pilot. Every rate is returned, including warm-up and pilot-failure outcomes;
+there is no upstream selection or splicing of rate winners across CPIs.
+The legacy `append` API refuses configured migration rates.
+
+All channels, delay axes and recorded beam IDs use the same interpolation
+crop. The known reference-heterodyne range phase is removed before temporal
+integration, leaving physical Doppler as the only inter-CPI phase convention.
+Raw sample spans, correlation length and the sealed configuration identity
+remain attached to every rate result. Canonical unused tail samples remain
+in raw lineage: they never masquerade as additional correlation blocks.
+
+With migration enabled, fallback power is explicitly `norm(sum(weight[c] *
+corrected_CAF[c]))` for that rate's immutable spatial projection. It is not the
+recorded native selected-beam power. Recorded beam IDs are preserved as source
+provenance and do not label this fixed projection. With migration disabled,
+the legacy recorded FP64 power and selected-beam compatibility remain intact.
+Pilot rejection clears only the coherent history; the matching corrected
+power history remains available. Move-only rate results own their fallback
+maps, so later appends do not invalidate previously returned results.
+
+The composed CLI accepts `--migration-rates 0,RATE,...` immediately before the
+snapshot list. It reports rate index, delay rate, interpolation noise gain,
+fallback kind, and per-rate and combined trial counts. These counts include
+both coherent and power families across every configured spatial/path/depth
+trial and every rate, including zero, warm-up and pilot rejection. They do not
+replace empirical null calibration or charge undeclared tuning choices.
+
+`directPathCoherentReplayCpuContract` now generates continuous fractional-delay
+IQ, processes it with canonical `Ambiguity`, seals snapshots, and sends them
+through the composed reader. It checks separate nonzero-rate complex 2/4/8-CPI
+sums against an explicit phase oracle, changing reference gauge, overlapping
+CPIs with noninteger inter-CPI phase, exact sample counters above `2^53`, corrected fallback after
+pilot loss, beam cropping, config/span/reorder refusal and result lifetime.
+The superseded standalone adapter and its narrower zero-rate test were removed.
+The native sealed snapshot contract currently admits a zero Doppler center;
+the separate canonical-IQ range tests retain nonzero-center phase coverage.
+
+The composed implementation passed both native CTest contracts on an isolated
+Linux CPU build on 2026-11-26: `rangeMigrationReplayCpuContract` (0.85 s) and
+`directPathCoherentReplayCpuContract` (0.72 s). The inspector also compiled with
+warnings treated as errors. The build used one job and a 2 GiB memory cap,
+including the canonical processing and offline replay CMake owners. All 86
+architecture checks and 943 repository-budget ceilings passed. This validates
+the numerical contracts, not recorded-radar benefit or live promotion.

@@ -1,5 +1,5 @@
 // Mechanism/negative-control regression for the isolated intra-CPI experiment.
-#include "process/integration/RangeMigrationCoherentAdapter.h"
+#include "process/integration/RangeMigrationReplay.h"
 #include "process/ambiguity/Ambiguity.h"
 #include <iostream>
 #include <random>
@@ -143,55 +143,6 @@ void invariantsAndNoise() {
   std::cout << "noise fixed_trial_means=" << powers[0] / cells << ',' << powers[1] / cells
     << ',' << powers[2] / cells << " searched_mean=" << selectedPower / cells << '\n';
 }
-void nonzeroCentreCrossCpiPhase() {
-  // The adapter must remove the range-correlator's nonzero heterodyne
-  // reference and leave physical Doppler as the only temporal phase term.
-  // A one-CPI peak test cannot expose this frame-to-frame convention.
-  auto caf = map();
-  for (auto& hz : caf.doppler) hz += 16.;
-  constexpr uint32_t fs = 8192, hop = 65 * 128;
-  blah2::integration::CoherentPathEvidence::Config temporal;
-  temporal.maximumCpis = 2; temporal.delayMotionBins = 1; temporal.dopplerMotionBins = 0;
-  temporal.minimumCoherence = .999;
-  blah2::integration::RangeMigrationCoherentAdapter adapter(temporal, {0.});
-  const auto append = [&](uint64_t sequence, double phase) {
-    auto frame = caf;
-    const uint32_t delayColumn = sequence == 1 ? 40 : 41;
-    // The raw CAF carries its reference-heterodyne delay phase.  The target
-    // moves one delay bin between CPIs while retaining a physical 16 Hz
-    // Doppler phase; both terms must be handled before complex accumulation.
-    const double heterodyne = tau * 16. * frame.delay[delayColumn] / fs;
-    frame.data[32][delayColumn] = std::polar(1., phase + heterodyne);
-    blah2::integration::RangeMigrationCoherentAdapter::Frame lineage;
-    lineage.epoch = 9; lineage.sequence = sequence;
-    lineage.firstSample = (sequence - 1) * hop; lineage.endSample = sequence * hop;
-    lineage.sampleRateHz = fs; lineage.configHash[0] = 77;
-    return adapter.append(frame, lineage, hop);
-  };
-  const auto first = append(1, -tau * 16. * hop / fs);
-  const auto second = append(2, 0);
-  check(first.size() == 1 && second.size() == 1, "Migration rate family was not retained");
-  const auto& bank = second[0].temporal[0];
-  const size_t cell = 32 * bank.map->get_nCols() + (41 - 8);
-  check(bank.valid[cell] && std::norm(bank.map->data[32][41 - 8]) > 1.9999999999,
-    "Nonzero-centre cross-CPI phase convention lost coherence");
-  check(second[0].heterodyneCenterHz == 16. && second[0].configHash[0] == 77 &&
-    second[0].interpolationWhiteNoiseGain == 1., "Migration phase lineage metadata lost");
-  blah2::integration::RangeMigrationCoherentAdapter bad(temporal, {0.});
-  auto shortFrame = caf;
-  blah2::integration::RangeMigrationCoherentAdapter::Frame impossible;
-  impossible.epoch = 9; impossible.sequence = 1; impossible.endSample = 128;
-  impossible.sampleRateHz = fs;
-  rejects([&] { bad.append(shortFrame, impossible, 128); });
-  auto changedHash = caf;
-  blah2::integration::RangeMigrationCoherentAdapter::Frame incompatible;
-  incompatible.epoch = 9; incompatible.sequence = 1; incompatible.endSample = hop;
-  incompatible.sampleRateHz = fs; incompatible.configHash[0] = 1;
-  bad.append(changedHash, incompatible, 128);
-  incompatible.sequence = 2; incompatible.firstSample = hop; incompatible.endSample = 2 * hop;
-  incompatible.configHash[0] = 2;
-  rejects([&] { bad.append(changedHash, incompatible, 128); });
-}
 void refusal() {
   auto value = map();
   const auto run = [&](const std::vector<double>& rates) { return Migration::process(value, 8192, 128, rates); };
@@ -214,7 +165,7 @@ void refusal() {
 }
 }
 int main() try {
-  analyticEchoes(); canonicalIq(); invariantsAndNoise(); nonzeroCentreCrossCpiPhase(); refusal();
+  analyticEchoes(); canonicalIq(); invariantsAndNoise(); refusal();
   std::cout << "PASS range migration replay numerical contract (not radar qualification)\n";
   return 0;
 } catch (const std::exception& error) {

@@ -9694,6 +9694,107 @@
         "context_tokens:production": [1798327, 1798355]
       }
     }
+      ,
+      {
+        "owner": "2026-11-26 composed coherent migration owner review",
+        "purpose": "Replace the unconsumed standalone migration adapter with one sealed-frame decoder and persistent independent per-rate DirectPathCoherentExperiment histories. Move-only results own corrected fallback maps, retain raw/config/beam lineage, and account for every rate and coherent/power family. Continuous-IQ native regression exercises the real reader composition.",
+        "rejected_reuse": "The removed adapter had neither pilot nor fallback integration and its zero-rate-only test could not validate the composed path. Reuse the canonical migration, pilot, temporal and snapshot owners; do not create another numerical or live pipeline.",
+        "cleanup_plan": "Delete the superseded adapter and replace its zero-rate test with composed 2/4/8-CPI complex and failure regressions. Keep this experiment offline and require frozen-IQ null calibration and prospective acceptance before any integration or promotion.",
+        "changes": {
+          "context_characters:build-integration": [
+            103114,
+            103128
+          ],
+          "context_characters:build-integration/contracts": [
+            1410909,
+            1412051
+          ],
+          "context_characters:native-integration": [
+            94552,
+            97051
+          ],
+          "context_characters:operational-tools": [
+            653186,
+            654328
+          ],
+          "context_characters:operational-tools/contracts": [
+            535214,
+            542434
+          ],
+          "context_characters:production": [
+            7177809,
+            7181464
+          ],
+          "context_dynamic:native-integration": [
+            28,
+            35
+          ],
+          "context_files:native-integration": [
+            8,
+            7
+          ],
+          "context_files:production": [
+            587,
+            586
+          ],
+          "context_lines:build-integration/contracts": [
+            28722,
+            28743
+          ],
+          "context_lines:native-integration": [
+            1955,
+            1968
+          ],
+          "context_lines:operational-tools": [
+            12138,
+            12159
+          ],
+          "context_lines:operational-tools/contracts": [
+            9344,
+            9459
+          ],
+          "context_lines:production": [
+            132688,
+            132722
+          ],
+          "context_tokens:build-integration": [
+            16598,
+            16599
+          ],
+          "context_tokens:build-integration/contracts": [
+            347545,
+            347844
+          ],
+          "context_tokens:native-integration": [
+            23161,
+            23772
+          ],
+          "context_tokens:operational-tools": [
+            158769,
+            159068
+          ],
+          "context_tokens:operational-tools/contracts": [
+            134388,
+            136022
+          ],
+          "context_tokens:production": [
+            1797969,
+            1798880
+          ],
+          "files:src": [
+            217,
+            216
+          ],
+          "lines:src": [
+            46349,
+            46362
+          ],
+          "lines:tools": [
+            2862,
+            2883
+          ]
+        }
+      }
   ],
   "context_snapshot": {
     "policy": {

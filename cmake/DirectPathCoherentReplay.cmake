@@ -50,7 +50,7 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
       ${PROJECT_ROOT}/test/unit/process/analysis/TestDirectPathCoherentReplay.cpp)
     target_include_directories(testDirectPathCoherentReplay PRIVATE
       ${PROJECT_ROOT}/src/process/ambiguity ${PROJECT_ROOT}/test/gpu)
-    target_link_libraries(testDirectPathCoherentReplay PRIVATE blah2DirectPathCoherentReplay)
+    target_link_libraries(testDirectPathCoherentReplay PRIVATE blah2DirectPathCoherentReplay blah2RadarDsp)
     add_test(NAME directPathCoherentReplayCpuContract COMMAND testDirectPathCoherentReplay)
     set_tests_properties(directPathCoherentReplayCpuContract PROPERTIES TIMEOUT 10)
   endif()
