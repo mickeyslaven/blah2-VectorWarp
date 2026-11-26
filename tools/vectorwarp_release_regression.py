@@ -406,7 +406,8 @@ def run(args):
         archive = Evidence(evidence_directory, reserve)
         binding_sha, policy_sha, inputs_sha = (archive.retain(raw) for raw in (binding_raw, policy_raw, inputs_raw))
         evaluator = evaluate
-        if policy.get("schema") == "vectorwarp-operational-release-policy-v1":
+        if policy.get("schema") in ("vectorwarp-operational-release-policy-v1",
+                                    "vectorwarp-functional-release-policy-v1"):
             from vectorwarp_operational_acceptance import evaluate as evaluator
         receipt, results = evaluator(binding, binding_sha, policy, policy_sha, inputs, archive, time.time())
         report = {"schema": "vectorwarp-release-regression-report-v1", "bindingSha256": binding_sha,
