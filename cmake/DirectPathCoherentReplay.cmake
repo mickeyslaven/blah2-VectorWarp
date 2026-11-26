@@ -3,11 +3,13 @@
 if(NOT TARGET blah2DirectPathCoherentReplay)
   add_library(blah2DirectPathCoherentReplay STATIC
     ${PROJECT_ROOT}/src/process/integration/DirectPathCoherentReplay.cpp
+    ${PROJECT_ROOT}/src/process/integration/DirectPathCoherentIq.cpp
     ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp
     ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
   target_compile_features(blah2DirectPathCoherentReplay PUBLIC cxx_std_17)
   target_include_directories(blah2DirectPathCoherentReplay PUBLIC ${PROJECT_ROOT}/src)
   target_link_libraries(blah2DirectPathCoherentReplay PUBLIC blah2RadarData blah2FixedExecutor blah2RadarDsp)
+  target_link_libraries(blah2DirectPathCoherentReplay PRIVATE blah2RapidJson)
   add_executable(directPathCoherentReplayInspect
     ${PROJECT_ROOT}/tools/DirectPathCoherentReplayInspect.cpp)
   target_link_libraries(directPathCoherentReplayInspect PRIVATE blah2DirectPathCoherentReplay)
@@ -15,7 +17,7 @@ if(NOT TARGET blah2DirectPathCoherentReplay)
     ${PROJECT_ROOT}/tools/RangeMigrationReplayInspect.cpp)
   target_link_libraries(rangeMigrationReplayInspect PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
   add_executable(passiveIsarApertureInspect ${PROJECT_ROOT}/tools/PassiveIsarApertureInspect.cpp)
-  target_link_libraries(passiveIsarApertureInspect PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
+  target_link_libraries(passiveIsarApertureInspect PRIVATE blah2DirectPathCoherentReplay blah2RapidJson blah2RadarDsp)
   add_executable(residentWeakEvidenceScore ${PROJECT_ROOT}/tools/ResidentWeakEvidenceScore.cpp)
   target_link_libraries(residentWeakEvidenceScore PRIVATE blah2DirectPathCoherentReplay blah2RapidJson)
   add_executable(residentSnapshotGeometry ${PROJECT_ROOT}/tools/ResidentSnapshotGeometry.cpp)

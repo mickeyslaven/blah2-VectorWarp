@@ -9938,7 +9938,7 @@
           1806497
         ]
       }
-    ,
+    },
     {
       "owner": "2026-11-26 offline coherent phase and continuous-range review",
       "purpose": "Bound and charge depth-aware 4/8/16 phase trials, reuse the canonical prepared Lanczos sampler for coherent-only inter-CPI paths, preserve newest-coordinate phase and noise-gain lineage, and cache FFTW slow-time batches in the existing offline owner. The canonical noncoherent contract and all live entry points remain unchanged.",
@@ -10062,6 +10062,154 @@
         "context_tokens:operational-tools/contracts": [137457, 137596],
         "context_tokens:production": [1803560, 1804313],
         "lines:src": [46664, 46717]
+      }
+    },
+    {
+      "owner": "Offline passive-ISAR aperture integration; parent-authorized typed replay boundary",
+      "purpose": "Authenticate bounded existing calibration IQ extractions with exact parent/plan/receipt/sample and byte identities; reuse Ambiguity and the immutable pre-temporal aperture factory; retain declared tails and nonuniform block support without extra exposure.",
+      "rejected_reuse": "Full original snapshots exceed the foundation admission bound and fabricated smaller snapshots would falsify provenance. The existing replay owner now validates sidecar-bound IQ ingress; no second DSP, interpolator, temporal winner or publisher was created.",
+      "cleanup_plan": "Keep the authenticated ingress in the canonical replay library and the aperture exporter offline. If a generic sealed slice contract supersedes this development format, remove this parser and ratchet these exact ceilings down; retain refusal/algebra tests. No evaluator, runtime or radar defaults change.",
+      "changes": {
+        "context_characters:build-integration": [
+          104264,
+          104425
+        ],
+        "context_characters:build-integration/contracts": [
+          1423209,
+          1439911
+        ],
+        "context_characters:native-integration": [
+          114672,
+          133881
+        ],
+        "context_characters:native-runtime/contracts": [
+          288372,
+          289704
+        ],
+        "context_characters:operational-tools": [
+          665486,
+          670254
+        ],
+        "context_characters:operational-tools/contracts": [
+          560055,
+          570781
+        ],
+        "context_characters:production": [
+          7211379,
+          7235517
+        ],
+        "context_contract:build-integration->src/process/integration/DirectPathCoherentIq.cpp": [
+          0,
+          1
+        ],
+        "context_contract:operational-tools->src/process/ambiguity/Ambiguity.h": [
+          0,
+          1
+        ],
+        "context_dynamic:native-integration": [
+          51,
+          96
+        ],
+        "context_files:build-integration/contracts": [
+          88,
+          89
+        ],
+        "context_files:native-integration": [
+          8,
+          9
+        ],
+        "context_files:operational-tools/contracts": [
+          24,
+          25
+        ],
+        "context_files:production": [
+          588,
+          589
+        ],
+        "context_imports:build-integration": [
+          134,
+          135
+        ],
+        "context_imports:native-integration": [
+          11,
+          13
+        ],
+        "context_imports:operational-tools": [
+          31,
+          33
+        ],
+        "context_lines:build-integration": [
+          1922,
+          1924
+        ],
+        "context_lines:build-integration/contracts": [
+          28882,
+          29145
+        ],
+        "context_lines:native-integration": [
+          2264,
+          2563
+        ],
+        "context_lines:native-runtime/contracts": [
+          6048,
+          6071
+        ],
+        "context_lines:operational-tools": [
+          12298,
+          12370
+        ],
+        "context_lines:operational-tools/contracts": [
+          9755,
+          9995
+        ],
+        "context_lines:production": [
+          133169,
+          133542
+        ],
+        "context_tokens:build-integration": [
+          16743,
+          16764
+        ],
+        "context_tokens:build-integration/contracts": [
+          351167,
+          355778
+        ],
+        "context_tokens:native-integration": [
+          27922,
+          32989
+        ],
+        "context_tokens:native-runtime/contracts": [
+          73043,
+          73329
+        ],
+        "context_tokens:operational-tools": [
+          162391,
+          163645
+        ],
+        "context_tokens:operational-tools/contracts": [
+          140172,
+          142669
+        ],
+        "context_tokens:production": [
+          1806497,
+          1812839
+        ],
+        "files:src": [
+          217,
+          218
+        ],
+        "lines:cmake": [
+          1289,
+          1291
+        ],
+        "lines:src": [
+          46658,
+          46957
+        ],
+        "lines:tools": [
+          3022,
+          3094
+        ]
       }
     }
   ],

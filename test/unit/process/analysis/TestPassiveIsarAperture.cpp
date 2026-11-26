@@ -182,6 +182,65 @@ void endToEnd(const std::filesystem::path& directory, bool pair, std::ostream* e
   const auto misaligned = reader.aperture(fixture(directory / (std::to_string(pair) + "-unaligned.vwrps"), 2, pair, true, startSample + hop + 1));
   rejects([&] { fresh.append(misaligned); }, "Partial block overlap was silently double-counted");
 }
+void declaredTails(const std::filesystem::path& directory) {
+  auto config = request(); config.migrationRates = {0.};
+  cr::ExperimentReader reader(config); cr::PassiveIsarAperture aperture;
+  auto parent = fixture(directory / "tail-parent.vwrps", 1, false).sidecar;
+  // Explicit synthetic typed-product fixture, not a fabricated native snapshot.
+  // Five raw samples per CPI are intentionally outside all correlation blocks.
+  constexpr uint64_t rawSamples = samples + 5;
+  parent.endSample = startSample + 8 * rawSamples;
+  cr::DerivedIqLineage lineage; lineage.planJson = "synthetic continuous-IQ tail contract";
+  lineage.receiptJson = "synthetic typed boundary, not a native snapshot";
+  const auto hash = [](const std::string& bytes) { blah2::Sha256 h; h.update(bytes.data(), bytes.size()); return h.finishBytes(); };
+  lineage.planHash = hash(lineage.planJson); lineage.receiptHash = hash(lineage.receiptJson);
+  lineage.payloadHash = hash("synthetic analytic block products");
+  for (uint64_t seq = 1; seq <= 8; ++seq) {
+    cr::ExperimentReader::ApertureInput input; input.source = parent; input.derived = lineage;
+    input.sequence = seq; input.firstSample = startSample + (seq - 1) * rawSamples;
+    input.endSample = input.firstSample + rawSamples; input.correlationSamples = correlation; input.carrierHz = carrier;
+    input.pilot = blah2::integration::DirectPathCoherentExperiment::Pilot{
+      {parent.captureEpoch, seq, input.firstSample, input.endSample, parent.tuningHz,
+        parent.gainCalibrationEpoch, rateHz, true, true}, 0, {1., 0.}, 1.};
+    std::vector<Complex> profiles(rows * columns);
+    for (uint32_t b = 0; b < rows; ++b) for (uint32_t col = 0; col < columns; ++col)
+      profiles[b * columns + col] = bruteBlock((seq - 1) * rawSamples + b * correlation, int(col) - 24, false);
+    for (unsigned channel = 0; channel < 2; ++channel) {
+      Map<Complex> caf(rows, columns);
+      for (int delay = -24; delay <= 24; ++delay) caf.delay.push_back(delay);
+      for (int frequency = -8; frequency <= 8; ++frequency) caf.doppler.push_back(frequency);
+      for (uint32_t f = 0; f < rows; ++f) for (uint32_t col = 0; col < columns; ++col) {
+        caf.data[f][col] = 0.;
+        if (channel == 1) for (uint32_t b = 0; b < rows; ++b)
+          caf.data[f][col] += profiles[b * columns + col] *
+            std::polar(1., -tau * (double(f) - rows / 2) * b / rows);
+      }
+      input.caf.push_back(std::move(caf));
+    }
+    auto bad = input; ++bad.firstSample; ++bad.endSample;
+    bad.pilot->frame.firstSample = bad.firstSample; bad.pilot->frame.endSample = bad.endSample;
+    if (seq == 2) rejects([&] { aperture.append(reader.aperture(bad)); }, "Acquisition gap disguised as tail");
+    bad = input; --bad.firstSample; --bad.endSample;
+    bad.pilot->frame.firstSample = bad.firstSample; bad.pilot->frame.endSample = bad.endSample;
+    if (seq == 2) rejects([&] { aperture.append(reader.aperture(bad)); }, "Derived acquisition overlap accepted");
+    aperture.append(reader.aperture(std::move(input)));
+    check(aperture.uniqueBlocks() == seq * rows && aperture.missingSupportSamples() == (seq - 1) * 5,
+      "Declared tails were erased or credited as independent samples");
+    if (seq == 2 || seq == 4 || seq == 8) {
+      const auto spectrum = aperture.spectrum(0, 0., {1.75, 2., 2.25});
+      for (size_t k = 0; k < 3; ++k) {
+        Complex expected{};
+        for (uint64_t frame = 0; frame < seq; ++frame) for (uint32_t b = 0; b < rows; ++b) {
+          const uint64_t start = frame * rawSamples + b * correlation;
+          expected += bruteBlock(start, 0, false) * std::polar(1., -tau * spectrum.residualDopplerHz[k] *
+            (start + .5 * (correlation - 1)) / rateHz);
+        }
+        expected /= std::sqrt(double(seq * rows));
+        close(spectrum.amplitude[k], expected, 1e-10, "Declared-tail nonuniform-time complex oracle");
+      }
+    }
+  }
+}
 }
 int main(int argc, char** argv) try {
   numericalCenter();
@@ -198,6 +257,7 @@ int main(int argc, char** argv) try {
   if (argc == 3) { evidence.open(directory / "synthetic-psf.jsonl"); check(bool(evidence), "Evidence file open"); }
   endToEnd(directory, false, argc == 3 ? &evidence : nullptr);
   endToEnd(directory, true, argc == 3 ? &evidence : nullptr);
+  declaredTails(directory);
   if (argc == 3) { evidence.flush(); check(bool(evidence), "Evidence write"); }
   else std::filesystem::remove_all(directory); // Only this test's newly created fixture directory.
   std::cout << "Passive ISAR aperture: immutable phase, independent IQ/PSF, overlap, center and refusal contracts passed\n";

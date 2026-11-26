@@ -311,14 +311,21 @@ class ExperimentReader {
 public:
   // An immutable, pre-winner/pre-sum linear data product. Raw CAF and the
   // optional range/slow-time representation share the canonical transform.
-  struct ApertureFrame {
-    Sidecar source;
-    resident::Config config;
+  struct ApertureInput {
+    Sidecar source; // Original sealed parent identity/range, including for slices.
+    std::optional<resident::Config> sourceConfig; // Absent, never invented, for derived IQ.
+    std::optional<DerivedIqLineage> derived;
+    uint64_t sequence = 0, firstSample = 0, endSample = 0;
+    uint32_t correlationSamples = 0;
+    double carrierHz = 0, referenceConditioningBandwidthHz = NAN;
     std::vector<DirectPathCoherentExperiment::ComplexMap> caf;
-    std::vector<RangeMigrationReplay::Result> migration;
     std::vector<resident_replay::Hash> blockHashes; // Ordered BlockKind 1..20.
-    std::vector<std::complex<double>> spatialCoefficients;
     std::optional<DirectPathCoherentExperiment::Pilot> pilot;
+  };
+  struct ApertureFrame : ApertureInput {
+    std::vector<uint32_t> channelIds;
+    std::vector<RangeMigrationReplay::Result> migration;
+    std::vector<std::complex<double>> spatialCoefficients;
     std::complex<double> gaugeCorrection{};
     bool phaseQualified = false;
     uint32_t anchorChannelId = 0, declaredSpatialTrials = 0;
@@ -354,6 +361,10 @@ public:
   // Stateless extraction; imaging aperture ownership is separate from the
   // detector's rolling evidence histories. No detector state is advanced.
   std::shared_ptr<const ApertureFrame> aperture(const ValidatedSnapshot&,
+    uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 128u << 20) const;
+  // One pre-temporal/pre-winner boundary, shared by native decoding and
+  // authenticated derived-IQ replay. This method performs no temporal search.
+  std::shared_ptr<const ApertureFrame> aperture(ApertureInput,
     uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 128u << 20) const;
   std::shared_ptr<const ApertureFrame> aperture(const std::filesystem::path& path,
       uint64_t maximumWork = RangeMigrationReplay::maximumMacs, uint64_t maximumBytes = 128u << 20) const {
@@ -598,25 +609,11 @@ inline std::vector<ExperimentReader::RateResult> ExperimentReader::appendAll(con
 
 inline std::shared_ptr<const ExperimentReader::ApertureFrame>
 ExperimentReader::aperture(const ValidatedSnapshot& validated, uint64_t maximumWork, uint64_t maximumBytes) const {
-  require(!previous_, "Aperture extraction cannot reuse temporal reader state");
-  require(!config_.migrationRates.empty(), "Aperture requires explicit rates including zero");
-  auto admissionConfig = config_; admissionConfig.migrationRates.clear();
-  DirectPathCoherentExperiment admission(admissionConfig, true);
   const auto& c = validated.config;
   const uint64_t rows = c.geometry.doppler, columns = c.geometry.delays;
   const uint64_t cells = rows * columns, channels = c.geometry.channels;
   require(channels > 0 && channels <= 5 && rows >= 3 && rows <= 511 &&
     columns <= 4096 && cells <= 65536, "Aperture frame dimensions exceed bounds");
-  const uint64_t bytes = cells * channels * 16 * (2 + 2 * config_.migrationRates.size()) +
-    rows * channels * config_.migrationRates.size() * sizeof(RangeMigrationReplay::Kernel) + (2u << 20);
-  const uint64_t work = channels * (rows * rows * columns +
-    config_.migrationRates.size() * rows * columns * (rows + 16));
-  require(bytes <= (128u << 20) &&
-    work <= RangeMigrationReplay::maximumMacs && work <= maximumWork && bytes <= maximumBytes,
-    "Aperture exceeds frame/remaining work/storage bounds");
-  require(rows * c.correlation <= c.geometry.clutterSamples && c.correlation > 0 &&
-    c.geometry.clutterSamples - rows * c.correlation < rows,
-    "Aperture raw support differs from correlation blocks");
   uint64_t snapshotBytes = resident_replay::headerBytes;
   for (const auto& block : validated.snapshot.blocks) {
     require(block.bytes.size() <= (128u << 20) - snapshotBytes, "Aperture snapshot exceeds byte bound");
@@ -632,27 +629,88 @@ ExperimentReader::aperture(const ValidatedSnapshot& validated, uint64_t maximumW
     validated.sidecar.actualGainDb == c.replay.actualGainDb,
     "Aperture snapshot identity differs from sidecar");
   auto decoded = decode(validated);
+  ApertureInput input;
+  input.source = validated.sidecar; input.sourceConfig = c;
+  input.sequence = input.source.identity.logicalFrame;
+  input.firstSample = input.source.firstSample; input.endSample = input.source.endSample;
+  input.correlationSamples = c.correlation; input.carrierHz = c.temporalCarrierHz();
+  input.referenceConditioningBandwidthHz = c.reference.bandwidthHz;
+  input.caf = std::move(decoded.maps); input.pilot = decoded.pilot;
+  for (const auto& block : validated.snapshot.blocks) {
+    Sha256 hash; hash.update(block.bytes.data(), block.bytes.size());
+    input.blockHashes.push_back(hash.finishBytes());
+  }
+  return aperture(std::move(input), maximumWork, maximumBytes);
+}
+
+inline std::shared_ptr<const ExperimentReader::ApertureFrame>
+ExperimentReader::aperture(ApertureInput input, uint64_t maximumWork, uint64_t maximumBytes) const {
+  require(!previous_ && !input.caf.empty(), "Aperture needs pre-temporal channel products");
+  require(!config_.migrationRates.empty(), "Aperture requires explicit rates including zero");
+  auto admissionConfig = config_; admissionConfig.migrationRates.clear();
+  DirectPathCoherentExperiment admission(admissionConfig, true);
+  const uint64_t rows = input.caf[0].data.size(), columns = input.caf[0].delay.size();
+  const uint64_t channels = input.caf.size(), cells = rows * columns;
+  require(channels == config_.channelIds.size() && channels <= 5 && rows >= 3 && rows <= 511 &&
+    columns <= 4096 && cells <= 65536 && input.correlationSamples > 0 && input.source.sampleRateHz > 0 &&
+    std::isfinite(input.carrierHz) && input.carrierHz >= 0 && input.sequence > 0 &&
+    input.firstSample >= input.source.firstSample && input.endSample <= input.source.endSample &&
+    input.endSample > input.firstSample, "Aperture product/parent support invalid");
+  const uint64_t raw = input.endSample - input.firstSample, processed = rows * input.correlationSamples;
+  require(processed <= raw && raw - processed < rows, "Aperture declared tail differs from correlation geometry");
+  require(bool(input.sourceConfig) != bool(input.derived), "Aperture origin must be native OR authenticated derived IQ");
+  if (input.sourceConfig) {
+    const auto& c = *input.sourceConfig;
+    require(resident::wire::configHash(c) == input.source.identity.configHash &&
+      c.surveillanceChannels == config_.channelIds && c.correlation == input.correlationSamples &&
+      input.carrierHz == c.temporalCarrierHz() && input.carrierHz > 0 &&
+      input.firstSample == input.source.firstSample && input.endSample == input.source.endSample &&
+      input.sequence == input.source.identity.logicalFrame && input.blockHashes.size() == 20,
+      "Native aperture configuration/source binding differs");
+  } else {
+    const auto sealed = [](const std::string& bytes, const resident_replay::Hash& expected) {
+      if (bytes.empty() || bytes.size() > (1u << 20)) return false;
+      Sha256 hash; hash.update(bytes.data(), bytes.size()); return hash.finishBytes() == expected;
+    };
+    require(input.blockHashes.empty() && sealed(input.derived->planJson, input.derived->planHash) &&
+      sealed(input.derived->receiptJson, input.derived->receiptHash), "Derived aperture manifest seal differs");
+  }
+  for (const auto& map : input.caf)
+    require(map.data.size() == rows && map.delay == input.caf[0].delay && map.doppler == input.caf[0].doppler,
+      "Aperture channel geometry differs");
+  const uint64_t bytes = cells * channels * 16 * (2 + 2 * config_.migrationRates.size()) +
+    rows * channels * config_.migrationRates.size() * sizeof(RangeMigrationReplay::Kernel) + (4u << 20);
+  const uint64_t work = channels * (rows * rows * columns +
+    config_.migrationRates.size() * rows * columns * (rows + 16));
+  require(bytes <= (128u << 20) && work <= RangeMigrationReplay::maximumMacs &&
+    work <= maximumWork && bytes <= maximumBytes, "Aperture exceeds frame/remaining work/storage bounds");
   auto frame = std::make_shared<ApertureFrame>();
-  frame->source = validated.sidecar; frame->config = c;
-  frame->caf = std::move(decoded.maps); frame->pilot = decoded.pilot;
+  static_cast<ApertureInput&>(*frame) = std::move(input);
+  frame->channelIds = config_.channelIds;
   frame->spatialCoefficients = config_.spatialCoefficients;
   frame->anchorChannelId = config_.anchorChannelId;
   frame->declaredSpatialTrials = config_.declaredSpatialTrials;
   frame->minimumPilotCoherence = config_.minimumPilotCoherence;
   frame->retainedBytes = bytes; frame->complexMacBound = work;
-  if (frame->pilot && frame->pilot->coherence >= config_.minimumPilotCoherence) {
+  if (frame->pilot) {
+    const auto& p = frame->pilot->frame;
+    require(p.captureEpoch == frame->source.captureEpoch && p.sequence == frame->sequence &&
+      p.firstSample == frame->firstSample && p.endSample == frame->endSample &&
+      p.sampleRateHz == frame->source.sampleRateHz && p.tuningHz == frame->source.tuningHz &&
+      p.gainCalibrationEpoch == frame->source.gainCalibrationEpoch && p.samplePositionAvailable && p.inputValid &&
+      frame->pilot->anchorChannelId == config_.anchorChannelId,
+      "Aperture pilot support differs");
     const auto z = frame->pilot->normalizedCorrelation;
     const double amplitude = std::abs(z);
-    frame->phaseQualified = std::isfinite(amplitude) && amplitude > 0;
+    require(std::isfinite(amplitude) && amplitude <= 1 + 1e-9 &&
+      std::isfinite(frame->pilot->coherence) && frame->pilot->coherence >= 0 && frame->pilot->coherence <= 1 &&
+      std::abs(frame->pilot->coherence - std::min(1., std::norm(z))) < 1e-9, "Aperture pilot normalization differs");
+    frame->phaseQualified = amplitude > 0 && frame->pilot->coherence >= config_.minimumPilotCoherence;
     if (frame->phaseQualified) frame->gaugeCorrection = std::conj(z) / amplitude;
-  }
-  for (const auto& block : validated.snapshot.blocks) {
-    Sha256 hash; hash.update(block.bytes.data(), block.bytes.size());
-    frame->blockHashes.push_back(hash.finishBytes());
   }
   for (const auto& map : frame->caf)
     frame->migration.push_back(RangeMigrationReplay::process(map, frame->source.sampleRateHz,
-      c.correlation, config_.migrationRates, true));
+      frame->correlationSamples, config_.migrationRates, true));
   return frame;
 }
 } // namespace blah2::integration::coherent_replay
