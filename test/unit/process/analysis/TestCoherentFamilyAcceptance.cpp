@@ -304,7 +304,7 @@ int main(int argc, char** argv) {
     }
     selector.freezeFit(); bool boundaryRefused = false;
     try { boundary.freezeFit(); } catch (const std::logic_error& error) {
-      require(std::string(error.what()) == "Empirical null calibration stratum missing",
+      require(std::string(error.what()) == "Empirical null calibration is unavailable",
         "Boundary calibration failed for an unexpected reason");
       boundaryRefused = true;
     }
