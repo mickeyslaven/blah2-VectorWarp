@@ -148,10 +148,12 @@ uint detectionSpatial(uint i){uint cell=s[post[41]+i],direction=s[post[86]+cell]
  // ABI16 temporal high bits carry selected-path motion, not a fine beam.
  if(post[74]>1u){fine=0u;quality=0u;}
  return coarse|(fine<<9u)|(quality<<20u);}
+uint supportDepth(uint qualified){
+ return (qualified&16u)!=0u?1u:((qualified&8u)!=0u?8u:((qualified&4u)!=0u?4u:((qualified&3u)!=0u||post[74]==2u?2u:1u)));}
 uint detectorSupportDepth(uint i){uint cell=s[post[41]+i];if(cell>=m[4])return 1u;
- uint qualified=(s[post[39]+cell]>>3u)&15u;
+ uint qualified=(s[post[39]+cell]>>3u)&31u;
  if(experimentalLineage()&&post[78]!=0u&&qualified==0u){reject(321u);return 0u;}
- uint depth=(qualified&8u)!=0u?8u:((qualified&4u)!=0u?4u:((qualified&3u)!=0u||post[74]==2u?2u:1u));
+ uint depth=supportDepth(qualified);
  if(experimentalLineage()&&(depth>post[74]||(post[78]!=0u&&depth>post[79]))){reject(321u);return 0u;}
  return depth;}
 uint latestSpatial(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
@@ -166,8 +168,7 @@ uint traceBase(){return TRACKER_METADATA_HEADER_WORDS+12u*m[3]
  ;}
 uint traceRecord(uint i){return traceBase()+16u+32u*i;}
 uint traceSupportDepth(uint i){uint cell=s[post[41]+i];if(cell>=m[4])return 0u;
- uint qualified=(s[post[39]+cell]>>3u)&15u;
- return (qualified&8u)!=0u?8u:((qualified&4u)!=0u?4u:((qualified&3u)!=0u||post[74]==2u?2u:1u));}
+ return supportDepth((s[post[39]+cell]>>3u)&31u);}
 void traceCandidate(uint i,uint reason){if(!traceEnabled()||i>=32u)return;
  uint t=traceRecord(i),at=m[5]+8u*i;m[t]=i;m[t+1u]=reason;m[t+4u]=i;
  // Read-only provenance extraction must not invoke a rejecting inference helper

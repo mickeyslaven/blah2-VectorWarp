@@ -104,29 +104,42 @@
 
   // Sources carry actual intervals, never additive per-channel percentages or
   // guessed timestamps reconstructed from historical CPI counts.
-  function aggregate(sources = [], {from = -Infinity, to = Infinity} = {}) {
-    const aircraft = new Map(); let complete = sources.length > 0, excluded = 0;
+  // This same union is used for aggregation and compact node transport. Keep
+  // the three interval sets separate until the final aggregate: pre-clipping
+  // measured time to one channel's scored time would change cross-node unions.
+  function unionBasis(sources = [], {from = -Infinity, to = Infinity} = {}) {
+    const aircraft = new Map(); let available = sources.length > 0, complete = available, excluded = 0;
     for (const input of sources) {
       const source = expandBasis(input);
-      if (source?.version !== 1 || !Array.isArray(source.aircraft)) { complete = false; continue; }
+      if (source?.version !== 1 || !Array.isArray(source.aircraft)) { available = complete = false; continue; }
+      if (source.available === false) available = complete = false;
       complete &&= source.complete === true;
       excluded += source.excluded_passes || 0;
       for (const row of source.aircraft) {
-        if (!row || !/^[0-9a-f]{6}$/i.test(row.hex || '')) { complete = false; continue; }
+        if (!row || !/^[0-9a-f]{6}$/i.test(row.hex || '')) { available = complete = false; continue; }
         const value = aircraft.get(row.hex.toLowerCase()) || {eligible: [], scored: [], measured: []};
         for (const field of Object.keys(value)) {
-          if (!Array.isArray(row[field]) || row[field].some(interval => !valid(interval))) complete = false;
-          value[field].push(...(Array.isArray(row[field]) ? row[field] : []).filter(valid)
-            .map(([start, end]) => [Math.max(from, start), Math.min(to, end)]).filter(valid));
+          if (!Array.isArray(row[field]) || row[field].some(interval => !valid(interval))) available = complete = false;
+          for (const [start, end] of (Array.isArray(row[field]) ? row[field] : []).filter(valid)) {
+            const clipped = [Math.max(from, start), Math.min(to, end)];
+            if (valid(clipped)) value[field].push(clipped);
+          }
         }
         aircraft.set(row.hex.toLowerCase(), value);
       }
     }
+    return {version: 1, available, complete, excluded_passes: excluded,
+      aircraft: [...aircraft].map(([hex, value]) => ({hex,
+        eligible: union(value.eligible), scored: union(value.scored), measured: union(value.measured)}))};
+  }
+  function aggregate(sources = [], options = {}) {
+    const basis = unionBasis(sources, options);
+    const {available, complete, excluded_passes: excluded} = basis;
     let eligibleMs = 0, scoredMs = 0, measuredMs = 0; const gaps = [];
-    for (const value of aircraft.values()) {
-      const eligible = union(value.eligible);
-      const scored = intersect(eligible, union(value.scored));
-      const measured = intersect(scored, union(value.measured));
+    for (const value of basis.aircraft) {
+      const eligible = value.eligible;
+      const scored = intersect(eligible, value.scored);
+      const measured = intersect(scored, value.measured);
       eligibleMs += milliseconds(eligible); scoredMs += milliseconds(scored); measuredMs += milliseconds(measured);
       // Only fully observed internal gaps count. Eligibility breaks, unscored
       // time, and left/right-censored edges cannot become continuity claims.
@@ -138,7 +151,7 @@
     gaps.sort((a, b) => a - b);
     const fullyScored = complete && eligibleMs === scoredMs;
     const continuityComplete = fullyScored && scoredMs > 0;
-    return {schema: 'vectorwarp-measured-track-coverage-v1',
+    const result = {schema: 'vectorwarp-measured-track-coverage-v1', available,
       scope: 'retained-eligible-aircraft-time', aggregation: 'aircraft-time-interval-union',
       eligible_seconds: eligibleMs / 1000, scored_seconds: scoredMs / 1000,
       unscored_seconds: (eligibleMs - scoredMs) / 1000, measured_seconds: measuredMs / 1000,
@@ -153,6 +166,8 @@
       gap_p95_seconds: continuityComplete ? quantile(gaps, .95) : null,
       gap_max_seconds: continuityComplete && gaps.length ? gaps[gaps.length - 1] : null,
       gap_semantics: 'internal-unmeasured-intervals-within-contiguous-scored-exposure;nearest-rank-quantiles'};
+    return available ? result : Object.fromEntries(Object.entries(result).map(([key, value]) =>
+      [key, typeof value === 'number' ? null : value]));
   }
   // Keep every pass and exact interval while omitting display-unused diagnostics.
   function kioskAssociationChannel(channel) {
@@ -173,5 +188,5 @@
     measured_track_coverage: aggregate([channel.measured_track_basis]),
     cpi_exposure: cpiExposure};
   }
-  return {union, extendUnion, intersect, aggregate, compactBasis, expandBasis, kioskAssociationChannel};
+  return {union, extendUnion, intersect, unionBasis, aggregate, compactBasis, expandBasis, kioskAssociationChannel};
 });

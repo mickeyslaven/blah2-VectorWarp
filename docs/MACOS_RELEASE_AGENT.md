@@ -3,7 +3,8 @@
 This is a local `launchd` job, not a Codex/AI automation or a GitHub
 self-hosted runner. GitHub-hosted macOS 15 runners build and test both runtimes
 on every pull request, merge to `main`, and stable version tag. A separate,
-explicit publish dispatch promotes the exact 24-hour-soaked Linux candidate to a
+explicit publish dispatch promotes the exact Linux candidate after at least 600
+consecutive healthy seconds of package-bound live acceptance to a
 draft; creating a tag alone does not authorize release. Every 15 minutes while this
 Mac is logged in, the local agent looks for a newer stable draft. It accepts
 only a tag on `main` with current successful hosted checks, exact-tag Mac runtime

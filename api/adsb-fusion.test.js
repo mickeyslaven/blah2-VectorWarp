@@ -110,6 +110,24 @@ const bounded = fuseAircraftData([snapshot(local, nowMs / 1000 + 1.1, [
 ])], {nowMs});
 assert.deepEqual(bounded.aircraft, [], 'raw observations outside the absolute one-second policy are rejected');
 
+for (const [offset, accepted] of [[-2.4, true], [1, true], [1.5, false], [2, false], [-3.1, false]]) {
+  const directional = fuseAircraftData([snapshot(local, nowMs / 1000 - offset, [
+    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, gs: 100, track: 90, seen_pos: 0}
+  ])], {nowMs, maxPositionAgeSeconds: 5,
+    maxPastObservationOffsetSeconds: 1, maxFutureObservationOffsetSeconds: 3});
+  assert.equal(directional.aircraft.length, Number(accepted),
+    `Future catch-up must not widen old-truth freshness at offset ${offset}`);
+}
+
+const olderRelay = fuseAircraftData([snapshot(local, nowMs / 1000 - 2, [
+  {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, gs: 100, track: 90, seen_pos: 0}
+])], {nowMs, maxObservationOffsetSeconds: 3});
+const directionallyFilteredRelay = fuseAircraftData([{source: local, receivedAtMs: nowMs,
+  data: olderRelay}], {nowMs, maxPastObservationOffsetSeconds: 1,
+  maxFutureObservationOffsetSeconds: 3});
+assert.equal(directionallyFilteredRelay.aircraft.length, 0,
+  'A relay cannot launder an older observation through a projected timestamp');
+
 const relayTargetTime = nowMs / 1000;
 const relayPositionTime = relayTargetTime + 2;
 const relayOriginalTime = relayTargetTime - 3;
@@ -130,6 +148,10 @@ assert.ok(separationKm(relayedTarget.aircraft[0], expectedAtTarget) < .001,
 assert.equal(relayedTarget.aircraft[0].vectorwarp.observation_position_timestamp_s,
   relayOriginalTime, 'relay preserves the original position observation epoch');
 assert.equal(relayedTarget.aircraft[0].vectorwarp.position_timestamp_s, relayTargetTime);
+assert.equal(fuseAircraftData([{source: local, receivedAtMs: nowMs,
+  data: relayedTarget}], {nowMs, maxPastObservationOffsetSeconds: 1,
+  maxFutureObservationOffsetSeconds: 3}).aircraft.length, 0,
+'Legacy relays also retain the original-observation directional age bound');
 
 const spoofedRelay = fuseAircraftData([{source: {id: 'external', kind: 'http'},
   receivedAtMs: nowMs + 2000, data: {now: relayPositionTime, aircraft: [{

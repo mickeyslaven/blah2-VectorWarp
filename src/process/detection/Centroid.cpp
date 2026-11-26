@@ -1,5 +1,5 @@
 #include "Centroid.h"
-#include <iostream>
+#include "IntegratedCfar.h"
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -17,57 +17,41 @@ Centroid::~Centroid()
 {
 }
 
-std::unique_ptr<Detection> Centroid::process(Detection *x)
+std::unique_ptr<Detection> Centroid::process(Detection *x, double currentCpiPreferenceSnr)
 { 
-  // store detections temporarily
-  std::vector<double> delay, doppler, snr;
-  delay = x->get_delay();
-  doppler = x->get_doppler();
-  snr = x->get_snr();
+  const auto delay = x->get_delay(), doppler = x->get_doppler(), snr = x->get_snr();
+  const auto finite = [&](size_t i) {
+    return std::isfinite(delay[i]) && std::isfinite(doppler[i]) && std::isfinite(snr[i]);
+  };
+  const auto rank = [&](size_t i) {
+    return blah2::detection::integrated_cfar::temporalCandidateRank(
+      !x->get_evidence().empty() && x->get_evidence()[i].depth == 1, snr[i], currentCpiPreferenceSnr);
+  };
 
-  // centroid data
-  double delayMin, delayMax;
-  double dopplerMin, dopplerMax;
-  bool isCentroid;
   std::vector<double> delay2, doppler2, snr2;
   std::vector<Detection::Evidence> evidence;
   std::vector<uint32_t> spatial;
 
-  // loop over every detection
-  const size_t nDetections = std::min(delay.size(), std::min(doppler.size(), snr.size()));
+  const size_t nDetections = std::min({delay.size(), doppler.size(), snr.size()});
   for (size_t i = 0; i < nDetections; i++)
   {
-    if (!std::isfinite(delay[i]) || !std::isfinite(doppler[i]) || !std::isfinite(snr[i]))
-      continue;
+    if (!finite(i)) continue;
     // Keep bounds signed/double: uint16 underflow previously made a detection
     // near delay zero immune to nearby stronger detections.
-    delayMin = delay[i] - static_cast<double>(nDelay);
-    delayMax = delay[i] + static_cast<double>(nDelay);
-    dopplerMin = doppler[i] - (nDoppler * resolutionDoppler);
-    dopplerMax = doppler[i] + (nDoppler * resolutionDoppler);
-    isCentroid = true;
+    const double delayMin = delay[i] - nDelay, delayMax = delay[i] + nDelay;
+    const double dopplerMin = doppler[i] - (nDoppler * resolutionDoppler);
+    const double dopplerMax = doppler[i] + (nDoppler * resolutionDoppler);
+    bool isCentroid = true;
     
-    // find detections to keep
     for (size_t j = 0; j < nDetections; j++)
     {
-      // skip same detection
-      if (j == i)
-      {
-        continue;
-      }
-      // search detections close by
-      if (!std::isfinite(delay[j]) || !std::isfinite(doppler[j]) || !std::isfinite(snr[j]))
-        continue;
+      if (j == i || !finite(j)) continue;
       if (delay[j] > delayMin && delay[j] < delayMax &&
-        doppler[j] > dopplerMin && doppler[j] < dopplerMax)
-        {
-          // remove if SNR is lower
-          if (snr[i] < snr[j])
-          {
-            isCentroid = false;
-            break;
-          }
-        }
+          doppler[j] > dopplerMin && doppler[j] < dopplerMax &&
+          (rank(i) < rank(j) || (rank(i) == rank(j) && snr[i] < snr[j]))) {
+        isCentroid = false;
+        break;
+      }
     }
     // store centroided detections
     if (isCentroid)

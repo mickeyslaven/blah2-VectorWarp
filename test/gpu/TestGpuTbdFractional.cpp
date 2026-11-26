@@ -15,6 +15,7 @@ using namespace blah2;
 unsigned checks=0;
 void require(bool value,const char* reason){++checks;if(!value)throw std::runtime_error(reason);}
 void put(uint32_t* p,uint32_t at,double value){std::memcpy(p+at,&value,8);}
+double get(const uint32_t* p,uint32_t at){double value;std::memcpy(&value,p+at,8);return value;}
 constexpr uint32_t rows=17,columns=65,cells=rows*columns;
 using History=std::vector<std::vector<double>>;
 const std::vector<double> axes=[] {std::vector<double> out(rows);
@@ -41,8 +42,8 @@ Candidate softwareCandidate(Instance& instance){
 struct Fixture {
  static constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
  static constexpr auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
- static constexpr uint32_t windows=(96+2*rows+columns+1)&~1u;
- static constexpr uint32_t rowBounds=windows+14*columns,colBounds=rowBounds+2*rows;
+ static constexpr uint32_t windows=(98+2*rows+columns+1)&~1u;
+ static constexpr uint32_t rowBounds=windows+16*columns,colBounds=rowBounds+2*rows;
  static constexpr uint32_t offsetBase=colBounds+2*columns;
  static constexpr uint32_t alphaBase=offsetBase+rows*33*8;
  Context& context;
@@ -57,11 +58,14 @@ struct Fixture {
  double elapsedMs=0,productionMs=0;
  unsigned timedPairs=0;
  bool captureTiming=false;
- Fixture(Context& c):context(c),metadata(c,(alphaBase+4*14*2)*4,host,preferred),
+ Fixture(Context& c):context(c),metadata(c,(alphaBase+5*14*2)*4,host,preferred),
   fused(c,cells*16,host,preferred),scratch(c,layout.bytes,host,preferred),
   history(c,cells*8*8,host,preferred),power(c,cells*8,host,preferred),
   banks(c,cells*4*8,host,preferred),maps(c,8,host,preferred),weights(c,8,host,preferred),
   angles(c,cells*8*4,host,preferred){
+  require(layout.bytes==gpu_postprocess::layout(rows,columns,1).bytes+uint64_t(36)*cells*4&&
+    gpu_postprocess::layout(rows,columns,4).bytes==layout.bytes,
+    "Current-CPI family allocated an extra per-cell scratch bank");
   const std::vector<Buffer*> buffers{&metadata,&fused,&scratch,&history,&power,&banks,&maps,&weights,&angles};
   const auto sources=gpu_postprocess::shaderSources();
   levels=std::make_unique<Kernel>(c,sources[0].second.c_str(),buffers);
@@ -110,18 +114,18 @@ struct Fixture {
   m[41]=layout.indices;m[43]=layout.records;m[57]=layout.bankCandidates;m[58]=layout.bankMotion;
   m[86]=layout.direction;
   m[91]=layout.metricPartials;m[92]=layout.metricPartialCount;
-  m[44]=96;m[45]=96+2*rows;m[46]=windows;m[49]=1;m[60]=2400000;
+  m[44]=98;m[45]=98+2*rows;m[46]=windows;m[49]=1;m[60]=2400000;
   m[74]=maximum;m[75]=8;m[76]=2;m[77]=angleGate?0u:UINT32_MAX;
   m[78]=1;m[79]=available-1;m[80]=track_before_detect::bankCount(maximum);
-  m[84]=14;m[93]=dopplerBins;m[59]=1;put(m,94,scale);
-  for(uint32_t row=0;row<rows;++row)put(m,96+2*row,axes[row]);
+  m[84]=16;m[93]=dopplerBins;m[59]=1;put(m,94,scale);
+  for(uint32_t row=0;row<rows;++row)put(m,98+2*row,axes[row]);
   for(uint32_t col=0;col<columns;++col){
-   m[96+2*rows+col]=col;const uint32_t at=windows+14*col;
+   m[98+2*rows+col]=col;const uint32_t at=windows+16*col;
    const uint32_t a=uint32_t(std::max(0,int(col)-8)),b=uint32_t(std::max(0,int(col)-2));
    const uint32_t c=std::min(columns,col+3),d=std::min(columns,col+9),n=b-a+d-c;
    m[at]=a;m[at+1]=b;m[at+2]=c;m[at+3]=d;m[at+4]=n;
-   for(uint32_t pass=0;pass<=m[80];++pass){const uint32_t depth=pass?2u<<(pass-1):2;
-    put(m,at+6+2*pass,track_before_detect::cfarAlpha(
+   for(uint32_t pass=0;pass<=m[80]+1;++pass){const uint32_t depth=track_before_detect::passDepth(maximum,pass);
+    put(m,at+6+2*pass,::blah2::detection::integrated_cfar::alpha(
       track_before_detect::passPfa(1e-6,maximum,2,dopplerBins,pass),n,depth));}
   }
   std::vector<uint32_t> alphaWords(m,m+alphaBase);
@@ -245,14 +249,69 @@ struct Fixture {
  }
  double longestThreshold(uint32_t row,uint32_t col){
   const auto* m=static_cast<const uint32_t*>(metadata.mapped);
-  const uint32_t at=windows+14*col,bank=m[80];
+  const uint32_t at=windows+16*col,bank=m[80];
   double train=0;uint32_t count=0;
   const auto add=[&](uint32_t c){const double value=observed[bank*cells+row*columns+c];
    if(std::isfinite(value)&&value>=0){train+=value;++count;}};
   for(uint32_t c=m[at];c<m[at+1];++c)add(c);
   for(uint32_t c=m[at+2];c<m[at+3];++c)add(c);
   if(!count)return std::numeric_limits<double>::infinity();
-  return track_before_detect::cfarAlpha(track_before_detect::passPfa(1e-6,m[74],2,m[93],bank),count,m[74])*(train/count);
+  return ::blah2::detection::integrated_cfar::alpha(track_before_detect::passPfa(1e-6,m[74],2,m[93],bank),count,m[74])*(train/count);
+ }
+ void mixedFamilyMergeParity(){
+  if(detectorKernels.empty()){const std::vector<Buffer*> buffers{&metadata,&fused,&scratch,&history,&power,&banks,&maps,&weights,&angles};
+   for(const auto& source:gpu_postprocess::shaderSources())detectorKernels.push_back(std::make_unique<Kernel>(context,source.second.c_str(),buffers));}
+  struct Case{double current,deep,minimum;bool fresh;};
+  for(const auto test:{Case{6,6,7,false},Case{6,8,7,false},Case{8,10,7,true},
+      Case{8,10,9,false},Case{9.1000002,10,9.1,true},Case{8,10,0,false},Case{8,-1,7,true}})
+   for(uint32_t maximum:{4u,8u})for(uint32_t separation:{0u,1u})for(double shift:{0.0,.5}){
+    run(History(8,std::vector<double>(cells,1)),0,maximum,maximum);
+    auto* m=static_cast<uint32_t*>(metadata.mapped);auto* s=static_cast<uint32_t*>(scratch.mapped);
+    std::fill(m,m+32,0);std::memset(s,0,size_t(scratch.bytes));
+    put(m,68,2);put(m,70,1);put(m,96,test.minimum);
+    const uint32_t deepCell=8*columns+32,currentCell=deepCell+separation,currentPass=m[80]+2;
+    const auto accepted=[&](uint32_t pass,uint32_t cell,double snr){
+     const uint32_t base=layout.bankCandidates+8*(pass-1)*cells;
+     const bool current=pass==currentPass;
+     s[current?layout.flags+cell:base+cell]=7;s[current?layout.keep+cell:base+cells+cell]=1;
+     const uint32_t record=current?layout.records+8*cell:base+2*cells+6*cell;
+     put(s,record,cell%columns+(current?shift:0));put(s,record+2,axes[cell/columns]);put(s,record+4,snr);
+    };
+    if(test.deep>=0)accepted(3,deepCell,test.deep);
+    accepted(currentPass,currentCell,test.current);
+    for(Buffer* b:{&metadata,&scratch})b->flush(0,b->bytes);
+    gpu_reference::CommandOwner command(context);command.allocate();VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    check(vkBeginCommandBuffer(command.command,&begin),"Mixed-family merge recording");
+    const auto dispatch=[&](uint32_t kernel,Push push){detectorKernels[kernel]->append(command.command,push);barrier(command.command);};
+    dispatch(14,{cells,0,0,0,0});
+    for(uint32_t pass=1;pass<=currentPass;++pass)dispatch(14,{cells,1,pass,0,0});
+    dispatch(14,{cells,2,0,0,0});dispatch(14,{cells,3,0,0,0});dispatch(14,{cells,4,0,0,0});
+    gpu_postprocess::appendStableCompaction(command.command,detectorKernels,cells,0);dispatch(7,{cells,0,0,0,0});gpu_resident::hostRead(command.command);
+    check(vkEndCommandBuffer(command.command),"Mixed-family merge end");VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount=1;submit.pCommandBuffers=&command.command;
+    check(vkQueueSubmit(context.queue,1,&submit,context.fence),"Mixed-family merge submit");
+    check(vkWaitForFences(context.device,1,&context.fence,VK_TRUE,UINT64_C(30000000000)),"Mixed-family merge fence");
+    check(vkResetFences(context.device,1,&context.fence),"Mixed-family merge fence reset");
+    metadata.invalidate(0,metadata.bytes);scratch.invalidate(0,scratch.bytes);
+    require(!m[0]&&m[11]==1,"Mixed-family merge did not retain exactly one accepted candidate");
+    const uint32_t cell=s[layout.indices],flag=s[layout.flags+cell];
+    require(cell==(test.fresh?currentCell+uint32_t(std::llround(shift)):deepCell)&&bool(flag&128u)==test.fresh,
+      "Mixed-family merge lost strong fresh evidence or weak deep birth support");
+    require(temporal_candidate::sourceCell(cell,flag,rows,columns,maximum)==(test.fresh?currentCell:deepCell),
+      "Current-CPI scratch reuse lost the original interpolation source");
+    const double actualDelay=get(s,layout.records),actualSnr=get(s,layout.records+4);
+    require(actualDelay==(test.fresh?32+separation+shift:32)&&actualSnr==(test.fresh?test.current:test.deep),
+      "Current-CPI scratch reuse overwrote selected candidate coordinates/SNR");
+    if(test.deep<0)continue; // Current-only shifted key must not retain its old source keep bit.
+    Detection candidates({32,32+separation+shift},{0,0},{test.deep,test.current});
+    candidates.set_evidence({{1,maximum,4,3,0,0,{maximum,maximum-1,maximum-2,maximum-3}},
+      {1,maximum,1,0,0,0,{maximum}}});
+    Centroid centroid(2,1,1);const auto expected=centroid.process(&candidates,test.minimum);
+    require(expected->get_nDetections()==1&&(expected->get_evidence()[0].depth==1)==test.fresh,
+      "CPU mixed-family centroid differs from GPU");
+    require(::blah2::detection::integrated_cfar::temporalCandidateBetter(true,test.current,false,test.deep,test.minimum,false)==test.fresh,
+      "CPU same-key consolidation differs from GPU");
+   }
  }
  void detectorParity(const std::vector<double>& values,uint32_t maximum=8,uint32_t radius=1,uint32_t expectedSource=UINT32_MAX){
   require(values.size()==4*cells,"Synthetic bank shape invalid");
@@ -269,15 +328,16 @@ struct Fixture {
   m[47]=rowBounds;m[48]=colBounds;m[50]=3;put(m,68,radius);put(m,70,1);
   for(uint32_t r=0;r<rows;++r){m[rowBounds+2*r]=r;m[rowBounds+2*r+1]=r+1;}
   for(uint32_t c=0;c<columns;++c){m[colBounds+2*c]=uint32_t(std::max(0,int(c)-int(radius)+1));m[colBounds+2*c+1]=std::min(columns,c+radius);}
-  for(Buffer* b:{&metadata,&scratch,&banks})b->flush(0,b->bytes);
+  std::fill_n(static_cast<double*>(power.mapped),cells,1.0);
+  for(Buffer* b:{&metadata,&scratch,&banks,&power})b->flush(0,b->bytes);
   if(detectorKernels.empty()){const std::vector<Buffer*> buffers{&metadata,&fused,&scratch,&history,&power,&banks,&maps,&weights,&angles};
    for(const auto& source:gpu_postprocess::shaderSources())detectorKernels.push_back(std::make_unique<Kernel>(context,source.second.c_str(),buffers));}
   gpu_reference::CommandOwner command(context);command.allocate();VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   check(vkBeginCommandBuffer(command.command,&begin),"Bank parity recording");
   const auto dispatch=[&](uint32_t kernel,Push push){detectorKernels[kernel]->append(command.command,push);barrier(command.command);};
-  for(uint32_t pass=1;pass<=m[80]+1;++pass){dispatch(1,{cells,pass,0,0,0});dispatch(13,{1,pass,0,0,0});
+  for(uint32_t pass=1;pass<=m[80]+2;++pass){dispatch(1,{cells,pass,0,0,0});dispatch(13,{1,pass,0,0,0});
    dispatch(3,{cells,pass,1,1,0});dispatch(4,{cells,0,pass,0,0});dispatch(5,{cells,0,pass,0,0});}
-  dispatch(14,{cells,0,0,0,0});for(uint32_t pass=1;pass<=m[80]+1;++pass)dispatch(14,{cells,1,pass,0,0});
+  dispatch(14,{cells,0,0,0,0});for(uint32_t pass=1;pass<=m[80]+2;++pass)dispatch(14,{cells,1,pass,0,0});
   dispatch(14,{cells,2,0,0,0});dispatch(14,{cells,3,0,0,0});dispatch(14,{cells,4,0,0,0});
   gpu_postprocess::appendStableCompaction(command.command,detectorKernels,cells,0);dispatch(7,{cells,0,0,0,0});gpu_resident::hostRead(command.command);
   check(vkEndCommandBuffer(command.command),"Bank parity recording end");VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&command.command;
@@ -287,6 +347,12 @@ struct Fixture {
   metadata.invalidate(0,metadata.bytes);scratch.invalidate(0,scratch.bytes);require(!m[0],"Independent bank detector numeric rejection");
   detection::IntegrationMetrics metrics;metrics.cpis=maximum;metrics.delayMotionBins=2;metrics.dopplerMotionBins=4;metrics.ready=true;
   metrics.evidence=std::make_shared<integration::TemporalEvidence::Result>();
+  metrics.evidence->epoch=1;metrics.evidence->sequence=maximum;
+  metrics.evidence->currentMap=std::make_unique<Map<std::complex<double>>>(rows,columns);
+  auto& current=*metrics.evidence->currentMap;current.doppler.assign(axes.begin(),axes.end());
+  for(uint32_t c=0;c<columns;++c)current.delay.push_back(c);
+  for(auto& row:current.data)for(auto& value:row)value={1,0};
+  current.set_metrics();
   for(uint32_t pass=0;pass<=m[80];++pass){auto& bank=metrics.evidence->banks[pass];bank.depth=pass?2u<<(pass-1):2;bank.ready=true;
    bank.window.epoch=1;bank.window.newestSequence=maximum;bank.window.depth=uint8_t(bank.depth);
    for(uint32_t age=0;age<bank.depth;++age)bank.window.sequences[age]=maximum-age;
@@ -398,11 +464,11 @@ void exactPowerBoundaryParity(Fixture& fixture){
  for(uint32_t pass:{0u,2u,3u,4u}){
   const uint32_t depth=pass<3?2:pass==3?4:8;
   const double pfa=pass?track_before_detect::passPfa(1e-6,8,2,4,pass-1):1e-6;
-  const double threshold=track_before_detect::cfarAlpha(pfa,12,depth);
+  const double threshold=::blah2::detection::integrated_cfar::alpha(pfa,12,depth);
   CfarDetector1D detector(pfa,2,6,0,0,depth);
   m[74]=pass?8:2;m[28]=1;
-  for(uint32_t c=0;c<columns;++c){const uint32_t at=Fixture::windows+14*c;
-   put(m,at+6+2*(pass?pass-1:0),track_before_detect::cfarAlpha(pfa,m[at+4],depth));}
+  for(uint32_t c=0;c<columns;++c){const uint32_t at=Fixture::windows+16*c;
+   put(m,at+6+2*(pass?pass-1:0),::blah2::detection::integrated_cfar::alpha(pfa,m[at+4],depth));}
   for(double cut:{std::nextafter(threshold,0.0),threshold,
       std::nextafter(threshold,std::numeric_limits<double>::infinity())}){
    std::fill(m,m+28,0);std::memset(s,0,size_t(fixture.scratch.bytes));
@@ -533,7 +599,7 @@ void observedPopulationParity(Fixture& fixture){
    check(vkWaitForFences(context.device,1,&context.fence,VK_TRUE,UINT64_C(30000000000)),"Observed population fence");
    check(vkResetFences(context.device,1,&context.fence),"Observed population fence reset");stage.copyOutputs(out);
    const uint32_t available=std::min(frame+1,depth),passes=depth<=2?(available==depth?1u:0u):
-    (available>=2?2u:0u)+(available>=4?1u:0u)+(available>=8?1u:0u);
+    1u+(available>=2?2u:0u)+(available>=4?1u:0u)+(available>=8?1u:0u);
    require(metrics.detectorObserved==observed&&metrics.evaluatedCells==(observed?cells*passes:0),
     "Pre-recorded CFAR commands ignored the submission-time observer toggle");
    require(!passes||metrics.cfarCount>0,"Observed population fixture never accepted its positive control");
@@ -648,8 +714,9 @@ void noncoherentTemporalDetectorParity(Fixture& fixture){
  auto& context=fixture.context;
  for(uint32_t depth:{4u,8u})for(double drift:{0.0,-.566}){
   PostprocessConfig config;config.enabled=true;config.detection=true;config.pfa=1e-6;
-  config.guard=2;config.train=6;config.centroidDelay=1;config.centroidDoppler=1;
+  config.guard=2;config.train=6;config.centroidDelay=2;config.centroidDoppler=1;
   config.centroidDopplerResolution=1;config.integrationCpis=depth;
+  config.currentCpiPreferenceSnr=7;
   config.integrationDelayMotionBins=2;config.integrationDopplerMotionBins=4;
   config.integrationDelayDriftPerHz=drift;config.dopplerAxis=axes;
   for(uint32_t c=0;c<columns;++c)config.delayAxis.push_back(c);
@@ -659,7 +726,7 @@ void noncoherentTemporalDetectorParity(Fixture& fixture){
   auto mapConfig=config;mapConfig.amplitudeOutput=true;
   gpu_postprocess::MapStage mapStage(context,mapConfig,2400000);
   detection::DetectorIntegration integration(depth,track_before_detect::encodeMotionBins(2,4,drift!=0),drift);
-  CfarDetector1D detector(1e-6,2,6,0,0,depth);Centroid centroid(1,1,1);Interpolate interpolate(true,true);
+  CfarDetector1D detector(1e-6,2,6,0,0,depth);Centroid centroid(2,1,1);Interpolate interpolate(true,true);
   PostprocessMetrics metrics;std::vector<double> display(cells);
   std::vector<PostprocessDetection> actual(cells);std::vector<uint32_t> flags(cells),keys(cells);
   PostprocessOutputs out;out.metrics=&metrics;out.display=display.data();out.displayCount=cells;
@@ -687,7 +754,9 @@ void noncoherentTemporalDetectorParity(Fixture& fixture){
     auto* fused=static_cast<double*>(fixture.fused.mapped);
     for(uint32_t r=0;r<rows;++r)for(uint32_t c=0;c<columns;++c){
      const double background=1+double((frame*13+r*7+c*3)%11)/16;
-     const double amplitude=r==11&&c==24+frame%5?1000:background;
+     // The older, stronger peak is adjacent to a fresh weaker detection.
+     // Cross-key suppression must not replace its independent CPI support.
+     const double amplitude=r==11&&c==24+frame%5?(frame?100:1000):background;
      map->data[r][c]={amplitude,0};fused[2*(r*columns+c)]=amplitude;fused[2*(r*columns+c)+1]=0;}
     fixture.fused.flush(0,fixture.fused.bytes);map->set_metrics();
     mapStage.upload(static_cast<const std::complex<double>*>(fixture.fused.mapped));
@@ -696,7 +765,7 @@ void noncoherentTemporalDetectorParity(Fixture& fixture){
     // Carry the originating CFAR cell through the canonical winner/centroid
     // operations using its existing spatial tag, then compare it exactly.
     auto expected=detection::detectProducts(*map,detector,centroid,interpolate,integrated,nullptr,
-     [](uint32_t row,uint32_t column){return row*columns+column+1;});
+     [](uint32_t row,uint32_t column){return row*columns+column+1;},nullptr,config.currentCpiPreferenceSnr);
     const auto sourceCells=expected->get_spatial();expected->set_spatial({});
     expected->set_evidence_identity(integrated.window.epoch,integrated.window.newestSequence);
     gpu_reference::CommandOwner command(context);command.allocate();VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -719,7 +788,7 @@ void noncoherentTemporalDetectorParity(Fixture& fixture){
     require(metrics.availableCpis==std::min(frame+1,depth)&&metrics.detectionCount==expected->get_nDetections(),
      "Noncoherent temporal readiness/detection count differs");
     require(!stage.evidenceStatus()[gpu_postprocess::refinedCandidates],"Noncoherent detector executed spatial refinement");
-    if(frame)require(metrics.detectionCount>0,"Noncoherent temporal positive control missing");
+    require(metrics.detectionCount>0,"Noncoherent current-CPI positive control missing during warmup/reset");
     sequences.push_back(integrated.window.newestSequence);if(sequences.size()>depth)sequences.erase(sequences.begin());
     auto decoded=gpu_result_json::hostDetections(gpu_result_json::View<PostprocessDetection>{actual.data(),size_t(metrics.detectionCount)},
      {flags.data(),flags.size()},{keys.data(),size_t(metrics.detectionCount)},integrated.window.epoch,
@@ -736,7 +805,16 @@ void noncoherentTemporalDetectorParity(Fixture& fixture){
      require(left.epoch==right.epoch&&left.newestSequence==right.newestSequence&&left.depth==right.depth&&
       left.bank==right.bank&&left.delayMotion==right.delayMotion&&left.dopplerMotion==right.dopplerMotion&&
       left.sequences==right.sequences,"Noncoherent temporal exact bank/support lineage differs");
+     if(left.depth==1)require(decoded.get_delay()[i]!=double((sourceCells[i]-1)%columns)&&
+      decoded.get_doppler()[i]!=axes[(sourceCells[i]-1)/columns],
+      "Current-CPI parity fixture did not exercise non-flat interpolation");
     }
+    bool fresh=false;
+    for(const auto& evidence:decoded.get_evidence())if(evidence.depth==1){
+     fresh=true;require(evidence.bank==0&&evidence.newestSequence==frame+1&&
+      evidence.sequences[0]==frame+1&&evidence.sequences[1]==0&&
+      evidence.delayMotion==0&&evidence.dopplerMotion==0,"Single-CPI source lineage differs");}
+    require(fresh,"Deep integration replaced every independently detected current-CPI candidate");
     require(std::abs(metrics.noisePower-map->noisePower)<1e-9&&std::abs(metrics.maxPower-map->maxPower)<1e-9,
      "Noncoherent integrated display metadata differs");
    }
@@ -931,6 +1009,7 @@ int main(int argc,char** argv)try{
  std::cout<<"device="<<candidate.info.name<<" software_only=1\n";
  ::blah2::Context context(instance,candidate);Fixture fixture(context);
  fixture.geometryParity();
+ fixture.mixedFamilyMergeParity();
  clutterScratchParity(context);
  spatialLineageFlags(context);
  adaptiveBearingParity(context);

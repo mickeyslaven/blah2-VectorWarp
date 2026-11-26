@@ -89,7 +89,7 @@ TEST_CASE("temporal preflight budgets use complete native lane geometry")
       return track_before_detect::encodeMotionBins(delay, doppler, fractional);
     };
     const auto narrow = temporalIntegrationBudget(601, 1261, 8, motion(1, 1));
-    REQUIRE(narrow.workingBytes == 218263968);
+    REQUIRE(narrow.workingBytes == 230389744);
     REQUIRE(narrow.pathSamples == 95490486);
     REQUIRE(temporalIntegrationBudget(601, 1261, 8, motion(2, 2)).pathSamples == 265251350);
     REQUIRE_THROWS_AS(temporalIntegrationBudget(601, 1261, 8, motion(2, 4)), std::invalid_argument);
@@ -101,8 +101,8 @@ TEST_CASE("temporal preflight budgets use complete native lane geometry")
   }
   REQUIRE_THROWS_AS(temporalIntegrationBudget(0, 1, 8, 0), std::invalid_argument);
   REQUIRE_THROWS_AS(temporalIntegrationBudget(1024, 1025, 2, 0), std::invalid_argument);
-  REQUIRE_NOTHROW(temporalIntegrationBudget(1, 932067, 8, 0));
-  REQUIRE_THROWS_AS(temporalIntegrationBudget(1, 932068, 8, 0), std::invalid_argument);
+  REQUIRE_NOTHROW(temporalIntegrationBudget(1, 883011, 8, 0));
+  REQUIRE_THROWS_AS(temporalIntegrationBudget(1, 883012, 8, 0), std::invalid_argument);
 }
 
 TEST_CASE("immutable radar plans preserve physical intent across backends and temporal depths")
@@ -254,6 +254,21 @@ TEST_CASE("radar plan preserves zero centroid radius and refuses invalid stage i
     spatial, *shape, 20000, 100000000, 2000, true);
   REQUIRE(qualified.products().beamTolerance == 1);
   REQUIRE(qualified.residentDetector().integrationBeamTolerance == 1);
+}
+
+TEST_CASE("radar plan binds deep current preference to exact configured birth threshold")
+{
+  using namespace blah2::pipeline;
+  for(uint32_t depth:{4u,8u})for(double minimum:{5.0,9.0,9.1}) {
+    ProductConfig config;config.integrationCpis=depth;config.trackerM=2;
+    config.trackerN=depth+1;config.trackerDelete=20;config.minimumSnr=minimum;
+    const RadarPlan plan(config);
+    REQUIRE(plan.residentDetector().currentCpiPreferenceSnr==std::max(7.0,minimum));
+    REQUIRE(plan.residentTracker(128).minInitiationSnrDb==minimum);
+    config.stages.tracking=false;const RadarPlan disabled(config);
+    REQUIRE(disabled.residentDetector().currentCpiPreferenceSnr==0);
+    REQUIRE(disabled.identity()!=plan.identity());
+  }
 }
 
 TEST_CASE("lane delay geometry preserves physical units across sample rates")
@@ -539,12 +554,17 @@ TEST_CASE("temporal memory reservation follows geometry without increasing aggre
   const resident::LaneBudget budget(3);
   REQUIRE(budget.totalBytes==(3ULL<<30));
   REQUIRE(budget.bytesPerSession==(1ULL<<30));
-  const std::array<uint64_t,3> expectedWorking{121417996,266958388,297273100};
+  const std::array<uint64_t,3> expectedWorking{121418004,266968756,297283468};
+  const std::array<uint64_t,3> previousWorking{121417996,266958388,297273100};
   uint64_t previous=0;size_t index=0;
   for(uint32_t depth:{2u,4u,8u}) {
     auto config=temporalBudgetConfig(601,1261,depth);
     const auto reservation=temporal_gpu::memoryReservation(config,4096);
-    REQUIRE(reservation.workingBytes==expectedWorking[index++]);
+    REQUIRE(reservation.workingBytes==expectedWorking[index]);
+    // Only the scalar prefix, per-column alpha and extra pass metadata grow;
+    // the current family must not reserve another full-map candidate bank.
+    REQUIRE(reservation.workingBytes-previousWorking[index++]==
+      8+(depth>2?8*config.delayAxis.size()+16*(uint64_t(config.detector.train)+1):0));
     REQUIRE(reservation.workingBytes>previous);previous=reservation.workingBytes;
     REQUIRE(reservation.headroomBytes==(16ULL<<20));
     REQUIRE(reservation.bytes()<budget.bytesPerSession/2);
@@ -629,13 +649,14 @@ TEST_CASE("Map temporal product lifecycle retains host tracker and exact CPU fal
       map->doppler.assign(config_.dopplerAxis.begin(),config_.dopplerAxis.end());map->delay.assign(config_.delayAxis.begin(),config_.delayAxis.end());
       size_t at=0;for(auto& row:map->data)for(auto& value:row)value=input_[at++];map->set_metrics();
       const auto integrated=integration_.process(map,1,frame_*1000,(frame_+1)*1000,true);++frame_;
-      const auto found=detection::detectProducts(*map,detector_,centroid_,interpolate_,integrated);
+      const auto found=detection::detectProducts(*map,detector_,centroid_,interpolate_,integrated,
+        nullptr,{},nullptr,config_.detector.currentCpiPreferenceSnr);
       auto& mutableFound=*found;const auto delay=mutableFound.get_delay(),doppler=mutableFound.get_doppler(),snr=mutableFound.get_snr();
       output_.metrics.available=integrated.availableCpis;output_.metrics.count=found->get_nDetections();
       output_.metrics.noise=map->noisePower;output_.metrics.maximum=map->maxPower;
       at=0;for(const auto& row:map->data)for(const auto value:row)display_[at++]=value.real();
       for(size_t i=0;i<delay.size();++i){records_[i]={delay[i],doppler[i],snr[i],0};cells_[i]=i;
-        const auto& e=found->get_evidence()[i];flags_[i]=4u|((1u<<(e.bank-1))<<3u)|
+        const auto& e=found->get_evidence()[i];flags_[i]=4u|(e.bank?1u<<(e.bank+2):128u)|
           (uint32_t(e.delayMotion+2)<<17u)|(uint32_t(e.dopplerMotion+16)<<20u);}
       return output_;
     }
@@ -1419,12 +1440,14 @@ TEST_CASE("direct and channelized ingress share canonical products and disabled 
         REQUIRE(lane.detectorIntegration->window.newestSequence == phase + 1);
         REQUIRE(lane.detectorIntegration->window.supportSequences() ==
           direct.integration->window.supportSequences());
-        REQUIRE(lane.detectorIntegration->ready == (phase >= 1));
+        REQUIRE(lane.detectorIntegration->ready == (depth > 2 || phase >= 1));
         REQUIRE(lane.detectorIntegration->firstInputSample == direct.integration->firstInputSample);
         REQUIRE(lane.detectorIntegration->endInputSample == end);
         if (depth > 2) {
           REQUIRE(lane.detectorIntegration->evidence);
           REQUIRE(direct.integration->evidence);
+          REQUIRE(lane.detectorIntegration->evidence->currentMap->data ==
+            direct.integration->evidence->currentMap->data);
           for (size_t index = 0; index < 4; ++index) {
             const auto& actualBank = lane.detectorIntegration->evidence->banks[index];
             const auto& directBank = direct.integration->evidence->banks[index];
@@ -1849,7 +1872,7 @@ TEST_CASE("host temporal banks keep FP64 fractional paths exact and accept sourc
     history.insert(history.begin(), std::move(power));
     metrics = integrated.process(map, 0, (sequence - 1) * 100, sequence * 100, true);
     REQUIRE(metrics.captureEpoch == 0);
-    REQUIRE(metrics.ready == (sequence >= 2));
+    REQUIRE(metrics.ready);
   }
   REQUIRE(metrics.evidence->banks[2].ready);
   REQUIRE_FALSE(metrics.evidence->banks[3].ready);
@@ -1866,7 +1889,7 @@ TEST_CASE("host temporal banks keep FP64 fractional paths exact and accept sourc
   auto map = makeMap(5);
   const auto gap = integrated.process(map, 0, 500, 600, true);
   REQUIRE(gap.historyReset);
-  REQUIRE_FALSE(gap.ready);
+  REQUIRE(gap.ready);
 }
 
 TEST_CASE("temporal family PFA is preregistered and interpolation retains its originating statistic")
@@ -1874,8 +1897,10 @@ TEST_CASE("temporal family PFA is preregistered and interpolation retains its or
   for (const uint32_t maximum : {4u, 8u}) {
     const double pfa = 1e-4;
     double allocated = track_before_detect::passPfa(pfa, maximum, 1, 4, 0);
-    for (uint32_t pass = 1; pass < track_before_detect::detectorPassCount(maximum); ++pass)
+    for (uint32_t pass = 1; pass + 1 < track_before_detect::detectorPassCount(maximum); ++pass)
       allocated += 27 * track_before_detect::passPfa(pfa, maximum, 1, 4, pass);
+    allocated += track_before_detect::passPfa(pfa, maximum, 1, 4,
+      track_before_detect::detectorPassCount(maximum) - 1);
     REQUIRE(allocated == Catch::Approx(pfa).epsilon(1e-14));
   }
   blah2::detection::IntegrationMetrics metrics;
@@ -1899,6 +1924,9 @@ TEST_CASE("temporal family PFA is preregistered and interpolation retains its or
   bank.detectorPower[6 * 21 + 9] = 9;
   bank.detectorPower[6 * 21 + 11] = 25;
   bank.map->set_metrics();
+  metrics.evidence->currentMap = std::make_unique<Map<std::complex<double>>>(*bank.map);
+  for (auto& row : metrics.evidence->currentMap->data) for (auto& value : row) value = {1, 0};
+  metrics.evidence->currentMap->set_metrics();
   auto display = *bank.map;
   CfarDetector1D detector(.01, 1, 3, 0, 0);
   Centroid centroid(2, 2, 1); Interpolate interpolate(true, true);

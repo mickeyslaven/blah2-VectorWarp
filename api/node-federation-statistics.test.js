@@ -5,6 +5,7 @@ const http = require('node:http');
 const {compactNodeStatistics, combineNodeStatistics, probeJson} = require(
   process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation');
 const {federationAssociationPassTransport} = require('./evidence-statistics');
+const coverage = require('../html/js/measured_track_coverage');
 
 test('large association reads require an explicit bounded allowance', async t => {
   const body = JSON.stringify({passes: ['x'.repeat(2 * 1024 * 1024)]});
@@ -17,6 +18,7 @@ test('large association reads require an explicit bounded allowance', async t =>
   const origin = `http://127.0.0.1:${server.address().port}`;
   await assert.rejects(probeJson(origin, '/association', 2500),
     /response is too large/);
+  await assert.rejects(probeJson(origin, '/association', 2500, 1024 * 1024), /response is too large/);
   const accepted = await probeJson(origin, '/association', 2500, 8 * 1024 * 1024);
   assert.equal(accepted.value.passes[0].length, 2 * 1024 * 1024);
   await assert.rejects(probeJson(origin, '/association', 2500, 17 * 1024 * 1024),
@@ -28,7 +30,7 @@ test('network summary uses the bounded association basis contract', () => {
     require.resolve(process.env.VECTORWARP_NODE_FEDERATION_MODULE || './node-federation'),
     'utf8');
   assert.match(source,
-    /association-basis\?timing=provisional&compact=true'[\s\S]*?timeoutMs, 512 \* 1024/,
+    /association-basis\?timing=provisional&compact=true'[\s\S]*?timeoutMs, 1024 \* 1024/,
     'network polling must not transfer the full measured-track evidence ledger');
   assert.match(source,
     /association\/passes\?timing=provisional&transport=federation-v1'[\s\S]*?timeoutMs,\s*1024 \* 1024/,
@@ -55,11 +57,31 @@ test('compacts single-node scorecard with provenance', () => {
       recent_scored_passes: []});
   assert.deepEqual(value.association, {eligible: 10, detected: 4, tracked: 3});
   assert.equal(value.channels[0].key, 'beta:primary');
+  assert.equal(value.config_revision, 'a');
+  assert.equal(value.loaded_revision, 'a');
+  assert.equal(value.timing.maximum_completed_cycle_ms, null);
   assert.equal(value.timing.backlog_ms, 500);
   assert.equal(value.timing.raw_capture_backlog_ms, 500);
   assert.equal(value.evidence_status, 'degraded');
   assert.deepEqual(value.evidence_errors, ['ledger unwritable']);
   assert.equal(combineNodeStatistics([{...value, passes: []}]).health.status, 'degraded');
+});
+
+test('operational release evidence preserves canonical population windows and cycle maxima', () => {
+  const window = {schema: 'vectorwarp-operational-track-window-v1', complete: false,
+    unmatched_tracks: 0};
+  const value = compactNodeStatistics({id: 'site'},
+    {configRevision: 'digest', loadedRevision: 'digest'},
+    {processingCycle: {processing: {maximumMs: 501}, completion_interval: {maximumMs: 550}}},
+    {channels: [{identity: {illuminator: 'a'}, operational_track_window: window}]});
+  assert.deepEqual(value.channels[0].operational_track_window, window);
+  assert.equal(value.timing.maximum_completed_cycle_ms, 501);
+  assert.equal(value.timing.maximum_completion_interval_ms, 550);
+  const many = Array.from({length: 101}, (_, index) => ({hex: `id${index}`, started_at: index,
+    finalized_at: index + 1, eligible: true, detected: true, tracked: true}));
+  const summary = combineNodeStatistics([{...node('site', 101, 101, 101, many[0]), passes: many}]);
+  assert.equal(summary.system_wide_unique_passes.passes_complete, false);
+  assert.equal(summary.system_wide_unique_passes.passes.length, 100);
 });
 
 test('reports queued work rather than the receiver in-flight CPI', () => {
@@ -73,6 +95,30 @@ test('reports queued work rather than the receiver in-flight CPI', () => {
   const explicit = compactNodeStatistics({id: 'alpha'}, status,
     {cpi: 430, capture_backlog_ms: 910, capture_queue_ready_cpis: 1}, scorecard);
   assert.equal(explicit.timing.backlog_ms, 500);
+});
+
+test('retired work comes from canonical exact capture counters, never absent legacy fields', () => {
+  const summarize = cycleEvidence => compactNodeStatistics({id: 'site'}, {}, {cycleEvidence}, {}).timing;
+  const capture = {available: true, epoch: '1', discontinuities: '0', requalifications: '0',
+    retiredCpis: '0', retiredSamples: '0',
+    lanes: [{acceptedSamples: '2400000', droppedSamples: '0', discardedSamples: '0'}]};
+  const evidence = {schema: 'vectorwarp-processing-cycles-v1', anchorMonoNs: '1', anchorUtcNs: '1',
+    fault: '', records: [{sequence: '1', startMonoNs: '2', endMonoNs: '3', drainBatches: '0',
+      outcome: 'completed', captureBefore: capture,
+      captureAfter: {...capture, retiredCpis: '2', retiredSamples: '2400000'}}]};
+  assert.equal(summarize(evidence).retired_cpis, 2);
+  assert.equal(summarize(evidence).retired_samples, 2400000);
+  for (const bad of [undefined, {...evidence, fault: 'counter-overflow'}, {...evidence, records: []},
+    {...evidence, records: [{captureAfter: {available: false, retiredCpis: '0', retiredSamples: '0'}}]}]) {
+    assert.equal(summarize(bad).retired_cpis, null);
+    assert.equal(summarize(bad).retired_samples, null);
+  }
+  for (const bad of [undefined, null, 0, '-1', '9007199254740992']) {
+    evidence.records[0].captureAfter.retiredCpis = bad;
+    assert.equal(summarize(evidence).retired_cpis, null);
+  }
+  evidence.records[0].captureAfter.retiredCpis = '0';
+  assert.equal(summarize(evidence).retired_cpis, 0);
 });
 
 test('display-only coordinators are not counted as radar nodes', () => {
@@ -153,18 +199,18 @@ test('cached statistics remain visible without certifying stale node health', ()
 test('compact and deduplicated network statistics preserve scoring and restart provenance', () => {
   const pass = {pass_id: 'pass-1', hex: 'abc123', started_at: 1000, finalized_at: 2000,
     channel: 'primary', eligible_cpis: 6, detected_cpis: 3, detected: true,
-    site_epoch: 'site', evaluation_contract_hash: 'contract', evaluation_policy_hash: 'policy',
+    site_epoch: 'site', evaluation_contract_hash: 'contract', evaluation_policy_hash: 'a'.repeat(64),
     timing_policy: 'provisional', decision_grade: false,
     sensitivity_epoch_id: null, sensitivity_epoch_mixed: true};
   const compact = compactNodeStatistics({id: 'alpha'},
     {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
     {timing_policy: 'provisional', channels: [{selected_channel: 'primary', association_statistics: {
-      evaluation_contract_hash: 'contract', evaluation_policy_hash: 'policy',
+      evaluation_contract_hash: 'contract', evaluation_policy_hash: 'a'.repeat(64),
       timing_policy: 'provisional', decision_grade: false, sensitivity_epoch: {id: 'new-run'}}}]},
     {timing_policy: 'provisional', statistics_window: {complete: false}, passes: [pass]});
   const combined = combineNodeStatistics([compact]);
   assert.equal(combined.nodes[0].pass_count, 1);
-  assert.equal(combined.channels[0].evaluation_policy_hash, 'policy');
+  assert.equal(combined.channels[0].evaluation_policy_hash, 'a'.repeat(64));
   const provenance = combined.unique_recent_passes.passes[0].provenance[0];
   assert.equal(provenance.node, 'alpha');
   assert.equal(provenance.sensitivity_epoch_mixed, true);
@@ -184,7 +230,10 @@ test('columnar node transport preserves network outcomes without returning node 
     tracked_cpis: 3, eligible: true, detected: true, tracked: true},
   {hex: 'def456', started_at: 3000, finalized_at: 4000,
     outcome: 'no_radar_return', channel: 'primary', eligible_cpis: 6,
-    eligible: true, detected: false, tracked: false}];
+    eligible: true, detected: false, tracked: false}].map((pass, index) => ({...pass,
+      pass_id: `pass-${index}`, site_epoch: 'a'.repeat(64), evaluation_contract_hash: 'b'.repeat(64),
+      evaluation_policy_hash: 'c'.repeat(64), timing_policy: 'provisional',
+      sensitivity_epoch_id: 'd'.repeat(64), sensitivity_epoch_mixed: false, decision_grade: false}));
   const compact = compactNodeStatistics({id: 'alpha'},
     {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
     {timing_policy: 'provisional', channels: [{selected_channel: 'primary',
@@ -197,4 +246,55 @@ test('columnar node transport preserves network outcomes without returning node 
   assert.equal(combined.system_wide_unique_passes.tracking.associated_passes, 1);
   assert.equal(combined.nodes[0].pass_count, 2);
   assert.equal(combined.nodes[0].passes, undefined);
+});
+
+test('compact coverage transport yields exact cross-node union and fails closed without its basis', () => {
+  const nodes = [[[0, 10000], [30000, 40000]], [[5000, 20000], [35000, 50000]]].map((measured, index) => {
+    const basis = {version: 1, complete: true, aircraft: [{hex: index ? 'ABC123' : 'abc123',
+      eligible: [[0, 100000]], scored: [[0, 100000]], measured}]};
+    return compactNodeStatistics({id: `radar-${index}`},
+      {radar: 'receiving', processorFresh: true, processor: {state: 'live'}}, {},
+      {channels: [{selected_channel: 'primary', association_statistics: {evaluation_policy_hash: 'a'.repeat(64)},
+        measured_track_basis: coverage.compactBasis(basis), measured_track_coverage: coverage.aggregate([basis]),
+        cpi_exposure: {eligible_cpis: 200, operationally_tracked_cpis: 80, eligible_seconds: 100}}]},
+      {passes: [{hex: 'abc123', started_at: 1, finalized_at: 100000, eligible_cpis: 200}]});
+  });
+  const result = combineNodeStatistics([...nodes, {id: 'display', role: 'coordinator', available: false}]);
+  assert.equal(result.measured_track_coverage.available, true);
+  assert.equal(result.measured_track_coverage.fraction, .4, 'Overlapping support is unioned, not added');
+  assert.equal(result.measured_track_coverage.eligible_seconds, 100);
+  assert.equal(result.measured_track_coverage.measured_seconds, 40);
+  assert.equal(result.measured_track_coverage.gap_count, 1);
+  assert.equal(result.measured_track_coverage.gap_max_seconds, 10);
+  assert.equal(result.channels[0].measured_track_coverage.measured_seconds, 20);
+  assert.equal(result.channels[0].cpi_exposure.operationally_tracked_cpis, 80);
+  assert.equal(result.channels[0].cpi_exposure.eligible_seconds, 100);
+  assert.equal(JSON.stringify(result).includes('measured_track_basis'), false);
+  const nodeWide = structuredClone(nodes);
+  for (const entry of nodeWide) {
+    entry.measured_track_basis = coverage.compactBasis(coverage.unionBasis(
+      entry.channels.map(channel => channel.measured_track_basis)));
+    for (const channel of entry.channels) delete channel.measured_track_basis;
+  }
+  assert.deepEqual(combineNodeStatistics(nodeWide).measured_track_coverage, result.measured_track_coverage);
+  assert.deepEqual(combineNodeStatistics([nodeWide[0], nodes[1]]).measured_track_coverage,
+    result.measured_track_coverage, 'Mixed full and compact peers preserve the same interval union');
+  assert.equal(JSON.stringify(combineNodeStatistics(nodeWide)).includes('measured_track_basis'), false);
+  for (const bad of [null, {}, {...nodeWide[0].measured_track_basis, available: false}]) {
+    const changed = structuredClone(nodeWide); changed[0].measured_track_basis = bad;
+    assert.equal(combineNodeStatistics(changed).measured_track_coverage.available, false);
+  }
+  const partial = structuredClone(nodes); partial[0].channels[0].measured_track_basis.complete = false;
+  assert.equal(combineNodeStatistics(partial).measured_track_coverage.scored_fraction, .4);
+  for (const mutate of [rows => { delete rows[1].channels[0].measured_track_basis; },
+    rows => { rows[1].channels[0].measured_track_basis.aircraft[0].measured = [0, -1]; },
+    rows => { rows[1].available = false; }, rows => { rows[1].stale = true; },
+    rows => { rows[1].channels[0].evaluation_policy_hash = 'b'.repeat(64); },
+    rows => { rows.forEach(node => { node.channels[0].evaluation_policy_hash = 'unidentified'; }); }]) {
+    const changed = structuredClone(nodes); mutate(changed);
+    const unavailable = combineNodeStatistics(changed).measured_track_coverage;
+    assert.equal(unavailable.available, false);
+    for (const field of ['fraction', 'scored_fraction', 'measured_seconds', 'scored_seconds', 'gap_count', 'observed_internal_gap_count'])
+      assert.equal(unavailable[field], null, `${field} must not fabricate zero or partial coverage`);
+  }
 });

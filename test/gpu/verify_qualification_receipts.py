@@ -220,10 +220,7 @@ def main():
                   feature_receipts)
     for path, receipt in zip(feature_paths, feature_receipts):
         validate_evidence_files(receipt, path)
-    import pre_soak_receipt_gate
-    pre_soak_receipt_gate.validate_directory(args.receipts, args.source_sha,
-        feature_receipts[0]["artifacts"])
-    print("Required Linux FP32-only + FP64 receipts and measured pre-soak retention/negative controls match the exact source and artifact.")
+    print("Required Linux FP32-only + FP64 product parity and unified feature evidence match the exact source and artifact.")
 
 
 if __name__ == "__main__":

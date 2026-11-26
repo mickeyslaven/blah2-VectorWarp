@@ -10,8 +10,9 @@ std::optional<detection::IntegrationMetrics> temporalPublication(
  const Config& config,const Publication& publication,uint64_t captureEpoch,
  uint64_t first,uint64_t end){
  if(config.detector.integrationCpis==1)return std::nullopt;
+ const bool baselineReady=publication.availableCpis>=2;
  if(!publication.availableCpis||publication.availableCpis>config.detector.integrationCpis||
-    publication.detectorReady!=(publication.availableCpis>=2)||end<=first)
+    publication.detectorReady!=(config.detector.integrationCpis>2||baselineReady)||end<=first)
   throw std::invalid_argument("Resident temporal publication acknowledgement invalid");
  detection::IntegrationMetrics result;
  result.backend="vulkan-resident";
@@ -26,9 +27,8 @@ std::optional<detection::IntegrationMetrics> temporalPublication(
  if(older&&span>first/older)throw std::invalid_argument("Resident temporal sample history precedes capture origin");
  result.firstInputSample=first-older*span;result.endInputSample=end;
  result.window.epoch=publication.temporalEpoch;result.window.newestSequence=publication.newestSequence;
- // Canonical publication describes the ready baseline's support; the full
- // acknowledged ring separately supplies each candidate's originating bank.
- result.window.depth=publication.detectorReady?2:1;
+ // Baseline support matures after current-CPI detection is already usable.
+ result.window.depth=baselineReady?2:1;
  for(uint32_t age=0;age<result.window.depth;++age)
   result.window.sequences[age]=publication.supportSequences[age];
  return result;

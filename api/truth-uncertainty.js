@@ -28,6 +28,18 @@ function policy(value) {
   return result;
 }
 
+// Catch-up holds permit later observations, never older truth. Acquisition
+// also caps future projection at elapsed CPI-to-fetch time; uncertainty wins.
+function scoringProjectionPolicy(config) {
+  const adsb = config.truth?.adsb || {}, uncertainty = policy(adsb.uncertainty_association);
+  const maxAge = finite(adsb.max_position_age) ? adsb.max_position_age : 30;
+  const held = Number.isInteger(adsb.association_lag_cpis) && adsb.association_lag_cpis > 0;
+  return {schema: 'vectorwarp-adsb-scoring-projection-v1',
+    past_s: Math.min(maxAge, uncertainty?.maxProjectionS ?? 1),
+    future_s: Math.min(maxAge, uncertainty?.maxProjectionS ?? (held ? maxAge : 1)),
+    future_bound: held && !uncertainty ? 'elapsed-target-to-fetch' : 'fixed'};
+}
+
 function enu(latitude, longitude) {
   const p = radians(latitude), l = radians(longitude);
   return [[-Math.sin(l), Math.cos(l), 0],
@@ -139,4 +151,4 @@ function projectedUncertainty({aircraft, target, rx, tx, frequency, config, moti
     assumptions: 'NACp isotropic Gaussian conversion; declared velocity/altitude/acceleration spreads; no NIC-to-sigma conversion'};
 }
 
-module.exports = {policy, velocity, geometry, projectedUncertainty};
+module.exports = {policy, scoringProjectionPolicy, velocity, geometry, projectedUncertainty};

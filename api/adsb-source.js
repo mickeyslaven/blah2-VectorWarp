@@ -4,6 +4,7 @@ const http = require('http');
 const https = require('https');
 const {DelayDopplerHistory} = require('./adsb-geometry');
 const {fuseAircraftData} = require('./adsb-fusion');
+const {scoringProjectionPolicy} = require('./truth-uncertainty');
 const {classifyAdsbSource, discoverLocalAdsb, selectLocalAdsb,
   validateAircraftData} = require('./adsb-discovery');
 
@@ -146,8 +147,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   const cache = new Map();
   const aircraftMetadataCache = new Map();
   const geometry = new DelayDopplerHistory(config);
-  // Display polling must not perturb the event-time history used by scoring.
-  // It also must not inherit the intentional multi-CPI association hold.
+  // Presentation keeps separate history and skips the scoring hold.
   const presentationGeometry = new DelayDopplerHistory(config);
   let warmup = [];
   let fusionState = null;
@@ -183,9 +183,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     (exchangePollMs + sourceTimeoutMs) / 1000 + pollMs / 1000 + 1));
   function sourceRetryInterval(slot) {
     const interval = slot.state.kind === 'exchange' ? exchangePollMs : pollMs;
-    // An initially unavailable configured source must still recover at the
-    // declared cadence. Exponential backoff applies after a validated snapshot
-    // exists, where that snapshot can safely bridge transport failures.
+    // Back off only after a validated snapshot can bridge transport failures.
     const failures = slot.lastValue ?
       Math.max(0, Number(slot.state.consecutive_failures) || 0) : 0;
     return interval * Math.min(8, 2 ** failures);
@@ -194,6 +192,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     Math.max(1, config.process.data.cpi * 1000) : 500;
   const associationLagMs = Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
     Math.max(0, Math.min(8, config.truth.adsb.association_lag_cpis)) * cpiMs : 0;
+  const associationProjection = scoringProjectionPolicy(config);
   const discoveryOptions = {fetchJson, now, maxAgeSeconds: geometry.maxAge,
     timeoutMs: sourceTimeoutMs};
   async function resolveSource(slot) {
@@ -227,10 +226,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     try {
       const selection = await resolveSource(slot);
       let data;
-      // Transport errors retain the last validated frame and use exponential
-      // retry backoff. Only a successfully received but invalid payload may
-      // clear that frame; treating timeouts/HTTP failures as invalid snapshots
-      // erased good truth and defeated the backoff cadence.
+      // Transport failures retain validated truth; invalid payloads clear it.
       const payload = await selection.read();
       try {
         data = validateAircraftData(payload, {now, maxAgeSeconds: geometry.maxAge});
@@ -299,9 +295,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       slot.lastValue = value;
       return value;
     } catch (error) {
-      // A failed refresh must not erase a previously validated feed. Event-time
-      // filtering retires its aircraft naturally, while exponential backoff
-      // prevents a throttled public endpoint from being hammered every CPI.
+      // Age filtering retires cached truth while transport retries back off.
       if (error.invalidSnapshot === true) {
         slot.lastAttemptAt = now() - interval;
         slot.lastValue = undefined;
@@ -320,9 +314,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    // readSourcePaced independently reuses or backs off each source. Calling
-    // every slot here does not multiply network reads between intervals, but it
-    // prevents one slow/failed provider from stealing another provider's turn.
+    // Per-source pacing prevents duplicate reads and provider starvation.
     const refreshSlots = slots;
     entry.promise = Promise.allSettled(refreshSlots.map(readSourcePaced)).then(results => {
       const healthy = slots.map(slot => slot.lastValue).filter(Boolean);
@@ -334,29 +326,28 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     cache.set('raw', entry); return entry.promise;
   }
   async function presentationSnapshots() {
-    // Rendering must never wait behind a slow WAN request. Reuse every last
-    // validated source snapshot while a refresh proceeds independently; the
-    // fusion age limits naturally retire stale aircraft. This also prevents a
-    // transient 429/timeout from erasing an otherwise usable source between
-    // screen frames.
+    // Refresh asynchronously; fusion retires stale positions during WAN delays.
     const refresh = rawSnapshots();
     const healthy = slots.map(slot => slot.lastValue).filter(Boolean);
     if (!healthy.length) return refresh;
     void refresh.catch(() => {});
     return {healthy, failed: slots.length - healthy.length};
   }
-  async function rawAircraft(targetAtMs, fusionOptions = {}, snapshots = rawSnapshots) {
+  async function rawAircraft(targetAtMs, {scoring = false, ...fusionOptions} = {}, snapshots = rawSnapshots) {
     const {healthy, failed} = await snapshots();
-    // Presentation callers intentionally omit a target. Stamp those snapshots
-    // after I/O completes; otherwise source latency makes newly acquired local
-    // positions look future-dated and distorts freshness diagnostics. Scoring
-    // callers pass the exact historical CPI time and retain that projection.
+    // Stamp presentation after I/O; scoring retains the historical CPI time.
     const fusionAtMs = Number.isFinite(targetAtMs) ? targetAtMs : now();
+    const scoringOptions = scoring ? {
+      maxPastObservationOffsetSeconds: associationProjection.past_s,
+      maxFutureObservationOffsetSeconds: Math.min(associationProjection.future_s,
+        associationProjection.future_bound === 'elapsed-target-to-fetch' ?
+          Math.max(associationProjection.past_s, (now() - fusionAtMs) / 1000) :
+          associationProjection.future_s)} : {};
     const data = fuseAircraftData(healthy, {nowMs: fusionAtMs,
       maxPositionAgeSeconds: geometry.maxAge, metadataCache: aircraftMetadataCache,
       ...(geometry.uncertaintyPolicy ?
         {maxObservationOffsetSeconds: geometry.uncertaintyPolicy.maxProjectionS} : {}),
-      ...fusionOptions});
+      ...fusionOptions, ...scoringOptions});
     fusionState = {...data.vectorwarp_fusion, fused_at: fusionAtMs,
       healthy_sources: healthy.length, failed_sources: failed};
     return data;
@@ -366,14 +357,11 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (preview) throw new Error('Preview: no live ADS-B connection');
     if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
     if (!Number.isFinite(targetAtMs)) throw new Error('ADS-B target time is invalid');
-    // Wait for delayed feeder reports to arrive, then acquire the newest raw
-    // observation and project it back to this exact CPI event time. Merely
-    // delaying publication of a snapshot captured now would not let ADS-B
-    // catch up at all.
+    // Fetch after the hold, then project the newest report to the scored CPI.
     const ready = associationLagMs ? new Promise(resolve =>
       setTimeoutFn(resolve, associationLagMs)) : Promise.resolve();
     await ready;
-    const data = await rawAircraft(targetAtMs);
+    const data = await rawAircraft(targetAtMs, {scoring: true});
     if (kind === 'aircraft') return data;
     const result = geometry.update(data, nativeFrame); warmup = result.warming; return result.data;
   }
@@ -385,11 +373,10 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const requestedAt = now();
     const entry = {at: requestedAt, pending: true};
-    // Hold association so delayed feeder reports can arrive, then fetch and
-    // project the newest observation back to requestedAt.
+    // Fetch after the catch-up hold and project to requestedAt.
     const ready = associationLagMs ? new Promise(resolve =>
       setTimeoutFn(resolve, associationLagMs)) : Promise.resolve();
-    entry.promise = ready.then(() => rawAircraft(requestedAt)).then(data => {
+    entry.promise = ready.then(() => rawAircraft(requestedAt, {scoring: true})).then(data => {
       if (kind === 'aircraft') return data;
       const result = geometry.update(data); warmup = result.warming; return result.data;
     })
@@ -401,10 +388,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
     if (preview) throw new Error('Preview: no live ADS-B connection');
     if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
-    // UI positions are a newest-known display, not a CPI truth association.
-    // Accept any observation already allowed by max_position_age and project it
-    // to now. This avoids the delayed-scoring request time rejecting otherwise
-    // fresh feeder snapshots and making every aircraft flash on and off.
+    // Presentation projects newest-known positions within its own age budget.
     const data = await rawAircraft(undefined, {
       maxPositionAgeSeconds: presentationAgeSeconds,
       maxObservationOffsetSeconds: presentationAgeSeconds},
@@ -444,11 +428,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
         aircraft: {available: false, message},
         delayDoppler: {available: false, warming: warmup.length, message}};
     }
-    // Status is an operator-health query, not an event-time association. Do not
-    // put the intentional CPI publication delay on this endpoint: the browser's
-    // health timeout is shorter than a normal four-CPI association hold. Keep
-    // source states warm in the background whenever at least one source is
-    // already known-good; only the initial/all-down probe waits for I/O.
+    // Health skips the association hold; only initial/all-down probes await I/O.
     const refresh = rawSnapshots();
     if (!slots.some(slot => slot.state.healthy === true)) {
       try { await refresh; } catch (_) { /* Source states contain the failure. */ }
@@ -461,6 +441,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       presentation_max_position_age_s: presentationAgeSeconds,
       association_lag_cpis: associationLagMs / cpiMs,
       association_lag_ms: associationLagMs,
+      association_projection: associationProjection,
       aircraft: {available: online, ...(!online ? {message: 'No healthy ADS-B source'} : {})},
       delayDoppler: {available: online, warming: warmup.length,
         message: online && warmup.length ? 'Feed online; waiting for motion updates.' :

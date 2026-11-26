@@ -174,6 +174,11 @@ async function send(port, chunks) {
     const compactAssociationHistory = JSON.parse((await request(apiPort,
       '/api/association/passes?compact=true')).body);
     assert.equal(compactAssociationHistory.passes.length, 1);
+    const compactBasis = JSON.parse((await request(apiPort,
+      '/api/live-scorecard/association-basis?timing=provisional&compact=true')).body);
+    assert.equal(compactBasis.measured_track_basis.version, 2);
+    assert.ok(compactBasis.channels.every(channel => channel.measured_track_basis === undefined &&
+      channel.measured_track_coverage && channel.cpi_exposure && channel.passes === undefined));
     assert.deepEqual(Object.keys(compactAssociationHistory.passes[0]).sort(),
       ['association_eligible_cpis', 'channel', 'decision_grade', 'detected', 'detected_cpis',
         'eligible', 'eligible_cpis', 'evaluation_contract_hash', 'evaluation_policy_hash',

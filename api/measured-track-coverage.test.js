@@ -50,6 +50,7 @@ assert.equal(aggregate([basis(full, [])]).fraction, 0, 'Known all-miss evidence 
 assert.equal(aggregate([]).fraction, null);
 assert.equal(aggregate([basis([], [])]).fraction, null);
 assert.equal(aggregate([undefined, basis(full, hits)]).fraction, null);
+assert.equal(aggregate([undefined, basis(full, hits)]).measured_seconds, null);
 assert.equal(aggregate([{...basis(full, hits), complete: false}]).gap_count, null);
 assert.equal(aggregate([{version: 1, complete: true, aircraft: [{hex: 'abc123', eligible: 'bad'}]}]).complete, false);
 
@@ -193,26 +194,40 @@ console.log('PASS measured track coverage: source intervals, coast exclusion, ov
     timestamp: now / 1000, provenance: {observation_time_offset_s: 0, projection_model: 'identity'}}}; }};
   const statistics = new EvidenceStatistics(config, source, options);
   try {
-    for (let index = 0; index < 5; ++index) {
-      const record = association(index, 1).tracker;
-      const detection = {timestamp: now, eventTime, delay: [10], doppler: [100], evidence: [record.measurement_evidence]};
+    for (let index = 0; index < 12; ++index) {
+      const depth = [1, 0, 0, 0, 1, 2, 4, 8, 1, 4, 2, 0][index];
+      const record = association(index, depth || 1).tracker;
+      const evidence = record.measurement_evidence, count = depth ? index === 8 ? 2 : 1 : 0;
+      const detection = {timestamp: now, eventTime, delay: Array(count).fill(10),
+        doppler: Array(count).fill(100), evidence_identity: {epoch_exact: evidence.epoch_exact,
+          newest_sequence_exact: evidence.newest_sequence_exact},
+        evidence: count === 2 ? [evidence, association(index, 8).tracker.measurement_evidence] :
+          depth ? [evidence] : []};
       // Store directly to control the asynchronous join order deterministically.
       statistics.detectionHistory.set(now, detection);
       if (index !== 3) statistics.acceptTracker({timestamp: now, eventTime, data: index === 1 ? [] : [{...record,
         id: 'T1', n: 5, delay: 10 / statistics.limits.kmPerBin, doppler: 100,
-        ...(index === 2 ? {state: 'COASTING', measured: false, source: 'prediction'} : {}),
+        ...([2, 11].includes(index) ? {state: 'COASTING', measured: false, source: 'prediction'} : {}),
         ...(index === 4 ? {measurement_evidence: null} : {})}]});
       await statistics.sample(now);
+      await statistics.sample(now); // Duplicate arrival cannot earn another CPI.
       assert.equal(statistics.state.error, null);
+      const pass = statistics.state.active.abc123;
+      const hits = index < 4 ? 1 : Math.min(index - 2, 8);
+      assert.equal(pass.eligibleFrames, index + 1);
+      assert.equal(pass.associationEligibleFrames, index + 1);
+      assert.equal(pass.detectedFrames, hits, 'Temporal depth and duplicate candidates cannot backfill detection CPIs');
+      assert.equal(pass.trackedFrames, hits, 'Only current ACTIVE associations count in the legacy tracked counter');
       now += 500;
     }
     const result = statistics.summarize(Infinity, now).measured_track_coverage;
-    assert.equal(result.eligible_seconds, 2.5);
-    assert.equal(result.measured_seconds, .5, 'Only the genuine operational measurement counts');
-    assert.equal(result.scored_seconds, 1.5, 'Empty and coasted frames are scored misses');
+    assert.equal(result.eligible_seconds, 6);
+    assert.equal(result.measured_seconds, 4.5,
+      'Exact 1/2/4/8-CPI source intervals are unioned once; the final coast earns no support');
+    assert.equal(result.scored_seconds, 5, 'Empty and coasted frames remain scored');
     assert.equal(result.unscored_seconds, 1, 'Absent frames and absent lineage remain unknown');
     assert.equal(result.fraction, null);
-    assert.equal(statistics.state.active.abc123.trackedFrames, 2, 'Retained pass counters keep their existing contract');
+    assert.equal(statistics.state.active.abc123.trackedFrames, 8, 'Legacy ACTIVE counts still include the association lacking lineage');
     statistics.close();
     const restored = new EvidenceStatistics(config, source, options);
     assert.deepEqual(restored.measuredTrackBasis(), statistics.measuredTrackBasis());
@@ -260,9 +275,14 @@ test('compact interval transport retains sparse breaks, fractional times and inc
   assert.equal(coverage.aggregate([invalid]).complete,false, 'Corrupt compact data never becomes known zero');
   assert.equal(coverage.compactBasis({version:1,aircraft:[{eligible:null}]}).version,1,
     'Invalid legacy evidence retains its existing unavailable semantics');
+  const sparse = {version:2,encoding:'delta-duration-ms-v1',complete:true,aircraft:[{hex:'abc123',
+    origin:0,eligible:Array.from({length:300000},()=>1),scored:'eligible',measured:[]}]};
+  assert.ok(Buffer.byteLength(JSON.stringify(sparse)) < 1024*1024);
+  assert.equal(coverage.aggregate([sparse]).eligible_seconds,150,
+    'Valid bounded transport must not exceed the engine argument-stack limit');
 });
 
-test('multi-channel route uses the same projection and leaves normal and compact responses unchanged', () => {
+test('multi-channel route projects kiosk scalars and transports exact compact coverage without pass details', () => {
   const basis = {version:1,complete:true,aircraft:[]};
   const statistics = {liveStatus:()=>({updated_at:1,current_setup_lifetime:{eligible_passes:3,
       measured_track_coverage: coverage.aggregate([basis]), cpi_exposure:{eligible_cpis:0,
@@ -276,8 +296,31 @@ test('multi-channel route uses the same projection and leaves normal and compact
   const kiosk = multi.associationBasis({kiosk:true});
   assert.deepEqual(kiosk.channels, full.channels.map(kioskAssociationChannel));
   assert.ok(full.channels[0].passes[0].cpi_audit);
-  assert.equal(multi.associationBasis({compact:true}).channels[0].passes, undefined);
+  const compact = multi.associationBasis({compact:true});
+  assert.equal(compact.channels[0].passes, undefined);
+  assert.equal(compact.channels[0].measured_track_basis, undefined);
+  assert.deepEqual(coverage.expandBasis(compact.measured_track_basis), coverage.unionBasis([basis]));
+  assert.deepEqual(compact.channels[0].cpi_exposure, kiosk.channels[0].cpi_exposure);
   const source = require('node:fs').readFileSync(require.resolve('./server'),'utf8');
-  assert.match(source,/if \(kiosk\) return await sendDisplayResponse[\s\S]*?kioskAssociationChannel/,
+  assert.match(source,/if \(compact \|\| kiosk\) return await sendDisplayResponse[\s\S]*?kioskAssociationChannel/,
     'Single-channel receivers use the bounded projection before materializing detail');
+});
+
+test('node-wide interval union preserves overlap, disjoint, duplicate, empty and incomplete evidence', () => {
+  const basis = (aircraft, complete = true) => ({version: 1, complete, excluded_passes: 2, aircraft});
+  const row = (hex, eligible, measured = eligible) => ({hex, eligible, scored: eligible, measured});
+  const a = basis([row('abc123', [[0, 10.25], [20, 30]], [[1.5, 3], [5, 8], [21, 22]])]);
+  const b = basis([row('ABC123', [[5, 15.5]], [[7, 14.5]]), row('def456', [[40, 50]])]);
+  const c = basis([row('abc123', [[60, 70]])], false);
+  for (const sources of [[a, b, c], [c, b, a], [a, a, b], [a, basis([])],
+    [basis([])], [], [a, null], [a, basis([{hex: 'broken', eligible: []}])]]) {
+    const union = coverage.unionBasis(sources);
+    const wire = coverage.compactBasis(union);
+    assert.deepEqual(coverage.aggregate([wire]), coverage.aggregate(sources));
+    if (sources.length) assert.deepEqual(coverage.aggregate([wire, b]), coverage.aggregate([...sources, b]));
+  }
+  const merged = coverage.unionBasis([a, b]);
+  assert.deepEqual(merged.aircraft[0].eligible, [[0, 15.5], [20, 30]]);
+  assert.deepEqual(a.aircraft[0].eligible, [[0, 10.25], [20, 30]], 'Never mutate full local evidence');
+  assert.equal(coverage.aggregate([coverage.unionBasis([a, null])]).available, false);
 });

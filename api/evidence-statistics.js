@@ -73,14 +73,8 @@ const MAX_TOTAL_COVERAGE_INTERVALS = 1024 * 1024;
 const TIMING_RETENTION_MS = 10 * 60 * 1000;
 const PASS_GAP_MS = 120000;
 const DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S = 1;
-// Version the eligibility semantics separately from receiver configuration so
-// previously finalized exposure is never reinterpreted under a new detector
-// mask, truth Doppler estimator, or observation-freshness policy.
-// v6 separates scorecards collected while public truth providers shared one
-// round-robin cadence from scorecards collected with per-provider cadence.
-// The older denominator can contain source-age gaps and must remain preserved
-// but must never be blended into current evaluation percentages.
-const DETECTOR_ELIGIBILITY_VERSION = 6;
+// v7 separates directional catch-up projection from historical symmetric gates.
+const DETECTOR_ELIGIBILITY_VERSION = 7;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
 const SLANT_RANGE_EDGES_KM = Object.freeze([0, 10, 20, 30, 40, 50, 75, 100, 150, 250, 500]);
@@ -229,10 +223,16 @@ function compactAssociationPass(value) {
 // by several nodes, but it must not repeatedly transport the full evidence
 // ledger. A small columnar contract removes repeated field names and channel /
 // outcome strings while retaining every finalized pass used by the network
-// scorecard. Detailed provenance remains available from the node-local API.
+// scorecard. Repeated provenance is dictionary encoded, never inferred from
+// the current channel policy. Appended v1 columns remain readable by old peers.
+const ASSOCIATION_PROVENANCE_FIELDS = ['site_epoch', 'evaluation_contract_hash',
+  'evaluation_policy_hash', 'timing_policy', 'sensitivity_epoch_id', 'decision_grade'];
+const ASSOCIATION_TRANSPORT_FIELDS = ['hex', 'flight', 'started_at', 'finalized_at',
+  'outcome_index', 'channel_index', 'eligible_cpis', 'detected_cpis', 'tracked_cpis',
+  'flags', 'pass_id', 'provenance_index', 'association_eligible_cpis'];
 function federationAssociationPassTransport(values) {
-  const channels = [], outcomes = [];
-  const channelIndex = new Map(), outcomeIndex = new Map();
+  const channels = [], outcomes = [], provenance = [];
+  const channelIndex = new Map(), outcomeIndex = new Map(), provenanceIndex = new Map();
   const intern = (value, dictionary, indexes) => {
     const key = String(value ?? '');
     if (!indexes.has(key)) { indexes.set(key, dictionary.length); dictionary.push(key); }
@@ -240,6 +240,11 @@ function federationAssociationPassTransport(values) {
   };
   const rows = (Array.isArray(values) ? values : []).map(value => {
     const pass = compactAssociationPass(value);
+    const identity = ASSOCIATION_PROVENANCE_FIELDS.map(field => pass[field]);
+    const key = JSON.stringify(identity);
+    if (!provenanceIndex.has(key)) {
+      provenanceIndex.set(key, provenance.length); provenance.push(identity);
+    }
     const flags = Number(pass.eligible !== false) |
       (Number(pass.detected === true) << 1) |
       (Number(pass.tracked === true) << 2) |
@@ -249,12 +254,12 @@ function federationAssociationPassTransport(values) {
       intern(pass.outcome, outcomes, outcomeIndex),
       intern(pass.channel, channels, channelIndex),
       Number(pass.eligible_cpis) || 0, Number(pass.detected_cpis) || 0,
-      Number(pass.tracked_cpis) || 0, flags];
+      Number(pass.tracked_cpis) || 0, flags, pass.pass_id,
+      provenanceIndex.get(key), pass.association_eligible_cpis];
   });
   return {schema: 'vectorwarp-federation-association-passes-v1',
-    fields: ['hex', 'flight', 'started_at', 'finalized_at', 'outcome_index',
-      'channel_index', 'eligible_cpis', 'detected_cpis', 'tracked_cpis', 'flags'],
-    dictionaries: {channels, outcomes}, rows};
+    fields: [...ASSOCIATION_TRANSPORT_FIELDS],
+    dictionaries: {channels, outcomes, provenance}, rows};
 }
 
 function expandFederationAssociationPassTransport(value) {
@@ -264,13 +269,43 @@ function expandFederationAssociationPassTransport(value) {
     value.dictionaries.channels : [];
   const outcomes = Array.isArray(value.dictionaries?.outcomes) ?
     value.dictionaries.outcomes : [];
+  const augmented = value.fields?.length > 10 || Object.hasOwn(value.dictionaries || {}, 'provenance') ||
+    value.rows.some(row => Array.isArray(row) && row.length > 10);
   return value.rows.map(row => {
     const flags = Number(row?.[9]) || 0;
-    return {hex: String(row?.[0] || ''), flight: String(row?.[1] || ''),
+    const index = row?.[11];
+    const identity = Number.isSafeInteger(index) && index >= 0 &&
+      Array.isArray(value.dictionaries?.provenance) ?
+      value.dictionaries?.provenance?.[index] : null;
+    const hash = item => typeof item === 'string' && /^[0-9a-f]{64}$/.test(item);
+    const complete = Array.isArray(row) && row.length === ASSOCIATION_TRANSPORT_FIELDS.length &&
+      Array.isArray(value.fields) && value.fields.length === row.length &&
+      value.fields.every((field, i) => field === ASSOCIATION_TRANSPORT_FIELDS[i]) &&
+      typeof row[0] === 'string' && row[0].trim().length > 0 && typeof row[1] === 'string' &&
+      Number.isFinite(row[2]) && row[2] > 0 && Number.isFinite(row[3]) && row[3] >= row[2] &&
+      [4, 5, 6, 7, 8, 9, 12].every(i => Number.isSafeInteger(row[i]) && row[i] >= 0) &&
+      row[9] <= 15 && Boolean(flags & 1) && row[12] >= 3 &&
+      row[12] <= row[6] && row[7] <= row[12] && row[8] <= row[12] &&
+      typeof outcomes[row[4]] === 'string' &&
+      typeof channels[row[5]] === 'string' && channels[row[5]].length > 0 &&
+      typeof row[10] === 'string' && row[10].trim().length > 0 && row[10].length <= 256 &&
+      Array.isArray(identity) && identity.length === ASSOCIATION_PROVENANCE_FIELDS.length &&
+      identity.slice(0, 3).every(hash) && ['exact', 'provisional'].includes(identity[3]) &&
+      (hash(identity[4]) || identity[4] === null && Boolean(flags & 8)) &&
+      typeof identity[5] === 'boolean' && (!identity[5] || identity[3] === 'exact' && !(flags & 8));
+    // Refuse the whole augmented batch: dropping a malformed/ineligible row
+    // would silently change its denominator. Only legacy rows use display defaults.
+    if (augmented && !complete) throw new Error('Invalid federation pass provenance batch');
+    const provenance = Object.fromEntries(ASSOCIATION_PROVENANCE_FIELDS.map((field, i) =>
+      [field, complete ? identity[i] : null]));
+    return {...provenance, decision_grade: provenance.decision_grade === true,
+      pass_id: row?.[10] ?? null, hex: String(row?.[0] || ''), flight: String(row?.[1] || ''),
       started_at: Number(row?.[2]) || 0, finalized_at: Number(row?.[3]) || 0,
       outcome: outcomes[Number(row?.[4])] || null,
       channel: channels[Number(row?.[5])] || 'primary',
-      eligible_cpis: Number(row?.[6]) || 0, detected_cpis: Number(row?.[7]) || 0,
+      eligible_cpis: Number(row?.[6]) || 0,
+      association_eligible_cpis: Number(row?.[12] ?? row?.[6]) || 0,
+      detected_cpis: Number(row?.[7]) || 0,
       tracked_cpis: Number(row?.[8]) || 0, eligible: Boolean(flags & 1),
       detected: Boolean(flags & 2), tracked: Boolean(flags & 4),
       sensitivity_epoch_mixed: Boolean(flags & 8)};
@@ -493,7 +528,8 @@ function limits(config, frames = []) {
     trackerInitiateMinSnrDb: finite(trackerInitiate.min_snr_db) ?
       trackerInitiate.min_snr_db : -Infinity,
     provisionalTimeUncertaintyS,
-    truthUncertaintyPolicy: truthUncertainty.policy(config.truth?.adsb?.uncertainty_association)};
+    truthUncertaintyPolicy: truthUncertainty.policy(config.truth?.adsb?.uncertainty_association),
+    truthProjectionPolicy: truthUncertainty.scoringProjectionPolicy(config)};
 }
 
 function siteCoordinates(site = {}) {
@@ -558,7 +594,9 @@ function evaluationContract(span, timingPolicy = 'exact') {
     delay_max: span?.delayMaxBin, doppler_min: span?.dopplerMinHz,
     doppler_max: span?.dopplerMaxHz, timing_trigger: 'native-only-v2',
     exact_timing_required: timingPolicy === 'exact', timing_policy: timingPolicy,
-    timing_skew_ms: 100, truth_offset_s: span?.truthUncertaintyPolicy?.maxProjectionS ?? 1,
+    timing_skew_ms: 100, truth_offset_s: Math.max(span?.truthProjectionPolicy?.past_s ?? 1,
+      span?.truthProjectionPolicy?.future_s ?? 1),
+    truth_projection_policy: span?.truthProjectionPolicy,
     ...(span?.truthUncertaintyPolicy ? {association_family: 'uncertainty-ellipse-v1',
       uncertainty_policy: span.truthUncertaintyPolicy, null_calibrated: false} : {}),
     provisional_event_time_uncertainty_s: timingPolicy === 'provisional' ?
@@ -1111,16 +1149,16 @@ function truthSnapshot(prediction, timestamp) {
       {...prediction.provenance} : null};
 }
 
-function truthIntegrity(prediction, uncertaintyPolicy = null, timestamp = null) {
+function truthIntegrity(prediction, uncertaintyPolicy = null, timestamp = null, projectionPolicy = null) {
   const provenance = prediction?.provenance;
   if (!provenance || typeof provenance !== 'object') return {valid: false, reason: 'missing-provenance'};
-  // A cached prediction's original observation continues to age even when its
-  // stored projection offset does not. It cannot extend the presence horizon.
+  // Age the original observation even when reusing a cached projection.
   const predictionAge = finite(timestamp) && finite(prediction.timestamp) ?
     timestamp / 1000 - prediction.timestamp : 0;
   const offset = finite(provenance.observation_time_offset_s) ?
     provenance.observation_time_offset_s + predictionAge : NaN;
-  if (!finite(offset) || Math.abs(offset) > (uncertaintyPolicy?.maxProjectionS ?? 1))
+  if (!finite(offset) || offset > (projectionPolicy?.past_s ?? uncertaintyPolicy?.maxProjectionS ?? 1) ||
+      -offset > (projectionPolicy?.future_s ?? uncertaintyPolicy?.maxProjectionS ?? 1))
     return {valid: false, reason: 'stale-observation'};
   if (uncertaintyPolicy && provenance.disagreement === true)
     return {valid: false, reason: 'source-disagreement'};
@@ -1350,13 +1388,12 @@ class EvidenceStatistics {
       for (const event of this.state.eligibilityEvents) compactEligibilityEvent(event);
       this.trimEligibilityEvents();
       if (this.state.rollup?.siteKey !== this.key) {
-        // A contract/configuration rollover starts a new cohort, not a rewrite
-        // of archived pass counts (including those already compacted to rollup).
-        if (this.state.rollup?.siteKey) {
-          const previous = this.state.sites[this.state.rollup.siteKey] ||= {};
-          previous.finalized_rollup = this.state.rollup;
-        }
+        // Archive prior counts and coverage.
+        const {rollup, radarCoverage} = this.state;
+        if (rollup?.siteKey) Object.assign(this.state.sites[rollup.siteKey] ||= {},
+          {finalized_rollup: rollup, radar_coverage: radarCoverage});
         this.state.rollup = emptyRollup(this.key);
+        this.state.radarCoverage = {...radarCoverage, buckets: {}};
       }
       this.state.rollup.trackingFailureClasses ||= {};
       const hasArchivedCpiExposure = ['eligibleCpis', 'detectedCpis', 'trackedCpis']
@@ -1506,7 +1543,7 @@ class EvidenceStatistics {
       const timingUncertaintyS = this.timingPolicy === 'provisional' &&
         timing?.exact_event_time === false ? timing.event_time_uncertainty_s : 0;
       const eligiblePredictions = uncertaintyPolicy ? valid.filter(([, prediction]) =>
-        truthIntegrity(prediction, uncertaintyPolicy, timestamp).valid) : valid;
+        truthIntegrity(prediction, uncertaintyPolicy, timestamp, span.truthProjectionPolicy).valid) : valid;
       // Preserve the existing operational/provisional frame-alignment contract
       // for every SDR without introducing a new receiver prerequisite.
       const timingContext = frameTimestamp => ({declared: finite(timingUncertaintyS),
@@ -1676,7 +1713,8 @@ class EvidenceStatistics {
     if (span.clutterMaxBin !== null && delayBin <= span.clutterMaxBin)
       pass.clutterCancelledFrames += 1;
     else if (physical) pass.outsideClutterFrames += 1;
-    const integrity = truthIntegrity(prediction, span.truthUncertaintyPolicy, timestamp);
+    const integrity = truthIntegrity(prediction, span.truthUncertaintyPolicy, timestamp,
+      span.truthProjectionPolicy);
     // Presence establishes exposure; covariance and alignment establish whether
     // a radar association can be credited. Abstention must not erase exposure.
     const associationValid = integrity.valid && (!span.truthUncertaintyPolicy ||
@@ -2247,6 +2285,7 @@ class EvidenceStatistics {
     const timestamp = this.now();
     const quality = this.associationQuality(timestamp);
     return {updated_at: this.state.updatedAt, timing_policy: this.timingPolicy,
+      operational_track_window: this.trackPopulation.operationalWindow(timestamp),
       decision_grade: quality.decisionGrade, warning: quality.warning,
       evaluation_contract_hash: this.scoreContractHash,
       evaluation_policy_hash: this.scorePolicyHash,

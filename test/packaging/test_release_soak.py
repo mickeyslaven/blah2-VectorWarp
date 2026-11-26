@@ -37,25 +37,27 @@ def fixture():
                                                   for name in ("homeportal", "hp")}}
     binding["nodes"]["hp"]["hostIdSha256"] = "e" * 64
     raw = json.dumps(binding)
-    summary = {"schema": 3, "startedEpoch": 13600, "releaseAccepted": True, "startupAccepted": True,
+    summary = {"schema": 3, "startedEpoch": 99400, "releaseAccepted": True, "startupAccepted": True,
                "steadyStateAccepted": True, "latestHealthy": True,
                "diagnosticWindow": False, "latestFailures": [], "startupFailures": [],
                "releaseBinding": {"expected": binding, "sha256": hashlib.sha256(raw.encode()).hexdigest(),
                    "monitorSha256": gate.identity.file_hash(ROOT / "tools/vectorwarp_two_node_soak.py"),
                    "probeSha256": gate.identity.file_hash(ROOT / "tools/vectorwarp_soak_identity.py")},
-               "cleanWindow": {"policy": {"cleanWindowSeconds": 86400, "maximumSampleGapSeconds": 180},
-                   "cleanSeconds": 86400, "cleanSamples": 1441, "lastSampleEpoch": 100000,
-                   "cleanSinceEpoch": 13600, "startupAccepted": True, "startupFailures": [],
+               "cleanWindow": {"policy": {"cleanWindowSeconds": 600, "maximumSampleGapSeconds": 180},
+                   "cleanSeconds": 600, "cleanSamples": 11, "lastSampleEpoch": 100000,
+                   "cleanSinceEpoch": 99400, "startupAccepted": True, "startupFailures": [],
                    "steadyStateAccepted": True},
                "latest": {"epoch": 100000, "healthy": True, "failures": [], "nodes": {},
                    "monitorFreeBytes": 300_000_000_000,
-                   "regressionEvidence": {"schema": 2, "bindingSha256": hashlib.sha256(raw.encode()).hexdigest(),
+                   "regressionEvidence": {"schema": 3,
+                       "evaluationMode": "frozen-baseline-prospective-operational-v1",
+                       "bindingSha256": hashlib.sha256(raw.encode()).hexdigest(),
                        "policySha256": "d" * 64,
                        "nodes": {name: {"retiredCpis": 0, "retiredSamples": 0,
-                           "checks": {key: {"accepted": True, "evidenceSha256": "f" * 64}
+                           "checks": {key: {"accepted": True, "status": "accepted", "evidenceSha256": "f" * 64}
                                       for key in gate.monitor.REGRESSION_CHECKS},
                            "qualifications": node["qualifications"]} for name in binding["nodes"]},
-                       "evidenceSha256": "f" * 64, "evaluationStartEpoch": 13600,
+                       "evidenceSha256": "f" * 64, "evaluationStartEpoch": 99400,
                        "evaluatedThroughEpoch": 100000, "regressionDetected": False}}}
     for name, expected in binding["nodes"].items():
         summary["latest"]["nodes"][name] = {"status": {"build": {"commit": SOURCE},
@@ -82,7 +84,7 @@ class ExactCandidatePromotion(unittest.TestCase):
         with self.assertRaises(ValueError):
             gate.candidate(valid, SOURCE, "123", "123")
 
-    def test_full_24_hour_receipt_is_accepted(self):
+    def test_complete_ten_minute_receipt_is_accepted(self):
         envelope, run, binding = fixture()
         self.assertEqual(gate.receipt(envelope, run, SOURCE), binding)
 
@@ -101,7 +103,7 @@ class ExactCandidatePromotion(unittest.TestCase):
                 latest["nodes"][name] = copy.deepcopy(measured)
                 latest["nodes"][name]["process"]["hostIdSha256"] = f"{index + 1:064x}"
                 regression["nodes"][name] = {"retiredCpis": 0, "retiredSamples": 0,
-                                           "checks": {key: {"accepted": True, "evidenceSha256": "f" * 64}
+                                           "checks": {key: {"accepted": True, "status": "accepted", "evidenceSha256": "f" * 64}
                                                       for key in gate.monitor.REGRESSION_CHECKS},
                                            "qualifications": template["qualifications"]}
             envelope["bindingJson"] = json.dumps(binding)
@@ -125,13 +127,13 @@ class ExactCandidatePromotion(unittest.TestCase):
             envelope["summary"][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 gate.receipt(envelope, run, SOURCE)
-        for field, value in (("cleanSeconds", 86399), ("cleanSamples", 2),
+        for field, value in (("cleanSeconds", 599), ("cleanSamples", 2),
                              ("cleanSinceEpoch", 1), ("startupAccepted", False)):
             envelope, run, _ = fixture()
             envelope["summary"]["cleanWindow"][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 gate.receipt(envelope, run, SOURCE)
-        for field, value in (("cleanWindowSeconds", 60), ("maximumSampleGapSeconds", 181),
+        for field, value in (("cleanWindowSeconds", 599), ("maximumSampleGapSeconds", 181),
                              ("maximumSampleGapSeconds", float("nan"))):
             envelope, run, _ = fixture()
             envelope["summary"]["cleanWindow"]["policy"][field] = value
@@ -165,6 +167,9 @@ class ExactCandidatePromotion(unittest.TestCase):
             envelope, run, _ = fixture()
             envelope["summary"]["latest"]["regressionEvidence"]["nodes"]["hp"]["checks"][key]["accepted"] = False
             with self.subTest(check=key), self.assertRaises(ValueError):
+                gate.receipt(envelope, run, SOURCE)
+            envelope["summary"]["latest"]["regressionEvidence"]["nodes"]["hp"]["checks"][key]["status"] = "inconclusive"
+            with self.subTest(inconclusive=key), self.assertRaises(ValueError):
                 gate.receipt(envelope, run, SOURCE)
 
     def test_rebuild_or_deployment_mutation_cannot_replace_soaked_package(self):

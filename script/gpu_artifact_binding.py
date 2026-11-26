@@ -16,13 +16,13 @@ MAX_RECEIPT = 4096
 MAX_RECEIPTS = 1024
 MODULES = {"portable": ("blah2-gpu-vulkan.so", 4),
            "wideband": ("blah2-gpu-wideband-vulkan.so", 1),
-           "resident": ("blah2-gpu-resident-vulkan.so", 18)}
+           "resident": ("blah2-gpu-resident-vulkan.so", 19)}
 FACTORIES = {
     "portable": {"blah2_gpu_create": (4, ""),
                  "blah2_gpu_driver_status": (4, "--driver-status")},
     "wideband": {"blah2_gpu_create_wideband": (1, "--wideband-v1")},
-    "resident": {"blah2_gpu_create_resident": (18, "--resident-v5"),
-                 "blah2_gpu_create_temporal": (1, "--temporal-v1")},
+    "resident": {"blah2_gpu_create_resident": (19, "--resident-v5"),
+                 "blah2_gpu_create_temporal": (2, "--temporal-v1")},
 }
 
 

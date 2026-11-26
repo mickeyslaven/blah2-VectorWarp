@@ -23,6 +23,7 @@ Config configuration(){
   c.detector.integrationBeamTolerance=1;
   c.tracker.enabled=true;c.tracker.capacity=2;c.tracker.m=4;c.tracker.n=13;c.tracker.nDelete=3;
   c.tracker.cpi=63.0/128000;c.tracker.rangeRes=299792458.0/128000;c.tracker.lambda=.6;
+  c.tracker.minInitiationSnrDb=9.1;c.detector.currentCpiPreferenceSnr=9.1;
   c.device="cpu-contract-only";rr::test::enable(c);c.replay.maxFrames=4;validateConfig(c);return c;
 }
 std::string hex(const rr::Hash& h){
@@ -121,6 +122,7 @@ int main(){try{
   reject([&]{rr::parseInspectorHash(std::string(63,'1'));});
   // A production snapshot may have tracking disabled and a one-CPI detector.
   auto simple=c;simple.detector.integrationCpis=1;simple.detector.integrationMotionBins=0;
+  simple.detector.currentCpiPreferenceSnr=0;
   simple.detector.integrationBeamTolerance=UINT32_MAX;simple.tracker={};
   rr::test::enable(simple);validateConfig(simple);
   auto snapshot=rr::test::fixture(simple);const auto encoded=rr::encode(snapshot,simple);
@@ -130,6 +132,7 @@ int main(){try{
   // Two-CPI readiness is emitted separately from the deeper TBD history count.
   // The first frame must remain cold; a reset must become cold again.
   auto pair=c;pair.detector.integrationCpis=2;pair.detector.integrationMotionBins=0;
+  pair.detector.currentCpiPreferenceSnr=0;
   pair.detector.integrationBeamTolerance=UINT32_MAX;pair.tracker={};
   rr::test::enable(pair);pair.replay.maxFrames=2;validateConfig(pair);
   auto cold=rr::test::fixture(pair,1,{1,1,1},0),warm=rr::test::fixture(pair,2,{2,2,2},0);

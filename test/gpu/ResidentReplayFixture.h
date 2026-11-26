@@ -16,7 +16,8 @@ inline ResidentReplaySnapshot fixture(const resident::Config& c,uint32_t availab
  const bool tbd=c.detector.integrationCpis>2;const uint32_t depth=tbd?c.detector.integrationCpis:1;
  const uint32_t passes=tbd?track_before_detect::detectorPassCount(depth):1;
  const uint32_t refinement=tbd?(c.bearing.scanBeams?c.bearing.scanBeams:c.fusion.beams*4):0;
- const uint32_t windows=(96+2*rows+cols+1)&~1u,windowWords=tbd?14:8;
+ const uint32_t axes=track_before_detect::postprocessAxesWord;
+ const uint32_t windows=(axes+2*rows+cols+1)&~1u,windowWords=tbd?16:8;
  const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
  const double delayScale=motion.fractionalDelay?track_before_detect::delayDriftPerHz(
   c.geometry.clutterSamples,c.temporalCarrierHz()):0;
@@ -28,7 +29,7 @@ inline ResidentReplaySnapshot fixture(const resident::Config& c,uint32_t availab
  const uint64_t lengths[]={256,1024,uint64_t(c.fusion.beams)*ch*8,uint64_t(refinement)*ch*8,
   uint64_t(alphaBase+alphaWords)*4,uint64_t(cells)*depth*8,
   tbd&&c.detector.integrationBeamTolerance!=UINT32_MAX?uint64_t(cells)*depth*4:0,
-  uint64_t(cells)*8,tbd?uint64_t(cells)*passes*8:0,uint64_t(cells)*std::max(1u,c.fusion.beams)*8,
+  uint64_t(cells)*8,tbd?uint64_t(cells)*(passes-1)*8:0,uint64_t(cells)*std::max(1u,c.fusion.beams)*8,
   uint64_t(cells)*passes*40,uint64_t(cells)*16,uint64_t(cells)*ch*8,
   uint64_t(c.geometry.clutterSamples)*ch*16,uint64_t(c.geometry.clutterSamples)*16,
   uint64_t(c.geometry.clutterSamples)*ch*16,uint64_t(cells)*4,uint64_t(cells)*32,
@@ -43,32 +44,33 @@ inline ResidentReplaySnapshot fixture(const resident::Config& c,uint32_t availab
  metadata.u32(35*4,offsetWords?offsetBase:0);
  if(tbd){metadata.u32(54*4,alphaBase);metadata.u32(55*4,alphaStride);
   metadata.u32(56*4,alphaBase+2*passes*alphaStride);
-  for(uint32_t pass=0;pass<passes;++pass){const uint32_t cpis=pass?track_before_detect::bankLength(pass-1):2;
+  for(uint32_t pass=0;pass<passes;++pass){const uint32_t cpis=track_before_detect::passDepth(depth,pass);
    const double pfa=track_before_detect::passPfa(c.detector.pfa,depth,motion.delay,motion.doppler,pass);
    for(uint32_t count=1;count<alphaStride;++count)
-    metadata.f64((alphaBase+2*(pass*alphaStride+count))*4,track_before_detect::cfarAlpha(pfa,count,cpis));}}
+    metadata.f64((alphaBase+2*(pass*alphaStride+count))*4,blah2::detection::integrated_cfar::alpha(pfa,count,cpis));}}
  metadata.u32(72*4,uint32_t(c.epoch));metadata.u32(73*4,uint32_t(c.epoch>>32));metadata.u32(74*4,c.detector.integrationCpis);
  metadata.u32(75*4,c.fusion.beams);
  metadata.u32(76*4,motion.delay);metadata.u32(77*4,c.detector.integrationBeamTolerance);
  metadata.u32(79*4,tbd?available:0);metadata.u32(84*4,windowWords);metadata.u32(93*4,motion.doppler);
  metadata.f64(94*4,delayScale);
+ metadata.f64(96*4,c.detector.currentCpiPreferenceSnr);
  if(offsetWords)for(uint32_t row=0;row<rows;++row)for(uint32_t path=0;path<2*motion.doppler+1;++path)
   for(uint32_t age=0;age<depth;++age){const int older=int(row)-(int(path)-int(motion.doppler))*int(age);
    const int offset=older<0||older>=int(rows)?0:-track_before_detect::delayPathColumn(
     0,0,age,delayScale,c.dopplerAxis[row],c.dopplerAxis[older]);
    metadata.u32((offsetBase+(row*(2*motion.doppler+1)+path)*depth+age)*4,uint32_t(offset));}
- for(uint32_t row=0;row<rows;++row)metadata.f64((96+2*row)*4,c.dopplerAxis[row]);
- for(uint32_t j=0;j<cols;++j){metadata.u32((96+2*rows+j)*4,uint32_t(c.delayAxis[j]));
+ for(uint32_t row=0;row<rows;++row)metadata.f64((axes+2*row)*4,c.dopplerAxis[row]);
+ for(uint32_t j=0;j<cols;++j){metadata.u32((axes+2*rows+j)*4,uint32_t(c.delayAxis[j]));
   const int n=cols,g=c.detector.guard,t=c.detector.train,k=j;const uint32_t bounds[]={uint32_t(std::max(0,k-g-t)),uint32_t(std::max(0,k-g)),uint32_t(std::min(n,k+g+1)),uint32_t(std::min(n,k+g+t+1))};
   const auto at=windows+windowWords*j,count=bounds[1]-bounds[0]+bounds[3]-bounds[2];
   for(size_t b=0;b<4;++b)metadata.u32((at+b)*4,bounds[b]);
   metadata.u32((at+4)*4,count);
-  for(uint32_t pass=0;pass<passes;++pass){const uint32_t cpis=tbd?(pass?track_before_detect::bankLength(pass-1):2):c.detector.integrationCpis;
+  for(uint32_t pass=0;pass<passes;++pass){const uint32_t cpis=tbd?track_before_detect::passDepth(depth,pass):c.detector.integrationCpis;
    const double pfa=tbd?track_before_detect::passPfa(c.detector.pfa,depth,motion.delay,motion.doppler,pass):c.detector.pfa;
-   metadata.f64((at+6+2*pass)*4,count?(cpis==1?count*(std::pow(pfa,-1.0/count)-1):track_before_detect::cfarAlpha(pfa,count,cpis)):0);}}
+   metadata.f64((at+6+2*pass)*4,count?(cpis==1?count*(std::pow(pfa,-1.0/count)-1):blah2::detection::integrated_cfar::alpha(pfa,count,cpis)):0);}}
  auto history=writer(BlockKind::powerHistory);const double nan=std::numeric_limits<double>::quiet_NaN();
  for(uint32_t slot=0;slot<depth;++slot)for(uint32_t i=0;i<cells;++i)history.f64((slot*cells+i)*8,tbd&&slot>=available?nan:double(i+1));
- if(tbd){auto banks=writer(BlockKind::temporalBanks);for(uint32_t pass=0;pass<passes;++pass){const auto length=pass?track_before_detect::bankLength(pass-1):2;
+ if(tbd){auto banks=writer(BlockKind::temporalBanks);for(uint32_t pass=0;pass+1<passes;++pass){const auto length=pass?track_before_detect::bankLength(pass-1):2;
   for(uint32_t i=0;i<cells;++i)banks.f64((pass*cells+i)*8,available<length?nan:1);}}
  if(c.tracker.enabled){auto tracker=writer(BlockKind::trackerCheckpoint);tracker.u32(0,5);
   tracker.u32(108,uint32_t(c.detector.integrationCpis>1));tracker.u32(4,trackerRecordWords(c.tracker)*4);

@@ -153,3 +153,7 @@ def validate_directory(directory, source_sha, artifacts):
         return result
     validate(json.loads(path.read_text()), source_sha, artifacts, policy,
              hashlib.sha256(policy_bytes).hexdigest(), load)
+
+
+if __name__ == "__main__":
+    validate_policy(json.loads(POLICY_PATH.read_bytes()))

@@ -127,11 +127,11 @@ filtered-sample diagnostic section. Runs with both CPU and GPU qualification
 work are labelled `cpu+vulkan-qualification`, not a GPU-only retention result.
 Disabled clutter is identified explicitly and must leave surveillance unchanged.
 `fixed-weights` is currently unsupported and is refused before an observer file
-is created. The fixed-weight release requirement remains unsatisfied until a
+is created. Fixed-weight retention remains an unqualified research claim until a
 reviewed canonical execution boundary exists; a refit observation cannot fill it.
 
-Pre-soak admission is stricter than synthetic arithmetic parity. The final
-receipt verifier also requires `pre-soak-radar-evidence.json` for the exact
+Recorded-IQ research qualification is separate from release arithmetic parity
+and bounded live acceptance. Its verifier requires `pre-soak-radar-evidence.json` for the exact
 source and artifact, with hash-verified retained measurements under
 `pre-soak-evidence/`. Required evidence includes physical FP32/FP64 paired
 recorded-IQ injections, both fixed-weight and refit-weight differential echo
@@ -141,8 +141,11 @@ false-track bounds. PFA needs a separate retained, reviewed statistical
 analysis; a synthetic null's observed count is not an empirical PFA estimate.
 
 `test/gpu/pre_soak_policy.json` deliberately contains unapproved/null risk and
-exposure bounds. The final gate therefore currently fails closed even if the
-synthetic corpus passes. Approve and pin those bounds before measurement, then
+exposure bounds. The research gate fails closed even if the synthetic corpus
+passes; it no longer blocks stable publication. Stable release still requires
+physical FP32/FP64 product parity, the complete unified feature corpus, and
+exact-package bounded live acceptance with detection/track, false-track,
+deadline and capture checks. Approve and pin research bounds before measurement, then
 run the measured-evidence producer under the resource gates. The bounded
 `test/gpu/recorded_iq_qualification.py` postprocessor consumes an independently
 pinned authorized plan and retained canonical replay runs. It joins the actual
@@ -163,6 +166,15 @@ recording inspector's `acquisition` result and exact source/artifact/device
 identities. `pfaAnalyses` must retain a reviewed statistical method and separately
 pinned `independenceEvidence`; raw cell counts never imply independent trials.
 Invoke with `--plan PATH --plan-sha256 SHA256 --output NEW_DIRECTORY`.
+
+The trusted GPU workflow builds one exact-source artifact and requires both
+physical device classes to pass product parity and the unified feature corpus.
+It retains and verifies their measured products and oracle evidence. Recorded-IQ
+research runs instead use a separately authorized plan and retained inputs with
+the explicit postprocessor command above. Their plan must cover both physical
+device classes and the exact source, policy and unified artifact being studied.
+Missing inputs, unapproved bounds or incomplete physical coverage refuse that
+research qualification; a diagnostic report alone never supplies a passing receipt.
 The producer writes a measured report and retained evidence, and writes the
 release receipt only if the existing full admission gate passes. Current
 fixed-weight replay remains unsupported and fails closed, so refit observations
@@ -199,7 +211,7 @@ rebuilt distribution package or physical GPU has been qualified. Hosted macOS
 jobs check loader/runtime behavior on both architectures, including the
 standalone package with Homebrew hidden; they do not establish these physical
 GPU results. Source-only harness unit tests establish neither physical parity
-nor eligibility to start the candidate's 24-hour soak. That soak follows
+nor eligibility to start the candidate's bounded live acceptance. That acceptance follows
 successful exact-candidate physical receipts.
 
 The runtime capability API separately reports `compiled` (`built` alias),

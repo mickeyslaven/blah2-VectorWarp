@@ -1,7 +1,9 @@
-# External release regression evaluator
+# Paired recorded-IQ research evaluator
 
-`tools/vectorwarp_release_regression.py` produces the schema-2 receipt consumed
-by [the live release cohort](LIVE_RELEASE_COHORT.md). It is an offline evaluator,
+The recorded-IQ mode of `tools/vectorwarp_release_regression.py` produces a
+schema-3 research receipt. Stable publication instead requires the explicit
+[operational baseline/prospective mode](OPERATIONAL_RELEASE_ACCEPTANCE.md);
+research receipts cannot substitute for its live acceptance. The paired mode is an offline evaluator,
 not an installed radar service or a second processor. It never activates a
 release, starts capture, calls a live API, or feeds ADS-B into inference. Its
 decisions use retained paired whole-pass measurements and a complete runtime
@@ -224,7 +226,11 @@ can intentionally see unavailable evidence and reject the cohort. Concurrent
 writers to the same output are refused by a lock.
 
 Exit 0 means all five checks passed this evidence/policy. Exit 1 publishes a valid
-schema-2 receipt reporting regression or inadequate exposure. Exit 2 means
+schema-3 receipt reporting a rejected check or explicitly inconclusive exposure.
+Each check carries `status` (`accepted`, `rejected`, or `inconclusive`) and a
+matching `accepted` boolean. No eligible traffic is inconclusive, never a pass;
+insufficient exposure alone does not claim a measured regression. An observed
+capture or deadline failure still rejects the cohort. Exit 2 means
 malformed, missing, stale, unreviewed, or inconsistent evidence; after acquiring
 the output lock, the output is an invalid rejection marker. If the filesystem
 cannot accept even that marker, callers must treat command failure as unavailable

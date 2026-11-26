@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Offline, fail-closed schema-2 release regression evaluator.
+"""Offline, fail-closed schema-3 release regression evaluator.
 
 The input adapter/scorer and scientific policy require independent review. This
 tool verifies their retained evidence, computes paired whole-pass outcomes, and
@@ -20,7 +20,7 @@ import sys
 import tempfile
 import time
 
-from vectorwarp_two_node_soak import REGRESSION_CHECKS, load_binding
+from vectorwarp_two_node_soak import REGRESSION_CHECKS, REGRESSION_RECEIPT_SCHEMA, load_binding
 
 
 POLICY_SCHEMA = "vectorwarp-release-regression-policy-v1"
@@ -270,19 +270,22 @@ def evaluate_passes(population, policy, node_policy, candidate, start, through, 
             denominator = total["eligibleTrackSeconds"] or 1
             continuity = total["candidateTrackSeconds"] / denominator
             continuity_delta = (total["candidateTrackSeconds"] - total["baselineTrackSeconds"]) / denominator
-            decisions["detections"].append(sufficient and detection >= limits["minimumDetectionFraction"] and
-                                             detection_delta >= limits["minimumDetectionDelta"])
-            decisions["measurement-backed-track-continuity"].append(sufficient and
-                continuity >= limits["minimumContinuityFraction"] and continuity_delta >= limits["minimumContinuityDelta"])
+            decisions["detections"].append((sufficient, detection >= limits["minimumDetectionFraction"] and
+                                             detection_delta >= limits["minimumDetectionDelta"]))
+            decisions["measurement-backed-track-continuity"].append((sufficient,
+                continuity >= limits["minimumContinuityFraction"] and continuity_delta >= limits["minimumContinuityDelta"]))
             total.update(detectionFraction=detection, detectionDelta=detection_delta,
                          continuityFraction=continuity, continuityDelta=continuity_delta)
         # False tracks in positive traffic also matter; empty-scene controls
         # alone cannot excuse false associations when aircraft are present.
         false_rate = total["candidateFalseTracks"] * 3600 / (total["seconds"] or 1)
-        decisions["false-track-controls"].append(sufficient and total["candidateFalseTracks"] <= total["baselineFalseTracks"] and
-                                                 false_rate <= limits["maximumFalseTracksPerHour"])
+        decisions["false-track-controls"].append((sufficient, total["candidateFalseTracks"] <= total["baselineFalseTracks"] and
+                                                 false_rate <= limits["maximumFalseTracksPerHour"]))
         total.update(exposureSufficient=sufficient, falseTracksPerHour=false_rate)
-    return {check: all(values) for check, values in decisions.items()}, totals
+    statuses = {check: ("rejected" if any(sufficient and not passed for sufficient, passed in values) else
+                       "inconclusive" if any(not sufficient for sufficient, _ in values) else "accepted")
+                for check, values in decisions.items()}
+    return statuses, totals
 
 
 def evaluate_runtime(references, candidate, start, through, cadence_ms, cycle_ms, archive):
@@ -348,7 +351,7 @@ def evaluate(binding, binding_sha, policy, policy_sha, inputs, archive, now):
             policy["reviewedAtEpoch"] < start and policy["tuningCutoffEpoch"] < start,
             "invalid, future, stale, or unreviewed evaluation interval")
     keys(inputs["nodes"], binding["nodes"], "evaluation nodes")
-    receipt = {"schema": 2, "bindingSha256": binding_sha, "policySha256": policy_sha,
+    receipt = {"schema": REGRESSION_RECEIPT_SCHEMA, "bindingSha256": binding_sha, "policySha256": policy_sha,
                "evaluationStartEpoch": start, "evaluatedThroughEpoch": through, "nodes": {}, "regressionDetected": False}
     results = {}
     for name, bound in binding["nodes"].items():
@@ -358,23 +361,25 @@ def evaluate(binding, binding_sha, policy, policy_sha, inputs, archive, now):
         for reference in bound["qualifications"].values():
             archive.load(reference, structured=False)
         candidate = {"sourceCommit": binding["sourceCommit"], **{key: bound[key] for key in IDENTITY_FIELDS[1:]}}
-        checks, passes = evaluate_passes(archive.load(node["populationSha256"]), policy, policy["nodes"][name],
+        statuses, passes = evaluate_passes(archive.load(node["populationSha256"]), policy, policy["nodes"][name],
                                         candidate, start, through, archive)
         runtime_checks, runtime = evaluate_runtime(node["runtimeBlocks"], candidate, start, through,
             bound["maximumCadenceMs"], policy["nodes"][name]["limits"]["maximumCompletedCycleMs"], archive)
-        checks.update(runtime_checks)
+        statuses.update({check: "accepted" if passed else "rejected" for check, passed in runtime_checks.items()})
         results[name] = {"wholePassStrata": passes, "runtime": runtime}
         result = {"retiredCpis": runtime["retiredCpis"], "retiredSamples": runtime["retiredSamples"],
                   "qualifications": bound["qualifications"], "checks": {}}
         for check in REGRESSION_CHECKS:
             evidence = {"schema": "vectorwarp-release-check-result-v1", "bindingSha256": binding_sha,
-                        "policySha256": policy_sha, "node": name, "check": check, "accepted": checks[check],
+                        "policySha256": policy_sha, "node": name, "check": check,
+                        "accepted": statuses[check] == "accepted", "status": statuses[check],
                         "evaluationStartEpoch": start, "evaluatedThroughEpoch": through,
                         "populationSha256": node["populationSha256"], "runtimeBlocks": node["runtimeBlocks"],
                         "measurements": passes if check in REGRESSION_CHECKS[:3] else runtime}
-            result["checks"][check] = {"accepted": checks[check], "evidenceSha256": archive.result(evidence)}
+            result["checks"][check] = {"accepted": evidence["accepted"], "status": statuses[check],
+                                       "evidenceSha256": archive.result(evidence)}
         receipt["nodes"][name] = result
-        receipt["regressionDetected"] |= not all(checks.values())
+        receipt["regressionDetected"] |= "rejected" in statuses.values()
     return receipt, results
 
 
@@ -390,7 +395,8 @@ def run(args):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Revoke a previous success before reading any new inputs. A failed
         # evaluation must not leave a still-fresh success receipt consumable.
-        atomic_bytes(output, encoded({"schema": 2, "regressionDetected": True, "error": "evaluation-in-progress-or-failed"}))
+        atomic_bytes(output, encoded({"schema": REGRESSION_RECEIPT_SCHEMA, "regressionDetected": True,
+                                      "error": "evaluation-in-progress-or-failed"}))
         binding_raw, policy_raw, inputs_raw = (read_bytes(Path(path)) for path in (args.binding, args.policy, args.inputs))
         binding = load_binding(args.binding)
         require(decode(binding_raw) == binding, "binding changed during read")
@@ -399,10 +405,14 @@ def run(args):
         require(count(reserve) and reserve > 0, "policy requires evidence reserve")
         archive = Evidence(evidence_directory, reserve)
         binding_sha, policy_sha, inputs_sha = (archive.retain(raw) for raw in (binding_raw, policy_raw, inputs_raw))
-        receipt, results = evaluate(binding, binding_sha, policy, policy_sha, inputs, archive, time.time())
+        evaluator = evaluate
+        if policy.get("schema") == "vectorwarp-operational-release-policy-v1":
+            from vectorwarp_operational_acceptance import evaluate as evaluator
+        receipt, results = evaluator(binding, binding_sha, policy, policy_sha, inputs, archive, time.time())
         report = {"schema": "vectorwarp-release-regression-report-v1", "bindingSha256": binding_sha,
                   "policySha256": policy_sha, "inputsSha256": inputs_sha,
                   "evaluatorSha256": archive.retain(Path(__file__).read_bytes()),
+                  "operationalEvaluatorSha256": archive.retain(Path(__file__).with_name("vectorwarp_operational_acceptance.py").read_bytes()),
                   "soakContractSha256": archive.retain(Path(__file__).with_name("vectorwarp_two_node_soak.py").read_bytes()),
                   "results": results, "receipt": receipt, "retainedEvidence": sorted(archive.references)}
         receipt["evidenceSha256"] = archive.result(report)
@@ -411,7 +421,8 @@ def run(args):
         require(0 <= time.time() - receipt["evaluatedThroughEpoch"] <= 180,
                 "evidence became stale while evaluating; retain newer complete input")
         atomic_bytes(output, encoded(receipt))
-        return 1 if receipt["regressionDetected"] else 0
+        return int(any(not check["accepted"] for node in receipt["nodes"].values()
+                       for check in node["checks"].values()))
 
 
 def main():

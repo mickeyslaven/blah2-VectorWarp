@@ -36,6 +36,100 @@ Map<std::complex<double>> map(uint32_t rows, uint32_t columns)
   return result;
 }
 
+TEST_CASE("deep integration preserves per-CPI detection and independent confirmation",
+  "[temporal][lineage][single-cpi]")
+{
+  constexpr uint32_t rows = 3, columns = 33;
+  for (const uint32_t maximum : {4u, 8u}) for (const uint32_t positiveCpis : {1u, 4u}) {
+    blah2::detection::DetectorIntegration integration(maximum, 0);
+    CfarDetector1D detector(1e-6, 1, 4, 0, 0, maximum);
+    Centroid centroid(2, 1, 10); Interpolate interpolate(true, true);
+    Tracker tracker(4, 25, 20, 1, 0, 100, 2, -100);
+    tracker.configureMaximumEvidenceDepth(maximum);
+    uint64_t credits = 0;
+    for (uint64_t sequence = 1; sequence <= positiveCpis + maximum; ++sequence) {
+      CAPTURE(maximum, positiveCpis, sequence);
+      auto frame = std::make_unique<Map<std::complex<double>>>(rows, columns);
+      frame->doppler = {-10, 0, 10};
+      for (uint32_t column = 0; column < columns; ++column) frame->delay.push_back(column);
+      for (auto& row : frame->data) for (auto& value : row) value = {1, 0};
+      if (sequence <= positiveCpis) frame->data[1][16] = {sequence == 1 ? 1000.0 : 100.0, 0};
+      frame->set_metrics();
+      const auto metrics = integration.process(frame, 29, (sequence - 1) * 100, sequence * 100, true);
+      REQUIRE(metrics.ready);
+      CfarDetector1D::Trials trials;
+      auto detections = blah2::detection::detectProducts(*frame, detector, centroid,
+        interpolate, metrics, nullptr, {}, &trials, 7);
+      const uint64_t readyPasses = 1 + (sequence >= 2 ? 2 : 0) +
+        (sequence >= 4 ? 1 : 0) + (maximum == 8 && sequence >= 8 ? 1 : 0);
+      REQUIRE(trials.evaluated == rows * columns * readyPasses);
+      if (sequence <= positiveCpis) {
+        REQUIRE(detections->get_nDetections() == 1);
+        const auto& source = detections->get_evidence().front();
+        REQUIRE(source.depth == 1);
+        REQUIRE(source.bank == 0);
+        REQUIRE(source.newestSequence == sequence);
+        REQUIRE(source.sequences[0] == sequence);
+        REQUIRE(source.sequences[1] == 0);
+        REQUIRE(source.delayMotion == 0);
+        REQUIRE(source.dopplerMotion == 0);
+      } else for (const auto& source : detections->get_evidence()) REQUIRE(source.depth > 1);
+      auto tracks = tracker.process(detections.get(), sequence * 1000);
+      credits += tracker.frame_diagnostics().independentCredits;
+      REQUIRE(credits == std::min<uint64_t>(sequence, positiveCpis));
+      REQUIRE(tracker.frame_diagnostics().creditedCpis == (sequence <= positiveCpis ? 1 : 0));
+      REQUIRE(tracks->get_n() == 1);
+      if (sequence <= positiveCpis) {
+        REQUIRE(tracks->get_current_source(0) == Track::Source::detector);
+        REQUIRE(tracks->get_current(0).get_evidence().front().depth == 1);
+        REQUIRE(tracks->get_state(0) == (sequence >= 4 ? "ACTIVE" : sequence == 1 ? "TENTATIVE" : "ASSOCIATED"));
+      }
+      if (positiveCpis == 1) REQUIRE(tracks->get_state(0) != "ACTIVE");
+      if (sequence == positiveCpis + maximum) {
+        REQUIRE(detections->get_nDetections() == 0);
+        REQUIRE(tracks->get_current_source(0) == Track::Source::prediction);
+        rapidjson::Document published; published.Parse(tracks->to_json(sequence * 1000).c_str());
+        REQUIRE_FALSE(published.HasParseError());
+        REQUIRE(published.HasMember("data")); REQUIRE(published["data"].IsArray());
+        if (positiveCpis == 1) REQUIRE(published["data"].Empty()); // Tentative tracks are not published.
+        else {
+          REQUIRE(published["data"].Size() == 1);
+          REQUIRE_FALSE(published["data"][0]["measured"].GetBool());
+          REQUIRE_FALSE(published["data"][0].HasMember("measurement_evidence"));
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("mixed temporal suppression preserves strong fresh evidence and weak deep births",
+    "[temporal][lineage][single-cpi]")
+{
+  struct Case { double current, deep, minimum; bool fresh; };
+  for (const auto test : {Case{6,6,7,false}, Case{6,8,7,false}, Case{8,10,7,true},
+      Case{8,10,9,false}, Case{9.1000002,10,9.1,true}, Case{8,10,0,false}})
+    for (double separation : {0.0, 1.0}) for (uint32_t maximum : {4u, 8u}) {
+      Detection candidates({16,16+separation}, {0,0}, {test.deep,test.current});
+      candidates.set_evidence({{29,8,4,3,0,0,{8,7,6,5}}, {29,8,1,0,0,0,{8}}});
+      Centroid centroid(2,1,1);
+      const auto selected = centroid.process(&candidates, test.minimum);
+      REQUIRE(selected->get_nDetections() == 1);
+      REQUIRE(selected->get_evidence().front().depth == (test.fresh ? 1 : 4));
+      // Same-key consolidation and the final neighborhood use one ordering.
+      REQUIRE(blah2::detection::integrated_cfar::temporalCandidateBetter(true,test.current,
+        false,test.deep,test.minimum,false) == test.fresh);
+      if (!test.minimum) continue; // Detector-only mode has no birth guarantee.
+      Tracker tracker(2,9,20,1,0,100,2,test.minimum == 7 ? 5 : test.minimum);
+      tracker.configureMaximumEvidenceDepth(maximum);
+      const auto tracks = tracker.process(selected.get(), 8000);
+      REQUIRE(tracks->get_n() == 1);
+      REQUIRE(tracks->get_current(0).get_evidence().front().depth == (test.fresh ? 1 : 4));
+    }
+  Detection weak(16, 0, 6); weak.set_evidence({{29,8,1,0,0,0,{8}}});
+  Tracker tracker(2,9,20,1,0,100,2,5); tracker.configureMaximumEvidenceDepth(4);
+  REQUIRE(tracker.process(&weak,8000)->get_n() == 0); // Gate is not relaxed.
+}
+
 TEST_CASE("two-CPI production bank retains only adjacent mean-power evidence")
 {
   for (const uint32_t motion : {0u, 1u}) {
@@ -501,6 +595,7 @@ TEST_CASE("temporal motion validity excludes partial and empty rows from CFAR",
   integration->delayMotionBins = 2;
   integration->evidence = std::make_shared<blah2::integration::TemporalEvidence::Result>(
     std::move(result));
+  integration->evidence->currentMap = std::make_unique<Map<std::complex<double>>>(frame);
   CfarDetector1D detector(1e-6, 2, 32, 0, 0);
   Centroid centroid(1, 1, 1);
   Interpolate interpolate(true, true);

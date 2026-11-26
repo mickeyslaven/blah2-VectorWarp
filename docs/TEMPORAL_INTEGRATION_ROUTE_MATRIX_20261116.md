@@ -19,14 +19,22 @@ with a bounded two-, four- or eight-CPI history. Its selected calibrated banks f
 `detectProducts` and `trackProducts` orchestration around `CfarDetector1D`,
 `Centroid`, `Interpolate` and `Tracker`. There is no receiver-name or OS gate on
 this power-integration path.
-`CfarDetector1D` uses the matching Gamma(2/4/8) `IntegratedCfar` thresholds.
+`CfarDetector1D` uses the matching single-CPI or Gamma(2/4/8) thresholds.
 Ordinary two-CPI one-bin motion includes nine trials. TBD pre-registers half
-the configured PFA for baseline2 and half across every configured motion
+the configured PFA for the current CPI, one quarter for baseline2 and one quarter across every configured motion
 path/depth; warming banks do not reclaim another family's budget. Candidates
 are centroided/interpolated within their originating bank before deduplication,
 not against the maximum display map. The same threshold split is used by the
-resident implementation. A single-CPI warm-up map produces no integrated
-detection. Arithmetic remains FP64; the explicit cell, byte and path-work caps
+resident implementation. With deep tracking enabled, current-CPI candidates
+at or above `max(7, configured tracker minimum SNR)` win mixed-family duplicate
+keys and final centroid neighborhoods. They retain bank zero, depth one and
+exactly the newest CPI as support. Weak current candidates overlapping temporal
+evidence deliberately remain represented by the best temporal candidate, so
+the unchanged weak-birth gate does not discard otherwise eligible deep births.
+Detector-only mode retains SNR ranking. The immutable threshold is transported
+losslessly through versioned resident/map-only configurations and replay metadata.
+Current candidates are available during warm-up; the two-CPI-only configuration
+still waits for its second CPI. Arithmetic remains FP64; the explicit cell, byte and path-work caps
 reject oversized jobs instead of downsampling or narrowing precision.
 
 Each lane owns its history. Sample gaps, replayed sample ranges, capture-epoch

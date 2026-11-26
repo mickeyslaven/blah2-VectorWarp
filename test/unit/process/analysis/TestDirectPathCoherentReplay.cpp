@@ -39,6 +39,7 @@ blah2::integration::DirectPathCoherentExperiment::Config experimentConfig() {
 }
 void fractionalMaps(const fs::path& directory) {
   auto value=config(); value.detector.integrationCpis=8;
+  value.detector.currentCpiPreferenceSnr=9.1;
   value.detector.integrationMotionBins=track_before_detect::encodeMotionBins(2,4,true);
   value.detector.integrationBeamTolerance=UINT32_MAX;
   value.fusion={blah2::resident::FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
@@ -56,6 +57,8 @@ void fractionalMaps(const fs::path& directory) {
   const auto bytes=rr::encode(snapshot,value);const auto path=directory/"fractional.vwrps";
   write(path,bytes);cr::writeSidecarExclusive(path,sidecar(snapshot,value,100));
   const auto validated=cr::loadValidatedSnapshot(path);
+  check(validated.config.detector.currentCpiPreferenceSnr==9.1,
+    "Sidecar reader changed current-CPI merge threshold");
   check(validated.snapshot.blocks[4].bytes==snapshot.blocks[4].bytes,
     "Sidecar reader changed fractional metadata table");
   const auto decodedMaps=cr::channelMaps(validated);

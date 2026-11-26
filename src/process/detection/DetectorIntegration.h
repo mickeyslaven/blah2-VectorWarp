@@ -33,7 +33,7 @@ inline IntegrationBudget temporalIntegrationBudget(uint32_t rows, uint32_t colum
     throw std::invalid_argument("Temporal detector exceeds the 1048576-cell CPU contract");
   const uint64_t powerBanks = maximumCpis == 8 ? 4 : maximumCpis == 4 ? 3 : 2;
   const uint64_t depths = maximumCpis == 8 ? 14 : maximumCpis == 4 ? 6 : 2;
-  const IntegrationBudget budget{cells * (maximumCpis * 8 + 192 + powerBanks * 8),
+  const IntegrationBudget budget{cells * (maximumCpis * 8 + 192 + powerBanks * 8 + (maximumCpis > 2 ? 16 : 0)),
     cells * (2 * motion.delay + 1) * (2 * motion.doppler + 1) * depths};
   if (budget.workingBytes > (256ULL << 20) || budget.pathSamples > (256ULL << 20))
     throw std::invalid_argument("Temporal detector exceeds its 256-MiB/268435456-path-sample contract; reduce explicit geometry or motion bounds");
@@ -147,13 +147,14 @@ public:
     firstSamples_.push_back(first);
     while (firstSamples_.size() > maximumCpis_) firstSamples_.pop_front();
     auto& bank = integrated->banks[maximumCpis_ > 2 ? 0u : motionBins_ ? 1u : 0u];
-    metrics.ready = bank.ready;
+    metrics.ready = maximumCpis_ > 2 || bank.ready;
     metrics.firstInputSample = maximumCpis_ > 2 ? firstSamples_.front() :
       bank.ready ? previousFirst_ : first;
     metrics.endInputSample = end;
     previousFirst_ = first;
     metrics.window = bank.ready ? bank.window : integrated->lineageAt(0);
     if (maximumCpis_ > 2) {
+      integrated->currentMap = std::move(map);
       map = std::move(integrated->map);
       metrics.evidence = std::move(integrated);
     } else if (bank.ready) {
@@ -176,88 +177,89 @@ inline std::unique_ptr<Detection> detectProducts(Map<std::complex<double>>& map,
     const std::optional<IntegrationMetrics>& integration,
     const std::vector<std::vector<double>>* background = nullptr,
     const std::function<uint32_t(uint32_t, uint32_t)>& spatialAt = {},
-    CfarDetector1D::Trials* trials = nullptr) {
+    CfarDetector1D::Trials* trials = nullptr, double currentCpiPreferenceSnr = 0) {
+  track_before_detect::validateCurrentPreference(currentCpiPreferenceSnr);
   // Never apply a two-CPI threshold to an unintegrated startup/reset map.
   if (integration && !integration->ready)
     return std::make_unique<Detection>(std::vector<double>{},
       std::vector<double>{}, std::vector<double>{});
+  const auto locate = [](const auto& source, double delay, double doppler) {
+    const auto column = std::find(source.delay.begin(), source.delay.end(), delay);
+    const auto row = std::find(source.doppler.begin(), source.doppler.end(), doppler);
+    if (column == source.delay.end() || row == source.doppler.end())
+      throw std::logic_error("Detector candidate left its native grid");
+    return std::make_pair(uint32_t(row - source.doppler.begin()), uint32_t(column - source.delay.begin()));
+  };
   if (integration && integration->cpis > 2 && integration->evidence) {
     // Separate depth-specific Gamma passes; never threshold the maximum of
     // different depths as if it were one Gamma-distributed observation.
     const auto& metrics = *integration;
-    std::vector<double> delays, dopplers, snrs;
-    std::vector<Detection::Evidence> lineages;
-    std::vector<uint32_t> spatial;
-    std::map<std::pair<double, double>, std::size_t> uniqueCells;
-    const double motionTrials = track_before_detect::trialCount(metrics.cpis,
-      metrics.delayMotionBins, metrics.dopplerMotionBins);
-    for (uint8_t index = 0; index < metrics.evidence->banks.size(); ++index) {
-      const auto& bank = metrics.evidence->banks[index];
-      if (!bank.ready) continue;
-      auto pass = detector.forIntegration(bank.depth, index ? 2 * motionTrials : 2);
-      auto candidates = pass->process(bank.map.get(), bank.validCells, background,
+    struct Candidate { double delay, doppler, snr; Detection::Evidence lineage; uint32_t spatial; };
+    std::map<std::pair<double, double>, Candidate> uniqueCells;
+    const std::vector<uint8_t> validCurrent;
+    const uint32_t count = track_before_detect::detectorPassCount(metrics.cpis);
+    for (uint8_t index = 0; index < count; ++index) {
+      const bool current = uint32_t(index) + 1u == count;
+      const auto* bank = current ? nullptr : &metrics.evidence->banks[index];
+      if (bank && !bank->ready) continue;
+      auto* source = current ? metrics.evidence->currentMap.get() : bank->map.get();
+      if (!source) throw std::logic_error("Temporal detector source map missing");
+      auto pass = detector.forIntegration(track_before_detect::passDepth(metrics.cpis, index),
+        track_before_detect::passTrials(metrics.cpis,
+          metrics.delayMotionBins, metrics.dopplerMotionBins, index));
+      auto candidates = pass->process(source, current ? validCurrent : bank->validCells, background,
         nullptr, std::numeric_limits<std::size_t>::max(), nullptr, trials,
-        &bank.detectorPower);
+        current ? nullptr : &bank->detectorPower);
       const auto ds = candidates->get_delay(), fs = candidates->get_doppler();
       std::vector<Detection::Evidence> candidateLineage;
       std::vector<uint32_t> candidateSpatial;
       for (std::size_t candidate = 0; candidate < ds.size(); ++candidate) {
-        const auto column = std::find(bank.map->delay.begin(), bank.map->delay.end(), ds[candidate]);
-        const auto row = std::find(bank.map->doppler.begin(), bank.map->doppler.end(), fs[candidate]);
-        if (column == bank.map->delay.end() || row == bank.map->doppler.end())
-          throw std::logic_error("Temporal detector candidate left its native grid");
-        const auto lineage = bank.lineageAt(uint64_t(row - bank.map->doppler.begin()) *
-          bank.map->get_nCols() + uint64_t(column - bank.map->delay.begin()));
+        const auto [row, column] = locate(*source, ds[candidate], fs[candidate]);
+        const auto lineage = current ? integration::EvidenceLineage{metrics.evidence->epoch,
+          metrics.evidence->sequence, 1, 0, 0, {metrics.evidence->sequence}} :
+          bank->lineageAt(uint64_t(row) * source->get_nCols() + column);
         candidateLineage.push_back({lineage.epoch, lineage.newestSequence,
-          lineage.depth, uint8_t(index + 1), lineage.delayMotion,
+          lineage.depth, uint8_t(current ? 0 : index + 1), lineage.delayMotion,
           lineage.dopplerMotion, lineage.sequences});
-        if (spatialAt) candidateSpatial.push_back(spatialAt(
-          uint32_t(row - bank.map->doppler.begin()), uint32_t(column - bank.map->delay.begin())));
+        if (spatialAt) candidateSpatial.push_back(spatialAt(row, column));
       }
       candidates->set_evidence(std::move(candidateLineage));
       if (spatialAt) candidates->set_spatial(std::move(candidateSpatial));
       auto centered = centroid.process(candidates.get());
       // Interpolation must use the same bank that passed CFAR, never the
       // display maximum across depths (which carries a different statistic).
-      auto finalized = interpolate.process(centered.get(), bank.map.get());
+      auto finalized = interpolate.process(centered.get(), source);
       const auto finalDelay = finalized->get_delay(), finalDoppler = finalized->get_doppler(),
         finalSnr = finalized->get_snr();
       for (std::size_t candidate = 0; candidate < finalDelay.size(); ++candidate) {
-        const auto nearest = std::min_element(bank.map->doppler.begin(), bank.map->doppler.end(),
+        const auto nearest = std::min_element(source->doppler.begin(), source->doppler.end(),
           [&](double left, double right) {
             return std::abs(left - finalDoppler[candidate]) < std::abs(right - finalDoppler[candidate]);
           });
         const auto key = std::make_pair(*nearest, double(std::llround(finalDelay[candidate])));
         const auto found = uniqueCells.find(key);
-        if (found == uniqueCells.end()) {
-          uniqueCells.emplace(key, delays.size());
-          delays.push_back(finalDelay[candidate]); dopplers.push_back(finalDoppler[candidate]);
-          snrs.push_back(finalSnr[candidate]);
-          lineages.push_back(finalized->get_evidence()[candidate]);
-          if (spatialAt) spatial.push_back(finalized->get_spatial()[candidate]);
-        } else if (finalSnr[candidate] > snrs[found->second]) {
-          const auto at = found->second;
-          delays[at] = finalDelay[candidate]; dopplers[at] = finalDoppler[candidate];
-          snrs[at] = finalSnr[candidate]; lineages[at] = finalized->get_evidence()[candidate];
-          if (spatialAt) spatial[at] = finalized->get_spatial()[candidate];
-        }
+        if (found == uniqueCells.end() || integrated_cfar::temporalCandidateBetter(current,
+            finalSnr[candidate], found->second.lineage.depth == 1, found->second.snr,
+            currentCpiPreferenceSnr, false))
+          uniqueCells.insert_or_assign(key, Candidate{finalDelay[candidate], finalDoppler[candidate],
+            finalSnr[candidate], finalized->get_evidence()[candidate],
+            spatialAt ? finalized->get_spatial()[candidate] : 0});
       }
     }
     // Canonical row-major grid-key order matches resident stable compaction.
-    // Winner selection above remains highest SNR, then first originating bank.
     std::vector<double> orderedDelays, orderedDopplers, orderedSnrs;
     std::vector<Detection::Evidence> orderedLineages;
     std::vector<uint32_t> orderedSpatial;
     for (const auto& cell : uniqueCells) {
-      const auto at = cell.second;
-      orderedDelays.push_back(delays[at]); orderedDopplers.push_back(dopplers[at]);
-      orderedSnrs.push_back(snrs[at]); orderedLineages.push_back(lineages[at]);
-      if (spatialAt) orderedSpatial.push_back(spatial[at]);
+      const auto& value = cell.second;
+      orderedDelays.push_back(value.delay); orderedDopplers.push_back(value.doppler);
+      orderedSnrs.push_back(value.snr); orderedLineages.push_back(value.lineage);
+      if (spatialAt) orderedSpatial.push_back(value.spatial);
     }
     Detection combined(std::move(orderedDelays), std::move(orderedDopplers), std::move(orderedSnrs));
     combined.set_evidence(std::move(orderedLineages));
     if (spatialAt) combined.set_spatial(std::move(orderedSpatial));
-    return centroid.process(&combined);
+    return centroid.process(&combined, currentCpiPreferenceSnr);
   }
   const auto* bank = integration && integration->evidence ?
     &integration->evidence->banks[integration->motionBins ? 1u : 0u] : nullptr;
@@ -269,12 +271,8 @@ inline std::unique_ptr<Detection> detectProducts(Map<std::complex<double>>& map,
     std::vector<uint32_t> spatial;
     const auto delays = first->get_delay(), dopplers = first->get_doppler();
     for (size_t candidate = 0; candidate < delays.size(); ++candidate) {
-      const auto column = std::find(map.delay.begin(), map.delay.end(), delays[candidate]);
-      const auto row = std::find(map.doppler.begin(), map.doppler.end(), dopplers[candidate]);
-      if (column == map.delay.end() || row == map.doppler.end())
-        throw std::logic_error("Spatial detector candidate left its native grid");
-      spatial.push_back(spatialAt(uint32_t(row - map.doppler.begin()),
-        uint32_t(column - map.delay.begin())));
+      const auto [row, column] = locate(map, delays[candidate], dopplers[candidate]);
+      spatial.push_back(spatialAt(row, column));
     }
     first->set_spatial(std::move(spatial));
   }
@@ -289,12 +287,8 @@ inline std::unique_ptr<Detection> detectProducts(Map<std::complex<double>>& map,
       const auto& bank = integration->evidence->banks[index];
       const auto delays = first->get_delay(), dopplers = first->get_doppler();
       for (size_t candidate = 0; candidate < lineages.size(); ++candidate) {
-        const auto column = std::find(map.delay.begin(), map.delay.end(), delays[candidate]);
-        const auto row = std::find(map.doppler.begin(), map.doppler.end(), dopplers[candidate]);
-        if (column == map.delay.end() || row == map.doppler.end())
-          throw std::logic_error("Two-CPI detector candidate left its native grid");
-        const auto lineage = bank.lineageAt(uint64_t(row - map.doppler.begin()) *
-          map.get_nCols() + uint64_t(column - map.delay.begin()));
+        const auto [row, column] = locate(map, delays[candidate], dopplers[candidate]);
+        const auto lineage = bank.lineageAt(uint64_t(row) * map.get_nCols() + column);
         if (lineage.depth != 2)
           throw std::logic_error("Two-CPI detector selected unavailable source lineage");
         lineages[candidate] = {lineage.epoch, lineage.newestSequence, lineage.depth,
@@ -325,7 +319,7 @@ void writeIntegration(Writer& writer, const IntegrationMetrics& metrics) {
   writer.Key("arithmetic"); writer.String("fp64");
   writer.Key("backend"); writer.String(metrics.backend);
   writer.Key("pfa_allocation"); writer.String(metrics.cpis > 2 ?
-    "half_baseline_half_all_configured_motion_paths" : "single_configured_family");
+    "half_current_quarter_baseline_quarter_all_configured_motion_paths" : "single_configured_family");
   writer.Key("processing_ms"); writer.Double(metrics.processingMs);
   writer.Key("working_bytes_bound"); writer.Uint64(metrics.workingBytesBound);
   writer.Key("path_samples_bound"); writer.Uint64(metrics.pathSamplesBound);

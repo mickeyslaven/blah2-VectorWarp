@@ -108,7 +108,8 @@ const compactBasis = evidence.associationBasis({timing: 'provisional', compact: 
 assert.ok(compactBasis.channels.every(channel =>
   channel.measured_track_basis === undefined && channel.track_population === undefined &&
   channel.passes === undefined),
-  'Federation summary basis excludes detailed evidence that has a separate endpoint');
+  'Federation transports one node-wide interval union, not repeated channel bases');
+assert.equal(compactBasis.measured_track_basis.version, 2);
 assert.ok(compactBasis.channels.every(channel =>
   Object.entries(policyIdentity).every(([field, value]) =>
     channel.association_statistics[field] === value)),

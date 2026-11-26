@@ -42,6 +42,42 @@ function capture(value, previous) {
   });
 }
 
+function cycleHeader(evidence) {
+  fields(evidence, ['schema', 'anchorMonoNs', 'anchorUtcNs', 'fault', 'records']);
+  requireValue(evidence.schema === 'vectorwarp-processing-cycles-v1' && evidence.fault === '',
+    'Native cycle evidence fault');
+  const mono = uint(evidence.anchorMonoNs), utc = uint(evidence.anchorUtcNs);
+  requireValue(mono > 0n && utc > 0n && Array.isArray(evidence.records) &&
+    evidence.records.length <= 8, 'Invalid cycle clock or retention');
+  return {mono, utc};
+}
+function cycleRecord(record, mono, utc) {
+  fields(record, ['sequence', 'startMonoNs', 'endMonoNs', 'drainBatches', 'outcome',
+    'captureBefore', 'captureAfter']);
+  const sequence = uint(record.sequence), start = uint(record.startMonoNs), end = uint(record.endMonoNs);
+  uint(record.drainBatches);
+  requireValue(sequence > 0n && start >= mono && end > start &&
+    end - mono <= UINT64_MAX - utc && OUTCOMES.has(record.outcome), 'Invalid cycle interval/outcome');
+  capture(record.captureBefore);
+  capture(record.captureAfter, record.captureBefore);
+  return {sequence, start, end};
+}
+function latestCaptureEvidence(timing) {
+  try {
+    const evidence = timing?.cycleEvidence, {mono, utc} = cycleHeader(evidence);
+    let previous, interval;
+    for (const record of evidence.records) {
+      const next = cycleRecord(record, mono, utc);
+      requireValue(!interval || next.sequence === interval.sequence + 1n && next.start >= interval.end,
+        'Unordered retained cycle batch');
+      capture(record.captureBefore, previous);
+      requireValue(record.captureBefore.available && record.captureAfter.available, 'Unavailable capture evidence');
+      previous = record.captureAfter; interval = next;
+    }
+    return previous || null;
+  } catch (_) { return null; }
+}
+
 class ProcessingCycleLedger {
   constructor({directory, io = fs.promises, maxBytes = 512 * 1024 * 1024,
     maxPendingRecords = 32, minimumFreeBytes = 1024 * 1024 * 1024} = {}) {
@@ -122,24 +158,14 @@ class ProcessingCycleLedger {
     if (!this.directory || this.fault || this.closed) return false;
     try {
       const evidence = timing?.cycleEvidence;
-      fields(evidence, ['schema', 'anchorMonoNs', 'anchorUtcNs', 'fault', 'records']);
-      requireValue(evidence.schema === 'vectorwarp-processing-cycles-v1' && evidence.fault === '',
-        'Native cycle evidence fault');
-      const mono = uint(evidence.anchorMonoNs), utc = uint(evidence.anchorUtcNs);
-      requireValue(mono > 0n && utc > 0n && Array.isArray(evidence.records) &&
-        evidence.records.length <= 8, 'Invalid cycle clock or retention');
+      const {mono, utc} = cycleHeader(evidence);
       const anchor = `${mono}:${utc}`;
       requireValue(!this.anchor || this.anchor === anchor, 'Processor clock/session reset');
       this.anchor = anchor;
       this.anchors = {anchorMonoNs: evidence.anchorMonoNs, anchorUtcNs: evidence.anchorUtcNs};
       let batchSequence;
       for (const record of evidence.records) {
-        fields(record, ['sequence', 'startMonoNs', 'endMonoNs', 'drainBatches', 'outcome',
-          'captureBefore', 'captureAfter']);
-        const sequence = uint(record.sequence), start = uint(record.startMonoNs), end = uint(record.endMonoNs);
-        uint(record.drainBatches);
-        requireValue(sequence > 0n && start >= mono && end > start &&
-          end - mono <= UINT64_MAX - utc && OUTCOMES.has(record.outcome), 'Invalid cycle interval/outcome');
+        const {sequence, start, end} = cycleRecord(record, mono, utc);
         requireValue(batchSequence === undefined || sequence === batchSequence + 1n,
           'Gap inside retained cycle batch');
         batchSequence = sequence;
@@ -151,7 +177,6 @@ class ProcessingCycleLedger {
         requireValue(sequence === this.sequence + 1n, 'Missing processing cycle');
         requireValue(this.lastEnd === undefined || start >= this.lastEnd, 'Processing clock regression/overlap');
         capture(record.captureBefore, this.lastCapture);
-        capture(record.captureAfter, record.captureBefore);
         requireValue(this.queue.length + this.inFlightRecords < this.maxPendingRecords, 'Cycle ledger queue overflow');
         const bytes = Buffer.byteLength(line);
         requireValue(this.bytes + bytes <= this.maxBytes, 'Cycle ledger capacity exceeded');
@@ -225,4 +250,4 @@ class ProcessingCycleLedger {
   }
 }
 
-module.exports = {ProcessingCycleLedger};
+module.exports = {ProcessingCycleLedger, latestCaptureEvidence};

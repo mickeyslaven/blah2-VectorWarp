@@ -149,6 +149,13 @@ class RepositoryBudgetControls(unittest.TestCase):
         self.assertEqual(sum(len(row["changes"]) for row in adjustments[131:166]), 224)
         self.assertEqual(sum(after < before for row in adjustments[131:166]
                              for before, after in row["changes"].values()), 22)
+        # Single-CPI restoration reuses numerical owners and removes duplicate
+        # storage/configuration; every new ceiling is an exact reduction.
+        self.assertGreaterEqual(len(adjustments), 209)
+        self.assertEqual(BUDGET.digest(adjustments[:209]),
+                         "49c6faa312cde259754dce048c0d54a48186662e7f6879b9b63874646db53975")
+        self.assertEqual(len(adjustments[208]["changes"]), 59)
+        self.assertTrue(all(after < before for before, after in adjustments[208]["changes"].values()))
 
     def test_checkout_line_endings_do_not_change_metrics(self):
         before = BUDGET.measure(self.root, self.paths(), {})

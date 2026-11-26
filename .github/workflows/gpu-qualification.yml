@@ -1,7 +1,6 @@
 name: Trusted unified GPU qualification
 
-# Never send pull-request code to a self-hosted GPU. Dispatch this workflow
-# only at the exact protected default-branch revision to be qualified.
+# Dispatch only the protected default-branch revision; never run PR code on GPUs.
 on:
   workflow_dispatch:
 
@@ -25,7 +24,7 @@ jobs:
       matrix: ${{ steps.authorize.outputs.matrix }}
     steps:
       - id: authorize
-        name: Require protected exact revision and explicit runner classes
+        name: Require protected revision and runner classes
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -69,14 +68,14 @@ jobs:
         with:
           node-version: ${{ steps.node-pin.outputs.version }}
           package-manager-cache: false
-      - name: Install unified-artifact build dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential cmake curl git \
             ninja-build pkg-config tar unzip zip xz-utils libarmadillo-dev libfftw3-dev \
             libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libhackrf-dev libusb-1.0-0-dev \
             libboost-dev libeigen3-dev libssl-dev zlib1g-dev patch
-      - name: Build one all-receiver artifact for both GPU feature classes
+      - name: Build the shared all-receiver artifact
         run: |
           script/build-native.sh --backend all --gpu on --test --jobs 2 --build-dir build/gpu-qualification
           python3 test/recording/processor_replay_test.py --binary build/gpu-qualification/artifact/bin/blah2
@@ -94,8 +93,7 @@ jobs:
       max-parallel: 1
       matrix: ${{ fromJSON(needs.authorize.outputs.matrix) }}
     runs-on: ${{ matrix.labels }}
-    # Administrators must restrict these environments to the protected default
-    # branch and require approval. No personal runner or device is hardcoded.
+    # Require approval and protected-default-branch-only environment access.
     environment: vectorwarp-gpu-${{ matrix.device_class }}
     timeout-minutes: 210
     env:
@@ -110,11 +108,10 @@ jobs:
         with:
           name: unified-gpu-artifact-${{ github.sha }}
           path: build/qualified-input
-      - name: Run two-channel CPU/GPU/resident baseline
+      - name: Measure physical baseline and unified feature evidence
         run: |
           set -euo pipefail
-          # The downloaded artifact uses Ubuntu 24.04 shared libraries. Fail
-          # before replay if this administrator-provisioned runner lacks them.
+          # Refuse missing Ubuntu 24.04 runtime dependencies before replay.
           python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ is required"'
           tar -C build/qualified-input -xzf build/qualified-input/unified-gpu-artifact.tar.gz
           while IFS= read -r -d '' native; do
@@ -124,20 +121,13 @@ jobs:
               exit 1
             fi
           done < <(find build/qualified-input/artifact/bin -maxdepth 1 -type f \( -name blah2 -o -name blah2-gpu-worker -o -name '*.so' \) -print0)
-          python3 test/gpu/product_parity_test.py \
-            --binary build/qualified-input/artifact/bin/blah2 \
-            --device-class '${{ matrix.device_class }}' --source-sha "$GITHUB_SHA" \
+          common=(--binary build/qualified-input/artifact/bin/blah2
+            --device-class '${{ matrix.device_class }}' --source-sha "$GITHUB_SHA")
+          python3 test/gpu/product_parity_test.py "${common[@]}" \
             --receipt 'build/gpu-product-parity-${{ matrix.device_class }}.json'
-          python3 test/gpu/verify_qualification_receipts.py --requirements \
-            > build/gpu-unified-feature-requirements.json
-      - name: Measure supplemental unified feature corpus on the exact artifact
-        run: |
-          set -euo pipefail
           python3 -c 'import shutil; assert shutil.disk_usage("build").free >= 40 * 2**30, "Supplemental evidence requires 40 GiB free disk"'
-          python3 test/gpu/unified_physical_corpus.py \
-            --binary build/qualified-input/artifact/bin/blah2 \
+          python3 test/gpu/unified_physical_corpus.py "${common[@]}" \
             --baseline-receipt 'build/gpu-product-parity-${{ matrix.device_class }}.json' \
-            --device-class '${{ matrix.device_class }}' --source-sha "$GITHUB_SHA" \
             --receipt 'build/gpu-unified-features-${{ matrix.device_class }}.json'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
@@ -145,7 +135,6 @@ jobs:
           name: gpu-product-parity-${{ matrix.device_class }}-${{ github.sha }}
           path: |
             build/gpu-product-parity-${{ matrix.device_class }}.json
-            build/gpu-unified-feature-requirements.json
             build/gpu-unified-features-${{ matrix.device_class }}.json
             build/gpu-feature-evidence/
           if-no-files-found: error
@@ -162,5 +151,5 @@ jobs:
         with:
           pattern: gpu-product-parity-*-${{ github.sha }}
           path: build/gpu-receipts
-      - name: Require both device classes, the same artifact, and every unified feature receipt
+      - name: Require complete exact-artifact physical GPU receipts
         run: python3 test/gpu/verify_qualification_receipts.py --receipts build/gpu-receipts --source-sha "$GITHUB_SHA"

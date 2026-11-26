@@ -770,7 +770,7 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
   assert.equal(migratedNotch.liveStatus().current_setup_lifetime.eligible_passes, 0);
   assert.equal(migratedNotch.measuredTrackBasis().aircraft.length, 0);
   assert.equal(migratedNotch.state.liveScoreContract.startedAt, clock + 10000);
-  assert.equal(siteDescriptor(notchConfig).detector_eligibility_version, 6);
+  assert.equal(siteDescriptor(notchConfig).detector_eligibility_version, 7);
   assert.equal(migratedNotch.liveStatus().evaluation_contract.truth_doppler_policy,
     'reported-kinematic-with-position-fit-fallback-v1');
   assert.equal(migratedNotch.liveStatus().evaluation_contract.truth_freshness_policy,
@@ -793,6 +793,58 @@ assert.notEqual(siteKey(identityConfig), siteKey(geometryEdit),
     other.close();
   }
   migratedNotch.close();
+
+  const heldConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    max_position_age: 5, association_lag_cpis: 4}}};
+  const heldStats = new EvidenceStatistics(heldConfig, source, {
+    filename: path.join(directory, 'directional-projection.json'), now: () => clock,
+    timingPolicy: 'provisional', setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  assert.deepEqual(heldStats.liveStatus().evaluation_contract.truth_projection_policy, {
+    schema: 'vectorwarp-adsb-scoring-projection-v1', past_s: 1, future_s: 5,
+    future_bound: 'elapsed-target-to-fetch'});
+  for (const [index, offset] of [-2.4, 1.5, 2, -5.1].entries()) {
+    const at = clock + index * 500;
+    heldStats.observe('abc123', {...prediction, timestamp: at / 1000,
+      provenance: {...prediction.provenance, observation_time_offset_s: offset}}, at,
+    {frame_timestamp_ms: at, cell_index: 0, kind: 'detection'},
+    {frame_timestamp_ms: at, cell_index: 0, kind: 'tracker'});
+  }
+  assert.equal(heldStats.state.active.abc123.eligibleFrames, 1,
+    'Only the bounded future observation joins the evaluation denominator');
+  assert.equal(heldStats.state.active.abc123.detectedFrames, 1,
+    'Future catch-up truth must retain detection credit after source fusion');
+  assert.equal(heldStats.state.active.abc123.staleTruthFrames, 3);
+  const unheldStats = new EvidenceStatistics({...heldConfig, truth: {adsb: {
+    ...heldConfig.truth.adsb, association_lag_cpis: 0}}}, source, {
+    filename: path.join(directory, 'unheld-projection.json'), now: () => clock,
+    timingPolicy: 'provisional', setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  assert.notEqual(heldStats.scorePolicyHash, unheldStats.scorePolicyHash,
+    'Changing only the directional projection contract changes evaluation policy identity');
+  unheldStats.close();
+  heldStats.finish('abc123'); heldStats.persist(); heldStats.close();
+  const priorHeldState = JSON.parse(fs.readFileSync(path.join(directory, 'directional-projection.json'), 'utf8'));
+  const priorKey = 'legacy-v6-symmetric-projection';
+  priorHeldState.sites = {[priorKey]: {...siteDescriptor(heldConfig), detector_eligibility_version: 6}};
+  for (const pass of priorHeldState.passes) pass.siteKey = priorKey;
+  priorHeldState.rollup.siteKey = priorKey;
+  priorHeldState.liveScoreContract = {hash: 'legacy-v6-contract', startedAt: clock - 1000};
+  const priorPasses = structuredClone(priorHeldState.passes);
+  const priorCoverage = structuredClone(priorHeldState.radarCoverage);
+  assert.equal(heldStats.radarCoverage().supported_bins, 1, 'Migration fixture contains actual prior-cohort coverage');
+  fs.writeFileSync(path.join(directory, 'directional-projection.json'), JSON.stringify(priorHeldState));
+  const heldRestart = new EvidenceStatistics(heldConfig, source, {
+    filename: path.join(directory, 'directional-projection.json'), now: () => clock,
+    timingPolicy: 'provisional', setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  assert.deepEqual(heldRestart.state.passes, priorPasses,
+    'The v6 evidence remains unchanged after the directional-policy rollover');
+  assert.equal(heldRestart.status().windows.lifetime.eligible_passes, 0,
+    'The corrected denominator cannot include the previous projection policy');
+  assert.deepEqual(heldRestart.state.sites[priorKey].radar_coverage, priorCoverage,
+    'Archive the exact prior-policy coverage without rewriting its points or counters');
+  assert.equal(heldRestart.radarCoverage().supported_bins, 0);
+  assert.equal(heldRestart.radarCoverage().associated_samples, 0,
+    'Current coverage cannot inherit the previous policy through its accumulator');
+  heldRestart.close();
 
   const bufferedOptions = {filename: path.join(directory, 'buffered-cohort.json'),
     now: () => clock + 10000, timingPolicy: 'provisional',

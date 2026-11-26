@@ -4,6 +4,7 @@
 #include "process/tracker/CausalTraceLayout.h"
 #include "process/tracker/Tracker.h"
 #include "process/analysis/ResidentReplaySnapshot.h"
+#include "../../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <array>
 #include <complex>
@@ -23,13 +24,13 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=18;
+constexpr unsigned moduleAbi=19;
 inline void validateModuleAbi(unsigned abi){
- if(abi!=moduleAbi)throw std::invalid_argument("Resident module ABI18 required: older modules lack canonical tracker frame diagnostics");
+ if(abi!=moduleAbi)throw std::invalid_argument("Resident module ABI19 required: older modules lack current-CPI merge threshold");
 }
 
-constexpr uint32_t protocol=0x42475212,packetBytes=160,configBytes=32768;
-static_assert(configBytes>=640+(360+127+1)*8*sizeof(std::complex<float>)+152,
+constexpr uint32_t protocol=0x42475213,packetBytes=160,configBytes=32768;
+static_assert(configBytes>=648+(360+127+1)*8*sizeof(std::complex<float>)+152,
  "Resident config cannot carry maximum fusion and bearing manifolds");
 constexpr uint64_t sharedLimit=512ULL<<20;
 // Exact replay snapshots duplicate the complete resident state in the sealed
@@ -91,6 +92,8 @@ struct DetectorConfig {
  double pfa=0,minDoppler=0,centroidDopplerResolution=0;
  uint32_t integrationCpis=1;
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
+ // Zero ranks by SNR; positive binds the host/resident birth threshold.
+ double currentCpiPreferenceSnr=0;
 };
 enum class BearingMethod:uint32_t {coherentBeamBank=0,covarianceMvdr=1};
 // Value2 is an explicitly selected native-replay experiment, never a default.
@@ -271,8 +274,8 @@ OutputViews views(Mapping,const Config&,const Packet&);
 // remain unchanged. Consumed by canonical ProductStages and the isolated worker;
 // no receiver, reference-conditioning, clutter, fusion or tracker state lives here.
 namespace blah2::temporal_gpu {
-constexpr unsigned moduleAbi=1;
-constexpr uint32_t protocol=0x42545001;
+constexpr unsigned moduleAbi=2;
+constexpr uint32_t protocol=0x42545002;
 struct Config {
  resident::DetectorConfig detector;
  uint32_t sampleRate=0;
@@ -343,6 +346,7 @@ inline Layout layout(uint32_t rows,uint32_t columns){
 inline void validate(const Config& c){
  (void)layout(uint32_t(c.dopplerAxis.size()),uint32_t(c.delayAxis.size()));
  const auto& d=c.detector;
+ track_before_detect::validateCurrentPreference(d.currentCpiPreferenceSnr);
  if(!c.sampleRate||c.device.empty()||c.device.size()>=sizeof(Header::device)||
     !d.enabled||(d.integrationCpis!=2&&d.integrationCpis!=4&&d.integrationCpis!=8)||
     d.integrationBeamTolerance!=UINT32_MAX||!std::isfinite(c.delayDriftPerHz)||
@@ -363,10 +367,7 @@ struct MemoryReservation {
  uint64_t mappingBytes=0,workingBytes=0,headroomBytes=0;
  uint64_t bytes()const{return mappingBytes+workingBytes+headroomBytes;}
 };
-// Pure admission estimate for the map-only seam, not a device-specific quota.
-// Include every MapStage/Stage buffer, including host-visible staging, before
-// sharing a lane with portable CAF/clutter. Actual Vulkan allocation sizes and
-// per-heap limits remain authoritative; unusual driver padding fails closed.
+// Bound all map-only buffers before lane sharing; Vulkan heap limits still apply.
 inline MemoryReservation memoryReservation(const Config& c,uint64_t pageBytes){
  validate(c);
  if(!pageBytes||(pageBytes&(pageBytes-1))||pageBytes>(1ULL<<30))
@@ -375,23 +376,18 @@ inline MemoryReservation memoryReservation(const Config& c,uint64_t pageBytes){
  const auto wire=layout(uint32_t(rows),uint32_t(columns));
  const uint64_t cells=wire.count,depth=c.detector.integrationCpis;
  const bool tbd=depth>2;
- const uint64_t banks=tbd?(depth==8?3u:2u):0u,passes=tbd?banks+1u:1u;
- // Postprocess scratch: 24 words/cell, plus 36 for multi-bank candidates;
- // four reduction words per 128 cells and at most two alignment words.
+ const uint64_t banks=tbd?(depth==8?3u:2u):0u,passes=tbd?banks+2u:1u;
+ // 24 words/cell + 36 for temporal banks; current reuses flags/keep/records.
  const uint64_t scratch=(tbd?240u:96u)*cells+16*((cells+127)/128)+8;
- // Metadata includes axes, training windows, centroid bounds and all CFAR
- // population tables. Reserve the maximum supported 33 Doppler paths for
- // fractional offsets, avoiding a second copy of the motion-tag decoder.
+ // Axes, windows, bounds, CFAR tables, and up to 33 fractional Doppler paths.
  const uint64_t offsets=tbd&&c.delayDriftPerHz!=0?rows*33*depth:0;
- const uint64_t metadataWords=96+4*rows+(tbd?17u:11u)*columns+1+offsets+
+ const uint64_t metadataWords=track_before_detect::postprocessAxesWord+4*rows+(tbd?19u:11u)*columns+1+offsets+
   (tbd?2*passes*(2*uint64_t(c.detector.train)+1)+2*passes:0);
  MemoryReservation result;
  result.mappingBytes=(wire.bytes+pageBytes-1)&~(pageBytes-1);
  result.workingBytes=48*cells+scratch+8*cells*(tbd?depth:1u)+8*cells+
   (tbd?8*cells*(banks+1):0)+4+4*metadataWords;
- // MapStage owns eight buffers (nine with TBD), all counted above, and has no
- // FFT plans or data-dependent scratch. Reserve 16 MiB for their allocation
- // padding rather than a percentage of already-counted map/history storage.
+ // Eight buffers (nine with TBD), no FFT plans; reserve 16 MiB for padding.
  // Actual Vulkan requirements still fail closed if this allowance is exceeded.
  result.headroomBytes=16ULL<<20;
  return result;

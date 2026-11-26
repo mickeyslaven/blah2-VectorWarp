@@ -22,8 +22,7 @@
 
 namespace blah2::pipeline {
 
-// Normalized processing behavior. Receiver, operating system and ingress
-// implementation are deliberately absent: those identities cannot select DSP.
+// Canonical DSP stages, independent of receiver, OS and ingress.
 struct Stages {
   bool clutter = true, detection = true, tracking = true;
   void validate() const {
@@ -62,14 +61,12 @@ struct ProductConfig {
   TrackerRecoveryConfig recovery;
 };
 
-// Resolved numerical policy. Only the canonical resolver constructs this
-// snapshot; execution adapters can translate it, never retune it.
+// Resolved policy: adapters translate this snapshot without retuning it.
 class RadarPlan {
   const ProductConfig products_;
   const std::string identity_;
   static std::string serialize(const ProductConfig& p) {
-    // Ordered, locale-independent round-trip doubles; no backend or scheduling
-    // inputs. This is observability of the resolved policy, never another plan.
+    // Ordered, locale-independent doubles identify the resolved policy.
     rapidjson::StringBuffer b; rapidjson::Writer<rapidjson::StringBuffer> w(b);
     w.StartObject(); w.Key("schema"); w.String("vectorwarp-resolved-products-v1");
     w.Key("tracker_policy"); w.String(tracker_policy::identity);
@@ -119,11 +116,15 @@ public:
   }
   const ProductConfig& products() const { return products_; }
   const std::string& identity() const { return identity_; }
+  static double currentCpiPreferenceSnr(const ProductConfig& p) {
+    return p.stages.tracking && p.integrationCpis > 2 ?
+      std::max(tracker_weak_birth::strongBirthSnr(), p.minimumSnr) : 0;
+  }
   resident::DetectorConfig residentDetector() const {
     const auto& p = products_;
     return {p.stages.detection, true, true, p.guard, p.train, p.minimumDelay,
       p.centroidDelay, p.centroidDoppler, p.pfa, p.minimumDoppler, 1 / p.cpiSeconds,
-      p.integrationCpis, p.integrationMotion, p.beamTolerance};
+      p.integrationCpis, p.integrationMotion, p.beamTolerance, currentCpiPreferenceSnr(p)};
   }
   resident::TrackerConfig residentTracker(uint32_t capacity) const {
     const auto& p = products_;
@@ -211,13 +212,13 @@ class ProductStages {
       gpu_result_json::View<temporal_gpu::Record>{output.records, output.metrics.count},
       {output.flags, offset}, {output.cells, output.metrics.count}, identity.epoch,
       {sequences.data(), temporalAvailable_}, config_.integrationCpis));
-    metrics.availableCpis = temporalAvailable_; metrics.ready = temporalAvailable_ >= 2;
+    metrics.availableCpis = temporalAvailable_; metrics.ready = config_.integrationCpis > 2 || temporalAvailable_ >= 2;
     const uint64_t span = position.end - position.first;
     if (temporalAvailable_ > 1 && span > position.first / (temporalAvailable_ - 1))
       throw std::runtime_error("Temporal GPU support precedes capture origin");
     metrics.firstInputSample = position.first - uint64_t(temporalAvailable_ - 1) * span;
     metrics.endInputSample = position.end; metrics.window.epoch = identity.epoch;
-    metrics.window.newestSequence = identity.newestSequence; metrics.window.depth = metrics.ready ? 2 : 1;
+    metrics.window.newestSequence = identity.newestSequence; metrics.window.depth = temporalAvailable_ >= 2 ? 2 : 1;
     for (uint32_t age = 0; age < metrics.window.depth; ++age)
       metrics.window.sequences[age] = identity.newestSequence - age;
     metrics.processingMs = output.metrics.uploadMs + output.metrics.executeMs + output.metrics.readbackMs;
@@ -267,9 +268,8 @@ public:
   const std::string& planIdentity() const { return planIdentity_; }
   bool temporalAccelerated() const { return bool(temporal_); }
   const std::string& temporalDevice() const { return temporalConfig_.device; }
-  // Before capture only: independently compare the same bounded native maps
-  // through canonical CPU products and the map-only capability, then clear all
-  // private history. Runtime never runs a shadow CPU detector.
+  // Before capture, compare CPU/GPU products on the same bounded maps,
+  // then clear private history. No runtime shadow detector.
   void prepareTemporal(temporal_gpu::Config config, const GpuProcessOptions& options,
       const std::function<std::unique_ptr<temporal_gpu::Session>(
         const temporal_gpu::Config&, const GpuProcessOptions&)>& factory = temporal_gpu::createProcess) {
@@ -278,9 +278,7 @@ public:
     config.detector = RadarPlan(config_).residentDetector();
     config.delayDriftPerHz = config_.delayDriftPerHz;
     temporal_gpu::validate(config);
-    // Qualification owns private detector/tracker clocks. Only the verified,
-    // reset worker transfers into this production owner; synthetic admission
-    // must not consume an evidence generation on success or failure.
+    // Synthetic qualification uses private clocks; transfer only a reset worker.
     ProductStages candidate{RadarPlan(config_)};
     candidate.temporalConfig_ = std::move(config);
     candidate.temporal_ = factory(candidate.temporalConfig_, options);
@@ -357,7 +355,7 @@ public:
     const auto detect = [&](const std::vector<std::vector<double>>* background,
         CfarDetector1D::Trials* observed) {
       return detection::detectProducts(*map, detector, centroid, interpolate,
-        output.integration, background, spatialAt, observed);
+        output.integration, background, spatialAt, observed, RadarPlan::currentCpiPreferenceSnr(config_));
     };
     if (!config_.stages.detection) return output;
     output.detections = detect(nullptr, trials);

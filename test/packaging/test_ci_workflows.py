@@ -58,7 +58,8 @@ def condition(expression, event, ref="refs/heads/main", **inputs):
 class WorkflowContracts(unittest.TestCase):
     def test_release_cycle_evidence_is_gated_in_ci_and_packages(self):
         ordinary = (WORKFLOWS / "ci.yml").read_text()
-        for suite in ("test/script/test_release_regression.py", "test/script/test_export_cycles.py"):
+        for suite in ("test/script/test_release_regression.py", "test/script/test_export_cycles.py",
+                      "test/script/test_operational_acceptance.py"):
             self.assertIn(suite, ordinary)
         release = (WORKFLOWS / "release-packages.yml").read_text()
         self.assertIn("script/verify-release-ci.py", release)
@@ -135,7 +136,7 @@ class WorkflowContracts(unittest.TestCase):
                          "github.event_name != 'pull_request'")
         self.assertIn("github.event_name != 'pull_request'", workflow("homebrew.yml")["jobs"]["formula"]["if"])
         linux = workflow("ci.yml")["jobs"]["test"]
-        once = {"Verify GPU platform and receiver build contracts",
+        once = {"Test GPU and receiver build contracts",
                 "Run offline replay and qualification contract regressions",
                 "Run offline Pi packaging and diagnostics checks",
                 "Run repository generator unit and ephemeral integration tests",
@@ -190,12 +191,34 @@ class WorkflowContracts(unittest.TestCase):
         self.assertLess(source.index("npm ci --prefix api"), gate)
         self.assertLess(source.index("-DCMAKE_COMPILE_WARNING_AS_ERROR=ON"), gate)
         self.assertLess(gate, source.index("cmake --build build/ci"))
-        self.assertIn("--native-test testDetectionMath", source)
-        self.assertIn("--native-test testTracker", source)
         self.assertIn("-DBLAH2_GPU=ON", source)
         self.assertNotIn("--skip-target-build", source)
-        self.assertIn("--native-target testFrontendPlan", source)
-        self.assertIn("--native-test frontendPlanParity", source)
+        gate_run = next(step["run"] for step in job["steps"]
+                        if "script/prebuild_acceptance.py" in step.get("run", ""))
+        # Execute the real shell assembly without invoking builds or devices.
+        probe = 'python3() { printf "%s\\n" "$@"; };\n'
+        args = subprocess.check_output(["bash", "-euc", probe + gate_run],
+                                       text=True, timeout=5).splitlines()
+        self.assertEqual(args[:7], ["script/prebuild_acceptance.py", "--build-dir", "build/ci",
+                                   "--receipt", "build/ci/prebuild-acceptance.json",
+                                   "--native-target", "blah2"])
+        expected = (
+            ("testGpuTrackerAdmission", "gpuTrackerCapacityAdmission"),
+            ("testTracker", "testTracker"), ("testDetectionMath", "testDetectionMath"),
+            ("testGpuTrackerCorrectness", "residentTrackerSoftwareVulkanParity"),
+            ("testMultiIlluminatorRadar", "multiIlluminatorRadar"),
+            ("testFrontendPlan", "frontendPlanParity"),
+            ("testGpuTbdFractional", "residentTemporalSoftwareVulkanParity"),
+            ("testGpuResidentWire", "residentWireCpuBoundary"),
+            ("testResidentReplaySnapshot", "residentReplaySnapshotCpuContract"),
+            ("testResidentReplayShaders", "residentReplayShaderCpuCompile"),
+            ("testTrackBeforeDetect", "trackBeforeDetectMath"),
+            ("testGpuResultJson", "gpuResultJsonCpuCompatibility"),
+            ("testResidentReplayInspector", "residentReplayInspectorCpuContract"),
+            ("testDirectPathCoherentReplay", "directPathCoherentReplayCpuContract"),
+        )
+        self.assertEqual(args[7:], [argument for target, test in expected
+                                   for argument in ("--native-target", target, "--native-test", test)])
         evidence = next(s for s in job["steps"] if
                         "build/ci/prebuild-acceptance.json" in s.get("with", {}).get("path", ""))
         self.assertEqual(evidence["if"], "always()")
@@ -304,6 +327,7 @@ class WorkflowContracts(unittest.TestCase):
                                 ("script", "test_run_isolated_iq_replay"),
                                 ("script", "test_observer_allocation_contract"))] + [
                     "python3 test/script/test_release_regression.py -v",
+                    "python3 test/script/test_operational_acceptance.py -v",
                     "python3 test/script/test_export_cycles.py -v"]
                 self.assertEqual(step["run"].splitlines(), expected)
                 source = "\n".join(step.get("run", "") for step in job["steps"])
@@ -413,6 +437,47 @@ class WorkflowContracts(unittest.TestCase):
         self.assertEqual(set(qualification["on"]), {"workflow_dispatch"})
         self.assertIn("environment", qualification["jobs"]["qualify"])
         self.assertEqual(qualification["jobs"]["qualify"]["strategy"]["max-parallel"], "1")
+
+    def test_physical_qualification_does_not_depend_on_unapproved_research_bounds(self):
+        jobs = workflow("gpu-qualification.yml")["jobs"]
+        steps = jobs["build"]["steps"]
+        self.assertTrue(steps[0]["uses"].startswith("actions/checkout@"))
+        self.assertEqual(steps[0]["with"]["ref"], "${{ github.sha }}")
+        self.assertEqual(jobs["build"]["needs"], "authorize")
+        self.assertIn("build", jobs["qualify"]["needs"])
+        source = (WORKFLOWS / "gpu-qualification.yml").read_text()
+        for research in ("pre_soak_receipt_gate.py", "recorded_iq_qualification.py", "PRE_SOAK_PLAN"):
+            self.assertNotIn(research, source)
+        validator = (ROOT / "test/gpu/verify_qualification_receipts.py").read_text()
+        self.assertNotIn("pre_soak_receipt_gate", validator)
+        self.assertIn("validate_pair(", validator)
+        self.assertIn("validate_evidence_files(receipt, path)", validator)
+
+    def test_physical_products_and_unified_evidence_reach_both_receipt_gates(self):
+        jobs = workflow("gpu-qualification.yml")["jobs"]
+        steps = jobs["qualify"]["steps"]
+        producers = [step for step in steps if "test/gpu/unified_physical_corpus.py" in step.get("run", "")]
+        self.assertEqual(len(producers), 1)
+        producer = producers[0]
+        self.assertNotIn("continue-on-error", producer)
+        self.assertIn("test/gpu/product_parity_test.py", producer["run"])
+        self.assertIn('--source-sha "$GITHUB_SHA"', producer["run"])
+        for diagnostic_mode in ("--golden-only", "--policy-comparison", "--capture"):
+            self.assertNotIn(diagnostic_mode, producer["run"])
+        upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertGreater(steps.index(upload), steps.index(producer))
+        self.assertEqual(upload["if"], "always()")
+        self.assertIn("build/gpu-feature-evidence/", upload["with"]["path"].splitlines())
+        downloads = [step["with"] for step in jobs["acceptance"]["steps"]
+                     if step.get("uses", "").startswith("actions/download-artifact@")]
+        fp64_artifact = upload["with"]["name"].replace("${{ matrix.device_class }}", "fp64")
+        self.assertTrue(any(fnmatch.fnmatchcase(fp64_artifact, step.get("pattern", "")) for step in downloads))
+        acceptance = "\n".join(step.get("run", "") for step in jobs["acceptance"]["steps"])
+        self.assertIn("verify_qualification_receipts.py --receipts build/gpu-receipts", acceptance)
+        release = "\n".join(step.get("run", "") for step in workflow("gpu-receipt-gate.yml")["jobs"]["receipt"]["steps"])
+        self.assertIn("for feature in ('fp32', 'fp64'):", release)
+        self.assertIn("f'gpu-product-parity-{feature}-{sha}'", release)
+        self.assertIn("verify_qualification_receipts.py --receipts build/gpu-receipts", release)
 
     def test_linux_resident_temporal_parity_is_explicit_cpu_only_vulkan(self):
         job = workflow("ci.yml")["jobs"]["test"]

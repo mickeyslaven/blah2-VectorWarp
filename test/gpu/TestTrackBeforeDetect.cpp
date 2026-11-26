@@ -56,8 +56,9 @@ int main() try {
     try{fractionalDelayTableWords(17,depth,4,-.566);}catch(const std::invalid_argument&){rejected=true;}
     check(rejected,"Invalid table depth admitted");}
   check(bankCount(4) == 2 && bankCount(8) == 3, "Unexpected multi-timescale bank count");
-  check(detectorPassCount(4) == 3 && detectorPassCount(8) == 4,
-    "Conventional detector pass is not retained");
+  check(detectorPassCount(4) == 4 && detectorPassCount(8) == 5 &&
+    passDepth(4,3)==1 && passDepth(8,4)==1,
+    "Single-CPI detector pass is not retained");
   check(bankLength(0) == 2 && bankLength(1) == 4 && bankLength(2) == 8,
     "Unexpected multi-timescale bank lengths");
   check(trialCount(8, 1, 1) == 27, "Legacy motion-path trial correction changed");
@@ -107,27 +108,28 @@ int main() try {
   }
   histories[3][4]=std::numeric_limits<double>::quiet_NaN();
   check(pathMean(histories,9,{0},0,4,8,0,0)==-1,"Nonfinite path admitted");
-  check(close(passPfa(.001, 8, 1, 4, 0), .0005) &&
-      close(passPfa(.001, 8, 1, 4, 1), .001 / 162),
+  check(close(passPfa(.001, 8, 1, 4, 0), .00025) &&
+      close(passPfa(.001, 8, 1, 4, 1), .001 / 324) &&
+      close(passPfa(.001, 8, 1, 4, 4), .0005),
     "Conventional and motion-bank PFA separation changed");
   const uint32_t training = 12;
   const double alphaOne = 7.0;
-  check(close(survival(alphaOne, training, 1),
+  check(close(blah2::detection::integrated_cfar::survival(alphaOne, training, 1),
     std::pow(double(training) / (training + alphaOne), training)),
     "Single-CPI CFAR survival differs");
   const double pfa = 0.005 / 72.0;
   double previousSumThreshold = 0;
   for (uint32_t cpis : {2u, 4u, 8u}) {
-    const double alpha = cfarAlpha(pfa, training, cpis);
+    const double alpha = blah2::detection::integrated_cfar::alpha(pfa, training, cpis);
     check(double(cpis) * alpha > previousSumThreshold,
       "Longer integration did not increase sum-domain threshold");
-    check(close(survival(alpha, training, cpis), pfa, 1e-8),
+    check(close(blah2::detection::integrated_cfar::survival(alpha, training, cpis), pfa, 1e-8),
       "Exact Gamma CFAR inversion differs");
     previousSumThreshold = double(cpis) * alpha;
   }
   bool rejected = false;
   for (double probability : {1e-30, 1e-300}) {
-    const double threshold = cfarAlpha(probability, 1, 2);
+    const double threshold = blah2::detection::integrated_cfar::alpha(probability, 1, 2);
     const double x = 1 / (1 + threshold);
     // Independent closed form for Beta(2,2); unlike x^3-first recurrence,
     // this remains representable when the leading recurrence term underflows.
@@ -136,7 +138,7 @@ int main() try {
       std::abs(tail / probability - 1) < 2e-12,
       "Extreme accepted PFA was not bracketed to its actual beta tail");
   }
-  try { (void)cfarAlpha(std::numeric_limits<double>::denorm_min(), 1, 1); }
+  try { (void)blah2::detection::integrated_cfar::alpha(std::numeric_limits<double>::denorm_min(), 1, 1); }
   catch (const std::overflow_error&) { rejected = true; }
   check(rejected, "Unrepresentable CFAR threshold did not fail closed");
   rejected = false;

@@ -28,25 +28,25 @@ void fractionalDiagnosticGeometry(){
  c.detector.integrationBeamTolerance=UINT32_MAX;rr::test::enable(c);validateConfig(c);
  auto s=rr::test::fixture(c);auto& metadata=s.blocks[uint32_t(rr::BlockKind::postprocessMetadata)-1].bytes;
  // Prefix + 601*9*8 signed offsets + valid-population alphas/bank noise.
- check(metadata.size()==190560,"Diagnostic fractional metadata allocation differs");
+ check(metadata.size()==191472,"Diagnostic fractional metadata allocation differs");
  check(s.blocks[uint32_t(rr::BlockKind::refinementWeights)-1].bytes.size()==1920,
   "Disabled angle gate removed allocated refinement weights");
  check(s.blocks[uint32_t(rr::BlockKind::angleHistory)-1].bytes.empty(),
   "Disabled angle gate exported unused angle history");
- check(wire::Reader{{metadata.data(),metadata.size()}}.u32(35*4)==4320,
+ check(wire::Reader{{metadata.data(),metadata.size()}}.u32(35*4)==4536,
   "Fractional lookup table pointer differs from production allocation");
- check(std::any_of(metadata.begin()+17280,metadata.end(),[](uint8_t byte){return byte!=0;}),
+ check(std::any_of(metadata.begin()+18144,metadata.end(),[](uint8_t byte){return byte!=0;}),
   "Diagnostic fixture did not exercise nonzero signed offsets");
  const auto encoded=rr::encode(s,c);
  const auto decoded=rr::decode(encoded.data(),encoded.size(),c,s.identity);
  check(decoded.blocks[4].bytes==metadata,"Fractional offset table changed in round trip");
  const wire::Reader envelope{{encoded.data(),encoded.size()}};
- check(envelope.u64(512+24*4+16)==190560,"Metadata descriptor omitted temporal tables");
- auto corrupted=encoded;const auto tableByte=size_t(envelope.u64(512+24*4+8))+17280;
+ check(envelope.u64(512+24*4+16)==191472,"Metadata descriptor omitted temporal tables");
+ auto corrupted=encoded;const auto tableByte=size_t(envelope.u64(512+24*4+8))+18144;
  corrupted[tableByte]^=1;reject([&]{rr::decode(corrupted.data(),corrupted.size(),c,s.identity);});
- auto truncated=metadata;metadata.resize(17280);reject([&]{rr::encode(s,c);});metadata=std::move(truncated);
+ auto truncated=metadata;metadata.resize(18144);reject([&]{rr::encode(s,c);});metadata=std::move(truncated);
  wire::Writer{{metadata.data(),metadata.size()}}.u32(35*4,0);reject([&]{rr::encode(s,c);});
- wire::Writer{{metadata.data(),metadata.size()}}.u32(35*4,4320);
+ wire::Writer{{metadata.data(),metadata.size()}}.u32(35*4,4536);
  std::swap(s.blocks[3],s.blocks[4]);reject([&]{rr::encode(s,c);});std::swap(s.blocks[3],s.blocks[4]);
  s.blocks[uint32_t(rr::BlockKind::refinementWeights)-1].bytes.clear();reject([&]{rr::encode(s,c);});
  auto integer=c;integer.detector.integrationMotionBins=track_before_detect::encodeMotionBins(2,4);
@@ -60,6 +60,7 @@ void noncoherentFractionalCarrier(){
   c.reference.centreHz=509000000;
   c.fusion.frequencyHz=0;
   c.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,1,true);
+  c.detector.currentCpiPreferenceSnr=9.1;
   rr::test::enable(c);validateConfig(c);
   auto snapshot=rr::test::fixture(c,cpis);
   const auto encoded=rr::encode(snapshot,c);
@@ -68,6 +69,14 @@ void noncoherentFractionalCarrier(){
   const wire::Reader metadata{{snapshot.blocks[4].bytes.data(),snapshot.blocks[4].bytes.size()}};
   check(metadata.f64(94*4)==-64.0/c.reference.centreHz,
    "Noncoherent replay used fusion carrier instead of reference carrier");
+  check(metadata.f64(96*4)==9.1,"Replay lost exact current-CPI merge threshold");
+  auto old=encoded;wire::Writer{{old.data(),old.size()}}.u32(4,1);
+  reject([&]{rr::decode(old.data(),old.size(),c,snapshot.identity);});
+  auto changed=c;changed.detector.currentCpiPreferenceSnr=9;
+  reject([&]{rr::decode(encoded.data(),encoded.size(),changed,snapshot.identity);});
+  wire::Writer{{snapshot.blocks[4].bytes.data(),snapshot.blocks[4].bytes.size()}}.f64(96*4,9);
+  reject([&]{rr::encode(snapshot,c);});
+  wire::Writer{{snapshot.blocks[4].bytes.data(),snapshot.blocks[4].bytes.size()}}.f64(96*4,9.1);
   wire::Writer{{snapshot.blocks[4].bytes.data(),snapshot.blocks[4].bytes.size()}}.
    f64(94*4,-63.0/c.reference.centreHz);
   reject([&]{rr::encode(snapshot,c);});

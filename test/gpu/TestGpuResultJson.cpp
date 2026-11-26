@@ -95,7 +95,9 @@ void composedOracleCases(){
    std::vector<std::complex<double>> cpu(rows*columns,{1,2}),gpu=cpu,bad;
    if(frame+2==depth){cpu[cell-1]={100*(1+1e-7),2};gpu[cell-1]={100*(1-1e-7),2};
     cpu[cell+1]=gpu[cell+1]={100,2};}
-   if(frame+1==depth)cpu[cell]=gpu[cell]={100,2};
+   // Keep deep-bank qualification observable when the current CPI is weak;
+   // a strong current hit now intentionally takes precedence over its paths.
+   if(frame+1==depth)cpu[cell]=gpu[cell]={depth>2?1.0:100.0,2};
    bad=gpu;if(frame+1==depth){bad[cell]={1,2};bad[cell+5*columns+20]={100,2};}
    const pipeline::Position position{1,frame*100u,(frame+1)*100u,1000+frame*500u,true};
    const auto raw=[&](const auto& input){
@@ -388,6 +390,18 @@ void detectionCases(){
   same(temporalEvidence(absent,{}, {},support.epoch,view(sequences),depth),empty.to_json_km(17,fs));
   sequences.pop_back();rejects([&]{temporalEvidence(base,view(flags),view(cells),support.epoch,view(sequences),depth);});
  }
+ for(uint32_t maximum:{4u,8u}){
+  std::vector<uint32_t> flags{7u|128u|(130u<<17)|(5u<<26)},cells{0};
+  const std::vector<uint64_t> sequences{UINT64_C(9007199254740993)};
+  auto current=hostDetections(view(records),view(flags),view(cells),17,view(sequences),maximum);
+  const auto& evidence=current.get_evidence().front();
+  check(evidence.bank==0&&evidence.depth==1&&evidence.newestSequence==sequences[0]&&
+   evidence.sequences[0]==sequences[0]&&evidence.sequences[1]==0&&
+   !evidence.delayMotion&&!evidence.dopplerMotion,"Deep current-CPI host handoff lost exact support");
+  flags[0]|=8u;rejects([&]{hostDetections(view(records),view(flags),view(cells),17,view(sequences),maximum);});
+  flags[0]&=~8u;flags[0]^=1u<<17;
+  rejects([&]{hostDetections(view(records),view(flags),view(cells),17,view(sequences),maximum);});
+ }
  for(bool hit:{false,true}){
   Detection expected=hit?Detection(1,2,3):Detection(std::vector<double>{},std::vector<double>{},std::vector<double>{});
   const auto base=expected.to_json_km(17,fs);Detection::Evidence identity;
@@ -406,13 +420,36 @@ void detectionCases(){
    "Temporal source offsets changed finalized key or selected the wrong cell");
   flags[12]&=~(15u<<26);rejects([&]{temporalSourceCells(view(flags),view(keys),5,5,8);});
  }
- struct Acknowledgement {uint32_t availableCpis=1;bool detectorReady=false;
-  uint64_t temporalEpoch=7,newestSequence=11;std::array<uint64_t,8>supportSequences{11};} acknowledgement;
- blah2::resident::Config temporalConfig;temporalConfig.detector.integrationCpis=8;
+ struct Acknowledgement {uint32_t availableCpis=1;bool detectorReady=true;
+  uint64_t temporalEpoch=7,newestSequence=11;std::array<uint64_t,8>supportSequences{11};};
+ blah2::resident::Config temporalConfig;
  temporalConfig.geometry.clutterSamples=250001;temporalConfig.reference.centreHz=101100000;
  temporalConfig.detector.integrationMotionBins=track_before_detect::encodeMotionBins(2,4,true);
+ for(uint32_t depth:{2u,4u,8u}){
+  temporalConfig.detector.integrationCpis=depth;
+  Acknowledgement first;first.detectorReady=depth>2;
+  const auto firstFrame=blah2::resident::temporalPublication(temporalConfig,first,17,100,200);
+  check(firstFrame&&firstFrame->ready==first.detectorReady&&firstFrame->availableCpis==1&&
+   firstFrame->historyReset&&firstFrame->window.depth==1&&firstFrame->window.sequences[0]==11,
+   "Resident first-frame readiness disagreed with the configured temporal banks");
+  auto contradictory=first;contradictory.detectorReady=!contradictory.detectorReady;
+  rejects([&]{blah2::resident::temporalPublication(temporalConfig,contradictory,17,100,200);});
+  auto empty=first;empty.availableCpis=0;
+  rejects([&]{blah2::resident::temporalPublication(temporalConfig,empty,17,100,200);});
+  auto excessive=first;excessive.availableCpis=depth+1;
+  rejects([&]{blah2::resident::temporalPublication(temporalConfig,excessive,17,100,200);});
+  Acknowledgement second;second.availableCpis=2;second.detectorReady=true;
+  second.newestSequence=12;second.supportSequences={12,11};
+  const auto baseline=blah2::resident::temporalPublication(temporalConfig,second,17,200,300);
+  check(baseline&&baseline->ready&&baseline->availableCpis==2&&baseline->window.depth==2&&
+   baseline->window.sequences[0]==12&&baseline->window.sequences[1]==11,
+   "Resident two-CPI baseline readiness or lineage was lost");
+ }
+ temporalConfig.detector.integrationCpis=8;
+ Acknowledgement acknowledgement;
  auto warm=blah2::resident::temporalPublication(temporalConfig,acknowledgement,17,100,200);
- check(warm&&!warm->ready&&warm->availableCpis==1&&warm->historyReset,"Resident warmup was reported ready");
+ check(warm&&warm->ready&&warm->availableCpis==1&&warm->historyReset&&warm->window.depth==1,
+  "Resident current-CPI startup was hidden before the two-CPI baseline matured");
  check(warm->delayDriftPerHz==-250001.0/101100000,
   "Noncoherent temporal publication used fusion/capture frequency instead of lane carrier");
  acknowledgement.availableCpis=2;acknowledgement.detectorReady=true;acknowledgement.newestSequence=12;acknowledgement.supportSequences={12,11};
@@ -428,9 +465,11 @@ void detectionCases(){
  const auto& readiness=partialJson["detector_integration"]["bank_ready"];
  check(readiness.Size()==4&&readiness[0].GetBool()&&readiness[1].GetBool()&&!readiness[2].GetBool()&&!readiness[3].GetBool(),
   "Resident per-bank readiness used configured depth instead of acknowledged history");
- acknowledgement={};acknowledgement.temporalEpoch=8;acknowledgement.newestSequence=13;acknowledgement.supportSequences={13};
+ acknowledgement={};acknowledgement.detectorReady=true;acknowledgement.temporalEpoch=8;
+ acknowledgement.newestSequence=13;acknowledgement.supportSequences={13};
  auto reset=blah2::resident::temporalPublication(temporalConfig,acknowledgement,17,300,400);
- check(reset&&!reset->ready&&reset->window.epoch==8&&reset->window.sequences[1]==0,"Resident reset retained pre-gap temporal support");
+ check(reset&&reset->ready&&reset->window.depth==1&&reset->window.epoch==8&&
+  reset->window.sequences[1]==0,"Resident reset retained pre-gap temporal support");
  rapidjson::Document ordinaryDetections;ordinaryDetections.Parse(detectionRecords(100000,
   View<Record>{records.data(),records.size()}).c_str());
  check(!ordinaryDetections.HasParseError()&&!ordinaryDetections.HasMember("track_guided_shadow"),
