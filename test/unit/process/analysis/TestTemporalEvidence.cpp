@@ -325,6 +325,28 @@ TEST_CASE("temporal evidence follows weak motion paths")
   REQUIRE(lineage.dopplerMotion == 1);
 }
 
+TEST_CASE("coherent temporal evidence retains accumulated phase")
+{
+  blah2::integration::CoherentPathEvidence::Config config;
+  config.maximumCpis = 4;
+  config.delayMotionBins = config.dopplerMotionBins = 0;
+  config.cpiHopSeconds = .5;
+  config.minimumCoherence = .99;
+  blah2::integration::CoherentPathEvidence engine(config);
+  std::array<blah2::integration::CoherentPathEvidence::Bank, 3> result;
+  for (uint64_t sequence = 1; sequence <= 4; ++sequence) {
+    auto frame = map(1, 1);
+    frame.doppler = {0};
+    frame.data[0][0] = std::polar(2.0, .61);
+    result = engine.process(frame, 3, sequence);
+  }
+  REQUIRE(result[1].ready);
+  REQUIRE(result[1].valid[0]);
+  REQUIRE(std::norm(result[1].map->data[0][0]) == Catch::Approx(16).epsilon(1e-12));
+  REQUIRE(std::arg(result[1].map->data[0][0]) == Catch::Approx(.61).margin(1e-12));
+  REQUIRE(result[1].coherence[0] == Catch::Approx(1).margin(1e-12));
+}
+
 TEST_CASE("overlapping windows cannot repeatedly confirm one impulse")
 {
   blah2::integration::TemporalEvidence engine;
@@ -841,6 +863,69 @@ TEST_CASE("coherent temporal evidence recovers phase-stable energy only")
   }
   REQUIRE(result[1].valid[0] == 0);
   REQUIRE(std::norm(result[1].map->data[0][0]) == 0);
+}
+
+TEST_CASE("coherent selected-beam paths require one known spatial identity")
+{
+  blah2::integration::CoherentPathEvidence::Config config;
+  config.maximumCpis = 2; config.delayMotionBins = config.dopplerMotionBins = 0;
+  config.beamCount = 4;
+  blah2::integration::CoherentPathEvidence engine(config);
+  auto frame = map(1, 1); frame.doppler = {0}; frame.data[0][0] = {1, 0};
+  REQUIRE_THROWS_AS(engine.process(frame, 7, 1, 0, 80), std::invalid_argument);
+  std::vector<uint32_t> beams{5};
+  REQUIRE_THROWS_AS(engine.process(frame, 7, 1, 0, 80, &beams), std::invalid_argument);
+  beams[0] = 1; engine.process(frame, 7, 1, 0, 80, &beams);
+  beams[0] = 2;
+  auto changed = engine.process(frame, 7, 2, 8, 80, &beams);
+  REQUIRE(changed[0].ready); REQUIRE_FALSE(changed[0].valid[0]);
+  auto stable = engine.process(frame, 7, 3, 16, 80, &beams);
+  REQUIRE(stable[0].valid[0]);
+  REQUIRE(std::norm(stable[0].map->data[0][0]) == Catch::Approx(2));
+  beams[0] = 0;
+  REQUIRE_FALSE(engine.process(frame, 7, 4, 24, 80, &beams)[0].valid[0]);
+}
+
+TEST_CASE("coherent phase preservation avoids intermediate overflow and rejects malformed inputs")
+{
+  blah2::integration::CoherentPathEvidence::Config config;
+  config.maximumCpis = 2; config.delayMotionBins = config.dopplerMotionBins = 0;
+  blah2::integration::CoherentPathEvidence engine(config);
+  auto frame = map(1, 1); frame.doppler = {0}; frame.data[0][0] = {1e308, 0};
+  engine.process(frame, 1, 1, 0, 80);
+  const auto result = engine.process(frame, 1, 2, 8, 80);
+  REQUIRE(result[0].valid[0]);
+  REQUIRE(result[0].map->data[0][0].real() == Catch::Approx(std::sqrt(2.0) * 1e308));
+  REQUIRE(result[0].map->data[0][0].imag() == 0);
+  REQUIRE_THROWS_AS(engine.process(frame, 1, 2, 8, 80), std::invalid_argument);
+  engine.reset();
+  frame.data[0].clear();
+  REQUIRE_THROWS_AS(engine.process(frame, 1, 1, 0, 80), std::invalid_argument);
+  frame.data[0] = {{1, 0}};
+  frame.doppler[0] = std::numeric_limits<double>::infinity();
+  REQUIRE_THROWS_AS(engine.process(frame, 1, 1, 0, 80), std::invalid_argument);
+}
+
+TEST_CASE("temporal replay power admission avoids an amplitude round trip")
+{
+  using Engine = blah2::integration::TemporalEvidence;
+  auto frame = map(1, 1); frame.doppler = {0};
+  Engine engine({2, 0, 0});
+  const double exact = std::nextafter(1.0, 2.0);
+  REQUIRE(std::norm(std::complex<double>{std::sqrt(exact), 0}) != exact);
+  frame.data[0][0] = {exact, 0};
+  engine.process(frame, 0, 1, nullptr, nullptr, Engine::Input::realPower);
+  const auto result = engine.process(frame, 0, 2, nullptr, nullptr, Engine::Input::realPower);
+  REQUIRE(result.banks[0].detectorPower[0] == exact);
+  REQUIRE(result.banks[1].detectorPower[0] == exact);
+  for (const auto bad : {std::complex<double>{-1, 0}, {1, 1},
+      {std::numeric_limits<double>::infinity(), 0}}) {
+    frame.data[0][0] = bad;
+    REQUIRE_THROWS_AS(engine.process(frame, 0, 3, nullptr, nullptr, Engine::Input::realPower),
+      std::invalid_argument);
+  }
+  frame.data[0][0] = 2;
+  REQUIRE_NOTHROW(engine.process(frame, 0, 3, nullptr, nullptr, Engine::Input::realPower));
 }
 
 TEST_CASE("coherent temporal evidence locks its hop to capture lineage")

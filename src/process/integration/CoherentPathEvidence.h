@@ -36,6 +36,10 @@ public:
     double cpiHopSeconds = 0;
     double minimumCoherence = .6;
     int phaseDirection = 1;
+    double delayDriftPerHz = 0;
+    // Zero declares one immutable spatial projection. Selected-beam inputs
+    // require a known, identical beam along the entire coherent path.
+    uint32_t beamCount = 0;
   };
 
   struct Bank
@@ -47,6 +51,8 @@ public:
     std::vector<uint8_t> valid;
     std::vector<EvidenceMotion> motion;
     EvidenceLineage window;
+    std::array<uint64_t, 8> firstSamples{};
+    uint32_t sampleRateHz = 0;
 
     EvidenceLineage lineageAt(uint64_t cell) const
     {
@@ -62,12 +68,14 @@ public:
 
   explicit CoherentPathEvidence(Config config) : config_(config)
   {
-    if ((config_.maximumCpis != 4 && config_.maximumCpis != 8) ||
+    if ((config_.maximumCpis != 2 && config_.maximumCpis != 4 && config_.maximumCpis != 8) ||
         config_.delayMotionBins > 2 || config_.dopplerMotionBins > 16 ||
         !(config_.cpiHopSeconds >= 0) || !std::isfinite(config_.cpiHopSeconds) ||
         !(config_.minimumCoherence >= 0 && config_.minimumCoherence <= 1) ||
         !std::isfinite(config_.minimumCoherence) ||
-        (config_.phaseDirection != -1 && config_.phaseDirection != 1))
+        (config_.phaseDirection != -1 && config_.phaseDirection != 1) ||
+        !std::isfinite(config_.delayDriftPerHz) || config_.delayDriftPerHz > 0 ||
+        config_.beamCount > 360)
       throw std::invalid_argument("Coherent temporal evidence configuration invalid");
   }
 
@@ -78,23 +86,41 @@ public:
   }
 
   std::array<Bank, 3> process(Map<std::complex<double>>& map, uint64_t epoch,
-    uint64_t sequence, uint64_t firstSample, uint32_t sampleRateHz)
+    uint64_t sequence, uint64_t firstSample, uint32_t sampleRateHz,
+    const std::vector<uint32_t>* beams = nullptr)
   {
     const uint32_t rows = map.get_nRows(), columns = map.get_nCols();
-    if (!rows || !columns || (map.doppler.size() != 2 &&
+    if (!rows || !columns || map.data.size() != rows ||
+        std::any_of(map.data.begin(), map.data.end(), [&](const auto& row) {
+          return row.size() != columns;
+        }) || (map.delay.size() != 2 && map.delay.size() != columns) ||
+        std::any_of(map.doppler.begin(), map.doppler.end(),
+          [](double hz) { return !std::isfinite(hz); }) || (map.doppler.size() != 2 &&
         map.doppler.size() != rows) ||
         (!frames_.empty() && (rows != rows_ || columns != columns_ ||
           map.delay != delay_ || map.doppler != doppler_ ||
-          epoch != frames_.back().epoch || sequence != frames_.back().sequence + 1 ||
+          epoch != frames_.back().epoch || sequence <= frames_.back().sequence ||
+          sequence != frames_.back().sequence + 1 ||
           sampleRateHz != frames_.back().sampleRateHz ||
           firstSample <= frames_.back().firstSample ||
           !validHop(firstSample - frames_.back().firstSample, sampleRateHz))))
       throw std::invalid_argument("Coherent temporal evidence lineage changed");
     if (!sampleRateHz)
       throw std::invalid_argument("Coherent temporal evidence sample rate invalid");
-    rows_ = rows; columns_ = columns; delay_ = map.delay; doppler_ = map.doppler;
+    if (config_.beamCount && (!beams || beams->size() != uint64_t(rows) * columns ||
+        std::any_of(beams->begin(), beams->end(), [&](uint32_t beam) {
+          return beam > config_.beamCount;
+        })))
+      throw std::invalid_argument("Coherent temporal evidence beam identity invalid");
+    if (config_.delayDriftPerHz) {
+      if (map.doppler.size() != rows)
+        throw std::invalid_argument("Coherent delay drift requires an explicit Doppler axis");
+      track_before_detect::validateDelayDrift(config_.delayDriftPerHz,
+        std::vector<double>(map.doppler.begin(), map.doppler.end()));
+    }
     Frame frame{epoch, sequence, firstSample, sampleRateHz,
-      std::vector<std::complex<double>>(uint64_t(rows) * columns)};
+      std::vector<std::complex<double>>(uint64_t(rows) * columns),
+      config_.beamCount ? *beams : std::vector<uint32_t>{}};
     for (uint32_t row = 0; row < rows; ++row)
       for (uint32_t column = 0; column < columns; ++column)
       {
@@ -107,6 +133,7 @@ public:
     // after all samples passed validation, alongside accepting the frame.
     const uint64_t acceptedHop = frames_.empty() ? 0 :
       firstSample - frames_.back().firstSample;
+    rows_ = rows; columns_ = columns; delay_ = map.delay; doppler_ = map.doppler;
     frames_.push_back(std::move(frame));
     if (!lockedHopSamples_) lockedHopSamples_ = acceptedHop;
     while (frames_.size() > config_.maximumCpis) frames_.pop_front();
@@ -122,6 +149,9 @@ public:
       const auto cells = uint64_t(rows) * columns;
       bank.coherence.assign(cells, 0); bank.valid.assign(cells, 0);
       bank.motion.resize(cells); bank.window = lineage(bank.depth, 0, 0);
+      bank.sampleRateHz = sampleRateHz;
+      for (uint32_t age = 0; age < bank.depth; ++age)
+        bank.firstSamples[age] = frames_[frames_.size() - 1 - age].firstSample;
       for (uint32_t row = 0; row < rows; ++row)
         for (uint32_t column = 0; column < columns; ++column)
           accumulate(bank, row, column);
@@ -145,7 +175,7 @@ public:
 
 private:
   struct Frame { uint64_t epoch, sequence, firstSample; uint32_t sampleRateHz;
-    std::vector<std::complex<double>> cells; };
+    std::vector<std::complex<double>> cells; std::vector<uint32_t> beams; };
 
   bool validHop(uint64_t hop, uint32_t sampleRateHz) const
   {
@@ -197,6 +227,7 @@ private:
   {
     constexpr double pi = 3.14159265358979323846;
     double best = -1, bestCoherence = 0; int bestDelay = 0, bestDoppler = 0;
+    std::complex<double> bestValue{};
     for (int dr = -int(config_.dopplerMotionBins);
          dr <= int(config_.dopplerMotionBins); ++dr)
       for (int dc = -int(config_.delayMotionBins);
@@ -207,9 +238,17 @@ private:
         for (uint32_t age = 0; age < bank.depth; ++age)
         {
           const int rr = int(row) - dr * int(age);
-          const int cc = int(column) - dc * int(age);
-          if (rr < 0 || cc < 0 || rr >= int(rows_) || cc >= int(columns_))
+          if (rr < 0 || rr >= int(rows_)) { usable = false; break; }
+          const int cc = track_before_detect::delayPathColumn(int(column), dc, age,
+            config_.delayDriftPerHz, dopplerHz(row), dopplerHz(uint32_t(rr)));
+          if (cc < 0 || cc >= int(columns_))
           { usable = false; break; }
+          if (config_.beamCount) {
+            const auto newestBeam = frames_.back().beams[uint64_t(row) * columns_ + column];
+            if (!newestBeam || frames_[frames_.size() - 1 - age].beams[
+                uint64_t(rr) * columns_ + uint32_t(cc)] != newestBeam)
+            { usable = false; break; }
+          }
           const auto value = frames_[frames_.size() - 1 - age].cells[
             uint64_t(rr) * columns_ + uint32_t(cc)];
           if (age)
@@ -242,17 +281,18 @@ private:
         if (!usable || !(power > 0) || !std::isfinite(power) ||
             !std::isfinite(sumPower)) continue;
         const double coherence = sumPower / (double(bank.depth) * power);
-        const double amplitude = scale * std::sqrt(sumPower / double(bank.depth));
+        const auto coherentValue = (sum / std::sqrt(double(bank.depth))) * scale;
+        const double amplitude = std::abs(coherentValue);
         if (!std::isfinite(coherence) || coherence < 0 || coherence > 1 + 1e-9 ||
             !std::isfinite(amplitude)) continue;
         if (coherence >= config_.minimumCoherence && amplitude > best)
         { best = amplitude; bestCoherence = std::min(1.0, coherence);
-          bestDelay = dc; bestDoppler = dr; }
+          bestDelay = dc; bestDoppler = dr; bestValue = coherentValue; }
       }
     const uint64_t cell = uint64_t(row) * columns_ + column;
     if (best >= 0)
     {
-      bank.map->data[row][column] = {best, 0}; bank.valid[cell] = 1;
+      bank.map->data[row][column] = bestValue; bank.valid[cell] = 1;
       bank.coherence[cell] = bestCoherence;
       bank.motion[cell] = {int8_t(bestDelay), int8_t(bestDoppler)};
     }

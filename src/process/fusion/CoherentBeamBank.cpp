@@ -153,6 +153,23 @@ void CoherentBeamBank::process_into(
   const std::vector<Map<std::complex<double>> *>& maps,
   Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams) const
 {
+  processSelected(maps, fused, selectedBeams, false);
+}
+
+void CoherentBeamBank::process_coherent_into(
+  const std::vector<Map<std::complex<double>> *>& maps,
+  Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams) const
+{
+  if (!selectedBeams)
+    throw std::invalid_argument("Complex projection requires selected beam identity");
+  processSelected(maps, fused, selectedBeams, true);
+}
+
+void CoherentBeamBank::processSelected(
+  const std::vector<Map<std::complex<double>> *>& maps,
+  Map<std::complex<double>>& fused, std::vector<uint32_t>* selectedBeams,
+  bool preservePhase) const
+{
   if (maps.empty() || maps.front() == nullptr || maps.size() != weights_.front().size())
     throw std::invalid_argument("Coherent fusion map count does not match antenna geometry");
   const uint32_t rows = maps.front()->get_nRows();
@@ -160,7 +177,9 @@ void CoherentBeamBank::process_into(
   if (fused.get_nRows() != rows || fused.get_nCols() != columns)
     throw std::invalid_argument("Fused ambiguity-map dimensions do not match");
   for (auto *map : maps)
-    if (!map || map->get_nRows() != rows || map->get_nCols() != columns)
+    if (!map || map->get_nRows() != rows || map->get_nCols() != columns ||
+        (preservePhase && (map->delay != maps.front()->delay ||
+          map->doppler != maps.front()->doppler)))
       throw std::invalid_argument("Ambiguity-map dimensions do not match");
   fused.delay = maps.front()->delay;
   fused.doppler = maps.front()->doppler;
@@ -171,6 +190,7 @@ void CoherentBeamBank::process_into(
     {
       double bestPower = -1;
       uint32_t bestBeam = 0;
+      std::complex<double> bestValue{};
       for (uint32_t beam = 0; beam < weights_.size(); ++beam)
       {
         const auto& weights = weights_[beam];
@@ -178,11 +198,15 @@ void CoherentBeamBank::process_into(
         for (std::size_t channel = 0; channel < maps.size(); ++channel)
           beamValue += weights[channel] * maps[channel]->data[row][column];
         const double power = std::norm(beamValue);
-        if (power > bestPower) { bestPower = power; bestBeam = beam + 1; }
+        if (!std::isfinite(power))
+          throw std::runtime_error("Coherent fusion produced non-finite beam power");
+        if (power > bestPower)
+        { bestPower = power; bestValue = beamValue; bestBeam = beam + 1; }
       }
-      // Match the existing noncoherent fusion contract: downstream stages
-      // consume a real, nonnegative amplitude rather than a complex sample.
-      fused.data[row][column] = {std::sqrt(bestPower), 0};
+      // The accepted detector projection remains real nonnegative amplitude.
+      // Only the explicit offline projection retains the selected phasor.
+      fused.data[row][column] = preservePhase ? bestValue :
+        std::complex<double>{std::sqrt(bestPower), 0};
       if (selectedBeams) (*selectedBeams)[uint64_t(row) * columns + column] = bestBeam;
     }
 }
@@ -208,10 +232,20 @@ std::vector<double> CoherentBeamBank::powerBankAt(
 std::vector<double> CoherentBeamBank::powerBank(
   const std::vector<std::complex<double>>& channels) const
 {
+  const auto complex = complexBank(channels);
+  std::vector<double> powers;
+  powers.reserve(complex.size());
+  for (const auto value : complex) powers.push_back(std::norm(value));
+  return powers;
+}
+
+std::vector<std::complex<double>> CoherentBeamBank::complexBank(
+  const std::vector<std::complex<double>>& channels) const
+{
   if (channels.size() != weights_.front().size())
     throw std::invalid_argument("Coherent fusion channel vector does not match antenna geometry");
-  std::vector<double> powers;
-  powers.reserve(weights_.size());
+  std::vector<std::complex<double>> values;
+  values.reserve(weights_.size());
   for (const auto& weights : weights_)
   {
     std::complex<double> beamValue{0, 0};
@@ -220,7 +254,7 @@ std::vector<double> CoherentBeamBank::powerBank(
     const double power = std::norm(beamValue);
     if (!std::isfinite(power))
       throw std::runtime_error("Coherent fusion produced non-finite beam power");
-    powers.push_back(power);
+    values.push_back(beamValue);
   }
-  return powers;
+  return values;
 }

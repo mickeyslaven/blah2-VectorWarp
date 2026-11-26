@@ -75,6 +75,38 @@ void fractionalMaps(const fs::path& directory) {
     }
   }
 }
+void hybridReplay(const fs::path& directory) {
+  auto value = config(); value.detector.integrationCpis = 8;
+  value.detector.integrationBeamTolerance = 0;
+  value.fusion = {blah2::resident::FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
+  rr::test::enable(value);
+  cr::ExperimentReader reader(experimentConfig());
+  for (uint64_t sequence = 1; sequence <= 3; ++sequence) {
+    auto snapshot = rr::test::fixture(value, 1, {sequence, 100 + sequence, 1000 + sequence});
+    populatePilot(snapshot);
+    auto& power = snapshot.blocks.at(uint32_t(rr::BlockKind::currentPower) - 1).bytes;
+    auto& fused = snapshot.blocks.at(uint32_t(rr::BlockKind::fused) - 1).bytes;
+    blah2::resident::wire::Writer powerWriter{{power.data(), power.size()}},
+      fusedWriter{{fused.data(), fused.size()}};
+    for (size_t cell = 0; cell < power.size() / 8; ++cell) {
+      powerWriter.f64(cell * 8, std::nextafter(1., 2.));
+      fusedWriter.f64(cell * 16 + 8, sequence == 1 ? 0 : 1);
+    }
+    const auto path = directory / ("hybrid-" + std::to_string(sequence) + ".vwrps");
+    write(path, rr::encode(snapshot, value));
+    cr::writeSidecarExclusive(path, sidecar(snapshot, value, 100 + (sequence - 1) * 64));
+    const auto result = reader.append(path);
+    const auto selected = result.hybridAt(0, 0);
+    check(selected.valid == (sequence == 3), "Hybrid fallback ignored recorded beam compatibility");
+    if (selected.valid) {
+      check(!selected.coherent && selected.power == std::nextafter(1., 2.),
+        "Hybrid fallback changed exact recorded power");
+      check(selected.lineage.supportSequences() == std::vector<uint64_t>{3, 2} &&
+        result.sources[0].firstSample == 228 && result.sources[1].endSample == 228,
+        "Hybrid fallback lost exact source CPI lineage");
+    }
+  }
+}
 }
 
 int main() {
@@ -100,6 +132,7 @@ int main() {
     rejects([&]{cr::decodeSidecar(encoded.data(),encoded.size(),secondBytes.data(),secondBytes.size());}, "sidecar snapshot swap accepted");
     const auto directory=fs::temp_directory_path()/"direct-path-coherent-replay-contract"; std::error_code ignored; fs::remove_all(directory,ignored); fs::create_directory(directory);
     fractionalMaps(directory);
+    hybridReplay(directory);
     const auto one=directory/"one.vwrps", two=directory/"two.vwrps", three=directory/"three.vwrps"; write(one,firstBytes); write(two,secondBytes); write(three,thirdBytes);
     rejects([&]{cr::readSidecar(one);}, "missing sidecar accepted");
     cr::writeSidecarExclusive(one,firstSidecar);
@@ -120,7 +153,11 @@ int main() {
     rejects([&]{reader.append(two);}, "changed gain sidecar accepted");
     fs::remove(cr::sidecarPath(two)); auto changedEpoch=sidecar(second,value,164,4); cr::writeSidecarExclusive(two,changedEpoch);
     rejects([&]{reader.append(two);}, "changed capture epoch sidecar accepted");
-    fs::remove(cr::sidecarPath(two)); cr::writeSidecarExclusive(two,sidecar(second,value,164)); reader.append(two);
+    fs::remove(cr::sidecarPath(two)); cr::writeSidecarExclusive(two,sidecar(second,value,164));
+    const auto paired = reader.append(two);
+    check(paired.hybridAt(0,0).valid && !paired.hybridAt(0,0).coherent &&
+      paired.hybridAt(0,0).power == 4.625,
+      "Hybrid fallback squared the recorded current-power map");
     auto changedHop=sidecar(third,value,356); cr::writeSidecarExclusive(three,changedHop);
     const auto hopFallback=reader.append(three); check(hopFallback.powerFallback != nullptr && hopFallback.reason == "lineage_reset", "changed hop did not fall back");
     // A reordered logical frame is also rejected, independently of filenames.

@@ -26,6 +26,7 @@ public:
     uint32_t declaredSpatialTrials = 1;
     uint64_t maximumCells = 65536;
     double minimumPilotCoherence = .25; // Squared normalized correlation.
+    uint32_t fallbackBeamCount = 0, fallbackBeamTolerance = UINT32_MAX;
   };
   struct Frame {
     uint64_t captureEpoch = 0, sequence = 0;
@@ -42,7 +43,12 @@ public:
   };
   struct Result {
     std::array<CoherentPathEvidence::Bank, 3> banks;
-    const ComplexMap* powerFallback = nullptr; // Caller keeps this map alive.
+    TemporalEvidence::Result noncoherent;
+    // Exact newest-first capture ranges for either selected family. Overlap
+    // between rolling banks remains visible to the shared ConfirmationLedger.
+    std::array<Frame, 8> sources{};
+    uint32_t sourceCount = 0;
+    const ComplexMap* powerFallback = nullptr; // Borrowed real FP64 power, not amplitude.
     std::string reason;
     uint64_t declaredPerCellTrials = 0;
     // Calibration includes path/beam maxima, depths, pilot and target-coherence
@@ -52,10 +58,39 @@ public:
       return bank >= banks.size() || !banks[bank].ready ||
         cell >= banks[bank].valid.size() || !banks[bank].valid[cell];
     }
+    struct Cell {
+      Complex amplitude{};
+      double power = 0;
+      EvidenceLineage lineage;
+      bool coherent = false;
+      bool valid = false;
+    };
+    // A view, never a detector map: coherent and fallback selections require
+    // joint empirical-null calibration before any detection/confirmation use.
+    Cell hybridAt(std::size_t bank, uint64_t cell) const {
+      if (bank >= banks.size()) return {};
+      const auto& fallback = noncoherent.banks[bank + 1];
+      const auto lineage = fallback.lineageAt(cell);
+      if (!lineage.depth) return {};
+      const auto columns = fallback.map->get_nCols();
+      if (!usePowerFallback(bank, cell)) {
+        const auto coherentLineage = banks[bank].lineageAt(cell);
+        const auto value = banks[bank].map->data[cell / columns][cell % columns];
+        const double power = std::norm(value);
+        if (coherentLineage.epoch == lineage.epoch &&
+            coherentLineage.sequences == lineage.sequences && std::isfinite(power))
+          return {value, power, coherentLineage, true, true};
+      }
+      return {fallback.map->data[cell / columns][cell % columns],
+        fallback.detectorPower[cell], lineage, false, true};
+    }
   };
 
   DirectPathCoherentExperiment(Config config, bool replayInput)
-    : config_(std::move(config)), coherent_(config_.temporal) {
+    : config_(std::move(config)), coherent_(config_.temporal),
+      noncoherent_({config_.temporal.maximumCpis, config_.temporal.delayMotionBins,
+        config_.temporal.dopplerMotionBins, config_.temporal.delayDriftPerHz,
+        config_.fallbackBeamCount, config_.fallbackBeamTolerance}) {
     if (!replayInput)
       throw std::invalid_argument("Direct-path coherent experiment is replay-only");
     if (config_.channelIds.empty() || config_.channelIds.size() > 8 ||
@@ -63,7 +98,8 @@ public:
         !config_.declaredSpatialTrials || config_.declaredSpatialTrials > 360 ||
         !config_.maximumCells || config_.maximumCells > (1u << 20) ||
         !std::isfinite(config_.minimumPilotCoherence) ||
-        config_.minimumPilotCoherence <= 0 || config_.minimumPilotCoherence > 1)
+        config_.minimumPilotCoherence <= 0 || config_.minimumPilotCoherence > 1 ||
+        config_.temporal.beamCount)
       throw std::invalid_argument("Direct-path coherent experiment configuration invalid");
     auto ids = config_.channelIds;
     std::sort(ids.begin(), ids.end());
@@ -107,26 +143,20 @@ public:
 
   Result process(const std::vector<ComplexMap*>& channels,
     const std::vector<uint32_t>& channelIds, const Frame& frame,
-    const std::optional<Pilot>& pilot, const ComplexMap& powerFallback) {
+    const std::optional<Pilot>& pilot, ComplexMap& powerFallback,
+    const std::vector<uint32_t>* fallbackBeams = nullptr) {
     Result result;
+    for (std::size_t bank = 0; bank < result.banks.size(); ++bank)
+      result.banks[bank].depth = 2u << bank;
     result.powerFallback = &powerFallback;
     result.declaredPerCellTrials = uint64_t(config_.declaredSpatialTrials) *
-      (config_.temporal.maximumCpis == 8 ? 3u : 2u) *
+      (config_.temporal.maximumCpis == 8 ? 3u : config_.temporal.maximumCpis == 4 ? 2u : 1u) *
       (2u * config_.temporal.delayMotionBins + 1u) *
       (2u * config_.temporal.dopplerMotionBins + 1u);
     const auto fail = [&](const char* reason) {
       reset(); result.reason = reason; return std::move(result);
     };
     if (!validFrame(frame)) return fail("capture_lineage_unavailable");
-    if (!pilot || !sameFrame(frame, pilot->frame) ||
-        pilot->anchorChannelId != config_.anchorChannelId)
-      return fail("pilot_identity_unavailable");
-    const double pilotPower = std::norm(pilot->normalizedCorrelation);
-    if (!finite(pilot->normalizedCorrelation) || !std::isfinite(pilotPower) ||
-        !std::isfinite(pilot->coherence) || pilotPower > 1 + 1e-9 ||
-        std::abs(pilot->coherence - std::min(1.0, pilotPower)) > 1e-9 ||
-        pilot->coherence < config_.minimumPilotCoherence)
-      return fail("pilot_quality");
     if (channelIds != config_.channelIds || channels.size() != channelIds.size() ||
         channels.empty() || !channels.front()) return fail("channel_identity");
     const uint32_t rows = channels.front()->get_nRows();
@@ -141,29 +171,59 @@ public:
             std::all_of(row.begin(), row.end(), [](auto value) { return finite(value); });
         });
     };
-    if (!validMap(powerFallback) ||
+    if (powerFallback.get_nRows() != rows || powerFallback.get_nCols() != columns ||
+        !validMap(powerFallback) ||
         std::any_of(channels.begin(), channels.end(), [&](const auto* map) {
           return !map || !validMap(*map);
-        }) || (channels.front()->doppler.size() != rows &&
-          channels.front()->doppler.size() != 2) ||
+        }) || channels.front()->doppler.size() != rows ||
         (channels.front()->delay.size() != columns && channels.front()->delay.size() != 2) ||
         std::any_of(channels.front()->doppler.begin(), channels.front()->doppler.end(),
           [](double value) { return !std::isfinite(value); }))
       return fail("map_invalid");
     bool restarted = false;
     if (previous_) {
+      if (frame.captureEpoch == previous_->captureEpoch &&
+          (frame.sequence <= previous_->sequence || frame.firstSample <= previous_->firstSample)) {
+        coherent_.reset(); noncoherent_.reset(); sources_.clear(); hopSamples_ = 0;
+        result.reason = "capture_reordered"; return result;
+      }
       const bool sameIdentity = frame.captureEpoch == previous_->captureEpoch &&
         frame.tuningHz == previous_->tuningHz &&
         frame.gainCalibrationEpoch == previous_->gainCalibrationEpoch &&
         frame.sampleRateHz == previous_->sampleRateHz;
       const bool sameSamples = frame.endSample - frame.firstSample ==
         previous_->endSample - previous_->firstSample;
+      const double declaredHop = config_.temporal.cpiHopSeconds * frame.sampleRateHz;
       if (!sameIdentity || !sameSamples || frame.sequence != previous_->sequence + 1 ||
           frame.firstSample <= previous_->firstSample ||
+          (config_.temporal.cpiHopSeconds > 0 &&
+            double(frame.firstSample - previous_->firstSample) != declaredHop) ||
           (hopSamples_ && frame.firstSample - previous_->firstSample != hopSamples_)) {
         reset(); restarted = true;
       }
     }
+    try {
+      result.noncoherent = noncoherent_.process(powerFallback, frame.captureEpoch,
+        frame.sequence, nullptr, fallbackBeams, TemporalEvidence::Input::realPower);
+    } catch (const std::exception&) { return fail("power_lineage_or_numeric_rejection"); }
+    if (previous_ && !hopSamples_) hopSamples_ = frame.firstSample - previous_->firstSample;
+    previous_ = frame;
+    sources_.push_front(frame);
+    while (sources_.size() > config_.temporal.maximumCpis) sources_.pop_back();
+    result.sourceCount = uint32_t(sources_.size());
+    std::copy(sources_.begin(), sources_.end(), result.sources.begin());
+    const auto phaseFail = [&](const char* reason) {
+      coherent_.reset(); result.reason = reason; return std::move(result);
+    };
+    if (!pilot || !sameFrame(frame, pilot->frame) ||
+        pilot->anchorChannelId != config_.anchorChannelId)
+      return phaseFail("pilot_identity_unavailable");
+    const double pilotPower = std::norm(pilot->normalizedCorrelation);
+    if (!finite(pilot->normalizedCorrelation) || !std::isfinite(pilotPower) ||
+        !std::isfinite(pilot->coherence) || pilotPower > 1 + 1e-9 ||
+        std::abs(pilot->coherence - std::min(1.0, pilotPower)) > 1e-9 ||
+        pilot->coherence < config_.minimumPilotCoherence)
+      return phaseFail("pilot_quality");
     ComplexMap spatial(rows, columns);
     spatial.delay = channels.front()->delay; spatial.doppler = channels.front()->doppler;
     const Complex correction = std::conj(pilot->normalizedCorrelation) / std::sqrt(pilotPower);
@@ -178,16 +238,16 @@ public:
       result.banks = coherent_.process(spatial, frame.captureEpoch, frame.sequence,
         frame.firstSample, frame.sampleRateHz);
     } catch (const std::invalid_argument&) {
-      return fail("coherent_lineage_or_numeric_rejection");
+      return phaseFail("coherent_lineage_or_numeric_rejection");
     }
-    if (previous_ && !hopSamples_) hopSamples_ = frame.firstSample - previous_->firstSample;
-    previous_ = frame;
     result.reason = restarted ? "lineage_reset" : result.banks[0].ready ?
       "uncalibrated_coherent_scores" : "warmup";
     return result;
   }
 
-  void reset() { coherent_.reset(); previous_.reset(); hopSamples_ = 0; }
+  void reset() {
+    coherent_.reset(); noncoherent_.reset(); sources_.clear(); previous_.reset(); hopSamples_ = 0;
+  }
 
 private:
   static bool finite(Complex value) {
@@ -206,6 +266,8 @@ private:
   }
   Config config_;
   CoherentPathEvidence coherent_;
+  TemporalEvidence noncoherent_;
+  std::deque<Frame> sources_;
   std::optional<Frame> previous_;
   uint64_t hopSamples_ = 0;
 };
@@ -225,8 +287,8 @@ public:
   DirectPathCoherentExperiment::Result append(const std::filesystem::path& snapshot);
   DirectPathCoherentExperiment::Result append(const ValidatedSnapshot& snapshot);
 private:
-  DirectPathCoherentExperiment experiment_;
-  uint32_t anchorChannel_ = 0;
+  DirectPathCoherentExperiment::Config config_;
+  std::unique_ptr<DirectPathCoherentExperiment> experiment_;
   std::unique_ptr<DirectPathCoherentExperiment::ComplexMap> fallback_;
   std::optional<Sidecar> previous_;
 };
@@ -267,7 +329,7 @@ inline DirectPathCoherentExperiment::ComplexMap channelMap(const resident_replay
 }
 }
 inline ExperimentReader::ExperimentReader(DirectPathCoherentExperiment::Config config)
-  : experiment_(config, true), anchorChannel_(config.anchorChannelId) {}
+  : config_(std::move(config)) {}
 inline DirectPathCoherentExperiment::Result ExperimentReader::append(const std::filesystem::path& path) {
   return append(loadValidatedSnapshot(path));
 }
@@ -282,6 +344,17 @@ inline DirectPathCoherentExperiment::Result ExperimentReader::append(const Valid
   const auto& sidecar = validated.sidecar; const auto& config = validated.config;
   const auto& snapshot = validated.snapshot;
   if (previous_) { require(experiment_detail::same(*previous_, sidecar), "Replay coherent lineage identity changed"); require(sidecar.identity.logicalFrame == previous_->identity.logicalFrame + 1 && sidecar.identity.generation == previous_->identity.generation + 1 && sidecar.identity.consumedSequence > previous_->identity.consumedSequence && sidecar.firstSample > previous_->firstSample, "Replay coherent sidecars reordered or discontinuous"); }
+  if (!experiment_) {
+    // Physical motion geometry and fallback beam compatibility come from the
+    // sealed radar plan. The experiment declares only its depth/search bounds.
+    auto bound = config_;
+    const auto motion = track_before_detect::decodeMotionBins(config.detector.integrationMotionBins);
+    bound.temporal.delayDriftPerHz = motion.fractionalDelay ?
+      track_before_detect::delayDriftPerHz(config.geometry.clutterSamples, config.temporalCarrierHz()) : 0;
+    bound.fallbackBeamCount = config.fusion.beams;
+    bound.fallbackBeamTolerance = config.detector.integrationBeamTolerance;
+    experiment_ = std::make_unique<DirectPathCoherentExperiment>(std::move(bound), true);
+  }
   auto maps = channelMaps(validated); std::vector<DirectPathCoherentExperiment::ComplexMap*> mapPointers;
   mapPointers.reserve(maps.size()); for (auto& map : maps) mapPointers.push_back(&map);
   fallback_ = std::make_unique<DirectPathCoherentExperiment::ComplexMap>(config.geometry.doppler, config.geometry.delays);
@@ -290,12 +363,18 @@ inline DirectPathCoherentExperiment::Result ExperimentReader::append(const Valid
   const auto& currentPower = snapshot.blocks.at(
     uint32_t(resident_replay::BlockKind::currentPower) - 1).bytes;
   const Reader powerReader{{currentPower.data(), currentPower.size()}};
+  const auto& fused = snapshot.blocks.at(uint32_t(resident_replay::BlockKind::fused) - 1).bytes;
+  const Reader fusedReader{{fused.data(), fused.size()}};
+  std::vector<uint32_t> beams(size_t(config.geometry.doppler) * config.geometry.delays);
   for (uint32_t row = 0; row < config.geometry.doppler; ++row)
-    for (uint32_t column = 0; column < config.geometry.delays; ++column)
+    for (uint32_t column = 0; column < config.geometry.delays; ++column) {
+      const size_t cell = size_t(row) * config.geometry.delays + column;
       fallback_->data[row][column] = DirectPathCoherentExperiment::Complex(
-        powerReader.f64((size_t(row) * config.geometry.delays + column) * 8), 0);
+        powerReader.f64(cell * 8), 0);
+      beams[cell] = config.fusion.beams ? uint32_t(fusedReader.f64(cell * 16 + 8)) + 1 : 0;
+    }
   const DirectPathCoherentExperiment::Frame frame{sidecar.captureEpoch,sidecar.identity.logicalFrame,sidecar.firstSample,sidecar.endSample,sidecar.tuningHz,sidecar.gainCalibrationEpoch,sidecar.sampleRateHz,true,true};
-  const auto anchor = std::find(config.surveillanceChannels.begin(), config.surveillanceChannels.end(), anchorChannel_);
+  const auto anchor = std::find(config.surveillanceChannels.begin(), config.surveillanceChannels.end(), config_.anchorChannelId);
   require(anchor != config.surveillanceChannels.end(), "Replay experiment anchor channel unavailable");
   const auto anchorIndex = size_t(std::distance(config.surveillanceChannels.begin(), anchor));
   const auto& raw = snapshot.blocks.at(uint32_t(resident_replay::BlockKind::rawIq) - 1).bytes;
@@ -303,7 +382,9 @@ inline DirectPathCoherentExperiment::Result ExperimentReader::append(const Valid
   const auto samples = config.geometry.clutterSamples; require(raw.size() == size_t(samples) * config.geometry.channels * 16 && reference.size() == size_t(samples) * 16, "Replay IQ pilot layout differs");
   const Reader rawReader{{raw.data(), raw.size()}}, referenceReader{{reference.data(), reference.size()}}; std::vector<DirectPathCoherentExperiment::Complex> pilotReference(samples), pilotAnchor(samples);
   for (uint32_t sample = 0; sample < samples; ++sample) { pilotReference[sample] = {referenceReader.f64(size_t(sample) * 16), referenceReader.f64(size_t(sample) * 16 + 8)}; const size_t offset = (anchorIndex * size_t(samples) + sample) * 16; pilotAnchor[sample] = {rawReader.f64(offset), rawReader.f64(offset + 8)}; }
-  previous_ = sidecar; return experiment_.process(mapPointers, config.surveillanceChannels, frame,
-    DirectPathCoherentExperiment::estimatePilot(pilotReference.data(), pilotAnchor.data(), samples, frame, anchorChannel_), *fallback_);
+  auto result = experiment_->process(mapPointers, config.surveillanceChannels, frame,
+    DirectPathCoherentExperiment::estimatePilot(pilotReference.data(), pilotAnchor.data(), samples,
+      frame, config_.anchorChannelId), *fallback_, &beams);
+  previous_ = sidecar; return result;
 }
 } // namespace blah2::integration::coherent_replay

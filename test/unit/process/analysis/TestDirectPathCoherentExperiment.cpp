@@ -48,7 +48,16 @@ TEST_CASE("direct-path experiment preserves spatial and temporal coherent gain",
     REQUIRE(result.banks[bank].coherence[0] == Catch::Approx(1).margin(1e-12));
     REQUIRE(std::norm(result.banks[bank].map->data[0][0]) ==
       Catch::Approx(2.0 * double(2u << bank)).margin(1e-10));
+    const auto hybrid = result.hybridAt(bank, 0);
+    REQUIRE(hybrid.valid); REQUIRE(hybrid.coherent);
+    REQUIRE(hybrid.amplitude == result.banks[bank].map->data[0][0]);
+    REQUIRE(result.noncoherent.banks[bank + 1].detectorPower[0] == 13);
   }
+  REQUIRE(result.sourceCount == 8);
+  REQUIRE(result.sources[0].firstSample == 56);
+  REQUIRE(result.sources[7].endSample == 8);
+  REQUIRE(result.banks[2].sampleRateHz == 80);
+  REQUIRE(result.banks[2].firstSamples == std::array<uint64_t, 8>{56, 48, 40, 32, 24, 16, 8, 0});
   REQUIRE(result.banks[2].lineageAt(0).supportSequences() ==
     std::vector<uint64_t>{8, 7, 6, 5, 4, 3, 2, 1});
 }
@@ -79,6 +88,10 @@ TEST_CASE("direct-path experiment falls back without bridging invalid input", "[
   auto result = step(lineage(3), weak);
   REQUIRE(result.reason == "pilot_quality"); REQUIRE(result.usePowerFallback(0, 0));
   REQUIRE(result.powerFallback == &fallback);
+  REQUIRE(result.hybridAt(0, 0).valid);
+  REQUIRE_FALSE(result.hybridAt(0, 0).coherent);
+  REQUIRE(result.hybridAt(0, 0).power == 7);
+  REQUIRE(result.hybridAt(0, 0).lineage.supportSequences() == std::vector<uint64_t>{3, 2});
   REQUIRE(step(lineage(4), pilot(lineage(4), 0)).reason == "warmup");
   REQUIRE_FALSE(step(lineage(5), pilot(lineage(5), 0)).usePowerFallback(0, 0));
   auto changed = lineage(6); changed.gainCalibrationEpoch++;
@@ -204,4 +217,125 @@ TEST_CASE("direct-path coherent accumulation scales large finite inputs", "[dire
   }
   REQUIRE(result.usePowerFallback(0, 0));
   REQUIRE(result.banks[0].map->data[0][0] == Complex{});
+}
+
+TEST_CASE("hybrid phase fallback preserves exact canonical power and source CPI deduplication",
+  "[direct-path-experiment]") {
+  Experiment engine(experimentConfig(), true);
+  auto first = oneCell(), second = oneCell(), fallback = oneCell();
+  blah2::integration::ConfirmationLedger ledger;
+  Experiment::Result result;
+  for (uint64_t sequence = 1; sequence <= 16; ++sequence) {
+    const double phase = sequence <= 8 || sequence % 2 == 0 ? 0 : 3.14159265358979323846;
+    first.data[0][0] = std::polar(1.0, phase);
+    second.data[0][0] = Complex{0, 1} * first.data[0][0];
+    // This exact power is lost by sqrt/norm rounding; every bank must keep it.
+    const double power = std::nextafter(1.0, 2.0);
+    fallback.data[0][0] = power;
+    result = engine.process({&first, &second}, {7, 2}, lineage(sequence),
+      pilot(lineage(sequence), 0), fallback);
+    if (sequence == 8) {
+      REQUIRE(result.hybridAt(2, 0).coherent);
+      REQUIRE(ledger.credit("target", result.hybridAt(2, 0).lineage));
+      REQUIRE_FALSE(ledger.credit("target", result.hybridAt(0, 0).lineage));
+    }
+    if (sequence == 9) {
+      REQUIRE_FALSE(result.hybridAt(2, 0).coherent);
+      REQUIRE_FALSE(ledger.credit("target", result.hybridAt(2, 0).lineage));
+    }
+  }
+  for (std::size_t bank = 0; bank < 3; ++bank) {
+    const auto cell = result.hybridAt(bank, 0);
+    REQUIRE(cell.valid); REQUIRE_FALSE(cell.coherent);
+    REQUIRE(cell.power == std::nextafter(1.0, 2.0));
+    REQUIRE(cell.power == result.noncoherent.banks[bank + 1].detectorPower[0]);
+    REQUIRE(cell.amplitude == result.noncoherent.banks[bank + 1].map->data[0][0]);
+    REQUIRE(cell.lineage.depth == (2u << bank));
+  }
+  REQUIRE(ledger.credit("target", result.hybridAt(2, 0).lineage));
+  REQUIRE_FALSE(result.nullCalibrated);
+  REQUIRE_FALSE(result.hybridAt(3, 0).valid);
+  REQUIRE_FALSE(result.hybridAt(0, 1).valid);
+}
+
+TEST_CASE("hybrid capture refusal cannot bridge or double count reordered frames",
+  "[direct-path-experiment]") {
+  auto config = experimentConfig(); config.temporal.maximumCpis = 2;
+  Experiment engine(config, true);
+  auto first = oneCell(), second = oneCell(), fallback = oneCell();
+  first.data[0][0] = 1; second.data[0][0] = Complex{0, 1}; fallback.data[0][0] = 1;
+  const auto step = [&](Experiment::Frame frame) {
+    return engine.process({&first, &second}, {7, 2}, frame, pilot(frame, 0), fallback);
+  };
+  step(lineage(1));
+  REQUIRE(step(lineage(2)).hybridAt(0, 0).valid);
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    const auto duplicate = step(lineage(2));
+    REQUIRE(duplicate.reason == "capture_reordered");
+    REQUIRE_FALSE(duplicate.hybridAt(0, 0).valid);
+    REQUIRE(duplicate.sourceCount == 0);
+  }
+  REQUIRE_FALSE(step(lineage(3)).hybridAt(0, 0).valid);
+  const auto recovered = step(lineage(4));
+  REQUIRE(recovered.hybridAt(0, 0).lineage.supportSequences() == std::vector<uint64_t>{4, 3});
+  REQUIRE(recovered.declaredPerCellTrials == 1);
+  REQUIRE_FALSE(recovered.hybridAt(1, 0).valid);
+  auto changed = lineage(5); changed.captureEpoch++;
+  REQUIRE_FALSE(step(changed).hybridAt(0, 0).valid);
+  fallback.data[0][0] = {-1, 0};
+  REQUIRE(step(lineage(6)).reason == "power_lineage_or_numeric_rejection");
+}
+
+TEST_CASE("hybrid fallback obeys canonical beam compatibility and phase loss",
+  "[direct-path-experiment]") {
+  auto config = experimentConfig(); config.fallbackBeamCount = 4; config.fallbackBeamTolerance = 0;
+  Experiment engine(config, true);
+  blah2::integration::TemporalEvidence oracle({8, 0, 0, 0, 4, 0});
+  auto first = oneCell(), second = oneCell(), fallback = oneCell();
+  for (uint64_t sequence = 1; sequence <= 8; ++sequence) {
+    fallback.data[0][0] = double(sequence);
+    std::vector<uint32_t> beams{sequence < 3 ? 1u : 2u};
+    const auto frame = lineage(sequence);
+    const auto expected = oracle.process(fallback, frame.captureEpoch, sequence, nullptr,
+      &beams, blah2::integration::TemporalEvidence::Input::realPower);
+    // Missing pilot disables only coherence; noncoherent history continues.
+    const auto result = engine.process({&first, &second}, {7, 2}, frame, {}, fallback, &beams);
+    for (std::size_t bank = 0; bank < 3; ++bank) {
+      const auto& baseline = expected.banks[bank + 1];
+      const auto selected = result.hybridAt(bank, 0);
+      REQUIRE(selected.valid == bool(baseline.lineageAt(0).depth));
+      if (selected.valid) {
+        REQUIRE_FALSE(selected.coherent);
+        REQUIRE(selected.power == baseline.detectorPower[0]);
+        REQUIRE(selected.lineage.supportSequences() == baseline.lineageAt(0).supportSequences());
+      }
+    }
+  }
+}
+
+TEST_CASE("hybrid fractional delay motion shares canonical path geometry",
+  "[direct-path-experiment]") {
+  auto config = experimentConfig(); config.temporal.delayDriftPerHz = -.5;
+  Experiment engine(config, true);
+  Experiment::ComplexMap first(1, 8), second(1, 8), fallback(1, 8);
+  for (auto* map : {&first, &second, &fallback}) {
+    map->delay = {0, 1, 2, 3, 4, 5, 6, 7}; map->doppler = {2};
+  }
+  Experiment::Result result;
+  for (uint64_t sequence = 1; sequence <= 8; ++sequence) {
+    for (auto* map : {&first, &second, &fallback})
+      std::fill(map->data[0].begin(), map->data[0].end(), Complex{});
+    const auto column = 8 - sequence;
+    first.data[0][column] = std::polar(1.0, 6.2831853071795864769 * .2 * double(sequence - 1));
+    second.data[0][column] = Complex{0, 1} * first.data[0][column];
+    fallback.data[0][column] = 2;
+    const auto frame = lineage(sequence);
+    result = engine.process({&first, &second}, {7, 2}, frame, pilot(frame, 0), fallback);
+  }
+  const auto selected = result.hybridAt(2, 0);
+  REQUIRE(selected.valid); REQUIRE(selected.coherent);
+  REQUIRE(selected.power == Catch::Approx(16).margin(1e-10));
+  REQUIRE(selected.lineage.delayMotion == 0);
+  REQUIRE(result.noncoherent.banks[3].detectorPower[0] == 2);
+  REQUIRE_FALSE(result.hybridAt(2, 7).valid); // No complete path, not measured zero.
 }

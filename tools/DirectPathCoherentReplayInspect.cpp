@@ -33,9 +33,11 @@ int main(int argc,char** argv)try {
     std::string(argv[5])!="--max-cpis"||std::string(argv[7])!="--delay-motion"||
     std::string(argv[9])!="--doppler-motion") {
     std::cerr<<"Usage: directPathCoherentReplayInspect --channels 0,1,... --anchor N "
-      "--max-cpis 4|8 --delay-motion N --doppler-motion N FRAME.vwrps...\n";
+      "--max-cpis 2|4|8 --delay-motion N --doppler-motion N FRAME.vwrps...\n";
     return 2;
   }
+  if(argc-11>int(blah2::resident_replay::frameLimit))
+    throw std::invalid_argument("Replay experiment exceeds the snapshot frame bound");
   integration::DirectPathCoherentExperiment::Config config;
   config.channelIds=channels(argv[2]); config.anchorChannelId=number(argv[4],"anchor");
   config.temporal.maximumCpis=number(argv[6],"maximum CPI count");
@@ -50,8 +52,10 @@ int main(int argc,char** argv)try {
   for(int argument=11;argument<argc;++argument) {
     const auto result=reader.append(argv[argument]);
     std::cout<<"frame="<<(argument-10)<<" reason="<<result.reason;
-    for(const auto& bank:result.banks) {
-      uint64_t bankValid=0; double bankPeak=0,bankCoherence=0;
+    for(size_t index=0;index<result.banks.size();++index) {
+      const auto& bank=result.banks[index];
+      uint64_t bankValid=0,hybridCoherent=0,hybridFallback=0;
+      double bankPeak=0,bankCoherence=0;
       if(bank.ready) {
         ++ready;
         bankValid=std::count(bank.valid.begin(),bank.valid.end(),uint8_t(1));
@@ -62,10 +66,18 @@ int main(int argc,char** argv)try {
         }
         valid+=bankValid;peak=std::max(peak,bankPeak);coherence=std::max(coherence,bankCoherence);
       }
+      for(size_t cell=0;cell<result.noncoherent.banks[index+1].motion.size();++cell) {
+        const auto selected=result.hybridAt(index,cell);
+        if(selected.valid) {
+          if(selected.coherent) ++hybridCoherent; else ++hybridFallback;
+        }
+      }
       std::cout<<" depth"<<bank.depth<<"_ready="<<bank.ready
         <<" depth"<<bank.depth<<"_valid="<<bankValid
         <<" depth"<<bank.depth<<"_peak="<<bankPeak
-        <<" depth"<<bank.depth<<"_max_coherence="<<bankCoherence;
+        <<" depth"<<bank.depth<<"_max_coherence="<<bankCoherence
+        <<" depth"<<(2u<<index)<<"_hybrid_coherent="<<hybridCoherent
+        <<" depth"<<(2u<<index)<<"_hybrid_fallback="<<hybridFallback;
     }
     std::cout<<" null_calibrated="<<result.nullCalibrated<<'\n';
   }

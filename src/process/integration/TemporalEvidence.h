@@ -114,6 +114,7 @@ private:
 class TemporalEvidence
 {
 public:
+  enum class Input { complexAmplitude, realPower };
   struct Config
   {
     uint32_t maximumCpis = 8;
@@ -248,7 +249,8 @@ public:
 
   Result process(Map<std::complex<double>>& map, uint64_t epoch,
     uint64_t sequence, const EvidenceWorkBudget* budget = nullptr,
-    const std::vector<uint32_t>* beams = nullptr)
+    const std::vector<uint32_t>* beams = nullptr,
+    Input input = Input::complexAmplitude)
   {
     const uint32_t rows = map.get_nRows(), columns = map.get_nCols();
     if (!rows || !columns || (!frames_.empty() &&
@@ -276,7 +278,12 @@ public:
       for (uint32_t column = 0; column < columns; ++column)
       {
         if (budget && column % 32 == 0) budget->check();
-        const double power = std::norm(map.data[row][column]);
+        // Sealed replay exports already hold FP64 power. Avoid a sqrt/norm
+        // round trip, which can change strict detector decisions by one ULP.
+        const auto value = map.data[row][column];
+        if (input == Input::realPower && value.imag() != 0)
+          throw std::invalid_argument("Temporal power input must be real");
+        const double power = input == Input::realPower ? value.real() : std::norm(value);
         if (!(power >= 0) || !std::isfinite(power))
           throw std::invalid_argument("Temporal evidence input is not finite");
         current.power[uint64_t(row) * columns + column] = power;
