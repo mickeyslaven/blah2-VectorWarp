@@ -125,7 +125,7 @@ struct Fixture {
    const uint32_t c=std::min(columns,col+3),d=std::min(columns,col+9),n=b-a+d-c;
    m[at]=a;m[at+1]=b;m[at+2]=c;m[at+3]=d;m[at+4]=n;
    for(uint32_t pass=0;pass<=m[80]+1;++pass){const uint32_t depth=track_before_detect::passDepth(maximum,pass);
-    put(m,at+6+2*pass,blah2::detection::integrated_cfar::alpha(
+    put(m,at+6+2*pass,::blah2::detection::integrated_cfar::alpha(
       track_before_detect::passPfa(1e-6,maximum,2,dopplerBins,pass),n,depth));}
   }
   std::vector<uint32_t> alphaWords(m,m+alphaBase);
@@ -256,7 +256,7 @@ struct Fixture {
   for(uint32_t c=m[at];c<m[at+1];++c)add(c);
   for(uint32_t c=m[at+2];c<m[at+3];++c)add(c);
   if(!count)return std::numeric_limits<double>::infinity();
-  return blah2::detection::integrated_cfar::alpha(track_before_detect::passPfa(1e-6,m[74],2,m[93],bank),count,m[74])*(train/count);
+  return ::blah2::detection::integrated_cfar::alpha(track_before_detect::passPfa(1e-6,m[74],2,m[93],bank),count,m[74])*(train/count);
  }
  void mixedFamilyMergeParity(){
   if(detectorKernels.empty()){const std::vector<Buffer*> buffers{&metadata,&fused,&scratch,&history,&power,&banks,&maps,&weights,&angles};
@@ -309,7 +309,7 @@ struct Fixture {
     Centroid centroid(2,1,1);const auto expected=centroid.process(&candidates,test.minimum);
     require(expected->get_nDetections()==1&&(expected->get_evidence()[0].depth==1)==test.fresh,
       "CPU mixed-family centroid differs from GPU");
-    require(blah2::detection::integrated_cfar::temporalCandidateBetter(true,test.current,false,test.deep,test.minimum,false)==test.fresh,
+    require(::blah2::detection::integrated_cfar::temporalCandidateBetter(true,test.current,false,test.deep,test.minimum,false)==test.fresh,
       "CPU same-key consolidation differs from GPU");
    }
  }
@@ -464,11 +464,11 @@ void exactPowerBoundaryParity(Fixture& fixture){
  for(uint32_t pass:{0u,2u,3u,4u}){
   const uint32_t depth=pass<3?2:pass==3?4:8;
   const double pfa=pass?track_before_detect::passPfa(1e-6,8,2,4,pass-1):1e-6;
-  const double threshold=blah2::detection::integrated_cfar::alpha(pfa,12,depth);
+  const double threshold=::blah2::detection::integrated_cfar::alpha(pfa,12,depth);
   CfarDetector1D detector(pfa,2,6,0,0,depth);
   m[74]=pass?8:2;m[28]=1;
   for(uint32_t c=0;c<columns;++c){const uint32_t at=Fixture::windows+16*c;
-   put(m,at+6+2*(pass?pass-1:0),blah2::detection::integrated_cfar::alpha(pfa,m[at+4],depth));}
+   put(m,at+6+2*(pass?pass-1:0),::blah2::detection::integrated_cfar::alpha(pfa,m[at+4],depth));}
   for(double cut:{std::nextafter(threshold,0.0),threshold,
       std::nextafter(threshold,std::numeric_limits<double>::infinity())}){
    std::fill(m,m+28,0);std::memset(s,0,size_t(fixture.scratch.bytes));
