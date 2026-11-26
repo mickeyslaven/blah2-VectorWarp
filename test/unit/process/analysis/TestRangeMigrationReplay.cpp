@@ -149,7 +149,7 @@ void nonzeroCentreCrossCpiPhase() {
   // A one-CPI peak test cannot expose this frame-to-frame convention.
   auto caf = map();
   for (auto& hz : caf.doppler) hz += 16.;
-  constexpr uint32_t fs = 8192, hop = 128;
+  constexpr uint32_t fs = 8192, hop = 65 * 128;
   blah2::integration::CoherentPathEvidence::Config temporal;
   temporal.maximumCpis = 2; temporal.delayMotionBins = 1; temporal.dopplerMotionBins = 0;
   temporal.minimumCoherence = .999;
@@ -177,6 +177,20 @@ void nonzeroCentreCrossCpiPhase() {
     "Nonzero-centre cross-CPI phase convention lost coherence");
   check(second[0].heterodyneCenterHz == 16. && second[0].configHash[0] == 77 &&
     second[0].interpolationWhiteNoiseGain == 1., "Migration phase lineage metadata lost");
+  blah2::integration::RangeMigrationCoherentAdapter bad(temporal, {0.});
+  auto shortFrame = caf;
+  blah2::integration::RangeMigrationCoherentAdapter::Frame impossible;
+  impossible.epoch = 9; impossible.sequence = 1; impossible.endSample = 128;
+  impossible.sampleRateHz = fs;
+  rejects([&] { bad.append(shortFrame, impossible, 128); });
+  auto changedHash = caf;
+  blah2::integration::RangeMigrationCoherentAdapter::Frame incompatible;
+  incompatible.epoch = 9; incompatible.sequence = 1; incompatible.endSample = hop;
+  incompatible.sampleRateHz = fs; incompatible.configHash[0] = 1;
+  bad.append(changedHash, incompatible, 128);
+  incompatible.sequence = 2; incompatible.firstSample = hop; incompatible.endSample = 2 * hop;
+  incompatible.configHash[0] = 2;
+  rejects([&] { bad.append(changedHash, incompatible, 128); });
 }
 void refusal() {
   auto value = map();

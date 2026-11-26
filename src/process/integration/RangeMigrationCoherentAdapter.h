@@ -4,6 +4,7 @@
 #include "process/integration/RangeMigrationReplay.h"
 
 #include <array>
+#include <optional>
 
 namespace blah2::integration {
 
@@ -50,11 +51,17 @@ public:
     if (!frame.epoch || !frame.sequence || !frame.sampleRateHz ||
         frame.endSample <= frame.firstSample)
       throw std::invalid_argument("Migration coherent adapter lineage invalid");
+    const uint64_t expectedSpan = uint64_t(caf.data.size()) * correlationSamples;
+    if (!expectedSpan || frame.endSample - frame.firstSample != expectedSpan)
+      throw std::invalid_argument("Migration coherent adapter raw span does not match CAF");
+    if (previous_ && (frame.epoch != previous_->epoch ||
+        frame.sequence != previous_->sequence + 1 ||
+        frame.firstSample != previous_->endSample ||
+        frame.configHash != previous_->configHash))
+      throw std::invalid_argument("Migration coherent adapter immutable lineage changed");
     const auto migrated = RangeMigrationReplay::process(caf, frame.sampleRateHz,
       correlationSamples, rates_);
-    // RangeMigrationReplay has already validated the explicit Doppler axis;
-    // use that const-accessible dimension rather than a mutable Map accessor.
-    const double centre = caf.doppler.at(caf.doppler.size() / 2);
+    const double centre = caf.doppler.at(caf.data.size() / 2);
     constexpr double tau = 6.283185307179586476925286766559;
     std::vector<RateResult> result;
     result.reserve(migrated.banks.size());
@@ -81,6 +88,7 @@ public:
         frame.firstSample, frame.sampleRateHz, nullptr, frame.endSample);
       result.push_back(std::move(item));
     }
+    previous_ = frame;
     return result;
   }
 
@@ -88,6 +96,7 @@ private:
   CoherentPathEvidence::Config temporal_;
   std::vector<double> rates_;
   std::vector<CoherentPathEvidence> engines_;
+  std::optional<Frame> previous_;
 };
 
 } // namespace blah2::integration
